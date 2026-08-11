@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import fields
 from typing import Any
-from unittest.mock import Mock, NonCallableMock, patch
+from unittest.mock import DEFAULT, Mock, NonCallableMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -36,6 +36,16 @@ def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
     return TestClient(app, headers={"Authorization": f"Bearer {API_TOKEN}"}, **kwargs)
 
 
+def _default_return(method: Any, value: Any) -> None:
+    """Stand *method* up as empty storage, unless the caller stubbed it.
+
+    This runs at boot, which is after the test has configured its storage, so
+    assigning unconditionally would silently undo the stub it came to test.
+    """
+    if method.side_effect is None and method._mock_return_value is DEFAULT:
+        method.return_value = value
+
+
 def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     """Make a mocked StorageManager behave like an empty settings/secret store.
 
@@ -61,10 +71,10 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     # as "already stored" — the opposite of an empty database. For
     # ``get_source_config`` that means the sweep discards every sensitive field
     # the test's config declared.
-    storage.get_credential.return_value = None
-    storage.credential_row_exists.return_value = False
-    storage.has_global_secret.return_value = False
-    storage.get_source_config.return_value = None
+    _default_return(storage.get_credential, None)
+    _default_return(storage.credential_row_exists, False)
+    _default_return(storage.has_global_secret, False)
+    _default_return(storage.get_source_config, None)
     return store
 
 

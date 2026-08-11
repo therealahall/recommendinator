@@ -9,6 +9,10 @@ const props = defineProps<{
   expectedOrigin: string
   helpText: string
   serviceName: string
+  // Why the button is dead is the parent's to say: a null auth URL means the
+  // source is disabled or the service refused a link, and only the parent
+  // holds the enable flag that separates them.
+  connectHint: string
 }>()
 
 const emit = defineEmits<{
@@ -79,7 +83,7 @@ function submitCode() {
       :id="hintId"
       class="oauth-connect-hint"
       data-testid="oauth-connect-hint"
-    >Enable this source in the settings below before you can connect.</p>
+    >{{ connectHint }}</p>
     <div v-if="showCodeStep">
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">

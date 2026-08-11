@@ -51,11 +51,16 @@ function makeTimer() {
 const SOURCE_ID = 'trakt_work'
 const SOURCE_NAME = 'Trakt (work)'
 
+// The parent picks the wording, so these tests only follow it through. A
+// sentence no branch of that decision produces is what proves the pass-through.
+const HINT = 'The remedy the parent worked out.'
+
 function mountFlow(timer: ReturnType<typeof makeTimer>) {
   return mount(TraktDeviceCodeFlow, {
     props: {
       sourceId: SOURCE_ID,
       sourceName: SOURCE_NAME,
+      connectHint: HINT,
       setTimer: timer.setTimer,
       clearTimer: timer.clearTimer,
     },
@@ -118,7 +123,7 @@ describe('TraktDeviceCodeFlow', () => {
     )
   })
 
-  it('disables connect and shows an accessible hint when credentials are missing', () => {
+  it('disables connect and shows the accessible hint it was given', () => {
     setTraktEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
@@ -126,8 +131,8 @@ describe('TraktDeviceCodeFlow', () => {
     expect((button.element as HTMLButtonElement).disabled).toBe(true)
 
     const hint = wrapper.get('[data-testid="trakt-connect-hint"]')
-    expect(hint.text()).toContain('client ID')
-    expect(hint.text()).toContain('client secret')
+    // A literal here told a disabled source to add credentials it already has.
+    expect(hint.text()).toBe(HINT)
 
     // The hint is programmatically associated with the disabled button so a
     // screen reader announces "why" alongside the control.
@@ -142,6 +147,7 @@ describe('TraktDeviceCodeFlow', () => {
       props: {
         sourceId: 'trakt_home',
         sourceName: 'Trakt (home)',
+        connectHint: HINT,
         setTimer: vi.fn(),
         clearTimer: vi.fn(),
       },
@@ -166,6 +172,7 @@ describe('TraktDeviceCodeFlow', () => {
       props: {
         sourceId: 'trakt_home',
         sourceName: 'Trakt (home)',
+        connectHint: HINT,
         setTimer: vi.fn(),
         clearTimer: vi.fn(),
       },

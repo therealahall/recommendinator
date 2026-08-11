@@ -554,8 +554,9 @@ def _stored_secret_names(
 ) -> list[str]:
     """What ``secrets_migrated`` reports, asked of the rows.
 
-    Not of what a call moved: the boot migration empties the YAML entry first,
-    so a source it had just encrypted would report none.
+    Not what a call moved: startup empties the YAML entry first, so a source it
+    just encrypted would report none. Existence, not readability: a stale row
+    still counts.
     """
     return sorted(
         name

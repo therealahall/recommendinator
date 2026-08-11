@@ -366,12 +366,11 @@ def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
     }
 
 
-class TestAFileHeldTokenReachesBothWebVerbsRegression:
-    """Reported: status said not connected for a config.yaml token.
+class TestAFileHeldTokenReachesBothWebVerbs:
+    """The startup credential pass and the two row-reading verbs, end to end.
 
-    Cause: ``connected`` reads the credential row, and nothing had moved a
-    file-held token into one. Fix: the credential migration runs at startup,
-    so the row exists before the first request.
+    Both ``connected`` and disconnect answer from the credential row, so what
+    boot does with a config.yaml token decides what either one can say.
     """
 
     @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
@@ -415,8 +414,12 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
         """
         storage.upsert_source_config(USER_ID, source_id, plugin, {}, enabled=True)
         config = yaml_held_token_config(source_id, plugin)
+        assert config["inputs"][source_id]["refresh_token"] == "from-yaml"
 
         with booted_client(storage, config, migrate_credentials=True) as client:
+            # Only the real pass empties the entry. Every other assertion here
+            # also holds when the migration never ran at all.
+            assert "refresh_token" not in config["inputs"][source_id]
             assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
             assert not client.get(
                 f"/api/{provider}/status?source_id={source_id}"

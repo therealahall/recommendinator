@@ -83,9 +83,9 @@ class OAuthSourceBinding:
     ) -> bool:
         """Whether *source_id* holds a token this plugin could revoke.
 
-        The stored row, not the resolved value: a token written into
-        config.yaml alone is one no disconnect can delete, and reporting it
-        connected offers a control that answers 404.
+        The stored row, not the resolved value: disconnect deletes rows.
+        Startup moves a file-held token into one, unless the source already had
+        a row — then it is discarded.
         """
         return (
             storage is not None

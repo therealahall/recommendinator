@@ -10,6 +10,9 @@ const props = withDefaults(
   defineProps<{
     sourceId: string
     sourceName: string
+    // The status `enabled` flag folds a disabled source in with missing client
+    // credentials, so the remedy is named by the parent, which knows which.
+    connectHint: string
     setTimer?: (handler: () => void, delayMs: number) => number
     clearTimer?: (handle: number) => void
   }>(),
@@ -174,7 +177,7 @@ onBeforeUnmount(clearPoll)
         :id="hintId"
         class="oauth-connect-hint"
         data-testid="trakt-connect-hint"
-      >Add the Trakt client ID and client secret in the settings below before you can connect.</p>
+      >{{ connectHint }}</p>
     </template>
 
     <div
