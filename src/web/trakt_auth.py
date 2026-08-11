@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from src.web.sync_sources import resolve_input_for_plugin
+from src.web.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -46,6 +46,9 @@ TRAKT_DEVICE_TOKEN_URL = f"{TRAKT_API_URL}/oauth/device/token"
 
 class TraktAuthError(Exception):
     """Exception raised for Trakt device-code authentication errors."""
+
+
+_TRAKT = OAuthSourceBinding(TRAKT_PLUGIN, "Trakt", TraktAuthError)
 
 
 class DevicePollStatus(str, Enum):
@@ -184,12 +187,7 @@ def save_trakt_token(
     Raises:
         TraktAuthError: If saving fails.
     """
-    try:
-        storage.save_credential(user_id, source_id, "refresh_token", refresh_token)
-        logger.info("Saved Trakt refresh token to database")
-    except Exception as error:
-        logger.error("Failed to save Trakt token to database: %s", type(error).__name__)
-        raise TraktAuthError("Failed to save Trakt token") from error
+    _TRAKT.save_token(storage, refresh_token, source_id, user_id)
 
 
 def resolve_trakt_client_credentials(
@@ -209,15 +207,9 @@ def resolve_trakt_client_credentials(
         TraktAuthError: If the source is not configured or either credential
             is missing.
     """
-    resolved = resolve_input_for_plugin(
-        source_id,
-        TRAKT_PLUGIN,
-        config,
-        storage,
-        user_id,
-        require_enabled=require_enabled,
+    trakt_config = _TRAKT.resolve(
+        config, storage, source_id, user_id, require_enabled=require_enabled
     )
-    trakt_config = resolved.config if resolved is not None else None
 
     if trakt_config is None:
         raise TraktAuthError(
@@ -236,13 +228,11 @@ def resolve_trakt_client_credentials(
     return client_id, client_secret
 
 
-def is_trakt_connected(
-    storage: StorageManager | None,
+def has_trakt_token(
+    config: dict[str, Any],
+    storage: StorageManager | None = None,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether *source_id* has a non-empty refresh token stored."""
-    if storage is None:
-        return False
-    token = storage.get_credential(user_id, source_id, "refresh_token")
-    return bool(token and token.strip())
+    """Whether a Trakt source called *source_id* has a refresh token."""
+    return _TRAKT.has_token(config, storage, source_id, user_id)

@@ -128,8 +128,28 @@ describe('TraktDeviceCodeFlow', () => {
 
     // The hint is programmatically associated with the disabled button so a
     // screen reader announces "why" alongside the control.
-    expect(button.attributes('aria-describedby')).toBe('trakt-connect-hint')
-    expect(hint.attributes('id')).toBe('trakt-connect-hint')
+    expect(hint.attributes('id')).toBe('trakt-connect-hint-trakt-work')
+    expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
+  })
+
+  it('gives each source its own hint id', () => {
+    setTraktEnabled(false)
+    const first = mountFlow(makeTimer())
+    const second = mount(TraktDeviceCodeFlow, {
+      props: { sourceId: 'trakt_home', setTimer: vi.fn(), clearTimer: vi.fn() },
+      attachTo: document.body,
+    })
+
+    // Two Trakt sources sit in one document; a shared id would point both
+    // buttons at the first panel's hint.
+    const hintId = (wrapper: typeof first) =>
+      wrapper.get('[data-testid="trakt-connect-hint"]').attributes('id')
+    expect(hintId(first)).not.toBe(hintId(second))
+    expect(
+      second.get('[data-testid="trakt-connect-btn"]').attributes('aria-describedby'),
+    ).toBe(hintId(second))
+    first.unmount()
+    second.unmount()
   })
 
   it('does not start the device flow while connect is disabled', async () => {
@@ -208,7 +228,10 @@ describe('TraktDeviceCodeFlow', () => {
     expect(codePanelVisible(wrapper)).toBe(true)
 
     await timer.fire() // second poll -> connected
-    expect(wrapper.text()).toContain('Trakt connected!')
+    // The confirmation goes to the store, which the panel's live region reads:
+    // this component is unmounted by the status flip and cannot announce it.
+    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
+    expect(wrapper.text()).not.toContain('Waiting for you to approve')
     // Once connected the code panel is hidden, not unmounted.
     expect(codePanelVisible(wrapper)).toBe(false)
     // No further poll scheduled once connected.
@@ -280,7 +303,7 @@ describe('TraktDeviceCodeFlow', () => {
     expect(timer.hasPending()).toBe(true)
 
     await timer.fire() // next poll -> connected
-    expect(wrapper.text()).toContain('Trakt connected!')
+    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
     expect(timer.hasPending()).toBe(false)
   })
 
@@ -295,9 +318,9 @@ describe('TraktDeviceCodeFlow', () => {
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
     const awaitingRegion = wrapper.get('.trakt-flow-status').element
+    expect(awaitingRegion.textContent).toContain('Waiting for you to approve')
 
     await timer.fire() // -> connected
-    expect(wrapper.text()).toContain('Trakt connected!')
     // The same DOM node carried the message through every state change
     // rather than being torn down and re-created (which JAWS would skip).
     expect(wrapper.get('.trakt-flow-status').element).toBe(awaitingRegion)

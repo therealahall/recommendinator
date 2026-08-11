@@ -68,6 +68,42 @@ def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClie
         yield test_client
 
 
+# Every route that turns a client-supplied id into a credential key, with a
+# body it would otherwise accept and the outward call it makes once past its
+# gate. A refusal that still reached the provider is not a refusal.
+WRITE_ROUTES: list[tuple[str, dict[str, str] | None, str]] = [
+    (
+        "/api/gog/exchange",
+        {"code_or_url": "an-authorization-code-long-enough"},
+        "src.web.api.exchange_gog_tokens",
+    ),
+    (
+        "/api/epic/exchange",
+        {"code_or_json": "an-authorization-code-long-enough"},
+        "src.web.api.exchange_epic_tokens",
+    ),
+    (
+        "/api/trakt/start-device-flow",
+        None,
+        "src.web.api.start_device_auth_flow",
+    ),
+    (
+        "/api/trakt/poll-device-approval",
+        {"device_code": "dev1234567"},
+        "src.web.api.poll_device_token",
+    ),
+]
+
+READ_ROUTES = [
+    ("GET", "/api/gog/status"),
+    ("GET", "/api/epic/status"),
+    ("GET", "/api/trakt/status"),
+    ("DELETE", "/api/gog/token"),
+    ("DELETE", "/api/epic/token"),
+    ("DELETE", "/api/trakt/token"),
+]
+
+
 def resolved_config(
     config: dict[str, Any], storage: StorageManager, source_id: str
 ) -> dict[str, Any]:
@@ -506,22 +542,20 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
 
         assert body == {"enabled": False, "connected": False}
 
-    def test_exchange_refuses_an_id_no_source_uses(
-        self, client: TestClient, storage: StorageManager
+    @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
+    def test_a_write_route_refuses_an_id_no_source_uses(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        endpoint: str,
+        body: dict[str, str] | None,
+        outward: str,
     ) -> None:
-        with (
-            patch("src.web.api.extract_gog_code", return_value="code"),
-            patch(
-                "src.web.api.exchange_gog_tokens",
-                return_value={"refresh_token": "gog-token"},
-            ),
-        ):
-            response = client.post(
-                "/api/gog/exchange?source_id=no_such_source",
-                json={"code_or_url": "code"},
-            )
+        with patch(outward) as reached:
+            response = client.post(f"{endpoint}?source_id=no_such_source", json=body)
 
         assert response.status_code == 400, response.text
+        reached.assert_not_called()
         assert (
             storage.get_credential(USER_ID, "no_such_source", "refresh_token") is None
         )
@@ -560,23 +594,20 @@ class TestASourceOnAPluginThisBuildDoesNotShipIsRefused:
         assert response.status_code == 404, response.text
         assert ghost.get_credential(USER_ID, "ghost", "refresh_token") == "orphan"
 
-    @pytest.mark.parametrize(
-        ("endpoint", "body"),
-        [
-            ("/api/gog/exchange", {"code_or_url": "code"}),
-            ("/api/epic/exchange", {"code_or_json": "code"}),
-        ],
-    )
-    def test_exchange_writes_nothing(
+    @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
+    def test_a_write_route_writes_nothing(
         self,
         client: TestClient,
         ghost: StorageManager,
         endpoint: str,
-        body: dict[str, str],
+        body: dict[str, str] | None,
+        outward: str,
     ) -> None:
-        response = client.post(f"{endpoint}?source_id=ghost", json=body)
+        with patch(outward) as reached:
+            response = client.post(f"{endpoint}?source_id=ghost", json=body)
 
         assert response.status_code == 400, response.text
+        reached.assert_not_called()
         assert ghost.get_credential(USER_ID, "ghost", "refresh_token") == "orphan"
 
 
@@ -719,6 +750,34 @@ STATUS_SOURCES = [
 ]
 
 
+class TestClearingTheTraktClientSecretLeavesTheTokenVisibleRegression:
+    """Reported: clearing the Trakt client secret hid the Disconnect control.
+
+    Cause: ``connected`` was computed by resolving the client credentials,
+    which raises when either half is missing. Fix: it asks who owns the id.
+    """
+
+    def test_connected_survives_a_cleared_client_secret(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "still-live")
+
+        # Anchor: with the secret in place both answers are true, so the clear
+        # below is the only thing that moves either.
+        assert client.get("/api/trakt/status?source_id=trakt_work").json() == {
+            "enabled": True,
+            "connected": True,
+        }
+
+        storage.delete_credential(USER_ID, "trakt_work", "client_secret")
+
+        assert client.get("/api/trakt/status?source_id=trakt_work").json() == {
+            "enabled": False,
+            "connected": True,
+        }
+
+
 class TestStatusSeparatesEnabledFromConnected:
     """``enabled`` is about the source, ``connected`` about its token.
 
@@ -748,38 +807,6 @@ class TestStatusSeparatesEnabledFromConnected:
         assert body["connected"] is True
 
 
-class TestSourceIdIsValidated:
-    """The id becomes a credential key, so a malformed one never reaches storage."""
-
-    @pytest.mark.parametrize(
-        ("method", "endpoint"),
-        [
-            ("GET", "/api/gog/status"),
-            ("GET", "/api/epic/status"),
-            ("GET", "/api/trakt/status"),
-            ("DELETE", "/api/gog/token"),
-            ("DELETE", "/api/epic/token"),
-            ("DELETE", "/api/trakt/token"),
-        ],
-    )
-    def test_rejects_an_id_outside_the_pattern(
-        self, client: TestClient, method: str, endpoint: str
-    ) -> None:
-        response = client.request(method, f"{endpoint}?source_id=Not%20An%20Id")
-
-        assert response.status_code == 422
-
-
-# Every route that takes the parameter, with a body that would otherwise be
-# accepted. Listing them here rather than only the GET/DELETE pair is the point:
-# the write routes are the ones that turn the id into a credential key.
-WRITE_ROUTES: list[tuple[str, dict[str, str] | None]] = [
-    ("/api/gog/exchange", {"code_or_url": "an-authorization-code-long-enough"}),
-    ("/api/epic/exchange", {"code_or_json": "an-authorization-code-long-enough"}),
-    ("/api/trakt/start-device-flow", None),
-    ("/api/trakt/poll-device-approval", {"device_code": "dev1234567"}),
-]
-
 # `^…$` is end-of-line in Python's ``re``, not end-of-string, so a trailing
 # newline is the payload that separates a full-match check from a search.
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
@@ -788,7 +815,7 @@ MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 class TestEveryOAuthRouteValidatesTheSourceId:
     """The parameter is a credential key on ten routes, not six."""
 
-    @pytest.mark.parametrize(("endpoint", "body"), WRITE_ROUTES)
+    @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
     @pytest.mark.parametrize("bad_id", MALFORMED_IDS)
     def test_write_route_rejects_a_malformed_id(
         self,
@@ -796,6 +823,7 @@ class TestEveryOAuthRouteValidatesTheSourceId:
         storage: StorageManager,
         endpoint: str,
         body: dict[str, str] | None,
+        outward: str,
         bad_id: str,
     ) -> None:
         response = client.post(endpoint, params={"source_id": bad_id}, json=body)
@@ -803,17 +831,7 @@ class TestEveryOAuthRouteValidatesTheSourceId:
         assert response.status_code == 422, response.text
         assert storage.get_credential(USER_ID, bad_id, "refresh_token") is None
 
-    @pytest.mark.parametrize(
-        ("method", "endpoint"),
-        [
-            ("GET", "/api/gog/status"),
-            ("GET", "/api/epic/status"),
-            ("GET", "/api/trakt/status"),
-            ("DELETE", "/api/gog/token"),
-            ("DELETE", "/api/epic/token"),
-            ("DELETE", "/api/trakt/token"),
-        ],
-    )
+    @pytest.mark.parametrize(("method", "endpoint"), READ_ROUTES)
     @pytest.mark.parametrize("bad_id", MALFORMED_IDS)
     def test_read_route_rejects_a_malformed_id(
         self, client: TestClient, method: str, endpoint: str, bad_id: str

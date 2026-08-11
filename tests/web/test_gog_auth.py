@@ -25,6 +25,9 @@ from tests.cli.conftest import _invoke_with_mocks
 
 GOG_LOGGER = "src.web.gog_auth"
 
+# Token storage is shared by the three providers, so its failures log there.
+OAUTH_LOGGER = "src.web.oauth_sources"
+
 
 class TestGetGogAuthUrl:
     """Tests for get_gog_auth_url function."""
@@ -196,14 +199,14 @@ class TestSaveGogToken:
         The frames name absolute source paths and say nothing the class name
         does not, so the two save functions render a failure the same way.
         """
-        with caplog.at_level(logging.ERROR, logger=GOG_LOGGER):
+        with caplog.at_level(logging.ERROR, logger=OAUTH_LOGGER):
             with patch.object(
                 storage, "save_credential", side_effect=OSError("disk full")
             ):
                 with pytest.raises(GogAuthError):
                     save_gog_token(storage, "some_token")
 
-        records = [record for record in caplog.records if record.name == GOG_LOGGER]
+        records = [record for record in caplog.records if record.name == OAUTH_LOGGER]
         assert [record.getMessage() for record in records] == [
             "Failed to save GOG token to database: OSError"
         ]

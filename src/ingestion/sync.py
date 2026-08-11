@@ -79,6 +79,7 @@ def execute_sync(
     progress_callback: SyncProgressCallback | None = None,
     mark_for_enrichment: bool = False,
     user_id: int = 1,
+    config: dict[str, Any] | None = None,
 ) -> SyncResult:
     """Execute a sync for a single plugin source.
 
@@ -94,6 +95,8 @@ def execute_sync(
         progress_callback: Optional callback(items_processed, total, current_item).
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
         user_id: User ID for credential storage (default 1).
+        config: Full application config, so the stranded-credential warning
+            sees the sources declared in YAML as well as those in the database.
 
     Returns:
         SyncResult with counts and any errors.
@@ -119,7 +122,7 @@ def execute_sync(
     # Before the fetch that is about to fail to authenticate, so the log says
     # why rather than leaving the operator with a bare 401.
     warn_about_orphaned_credentials(
-        storage_manager, plugin.name, credential_owner, user_id=user_id
+        storage_manager, plugin.name, credential_owner, config, user_id=user_id
     )
 
     # Inject credential rotation callback so plugins can persist rotated tokens
@@ -267,6 +270,7 @@ def execute_multi_source_sync(
     mark_for_enrichment: bool = False,
     user_id: int = 1,
     max_workers: int = 1,
+    config: dict[str, Any] | None = None,
 ) -> list[SyncResult]:
     """Execute sync for multiple plugin sources, optionally in parallel.
 
@@ -295,6 +299,7 @@ def execute_multi_source_sync(
         user_id: User ID for credential storage (default 1).
         max_workers: Maximum sources to sync concurrently. ``1`` (default)
             preserves the legacy sequential behaviour.
+        config: Full application config, forwarded to ``execute_sync``.
 
     Returns:
         List of SyncResult, one per source, in the same order as ``sources``.
@@ -313,6 +318,7 @@ def execute_multi_source_sync(
                 progress_callback=progress_callback,
                 mark_for_enrichment=mark_for_enrichment,
                 user_id=user_id,
+                config=config,
             )
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text

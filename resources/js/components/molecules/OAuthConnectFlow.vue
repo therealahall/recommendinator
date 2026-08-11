@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { domId } from '@/utils/format'
 
 const props = defineProps<{
+  sourceId: string
   authUrl: string | null
   expectedOrigin: string
   connectMessage: string
@@ -15,9 +17,7 @@ const emit = defineEmits<{
 
 const codeInput = ref('')
 const showCodeStep = ref(false)
-const sanitizedId = computed(() =>
-  `oauth-code-${props.serviceName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`
-)
+const codeInputId = computed(() => domId('oauth-code', props.sourceId))
 
 function openAuth() {
   if (!props.authUrl) return
@@ -54,21 +54,16 @@ function submitCode() {
     <div v-if="showCodeStep">
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">
-        <label :for="sanitizedId" class="sr-only">{{ serviceName }} authorization code</label>
-        <input :id="sanitizedId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
+        <label :for="codeInputId" class="sr-only">{{ serviceName }} authorization code</label>
+        <input :id="codeInputId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
         <button class="btn btn-primary" @click="submitCode">Connect</button>
       </div>
       <!--
-        Live region must be present in the DOM before content arrives,
-        otherwise some screen readers won't announce updates. Keep the
-        container persistent and let Vue reactivity update the text.
+        Deliberately NOT a live region: this component unmounts the moment the
+        connect succeeds, so the panel owns the region that announces it. Two
+        regions carrying the same words announce twice.
       -->
-      <div
-        class="mt-2"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >{{ connectMessage }}</div>
+      <div class="mt-2">{{ connectMessage }}</div>
     </div>
   </div>
 </template>

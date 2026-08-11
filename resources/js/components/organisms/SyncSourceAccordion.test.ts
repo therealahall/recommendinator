@@ -436,9 +436,9 @@ describe('SyncSourceAccordion', () => {
       )
       const connected = wrapper.find('[data-testid="trakt-connected"]')
       expect(connected.exists()).toBe(true)
-      // role="status" lets a screen reader self-describe the connected state
-      // when a user lands on an already-connected source.
-      expect(connected.attributes('role')).toBe('status')
+      // Not a live region of its own: it is inserted already populated, which
+      // announces nothing, and it repeats what the panel's region carries.
+      expect(connected.attributes('role')).toBeUndefined()
       const disconnect = wrapper.find('[data-testid="disconnect-btn-trakt_work"]')
       expect(disconnect.exists()).toBe(true)
       expect(disconnect.attributes('aria-label')).toBe('Disconnect Trakt')
@@ -468,6 +468,81 @@ describe('SyncSourceAccordion', () => {
       await flushPromises()
 
       expect(loadOAuthStatus).toHaveBeenCalledWith('trakt_work', 'trakt')
+    })
+
+    it('carries a trakt disconnect failure in the panel live region', async () => {
+      const { wrapper, store } = await expandTrakt(true)
+
+      // Trakt used to be excluded from the panel's only live region, so a
+      // refused disconnect left the button, the "connected" label and no word
+      // anywhere that it had failed (WCAG 3.3.1).
+      const region = wrapper.get('[data-testid="oauth-message"]')
+      expect(region.attributes('aria-live')).toBe('polite')
+
+      store.oauthMessages['trakt_work'] = 'Error: No active Trakt connection found'
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'No active Trakt connection found',
+      )
+    })
+
+    it('moves focus to the OAuth panel after a disconnect removes the button', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: traktSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, traktConfig, {
+        enabled: true,
+        connected: true,
+        authUrl: null,
+      })
+      vi.spyOn(store, 'disconnectTrakt').mockImplementation(async (id) => {
+        store.oauthStatus[id] = { enabled: true, connected: false, authUrl: null }
+      })
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper
+        .find('[data-testid="disconnect-btn-trakt_work"]')
+        .trigger('click')
+      await flushPromises()
+
+      // The button unmounts itself as it succeeds; without a deliberate move
+      // focus falls to <body> and keyboard users restart from the top.
+      expect(document.activeElement).toBe(
+        wrapper.get('.source-accordion-oauth').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('says so when the connection status cannot be read', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: traktSource, syncing: false },
+      })
+      const store = useDataStore()
+      const { loadOAuthStatus } = primeStore(store, traktConfig)
+      loadOAuthStatus.mockRejectedValueOnce(new Error('status read failed'))
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="oauth-status-error"]').attributes('role')).toBe(
+        'alert',
+      )
+      // The fallback status reads as "not connected", which would offer a
+      // Connect button hinting at credentials that may be perfectly fine.
+      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(false)
+
+      loadOAuthStatus.mockImplementation(async (id: string) => {
+        store.oauthStatus[id] = { enabled: true, connected: false, authUrl: null }
+      })
+      await wrapper.find('[data-testid="oauth-status-retry"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="oauth-status-error"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(true)
     })
 
     it('does not render trakt affordances before migration', async () => {
@@ -541,10 +616,64 @@ describe('SyncSourceAccordion', () => {
       await wrapper.find('[data-testid="disconnect-btn-gog_work"]').trigger('click')
 
       expect(disconnect).toHaveBeenCalledWith('gog_work')
+      expect(
+        wrapper.find('[data-testid="disconnect-btn-gog_work"]').attributes('aria-label'),
+      ).toBe('Disconnect GOG')
     })
 
-    // The Epic branch is the template's `v-else`, so nothing but a mounted
-    // Epic source distinguishes it from rendering GOG's flow twice.
+    it('gives two GOG sources distinct code field ids', async () => {
+      const store = useDataStore()
+      // Both sources run the gog plugin — the very configuration this branch
+      // exists to allow — and both panels stay in the document once opened.
+      primeStore(store, gogConfig, {
+        enabled: true,
+        connected: false,
+        authUrl: 'https://login.gog.com/auth',
+      })
+      vi.spyOn(window, 'open').mockReturnValue(null)
+      const wrappers = [gogSource, { ...gogSource, id: 'gog' }].map((source) =>
+        mount(SyncSourceAccordion, {
+          props: { source, syncing: false },
+          attachTo: document.body,
+        }),
+      )
+
+      for (const wrapper of wrappers) {
+        await wrapper.find('button.accordion-trigger').trigger('click')
+        await flushPromises()
+        await wrapper.findComponent(OAuthConnectFlow).find('button').trigger('click')
+      }
+
+      const ids = wrappers.map((w) => w.get('input[type="text"]').attributes('id'))
+      expect(new Set(ids).size).toBe(2)
+      for (const id of ids) {
+        expect(document.querySelectorAll(`#${id}`)).toHaveLength(1)
+      }
+      for (const wrapper of wrappers) wrapper.unmount()
+    })
+
+    it('announces the connect from a region the connect flow does not own', async () => {
+      const { wrapper, store } = await expandGog(false)
+      const region = wrapper.get('[data-testid="oauth-message"]').element
+
+      // What a successful exchange leaves behind: the confirmation, then the
+      // status flip that unmounts OAuthConnectFlow and its own message.
+      store.oauthMessages['gog_work'] = 'GOG account connected successfully!'
+      store.oauthStatus['gog_work'] = {
+        enabled: true,
+        connected: true,
+        authUrl: null,
+      }
+      await flushPromises()
+
+      expect(wrapper.findComponent(OAuthConnectFlow).exists()).toBe(false)
+      const surviving = wrapper.get('[data-testid="oauth-message"]')
+      expect(surviving.element).toBe(region)
+      expect(surviving.text()).toContain('GOG account connected successfully!')
+    })
+
+    // The Epic branch is `v-else-if="isEpic"`, so a third OAuth plugin cannot
+    // silently inherit Epic's flow, origin and label.
     const epicSource = {
       id: 'epic_work',
       display_name: 'Epic (work)',

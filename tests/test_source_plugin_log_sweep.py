@@ -72,6 +72,24 @@ _TREES = {
 }
 
 
+def _plugin_modules() -> set[str]:
+    """The folder-per-plugin modules, ``gog/gog.py`` and its siblings.
+
+    Derived from the layout rather than listed, so tomorrow's plugin is held
+    to the claims below without anyone remembering to enrol it.
+    """
+    return {
+        module
+        for module in _TREES
+        if module.count("/") == 1 and _names_its_folder(module)
+    }
+
+
+def _names_its_folder(module: str) -> bool:
+    folder, filename = module.split("/")
+    return filename == f"{folder}.py"
+
+
 def _log_calls(tree: ast.AST) -> list[ast.Call]:
     """Every ``logger.<level>(...)`` call in a parsed module."""
     return [
@@ -136,6 +154,94 @@ def _unsanitized_text_arguments(tree: ast.AST) -> set[str]:
             if not _is_escaped(argument, sanitized_names):
                 reported.add(f"{ast.unparse(argument)} (line {argument.lineno})")
     return reported
+
+
+def _logger_helper_calls(tree: ast.AST) -> list[ast.Call]:
+    """Calls handed the module logger, which then log on the caller's behalf.
+
+    ``log_progress(logger, label, ...)`` writes the same file, and none of it
+    passes through a ``logger.<level>`` call the sweep above can see.
+    """
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and any(
+            isinstance(argument, ast.Name) and argument.id == "logger"
+            for argument in node.args
+        )
+    ]
+
+
+def _text_arguments(call: ast.Call) -> list[ast.expr]:
+    """The arguments that are unambiguously text, an f-string by its values.
+
+    A bare name is not one: without the callee's signature a counter and a
+    label read alike, and reporting ``total`` would retire the check.
+    """
+    values: list[ast.expr] = []
+    for argument in call.args:
+        if isinstance(argument, ast.JoinedStr):
+            values.extend(
+                node.value
+                for node in ast.walk(argument)
+                if isinstance(node, ast.FormattedValue)
+            )
+        elif isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Mod):
+            values.append(argument)
+        elif (
+            isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Attribute)
+            and argument.func.attr == "format"
+        ):
+            values.append(argument)
+    return values
+
+
+def _unsanitized_text_handed_to_a_log_helper(tree: ast.AST) -> set[str]:
+    sanitized_names = _names_bound_to_a_sanitizer(tree)
+    return {
+        f"{ast.unparse(value)} (line {value.lineno})"
+        for call in _logger_helper_calls(tree)
+        for value in _text_arguments(call)
+        if ast.unparse(value) not in _NON_TEXT_LOG_ARGUMENTS
+        and not _is_escaped(value, sanitized_names)
+    }
+
+
+def _possible_values(node: ast.expr) -> list[ast.expr]:
+    """One entry per branch, so a conditional is judged on both of them."""
+    if isinstance(node, ast.IfExp):
+        return _possible_values(node.body) + _possible_values(node.orelse)
+    return [node]
+
+
+def _display_name_returns(tree: ast.AST) -> list[ast.expr]:
+    """What every ``display_name`` property in a module gives back."""
+    return [
+        value
+        for function in ast.walk(tree)
+        if isinstance(function, ast.FunctionDef) and function.name == "display_name"
+        for node in ast.walk(function)
+        if isinstance(node, ast.Return) and node.value is not None
+        for value in _possible_values(node.value)
+    ]
+
+
+def _bindings_of(tree: ast.AST, name: str) -> list[ast.expr]:
+    """Every value assigned to *name*, conditional branches flattened."""
+    return [
+        value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id == name
+        for value in _possible_values(node.value)
+    ]
+
+
+def _is_string_constant(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
 def _mismatched_argument_counts(tree: ast.AST) -> set[str]:
@@ -290,6 +396,10 @@ class TestNoSourcePluginInterpolatesAValueRaw:
     def test_no_caught_exception_takes_the_plain_sanitizer(self, module: str) -> None:
         assert _plain_sanitizer_on_a_caught_exception(_TREES[module]) == set()
 
+    def test_no_log_helper_is_handed_raw_text(self, module: str) -> None:
+        """``log_progress(logger, label, …)`` ends an entry the same way."""
+        assert _unsanitized_text_handed_to_a_log_helper(_TREES[module]) == set()
+
 
 class TestTheSweptPopulationIsNotEmpty:
     """``set()`` is also what a sweep that found no modules at all returns."""
@@ -311,6 +421,52 @@ class TestTheSweptPopulationIsNotEmpty:
             if (message := _literal_message(call)) is not None
             and _TEXT_CONVERSIONS & set(_conversions(message))
         } == _MODULES_THAT_LOG
+
+    def test_the_sweep_sees_the_log_helper_call_sites(self) -> None:
+        """A predicate matching no helper call would pass every module."""
+        assert {
+            Path(module).stem
+            for module, tree in _TREES.items()
+            if _logger_helper_calls(tree)
+        } == {"arr_base", "epic_games", "gog"}
+
+
+class TestTheWaivedArgumentsAreWhatTheyClaim:
+    """``_NON_TEXT_LOG_ARGUMENTS`` is keyed on unparsed text.
+
+    A module introducing a local of the same name inherits the waiver, so each
+    claim is asserted over the whole package rather than trusted.
+    """
+
+    def test_every_plugin_declares_a_display_name(self) -> None:
+        """The anchor: an empty scan would prove the waiver over nothing."""
+        assert {
+            module for module, tree in _TREES.items() if _display_name_returns(tree)
+        } == _plugin_modules()
+
+    def test_every_display_name_returns_a_string_constant(self) -> None:
+        assert {
+            f"{module}: {ast.unparse(value)}"
+            for module, tree in _TREES.items()
+            for value in _display_name_returns(tree)
+            if not _is_string_constant(value)
+        } == set()
+
+    def test_only_the_json_reader_binds_file_format(self) -> None:
+        """The anchor, and the reason the waiver is package-wide."""
+        assert {
+            module
+            for module, tree in _TREES.items()
+            if _bindings_of(tree, "file_format")
+        } == {"generic_json/generic_json.py"}
+
+    def test_every_file_format_binding_is_a_string_constant(self) -> None:
+        assert {
+            f"{module}: {ast.unparse(value)}"
+            for module, tree in _TREES.items()
+            for value in _bindings_of(tree, "file_format")
+            if not _is_string_constant(value)
+        } == set()
 
 
 class TestTheSweepFailsOnANewRawSink:
@@ -444,6 +600,48 @@ class TestTheSweepFailsOnANewRawSink:
 
         assert _plain_sanitizer_on_a_caught_exception(tree) == set()
         assert _unsanitized_text_arguments(tree) == set()
+
+    @pytest.mark.parametrize(
+        ("label", "reported"),
+        [
+            ("f'{source_name} items'", "source_name"),
+            ("'%s items' % source_name", "'%s items' % source_name"),
+            ("'{} items'.format(source_name)", "'{} items'.format(source_name)"),
+        ],
+    )
+    def test_raw_text_handed_to_a_log_helper_is_reported(
+        self, label: str, reported: str
+    ) -> None:
+        """The sink the sweep above cannot see: the logger is the argument."""
+        source = f"log_progress(logger, {label}, current, total)"
+
+        assert _unsanitized_text_handed_to_a_log_helper(ast.parse(source)) == {
+            f"{reported} (line 1)"
+        }
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "'GOG product details'",
+            "f'{self.display_name} items'",
+            "f'{safe} items'",
+        ],
+        ids=["a literal", "a waived value", "a sanitized local"],
+    )
+    def test_a_label_that_cannot_end_an_entry_is_not_reported(self, label: str) -> None:
+        """Flagging the fixed shapes would leave nobody a way to pass."""
+        tree = ast.parse(
+            "safe = sanitize_for_log(source_name)\n"
+            f"log_progress(logger, {label}, current, total)"
+        )
+
+        assert _unsanitized_text_handed_to_a_log_helper(tree) == set()
+
+    def test_a_counter_beside_the_label_is_not_reported(self) -> None:
+        """The three live call sites pass counters as bare names."""
+        tree = ast.parse("log_progress(logger, 'items', index + 1, len(records))")
+
+        assert _unsanitized_text_handed_to_a_log_helper(tree) == set()
 
     def test_the_clean_shape_is_not_reported(self) -> None:
         """The predicates accept what the plugins actually write."""

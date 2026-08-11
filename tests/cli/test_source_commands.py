@@ -1048,6 +1048,57 @@ class TestSourceRemove:
         assert result.exit_code != 0
 
 
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestRemovingTheLastSourceSweepsThePluginRowRegression:
+    """Reported: a credential the CLI was told to delete stayed in the database.
+
+    Cause: ``source remove`` passed no config, so the sweep never ran.
+    Fix: it passes one, as ``source create`` already did.
+    """
+
+    @pytest.fixture()
+    def stranded(self, storage: StorageManager) -> StorageManager:
+        storage.upsert_source_config(1, "games_work", "fake_api", {}, enabled=True)
+        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+        return storage
+
+    def test_the_row_under_the_plugin_name_goes_with_the_last_source(
+        self, cli_runner: CliRunner, stranded: StorageManager
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "remove", "games_work", "--yes"],
+            mock_storage=stranded,
+            config={"inputs": {}},
+        )
+
+        assert result.exit_code == 0
+        assert stranded.get_credential(1, "fake_api", "api_key") is None
+
+    def test_a_yaml_sibling_on_the_plugin_keeps_it(
+        self,
+        cli_runner: CliRunner,
+        stranded: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """The anchor, and why the sweep needs the config rather than the DB.
+
+        ``my_games`` runs the same plugin from config.yaml alone.
+        """
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "remove", "games_work", "--yes"],
+            mock_storage=stranded,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0
+        assert (
+            stranded.get_credential(1, "fake_api", "api_key")
+            == "stranded-by-an-upgrade"
+        )
+
+
 class TestSourceSetClearsBoundCredentials:
     """The CLI repoints a source too, so it must drop the same secrets.
 

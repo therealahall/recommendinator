@@ -20,7 +20,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import text_names
 from src.utils.progress import log_progress
 from src.utils.request_errors import scrub_request_error
-from src.utils.text import sanitize_for_log
+from src.utils.text import exception_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -75,9 +75,7 @@ def refresh_access_token(refresh_token: str) -> dict[str, str]:
         }
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
-        logger.error(
-            "Error refreshing GOG access token: %s", sanitize_for_log(scrubbed)
-        )
+        logger.error("Error refreshing GOG access token: %s", exception_for_log(error))
         # The refresh token and client secret are query parameters here, so the
         # URL inside ``error`` is a secret. Keeping it as ``__cause__`` would put
         # it in every caller's ``exc_info=True`` traceback.
@@ -135,7 +133,7 @@ def get_owned_games(
             logger.error(
                 "Error fetching GOG owned games (page %d): %s",
                 page,
-                sanitize_for_log(scrubbed),
+                exception_for_log(error),
             )
             # The access token rides in a header here, so the URL on ``error``
             # holds no secret and the chain is kept for a caller logging
@@ -169,7 +167,7 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
         return [int(product_id) for product_id in wishlist.keys()]
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
-        logger.error("Error fetching GOG wishlist: %s", sanitize_for_log(scrubbed))
+        logger.error("Error fetching GOG wishlist: %s", exception_for_log(error))
         # Header-authenticated like the library call above, so the URL on
         # ``error`` holds no secret and the chain is kept deliberately.
         raise GogAPIError(f"Failed to fetch wishlist: {scrubbed}") from error
@@ -200,7 +198,7 @@ def get_product_details(product_id: int) -> dict[str, Any] | None:
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
         logger.error(
-            "Error fetching GOG product %d: %s", product_id, sanitize_for_log(scrubbed)
+            "Error fetching GOG product %d: %s", product_id, exception_for_log(error)
         )
         # Unauthenticated public endpoint, so nothing in the URL is a secret
         # and the chain is kept deliberately.

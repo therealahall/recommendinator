@@ -16,7 +16,7 @@ import requests
 
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
 from src.utils.request_errors import scrub_request_error
-from src.web.sync_sources import is_nonempty_secret_value, resolve_input_for_plugin
+from src.web.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -38,6 +38,9 @@ class GogAuthError(Exception):
     """Exception raised for GOG authentication errors."""
 
     pass
+
+
+_GOG = OAuthSourceBinding(GOG_PLUGIN, "GOG", GogAuthError)
 
 
 def get_gog_auth_url() -> str:
@@ -153,36 +156,7 @@ def save_gog_token(
     Raises:
         GogAuthError: If saving fails.
     """
-    try:
-        storage.save_credential(user_id, source_id, "refresh_token", refresh_token)
-        logger.info("Saved GOG refresh token to database")
-    except Exception as error:
-        logger.error("Failed to save GOG token to database: %s", type(error).__name__)
-        raise GogAuthError("Failed to save GOG token") from error
-
-
-def _resolve_gog_source(
-    config: dict[str, Any],
-    storage: StorageManager | None = None,
-    source_id: str = GOG_SOURCE_ID,
-    user_id: int = 1,
-    *,
-    require_enabled: bool = True,
-) -> dict[str, Any] | None:
-    """*source_id*'s sync-ready config, unless it is not a GOG source.
-
-    Reads the database as well as ``inputs``, so a source added from the Data
-    tab is found too.
-    """
-    resolved = resolve_input_for_plugin(
-        source_id,
-        GOG_PLUGIN,
-        config,
-        storage,
-        user_id,
-        require_enabled=require_enabled,
-    )
-    return resolved.config if resolved is not None else None
+    _GOG.save_token(storage, refresh_token, source_id, user_id)
 
 
 def is_gog_enabled(
@@ -192,7 +166,7 @@ def is_gog_enabled(
     user_id: int = 1,
 ) -> bool:
     """Whether *source_id* is an enabled GOG source."""
-    return _resolve_gog_source(config, storage, source_id, user_id) is not None
+    return _GOG.is_enabled(config, storage, source_id, user_id)
 
 
 def has_gog_token(
@@ -201,15 +175,5 @@ def has_gog_token(
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether a GOG source called *source_id* has a refresh token.
-
-    Asks the resolved config, which layers the stored secret over the
-    ``inputs`` entry as the sync does. A disabled source answers too: its
-    token is there to be revoked.
-    """
-    resolved = _resolve_gog_source(
-        config, storage, source_id, user_id, require_enabled=False
-    )
-    return resolved is not None and is_nonempty_secret_value(
-        resolved.get("refresh_token")
-    )
+    """Whether a GOG source called *source_id* has a refresh token."""
+    return _GOG.has_token(config, storage, source_id, user_id)

@@ -276,44 +276,27 @@ def get_available_sync_sources(
         Every known source as a ``SyncSourceInfo`` (with its current
         ``enabled`` flag), sorted by ID.
     """
-    registry = get_registry()
     inputs_config = config.get("inputs", {})
 
-    db_configs: dict[str, dict[str, Any]] = {}
+    db_configs: dict[str, SourceConfigDict] = {}
     if storage is not None:
         for db_row in storage.list_source_configs(user_id):
-            db_configs[db_row["source_id"]] = {
-                "plugin": db_row["plugin"],
-                "enabled": db_row["enabled"],
-            }
+            db_configs[db_row["source_id"]] = db_row
 
-    source_ids = sorted(set(inputs_config.keys()) | set(db_configs.keys()))
     sources: list[SyncSourceInfo] = []
-    for source_id in source_ids:
-        db_entry = db_configs.get(source_id)
-        yaml_entry = inputs_config.get(source_id)
-
-        if db_entry is not None:
-            plugin_name = db_entry["plugin"]
-            enabled = bool(db_entry["enabled"])
-        else:
-            if not isinstance(yaml_entry, dict):
-                continue
-            plugin_name = yaml_entry.get("plugin")
-            if not plugin_name:
-                continue
-            enabled = bool(yaml_entry.get("enabled", False))
-
-        plugin = registry.get_plugin(plugin_name)
-        if plugin is None:
+    for source_id in sorted(set(inputs_config.keys()) | set(db_configs.keys())):
+        source = _authoritative_source(
+            source_id, db_configs.get(source_id), inputs_config.get(source_id)
+        )
+        if source is None:
             continue
 
         sources.append(
             SyncSourceInfo(
                 id=source_id,
                 display_name=humanize_source_id(source_id),
-                plugin_display_name=plugin.display_name,
-                enabled=enabled,
+                plugin_display_name=source.plugin.display_name,
+                enabled=source.enabled,
             )
         )
     return sources
@@ -528,18 +511,13 @@ def build_config_view(
     )
     yaml_entry = _yaml_entry_for(source_id, config)
 
-    if db_row is not None:
-        source_values = db_row["config"]
-        enabled = db_row["enabled"]
-        migrated = True
-        migrated_at: str | None = db_row["migrated_at"]
-    else:
-        source_values = {
-            k: v for k, v in yaml_entry.items() if k not in ("plugin", "enabled")
-        }
-        enabled = bool(yaml_entry.get("enabled", False))
-        migrated = False
-        migrated_at = None
+    migrated = db_row is not None
+    migrated_at: str | None = db_row["migrated_at"] if db_row is not None else None
+    # The caller resolved *plugin* through this same rule, so ``None`` here is
+    # unreachable; the fallback keeps the response shape rather than raising.
+    source = _authoritative_source(source_id, db_row, yaml_entry)
+    source_values = source.fields if source is not None else {}
+    enabled = source is not None and source.enabled
 
     field_values = {
         name: source_values[name]

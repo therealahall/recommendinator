@@ -33,23 +33,11 @@ def _credential_keys(storage: StorageManager, user_id: int, source_id: str) -> s
         return {row[0] for row in cursor.fetchall()}
 
 
-def _a_namesake_source_owns_the_row(
-    storage: StorageManager,
-    plugin_name: str,
-    config: dict[str, Any] | None,
-    user_id: int,
-) -> bool:
-    """Whether a configured source is itself called *plugin_name*.
-
-    It reads the row under its own id, so neither path may call it a leftover.
-    """
-    return plugin_name in configured_source_plugins(config or {}, storage, user_id)
-
-
 def warn_about_orphaned_credentials(
     storage: StorageManager,
     plugin_name: str,
     source_id: str,
+    config: dict[str, Any] | None = None,
     user_id: int = 1,
 ) -> None:
     """Tell the operator to reconnect *source_id* when a token is stranded.
@@ -59,13 +47,17 @@ def warn_about_orphaned_credentials(
     """
     if source_id == plugin_name:
         return
-    # No config file reaches the sync executor, so only a DB-backed namesake
-    # is visible here.
-    if _a_namesake_source_owns_the_row(storage, plugin_name, None, user_id):
-        return
 
+    # Asked before the source table is read: most syncs have nothing stranded,
+    # and this is one indexed lookup against a whole-table scan.
     stranded = sorted(_credential_keys(storage, user_id, plugin_name))
     if not stranded:
+        return
+
+    # A namesake source reads the row under its own id, so no path may call it
+    # a leftover. Without *config* the YAML half of that answer is missing and
+    # a live token gets reported stranded on every sync.
+    if plugin_name in configured_source_plugins(config or {}, storage, user_id):
         return
 
     logger.warning(
@@ -92,11 +84,10 @@ def delete_orphaned_credentials(
     Call after the deleted source's own row is gone, so *config* and the
     database together answer who is left.
     """
-    if _a_namesake_source_owns_the_row(storage, plugin_name, config, user_id):
-        return
-    # Two sources sharing the plugin keep the row: this delete was asked about
-    # one of them, and nothing records which rotated that token.
-    if plugin_name in configured_source_plugins(config, storage, user_id).values():
+    sources = configured_source_plugins(config, storage, user_id)
+    # A namesake source reads the row under its own id, and a sibling still on
+    # the plugin may have rotated the token — nothing records which one did.
+    if plugin_name in sources or plugin_name in sources.values():
         return
 
     deleted = storage.delete_credentials_for_source(user_id, plugin_name)

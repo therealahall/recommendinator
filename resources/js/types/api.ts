@@ -277,11 +277,6 @@ export interface EpicExchangeRequest {
   code_or_json: string
 }
 
-export interface AuthStatusResponse {
-  authenticated: boolean
-  auth_url?: string
-}
-
 /** GET /{gog,epic,trakt}/status. Only GOG and Epic carry an auth_url. */
 export interface OAuthStatusResponse {
   enabled: boolean

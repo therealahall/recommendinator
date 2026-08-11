@@ -116,7 +116,7 @@ from src.web.trakt_auth import (
     TRAKT_SOURCE_ID,
     DevicePollStatus,
     TraktAuthError,
-    is_trakt_connected,
+    has_trakt_token,
     poll_device_token,
     resolve_trakt_client_credentials,
     save_trakt_token,
@@ -1529,6 +1529,7 @@ def update_data(
             mark_for_enrichment=auto_enrich,
             user_id=1,
             max_workers=max_workers,
+            config=config,
         )
         return sum(result.items_synced for result in results)
 
@@ -2507,30 +2508,21 @@ def get_trakt_status(
     """Get Trakt integration status.
 
     ``enabled`` means an enabled Trakt source with client credentials saved,
-    so the device flow can run. ``connected`` means a stored refresh token
-    those credentials could still refresh.
+    so the device flow can run. ``connected`` means a refresh token is stored
+    under an id this route owns.
     """
+    try:
+        resolve_trakt_client_credentials(
+            config, storage, source_id=source_id, user_id=user_id
+        )
+        enabled = True
+    except TraktAuthError:
+        enabled = False
 
-    def credentials_resolve(*, require_enabled: bool) -> bool:
-        try:
-            resolve_trakt_client_credentials(
-                config,
-                storage,
-                source_id=source_id,
-                user_id=user_id,
-                require_enabled=require_enabled,
-            )
-        except TraktAuthError:
-            return False
-        return True
-
-    # ``connected`` ignores the enabled flag because the UI hangs its
-    # disconnect control off it: gated on enabled, a disabled source's token
-    # would be unrevocable from the Data tab showing it.
-    enabled = credentials_resolve(require_enabled=True)
-    connected = credentials_resolve(require_enabled=False) and is_trakt_connected(
-        storage, source_id=source_id, user_id=user_id
-    )
+    # Ownership, not credential completeness: clearing the client secret would
+    # otherwise read as disconnected while the token is still stored, and the
+    # Data tab hangs its only revoke control off ``connected``.
+    connected = has_trakt_token(config, storage, source_id, user_id)
 
     return {"enabled": enabled, "connected": connected}
 

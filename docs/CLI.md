@@ -262,10 +262,18 @@ python3.11 -m src.cli enrichment reset                     # re-process on the n
 ## Authentication (GOG/Epic/Trakt)
 
 ```bash
-python3.11 -m src.cli auth status
+python3.11 -m src.cli auth status                   # every OAuth source, enabled and connected
 python3.11 -m src.cli auth connect --source gog     # browser OAuth
 python3.11 -m src.cli auth connect --source trakt   # device code, prints a URL
 python3.11 -m src.cli auth disconnect --source gog
+```
+
+`--source` names the provider; the token belongs to a source id. Pass
+`--source-id` when yours is not called after its plugin:
+
+```bash
+python3.11 -m src.cli auth connect --source gog --source-id gog_work
+python3.11 -m src.cli auth disconnect --source gog --source-id gog_work
 ```
 
 ## Conversation and memories (requires AI)

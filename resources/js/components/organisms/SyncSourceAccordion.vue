@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
@@ -25,6 +25,7 @@ const data = useDataStore()
 const expanded = ref(false)
 const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
+const oauthStatusFailed = ref(false)
 const migrating = ref(false)
 const savingConfig = ref(false)
 const togglingEnabled = ref(false)
@@ -45,12 +46,23 @@ async function ensureDetails(): Promise<void> {
       data.loadSourceSchema(props.source.id),
       data.loadSourceConfig(props.source.id),
     ])
-    // The config names the plugin, which picks the OAuth routes to ask.
-    const plugin = config.value?.plugin
-    if (plugin) await data.loadOAuthStatus(props.source.id, plugin).catch(() => {})
+    await loadOAuthState()
     detailsLoaded.value = true
   } finally {
     detailsLoading.value = false
+  }
+}
+
+// A failed status read is tracked, not swallowed: the fallback reads as "not
+// connected", which offers a Connect button and a hint naming a remedy that
+// may have nothing to do with the failure.
+async function loadOAuthState(): Promise<void> {
+  if (!isOAuthSource.value) return
+  try {
+    await data.loadOAuthStatus(props.source.id, plugin.value)
+    oauthStatusFailed.value = false
+  } catch {
+    oauthStatusFailed.value = true
   }
 }
 
@@ -133,29 +145,55 @@ async function onRemove(): Promise<void> {
   }
 }
 
+/** The account each OAuth plugin connects, for the disconnect button's label. */
+const OAUTH_SERVICE_NAME: Record<string, string> = {
+  gog: 'GOG',
+  epic_games: 'Epic Games',
+  trakt: 'Trakt',
+}
+
 // Keyed on the plugin, never the source id: a GOG source the user named
 // "gog_work" runs the same connect flow as one named "gog".
-const isGog = computed(() => config.value?.plugin === 'gog')
-const isEpic = computed(() => config.value?.plugin === 'epic_games')
-const isTrakt = computed(() => config.value?.plugin === 'trakt')
+const plugin = computed(() => config.value?.plugin ?? '')
+const isGog = computed(() => plugin.value === 'gog')
+const isEpic = computed(() => plugin.value === 'epic_games')
+const isTrakt = computed(() => plugin.value === 'trakt')
+const isOAuthSource = computed(() => plugin.value in OAUTH_SERVICE_NAME)
+const disconnectLabel = computed(
+  () => `Disconnect ${OAUTH_SERVICE_NAME[plugin.value]}`,
+)
 const oauth = computed(() => data.oauthStatusFor(props.source.id))
 const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
 const showOAuthConnect = computed(
   () =>
     isMigrated.value &&
+    !oauthStatusFailed.value &&
     (isGog.value || isEpic.value) &&
     !oauth.value.connected &&
     !!oauth.value.authUrl,
 )
-const showOAuthDisconnect = computed(
-  () => isMigrated.value && (isGog.value || isEpic.value) && oauth.value.connected,
-)
 const showTraktConnect = computed(
-  () => isMigrated.value && isTrakt.value && !oauth.value.connected,
+  () =>
+    isMigrated.value &&
+    !oauthStatusFailed.value &&
+    isTrakt.value &&
+    !oauth.value.connected,
 )
-const showTraktDisconnect = computed(
-  () => isMigrated.value && isTrakt.value && oauth.value.connected,
+const showDisconnect = computed(
+  () => isMigrated.value && isOAuthSource.value && oauth.value.connected,
 )
+
+const oauthPanel = ref<HTMLElement | null>(null)
+
+async function onDisconnect(): Promise<void> {
+  if (isGog.value) await data.disconnectGog(props.source.id)
+  else if (isEpic.value) await data.disconnectEpic(props.source.id)
+  else if (isTrakt.value) await data.disconnectTrakt(props.source.id)
+  // The button removes itself as it succeeds, dropping focus to <body>. Land
+  // it on the panel the connect flow has just re-entered.
+  await nextTick()
+  oauthPanel.value?.focus()
+}
 
 onBeforeUnmount(() => {
   if (saveStatusTimer) {
@@ -300,29 +338,55 @@ const errorBadgeAriaLabel = computed<string>(
       </template>
 
       <template v-else>
-        <div v-if="showOAuthConnect && oauth.authUrl" class="source-accordion-oauth">
-          <OAuthConnectFlow
-            v-if="isGog"
-            :auth-url="oauth.authUrl"
-            expected-origin="https://login.gog.com"
-            :connect-message="oauthMessage"
-            help-text="Paste the redirect URL after logging in:"
-            service-name="GOG Account"
-            @submit="data.submitGogCode(source.id, $event)"
-          />
-          <OAuthConnectFlow
-            v-else
-            :auth-url="oauth.authUrl"
-            expected-origin="https://www.epicgames.com"
-            :connect-message="oauthMessage"
-            help-text="Paste the authorization code from the JSON response:"
-            service-name="Epic Games"
-            @submit="data.submitEpicCode(source.id, $event)"
-          />
-        </div>
+        <!--
+          Rendered for every OAuth source whatever its connection state: it is
+          the focus target after a disconnect removes the button that had focus.
+        -->
+        <div
+          v-if="isOAuthSource"
+          ref="oauthPanel"
+          class="source-accordion-oauth"
+          tabindex="-1"
+        >
+          <template v-if="showOAuthConnect">
+            <OAuthConnectFlow
+              v-if="isGog"
+              :source-id="source.id"
+              :auth-url="oauth.authUrl"
+              expected-origin="https://login.gog.com"
+              :connect-message="oauthMessage"
+              help-text="Paste the redirect URL after logging in:"
+              service-name="GOG Account"
+              @submit="data.submitGogCode(source.id, $event)"
+            />
+            <OAuthConnectFlow
+              v-else-if="isEpic"
+              :source-id="source.id"
+              :auth-url="oauth.authUrl"
+              expected-origin="https://www.epicgames.com"
+              :connect-message="oauthMessage"
+              help-text="Paste the authorization code from the JSON response:"
+              service-name="Epic Games"
+              @submit="data.submitEpicCode(source.id, $event)"
+            />
+          </template>
 
-        <div v-if="showTraktConnect" class="source-accordion-oauth">
-          <TraktDeviceCodeFlow :source-id="source.id" />
+          <TraktDeviceCodeFlow v-if="showTraktConnect" :source-id="source.id" />
+
+          <p
+            v-if="oauthStatusFailed"
+            class="source-accordion-oauth-error"
+            data-testid="oauth-status-error"
+            role="alert"
+          >
+            Could not read this source's connection status.
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-testid="oauth-status-retry"
+              @click="loadOAuthState"
+            >Retry</button>
+          </p>
         </div>
 
         <SourceConfigForm
@@ -342,43 +406,35 @@ const errorBadgeAriaLabel = computed<string>(
         >
           <template #actions-extra>
             <!--
-              aria-live regions must exist in the DOM before content arrives,
-              otherwise some screen readers (notably JAWS) skip announcements
-              when the region is inserted with content already populated. Keep
-              the <p> persistent and let the text update reactively.
+              The one live region for the whole OAuth lifecycle. It is bound to
+              the plugin, not to the connection state, so it outlives the
+              connect ⇄ disconnect swap: a region inserted along with its text
+              is read as page content and skipped (WCAG 4.1.3).
             -->
             <p
-              v-if="showOAuthDisconnect"
+              v-if="isOAuthSource"
               class="sr-only"
+              data-testid="oauth-message"
+              role="status"
               aria-live="polite"
               aria-atomic="true"
             >{{ oauthMessage }}</p>
+            <span
+              v-if="showDisconnect && isTrakt"
+              class="source-accordion-connected"
+              data-testid="trakt-connected"
+            >
+              Trakt account connected.
+            </span>
             <button
-              v-if="showOAuthDisconnect"
+              v-if="showDisconnect"
               type="button"
               class="btn btn-danger"
               :data-testid="`disconnect-btn-${source.id}`"
-              :aria-label="isGog ? 'Disconnect GOG' : 'Disconnect Epic Games'"
+              :aria-label="disconnectLabel"
               :disabled="props.syncing"
-              @click="isGog ? data.disconnectGog(source.id) : data.disconnectEpic(source.id)"
+              @click="onDisconnect"
             >Disconnect</button>
-            <template v-if="showTraktDisconnect">
-              <span
-                class="source-accordion-connected"
-                data-testid="trakt-connected"
-                role="status"
-              >
-                Trakt account connected.
-              </span>
-              <button
-                type="button"
-                class="btn btn-danger"
-                :data-testid="`disconnect-btn-${source.id}`"
-                aria-label="Disconnect Trakt"
-                :disabled="props.syncing"
-                @click="data.disconnectTrakt(source.id)"
-              >Disconnect</button>
-            </template>
             <button
               type="button"
               class="btn btn-danger source-accordion-remove-btn"
@@ -450,6 +506,26 @@ const errorBadgeAriaLabel = computed<string>(
 
 .source-accordion-oauth {
   margin-bottom: var(--space-3);
+}
+
+/* Focused only programmatically, after a disconnect removes the button that
+   had focus, so the ring would read as a stray highlight. */
+.source-accordion-oauth:focus {
+  outline: none;
+}
+
+/* A connected source keeps this panel mounted purely as that focus target,
+   with nothing in it to space away from the form below. */
+.source-accordion-oauth:not(:has(*)) {
+  margin-bottom: 0;
+}
+
+.source-accordion-oauth-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
 }
 
 .source-accordion-connected {

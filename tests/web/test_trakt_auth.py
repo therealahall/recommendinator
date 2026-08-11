@@ -11,7 +11,7 @@ from src.storage.manager import StorageManager
 from src.web.trakt_auth import (
     DevicePollStatus,
     TraktAuthError,
-    is_trakt_connected,
+    has_trakt_token,
     poll_device_token,
     resolve_trakt_client_credentials,
     save_trakt_token,
@@ -289,24 +289,40 @@ class TestResolveTraktClientCredentials:
             resolve_trakt_client_credentials(config, storage, source_id="my_games")
 
 
-class TestIsTraktConnected:
-    """Tests for is_trakt_connected."""
+class TestHasTraktToken:
+    """Tests for has_trakt_token."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
+    @staticmethod
+    def _trakt_source(plugin: str = "trakt") -> dict[str, Any]:
+        return {"inputs": {"trakt": {"plugin": plugin, "enabled": True}}}
+
     def test_true_when_token_present(self, storage: StorageManager) -> None:
         """Returns True when a refresh token is stored."""
         storage.save_credential(1, "trakt", "refresh_token", "token")
 
-        assert is_trakt_connected(storage) is True
+        assert has_trakt_token(self._trakt_source(), storage) is True
 
     def test_false_when_absent(self, storage: StorageManager) -> None:
         """Returns False when no token is stored."""
-        assert is_trakt_connected(storage) is False
+        assert has_trakt_token(self._trakt_source(), storage) is False
 
     def test_false_without_storage(self) -> None:
         """Returns False when storage is unavailable."""
-        assert is_trakt_connected(None) is False
+        assert has_trakt_token(self._trakt_source(), None) is False
+
+    def test_another_plugins_source_is_never_reported_connected(
+        self, storage: StorageManager
+    ) -> None:
+        """Regression: this reader took the id on trust, unlike its two twins.
+
+        A GOG source called ``trakt`` answered True, and the CLI asked it with
+        no ownership gate in front.
+        """
+        storage.save_credential(1, "trakt", "refresh_token", "gog-token")
+
+        assert has_trakt_token(self._trakt_source(plugin="gog"), storage) is False
