@@ -89,6 +89,9 @@ export const useDataStore = defineStore('data', () => {
   // for, and two sources can run the same OAuth plugin.
   const oauthStatus = ref<Record<string, OAuthStatus>>({})
   const oauthMessages = ref<Record<string, string>>({})
+  // Per source, never one counter: two sources rechecking at once are unrelated
+  // reads and must not cancel each other.
+  const oauthStatusGeneration: Record<string, number> = {}
 
   function oauthStatusFor(sourceId: string): OAuthStatus {
     return oauthStatus.value[sourceId] ?? DISCONNECTED
@@ -264,9 +267,15 @@ export const useDataStore = defineStore('data', () => {
   async function loadOAuthStatus(sourceId: string, plugin: string): Promise<void> {
     const route = OAUTH_ROUTE_BY_PLUGIN[plugin]
     if (!route) return
+    const generation = (oauthStatusGeneration[sourceId] ?? 0) + 1
+    oauthStatusGeneration[sourceId] = generation
     const status = await api.get<OAuthStatusResponse>(`/${route}/status`, {
       source_id: sourceId,
     })
+    // Responses need not arrive in the order they were asked for. The older one
+    // landing last leaves a gate the UI has already moved past, and nothing
+    // after it to correct the dead button that read leaves behind.
+    if (generation !== oauthStatusGeneration[sourceId]) return
     oauthStatus.value = {
       ...oauthStatus.value,
       [sourceId]: {
@@ -594,6 +603,12 @@ export const useDataStore = defineStore('data', () => {
     const remainingSchemas = { ...sourceSchemas.value }
     delete remainingSchemas[sourceId]
     sourceSchemas.value = remainingSchemas
+    const remainingStatus = { ...oauthStatus.value }
+    delete remainingStatus[sourceId]
+    oauthStatus.value = remainingStatus
+    const remainingMessages = { ...oauthMessages.value }
+    delete remainingMessages[sourceId]
+    oauthMessages.value = remainingMessages
   }
 
   return {

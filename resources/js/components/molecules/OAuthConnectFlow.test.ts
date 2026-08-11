@@ -140,8 +140,9 @@ describe('OAuthConnectFlow', () => {
     // A literal here told a disabled-but-connectable source to enable itself.
     expect(hint.text()).toBe(HINT)
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
-    // base.css greys `.btn[aria-disabled='true']`; off that class the button
-    // renders pixel-identically to a working one (WCAG 1.3.1).
+    // base.css's `.btn[aria-disabled='true']` is the only thing greying this
+    // button, and base.css.test.ts pins that rule. Off the class — a rename,
+    // say — it renders pixel-identically to a working one (WCAG 1.3.1).
     expect(button.classes()).toContain('btn')
     wrapper.unmount()
   })
