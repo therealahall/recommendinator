@@ -374,6 +374,25 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     assert storage.list_settings() == {"recommendations.default_count": 9}
 
 
+class TestAMalformedInputsBlockDoesNotAbortTheBoot:
+    """A list-shaped ``inputs:`` is truthy and has no ``.items()``.
+
+    The credential sweep runs on the callback, so letting it raise would take
+    down every verb — including the read-only ones the operator would read the
+    misconfiguration off.
+    """
+
+    def test_a_read_only_command_still_runs(self, cli_runner: CliRunner) -> None:
+        storage = MagicMock(spec=StorageManager)
+        config: dict[str, Any] = {"inputs": [{"plugin": "gog", "enabled": True}]}
+
+        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
+
+        assert result.exit_code == 0, result.output
+        # Anchored: the command reached its own body, rather than a quiet exit.
+        assert "Components:" in result.output
+
+
 class TestMockedBootSecretSweepRegression:
     """The mocked CLI storage must look like an empty credentials table.
 

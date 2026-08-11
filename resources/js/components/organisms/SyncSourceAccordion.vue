@@ -177,13 +177,15 @@ const connectedLabel = computed(
 )
 const oauth = computed(() => data.oauthStatusFor(props.source.id))
 const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
+// Not gated on the auth URL: a source the server will not connect gets one
+// disabled button and a hint naming the remedy, where dropping the whole block
+// left a named, empty group announcing nothing.
 const showOAuthConnect = computed(
   () =>
     isMigrated.value &&
     !oauthStatusFailed.value &&
     (isGog.value || isEpic.value) &&
-    !oauth.value.connected &&
-    !!oauth.value.authUrl,
+    !oauth.value.connected,
 )
 const showTraktConnect = computed(
   () =>
@@ -192,8 +194,14 @@ const showTraktConnect = computed(
     isTrakt.value &&
     !oauth.value.connected,
 )
+// An unreadable status asserts nothing: the cached flag is what the server said
+// before, and claiming a connection next to "could not read the status" leaves
+// the user no way to tell which statement is current.
+const showConnected = computed(
+  () => !oauthStatusFailed.value && oauth.value.connected,
+)
 const showDisconnect = computed(
-  () => isMigrated.value && isOAuthSource.value && oauth.value.connected,
+  () => isMigrated.value && isOAuthSource.value && showConnected.value,
 )
 
 const oauthPanel = ref<HTMLElement | null>(null)
@@ -218,10 +226,27 @@ watch([() => oauth.value.connected, oauthStatusFailed], () => {
   })
 })
 
+// Only the status re-read rejects out of these: a refused connect or disconnect
+// is reported in the live region instead. The server has already acted by then,
+// so the cached flag is stale — showing the status as unknown puts one
+// statement on screen, with the Retry that can settle it.
 async function onDisconnect(): Promise<void> {
-  if (isGog.value) await data.disconnectGog(props.source.id)
-  else if (isEpic.value) await data.disconnectEpic(props.source.id)
-  else if (isTrakt.value) await data.disconnectTrakt(props.source.id)
+  try {
+    if (isGog.value) await data.disconnectGog(props.source.id)
+    else if (isEpic.value) await data.disconnectEpic(props.source.id)
+    else if (isTrakt.value) await data.disconnectTrakt(props.source.id)
+  } catch {
+    oauthStatusFailed.value = true
+  }
+}
+
+async function onSubmitCode(code: string): Promise<void> {
+  try {
+    if (isGog.value) await data.submitGogCode(props.source.id, code)
+    else if (isEpic.value) await data.submitEpicCode(props.source.id, code)
+  } catch {
+    oauthStatusFailed.value = true
+  }
 }
 
 async function onRetryStatus(): Promise<void> {
@@ -401,7 +426,7 @@ const errorBadgeAriaLabel = computed<string>(
               nothing on screen to read the announcement against.
             -->
             <p
-              v-if="oauth.connected"
+              v-if="showConnected"
               class="source-accordion-oauth-connected"
               data-testid="oauth-connected"
             >{{ connectedLabel }}</p>
@@ -415,7 +440,7 @@ const errorBadgeAriaLabel = computed<string>(
                 expected-origin="https://login.gog.com"
                 help-text="Paste the redirect URL after logging in:"
                 service-name="GOG Account"
-                @submit="data.submitGogCode(source.id, $event)"
+                @submit="onSubmitCode"
               />
               <OAuthConnectFlow
                 v-else-if="isEpic"
@@ -425,7 +450,7 @@ const errorBadgeAriaLabel = computed<string>(
                 expected-origin="https://www.epicgames.com"
                 help-text="Paste the authorization code from the JSON response:"
                 service-name="Epic Games"
-                @submit="data.submitEpicCode(source.id, $event)"
+                @submit="onSubmitCode"
               />
             </template>
 
@@ -569,9 +594,11 @@ const errorBadgeAriaLabel = computed<string>(
   margin-bottom: var(--space-3);
 }
 
-/* Focused only programmatically, after an outcome removes the button that had
-   focus, so the ring would read as a stray highlight. */
-.source-accordion-oauth:focus {
+/* Pointer focus only, mirroring .main-content in base.css. The panel is focused
+   programmatically, which propagates :focus-visible from the control the user
+   just activated — so a keyboard disconnect keeps the ring that says where
+   focus went (2.4.7), and a mouse one never draws it. */
+.source-accordion-oauth:focus:not(:focus-visible) {
   outline: none;
 }
 

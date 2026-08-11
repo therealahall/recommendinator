@@ -18,6 +18,11 @@ const emit = defineEmits<{
 const codeInput = ref('')
 const showCodeStep = ref(false)
 const codeInputId = computed(() => domId('oauth-code', props.sourceId))
+// The server withholds the auth URL for a source it will not connect, so gate
+// the action on it rather than rendering a button that silently does nothing —
+// or, worse, nothing at all inside the panel's named group.
+const canConnect = computed(() => props.authUrl !== null)
+const hintId = computed(() => domId('oauth-connect-hint', props.sourceId))
 // Two expanded panels of one plugin render each of these twice. The enclosing
 // group disambiguates them on Tab, but NVDA's element list is name-only, so
 // the source name has to be in the name itself.
@@ -62,7 +67,19 @@ function submitCode() {
 
 <template>
   <div>
-    <button class="btn btn-primary" :aria-label="connectLabel" @click="openAuth">Connect {{ serviceName }}</button>
+    <button
+      class="btn btn-primary"
+      :disabled="!canConnect"
+      :aria-label="connectLabel"
+      :aria-describedby="canConnect ? undefined : hintId"
+      @click="openAuth"
+    >Connect {{ serviceName }}</button>
+    <p
+      v-if="!canConnect"
+      :id="hintId"
+      class="oauth-connect-hint"
+      data-testid="oauth-connect-hint"
+    >Enable this source in the settings below before you can connect.</p>
     <div v-if="showCodeStep">
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">

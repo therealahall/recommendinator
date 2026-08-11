@@ -170,12 +170,17 @@ class TestSourceSchema:
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceMigrate:
-    def test_migrate_moves_yaml_into_db(
+    def test_migrate_leaves_the_source_db_backed(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
+        """The end state after the command, whichever pass moved which half.
+
+        The boot migration encrypts the secret before ``migrate`` is reached,
+        so only the field half below is this command's own work.
+        """
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "migrate", "my_games"],
@@ -237,11 +242,7 @@ class TestSourceMigrate:
             "tags",
             "active",
         }
-        # Empty because the boot hook encrypts a file-held secret before any
-        # command runs, so this call finds none left in YAML to move. The web
-        # answers the same once its own startup migration has run.
-        assert body["secrets_migrated"] == []
-        assert storage.credential_row_exists(1, "my_games", "api_key")
+        assert body["secrets_migrated"] == ["api_key"]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

@@ -546,6 +546,24 @@ def build_config_view(
     }
 
 
+def _stored_secret_names(
+    source_id: str,
+    sensitive_names: list[str],
+    storage: StorageManager,
+    user_id: int,
+) -> list[str]:
+    """What ``secrets_migrated`` reports, asked of the rows.
+
+    Not of what a call moved: the boot migration empties the YAML entry first,
+    so a source it had just encrypted would report none.
+    """
+    return sorted(
+        name
+        for name in sensitive_names
+        if storage.credential_row_exists(user_id, source_id, name)
+    )
+
+
 def migrate_source(
     source_id: str,
     plugin: SourcePlugin,
@@ -573,10 +591,8 @@ def migrate_source(
             "source_id": source_id,
             "migrated_at": existing_row["migrated_at"],
             "fields_migrated": sorted(existing_row["config"].keys()),
-            "secrets_migrated": sorted(
-                name
-                for name in sensitive_names
-                if storage.credential_row_exists(user_id, source_id, name)
+            "secrets_migrated": _stored_secret_names(
+                source_id, sensitive_names, storage, user_id
             ),
         }
 
@@ -590,13 +606,10 @@ def migrate_source(
             config_to_store[name] = yaml_entry[name]
             fields_migrated.append(name)
 
-    secrets_migrated: list[str] = []
     for name in sensitive_names:
         value = yaml_entry.get(name)
-        if not is_nonempty_secret_value(value):
-            continue
-        storage.save_credential(user_id, source_id, name, value.strip())
-        secrets_migrated.append(name)
+        if is_nonempty_secret_value(value):
+            storage.save_credential(user_id, source_id, name, value.strip())
 
     storage.upsert_source_config(
         user_id,
@@ -616,7 +629,9 @@ def migrate_source(
         "source_id": source_id,
         "migrated_at": row["migrated_at"],
         "fields_migrated": sorted(fields_migrated),
-        "secrets_migrated": sorted(secrets_migrated),
+        "secrets_migrated": _stored_secret_names(
+            source_id, sensitive_names, storage, user_id
+        ),
     }
 
 

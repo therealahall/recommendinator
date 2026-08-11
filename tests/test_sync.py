@@ -1044,7 +1044,9 @@ class TestASyncSaysWhichSourceToReconnectRegression:
         with caplog.at_level(logging.WARNING):
             self._sync({"_source_id": "my_source"}, storage)
 
-        assert storage.get_credential(1, "rotating", "refresh_token") is not None
+        assert storage.get_credential(1, "rotating", "refresh_token") == (
+            "stranded-by-an-upgrade"
+        )
         assert len(self._warnings(caplog)) == 1
 
     def test_a_source_named_after_its_plugin_owns_the_row_outright(
@@ -1106,10 +1108,22 @@ class TestASyncSeesTheYamlHalfOfTheSourceListRegression:
 
         assert len(caplog.records) == 1
 
-    def test_the_executor_hands_the_config_down(
+
+class TestTheMultiSourceExecutorHandsTheConfigDown:
+    """The other door onto the same check, and never a reported failure.
+
+    Both interfaces sync a whole source list through here.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage.save_credential(1, "rotating", "refresh_token", "a-yaml-sources-own")
+        return storage
+
+    def test_a_yaml_namesake_is_not_reported_stranded(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Both interfaces reach the check through here, never directly."""
         config = {
             "inputs": {
                 "rotating": {"plugin": "rotating", "enabled": True},

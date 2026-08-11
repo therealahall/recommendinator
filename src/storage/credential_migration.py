@@ -75,10 +75,13 @@ def migrate_config_credentials(
         user_id: User ID to associate credentials with (default 1).
     """
     registry = get_registry()
-    inputs_config = config.get("inputs", {})
+    inputs_config = config.get("inputs")
 
-    if not inputs_config:
-        logger.debug("No inputs in config, skipping credential migration")
+    if not isinstance(inputs_config, dict) or not inputs_config:
+        # A list-shaped ``inputs:`` is truthy and has no ``.items()``. Raising
+        # here would abort every verb at boot, the read-only ones an operator
+        # would diagnose it with included.
+        logger.debug("No usable inputs in config, skipping credential migration")
         return
 
     for source_id, entry in inputs_config.items():

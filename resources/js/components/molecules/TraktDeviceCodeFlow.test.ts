@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import TraktDeviceCodeFlow from './TraktDeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
+import { componentStyles } from '@/testing/styles'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
@@ -378,23 +379,70 @@ describe('TraktDeviceCodeFlow', () => {
 
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
+    // Where the flow leaves a keyboard user: the code panel v-show is about to
+    // hide, taking their focus with it in a browser.
+    const link = wrapper.get('[data-testid="trakt-verification-link"]')
+      .element as HTMLElement
+    link.focus()
+
     await timer.fire()
 
     // The failed re-read leaves `connected` false, so the parent keeps this
     // component mounted: staying silent rendered an empty box with no controls.
     expect(useDataStore().oauthStatusFor(SOURCE_ID).connected).toBe(false)
-    expect(wrapper.get('.trakt-flow-status').text()).toContain(
+    const result = wrapper.get('[data-testid="trakt-result-panel"]')
+    expect(result.get('[data-testid="trakt-result-text"]').text()).toContain(
       'could not be re-read',
     )
+    // One region speaks: the store's confirmation. A second polite region
+    // going non-empty in the same tick queues two announcements.
+    expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
+    expect(wrapper.get('.trakt-flow-status').element.textContent).toBe('')
 
-    // In a browser the code panel is now v-show-hidden and the focus-fixup
-    // rule has already dropped its occupant to <body>. jsdom implements no
-    // such rule, so this proves the move, not the loss that motivates it.
-    const result = wrapper.get('[data-testid="trakt-result-panel"]')
     expect(document.activeElement).toBe(result.element)
     expect(result.attributes('role')).toBe('group')
     expect(result.attributes('aria-label')).toBe('Trakt (work) connection result')
     wrapper.unmount()
+  })
+
+  it('leaves focus alone when the poll lands somewhere the user is typing', async () => {
+    mockPost
+      .mockResolvedValueOnce(FLOW)
+      .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
+    mockGet.mockRejectedValue(new Error('status read failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const timer = makeTimer()
+    const wrapper = mountFlow(timer)
+
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+    // The settings form sits below this component. poll() fires from a timer,
+    // so a user who tabbed down there while waiting for approval is holding
+    // focus in a field no state change removes (WCAG 2.4.3).
+    const field = document.createElement('input')
+    document.body.appendChild(field)
+    field.focus()
+
+    await timer.fire()
+
+    expect(document.activeElement).toBe(field)
+    field.remove()
+    wrapper.unmount()
+  })
+
+  it('suppresses the result panel focus ring for pointer focus alone', () => {
+    // Programmatic focus matches :focus-visible when the element that lost
+    // focus did, so a blanket `:focus { outline: none }` erased the ring for
+    // the keyboard user it exists for (2.4.7). The scoped rule outranks
+    // base.css, which cannot rescue it.
+    const styles = componentStyles(
+      'resources/js/components/molecules/TraktDeviceCodeFlow.vue',
+    )
+
+    expect(styles).toMatch(
+      /\.trakt-flow-panel:focus:not\(:focus-visible\)\s*\{[^}]*outline:\s*none/,
+    )
+    expect(styles).not.toMatch(/\.trakt-flow-panel:focus\s*\{/)
   })
 
   it('keeps a single persistent live region across starting → awaiting → connected', async () => {

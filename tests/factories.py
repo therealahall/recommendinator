@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import fields
 from typing import Any
 from unittest.mock import Mock, NonCallableMock, patch
@@ -20,6 +20,11 @@ from src.web.state import AppState, app_state
 # The token ``booted_web_app`` boots with and ``authenticated_client``
 # presents. Long enough to satisfy ``MIN_API_TOKEN_LENGTH``.
 API_TOKEN = "test-api-token-000102030405060708090a0b"
+
+# Source ids both interfaces must refuse. `^…$` is end-of-line in Python's
+# ``re``, not end-of-string, so a trailing newline is the payload that
+# separates a full-match check from a search.
+MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
 
 def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
@@ -52,11 +57,14 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     storage.get_setting.side_effect = lambda key: store.get(key)
     storage.set_setting.side_effect = store.__setitem__
     storage.list_settings.side_effect = store.copy
-    # An unstubbed method on a spec'd Mock returns a truthy Mock, which would
-    # read as "a secret is already stored" — the opposite of an empty database.
+    # An unstubbed method on a spec'd Mock returns a truthy Mock, which reads
+    # as "already stored" — the opposite of an empty database. For
+    # ``get_source_config`` that means the sweep discards every sensitive field
+    # the test's config declared.
     storage.get_credential.return_value = None
     storage.credential_row_exists.return_value = False
     storage.has_global_secret.return_value = False
+    storage.get_source_config.return_value = None
     return store
 
 
@@ -89,6 +97,7 @@ def booted_web_app(
     llm_components: tuple[Any, Any, Any] = (None, None, None),
     engine: Any = None,
     api_token: str | None = API_TOKEN,
+    migrate_credentials: bool = False,
 ) -> Iterator[FastAPI]:
     """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
 
@@ -128,6 +137,13 @@ def booted_web_app(
         take_api_token if api_token is None else lambda _config: api_token
     )
     defaults = AppState()
+    # Stubbed by default so a test's config keeps the secrets it declared; a
+    # test about what startup does to a file-held one asks for the real pass.
+    credential_migration: Any = (
+        nullcontext()
+        if migrate_credentials
+        else patch("src.web.app.migrate_config_credentials")
+    )
     try:
         # Field by field, never a rebind: the singleton is imported by name in
         # a dozen modules, all of which must keep seeing the current state.
@@ -138,7 +154,7 @@ def booted_web_app(
             patch("src.web.app.create_storage_manager", return_value=storage),
             patch("src.web.app.create_llm_components", return_value=llm_components),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
-            patch("src.web.app.migrate_config_credentials"),
+            credential_migration,
             patch("src.web.app.take_api_token", read_token),
             # Resolved independently of the patched loader, so unpatched this
             # binds the path of whatever config file the machine has — which a

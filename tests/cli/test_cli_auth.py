@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from src.storage.manager import StorageManager
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
-from tests.web.test_oauth_source_binding import MALFORMED_IDS
+from tests.factories import MALFORMED_IDS
 
 from .conftest import _invoke_with_mocks
 
@@ -889,6 +889,14 @@ class TestRevokingATokenNoSourceClaimsRegression:
         assert result.exit_code == 0, result.output
         assert storage.get_credential(USER_ID, plugin, "refresh_token") is None
 
+
+class TestDisconnectingAnIdHoldingNothing:
+    """The boundary the class above stops at, never a reported failure.
+
+    Mirrors the web 404: the row alone separates a permitted id from an empty
+    one, so an unclaimed id being reachable must not make it succeed.
+    """
+
     @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
     def test_an_unclaimed_id_holding_nothing_still_fails(
         self,
@@ -897,7 +905,6 @@ class TestRevokingATokenNoSourceClaimsRegression:
         source: str,
         plugin: str,
     ) -> None:
-        """Mirrors the web 404: the row alone separates permitted from empty."""
         result = _invoke_with_mocks(
             cli_runner,
             [

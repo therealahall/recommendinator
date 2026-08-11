@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from src.storage.manager import StorageManager
 from src.web.sync_sources import delete_source, resolve_inputs
 from src.web.trakt_auth import DevicePollResult, DevicePollStatus
-from tests.factories import authenticated_client, booted_web_app
+from tests.factories import MALFORMED_IDS, authenticated_client, booted_web_app
 
 USER_ID = 1
 
@@ -44,13 +44,15 @@ def config() -> dict[str, Any]:
 
 @contextmanager
 def booted_client(
-    storage: StorageManager, config: dict[str, Any]
+    storage: StorageManager,
+    config: dict[str, Any],
+    migrate_credentials: bool = False,
 ) -> Iterator[TestClient]:
     """A booted app over *storage*, with the startup source migrations stubbed."""
     with (
         patch("src.web.app.migrate_source_labels"),
         patch("src.web.app.migrate_source_config_plugins"),
-        booted_web_app(storage, config) as app,
+        booted_web_app(storage, config, migrate_credentials=migrate_credentials) as app,
     ):
         yield authenticated_client(app)
 
@@ -342,50 +344,50 @@ class TestDisconnectTargetsTheNamedSource:
         )
 
 
-class TestStatusReportsOnlyATokenDisconnectCanDeleteRegression:
-    """Reported: status said connected where disconnect answered 404.
+YAML_HELD_SOURCES = [
+    ("gog", "gog_work", "gog"),
+    ("epic", "epic_work", "epic_games"),
+    ("trakt", "trakt_work", "trakt"),
+]
 
-    Cause: ``connected`` came off the resolved config, which layers the YAML
-    ``inputs`` entry in, while disconnect deletes the credential row alone.
-    Fix: status asks for the row.
+
+def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
+    """A source whose refresh token is still written in config.yaml."""
+    return {
+        "ollama": {"base_url": "http://localhost:11434", "model": "x"},
+        "storage": {"database_path": "data/test.db"},
+        "inputs": {
+            source_id: {
+                "plugin": plugin,
+                "enabled": True,
+                "refresh_token": "from-yaml",
+            },
+        },
+    }
+
+
+class TestAFileHeldTokenReachesBothWebVerbsRegression:
+    """Reported: status said not connected for a config.yaml token.
+
+    Cause: ``connected`` reads the credential row, and nothing had moved a
+    file-held token into one. Fix: the credential migration runs at startup,
+    so the row exists before the first request.
     """
 
-    @pytest.mark.parametrize(
-        ("provider", "source_id", "plugin"),
-        [
-            ("gog", "gog_work", "gog"),
-            ("epic", "epic_work", "epic_games"),
-            ("trakt", "trakt_work", "trakt"),
-        ],
-    )
-    def test_a_yaml_only_token_reads_not_connected(
+    @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
+    def test_status_reads_connected_and_disconnect_deletes_it(
         self,
         storage: StorageManager,
         provider: str,
         source_id: str,
         plugin: str,
     ) -> None:
-        yaml_config = {
-            "ollama": {"base_url": "http://localhost:11434", "model": "x"},
-            "storage": {"database_path": "data/test.db"},
-            "inputs": {
-                source_id: {
-                    "plugin": plugin,
-                    "enabled": True,
-                    "refresh_token": "from-yaml",
-                },
-            },
-        }
+        config = yaml_held_token_config(source_id, plugin)
 
-        with booted_client(storage, yaml_config) as client:
-            assert not client.get(
-                f"/api/{provider}/status?source_id={source_id}"
-            ).json()["connected"]
-
-            # The anchor: the same source reads connected once the token is
-            # somewhere the disconnect verb can reach it.
-            storage.save_credential(USER_ID, source_id, "refresh_token", "in-the-db")
-
+        with booted_client(storage, config, migrate_credentials=True) as client:
+            assert storage.get_credential(USER_ID, source_id, "refresh_token") == (
+                "from-yaml"
+            )
             assert client.get(f"/api/{provider}/status?source_id={source_id}").json()[
                 "connected"
             ]
@@ -394,6 +396,36 @@ class TestStatusReportsOnlyATokenDisconnectCanDeleteRegression:
                     f"/api/{provider}/token?source_id={source_id}"
                 ).status_code
                 == 200
+            )
+
+        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+
+    @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
+    def test_a_file_token_on_a_migrated_source_stays_out_of_reach(
+        self,
+        storage: StorageManager,
+        provider: str,
+        source_id: str,
+        plugin: str,
+    ) -> None:
+        """The database row is the only authority, so the file copy is dropped.
+
+        Nothing reads it and no verb can delete it — which is what the
+        disconnect 404 below reports.
+        """
+        storage.upsert_source_config(USER_ID, source_id, plugin, {}, enabled=True)
+        config = yaml_held_token_config(source_id, plugin)
+
+        with booted_client(storage, config, migrate_credentials=True) as client:
+            assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+            assert not client.get(
+                f"/api/{provider}/status?source_id={source_id}"
+            ).json()["connected"]
+            assert (
+                client.delete(
+                    f"/api/{provider}/token?source_id={source_id}"
+                ).status_code
+                == 404
             )
 
 
@@ -841,11 +873,6 @@ class TestStatusSeparatesEnabledFromConnected:
         assert body["connected"] is True
 
 
-# `^…$` is end-of-line in Python's ``re``, not end-of-string, so a trailing
-# newline is the payload that separates a full-match check from a search.
-MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
-
-
 class TestEveryOAuthRouteValidatesTheSourceId:
     """The parameter is a credential key on ten routes, not six."""
 
@@ -860,9 +887,11 @@ class TestEveryOAuthRouteValidatesTheSourceId:
         outward: str,
         bad_id: str,
     ) -> None:
-        response = client.post(endpoint, params={"source_id": bad_id}, json=body)
+        with patch(outward) as reached:
+            response = client.post(endpoint, params={"source_id": bad_id}, json=body)
 
         assert response.status_code == 422, response.text
+        reached.assert_not_called()
         assert storage.get_credential(USER_ID, bad_id, "refresh_token") is None
 
     @pytest.mark.parametrize(("method", "endpoint"), READ_ROUTES)
