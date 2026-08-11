@@ -43,6 +43,10 @@ completion history sit in the database as plaintext, and so do the embeddings.
 - Every OAuth route refuses a source id whose plugin is not the route's own. The
   id is the credential key, so an unchecked one files a GOG token where Trakt
   reads its own.
+- Running a plugin and being enabled are separate questions. Connecting a
+  disabled source is refused, but disconnecting it is not, and status still
+  reports its stored token. Disabling a source is how revoking its token starts,
+  and a credential you cannot delete is worse than one you cannot use.
 - An upgrade does not move tokens an earlier release stored under the plugin's
   name: several sources can share a plugin, and nothing records which owns the
   token. The sync warns, names the source, and asks you to reconnect it — a copy

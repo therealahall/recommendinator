@@ -166,13 +166,22 @@ def _resolve_gog_source(
     storage: StorageManager | None = None,
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
+    *,
+    require_enabled: bool = True,
 ) -> dict[str, Any] | None:
     """*source_id*'s sync-ready config, unless it is not a GOG source.
 
-    Goes through ``resolve_inputs``, so a source added from the Data tab —
-    which writes no ``inputs`` entry — is found too.
+    Reads the database as well as ``inputs``, so a source added from the Data
+    tab is found too.
     """
-    resolved = resolve_input_for_plugin(source_id, GOG_PLUGIN, config, storage, user_id)
+    resolved = resolve_input_for_plugin(
+        source_id,
+        GOG_PLUGIN,
+        config,
+        storage,
+        user_id,
+        require_enabled=require_enabled,
+    )
     return resolved.config if resolved is not None else None
 
 
@@ -192,12 +201,15 @@ def has_gog_token(
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether the next sync of *source_id* would carry a refresh token.
+    """Whether a GOG source called *source_id* has a refresh token.
 
     Asks the resolved config, which layers the stored secret over the
-    ``inputs`` entry exactly as the sync does.
+    ``inputs`` entry as the sync does. A disabled source answers too: its
+    token is there to be revoked.
     """
-    resolved = _resolve_gog_source(config, storage, source_id, user_id)
+    resolved = _resolve_gog_source(
+        config, storage, source_id, user_id, require_enabled=False
+    )
     return resolved is not None and is_nonempty_secret_value(
         resolved.get("refresh_token")
     )
