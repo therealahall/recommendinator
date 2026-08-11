@@ -26,6 +26,7 @@ from src.ingestion.sources.generic_csv import (
     parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -154,7 +155,9 @@ class JsonImportPlugin(SourcePlugin):
             raise SourceError(self.name, str(error)) from error
 
         file_format = "JSONL" if file_path.suffix == ".jsonl" else "JSON"
-        logger.info("Parsing %s file: %s", file_format, file_path)
+        logger.info(
+            "Parsing %s file: %s", file_format, sanitize_for_log(str(file_path))
+        )
 
         try:
             entries = _load_json_or_jsonl(file_path)
@@ -264,8 +267,8 @@ def _parse_entries(
             except ValueError:
                 logger.warning(
                     "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    title,
-                    date_str,
+                    sanitize_for_log(title),
+                    sanitize_for_log(date_str),
                 )
 
         # Parse review and notes

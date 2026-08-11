@@ -17,6 +17,7 @@ from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 from src.models.config_field import ConfigField
+from src.storage.credential_orphans import delete_orphaned_credentials
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -844,11 +845,11 @@ def set_source_enabled_state(
         )
 
 
-# Source ids must be safe to use as URL path parameters and YAML keys.
-# Lowercase letters, digits, underscores, and hyphens only; first character
-# must be a letter so the id never collides with a numeric YAML key. The
-# hyphen is last in the character class so it is a literal, not a range.
-_SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+# Safe as a URL parameter and a YAML key: the leading letter keeps an id off a
+# numeric YAML key, and the trailing hyphen in the class is a literal, not a
+# range.
+SOURCE_ID_PATTERN = r"^[a-z][a-z0-9_-]*$"
+_SOURCE_ID_RE = re.compile(SOURCE_ID_PATTERN)
 
 
 def list_available_plugins() -> list[dict[str, Any]]:
@@ -969,6 +970,7 @@ def delete_source(
     source_id: str,
     storage: StorageManager,
     user_id: int = 1,
+    config: dict[str, Any] | None = None,
 ) -> None:
     """Remove a DB-backed source and every credential stored for it.
 
@@ -993,3 +995,9 @@ def delete_source(
 
     storage.delete_credentials_for_source(user_id, source_id)
     storage.delete_source_config(user_id, source_id)
+
+    # Swept after the row is gone, so "who is left" reads as it now is. A
+    # caller without *config* sees half the source list, and would read a
+    # YAML-only source as gone and its live token as an orphan.
+    if config is not None:
+        delete_orphaned_credentials(storage, db_row["plugin"], config, user_id)

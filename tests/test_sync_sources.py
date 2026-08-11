@@ -1345,6 +1345,81 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
         )
 
 
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
+    """Reported: a token stranded under a plugin name outlived every source.
+
+    Cause: deletion is keyed on the source id, and that row is not under one.
+    Fix: the last source on a plugin takes it; a shared plugin keeps it.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage.upsert_source_config(1, "work_games", "fake_games", {}, enabled=True)
+        storage.save_credential(1, "fake_games", "api_key", "stranded-by-an-upgrade")
+        return storage
+
+    def test_the_last_source_on_the_plugin_takes_the_row_with_it(
+        self, storage: StorageManager
+    ) -> None:
+        delete_source("work_games", storage, config={"inputs": {}})
+
+        assert storage.get_credential(1, "fake_games", "api_key") is None
+
+    def test_a_sibling_on_the_same_plugin_keeps_the_row(
+        self, storage: StorageManager
+    ) -> None:
+        storage.upsert_source_config(1, "home_games", "fake_games", {}, enabled=True)
+
+        delete_source("work_games", storage, config={"inputs": {}})
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
+    def test_a_yaml_sibling_keeps_the_row(self, storage: StorageManager) -> None:
+        """The database is half the source list, so a sweep reading it alone lies."""
+        config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}
+
+        delete_source("work_games", storage, config=config)
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
+    def test_a_source_named_after_the_plugin_keeps_its_own_credential(
+        self, storage: StorageManager
+    ) -> None:
+        """That row is not stranded at all — it is that source's, live."""
+        config = {"inputs": {"fake_games": {"plugin": "fake_books", "enabled": True}}}
+
+        delete_source("work_games", storage, config=config)
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
+    def test_a_caller_that_cannot_read_the_config_leaves_the_row_alone(
+        self, storage: StorageManager
+    ) -> None:
+        """Half the source list is invisible, so the sweep is skipped, not guessed."""
+        delete_source("work_games", storage)
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
+    def test_the_deleted_sources_own_credentials_still_go(
+        self, storage: StorageManager
+    ) -> None:
+        storage.save_credential(1, "work_games", "api_key", "its-own")
+
+        delete_source("work_games", storage, config={"inputs": {}})
+
+        assert storage.get_credentials_for_source(1, "work_games") == {}
+
+
 class TestAPluginCannotDropAFrameworkConfigKey:
     """The guarantee the seven rotating plugins each broke independently."""
 

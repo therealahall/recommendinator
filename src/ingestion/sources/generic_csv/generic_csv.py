@@ -19,6 +19,7 @@ from src.ingestion.plugin_base import (
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.utils.series import MAX_SEASONS
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -407,7 +408,7 @@ class CsvImportPlugin(SourcePlugin):
             ContentItem objects for each row
         """
         source = self.get_source_identifier(config)
-        logger.info("Parsing CSV file: %s", file_path)
+        logger.info("Parsing CSV file: %s", sanitize_for_log(str(file_path)))
         expected_columns = COMMON_COLUMNS | set(
             CONTENT_TYPE_COLUMNS[content_type.value]
         )
@@ -435,7 +436,7 @@ class CsvImportPlugin(SourcePlugin):
             if unknown:
                 logger.warning(
                     "CSV contains unknown columns that will be ignored: %s",
-                    ", ".join(sorted(unknown)),
+                    sanitize_for_log(", ".join(sorted(unknown))),
                 )
 
         total = len(rows)
@@ -465,8 +466,8 @@ class CsvImportPlugin(SourcePlugin):
                 except ValueError:
                     logger.warning(
                         "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                        title,
-                        date_str,
+                        sanitize_for_log(title),
+                        sanitize_for_log(date_str),
                     )
 
             # Parse review and notes

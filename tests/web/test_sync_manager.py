@@ -1,9 +1,13 @@
 """Tests for background sync job manager."""
 
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
 
 from src.web.sync_manager import (
     SyncJob,
@@ -972,3 +976,109 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
 
         assert manager.get_status()["jobs"][0]["status"] == "failed"
         on_complete.assert_not_called()
+
+
+SYNC_MANAGER_LOGGER = "src.web.sync_manager"
+
+# ``source`` reaches here from POST /api/update via ``humanize_source_id``,
+# which title-cases the operator's string without dropping anything.
+FORGED_SOURCE = "Steam\nSync completed for Everything: 0 items processed"
+ESCAPED_SOURCE = "Steam\\nSync completed for Everything: 0 items processed"
+
+
+class TestSyncManagerLogInjectionRegression:
+    """Regression: the job label forged log entries.
+
+    Bug: four sinks interpolated ``source`` raw and the failure added
+    ``exc_info=True``. Cause: the escaping in ``src/web/api.py`` stopped at the
+    module boundary. Fix: escape once, render the exception instead.
+    """
+
+    @staticmethod
+    def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == SYNC_MANAGER_LOGGER
+        ]
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_a_newline_in_the_label_cannot_forge_a_completion(
+        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_thread.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
+
+        with caplog.at_level(logging.INFO, logger=SYNC_MANAGER_LOGGER):
+            manager._run_sync(FORGED_SOURCE, MagicMock(return_value=3))
+
+        assert self._messages(caplog) == [
+            f"Sync completed for {ESCAPED_SOURCE}: 3 items processed"
+        ]
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_a_newline_in_the_label_cannot_forge_an_empty_result(
+        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_thread.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
+
+        def sync_function(job: SyncJob) -> int:
+            manager.add_error(FORGED_SOURCE, "plugin said no")
+            return 0
+
+        with caplog.at_level(logging.WARNING, logger=SYNC_MANAGER_LOGGER):
+            manager._run_sync(FORGED_SOURCE, sync_function)
+
+        assert self._messages(caplog) == [
+            f"Sync for {ESCAPED_SOURCE} produced no items; marking failed (1 errors)"
+        ]
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_a_failure_logs_neither_the_raw_label_nor_a_traceback(
+        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The traceback is the half that carried the plugin's request URL."""
+        mock_thread.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
+        api_key = "steam-web-api-key-6b1f"
+
+        def sync_function(job: SyncJob) -> int:
+            raise requests.ConnectionError(
+                "HTTPSConnectionPool(host='api.steampowered.com', port=443): Max "
+                f"retries exceeded with url: /GetOwnedGames/v1/?key={api_key}"
+            )
+
+        with caplog.at_level(logging.ERROR, logger=SYNC_MANAGER_LOGGER):
+            manager._run_sync(FORGED_SOURCE, sync_function)
+
+        assert self._messages(caplog) == [
+            f"Sync failed for {ESCAPED_SOURCE}: ConnectionError"
+        ]
+        assert api_key not in caplog.text
+        assert not any(record.exc_info for record in caplog.records)
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_a_callback_fault_is_rendered_as_one_line(
+        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The callback runs library code, so its message is not ours either."""
+        mock_thread.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source="Steam", sync_function=MagicMock())
+
+        def on_complete() -> None:
+            raise OSError("disk full\nSync completed for Everything")
+
+        with caplog.at_level(logging.ERROR, logger=SYNC_MANAGER_LOGGER):
+            manager._run_sync(
+                "Steam", MagicMock(return_value=1), on_complete=on_complete
+            )
+
+        assert self._messages(caplog) == [
+            "Sync on_complete callback failed: OSError: disk full\\n"
+            "Sync completed for Everything"
+        ]

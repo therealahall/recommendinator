@@ -7,6 +7,7 @@ import type { TraktPollResponse } from '@/types/api'
 // seconds. The defaults bind to the real window timers in the browser.
 const props = withDefaults(
   defineProps<{
+    sourceId: string
     setTimer?: (handler: () => void, delayMs: number) => number
     clearTimer?: (handle: number) => void
   }>(),
@@ -20,10 +21,10 @@ const props = withDefaults(
 const data = useDataStore()
 
 // The device-flow POST returns 400 until both the Trakt client ID and client
-// secret resolve server-side. traktStatus.enabled reflects exactly that, so
-// gate the connect action on it instead of surfacing the failure only after a
-// click.
-const canConnect = computed(() => data.traktStatus.enabled)
+// secret resolve server-side. The status ``enabled`` flag reflects exactly
+// that, so gate the connect action on it instead of surfacing the failure only
+// after a click.
+const canConnect = computed(() => data.oauthStatusFor(props.sourceId).enabled)
 
 type FlowState = 'idle' | 'starting' | 'awaiting' | 'connected' | 'error'
 const state = ref<FlowState>('idle')
@@ -51,7 +52,7 @@ async function startFlow(): Promise<void> {
   state.value = 'starting'
   message.value = 'Requesting a device code from Trakt…'
   try {
-    const flow = await data.startTraktFlow()
+    const flow = await data.startTraktFlow(props.sourceId)
     deviceCode = flow.device_code
     userCode.value = flow.user_code
     verificationUrl.value = flow.verification_url
@@ -82,7 +83,7 @@ function schedulePoll(delayMs: number): void {
 async function poll(): Promise<void> {
   let result: TraktPollResponse
   try {
-    result = await data.pollTraktApproval(deviceCode)
+    result = await data.pollTraktApproval(props.sourceId, deviceCode)
   } catch {
     state.value = 'error'
     message.value = 'Connection check failed. Try connecting again.'

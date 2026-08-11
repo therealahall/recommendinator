@@ -45,6 +45,9 @@ async function ensureDetails(): Promise<void> {
       data.loadSourceSchema(props.source.id),
       data.loadSourceConfig(props.source.id),
     ])
+    // The config names the plugin, which picks the OAuth routes to ask.
+    const plugin = config.value?.plugin
+    if (plugin) await data.loadOAuthStatus(props.source.id, plugin).catch(() => {})
     detailsLoaded.value = true
   } finally {
     detailsLoading.value = false
@@ -130,30 +133,28 @@ async function onRemove(): Promise<void> {
   }
 }
 
-const isGog = computed(() => props.source.id === 'gog')
-const isEpic = computed(() => props.source.id === 'epic_games')
-const isTrakt = computed(() => props.source.id === 'trakt')
-const showOAuthConnect = computed(() => {
-  if (!isMigrated.value) return false
-  if (isGog.value) {
-    return !data.gogStatus.connected && !!data.gogStatus.authUrl
-  }
-  if (isEpic.value) {
-    return !data.epicStatus.connected && !!data.epicStatus.authUrl
-  }
-  return false
-})
-const showOAuthDisconnect = computed(() => {
-  if (!isMigrated.value) return false
-  if (isGog.value) return data.gogStatus.connected
-  if (isEpic.value) return data.epicStatus.connected
-  return false
-})
+// Keyed on the plugin, never the source id: a GOG source the user named
+// "gog_work" runs the same connect flow as one named "gog".
+const isGog = computed(() => config.value?.plugin === 'gog')
+const isEpic = computed(() => config.value?.plugin === 'epic_games')
+const isTrakt = computed(() => config.value?.plugin === 'trakt')
+const oauth = computed(() => data.oauthStatusFor(props.source.id))
+const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
+const showOAuthConnect = computed(
+  () =>
+    isMigrated.value &&
+    (isGog.value || isEpic.value) &&
+    !oauth.value.connected &&
+    !!oauth.value.authUrl,
+)
+const showOAuthDisconnect = computed(
+  () => isMigrated.value && (isGog.value || isEpic.value) && oauth.value.connected,
+)
 const showTraktConnect = computed(
-  () => isMigrated.value && isTrakt.value && !data.traktStatus.connected,
+  () => isMigrated.value && isTrakt.value && !oauth.value.connected,
 )
 const showTraktDisconnect = computed(
-  () => isMigrated.value && isTrakt.value && data.traktStatus.connected,
+  () => isMigrated.value && isTrakt.value && oauth.value.connected,
 )
 
 onBeforeUnmount(() => {
@@ -299,29 +300,29 @@ const errorBadgeAriaLabel = computed<string>(
       </template>
 
       <template v-else>
-        <div v-if="showOAuthConnect" class="source-accordion-oauth">
+        <div v-if="showOAuthConnect && oauth.authUrl" class="source-accordion-oauth">
           <OAuthConnectFlow
-            v-if="isGog && data.gogStatus.authUrl"
-            :auth-url="data.gogStatus.authUrl"
+            v-if="isGog"
+            :auth-url="oauth.authUrl"
             expected-origin="https://login.gog.com"
-            :connect-message="data.gogConnectMessage"
+            :connect-message="oauthMessage"
             help-text="Paste the redirect URL after logging in:"
             service-name="GOG Account"
-            @submit="data.submitGogCode($event)"
+            @submit="data.submitGogCode(source.id, $event)"
           />
           <OAuthConnectFlow
-            v-else-if="isEpic && data.epicStatus.authUrl"
-            :auth-url="data.epicStatus.authUrl"
+            v-else
+            :auth-url="oauth.authUrl"
             expected-origin="https://www.epicgames.com"
-            :connect-message="data.epicConnectMessage"
+            :connect-message="oauthMessage"
             help-text="Paste the authorization code from the JSON response:"
             service-name="Epic Games"
-            @submit="data.submitEpicCode($event)"
+            @submit="data.submitEpicCode(source.id, $event)"
           />
         </div>
 
         <div v-if="showTraktConnect" class="source-accordion-oauth">
-          <TraktDeviceCodeFlow />
+          <TraktDeviceCodeFlow :source-id="source.id" />
         </div>
 
         <SourceConfigForm
@@ -347,17 +348,11 @@ const errorBadgeAriaLabel = computed<string>(
               the <p> persistent and let the text update reactively.
             -->
             <p
-              v-if="isGog && showOAuthDisconnect"
+              v-if="showOAuthDisconnect"
               class="sr-only"
               aria-live="polite"
               aria-atomic="true"
-            >{{ data.gogConnectMessage }}</p>
-            <p
-              v-if="isEpic && showOAuthDisconnect"
-              class="sr-only"
-              aria-live="polite"
-              aria-atomic="true"
-            >{{ data.epicConnectMessage }}</p>
+            >{{ oauthMessage }}</p>
             <button
               v-if="showOAuthDisconnect"
               type="button"
@@ -365,7 +360,7 @@ const errorBadgeAriaLabel = computed<string>(
               :data-testid="`disconnect-btn-${source.id}`"
               :aria-label="isGog ? 'Disconnect GOG' : 'Disconnect Epic Games'"
               :disabled="props.syncing"
-              @click="isGog ? data.disconnectGog() : data.disconnectEpic()"
+              @click="isGog ? data.disconnectGog(source.id) : data.disconnectEpic(source.id)"
             >Disconnect</button>
             <template v-if="showTraktDisconnect">
               <span
@@ -378,10 +373,10 @@ const errorBadgeAriaLabel = computed<string>(
               <button
                 type="button"
                 class="btn btn-danger"
-                data-testid="disconnect-btn-trakt"
+                :data-testid="`disconnect-btn-${source.id}`"
                 aria-label="Disconnect Trakt"
                 :disabled="props.syncing"
-                @click="data.disconnectTrakt()"
+                @click="data.disconnectTrakt(source.id)"
               >Disconnect</button>
             </template>
             <button

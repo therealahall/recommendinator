@@ -2,7 +2,8 @@
 
 Credential contract (depended on by the web/CLI auth task)
 ----------------------------------------------------------
-Storage ``source_id`` is ``"trakt"``.  The config schema exposes four fields:
+Credentials are stored under the id of the source, which defaults to ``"trakt"``
+but is whatever the operator named it.  The config schema exposes four fields:
 
 - ``client_id``     (str, required, sensitive=False) — the user's own Trakt API
   application client id.  Not secret, but identifies the app for every request

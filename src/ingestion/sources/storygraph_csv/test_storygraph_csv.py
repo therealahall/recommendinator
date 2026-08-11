@@ -1,6 +1,7 @@
 """Tests for The StoryGraph CSV plugin."""
 
 import csv
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -666,3 +667,34 @@ class TestStorygraphCsvPluginDiscovery:
         book_plugins = registry.get_plugins_by_content_type(ContentType.BOOK)
 
         assert "storygraph_csv" in {plugin.name for plugin in book_plugins}
+
+
+STORYGRAPH_CSV_LOGGER = "src.ingestion.sources.storygraph_csv.storygraph_csv"
+
+
+class TestStorygraphCsvLogInjectionRegression:
+    """Regression: the configured file path forged log entries.
+
+    Bug: ``_parse_csv`` interpolates the resolved path raw. Cause: the
+    sanitiser pass covered ``csv_import`` alone. Fix: ``sanitize_for_log``.
+    """
+
+    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
+        self,
+        plugin: StorygraphCsvPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        csv_file = tmp_path / "books\nImported 9999 items from StoryGraph CSV file.csv"
+        csv_file.write_text(f"{HEADER}\n")
+
+        with caplog.at_level(logging.INFO, logger=STORYGRAPH_CSV_LOGGER):
+            list(plugin.fetch({"path": str(csv_file)}))
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == STORYGRAPH_CSV_LOGGER
+        ]
+        assert messages, "nothing was logged, so this proves nothing"
+        assert "\n" not in messages[0], messages

@@ -16,6 +16,7 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -180,7 +181,7 @@ class MarkdownImportPlugin(SourcePlugin):
         except PathNotAllowed as error:
             raise SourceError(self.name, str(error)) from error
 
-        logger.info("Parsing Markdown file: %s", file_path)
+        logger.info("Parsing Markdown file: %s", sanitize_for_log(str(file_path)))
 
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -271,8 +272,8 @@ def _parse_markdown(
             except ValueError:
                 logger.warning(
                     "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    title,
-                    date_str,
+                    sanitize_for_log(title),
+                    sanitize_for_log(date_str),
                 )
 
         if progress_callback:

@@ -45,11 +45,27 @@ function makeTimer() {
   return { setTimer, clearTimer, fire, hasPending: () => pending !== null }
 }
 
+// Not "trakt": the flow belongs to the source being connected, whatever the
+// operator named it.
+const SOURCE_ID = 'trakt_work'
+
 function mountFlow(timer: ReturnType<typeof makeTimer>) {
   return mount(TraktDeviceCodeFlow, {
-    props: { setTimer: timer.setTimer, clearTimer: timer.clearTimer },
+    props: {
+      sourceId: SOURCE_ID,
+      setTimer: timer.setTimer,
+      clearTimer: timer.clearTimer,
+    },
     attachTo: document.body,
   })
+}
+
+function setTraktEnabled(enabled: boolean): void {
+  useDataStore().oauthStatus[SOURCE_ID] = {
+    enabled,
+    connected: false,
+    authUrl: null,
+  }
 }
 
 // The code panel stays mounted across states (v-show), so visibility — not
@@ -79,7 +95,7 @@ describe('TraktDeviceCodeFlow', () => {
     mockDelete.mockReset()
     // Client credentials resolve by default so the connect action is live;
     // the gating tests below flip this off explicitly.
-    useDataStore().traktStatus.enabled = true
+    setTraktEnabled(true)
   })
 
   it('renders the connect trigger initially', () => {
@@ -100,7 +116,7 @@ describe('TraktDeviceCodeFlow', () => {
   })
 
   it('disables connect and shows an accessible hint when credentials are missing', () => {
-    useDataStore().traktStatus.enabled = false
+    setTraktEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
     const button = wrapper.get('[data-testid="trakt-connect-btn"]')
@@ -117,7 +133,7 @@ describe('TraktDeviceCodeFlow', () => {
   })
 
   it('does not start the device flow while connect is disabled', async () => {
-    useDataStore().traktStatus.enabled = false
+    setTraktEnabled(false)
     const wrapper = mountFlow(makeTimer())
 
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
@@ -134,7 +150,9 @@ describe('TraktDeviceCodeFlow', () => {
     await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
     await flushPromises()
 
-    expect(mockPost).toHaveBeenCalledWith('/trakt/start-device-flow')
+    expect(mockPost).toHaveBeenCalledWith('/trakt/start-device-flow', undefined, {
+      source_id: SOURCE_ID,
+    })
     expect(wrapper.get('[data-testid="trakt-user-code"]').text()).toContain(
       'ABCD-1234',
     )
@@ -176,8 +194,7 @@ describe('TraktDeviceCodeFlow', () => {
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'pending', message: 'wait' })
       .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
-    // loadSyncSources after success: config/reload POST + four GETs.
-    mockPost.mockResolvedValue({})
+    // The status re-read that follows a successful poll.
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
@@ -247,8 +264,7 @@ describe('TraktDeviceCodeFlow', () => {
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: false, status: 'slow_down', message: 'slow' })
       .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
-    // loadSyncSources after success: config/reload POST + four GETs.
-    mockPost.mockResolvedValue({})
+    // The status re-read that follows a successful poll.
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)
@@ -272,7 +288,6 @@ describe('TraktDeviceCodeFlow', () => {
     mockPost
       .mockResolvedValueOnce(FLOW)
       .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
-    mockPost.mockResolvedValue({})
     mockGet.mockResolvedValue({ enabled: true, connected: true })
     const timer = makeTimer()
     const wrapper = mountFlow(timer)

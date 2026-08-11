@@ -1,5 +1,6 @@
 """Tests for Markdown import plugin."""
 
+import logging
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -572,3 +573,83 @@ class TestMarkdownImportPathContainmentRegression:
 
         # list() would discard these, leaving the leak half of the name unproven.
         assert collected == []
+
+
+MARKDOWN_LOGGER = "src.ingestion.sources.markdown.markdown"
+
+# Parsing is line-based, so a break never survives into a title here. The
+# terminal control that erases the line an operator just read does.
+FORGED_TITLE = "Dune\x1b[2KImported 9999 items"
+ESCAPED_TITLE = "Dune\\u001b[2KImported 9999 items"
+
+
+class TestMarkdownImportLogInjectionRegression:
+    """Regression: an imported list item rewrote log entries.
+
+    Bug: the title and the date were logged raw, and neither is restricted to
+    printable text. Cause: no sanitiser on this path. Fix: ``sanitize_for_log``
+    at every sink.
+    """
+
+    @staticmethod
+    def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == MARKDOWN_LOGGER
+        ]
+
+    def test_a_control_character_in_a_title_cannot_rewrite_a_log_entry(
+        self,
+        plugin: MarkdownImportPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        markdown_file = tmp_path / "books.md"
+        markdown_file.write_text(f"- **{FORGED_TITLE}** | Date: yesterday\n")
+
+        with caplog.at_level(logging.WARNING, logger=MARKDOWN_LOGGER):
+            items = list(
+                plugin.fetch({"path": str(markdown_file), "content_type": "book"})
+            )
+
+        # The item keeps the title it was given; only the log line is escaped.
+        assert [item.title for item in items] == [FORGED_TITLE]
+        assert self._messages(caplog) == [
+            f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_control_character_in_a_date_cannot_rewrite_a_log_entry(
+        self,
+        plugin: MarkdownImportPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        markdown_file = tmp_path / "books.md"
+        markdown_file.write_text("- **Dune** | Date: 2024\x1b[2KImported 9999 items\n")
+
+        with caplog.at_level(logging.WARNING, logger=MARKDOWN_LOGGER):
+            list(plugin.fetch({"path": str(markdown_file), "content_type": "book"}))
+
+        assert self._messages(caplog) == [
+            "Invalid date format for 'Dune': 2024\\u001b[2KImported 9999 items. "
+            "Expected YYYY-MM-DD."
+        ]
+
+    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
+        self,
+        plugin: MarkdownImportPlugin,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A configured path is operator input, and a file name may hold a break."""
+        markdown_file = tmp_path / "books\nImported 9999 items.md"
+        markdown_file.write_text("- **Dune**\n")
+
+        with caplog.at_level(logging.INFO, logger=MARKDOWN_LOGGER):
+            list(plugin.fetch({"path": str(markdown_file), "content_type": "book"}))
+
+        assert self._messages(caplog)[0].endswith(
+            "books\\nImported 9999 items.md"
+        ), self._messages(caplog)
