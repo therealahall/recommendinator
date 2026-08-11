@@ -22,6 +22,7 @@ from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
+    from src.storage.schema import SourceConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,74 @@ class ResolvedInput:
     config: dict[str, Any]
 
 
+@dataclass
+class ConfiguredSource:
+    """What is configured under a source id, enabled or not.
+
+    Which plugin a source runs and whether it is enabled are separate
+    questions, and a caller asking one must not be handed the other.
+    """
+
+    plugin: SourcePlugin
+    enabled: bool
+    fields: dict[str, Any]
+
+
+def _authoritative_source(
+    source_id: str,
+    db_row: SourceConfigDict | None,
+    yaml_entry: Any,
+) -> ConfiguredSource | None:
+    """The DB row for *source_id* once migrated, else its YAML ``inputs`` entry.
+
+    ``None`` when neither declares a plugin this build ships.
+    """
+    plugin_name: str | None
+    if db_row is not None:
+        plugin_name = db_row["plugin"]
+        enabled = db_row["enabled"]
+        fields = db_row["config"]
+    else:
+        if not isinstance(yaml_entry, dict):
+            return None
+        plugin_name = yaml_entry.get("plugin")
+        if not plugin_name:
+            logger.warning("Input '%s' has no 'plugin' field, skipping", source_id)
+            return None
+        enabled = bool(yaml_entry.get("enabled", False))
+        fields = {
+            key: value
+            for key, value in yaml_entry.items()
+            if key not in ("plugin", "enabled")
+        }
+
+    plugin = get_registry().get_plugin(plugin_name)
+    if plugin is None:
+        logger.warning(
+            "Input '%s' references unknown plugin '%s', skipping",
+            source_id,
+            plugin_name,
+        )
+        return None
+
+    return ConfiguredSource(plugin=plugin, enabled=enabled, fields=fields)
+
+
+def _configured_source(
+    source_id: str,
+    config: dict[str, Any] | None,
+    storage: StorageManager | None,
+    user_id: int,
+) -> ConfiguredSource | None:
+    """``_authoritative_source`` for one id, reading the DB row it needs."""
+    db_row = (
+        storage.get_source_config(user_id, source_id) if storage is not None else None
+    )
+    return _authoritative_source(
+        source_id, db_row, (config or {}).get("inputs", {}).get(source_id)
+    )
+
+
 def resolve_inputs(
     config: dict[str, Any],
     storage: StorageManager | None = None,
@@ -109,60 +178,29 @@ def resolve_inputs(
     Returns:
         List of ResolvedInput for each enabled, valid source.
     """
-    registry = get_registry()
     inputs_config = config.get("inputs", {})
 
-    db_configs: dict[str, dict[str, Any]] = {}
+    db_configs: dict[str, SourceConfigDict] = {}
     if storage is not None:
         for db_row in storage.list_source_configs(user_id):
-            db_configs[db_row["source_id"]] = {
-                "plugin": db_row["plugin"],
-                "enabled": db_row["enabled"],
-                "config": db_row["config"],
-            }
+            db_configs[db_row["source_id"]] = db_row
 
     source_ids = set(inputs_config.keys()) | set(db_configs.keys())
     resolved: list[ResolvedInput] = []
 
     for source_id in source_ids:
-        db_entry = db_configs.get(source_id)
-        yaml_entry = inputs_config.get(source_id)
-
-        if db_entry is not None:
-            if not db_entry["enabled"]:
-                continue
-            plugin_name = db_entry["plugin"]
-            raw_fields = db_entry["config"]
-        else:
-            if not isinstance(yaml_entry, dict):
-                continue
-            if not yaml_entry.get("enabled", False):
-                continue
-            plugin_name = yaml_entry.get("plugin")
-            if not plugin_name:
-                logger.warning("Input '%s' has no 'plugin' field, skipping", source_id)
-                continue
-            raw_fields = {
-                key: value
-                for key, value in yaml_entry.items()
-                if key not in ("plugin", "enabled")
-            }
-
-        plugin = registry.get_plugin(plugin_name)
-        if plugin is None:
-            logger.warning(
-                "Input '%s' references unknown plugin '%s', skipping",
-                source_id,
-                plugin_name,
-            )
+        source = _authoritative_source(
+            source_id, db_configs.get(source_id), inputs_config.get(source_id)
+        )
+        if source is None or not source.enabled:
             continue
 
         resolved.append(
             ResolvedInput(
                 source_id=source_id,
-                plugin=plugin,
+                plugin=source.plugin,
                 config=assemble_plugin_config(
-                    source_id, plugin, raw_fields, storage, user_id
+                    source_id, source.plugin, source.fields, storage, user_id
                 ),
             )
         )
@@ -310,19 +348,27 @@ def resolve_input_for_plugin(
     config: dict[str, Any] | None,
     storage: StorageManager | None = None,
     user_id: int = 1,
+    *,
+    require_enabled: bool = True,
 ) -> ResolvedInput | None:
-    """The enabled source *source_id*, or ``None`` unless it runs *plugin_name*.
+    """The source *source_id*, or ``None`` unless it runs *plugin_name*.
 
-    An OAuth route's source id arrives from the client and becomes a credential
-    key. Unchecked, ``POST /api/gog/exchange?source_id=trakt_work`` files a GOG
-    token where the Trakt plugin reads one.
+    A client-supplied id is a credential key: unchecked, a GOG exchange files
+    its token where Trakt reads one. Ownership is not enabled state, so
+    revocation passes ``require_enabled=False``.
     """
-    resolved = get_sync_handler(
-        source_id, config or {}, storage=storage, user_id=user_id
-    )
-    if resolved is None or resolved.plugin.name != plugin_name:
+    source = _configured_source(source_id, config, storage, user_id)
+    if source is None or source.plugin.name != plugin_name:
         return None
-    return resolved
+    if require_enabled and not source.enabled:
+        return None
+    return ResolvedInput(
+        source_id=source_id,
+        plugin=source.plugin,
+        config=assemble_plugin_config(
+            source_id, source.plugin, source.fields, storage, user_id
+        ),
+    )
 
 
 def validate_source_config(
@@ -419,25 +465,11 @@ def resolve_source_plugin(
 ) -> SourcePlugin | None:
     """Return the plugin instance for *source_id*, or ``None`` if unknown.
 
-    Looks up the plugin name first from the migrated DB row (when storage is
-    available), then falls back to the YAML ``inputs`` entry.
+    Reads the migrated DB row first (when storage is available), then falls
+    back to the YAML ``inputs`` entry. The enabled flag is not consulted.
     """
-    plugin_name: str | None = None
-
-    if storage is not None:
-        db_row = storage.get_source_config(user_id, source_id)
-        if db_row is not None:
-            plugin_name = db_row["plugin"]
-
-    if plugin_name is None and config is not None:
-        yaml_entry = config.get("inputs", {}).get(source_id)
-        if isinstance(yaml_entry, dict):
-            plugin_name = yaml_entry.get("plugin")
-
-    if plugin_name is None:
-        return None
-
-    return get_registry().get_plugin(plugin_name)
+    source = _configured_source(source_id, config, storage, user_id)
+    return source.plugin if source is not None else None
 
 
 def _yaml_entry_for(source_id: str, config: dict[str, Any] | None) -> dict[str, Any]:

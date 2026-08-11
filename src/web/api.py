@@ -2246,8 +2246,18 @@ def _disconnect_source(
     An id this route may not act on gets the same refusal as one holding no
     token: telling them apart names sources the caller did not ask about.
     """
+    # Disabling a source is how revoking its token starts, so only the plugin
+    # behind the id decides here: a credential nobody can delete is worse than
+    # one nobody can use.
     if (
-        resolve_input_for_plugin(source_id, plugin_name, config, storage, user_id)
+        resolve_input_for_plugin(
+            source_id,
+            plugin_name,
+            config,
+            storage,
+            user_id,
+            require_enabled=False,
+        )
         is None
     ):
         logger.info(
@@ -2496,20 +2506,29 @@ def get_trakt_status(
 ) -> dict[str, Any]:
     """Get Trakt integration status.
 
-    ``enabled`` is true when the Trakt source has client credentials saved
-    (so the device flow can run). ``connected`` is true when a refresh token
-    is stored AND the source is enabled — a source whose client credentials
-    can no longer resolve is not usable, so it is never reported connected.
+    ``enabled`` means an enabled Trakt source with client credentials saved,
+    so the device flow can run. ``connected`` means a stored refresh token
+    those credentials could still refresh.
     """
-    enabled = True
-    try:
-        resolve_trakt_client_credentials(
-            config, storage, source_id=source_id, user_id=user_id
-        )
-    except TraktAuthError:
-        enabled = False
 
-    connected = enabled and is_trakt_connected(
+    def credentials_resolve(*, require_enabled: bool) -> bool:
+        try:
+            resolve_trakt_client_credentials(
+                config,
+                storage,
+                source_id=source_id,
+                user_id=user_id,
+                require_enabled=require_enabled,
+            )
+        except TraktAuthError:
+            return False
+        return True
+
+    # ``connected`` ignores the enabled flag because the UI hangs its
+    # disconnect control off it: gated on enabled, a disabled source's token
+    # would be unrevocable from the Data tab showing it.
+    enabled = credentials_resolve(require_enabled=True)
+    connected = credentials_resolve(require_enabled=False) and is_trakt_connected(
         storage, source_id=source_id, user_id=user_id
     )
 

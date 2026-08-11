@@ -167,6 +167,7 @@ def mock_components(mock_config):
     mock_storage_manager = Mock(spec=StorageManager)
     mock_storage_manager.get_credentials_for_source.return_value = {}
     mock_storage_manager.list_source_configs.return_value = []
+    mock_storage_manager.get_source_config.return_value = None
 
     mock_embedding_gen = Mock(spec=EmbeddingGenerator)
     llm_components = (

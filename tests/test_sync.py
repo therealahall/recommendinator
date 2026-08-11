@@ -1047,8 +1047,9 @@ class TestASyncSaysWhichSourceToReconnectRegression:
 class TestTheUpgradeScenarioItselfIsNotSilentRegression:
     """Reported: the case the warning exists for is the one it skips.
 
-    Cause: it is suppressed whenever the source holds the key at all, and an
-    upgrade leaves it holding the consumed copy. Fix: ask which copy is later.
+    Cause: it was suppressed whenever the source held the key, which an upgrade
+    guarantees. Fix: a held copy earns no silence, however recent — rotation
+    leaves it spent.
     """
 
     @pytest.fixture()
@@ -1057,7 +1058,7 @@ class TestTheUpgradeScenarioItselfIsNotSilentRegression:
 
     @staticmethod
     def _backdate(storage: StorageManager, source_id: str, key: str) -> None:
-        """Put a stored copy before the rotation, whatever the clock's grain."""
+        """Age a row past the clock's grain, so "newest" here is not a tie."""
         with storage.connection() as conn:
             conn.execute(
                 "UPDATE credentials SET updated_at = '2000-01-01 00:00:00' "
@@ -1076,10 +1077,13 @@ class TestTheUpgradeScenarioItselfIsNotSilentRegression:
 
     @pytest.fixture()
     def upgraded(self, storage: StorageManager) -> StorageManager:
-        """A source whose own refresh token predates the rotated one."""
-        storage.save_credential(1, "my_source", "refresh_token", "consumed-in-2024")
-        self._backdate(storage, "my_source", "refresh_token")
+        """The source's own copy is the newest row, and still the spent one.
+
+        A rule reading timestamps would call it live and say nothing.
+        """
         storage.save_credential(1, "rotating", "refresh_token", "the-live-one")
+        self._backdate(storage, "rotating", "refresh_token")
+        storage.save_credential(1, "my_source", "refresh_token", "spent-but-newer")
         return storage
 
     @staticmethod
@@ -1101,7 +1105,7 @@ class TestTheUpgradeScenarioItselfIsNotSilentRegression:
         assert len(warnings) == 1
         assert "my_source" in warnings[0]
         assert "refresh_token" in warnings[0]
-        assert "consumed-in-2024" not in warnings[0]
+        assert "spent-but-newer" not in warnings[0]
         assert "the-live-one" not in warnings[0]
 
     def test_neither_copy_is_moved_by_the_telling(

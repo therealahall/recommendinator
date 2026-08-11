@@ -197,6 +197,8 @@ def resolve_trakt_client_credentials(
     storage: StorageManager | None,
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
+    *,
+    require_enabled: bool = True,
 ) -> tuple[str, str]:
     """Resolve *source_id*'s ``(client_id, client_secret)``.
 
@@ -208,7 +210,12 @@ def resolve_trakt_client_credentials(
             is missing.
     """
     resolved = resolve_input_for_plugin(
-        source_id, TRAKT_PLUGIN, config, storage, user_id
+        source_id,
+        TRAKT_PLUGIN,
+        config,
+        storage,
+        user_id,
+        require_enabled=require_enabled,
     )
     trakt_config = resolved.config if resolved is not None else None
 

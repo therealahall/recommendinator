@@ -612,6 +612,142 @@ class TestADisabledSourceCanStillBeDisconnectedRegression:
         assert disabled.get_credential(USER_ID, source_id, "refresh_token") is None
 
 
+CONNECT_EXCHANGES = [
+    (
+        "/api/gog/exchange",
+        "gog_work",
+        "src.web.api.extract_gog_code",
+        "src.web.api.exchange_gog_tokens",
+        {"code_or_url": "code"},
+    ),
+    (
+        "/api/epic/exchange",
+        "epic_work",
+        "src.web.api.extract_epic_code",
+        "src.web.api.exchange_epic_tokens",
+        {"code_or_json": "code"},
+    ),
+]
+
+DEVICE_FLOW = {
+    "user_code": "USER1234",
+    "verification_url": "https://trakt.tv/activate",
+    "device_code": "dev1234567",
+    "expires_in": 600,
+    "interval": 5,
+}
+
+
+class TestConnectingADisabledSourceIsRefused:
+    """Deliberate: a disabled source takes on no new credential.
+
+    A refused connect costs one toggle and a retry; a refused disconnect
+    strands the token. The enabled leg of each case is the anchor.
+    """
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize(
+        ("endpoint", "source_id", "extract", "exchange", "body"), CONNECT_EXCHANGES
+    )
+    def test_exchange_writes_a_token_only_for_an_enabled_source(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        enabled: bool,
+        endpoint: str,
+        source_id: str,
+        extract: str,
+        exchange: str,
+        body: dict[str, str],
+    ) -> None:
+        storage.set_source_config_enabled(USER_ID, source_id, enabled)
+
+        with (
+            patch(extract, return_value="code"),
+            patch(exchange, return_value={"refresh_token": "fresh-token"}),
+        ):
+            response = client.post(f"{endpoint}?source_id={source_id}", json=body)
+
+        assert response.status_code == (200 if enabled else 400), response.text
+        assert storage.get_credential(USER_ID, source_id, "refresh_token") == (
+            "fresh-token" if enabled else None
+        )
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_device_flow_starts_only_for_an_enabled_source(
+        self, client: TestClient, storage: StorageManager, enabled: bool
+    ) -> None:
+        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.set_source_config_enabled(USER_ID, "trakt_work", enabled)
+
+        with patch(
+            "src.web.api.start_device_auth_flow", return_value=DEVICE_FLOW
+        ) as started:
+            response = client.post("/api/trakt/start-device-flow?source_id=trakt_work")
+
+        assert response.status_code == (200 if enabled else 400), response.text
+        assert started.called is enabled
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_poll_saves_a_token_only_for_an_enabled_source(
+        self, client: TestClient, storage: StorageManager, enabled: bool
+    ) -> None:
+        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.set_source_config_enabled(USER_ID, "trakt_work", enabled)
+
+        with patch(
+            "src.web.api.poll_device_token",
+            return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-token"),
+        ):
+            response = client.post(
+                "/api/trakt/poll-device-approval?source_id=trakt_work",
+                json={"device_code": "dev1234567"},
+            )
+
+        assert response.status_code == (200 if enabled else 400), response.text
+        assert storage.get_credential(USER_ID, "trakt_work", "refresh_token") == (
+            "trakt-token" if enabled else None
+        )
+
+
+# Trakt reports connected only while its client credentials resolve, and the
+# secret half of the pair lives in the credential store.
+STATUS_SOURCES = [
+    ("gog", "gog_work", {}),
+    ("epic", "epic_work", {}),
+    ("trakt", "trakt_work", {"client_secret": "secret"}),
+]
+
+
+class TestStatusSeparatesEnabledFromConnected:
+    """``enabled`` is about the source, ``connected`` about its token.
+
+    The Data tab hangs its disconnect control off ``connected``, so folding
+    the enabled flag into it hides the only control that revokes the token.
+    """
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize(("provider", "source_id", "secrets"), STATUS_SOURCES)
+    def test_a_stored_token_reads_connected_whatever_the_enabled_flag(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        enabled: bool,
+        provider: str,
+        source_id: str,
+        secrets: dict[str, str],
+    ) -> None:
+        for key, value in secrets.items():
+            storage.save_credential(USER_ID, source_id, key, value)
+        storage.save_credential(USER_ID, source_id, "refresh_token", "still-live")
+        storage.set_source_config_enabled(USER_ID, source_id, enabled)
+
+        body = client.get(f"/api/{provider}/status?source_id={source_id}").json()
+
+        assert body["enabled"] is enabled
+        assert body["connected"] is True
+
+
 class TestSourceIdIsValidated:
     """The id becomes a credential key, so a malformed one never reaches storage."""
 
