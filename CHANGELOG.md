@@ -1,6 +1,59 @@
 # CHANGELOG
 
 
+## v0.30.0 (2026-08-11)
+
+### Bug Fixes
+
+- **csv**: Neutralise formula characters on export, strip the guard on import
+  ([`6e5d969`](https://github.com/therealahall/recommendinator/commit/6e5d96937723823487b4ce8c91923c31f1631db8))
+
+- **security**: Close the remaining disclosure sinks
+  ([`04530e8`](https://github.com/therealahall/recommendinator/commit/04530e8a9c6d4833ac9c86e55f61afb7d83e1395))
+
+- **sync**: Key a rotated credential on the source id, and escape the log
+  ([`14570e3`](https://github.com/therealahall/recommendinator/commit/14570e38396a6fcb7d826af66f410fbc5662d29c))
+
+- **web**: Name UTF-8 at every text boundary
+  ([`a55bf5c`](https://github.com/therealahall/recommendinator/commit/a55bf5cfecb66714d9add7c0ef9c6f5a501863bb))
+
+- **web**: Stop the config doors describing what they refused
+  ([`6af2317`](https://github.com/therealahall/recommendinator/commit/6af23174ddf4434d80be89b4d1d1056c36f59414))
+
+### Chores
+
+- **llm**: Delete generate_embeddings_batch
+  ([`8c9b456`](https://github.com/therealahall/recommendinator/commit/8c9b456aa687a22fbc675981a603dc2555edf9c1))
+
+### Documentation
+
+- Cut the security-remainder additions back
+  ([`1c230cf`](https://github.com/therealahall/recommendinator/commit/1c230cff0e5c28144f15635794d7055159044661))
+
+- Record what each door reveals and which chain to break
+  ([`48f1cf1`](https://github.com/therealahall/recommendinator/commit/48f1cf1e1a11ca2e741ac16732473203cf4b22b1))
+
+### Features
+
+- **storage**: Re-attribute content items to the source that owns them
+  ([`fdd832e`](https://github.com/therealahall/recommendinator/commit/fdd832ebce293a8a3ed639fa6efaa3afc2112ac6))
+
+- **utils**: One family of sanitisers for logs, prompts and rules
+  ([`4769d12`](https://github.com/therealahall/recommendinator/commit/4769d12b8824d57cd0d3bf6ca513dab8b769cbeb))
+
+### Refactoring
+
+- **ingestion**: Make source identity framework-owned
+  ([`dc1c8a8`](https://github.com/therealahall/recommendinator/commit/dc1c8a8dc62335b8aaac856d88baa89d78121884))
+
+### Breaking Changes
+
+- **ingestion**: Overriding transform_config or get_source_identifier now raises TypeError. Override
+  transform_fields.
+
+- **storage**: Content_items.source holds the source id, not a plugin name.
+
+
 ## v0.29.0 (2026-08-09)
 
 ### Bug Fixes
