@@ -11,9 +11,14 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 # parents[1] resolves /tests/test_makefile.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = _REPO_ROOT / "Makefile"
+
+# The two documents that told a contributor how to get a tree checked.
+CONTRIBUTOR_DOCUMENTS = ("CONTRIBUTING.md", "QUICKSTART.md")
 
 # The one rule whose target is a path on disk rather than a name. Everything
 # else must be phony, or a file appearing under that name silently satisfies it.
@@ -106,6 +111,23 @@ class TestFrontendBootstrap:
         """A second copy is one `make install-frontend` can drift from what check runs."""
         text = MAKEFILE.read_text(encoding="utf-8")
         assert text.count("pnpm install --frozen-lockfile") == 1
+
+
+class TestTheDocumentedGateIsThisOne:
+    """A document that spells the gate out is a second copy of it."""
+
+    @pytest.mark.parametrize("name", CONTRIBUTOR_DOCUMENTS)
+    def test_no_contributor_document_runs_the_gate_by_hand(self, name: str) -> None:
+        """Both drifted from `make check` once already, silently, for a release."""
+        text = (_REPO_ROOT / name).read_text(encoding="utf-8")
+        assert text.strip(), f"{name} is empty"
+        assert "black --check" not in text, f"{name} spells the gate out"
+        assert "pnpm install" not in text, f"{name} asks for an install make does"
+
+    def test_the_gate_command_is_the_one_contributors_are_given(self) -> None:
+        """`make check` unnamed, the section above forbids without instructing."""
+        text = (_REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        assert "make check" in text
 
 
 class TestInterpreterSelection:

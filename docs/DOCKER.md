@@ -82,10 +82,11 @@ services:
 With no private plugins, leave `./private` empty or drop that volume.
 
 Every service also carries `cap_drop: [ALL]` and
-`security_opt: [no-new-privileges:true]`. The app has no authentication of its
-own, so the confinement is what limits a compromised dependency to the
-container. Nothing here needs a capability: the images run as an unprivileged
-user and bind ports above 1024.
+`security_opt: [no-new-privileges:true]`. Every `/api` route already requires a
+bearer token ([SECURITY.md](SECURITY.md#api-authentication)); this is the other
+half, limiting what a compromised dependency reaches once it is inside. Nothing
+here needs a capability: the images run as an unprivileged user and bind ports
+above 1024.
 
 ## Parameters
 
@@ -121,7 +122,11 @@ the host at all.
 | `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls. Must match `ollama.embedding_model`. |
 | `OLLAMA_CONVERSATION_MODEL` | unset, so reuses `OLLAMA_MODEL` | Set only when `ollama.conversation_model` names a separate chat model. |
-| `OLLAMA_MEMORY_LIMIT` | `12g` | Memory ceiling for the sidecar. Fits every model in [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md); raise it for anything larger, or the kernel kills the model load instead of the host. |
+| `OLLAMA_MEMORY_LIMIT` | `12g` | Memory ceiling for the sidecar, the only capped service. Fits every model in [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md); raise it for anything larger. A ceiling above the host's RAM never binds, so lower it on an 8 GB NAS or Pi — then the kernel kills the model load rather than choosing a victim machine-wide. |
+
+The app services are uncapped on purpose. Loading a model is the one thing here
+whose appetite is measured in gigabytes and known in advance; a ceiling guessed
+for a sync turns a long but healthy one into an OOM kill.
 
 **Setting `TZ` does not correct dates already stored, and a re-sync will not
 either.** The corrected local date is the earlier one, and a sync keeps the later
@@ -129,10 +134,14 @@ of two dates. Only new completions get the right day.
 
 ## First run
 
-The entrypoint copies `example.yaml` to `config.yaml` when none exists and never
-overwrites an existing file, so restarts are safe. It does not fill in
-`web.api_token`: the app exits until you do. Rotating it later is an edit to the
-same file, which the config watcher picks up without a restart.
+The entrypoint copies the image's `/app/example.yaml` to `config.yaml` when none
+exists and never overwrites an existing file, so restarts are safe. It does not
+fill in `web.api_token`: the app exits until you do. Rotating it later is an edit
+to the same file, which the config watcher picks up without a restart.
+
+That seed sits outside `/app/config` on purpose. Your `./config` mount covers
+that directory, so a copy kept inside it would be hidden on the one run that
+needs to read it.
 
 The UI comes up with no sources, so ingestion does nothing until you add them
 from the **Data** tab or `source create`, with API keys from the **Settings**
@@ -226,6 +235,11 @@ docker compose pull
 docker compose up -d
 ```
 
+**Never skip the `pull`.** `app-ai` waits on a health check that ships inside
+the sidecar image. A cached sidecar from before that check carries none, and
+compose fails the `service_healthy` dependency outright rather than waiting — a
+container with no health check can never report healthy.
+
 To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands.
 
 ## Reverse proxy
@@ -298,6 +312,11 @@ resolved. Confirm one by hand:
 ```bash
 docker compose exec ollama ollama pull mistral:7b
 ```
+
+### `app-ai` will not start: `has no healthcheck configured`
+
+The sidecar image in your local cache predates the health check `depends_on`
+waits on. `docker compose pull`, then bring the stack up again.
 
 ### The sidecar dies partway through loading a model
 

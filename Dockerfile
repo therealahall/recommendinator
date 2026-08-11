@@ -97,7 +97,10 @@ RUN useradd --create-home --shell /bin/bash appuser
 # Copy application code
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser templates/ ./templates/
-COPY --chown=appuser:appuser config/example.yaml ./config/example.yaml
+# Deliberately not under ./config: compose bind-mounts the host's ./config over
+# that directory, and a seed the mount hides is one the entrypoint cannot read
+# on the only run that needs it.
+COPY --chown=appuser:appuser config/example.yaml ./example.yaml
 
 # Copy entrypoint that bootstraps config.yaml on first run
 COPY --chown=appuser:appuser docker/entrypoint.sh /app/docker/entrypoint.sh

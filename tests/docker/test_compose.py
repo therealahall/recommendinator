@@ -29,6 +29,11 @@ DEV_COMPOSE = _REPO_ROOT / "docker-compose.dev.yml"
 DOCKERFILE = _REPO_ROOT / "Dockerfile"
 OLLAMA_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.ollama"
 DOCKERIGNORE = _REPO_ROOT / ".dockerignore"
+ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
+
+# The build-context path of the first-run seed. Where the image puts it is the
+# Dockerfile's decision; this is the only end of it that never moves.
+SEED_SOURCE = "config/example.yaml"
 
 # The stage both shipped targets build on, and the targets themselves. Anything
 # installed in the shared stage reaches both; anything installed in one target
@@ -115,6 +120,10 @@ _OLLAMA_HOME = re.compile(r"^ENV\s+HOME=(?P<path>\S+)\s*$", re.MULTILINE)
 
 # A `RUN`'s shell command, following backslash continuations onto the next line.
 _RUN = re.compile(r"^RUN\s+(?P<body>(?:[^\n\\]|\\\n)*)", re.MULTILINE)
+
+# The entrypoint's fallback for the seed it copies on first run, as `sh`'s
+# assign-if-unset form spells it.
+_SEED_DEFAULT = re.compile(r'^:\s*"\$\{SEED_CONFIG:=(?P<path>[^}"]+)\}"', re.MULTILINE)
 
 
 def _compose_text() -> str:
@@ -285,17 +294,92 @@ def _ollama_image() -> _Stage:
     return _Stage(parent="", body=OLLAMA_DOCKERFILE.read_text())
 
 
+def _runtime_workdir() -> str:
+    """The directory a relative COPY destination in a shipped stage lands in."""
+    match = re.search(
+        r"^WORKDIR\s+(?P<path>\S+)",
+        _instructions(_stages()[RUNTIME_BASE_STAGE]),
+        re.MULTILINE,
+    )
+    assert match is not None, "the runtime stage sets no WORKDIR"
+    return match.group("path")
+
+
+def _bundle_copy() -> str:
+    """The runtime stage's ``COPY`` of the built Vue bundle, on one line."""
+    match = re.search(
+        r"^COPY --from=frontend-builder\s.*$",
+        _instructions(_stages()[RUNTIME_BASE_STAGE]),
+        re.MULTILINE,
+    )
+    assert match is not None, "the runtime stage does not copy the built bundle"
+    return match.group()
+
+
 def _built_frontend_path() -> str:
     """The container path the image copies the built Vue bundle to."""
-    runtime = _instructions(_stages()[RUNTIME_BASE_STAGE])
-    workdir = re.search(r"^WORKDIR\s+(?P<path>\S+)", runtime, re.MULTILINE)
-    bundle = re.search(
-        r"^COPY --from=frontend-builder.*\s(?P<target>\S+)\s*$", runtime, re.MULTILINE
-    )
-    assert workdir is not None and bundle is not None
     return posixpath.normpath(
-        posixpath.join(workdir.group("path"), bundle.group("target"))
+        posixpath.join(_runtime_workdir(), _bundle_copy().split()[-1])
     )
+
+
+def _shipped_paths() -> set[str]:
+    """Every container path the *shipped* stages copy a file to.
+
+    Builder stages are excluded: what they write never leaves them.
+    """
+    stages = _stages()
+    paths: set[str] = set()
+    for name in [RUNTIME_BASE_STAGE, *APP_TARGETS]:
+        for match in _COPY.finditer(_instructions(stages[name])):
+            words = [
+                word
+                for word in match.group("arguments").split()
+                if not word.startswith("--")
+            ]
+            paths.add(posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1])))
+    return paths
+
+
+def _shipped_seed_path() -> str:
+    """The container path the image copies the first-run seed to."""
+    for match in _COPY.finditer(_instructions(_stages()[RUNTIME_BASE_STAGE])):
+        words = [
+            word
+            for word in match.group("arguments").split()
+            if not word.startswith("--")
+        ]
+        if words[0] == SEED_SOURCE:
+            return posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1]))
+    raise AssertionError(f"the {RUNTIME_BASE_STAGE} stage copies no {SEED_SOURCE}")
+
+
+def _mount_targets(compose: Path) -> set[str]:
+    """Every container path *compose* mounts something over."""
+    return {
+        posixpath.normpath(entry.split(":")[1] if ":" in entry else entry)
+        for service in _services(compose).values()
+        for entry in service.get("volumes") or []
+    }
+
+
+def _image_owned_mounts(compose: Path) -> set[str]:
+    """The mount points in *compose* seeded from the image: named and anonymous
+    volumes. A bind mount takes the host's ownership instead."""
+    mounts: set[str] = set()
+    for service in _services(compose).values():
+        for entry in service.get("volumes") or []:
+            source, _colon, rest = entry.partition(":")
+            if not rest:
+                mounts.add(posixpath.normpath(source))
+            elif not source.startswith((".", "/")):
+                mounts.add(posixpath.normpath(rest.split(":")[0]))
+    return mounts
+
+
+def _chowned_to(user: str) -> re.Pattern[str]:
+    """A ``chown`` or a ``COPY --chown=`` that names *user* as the new owner."""
+    return re.compile(rf"chown=?\s*(?:-R\s+)?{re.escape(user)}[:\s]")
 
 
 class TestComposeDefaultPortMapping:
@@ -657,10 +741,83 @@ class TestTheDevOverrideKeepsTheBuiltFrontend:
         assert "./src:/app/src" in service_definition["volumes"]
 
 
+class TestNothingTheImageShipsIsHiddenByAMount:
+    """Regression: a fresh `docker compose up -d` wrote no config.yaml.
+
+    Root cause: the image shipped ``example.yaml`` inside ``/app/config``, the
+    directory the deployment bind-mounts the host's ``./config`` over, so the
+    entrypoint read the seed through the mount that hid it.
+    """
+
+    def test_no_shipped_file_sits_under_a_deployment_mount(self) -> None:
+        """Whole class, not the one file: a mount hides everything beneath it,
+        and the image builds green either way. The dev override is excluded —
+        it mounts the source tree over the image's on purpose."""
+        shipped = _shipped_paths()
+        mounted = _mount_targets(COMPOSE)
+
+        # Named so a COPY or volume parse that stops matching fails loudly
+        # rather than comparing two empty sets.
+        assert f"{_runtime_workdir()}/src" in shipped
+        assert "/app/config" in mounted
+        assert {
+            path
+            for path in shipped
+            if any(
+                path == target or path.startswith(f"{target}/") for target in mounted
+            )
+        } == set()
+
+
+class TestTheEntrypointReadsTheSeedWhereTheImagePutsIt:
+    """The Dockerfile picks the destination, the entrypoint hardcodes what it
+    reads, and nothing connects them. Moved on one side only, the image builds,
+    starts, writes no config.yaml and exits on a missing token.
+    """
+
+    def test_the_seed_default_names_the_path_the_runtime_stage_copies_it_to(
+        self,
+    ) -> None:
+        """Both ends read out, so a rename on either fails here rather than in
+        somebody's first `docker compose up`."""
+        default = _SEED_DEFAULT.search(ENTRYPOINT.read_text())
+
+        assert default is not None, "the entrypoint sets no SEED_CONFIG default"
+        assert default.group("path") == _shipped_seed_path()
+
+
+class TestEveryImageOwnedMountPointExistsInItsImage:
+    """Docker seeds a fresh named or anonymous volume from the image's directory
+    at the mount point, ownership included. With nothing there it creates one
+    root-owned, which a container that dropped root cannot write."""
+
+    def test_those_are_every_mount_that_takes_its_ownership_from_an_image(
+        self,
+    ) -> None:
+        """The population the two below cover. A third volume added to either
+        compose file is checked against its image or it fails here."""
+        assert _image_owned_mounts(COMPOSE) | _image_owned_mounts(DEV_COMPOSE) == {
+            _ollama_model_store(),
+            _built_frontend_path(),
+        }
+
+    def test_the_bundle_volume_mounts_over_a_directory_the_image_owns(self) -> None:
+        """The dev override's anonymous volume, same class as the sidecar's
+        model store — and the reason to check every mount, not the reported one.
+        """
+        user = _instruction(_stages()[APP_TARGETS[0]], "USER")
+
+        assert _chowned_to(user).search(_bundle_copy()), (
+            f"the bundle is not copied to {user}; the dev override's anonymous "
+            "volume would mount root-owned"
+        )
+
+
 class TestEveryServiceIsConfined:
-    """The app has no authentication of its own and the docs recommend hardware
-    where one runaway container is the whole machine, so this is applied to every
-    service or it is decoration."""
+    """A bearer token guards the API; this guards what a compromised dependency
+    reaches once it is past that. The docs recommend hardware where one runaway
+    container is the whole machine, so it is every service or it is decoration.
+    """
 
     def test_the_hardened_list_covers_the_whole_file(self) -> None:
         """A service added later is confined too, or this fails."""
@@ -691,6 +848,13 @@ class TestEveryServiceIsConfined:
         """Loading a model is the one operation here measured in gigabytes, and
         an unbounded OOM on a NAS kills the host rather than the container."""
         assert _render(_services()["ollama"]["mem_limit"]) == "12g"
+
+    def test_the_sidecar_is_the_only_service_capped(self) -> None:
+        """The asymmetry is a decision, not an oversight: a ceiling guessed for
+        an app service turns a long but healthy sync into an OOM kill."""
+        assert {
+            name for name, service in _services().items() if "mem_limit" in service
+        } == {"ollama"}
 
 
 class TestTheSidecarImageStandsOnItsOwn:
@@ -741,7 +905,10 @@ class TestTheSidecarImageStandsOnItsOwn:
         """
         store = _ollama_model_store()
         user = _instruction(_ollama_image(), "USER")
+        # The user's name is a substring of the store path, so the chown has to
+        # be matched as a chown or this asserts nothing.
+        chown = _chowned_to(user)
 
         assert any(
-            store in run and user in run for run in _run_bodies(OLLAMA_DOCKERFILE)
+            store in run and chown.search(run) for run in _run_bodies(OLLAMA_DOCKERFILE)
         ), f"no RUN gives {store} to {user}; the model volume mounts root-owned"
