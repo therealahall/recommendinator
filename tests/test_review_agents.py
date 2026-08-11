@@ -73,6 +73,14 @@ _SCRIPTS_AWARE_TOOLS = ("black", "ruff", "mypy")
 # off rather than matched as a substring of the line.
 _MAKE_INVOCATION = re.compile(r"^\s*make\b(?P<arguments>.*)$", re.MULTILINE)
 
+# The flags that leave every target unrun: -n prints the recipe, -q only sets an
+# exit code, -t stamps the files. Read as targets, `make -n check` satisfies the
+# gate assertion below while running neither the preflight nor the suite.
+_MAKE_NO_OP_SHORT_FLAGS = frozenset("nqt")
+_MAKE_NO_OP_LONG_FLAGS = frozenset(
+    {"--dry-run", "--just-print", "--recon", "--question", "--touch"}
+)
+
 # Exactly what tracked settings grant. Both keys are ambient authority: an entry
 # in `permissions.allow` is pre-approved without a prompt for anyone who checks
 # out the branch carrying it, and an enabled plugin is code. Pinning cannot stop
@@ -274,19 +282,33 @@ def _gate_commands() -> list[str]:
     return commands
 
 
-def _make_targets(command: str) -> list[str]:
-    """Return every target the `make` invocations in *command* ask for.
+def _runs_nothing(argument: str) -> bool:
+    """Whether a `make` argument stops it running any of its targets.
 
-    Read as targets rather than searched for as text: `"make check" in command`
-    is satisfied by `make check-frontend`, which runs neither the review-agent
-    preflight nor the test suite.
+    Short flags cluster, so `-kn` is `-n` too.
     """
-    return [
-        word
-        for match in _MAKE_INVOCATION.finditer(command)
-        for word in match.group("arguments").split()
-        if "=" not in word and not word.startswith("-")
-    ]
+    if argument.startswith("--"):
+        return argument in _MAKE_NO_OP_LONG_FLAGS
+    return argument.startswith("-") and bool(
+        set(argument[1:]) & _MAKE_NO_OP_SHORT_FLAGS
+    )
+
+
+def _make_targets(command: str) -> list[str]:
+    """Return every target the `make` invocations in *command* actually run.
+
+    `"make check" in command` is satisfied by `make check-frontend`, which runs
+    neither the preflight nor the suite; `make -n check` runs nothing at all.
+    """
+    targets = []
+    for match in _MAKE_INVOCATION.finditer(command):
+        arguments = match.group("arguments").split()
+        if any(_runs_nothing(argument) for argument in arguments):
+            continue
+        targets += [
+            word for word in arguments if "=" not in word and not word.startswith("-")
+        ]
+    return targets
 
 
 class TestFindAgentProblems:
@@ -1013,6 +1035,41 @@ class TestDocumentedHookSnippet:
             "--hook",
         ):
             assert fragment in commands[0], f"documented hook omits {fragment}"
+
+
+class TestMakeInvocationsAreReadAsTargets:
+    """The parse the gate assertion below rests on, over strings, not the file.
+
+    Exercised on the real workflow alone, a drift making it more permissive
+    would restore the substring hole it was written to close, silently.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            ("make check PYTHON=.venv/bin/python", ["check"]),
+            ("make check-frontend", ["check-frontend"]),
+            ("uv sync --locked", []),
+            ("make check\nmake lint", ["check", "lint"]),
+            ("  make check", ["check"]),
+            ("make --no-print-directory check", ["check"]),
+        ],
+    )
+    def test_targets_are_read_off_the_invocation(
+        self, command: str, expected: list[str]
+    ) -> None:
+        """A flag, a variable assignment and a similarly named target are all
+        things a substring match cannot tell apart from the gate."""
+        assert _make_targets(command) == expected
+
+    @pytest.mark.parametrize(
+        "flag", ["-n", "--dry-run", "-q", "--question", "-t", "-kn"]
+    )
+    def test_a_make_that_runs_nothing_asks_for_no_target(self, flag: str) -> None:
+        """`make -n check` prints the recipe and runs none of it. Read as
+        `["check"]` it satisfies the gate assertion below while CI checks
+        nothing, which is the whole failure that assertion exists to prevent."""
+        assert _make_targets(f"make {flag} check") == []
 
 
 class TestQualityGateWiring:

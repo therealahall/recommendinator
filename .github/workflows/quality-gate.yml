@@ -7,6 +7,9 @@ on:
   workflow_call:
 
 jobs:
+  # The second half of the `check / check` status branch protection requires:
+  # the calling job's name, then this one. Renaming this blocks every merge
+  # until someone edits the repository settings. See ci.yml for the first half.
   check:
     runs-on: ubuntu-latest
     permissions:

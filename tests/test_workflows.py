@@ -63,6 +63,21 @@ STILL_MAIN_CONDITION = "steps.validated.outputs.current == 'true'"
 # provenance and sbom travel under packages:write and want neither.
 UNUSED_SCOPES = ("attestations", "id-token")
 
+# The one job entitled to push to the registry, as `<workflow>:<job>`. build-pr
+# runs on `pull_request`, where the scope would let a contributed branch push
+# over a published tag.
+PACKAGE_WRITERS = {"docker.yml:publish"}
+
+# The steps after the merge-race guard that carry no condition. They provision
+# the runner and write nothing outside it; everything else after the guard runs
+# against the detached HEAD the pinned checkout left behind.
+UNCONDITIONAL_SETUP_STEPS = {
+    "astral-sh/setup-uv",
+    "actions/setup-python",
+    "Install dependencies",
+    "Configure git for semantic-release",
+}
+
 # Each floating tag and the one guard output entitled to enable it. The three
 # are interchangeable to every other assertion here, and a swapped pair is
 # indistinguishable from the bug they exist to prevent.
@@ -71,6 +86,20 @@ FLOATING_TAG_GUARDS = {
     ("semver", "{{major}}"): "highest_in_major",
     ("semver", "{{major}}.{{minor}}"): "highest_in_minor",
 }
+
+# The git fixtures below inherit the developer's environment, so a global
+# `commit.gpgsign` or `core.hooksPath` would decide whether they pass. Both
+# config files are neutralised rather than each setting overridden by name.
+GIT_ISOLATION = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+}
+
+# What the tests for that isolation make a hostile git print.
+_HOSTILE_HOOK_MARKER = "HOSTILE-HOOK-RAN"
+
+# The only history the guards count anything from.
+MAIN_TRACKING_REF = "refs/remotes/origin/main"
 
 DOCKERFILE = _REPO_ROOT / "Dockerfile"
 
@@ -116,6 +145,12 @@ def _step_index(path: Path, job: str, name: str) -> int:
 
 def _step_named(path: Path, job: str, name: str) -> dict[str, Any]:
     return _steps(path, job)[_step_index(path, job, name)]
+
+
+def _step_identity(step: dict[str, Any]) -> str:
+    """A step's `name:`, or the action it runs when it has none."""
+    name = step.get("name")
+    return str(name) if name is not None else str(step["uses"]).split("@")[0]
 
 
 def _conditions(expression: str) -> set[str]:
@@ -189,6 +224,7 @@ def _git(repository: Path, *arguments: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, **GIT_ISOLATION},
     )
     return completed.stdout.strip()
 
@@ -198,6 +234,27 @@ def _commit(repository: Path, message: str) -> str:
     (repository / "CHANGELOG.md").write_text(f"# {message}\n", encoding="utf-8")
     _git(repository, "commit", "--quiet", "--all", "-m", message)
     return _git(repository, "rev-parse", "HEAD")
+
+
+def _land(repository: Path, message: str) -> str:
+    """Add a commit to `main` and push it, so `origin/main` reaches it."""
+    sha = _commit(repository, message)
+    _git(repository, "push", "--quiet", "origin", "main")
+    return sha
+
+
+def _release(repository: Path, tag: str, *, annotated: bool = False) -> str:
+    """Land a commit on `main` and tag it, the way a release reaches the guard.
+
+    python-semantic-release creates annotated tags, so `annotated` is the shape
+    production actually pushes; lightweight is the cheaper default here.
+    """
+    sha = _land(repository, f"work for {tag}")
+    if annotated:
+        _git(repository, "tag", "--annotate", "--message", f"Release {tag}", tag)
+    else:
+        _git(repository, "tag", tag)
+    return sha
 
 
 @pytest.fixture
@@ -249,6 +306,7 @@ def _run_step(
         cwd=repository,
         env={
             **os.environ,
+            **GIT_ISOLATION,
             "GITHUB_OUTPUT": str(step_output),
             **(environment or {}),
         },
@@ -347,6 +405,26 @@ class TestWorkflowSupplyChain:
             "contents": "read",
             "packages": "write",
         }
+
+    def test_publish_is_the_only_job_that_may_write_to_the_registry(self) -> None:
+        """Only one block is pinned above, and UNUSED_SCOPES covers just the
+        scopes nothing consumes. build-pr builds a contributed tree, on
+        `pull_request`, and this is what keeps the push scope away from it."""
+        holders = {
+            f"{path.name}:{job_name}"
+            for path in _workflow_files()
+            for job_name, job in _jobs(path).items()
+            if "packages" in job.get("permissions", {})
+        }
+
+        assert holders == PACKAGE_WRITERS
+
+    def test_the_pull_request_build_pushes_nothing(self) -> None:
+        """The other half of that: the scope is only one of the two things a
+        publishing pull-request build would need."""
+        build = _step_named(DOCKER, "build-pr", "Build ${{ matrix.name }}")
+
+        assert build["with"]["push"] is False
 
     def test_the_release_job_writes_nothing_with_its_own_token(self) -> None:
         """Every write it makes goes through the PAT, so `contents: write` here
@@ -458,6 +536,25 @@ class TestReleaseIntegrity:
             assert (
                 _step_named(RELEASE, "release", name)["if"] == STILL_MAIN_CONDITION
             ), name
+
+    def test_no_step_after_the_merge_race_guard_runs_unconditioned(self) -> None:
+        """The pair above is named, so a step inserted between them and the guard
+        is what nothing sees. It would run against the detached HEAD the
+        overtaken run was left standing on."""
+        following = _steps(RELEASE, "release")[
+            _step_index(RELEASE, "release", "Release only the commit CI validated")
+            + 1 :
+        ]
+
+        assert following, "nothing follows the guard; this sweep is empty"
+        assert {
+            _step_identity(step) for step in following if "if" not in step
+        } == UNCONDITIONAL_SETUP_STEPS
+        # `if: always()` is a condition too, and reopens the same hole.
+        assert {str(step["if"]) for step in following if "if" in step} <= {
+            STILL_MAIN_CONDITION,
+            RELEASED_TAG_CONDITION,
+        }
 
     def test_the_bumped_tree_is_verified_before_anything_is_pushed(self) -> None:
         """The version commit rewrites uv.lock, and a pushed tag cannot be taken back."""
@@ -699,6 +796,87 @@ class TestReleaseIsCutFromTheValidatedCommit:
         assert superseded in output and overtaking in output
 
 
+class TestTheGitFixturesIgnoreTheDevelopersConfiguration:
+    """Whether these tests pass must not depend on whose machine runs them.
+
+    A maintainer's `commit.gpgsign` or `core.hooksPath` reaches every fixture
+    here through the inherited environment, and both can fail a plain commit.
+    """
+
+    @pytest.fixture
+    def hostile_global_configuration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Point this process's git at hooks that refuse every commit and checkout."""
+        hooks = tmp_path / "hostile-hooks"
+        hooks.mkdir()
+        for hook in ("pre-commit", "post-checkout"):
+            (hooks / hook).write_text(
+                f"#!/bin/sh\necho {_HOSTILE_HOOK_MARKER} >&2\nexit 1\n",
+                encoding="utf-8",
+            )
+            (hooks / hook).chmod(0o755)
+        configuration = tmp_path / "hostile.gitconfig"
+        configuration.write_text(f"[core]\n\thooksPath = {hooks}\n", encoding="utf-8")
+        for variable in GIT_ISOLATION:
+            monkeypatch.setenv(variable, str(configuration))
+
+    @pytest.mark.parametrize(
+        "command",
+        [["commit", "--allow-empty", "-m", "probe"], ["switch", "-C", "probe"]],
+        ids=["commit", "switch"],
+    )
+    def test_the_hostile_configuration_reaches_a_plain_git(
+        self,
+        repository: Path,
+        hostile_global_configuration: None,
+        command: list[str],
+    ) -> None:
+        """The anchor. Without it the two below pass against any environment,
+        including one where nothing was ever isolated."""
+        refused = subprocess.run(
+            ["git", "-c", "user.email=t@example.test", "-c", "user.name=T", *command],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+
+        assert refused.returncode != 0
+        assert _HOSTILE_HOOK_MARKER in refused.stderr
+
+    def test_the_commit_helper_is_unaffected(
+        self, repository: Path, hostile_global_configuration: None
+    ) -> None:
+        """`_commit` builds the history every guard test reasons about."""
+        landed = _commit(repository, "landed anyway")
+
+        assert _git(repository, "rev-parse", "HEAD") == landed
+
+    def test_the_step_runner_is_unaffected(
+        self,
+        published_repository: Path,
+        tmp_path: Path,
+        hostile_global_configuration: None,
+    ) -> None:
+        """The release guard switches branches, and a `post-checkout` hook's exit
+        status becomes the command's."""
+        head = _git(published_repository, "rev-parse", "HEAD")
+        _git(published_repository, "checkout", "--quiet", "--detach", head)
+
+        code, output, step_output = _run_step(
+            RELEASE,
+            "release",
+            "Release only the commit CI validated",
+            repository=published_repository,
+            tmp_path=tmp_path,
+            environment={"VALIDATED_SHA": head},
+        )
+
+        assert code == 0, output
+        assert _HOSTILE_HOOK_MARKER not in output
+        assert "current=true\n" in step_output
+
+
 class TestOnlyMainCanBePublished:
     """A tag is pushable onto any commit; the guard is what narrows that."""
 
@@ -779,98 +957,119 @@ class TestOnlyMainCanBePublished:
 
 
 class TestFloatingTagsOnlyMoveForward:
-    """The alias decision, executed against real tag sets."""
+    """The alias decision, executed against real tag sets on real history.
+
+    Tagging one commit repeatedly satisfies every descendancy check trivially,
+    so a case about ordering gives each release a commit of its own.
+    """
 
     def test_the_guard_fetches_every_tag_before_comparing_them(self) -> None:
         """Shallow, `git tag --list` returns the pushed tag alone and it wins."""
         assert _steps(DOCKER, "guard")[0]["with"]["fetch-depth"] == 0
 
+    def test_the_decision_reads_a_ref_an_earlier_step_fetched(self) -> None:
+        """A checkout creates no remote-tracking ref, so the step before this one
+        is what puts `origin/main` there. Reordered, the decision finds no
+        releases and every alias stays put, on a workflow run that goes green."""
+        fetched_by = "Require the tagged commit to be on main"
+        deciding = "Decide which floating tags this release may move"
+
+        for step in (fetched_by, deciding):
+            assert MAIN_TRACKING_REF in str(_step_named(DOCKER, "guard", step)["run"])
+        assert _step_index(DOCKER, "guard", fetched_by) < _step_index(
+            DOCKER, "guard", deciding
+        )
+
+    @pytest.mark.parametrize(
+        "annotated", [False, True], ids=["lightweight", "annotated"]
+    )
     def test_the_newest_release_moves_every_alias(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path, annotated: bool
     ) -> None:
-        """The ordinary release: latest, 0 and 0.29 all follow it."""
+        """The ordinary release: latest, 0 and 0.29 all follow it.
+
+        Run over an annotated tag too, the shape python-semantic-release pushes:
+        nothing else notices the step's `^{commit}` derefs going missing.
+        """
         for name in ("v0.22.0", "v0.22.1", "v0.29.0"):
-            _git(repository, "tag", name)
-        assert _decide_aliases(repository, tmp_path, "v0.29.0") == {
+            _release(published_repository, name, annotated=annotated)
+        assert _decide_aliases(published_repository, tmp_path, "v0.29.0") == {
             "highest_overall": "true",
             "highest_in_major": "true",
             "highest_in_minor": "true",
         }
 
     def test_the_first_release_of_all_moves_every_alias(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """A repository whose only tag is the one being published."""
-        _git(repository, "tag", "v0.1.0")
-        assert _decide_aliases(repository, tmp_path, "v0.1.0") == {
+        """A repository whose only tag is the one being published.
+
+        One commit is the whole of this case rather than a shortcut: there is no
+        earlier release for it to descend from.
+        """
+        _release(published_repository, "v0.1.0")
+        assert _decide_aliases(published_repository, tmp_path, "v0.1.0") == {
             "highest_overall": "true",
             "highest_in_major": "true",
             "highest_in_minor": "true",
         }
 
     def test_a_backport_moves_only_the_line_it_belongs_to(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """`0.22` follows the backport; `latest` and `0` stay on 0.29."""
-        for name in ("v0.22.0", "v0.29.0", "v0.22.1"):
-            _git(repository, "tag", name)
-        assert _decide_aliases(repository, tmp_path, "v0.22.1") == {
+        """`0.22` follows the backport; `latest` and `0` stay on 0.29.
+
+        The backport is tagged on the main commit between the two releases,
+        which is the only shape the on-main guard admits.
+        """
+        _release(published_repository, "v0.22.0")
+        backported = _land(published_repository, "the fix worth backporting")
+        _release(published_repository, "v0.29.0")
+        _git(published_repository, "tag", "v0.22.1", backported)
+
+        assert _decide_aliases(published_repository, tmp_path, "v0.22.1") == {
             "highest_overall": "false",
             "highest_in_major": "false",
             "highest_in_minor": "true",
         }
 
     def test_re_pushing_a_superseded_tag_moves_nothing(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
         """Recovering a failed publish must not hand users a downgrade."""
         for name in ("v0.22.0", "v0.22.1", "v0.29.0"):
-            _git(repository, "tag", name)
-        assert _decide_aliases(repository, tmp_path, "v0.22.0") == {
+            _release(published_repository, name)
+        assert _decide_aliases(published_repository, tmp_path, "v0.22.0") == {
             "highest_overall": "false",
             "highest_in_major": "false",
             "highest_in_minor": "false",
         }
 
     def test_releases_are_ordered_by_version_and_not_by_text(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
         """Sorted as text, v0.9.1 outranks v0.10.0 and drags latest backwards."""
         for name in ("v0.9.0", "v0.9.1", "v0.10.0"):
-            _git(repository, "tag", name)
-        decided = _decide_aliases(repository, tmp_path, "v0.9.1")
-        assert decided["highest_overall"] == "false"
-        assert decided["highest_in_minor"] == "true"
+            _release(published_repository, name)
+        assert _decide_aliases(published_repository, tmp_path, "v0.9.1") == {
+            "highest_overall": "false",
+            "highest_in_major": "false",
+            "highest_in_minor": "true",
+        }
 
     def test_a_major_line_is_matched_on_the_dot_and_not_on_any_character(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
         """Unescaped, `^v1.` also matches v10.0.0 and the `1` alias never moves."""
         for name in ("v1.0.0", "v10.0.0"):
-            _git(repository, "tag", name)
-        decided = _decide_aliases(repository, tmp_path, "v1.0.0")
+            _release(published_repository, name)
+        decided = _decide_aliases(published_repository, tmp_path, "v1.0.0")
         assert decided["highest_overall"] == "false"
         assert decided["highest_in_major"] == "true"
         assert decided["highest_in_minor"] == "true"
 
-    def test_the_newest_release_moves_every_alias_across_commits_too(
-        self, repository: Path, tmp_path: Path
-    ) -> None:
-        """Every other case here tags one commit repeatedly, where descendancy is
-        trivially satisfied. The ordinary release is a commit ahead of the last
-        one, and must still take all three."""
-        _git(repository, "tag", "v0.28.0")
-        _commit(repository, "the release after")
-        _git(repository, "tag", "v0.29.0")
-
-        assert _decide_aliases(repository, tmp_path, "v0.29.0") == {
-            "highest_overall": "true",
-            "highest_in_major": "true",
-            "highest_in_minor": "true",
-        }
-
     def test_an_alias_never_moves_to_a_commit_its_holder_never_reached(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
         """Regression test: a tag on an old commit could take `latest`.
 
@@ -878,12 +1077,11 @@ class TestFloatingTagsOnlyMoveForward:
         Root cause: the guard ordered releases by tag name alone.
         Fix: the release must also descend from the alias's current holder.
         """
-        stale = _git(repository, "rev-parse", "HEAD")
-        _commit(repository, "everything since")
-        _git(repository, "tag", "v0.29.0")
-        _git(repository, "tag", "v9.0.0", stale)
+        stale = _git(published_repository, "rev-parse", "HEAD")
+        _release(published_repository, "v0.29.0")
+        _git(published_repository, "tag", "v9.0.0", stale)
 
-        decided = _decide_aliases(repository, tmp_path, "v9.0.0")
+        decided = _decide_aliases(published_repository, tmp_path, "v9.0.0")
 
         assert decided["highest_overall"] == "false"
         # `9` and `9.0` name no earlier release, so nothing is behind them to
@@ -891,30 +1089,105 @@ class TestFloatingTagsOnlyMoveForward:
         assert decided["highest_in_major"] == "true"
         assert decided["highest_in_minor"] == "true"
 
+    def test_a_second_release_on_that_commit_is_refused_too(
+        self, published_repository: Path, tmp_path: Path
+    ) -> None:
+        """Regression test: two tags on one stale commit walked `latest` back.
+
+        Bug reported: found by audit, not exploited.
+        Root cause: the holder was read as the highest-named other release.
+        Fix: descend from every other release in scope.
+        """
+        stale = _git(published_repository, "rev-parse", "HEAD")
+        _release(published_repository, "v0.29.0")
+        _git(published_repository, "tag", "v9.0.0", stale)
+        _git(published_repository, "tag", "v9.0.1", stale)
+
+        decided = _decide_aliases(published_repository, tmp_path, "v9.0.1")
+
+        assert decided["highest_overall"] == "false"
+        # The whole `9` line sits on that commit, so its two aliases are already
+        # there and moving them along it walks nothing back.
+        assert decided["highest_in_major"] == "true"
+        assert decided["highest_in_minor"] == "true"
+
+    def test_a_stale_release_after_a_refused_one_is_refused_too(
+        self, published_repository: Path, tmp_path: Path
+    ) -> None:
+        """Regression test: a stale release took `latest` after a refusal.
+
+        Bug reported: found by audit, not exploited.
+        Root cause: on a linear main, that holder is just the newest other tag.
+        Fix: descend from every other release in scope.
+        """
+        first_stale = _git(published_repository, "rev-parse", "HEAD")
+        second_stale = _land(published_repository, "a little newer, still stale")
+        _release(published_repository, "v0.29.0")
+        _git(published_repository, "tag", "v9.0.0", first_stale)
+        _git(published_repository, "tag", "v9.0.1", second_stale)
+
+        assert _decide_aliases(published_repository, tmp_path, "v9.0.1") == {
+            "highest_overall": "false",
+            "highest_in_major": "true",
+            "highest_in_minor": "true",
+        }
+
     def test_a_major_alias_does_not_follow_a_tag_cut_off_the_line(
-        self, repository: Path, tmp_path: Path
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
         """The same defect one scope down: `v1.2.0` cut from v1.0.0's commit
         outranks v1.1.0 by name and would drag `1` back onto a build missing it."""
-        first = _git(repository, "rev-parse", "HEAD")
-        _git(repository, "tag", "v1.0.0")
-        _commit(repository, "the minor release")
-        _git(repository, "tag", "v1.1.0")
-        _git(repository, "tag", "v1.2.0", first)
+        first = _git(published_repository, "rev-parse", "HEAD")
+        _git(published_repository, "tag", "v1.0.0", first)
+        _release(published_repository, "v1.1.0")
+        _git(published_repository, "tag", "v1.2.0", first)
 
-        decided = _decide_aliases(repository, tmp_path, "v1.2.0")
+        decided = _decide_aliases(published_repository, tmp_path, "v1.2.0")
 
         assert decided["highest_overall"] == "false"
         assert decided["highest_in_major"] == "false"
         assert decided["highest_in_minor"] == "true"
 
-    def test_tags_that_are_not_releases_do_not_hold_an_alias_back(
-        self, repository: Path, tmp_path: Path
+    def test_a_tag_that_never_reached_main_holds_no_alias(
+        self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """A prerelease sorts above the release it precedes; neither is a release."""
-        for name in ("v0.29.0", "nightly", "v1.0.0-rc1"):
-            _git(repository, "tag", name)
-        assert _decide_aliases(repository, tmp_path, "v0.29.0") == {
+        """Regression test: an unpublished tag could freeze `latest` forever.
+
+        Bug reported: found by audit, not exploited.
+        Root cause: every semver tag counted, including one pushed onto a
+        feature branch that published nothing.
+        Fix: only tags reachable from `origin/main` count.
+        """
+        _release(published_repository, "v0.29.0")
+        _git(published_repository, "checkout", "--quiet", "-b", "side")
+        _git(
+            published_repository,
+            "tag",
+            "v0.29.1",
+            _commit(published_repository, "tagged but never merged"),
+        )
+        _git(published_repository, "checkout", "--quiet", "main")
+        _release(published_repository, "v0.30.0")
+
+        assert _decide_aliases(published_repository, tmp_path, "v0.30.0") == {
+            "highest_overall": "true",
+            "highest_in_major": "true",
+            "highest_in_minor": "true",
+        }
+
+    def test_tags_that_are_not_releases_do_not_hold_an_alias_back(
+        self, published_repository: Path, tmp_path: Path
+    ) -> None:
+        """A prerelease sorts above the release it precedes; neither is a release.
+
+        Both sit on a later commit than the release being published, so a parse
+        that let either through would refuse the alias twice over.
+        """
+        _release(published_repository, "v0.29.0")
+        later = _land(published_repository, "unreleased work")
+        for name in ("nightly", "v1.0.0-rc1"):
+            _git(published_repository, "tag", name, later)
+        assert _decide_aliases(published_repository, tmp_path, "v0.29.0") == {
             "highest_overall": "true",
             "highest_in_major": "true",
             "highest_in_minor": "true",
