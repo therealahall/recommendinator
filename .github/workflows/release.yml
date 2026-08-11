@@ -142,10 +142,19 @@ jobs:
         run: |
           VERSION="${NEW_TAG#v}"
 
-          # Recovery path: if a prior partial run already created the release,
-          # delete it so we can recreate it with the asset bundled at creation.
-          # Tag is preserved (--cleanup-tag=false). Safe for immutable releases
-          # too — deletion is allowed; only post-creation mutation is forbidden.
+          # The version commit's own CI run reaches this job again, with the tag
+          # already at HEAD. Remaking a release that is already whole would
+          # re-notify every watcher and reissue its asset under a new id.
+          if gh release view "$NEW_TAG" --json assets --jq '.assets[].name' \
+              2>/dev/null | grep -qxF docker-compose.yml; then
+            echo "Release $NEW_TAG already carries its asset; nothing to do."
+            exit 0
+          fi
+
+          # Recovery: a prior run pushed the tag and then failed here. The asset
+          # can only go on at creation, so an incomplete release is remade.
+          # Immutable releases forbid mutation, not deletion, and the tag the
+          # push made public is kept.
           if gh release view "$NEW_TAG" >/dev/null 2>&1; then
             echo "Release $NEW_TAG already exists; deleting so it can be recreated with asset."
             gh release delete "$NEW_TAG" --yes --cleanup-tag=false
