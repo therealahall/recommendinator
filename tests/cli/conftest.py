@@ -24,10 +24,12 @@ def _cli_patches():
     The top-level ``cli`` callback runs the source migrations on every command,
     so they are patched here to keep them off the MagicMock storage in tests.
 
-    The real ``migrate_config_settings`` boot hook is NOT stubbed — it runs
-    against the mocked StorageManager, whose settings store behaves like an
-    empty database (see ``_invoke_with_mocks``) so the DB overlay is a no-op
-    and config resolves from const/YAML without leaking state across tests.
+    The ``migrate_config_settings`` and ``migrate_config_credentials`` boot
+    hooks are NOT stubbed — both run against the mocked StorageManager, which
+    ``back_mock_settings_store`` makes behave like an empty database. Without
+    that the settings overlay would leak state across tests, and the credential
+    sweep would read a source row that is not there and discard every sensitive
+    field the test's config declares.
     """
     return (
         patch("src.cli.main.load_config"),

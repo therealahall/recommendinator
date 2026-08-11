@@ -219,12 +219,17 @@ class TestConfigEndpoint:
 
 
 class TestMigrateEndpoint:
-    def test_migrates_yaml_into_db(
+    def test_migrates_yaml_into_db_when_no_boot_pass_ran(
         self,
         client: TestClient,
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
+        """``migrate_source``'s own work: the boot migration is stubbed here.
+
+        The shipped ordering — startup encrypts the secret first — is the
+        class below.
+        """
         response = client.post("/api/sync/sources/my_games/migrate")
         assert response.status_code == 200
         body = response.json()
@@ -267,6 +272,34 @@ class TestMigrateEndpoint:
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
         response = client.post("/api/sync/sources/nothing/migrate")
         assert response.status_code == 404
+
+
+class TestMigrateNamesASecretTheBootPassEncryptedRegression:
+    """Reported: ``source migrate`` printed no ``Secrets:`` line.
+
+    Cause: the answer counted what the call itself moved, and the startup
+    migration had already emptied the YAML entry. Fix: it counts the rows.
+    """
+
+    def test_a_real_boot_still_reports_the_secret(
+        self,
+        registry_with_source_fakes: None,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        with (
+            patch("src.web.app.migrate_source_labels"),
+            patch("src.web.app.migrate_source_config_plugins"),
+            booted_web_app(storage, base_config, migrate_credentials=True) as app,
+        ):
+            client = authenticated_client(app)
+            # Anchored: startup, not this request, is what encrypted it.
+            assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
+            response = client.post("/api/sync/sources/my_games/migrate")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["secrets_migrated"] == ["api_key"]
+        assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
 
 
 class TestUpdateConfigEndpoint:

@@ -55,7 +55,10 @@ completion history sit in the database as plaintext, and so do the embeddings.
   not. A credential you cannot delete is worse than one you cannot use.
 - A status read's `connected` reports the stored credential row, not the
   resolved config, so it never offers a control that answers 404. A token left
-  in `config.yaml` reads as not connected: no verb can delete it.
+  in `config.yaml` reads as connected, because startup moved it into that row
+  before any command or request ran. The exception is a source that already has
+  a database row: its file-held token is discarded rather than read, so it
+  reads as not connected and there is nothing for disconnect to delete.
 - Trakt's `enabled` also means its client credentials resolve. Clearing the
   client secret leaves `connected` true and the token revocable.
 - An upgrade does not move tokens an earlier release stored under the plugin's

@@ -288,17 +288,6 @@ export const useDataStore = defineStore('data', () => {
     return err instanceof ApiError ? `Error: ${err.message}` : fallback
   }
 
-  /** Re-read a status the server has already changed. The token was stored (or
-   *  dropped) either way, so a failure here leaves the panel stale rather than
-   *  overwriting the confirmation with an error the user cannot act on. */
-  async function refreshOAuthStatus(sourceId: string, plugin: string): Promise<void> {
-    try {
-      await loadOAuthStatus(sourceId, plugin)
-    } catch (err) {
-      console.error('OAuth status re-read failed:', err)
-    }
-  }
-
   async function submitOAuthCode(
     sourceId: string,
     plugin: string,
@@ -318,7 +307,10 @@ export const useDataStore = defineStore('data', () => {
       setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: connection failed'))
       return
     }
-    await refreshOAuthStatus(sourceId, plugin)
+    // Rejects to the caller: the token is stored by now, so a stale panel would
+    // offer Connect for an account that is connected. The confirmation above
+    // stands either way — this is not a failed connect.
+    await loadOAuthStatus(sourceId, plugin)
   }
 
   function submitGogCode(sourceId: string, codeOrUrl: string) {
@@ -357,7 +349,10 @@ export const useDataStore = defineStore('data', () => {
       setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: disconnect failed'))
       return
     }
-    await refreshOAuthStatus(sourceId, plugin)
+    // Rejects to the caller: the credential is gone by now, so a stale panel
+    // would keep claiming the account is connected, next to the message saying
+    // it was disconnected.
+    await loadOAuthStatus(sourceId, plugin)
   }
 
   function disconnectGog(sourceId: string) {
@@ -389,7 +384,15 @@ export const useDataStore = defineStore('data', () => {
       // the status re-read below unmounts that flow, taking its live region
       // with it before anything could be announced from there.
       setOAuthMessage(sourceId, result.message || 'Trakt account connected.')
-      await refreshOAuthStatus(sourceId, 'trakt')
+      try {
+        await loadOAuthStatus(sourceId, 'trakt')
+      } catch (err) {
+        // Swallowed, unlike the connect and disconnect re-reads: this one is
+        // awaited inside the poll loop, whose own catch reports the connect
+        // itself as failed. The flow reads the flag back and says the status
+        // could not be re-read.
+        console.error('Trakt status re-read failed:', err)
+      }
     }
     return result
   }

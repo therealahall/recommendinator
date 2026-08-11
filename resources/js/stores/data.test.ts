@@ -764,13 +764,17 @@ describe('useDataStore', () => {
       )
     })
 
-    it('submitGogCode keeps the confirmation when the status re-read fails', async () => {
+    it('submitGogCode keeps the confirmation and rejects when the re-read fails', async () => {
       mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
       mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
 
       const store = useDataStore()
-      await store.submitGogCode('gog_work', 'auth-code')
 
+      // Swallowed, this left the panel offering Connect for an account that is
+      // connected, with nothing anywhere saying the status is unknown.
+      await expect(
+        store.submitGogCode('gog_work', 'auth-code'),
+      ).rejects.toBeInstanceOf(ApiError)
       // The token IS stored by the time the re-read runs, so reporting the
       // connect as failed would be a lie the user acts on.
       expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
@@ -824,13 +828,17 @@ describe('useDataStore', () => {
       expect(mockGet).not.toHaveBeenCalled()
     })
 
-    it('disconnectGog keeps the confirmation when the status re-read fails', async () => {
+    it('disconnectGog keeps the confirmation and rejects when the re-read fails', async () => {
       mockDelete.mockResolvedValueOnce({})
       mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
 
       const store = useDataStore()
-      await store.disconnectGog('gog_work')
 
+      // Swallowed, this left the panel claiming the account was connected —
+      // Disconnect button and all — beside the message saying it was not.
+      await expect(store.disconnectGog('gog_work')).rejects.toBeInstanceOf(
+        ApiError,
+      )
       // The credential is already gone; a stale panel is not a failed
       // disconnect and must not be reported as one.
       expect(store.oauthMessages['gog_work']).toBe(

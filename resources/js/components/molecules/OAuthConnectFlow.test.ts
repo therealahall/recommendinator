@@ -94,6 +94,65 @@ describe('OAuthConnectFlow', () => {
     wrapper.unmount()
   })
 
+  it('disables Connect and names the remedy when there is no auth URL', () => {
+    const wrapper = mount(OAuthConnectFlow, {
+      props: {
+        sourceId: 'gog_work',
+        sourceName: 'GOG (work)',
+        authUrl: null,
+        expectedOrigin: 'https://login.gog.com',
+        helpText: '',
+        serviceName: 'GOG Account',
+      },
+      attachTo: document.body,
+    })
+
+    // openAuth already returned silently on a null URL, so the button was live
+    // and did nothing at all — the failure reached no user (WCAG 3.3.1).
+    const button = wrapper.get('button')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
+    expect(hint.text()).toContain('Enable this source')
+    expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
+    wrapper.unmount()
+  })
+
+  it('gives each source its own connect hint id', () => {
+    // Two GOG panels in one document: a shared id points both buttons at the
+    // first hint, and the second button loses its description.
+    const work = mount(OAuthConnectFlow, {
+      props: {
+        sourceId: 'gog_work',
+        sourceName: 'GOG (work)',
+        authUrl: null,
+        expectedOrigin: 'https://login.gog.com',
+        helpText: '',
+        serviceName: 'GOG Account',
+      },
+      attachTo: document.body,
+    })
+    const home = mount(OAuthConnectFlow, {
+      props: {
+        sourceId: 'gog-work',
+        sourceName: 'GOG (home)',
+        authUrl: null,
+        expectedOrigin: 'https://login.gog.com',
+        helpText: '',
+        serviceName: 'GOG Account',
+      },
+      attachTo: document.body,
+    })
+
+    const hintId = (wrapper: typeof work) =>
+      wrapper.get('[data-testid="oauth-connect-hint"]').attributes('id')
+    expect(hintId(work)).not.toBe(hintId(home))
+    for (const id of [hintId(work), hintId(home)]) {
+      expect(document.querySelectorAll(`#${id}`)).toHaveLength(1)
+    }
+    work.unmount()
+    home.unmount()
+  })
+
   it('names both buttons and the code field for their source', async () => {
     vi.spyOn(window, 'open').mockReturnValue(null)
     const work = await openCodeStep('gog_work', 'GOG (work)')

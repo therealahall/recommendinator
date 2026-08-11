@@ -40,6 +40,7 @@ const state = ref<FlowState>('idle')
 const userCode = ref('')
 const verificationUrl = ref('')
 const message = ref('')
+const resultText = ref('')
 
 let deviceCode = ''
 let intervalMs = 5000
@@ -102,21 +103,24 @@ async function poll(): Promise<void> {
   }
 
   if (result.connected) {
+    // Read before the state change hides the code panel: in a browser that
+    // blurs its occupant to <body>, and rescuing THAT focus is the only reason
+    // to move any. poll() fires from a timer, so a user who tabbed into the
+    // settings while waiting must keep the field they are typing in (2.4.3).
+    const rescuingFocus =
+      codePanel.value?.contains(document.activeElement) ?? false
     state.value = 'connected'
     // The confirmation belongs to the panel's region, since the status flip
-    // unmounts this component. But that re-read is best-effort: when it fails
-    // the parent keeps this mounted, and silence here renders an empty box.
-    if (data.oauthStatusFor(props.sourceId).connected) {
-      message.value = ''
-      return
+    // unmounts this component. That re-read is best-effort though, and when it
+    // fails the parent keeps this mounted — so the panel focus lands on says
+    // so itself, leaving the store's confirmation the only region speaking.
+    message.value = ''
+    if (!data.oauthStatusFor(props.sourceId).connected) {
+      resultText.value =
+        'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
+      await nextTick()
+      if (rescuingFocus) resultPanel.value?.focus()
     }
-    message.value =
-      'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
-    await nextTick()
-    // v-show has just hidden the code panel, so the browser's focus-fixup rule
-    // has already blurred whatever inside it held focus down to <body>. jsdom
-    // implements no fixup rule, so no test can reach that state.
-    resultPanel.value?.focus()
     return
   }
 
@@ -168,7 +172,7 @@ onBeforeUnmount(clearPoll)
       <p
         v-if="!canConnect"
         :id="hintId"
-        class="trakt-flow-hint"
+        class="oauth-connect-hint"
         data-testid="trakt-connect-hint"
       >Add the Trakt client ID and client secret in the settings below before you can connect.</p>
     </template>
@@ -205,6 +209,11 @@ onBeforeUnmount(clearPoll)
       :aria-label="resultLabel"
       tabindex="-1"
     >
+      <p
+        v-if="resultText"
+        class="trakt-flow-result"
+        data-testid="trakt-result-text"
+      >{{ resultText }}</p>
       <button
         v-if="state === 'error'"
         type="button"
@@ -242,14 +251,16 @@ onBeforeUnmount(clearPoll)
   cursor: not-allowed;
 }
 
-.trakt-flow-hint {
-  margin-top: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
+/* Pointer focus only, mirroring .main-content in base.css. A keyboard-driven
+   flow propagates :focus-visible through the programmatic focus() below, and
+   the ring is the only thing telling that user where they now stand (2.4.7). */
+.trakt-flow-panel:focus:not(:focus-visible) {
+  outline: none;
 }
 
-.trakt-flow-panel:focus {
-  outline: none;
+.trakt-flow-result {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
 }
 
 .trakt-flow-instructions {

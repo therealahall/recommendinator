@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import SyncSourceAccordion from './SyncSourceAccordion.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import { useDataStore, type OAuthStatus } from '@/stores/data'
+import { componentStyles } from '@/testing/styles'
 import type { SourceConfigResponse, SourceSchemaResponse } from '@/types/api'
 
 const baseSource = {
@@ -389,6 +390,21 @@ describe('SyncSourceAccordion', () => {
     await flushPromises()
   })
 
+  it('suppresses the OAuth panel focus ring for pointer focus alone', () => {
+    // Programmatic focus matches :focus-visible when the element that lost
+    // focus did, so a blanket `:focus { outline: none }` erased the ring for
+    // the keyboard user it exists for (2.4.7). The scoped rule outranks
+    // base.css, which cannot rescue it.
+    const styles = componentStyles(
+      'resources/js/components/organisms/SyncSourceAccordion.vue',
+    )
+
+    expect(styles).toMatch(
+      /\.source-accordion-oauth:focus:not\(:focus-visible\)\s*\{[^}]*outline:\s*none/,
+    )
+    expect(styles).not.toMatch(/\.source-accordion-oauth:focus\s*\{/)
+  })
+
   // Each OAuth source below is named for its purpose, not for its plugin: the
   // connect flow is chosen by plugin and addressed by source id.
   describe('trakt device-code connect/disconnect', () => {
@@ -684,7 +700,7 @@ describe('SyncSourceAccordion', () => {
 
     async function expandGog(
       connected: boolean,
-      authUrl = 'https://auth.gog.com/auth',
+      authUrl: string | null = 'https://auth.gog.com/auth',
     ) {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: gogSource, syncing: false },
@@ -898,6 +914,70 @@ describe('SyncSourceAccordion', () => {
       expect(region.text()).toContain('not enabled for that source')
       expect(region.classes()).not.toContain('sr-only')
       wrapper.unmount()
+    })
+
+    it('offers a disabled Connect and the remedy when there is no auth URL', async () => {
+      // What the server sends for a source it will not connect. Gating the
+      // whole connect block on the auth URL left the named group with no
+      // children: "GOG (work) connection, grouping" and nothing inside it.
+      const { wrapper } = await expandGog(false, null)
+
+      const connect = wrapper.findComponent(OAuthConnectFlow).get('button')
+      expect((connect.element as HTMLButtonElement).disabled).toBe(true)
+      const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
+      expect(hint.text()).toContain('Enable this source')
+      expect(connect.attributes('aria-describedby')).toBe(hint.attributes('id'))
+      expect(
+        wrapper.get('.source-accordion-oauth').element.contains(hint.element),
+      ).toBe(true)
+    })
+
+    it('reports the status as unknown when a disconnect cannot be re-read', async () => {
+      const { wrapper, store } = await expandGog(true)
+      // The DELETE succeeded and said so; only the re-read after it failed.
+      vi.spyOn(store, 'disconnectGog').mockImplementation(async (id: string) => {
+        store.oauthMessages[id] = 'Disconnected. You can reconnect below.'
+        throw new Error('status read failed')
+      })
+
+      await wrapper.get('[data-testid="disconnect-btn-gog_work"]').trigger('click')
+      await flushPromises()
+
+      // The cached flag still says connected, so rendering it put "GOG account
+      // connected." and a Disconnect button beside a region announcing the
+      // disconnect, with nothing saying which one is current.
+      expect(store.oauthStatusFor('gog_work').connected).toBe(true)
+      expect(wrapper.find('[data-testid="oauth-connected"]').exists()).toBe(false)
+      expect(
+        wrapper.find('[data-testid="disconnect-btn-gog_work"]').exists(),
+      ).toBe(false)
+      expect(wrapper.get('[data-testid="oauth-status-error"]').text()).toContain(
+        'Could not read',
+      )
+      expect(wrapper.find('[data-testid="oauth-status-retry"]').exists()).toBe(true)
+    })
+
+    it('reports the status as unknown when a connect cannot be re-read', async () => {
+      vi.spyOn(window, 'open').mockReturnValue(null)
+      const { wrapper, store } = await expandGog(false, 'https://login.gog.com/auth')
+      // The token is stored and the confirmation is out; the re-read failed.
+      vi.spyOn(store, 'submitGogCode').mockImplementation(async (id: string) => {
+        store.oauthMessages[id] = 'GOG account connected successfully!'
+        throw new Error('status read failed')
+      })
+
+      const flow = wrapper.findComponent(OAuthConnectFlow)
+      await flow.get('button').trigger('click')
+      await flow.get('input').setValue('auth-code')
+      await flow.findAll('button')[1].trigger('click')
+      await flushPromises()
+
+      // The stale flag reads as "not connected", so the panel kept offering
+      // Connect for an account that is now connected.
+      expect(wrapper.findComponent(OAuthConnectFlow).exists()).toBe(false)
+      expect(wrapper.get('[data-testid="oauth-status-error"]').text()).toContain(
+        'Could not read',
+      )
     })
 
     it('clears a stale message before the panel is shown again', async () => {
