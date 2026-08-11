@@ -377,9 +377,9 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
 class TestAMalformedInputsBlockDoesNotAbortTheBoot:
     """A list-shaped ``inputs:`` is truthy and has no ``.items()``.
 
-    The credential sweep runs on the callback, so letting it raise would take
-    down every verb — including the read-only ones the operator would read the
-    misconfiguration off.
+    The credential sweep runs on the callback, so letting it raise takes down
+    every verb. ``source list`` reads ``inputs`` itself and still faults; this
+    covers the verbs that do not.
     """
 
     def test_a_read_only_command_still_runs(self, cli_runner: CliRunner) -> None:
@@ -427,3 +427,40 @@ class TestMockedBootSecretSweepRegression:
         )
         # And no plaintext copy lingers in the running config.
         assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
+
+
+class TestASourceRowStubSurvivesTheBootRegression:
+    """Nothing depended on it yet, which is what made it a trap.
+
+    The shared backing assigned ``get_source_config`` after the test set it, so
+    a row-backed source read as fresh. Fix: it fills only what the caller left
+    unset.
+    """
+
+    def test_a_pre_set_source_row_still_shadows_the_file_secret(
+        self, cli_runner: CliRunner
+    ) -> None:
+        storage = MagicMock(spec=StorageManager)
+        storage.get_source_config.return_value = {
+            "source_id": "gog_work",
+            "plugin": "gog",
+            "config": {},
+            "enabled": True,
+        }
+        config: dict[str, Any] = {
+            "inputs": {
+                "gog_work": {
+                    "plugin": "gog",
+                    "enabled": True,
+                    "refresh_token": "from-yaml",
+                }
+            }
+        }
+
+        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
+
+        assert result.exit_code == 0, result.output
+        # Both branches drop the plaintext copy, so this only says the sweep
+        # ran; storing nothing is what says it saw the row.
+        assert "refresh_token" not in config["inputs"]["gog_work"]
+        storage.save_credential.assert_not_called()

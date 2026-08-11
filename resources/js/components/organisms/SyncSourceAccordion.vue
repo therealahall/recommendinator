@@ -194,6 +194,21 @@ const showTraktConnect = computed(
     isTrakt.value &&
     !oauth.value.connected,
 )
+// Neither flow can name its own remedy: Trakt's `enabled` folds "disabled" in
+// with "no client credentials", and Epic nulls the auth URL when its builder
+// throws while enabled. Only the enable flag tells those apart.
+const connectHint = computed(() => {
+  if (!config.value?.enabled) {
+    return 'Enable this source in the settings below before you can connect.'
+  }
+  if (isTrakt.value) {
+    return (
+      'Add the Trakt client ID and client secret in the settings below ' +
+      'before you can connect.'
+    )
+  }
+  return 'The service did not return a sign-in link. Try again in a moment.'
+})
 // An unreadable status asserts nothing: the cached flag is what the server said
 // before, and claiming a connection next to "could not read the status" leaves
 // the user no way to tell which statement is current.
@@ -440,6 +455,7 @@ const errorBadgeAriaLabel = computed<string>(
                 expected-origin="https://login.gog.com"
                 help-text="Paste the redirect URL after logging in:"
                 service-name="GOG Account"
+                :connect-hint="connectHint"
                 @submit="onSubmitCode"
               />
               <OAuthConnectFlow
@@ -450,6 +466,7 @@ const errorBadgeAriaLabel = computed<string>(
                 expected-origin="https://www.epicgames.com"
                 help-text="Paste the authorization code from the JSON response:"
                 service-name="Epic Games"
+                :connect-hint="connectHint"
                 @submit="onSubmitCode"
               />
             </template>
@@ -458,6 +475,7 @@ const errorBadgeAriaLabel = computed<string>(
               v-if="showTraktConnect"
               :source-id="source.id"
               :source-name="source.display_name"
+              :connect-hint="connectHint"
             />
 
             <!--

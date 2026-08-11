@@ -604,8 +604,16 @@ class SourceMigrationResponse(BaseModel):
 
     source_id: str
     migrated_at: str
-    fields_migrated: list[str]
-    secrets_migrated: list[str]
+    fields_migrated: list[str] = Field(
+        description="Non-sensitive fields the source's database row now holds."
+    )
+    secrets_migrated: list[str] = Field(
+        description=(
+            "Sensitive fields the source now holds an encrypted credential "
+            "for, whichever pass stored it — startup migrates a file-held "
+            "secret before any request reaches this route."
+        )
+    )
 
 
 class PluginInfoResponse(BaseModel):

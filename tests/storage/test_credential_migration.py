@@ -239,6 +239,18 @@ class TestMigrateConfigCredentials:
         migrate_config_credentials({"inputs": {}}, storage)
         migrate_config_credentials({}, storage)
 
+    def test_a_list_shaped_inputs_is_a_noop_too(self, storage: StorageManager) -> None:
+        """Truthy and without ``.items()``: the one shape that raises.
+
+        Every caller runs this on a boot or a reload, so the raise took the
+        whole process down rather than the one misconfigured source.
+        """
+        migrate_config_credentials(
+            {"inputs": [{"plugin": "gog", "refresh_token": "from-yaml"}]}, storage
+        )
+
+        assert storage.get_credential(1, "gog", "refresh_token") is None
+
     def test_stale_credential_re_encrypted_from_config(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:

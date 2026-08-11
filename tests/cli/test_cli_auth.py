@@ -1033,3 +1033,26 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
 
         assert result.exit_code == 0, result.output
         assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+
+    @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
+    def test_a_migrated_source_drops_the_file_copy_instead(
+        self, cli_runner: CliRunner, storage: StorageManager, plugin: str
+    ) -> None:
+        """The other half of the same pass, which the web asserts per provider.
+
+        A source with a row keeps it: reading the file back would undo a
+        revoke, so the copy is discarded and nothing reports it connected.
+        """
+        source_id = f"{plugin}_work"
+        config = self._yaml_held(storage, source_id, plugin)
+        # The row shadows the file entry wholesale, and Trakt's enabled half is
+        # its client id — which would otherwise move with the token.
+        storage.upsert_source_config(
+            USER_ID, source_id, plugin, {"client_id": "cid"}, enabled=True
+        )
+
+        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+
+        assert f"  {source_id} ({plugin}): enabled, not connected" in result.output
+        assert "refresh_token" not in config["inputs"][source_id]
+        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None

@@ -188,6 +188,10 @@ class TestSourceMigrate:
             config=base_config,
         )
         assert result.exit_code == 0
+        assert "Migrated source 'my_games'" in result.output
+        # The reported symptom: counting what this call moved printed no
+        # Secrets line at all, because startup had emptied the YAML entry.
+        assert "Secrets: api_key" in result.output
         row = storage.get_source_config(1, "my_games")
         assert row is not None
         assert row["plugin"] == "fake_api"

@@ -925,7 +925,7 @@ describe('SyncSourceAccordion', () => {
       const connect = wrapper.findComponent(OAuthConnectFlow).get('button')
       expect((connect.element as HTMLButtonElement).disabled).toBe(true)
       const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
-      expect(hint.text()).toContain('Enable this source')
+      expect(hint.text()).toContain('sign-in link')
       expect(connect.attributes('aria-describedby')).toBe(hint.attributes('id'))
       expect(
         wrapper.get('.source-accordion-oauth').element.contains(hint.element),
@@ -1055,6 +1055,83 @@ describe('SyncSourceAccordion', () => {
       await button.trigger('click')
 
       expect(disconnect).toHaveBeenCalledWith('epic_work')
+    })
+  })
+
+  // Neither flow can work out its own remedy. Trakt's `enabled` is false both
+  // for a disabled source and for one missing client credentials, and the auth
+  // URL is null both for a disabled source and for a builder that threw.
+  describe('the hint under a disabled Connect', () => {
+    async function expand(
+      plugin: string,
+      sourceEnabled: boolean,
+      oauth: OAuthStatus,
+    ) {
+      const id = `${plugin}_work`
+      const wrapper = mount(SyncSourceAccordion, {
+        props: {
+          source: {
+            id,
+            display_name: id,
+            plugin_display_name: plugin,
+            enabled: sourceEnabled,
+          },
+          syncing: false,
+        },
+      })
+      primeStore(
+        useDataStore(),
+        { ...migratedConfig, source_id: id, plugin, enabled: sourceEnabled },
+        oauth,
+      )
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    const UNCONNECTABLE: OAuthStatus = {
+      enabled: false,
+      connected: false,
+      authUrl: null,
+    }
+
+    it('tells a disabled Trakt source to enable itself', async () => {
+      // One click from connectable, and it was being told to add the client
+      // credentials it already has.
+      const wrapper = await expand('trakt', false, UNCONNECTABLE)
+
+      expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
+        'Enable this source in the settings below before you can connect.',
+      )
+    })
+
+    it('tells an enabled Trakt source to add its client credentials', async () => {
+      const wrapper = await expand('trakt', true, UNCONNECTABLE)
+
+      expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
+        'Add the Trakt client ID and client secret in the settings below ' +
+          'before you can connect.',
+      )
+    })
+
+    it('does not tell an enabled Epic source to enable itself', async () => {
+      const wrapper = await expand('epic_games', true, {
+        ...UNCONNECTABLE,
+        enabled: true,
+      })
+
+      expect(wrapper.get('[data-testid="oauth-connect-hint"]').text()).toBe(
+        'The service did not return a sign-in link. Try again in a moment.',
+      )
+    })
+
+    it('tells a disabled GOG source to enable itself', async () => {
+      const wrapper = await expand('gog', false, UNCONNECTABLE)
+
+      expect(wrapper.get('[data-testid="oauth-connect-hint"]').text()).toBe(
+        'Enable this source in the settings below before you can connect.',
+      )
     })
   })
 

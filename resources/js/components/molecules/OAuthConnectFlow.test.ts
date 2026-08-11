@@ -7,6 +7,10 @@ import OAuthConnectFlow from './OAuthConnectFlow.vue'
 // `gog-work` are the realistic collision — both are valid source ids.
 const SOURCE_IDS = ['gog', 'gog_work', 'gog-work']
 
+// The parent picks the wording, so these tests only follow it through. A
+// sentence no branch of that decision produces is what proves the pass-through.
+const HINT = 'The remedy the parent worked out.'
+
 function mountFlow(sourceId: string, sourceName = `GOG (${sourceId})`) {
   return mount(OAuthConnectFlow, {
     props: {
@@ -16,6 +20,7 @@ function mountFlow(sourceId: string, sourceName = `GOG (${sourceId})`) {
       expectedOrigin: 'https://login.gog.com',
       helpText: 'Paste the redirect URL after logging in:',
       serviceName: 'GOG Account',
+      connectHint: HINT,
     },
     attachTo: document.body,
   })
@@ -59,6 +64,7 @@ describe('OAuthConnectFlow', () => {
         expectedOrigin: 'https://login.gog.com',
         helpText: '',
         serviceName: 'GOG Account',
+        connectHint: HINT,
       },
     })
 
@@ -94,7 +100,7 @@ describe('OAuthConnectFlow', () => {
     wrapper.unmount()
   })
 
-  it('disables Connect and names the remedy when there is no auth URL', () => {
+  it('disables Connect and shows the remedy it was given when there is no auth URL', () => {
     const wrapper = mount(OAuthConnectFlow, {
       props: {
         sourceId: 'gog_work',
@@ -103,6 +109,7 @@ describe('OAuthConnectFlow', () => {
         expectedOrigin: 'https://login.gog.com',
         helpText: '',
         serviceName: 'GOG Account',
+        connectHint: HINT,
       },
       attachTo: document.body,
     })
@@ -112,7 +119,8 @@ describe('OAuthConnectFlow', () => {
     const button = wrapper.get('button')
     expect((button.element as HTMLButtonElement).disabled).toBe(true)
     const hint = wrapper.get('[data-testid="oauth-connect-hint"]')
-    expect(hint.text()).toContain('Enable this source')
+    // A literal here told a disabled-but-connectable source to enable itself.
+    expect(hint.text()).toBe(HINT)
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
     wrapper.unmount()
   })
@@ -128,6 +136,7 @@ describe('OAuthConnectFlow', () => {
         expectedOrigin: 'https://login.gog.com',
         helpText: '',
         serviceName: 'GOG Account',
+        connectHint: HINT,
       },
       attachTo: document.body,
     })
@@ -139,6 +148,7 @@ describe('OAuthConnectFlow', () => {
         expectedOrigin: 'https://login.gog.com',
         helpText: '',
         serviceName: 'GOG Account',
+        connectHint: HINT,
       },
       attachTo: document.body,
     })

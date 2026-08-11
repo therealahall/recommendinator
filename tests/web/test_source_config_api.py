@@ -258,6 +258,34 @@ class TestMigrateEndpoint:
         # ``resolve_inputs`` prefers the DB row regardless.
         assert "my_games" in base_config["inputs"]
 
+    def test_a_secret_no_key_can_decrypt_is_still_reported(
+        self,
+        client: TestClient,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Storage, not readability — the answer ``secret_status`` also gives.
+
+        The migration keeps a row an encryption-key change made unreadable, so
+        omitting it here would offer the operator a migration that never comes.
+        """
+        # Nothing left in the file to re-encrypt from, so the stale row is the
+        # only thing the answer can be built out of.
+        del base_config["inputs"]["my_games"]["api_key"]
+        with storage.connection() as conn:
+            conn.execute(
+                "INSERT INTO credentials "
+                "(user_id, source_id, credential_key, credential_value) "
+                "VALUES (1, 'my_games', 'api_key', 'stale_garbage')"
+            )
+            conn.commit()
+
+        response = client.post("/api/sync/sources/my_games/migrate")
+
+        assert response.status_code == 200, response.text
+        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert response.json()["secrets_migrated"] == ["api_key"]
+
     def test_migration_is_idempotent(
         self, client: TestClient, storage: StorageManager
     ) -> None:
