@@ -125,6 +125,8 @@ async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
   if (saveStatus.value === 'saved') await refreshConnectGate()
 }
 
+let gateGeneration = 0
+
 // The Connect button reads the OAuth status; the hint under it reads the
 // source's own settings. Only the settings half of that pair moves when the
 // user enables the source or stores a client credential, so without this the
@@ -132,9 +134,14 @@ async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
 // remedy — and nothing on screen changes to say so.
 async function refreshConnectGate(): Promise<void> {
   if (!isOAuthSource.value) return
+  const generation = ++gateGeneration
   gateRefreshing.value = true
   data.setOAuthMessage(props.source.id, RECHECKING_STATUS)
   await loadOAuthState()
+  // The secret verbs stay live through an enable, so two rechecks overlap. A
+  // refresh overtaken by a later one read a gate that has already moved again:
+  // releasing the hold on its result is how the stale remedy returns.
+  if (generation !== gateGeneration) return
   gateRefreshing.value = false
   data.setOAuthMessage(
     props.source.id,

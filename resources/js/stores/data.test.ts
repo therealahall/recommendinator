@@ -694,6 +694,56 @@ describe('useDataStore', () => {
       expect(store.oauthStatusFor('other').connected).toBe(false)
     })
 
+    /** Hold every status read open, in call order, so they can be answered
+     *  out of it. */
+    function pendingStatusReads(): Array<(status: unknown) => void> {
+      const resolvers: Array<(status: unknown) => void> = []
+      mockGet.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolvers.push(resolve)
+          }),
+      )
+      return resolvers
+    }
+
+    it('keeps the newer status when an overtaken read answers last', async () => {
+      // Enabling a source and clearing a secret each recheck the same gate, and
+      // the two reads can be in flight together.
+      const answer = pendingStatusReads()
+
+      const store = useDataStore()
+      const overtaken = store.loadOAuthStatus('trakt_work', 'trakt')
+      const latest = store.loadOAuthStatus('trakt_work', 'trakt')
+
+      answer[1]({ enabled: true, connected: false, auth_url: null })
+      await latest
+      answer[0]({ enabled: false, connected: false, auth_url: null })
+      await overtaken
+
+      // Last write wins left the older read's gate in the store with nothing
+      // after it to correct the dead Connect button that gate renders.
+      expect(store.oauthStatusFor('trakt_work').enabled).toBe(true)
+    })
+
+    it('lets two sources recheck at once without cancelling each other', async () => {
+      const answer = pendingStatusReads()
+
+      const store = useDataStore()
+      const trakt = store.loadOAuthStatus('trakt_work', 'trakt')
+      const gog = store.loadOAuthStatus('gog_work', 'gog')
+
+      answer[1]({ enabled: true, connected: true, auth_url: null })
+      await gog
+      answer[0]({ enabled: true, connected: true, auth_url: null })
+      await trakt
+
+      // One counter for the whole store would read the Trakt answer as
+      // overtaken by the GOG one and drop a status nobody asks for again.
+      expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
+      expect(store.oauthStatusFor('gog_work').connected).toBe(true)
+    })
+
     it('loadOAuthStatus asks nothing for a plugin with no OAuth flow', async () => {
       const store = useDataStore()
       await store.loadOAuthStatus('my_books', 'goodreads_csv')
@@ -1410,12 +1460,20 @@ describe('useDataStore', () => {
           secret_status: {},
         },
       }
+      store.oauthStatus = {
+        goner: { enabled: true, connected: true, authUrl: null },
+      }
+      store.oauthMessages = { goner: 'Disconnected. You can reconnect below.' }
 
       await store.deleteSource('goner')
 
       expect(mockDelete).toHaveBeenCalledWith('/sync/sources/goner')
       expect(store.syncSources.map((s) => s.id)).toEqual(['survivor'])
       expect(store.sourceConfigs.goner).toBeUndefined()
+      // A source id is reusable, so leaving these behind hands the next source
+      // of that name a connection state and an announcement it never earned.
+      expect(store.oauthStatus.goner).toBeUndefined()
+      expect(store.oauthMessages.goner).toBeUndefined()
     })
 
     it('deleteSource leaves caches intact when the API rejects', async () => {

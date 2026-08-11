@@ -49,7 +49,6 @@ let deviceCode = ''
 let intervalMs = 5000
 let pollHandle: number | null = null
 
-const startButton = ref<HTMLButtonElement | null>(null)
 const codePanel = ref<HTMLElement | null>(null)
 const resultPanel = ref<HTMLElement | null>(null)
 
@@ -169,7 +168,6 @@ onBeforeUnmount(clearPoll)
         already refuses the activation this leaves reachable.
       -->
       <button
-        ref="startButton"
         type="button"
         class="btn btn-primary"
         data-testid="trakt-connect-btn"

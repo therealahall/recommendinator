@@ -141,7 +141,9 @@ describe('TraktDeviceCodeFlow', () => {
     // screen reader announces "why" alongside the control.
     expect(hint.attributes('id')).toBe('trakt-connect-hint-trakt_work')
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
-    // base.css greys `.btn[aria-disabled='true']`; off that class the button
+    // Deleting `.trakt-flow-connect:disabled` left base.css's
+    // `.btn[aria-disabled='true']` as the only thing greying this button, and
+    // base.css.test.ts pins that rule. Off the class — a rename, say — it
     // renders pixel-identically to a working one (WCAG 1.3.1).
     expect(button.classes()).toContain('btn')
   })

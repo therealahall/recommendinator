@@ -1218,6 +1218,57 @@ describe('SyncSourceAccordion', () => {
       )
     })
 
+    it('keeps the recheck open when a second write overtakes the first', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expand(
+        'trakt',
+        false,
+        UNCONNECTABLE,
+      )
+      stubEnableToggle(store)
+      vi.spyOn(store, 'clearSourceSecret').mockResolvedValue(undefined)
+      const answer: Array<() => void> = []
+      loadOAuthStatus.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            answer.push(resolve)
+          }),
+      )
+
+      // The secret buttons gate on `syncing` alone, so Clear stays live all
+      // the way through the enable: two rechecks, in flight together.
+      await wrapper.get('[data-testid="form-toggle-enabled"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="secret-clear-api_key"]').trigger('click')
+      await flushPromises()
+      expect(answer).toHaveLength(2)
+
+      // The enable's read answers first, against a gate the clear has already
+      // moved again — the store drops its payload for the same reason.
+      answer[0]()
+      await flushPromises()
+
+      // Stamping that outcome dropped the hint out of "Rechecking…" and named
+      // a remedy worked out from half-applied state.
+      expect(wrapper.get('[data-testid="trakt-connect-hint"]').text()).toBe(
+        'Rechecking the connection status…',
+      )
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'Rechecking the connection status…',
+      )
+
+      store.oauthStatus['trakt_work'] = { ...UNCONNECTABLE, enabled: true }
+      answer[1]()
+      await flushPromises()
+
+      // Only the last recheck standing gets to say what the gate now is.
+      expect(wrapper.find('[data-testid="trakt-connect-hint"]').exists()).toBe(
+        false,
+      )
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toContain(
+        'Connection status updated.',
+      )
+    })
+
     it('rechecks the gate after either secret verb', async () => {
       const { wrapper, store, loadOAuthStatus } = await expand(
         'trakt',

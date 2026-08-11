@@ -41,10 +41,15 @@ const codeLabel = computed(
 )
 
 function openAuth() {
-  if (!props.authUrl) return
+  // The same expression the button dims on: an aria-disabled button is still
+  // activatable, so a second reading of "connectable" here is a live, undimmed
+  // Connect that silently does nothing.
+  if (!canConnect.value) return
+  // The fallback only satisfies the parse signature: the gate above has already
+  // refused a null URL, and an empty string fails the parse anyway.
   let parsed: URL
   try {
-    parsed = new URL(props.authUrl)
+    parsed = new URL(props.authUrl ?? '')
   } catch {
     return
   }
