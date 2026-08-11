@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from legendary.api.egs import EPCAPI
 from legendary.models.exceptions import InvalidCredentialsError
 
-from src.web.sync_sources import is_nonempty_secret_value, resolve_input_for_plugin
+from src.web.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -35,6 +35,9 @@ class EpicAuthError(Exception):
     """Exception raised for Epic Games authentication errors."""
 
     pass
+
+
+_EPIC = OAuthSourceBinding(EPIC_PLUGIN, "Epic Games", EpicAuthError)
 
 
 def get_epic_auth_url() -> str:
@@ -141,38 +144,7 @@ def save_epic_token(
     Raises:
         EpicAuthError: If saving fails.
     """
-    try:
-        storage.save_credential(user_id, source_id, "refresh_token", refresh_token)
-        logger.info("Saved Epic Games refresh token to database")
-    except Exception as error:
-        logger.error(
-            "Failed to save Epic Games token to database: %s", type(error).__name__
-        )
-        raise EpicAuthError("Failed to save Epic Games token") from error
-
-
-def _resolve_epic_source(
-    config: dict[str, Any],
-    storage: StorageManager | None = None,
-    source_id: str = EPIC_SOURCE_ID,
-    user_id: int = 1,
-    *,
-    require_enabled: bool = True,
-) -> dict[str, Any] | None:
-    """*source_id*'s sync-ready config, unless it is not an Epic source.
-
-    Reads the database as well as ``inputs``, so a source added from the Data
-    tab is found too.
-    """
-    resolved = resolve_input_for_plugin(
-        source_id,
-        EPIC_PLUGIN,
-        config,
-        storage,
-        user_id,
-        require_enabled=require_enabled,
-    )
-    return resolved.config if resolved is not None else None
+    _EPIC.save_token(storage, refresh_token, source_id, user_id)
 
 
 def is_epic_enabled(
@@ -182,7 +154,7 @@ def is_epic_enabled(
     user_id: int = 1,
 ) -> bool:
     """Whether *source_id* is an enabled Epic Games source."""
-    return _resolve_epic_source(config, storage, source_id, user_id) is not None
+    return _EPIC.is_enabled(config, storage, source_id, user_id)
 
 
 def has_epic_token(
@@ -191,15 +163,5 @@ def has_epic_token(
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether an Epic source called *source_id* has a refresh token.
-
-    Asks the resolved config, which layers the stored secret over the
-    ``inputs`` entry as the sync does. A disabled source answers too: its
-    token is there to be revoked.
-    """
-    resolved = _resolve_epic_source(
-        config, storage, source_id, user_id, require_enabled=False
-    )
-    return resolved is not None and is_nonempty_secret_value(
-        resolved.get("refresh_token")
-    )
+    """Whether an Epic source called *source_id* has a refresh token."""
+    return _EPIC.has_token(config, storage, source_id, user_id)

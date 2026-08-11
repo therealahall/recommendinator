@@ -80,6 +80,13 @@ export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
+/** A DOM id keyed on the source that owns the element. Two panels for the same
+ *  plugin sit on the page at once, and `for`/`aria-describedby` resolve a
+ *  duplicated id to the first match, leaving the second control unnamed. */
+export function domId(prefix: string, sourceId: string): string {
+  return `${prefix}-${sourceId.replace(/[^a-zA-Z0-9-]/g, '-')}`
+}
+
 /** Truncate a string to a max length, appending ellipsis if needed */
 export function truncate(str: string, maxLen: number): string {
   return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'

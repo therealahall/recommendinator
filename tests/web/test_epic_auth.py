@@ -25,6 +25,9 @@ from tests.cli.conftest import _invoke_with_mocks
 
 EPIC_LOGGER = "src.web.epic_auth"
 
+# Token storage is shared by the three providers, so its failures log there.
+OAUTH_LOGGER = "src.web.oauth_sources"
+
 
 class TestGetEpicAuthUrl:
     """Tests for get_epic_auth_url function."""
@@ -216,14 +219,14 @@ class TestSaveEpicToken:
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Regression: this sink logged a traceback naming absolute source paths."""
-        with caplog.at_level(logging.ERROR, logger=EPIC_LOGGER):
+        with caplog.at_level(logging.ERROR, logger=OAUTH_LOGGER):
             with patch.object(
                 storage, "save_credential", side_effect=OSError("disk full")
             ):
                 with pytest.raises(EpicAuthError):
                     save_epic_token(storage, "some_token")
 
-        records = [record for record in caplog.records if record.name == EPIC_LOGGER]
+        records = [record for record in caplog.records if record.name == OAUTH_LOGGER]
         assert [record.getMessage() for record in records] == [
             "Failed to save Epic Games token to database: OSError"
         ]

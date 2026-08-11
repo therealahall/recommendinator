@@ -16,7 +16,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
-from src.utils.text import sanitize_for_log
+from src.utils.text import exception_for_log, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -56,7 +56,7 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
         return None
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
-        logger.error("Error resolving Steam vanity URL: %s", sanitize_for_log(scrubbed))
+        logger.error("Error resolving Steam vanity URL: %s", exception_for_log(error))
         # ``from None``: the Web API key is a query parameter, so the URL on
         # ``error`` carries it and any caller logging ``exc_info=True`` would
         # print it out of the traceback.
@@ -92,7 +92,7 @@ def get_owned_games(
         return list(games) if games else []
     except requests.RequestException as error:
         scrubbed = scrub_request_error(error)
-        logger.error("Error fetching Steam games: %s", sanitize_for_log(scrubbed))
+        logger.error("Error fetching Steam games: %s", exception_for_log(error))
         # ``from None`` for the same reason as the vanity-URL call above.
         raise SteamAPIError(f"Failed to fetch Steam games: {scrubbed}") from None
 

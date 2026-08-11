@@ -13,7 +13,12 @@ import pytest
 # parents[1] resolves /tests/test_credential_url_chains.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-_SOURCE_PLUGIN_TREE = Path("src/ingestion/sources")
+# Both halves of the registry are scanned. The OAuth modules put a client
+# secret in a query string exactly as a plugin does, and only the plugin tree
+# was ever checked for completeness.
+_SCANNED_TREES = (Path("src/ingestion/sources"), Path("src/web"))
+
+_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 # GOG's token endpoint takes the refresh token, the authorization code and the
 # client secret as query parameters; Steam's Web API takes ``key``.
@@ -237,7 +242,7 @@ def _leaky_renderings(module_path: Path, function_name: str) -> list[str]:
     functions = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == function_name
+        if isinstance(node, _FUNCTION_NODES) and node.name == function_name
     ]
     assert functions, f"{module_path} has no function named {function_name}"
 
@@ -266,18 +271,35 @@ def _leaky_renderings(module_path: Path, function_name: str) -> list[str]:
     return leaks
 
 
-def _names_a_credential(function: ast.FunctionDef) -> bool:
-    """Report whether ``function`` builds a dict keyed by a secret's name."""
-    return any(
-        isinstance(key, ast.Constant) and key.value in _CREDENTIAL_PARAM_NAMES
-        for node in ast.walk(function)
-        if isinstance(node, ast.Dict)
-        for key in node.keys
-        if key is not None
-    )
+def _keys_written(function: ast.AST) -> set[str]:
+    """Every string this function spells as a key.
+
+    Three spellings reach a query string identically: a dict literal, an item
+    assignment onto one, and ``dict(api_key=…)``. Reading only the literal was
+    the hole.
+    """
+    keys: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Dict):
+            keys.update(
+                key.value
+                for key in node.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            )
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            if isinstance(node.slice.value, str):
+                keys.add(node.slice.value)
+        elif isinstance(node, ast.Call) and _bare_name(node.func) == "dict":
+            keys.update(keyword.arg for keyword in node.keywords if keyword.arg)
+    return keys
 
 
-def _sends_query_params(function: ast.FunctionDef) -> bool:
+def _names_a_credential(function: ast.AST) -> bool:
+    """Report whether ``function`` keys anything by a secret's name."""
+    return bool(_keys_written(function) & _CREDENTIAL_PARAM_NAMES)
+
+
+def _sends_query_params(function: ast.AST) -> bool:
     """Report whether ``function`` puts anything in a request query string."""
     return any(
         keyword.arg == "params"
@@ -287,28 +309,29 @@ def _sends_query_params(function: ast.FunctionDef) -> bool:
     )
 
 
-def _credential_url_functions(root: Path, subtree: Path) -> set[tuple[str, str]]:
-    """Find every function under *subtree* sending a credential as a param.
+def _credential_url_functions(root: Path, *subtrees: Path) -> set[tuple[str, str]]:
+    """Find every function under *subtrees* sending a credential as a param.
 
     Over-approximate on purpose: the name and the ``params=`` need only share
     a function, not a dict. A needless registration costs a line, a missing
     one costs the key.
     """
     found: set[tuple[str, str]] = set()
-    for module_path in sorted((root / subtree).rglob("*.py")):
-        if module_path.name.startswith("test_"):
-            continue
-        tree = ast.parse(
-            module_path.read_text(encoding="utf-8"), filename=str(module_path)
-        )
-        relative = module_path.relative_to(root).as_posix()
-        found.update(
-            (relative, node.name)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef)
-            and _sends_query_params(node)
-            and _names_a_credential(node)
-        )
+    for subtree in subtrees:
+        for module_path in sorted((root / subtree).rglob("*.py")):
+            if module_path.name.startswith("test_"):
+                continue
+            tree = ast.parse(
+                module_path.read_text(encoding="utf-8"), filename=str(module_path)
+            )
+            relative = module_path.relative_to(root).as_posix()
+            found.update(
+                (relative, node.name)
+                for node in ast.walk(tree)
+                if isinstance(node, _FUNCTION_NODES)
+                and _sends_query_params(node)
+                and _names_a_credential(node)
+            )
     return found
 
 
@@ -349,27 +372,42 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
             "`from None`:\n  " + "\n  ".join(leaks)
         )
 
-    def test_every_plugin_sending_a_credential_param_is_registered(self) -> None:
+    def test_every_caller_sending_a_credential_param_is_registered(self) -> None:
         """A new integration joins the list above, rather than being remembered in."""
-        registered = {
+        scanned = {
             (module, function)
             for module, function in _CREDENTIAL_URL_FUNCTIONS
-            if module.startswith(f"{_SOURCE_PLUGIN_TREE.as_posix()}/")
+            if any(
+                module.startswith(f"{subtree.as_posix()}/")
+                for subtree in _SCANNED_TREES
+            )
         }
-        assert registered, (
-            f"nothing under {_SOURCE_PLUGIN_TREE} is registered, so the "
-            "comparison below would pass over an empty scan"
+        assert scanned == set(_CREDENTIAL_URL_FUNCTIONS), (
+            "a registered module sits outside every scanned tree, so the "
+            "comparison below cannot see it"
         )
 
-        assert _credential_url_functions(_REPO_ROOT, _SOURCE_PLUGIN_TREE) == registered
+        assert _credential_url_functions(_REPO_ROOT, *_SCANNED_TREES) == scanned
 
-    def test_the_scan_finds_a_newly_written_integration(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "    params = {'api_key': api_key, 'format': 'json'}\n",
+            "    params = {}\n    params['api_key'] = api_key\n",
+            "    params = dict(api_key=api_key, format='json')\n",
+        ],
+        ids=["dict literal", "item assignment", "dict() call"],
+    )
+    @pytest.mark.parametrize("prefix", ["def", "async def"], ids=["sync", "async"])
+    def test_the_scan_finds_a_newly_written_integration(
+        self, tmp_path: Path, body: str, prefix: str
+    ) -> None:
         """A scan that found nothing new would report the whole tree registered."""
         plugin = tmp_path / "newsource.py"
         plugin.write_text(
             "import requests\n"
-            "def fetch(api_key):\n"
-            "    params = {'api_key': api_key, 'format': 'json'}\n"
+            f"{prefix} fetch(api_key):\n"
+            f"{body}"
             "    return requests.get('https://api.example.com/list', params=params)\n",
             encoding="utf-8",
         )
@@ -396,6 +434,23 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
         )
 
         assert _credential_url_functions(tmp_path, Path(".")) == set()
+
+    def test_an_async_handler_is_judged(self, tmp_path: Path) -> None:
+        """``async def`` was invisible to the guard, registry entry and all."""
+        module = tmp_path / "example.py"
+        module.write_text(
+            "import requests\n"
+            "async def fetch_token(code):\n"
+            "    try:\n"
+            "        return requests.get('https://auth.gog.com/token', params=code)\n"
+            "    except requests.RequestException as error:\n"
+            "        raise error\n",
+            encoding="utf-8",
+        )
+
+        assert _leaky_renderings(module, "fetch_token") == [
+            "fetch_token: `raise error` keeps it as the cause"
+        ]
 
     @pytest.mark.parametrize(
         ("handler_body", "expected"),

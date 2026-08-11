@@ -40,13 +40,18 @@ completion history sit in the database as plaintext, and so do the embeddings.
 - A GOG, Epic Games or Trakt refresh token is persisted under its source's id —
   both the one the connect flow obtains and the one a sync rotates — so a source
   reads back what it was connected with and removing it takes the token too.
-- Every OAuth route refuses a source id whose plugin is not the route's own. The
-  id is the credential key, so an unchecked one files a GOG token where Trakt
-  reads its own.
-- Running a plugin and being enabled are separate questions. Connecting a
-  disabled source is refused, but disconnecting it is not, and status still
-  reports its stored token. Disabling a source is how revoking its token starts,
-  and a credential you cannot delete is worse than one you cannot use.
+- **Every OAuth route now takes a `source_id` query parameter**, defaulted to
+  the plugin's own name so an older client still addresses the source it used
+  to, and validated against the source-id pattern before anything reads it.
+  `auth connect` and `auth disconnect` take `--source-id` to match.
+- A route refuses an id whose plugin is not its own. The id is the credential
+  key, so an unchecked one files a GOG token where Trakt reads its own.
+- Running a plugin and being enabled are separate questions, and each verb gates
+  on the one it needs: connecting requires an enabled source, while
+  disconnecting and a status read's `connected` require only ownership. A
+  credential you cannot delete is worse than one you cannot use.
+- Trakt's `enabled` also means its client credentials resolve. Clearing the
+  client secret leaves `connected` true and the token revocable.
 - An upgrade does not move tokens an earlier release stored under the plugin's
   name: several sources can share a plugin, and nothing records which owns the
   token. The sync warns, names the source, and asks you to reconnect it — a copy
@@ -62,10 +67,10 @@ it, stored credentials cannot be decrypted and have to be re-entered.
 
 **Removing a source deletes every credential row stored under its id**, plugin
 installed or not, field still marked sensitive or not. Removal deletes no
-library items. Removing the last source on a plugin through the API also clears
-anything stranded under that plugin's own name, since no source can read it any
-more. Another source on the same plugin, enabled or not, keeps it. The CLI's
-`source remove` does not sweep it yet.
+library items. Removing the last source on a plugin — through the API or
+`source remove` — also clears anything stranded under that plugin's own name,
+since no source can read it any more. Another source on the same plugin, in
+`config.yaml` or the database and enabled or not, keeps it.
 
 **Changing a `credential_bound` field clears that source's stored secrets** —
 `url` on Sonarr, Radarr and Calibre-Web, plus Calibre-Web's `verify_ssl`. A
@@ -207,9 +212,11 @@ name or a status code. None of them attaches a traceback.
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`
 logs with `exc_info=True`, so GOG's token refresh and code exchange and Steam's
-two Web API calls raise `from None`. `tests/test_credential_url_chains.py` fails
-on a source plugin that sends a secret as a query parameter without doing the
-same. TMDB and RAWG still chain such a URL; no sink prints it today.
+two Web API calls raise `from None`. `tests/test_credential_url_chains.py` holds
+every such caller to both halves — a chain-free handler and an entry in its
+`_CREDENTIAL_URL_FUNCTIONS` list — and enrols new ones by scanning
+`src/ingestion/sources/` and `src/web/` for a credential key beside a `params=`
+call. TMDB and RAWG still chain such a URL; no sink prints it today.
 
 A refused config write is redacted before logging, but the match is exact, so a
 truncated or encoded form of the secret survives it.

@@ -282,7 +282,21 @@ export const useDataStore = defineStore('data', () => {
   }
 
   function oauthErrorMessage(err: unknown, fallback: string): string {
-    return err instanceof ApiError ? `Error: server returned ${err.status}` : fallback
+    // ApiError.message is the server's own ``detail`` when it sent one, which
+    // is the only part of a refusal that tells the user what to do about it
+    // ("GOG is not enabled for that source.").
+    return err instanceof ApiError ? `Error: ${err.message}` : fallback
+  }
+
+  /** Re-read a status the server has already changed. The token was stored (or
+   *  dropped) either way, so a failure here leaves the panel stale rather than
+   *  overwriting the confirmation with an error the user cannot act on. */
+  async function refreshOAuthStatus(sourceId: string, plugin: string): Promise<void> {
+    try {
+      await loadOAuthStatus(sourceId, plugin)
+    } catch (err) {
+      console.error('OAuth status re-read failed:', err)
+    }
   }
 
   async function submitOAuthCode(
@@ -299,11 +313,12 @@ export const useDataStore = defineStore('data', () => {
         { source_id: sourceId },
       )
       setOAuthMessage(sourceId, data.message)
-      await loadOAuthStatus(sourceId, plugin)
     } catch (err) {
       console.error('OAuth connect failed:', err)
       setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: connection failed'))
+      return
     }
+    await refreshOAuthStatus(sourceId, plugin)
   }
 
   function submitGogCode(sourceId: string, codeOrUrl: string) {
@@ -337,11 +352,12 @@ export const useDataStore = defineStore('data', () => {
         source_id: sourceId,
       })
       setOAuthMessage(sourceId, 'Disconnected. You can reconnect below.')
-      await loadOAuthStatus(sourceId, plugin)
     } catch (err) {
       console.error('OAuth disconnect failed:', err)
       setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: disconnect failed'))
+      return
     }
+    await refreshOAuthStatus(sourceId, plugin)
   }
 
   function disconnectGog(sourceId: string) {
@@ -369,14 +385,17 @@ export const useDataStore = defineStore('data', () => {
       { source_id: sourceId },
     )
     if (result.connected) {
-      await loadOAuthStatus(sourceId, 'trakt')
+      // The confirmation belongs to the panel, not to the device-code flow:
+      // the status re-read below unmounts that flow, taking its live region
+      // with it before anything could be announced from there.
+      setOAuthMessage(sourceId, result.message || 'Trakt account connected.')
+      await refreshOAuthStatus(sourceId, 'trakt')
     }
     return result
   }
 
-  async function disconnectTrakt(sourceId: string): Promise<void> {
-    await api.delete('/trakt/token', { source_id: sourceId })
-    await loadOAuthStatus(sourceId, 'trakt')
+  function disconnectTrakt(sourceId: string) {
+    return disconnectOAuth(sourceId, 'trakt', 'Disconnecting Trakt...')
   }
 
   // Enrichment actions

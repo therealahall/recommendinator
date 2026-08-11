@@ -2,8 +2,21 @@ import { describe, it, expect } from 'vitest'
 import {
   formatContentType, formatStatus, formatScore, formatElapsed,
   formatStatusForContentType, formatScorerName, formatDate, capitalize, truncate,
-  humanizeSection,
+  humanizeSection, domId,
 } from './format'
+
+describe('domId', () => {
+  it('keys the id on the source, so two panels for one plugin differ', () => {
+    expect(domId('oauth-code', 'gog')).toBe('oauth-code-gog')
+    expect(domId('oauth-code', 'gog_work')).not.toBe(domId('oauth-code', 'gog'))
+  })
+
+  it('replaces every character an id may not carry', () => {
+    expect(domId('oauth-code', 'my gog:2 (work)')).toBe(
+      'oauth-code-my-gog-2--work-',
+    )
+  })
+})
 
 describe('formatContentType', () => {
   it('formats known content types', () => {

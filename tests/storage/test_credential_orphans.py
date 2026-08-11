@@ -115,6 +115,31 @@ class TestALiveNamesakeRowIsNotCalledStrandedRegression:
         assert len(caplog.records) == 1
 
 
+class TestAYamlNamesakeIsNotCalledStrandedRegression:
+    """Reported: every sync warned about a live token a YAML source reads.
+
+    Cause: the warning was given no config, so half the source list was
+    invisible to it. Fix: the sync passes the config it already holds.
+    """
+
+    def test_a_yaml_namesake_silences_the_warning(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = _yaml_inputs(gog="gog", gog_work="gog")
+
+        with caplog.at_level(logging.WARNING):
+            warn_about_orphaned_credentials(storage, "gog", "gog_work", config)
+
+        assert caplog.records == []
+
+        # Anchor: the same call speaks when the config is withheld, so the
+        # silence above is the config being read and not a quiet code path.
+        with caplog.at_level(logging.WARNING):
+            warn_about_orphaned_credentials(storage, "gog", "gog_work")
+
+        assert len(caplog.records) == 1
+
+
 class TestBothPathsAskTheSameNamesakeQuestion:
     """A source called ``gog`` reads that row whatever plugin it runs.
 
@@ -199,3 +224,28 @@ class TestSweepingAStrandedCredentialOnDelete:
 
         assert storage.get_credential(1, "gog", "refresh_token") is None
         assert storage.get_credential(2, "gog", "refresh_token") == "another-users"
+
+    def test_the_deletion_counts_the_rows_and_escapes_the_plugin_name(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Plugin names reach here off a ``source_configs`` row, unvalidated."""
+        storage.save_credential(1, "gog\nWARNING forged", "api_key", "also-stranded")
+
+        with caplog.at_level(logging.INFO):
+            delete_orphaned_credentials(storage, "gog\nWARNING forged", {})
+
+        message = caplog.records[0].getMessage()
+        assert "Deleted 1 credential(s)" in message
+        assert "\\n" in message
+        assert "\n" not in message
+
+    def test_the_count_is_the_rows_this_sweep_took(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A hardcoded 1 would read the same on the single-row case above."""
+        storage.save_credential(1, "gog", "api_key", "also-stranded")
+
+        with caplog.at_level(logging.INFO):
+            delete_orphaned_credentials(storage, "gog", {})
+
+        assert "Deleted 2 credential(s)" in caplog.records[0].getMessage()

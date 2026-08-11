@@ -453,8 +453,12 @@ RAWG enrichment providers and the Steam source all do this.
 original on `__cause__`, and a caller logging `exc_info=True` prints its URL.
 Break the chain when the credential is in the query string; keep `from error`
 when it travels in a header, where the URL is clean.
-`tests/test_credential_url_chains.py` scans this tree and fails on a plugin that
-sends a secret as a query parameter until it is listed there and chain-free.
+A plugin that sends a credential as a query parameter owes two things, and
+`tests/test_credential_url_chains.py` fails until it has both: a handler that
+neither logs the raw error, renders a traceback, nor keeps it as `__cause__`,
+and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`. The scan enrols you
+automatically — it reads this tree and `src/web/`, and reports any function
+naming a credential key beside a `params=` call that the list omits.
 
 Beyond those: raise `SourceError` for recoverable failures, validate every
 required config field, skip items missing required fields rather than yielding

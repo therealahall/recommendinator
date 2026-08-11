@@ -8,13 +8,11 @@ const mockPost = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
-vi.mock('@/composables/useApi', () => ({
-  ApiError: class ApiError extends Error {
-    constructor(public status: number, public statusText: string) {
-      super(`${status} ${statusText}`)
-      this.name = 'ApiError'
-    }
-  },
+// Only the transport is faked. ApiError is the real class so the store is
+// tested against the message the app actually gets, including the server's
+// ``detail`` — a hand-rolled stand-in would hide that it carries one.
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
   useApi: () => ({
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),
@@ -742,9 +740,40 @@ describe('useDataStore', () => {
       const store = useDataStore()
       await store.submitGogCode('gog_work', 'auth-code')
 
-      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Error: 500 Internal Server Error',
+      )
       expect(store.oauthMessages['gog']).toBeUndefined()
       expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('submitGogCode surfaces the refusal the server wrote for the user', async () => {
+      mockPost.mockRejectedValueOnce(
+        new ApiError(404, 'Not Found', {
+          detail: 'GOG is not enabled for that source.',
+        }),
+      )
+
+      const store = useDataStore()
+      await store.submitGogCode('gog_work', 'auth-code')
+
+      // The remedy text, not "server returned 404": the status code alone
+      // tells the user nothing they can act on (WCAG 3.3.3).
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Error: GOG is not enabled for that source.',
+      )
+    })
+
+    it('submitGogCode keeps the confirmation when the status re-read fails', async () => {
+      mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
+      mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
+
+      const store = useDataStore()
+      await store.submitGogCode('gog_work', 'auth-code')
+
+      // The token IS stored by the time the re-read runs, so reporting the
+      // connect as failed would be a lie the user acts on.
+      expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
     })
 
     it('disconnectGog deletes that source token and re-reads its status', async () => {
@@ -787,10 +816,26 @@ describe('useDataStore', () => {
       const store = useDataStore()
       await store.disconnectGog('gog_work')
 
-      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Error: 500 Internal Server Error',
+      )
       // The re-read must only run on success — otherwise a failed disconnect
       // triggers a spurious status fetch that itself may error.
       expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('disconnectGog keeps the confirmation when the status re-read fails', async () => {
+      mockDelete.mockResolvedValueOnce({})
+      mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
+
+      const store = useDataStore()
+      await store.disconnectGog('gog_work')
+
+      // The credential is already gone; a stale panel is not a failed
+      // disconnect and must not be reported as one.
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Disconnected. You can reconnect below.',
+      )
     })
 
     it('disconnectEpic surfaces API error and does not re-read status', async () => {
@@ -799,7 +844,9 @@ describe('useDataStore', () => {
       const store = useDataStore()
       await store.disconnectEpic('epic_work')
 
-      expect(store.oauthMessages['epic_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['epic_work']).toBe(
+        'Error: 500 Internal Server Error',
+      )
       expect(mockGet).not.toHaveBeenCalled()
     })
 
@@ -838,7 +885,9 @@ describe('useDataStore', () => {
       rejectDelete(new ApiError(500, 'Internal Server Error'))
       await pending
 
-      expect(store.oauthMessages['gog_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['gog_work']).toBe(
+        'Error: 500 Internal Server Error',
+      )
     })
 
     it('disconnectEpic sets in-progress message before awaiting DELETE', async () => {
@@ -854,7 +903,9 @@ describe('useDataStore', () => {
       rejectDelete(new ApiError(500, 'Internal Server Error'))
       await pending
 
-      expect(store.oauthMessages['epic_work']).toBe('Error: server returned 500')
+      expect(store.oauthMessages['epic_work']).toBe(
+        'Error: 500 Internal Server Error',
+      )
     })
   })
 
@@ -912,6 +963,31 @@ describe('useDataStore', () => {
         source_id: 'trakt_work',
       })
       expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
+      // The device-code flow is unmounted by that very status flip, so the
+      // confirmation has to reach the panel's own live region to be announced.
+      expect(store.oauthMessages['trakt_work']).toBe('Connected')
+    })
+
+    it('pollTraktApproval falls back to a default confirmation message', async () => {
+      mockPost.mockResolvedValueOnce({ connected: true, message: '' })
+      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
+
+      const store = useDataStore()
+      await store.pollTraktApproval('trakt_work', 'dev-code')
+
+      expect(store.oauthMessages['trakt_work']).toBe('Trakt account connected.')
+    })
+
+    it('pollTraktApproval keeps the confirmation when the status re-read fails', async () => {
+      mockPost.mockResolvedValueOnce({ connected: true, message: 'Connected' })
+      mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
+
+      const store = useDataStore()
+      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
+
+      // The token is stored; the flow must not report the connect as failed.
+      expect(result.connected).toBe(true)
+      expect(store.oauthMessages['trakt_work']).toBe('Connected')
     })
 
     it('pollTraktApproval surfaces the expired terminal status', async () => {
@@ -953,6 +1029,9 @@ describe('useDataStore', () => {
         source_id: 'trakt_work',
       })
       expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
+      expect(store.oauthMessages['trakt_work']).toBe(
+        'Disconnected. You can reconnect below.',
+      )
     })
 
     it('loadOAuthStatus propagates the rejection without clobbering state', async () => {
@@ -983,20 +1062,43 @@ describe('useDataStore', () => {
       await expect(store.startTraktFlow('trakt_work')).rejects.toBe(error)
     })
 
-    it('disconnectTrakt propagates the rejection and leaves status connected', async () => {
+    it('disconnectTrakt reports a refused disconnect instead of rejecting', async () => {
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
-      mockDelete.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
+      mockDelete.mockRejectedValueOnce(
+        new ApiError(404, 'Not Found', { detail: 'No active Trakt connection found' }),
+      )
 
       const store = useDataStore()
       await store.loadOAuthStatus('trakt_work', 'trakt')
 
-      await expect(store.disconnectTrakt('trakt_work')).rejects.toBeInstanceOf(
-        ApiError,
+      // The button that calls this drops the promise, so a rejection reaches
+      // nobody: there is no global handler, and the panel would keep claiming
+      // the account is connected with nothing said about the failure.
+      await store.disconnectTrakt('trakt_work')
+
+      expect(store.oauthMessages['trakt_work']).toBe(
+        'Error: No active Trakt connection found',
       )
       // No re-read on failure, and the connected flag stays true so the UI
       // still shows the account as connected.
       expect(mockGet).toHaveBeenCalledTimes(1)
       expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
+    })
+
+    it('disconnectTrakt announces the attempt before awaiting the DELETE', async () => {
+      let rejectDelete: (err: Error) => void = () => {}
+      mockDelete.mockImplementation(
+        () => new Promise((_, reject) => { rejectDelete = reject })
+      )
+
+      const store = useDataStore()
+      const pending = store.disconnectTrakt('trakt_work')
+      expect(store.oauthMessages['trakt_work']).toBe('Disconnecting Trakt...')
+
+      rejectDelete(new Error('network timeout'))
+      await pending
+
+      expect(store.oauthMessages['trakt_work']).toBe('Error: disconnect failed')
     })
   })
 

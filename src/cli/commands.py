@@ -56,10 +56,12 @@ from src.settings.service import (
 )
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.manager import StorageManager, UnknownUserError, unset_if_none
+from src.storage.source_migration import configured_source_plugins
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.epic_auth import (
+    EPIC_PLUGIN,
     exchange_code_for_tokens as exchange_epic_code,
     extract_code_from_input as extract_epic_code,
     get_epic_auth_url,
@@ -69,6 +71,7 @@ from src.web.epic_auth import (
 )
 from src.web.export import export_items_csv, export_items_json
 from src.web.gog_auth import (
+    GOG_PLUGIN,
     exchange_code_for_tokens as exchange_gog_code,
     extract_code_from_input as extract_gog_code,
     get_gog_auth_url,
@@ -77,9 +80,10 @@ from src.web.gog_auth import (
     save_gog_token,
 )
 from src.web.trakt_auth import (
+    TRAKT_PLUGIN,
     DevicePollStatus,
     TraktAuthError,
-    is_trakt_connected,
+    has_trakt_token,
     poll_device_token,
     resolve_trakt_client_credentials,
     save_trakt_token,
@@ -97,6 +101,7 @@ from src.web.sync_sources import (
     get_available_sync_sources,
     list_available_plugins,
     migrate_source,
+    resolve_input_for_plugin,
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
@@ -466,6 +471,7 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             progress_callback=cli_progress,
             mark_for_enrichment=auto_enrich,
             max_workers=max_workers,
+            config=config,
         )
 
         total_count = 0
@@ -1763,10 +1769,39 @@ def library_export(
 # Auth command group
 # ---------------------------------------------------------------------------
 
-# Maps CLI --source name to the internal storage source_id. The CLI accepts
-# "epic" for brevity but credentials are stored under "epic_games" to match
-# the plugin source identifier used across ingestion and storage.
-_SOURCE_ID_MAP = {"gog": "gog", "epic": "epic_games", "trakt": "trakt"}
+# The plugin behind each ``--source`` choice. The CLI accepts "epic" for
+# brevity while the plugin, and so the default source id, is "epic_games".
+_AUTH_PLUGINS = {"gog": GOG_PLUGIN, "epic": EPIC_PLUGIN, "trakt": TRAKT_PLUGIN}
+
+_SOURCE_ID_HELP = (
+    "Id of the source to act on, which owns the token. "
+    "Defaults to the plugin's own name."
+)
+
+
+def _is_trakt_enabled(
+    config: dict[str, Any],
+    storage: StorageManager,
+    source_id: str,
+    user_id: int,
+) -> bool:
+    """Whether *source_id* has client credentials saved for the device flow."""
+    try:
+        resolve_trakt_client_credentials(config, storage, source_id, user_id)
+    except TraktAuthError:
+        return False
+    return True
+
+
+_StatusCheck = Callable[[dict[str, Any], StorageManager, str, int], bool]
+
+# What ``GET /api/{provider}/status`` answers for a source on each plugin, so
+# both interfaces call being enabled and holding a token the same thing.
+_OAUTH_STATUS: dict[str, tuple[_StatusCheck, _StatusCheck]] = {
+    GOG_PLUGIN: (is_gog_enabled, has_gog_token),
+    EPIC_PLUGIN: (is_epic_enabled, has_epic_token),
+    TRAKT_PLUGIN: (_is_trakt_enabled, has_trakt_token),
+}
 
 
 @click.group()
@@ -1778,37 +1813,49 @@ def auth() -> None:
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
 @click.pass_context
 def auth_status(ctx: click.Context, user_id: int) -> None:
-    """Show authentication status for OAuth sources."""
+    """Show enabled and connected state for every configured OAuth source."""
     config = ctx.obj["config"]
-    storage = ctx.obj["storage"]
+    # Every answer below is a credential-store read, so "storage is down" and
+    # "nothing is connected" must not print the same thing.
+    storage = _require_storage(ctx)
 
-    found = False
-    if is_gog_enabled(config):
-        found = True
-        connected = has_gog_token(config, storage=storage, user_id=user_id)
-        click.echo(f"  gog: {'connected' if connected else 'not connected'}")
-    if is_epic_enabled(config):
-        found = True
-        connected = has_epic_token(config, storage=storage, user_id=user_id)
-        click.echo(f"  epic: {'connected' if connected else 'not connected'}")
-    if _is_trakt_enabled(config, storage, user_id):
-        found = True
-        connected = is_trakt_connected(storage, user_id=user_id)
-        click.echo(f"  trakt: {'connected' if connected else 'not connected'}")
+    lines = [
+        _auth_status_line(config, storage, source_id, plugin_name, user_id)
+        for source_id, plugin_name in sorted(
+            configured_source_plugins(config, storage, user_id).items()
+        )
+        if plugin_name in _OAUTH_STATUS
+    ]
 
-    if not found:
-        click.echo("No OAuth sources are enabled in config.")
+    if not lines:
+        click.echo("No OAuth sources are configured.")
+        return
+    for line in lines:
+        click.echo(line)
 
 
-def _is_trakt_enabled(
-    config: dict[str, Any], storage: StorageManager, user_id: int
-) -> bool:
-    """Whether the Trakt source has client credentials saved for the device flow."""
-    try:
-        resolve_trakt_client_credentials(config, storage, user_id=user_id)
-    except TraktAuthError:
-        return False
-    return True
+def _auth_status_line(
+    config: dict[str, Any],
+    storage: StorageManager,
+    source_id: str,
+    plugin_name: str,
+    user_id: int,
+) -> str:
+    """One source's line, answering both questions separately.
+
+    A disabled source keeps its token, and only a line saying so tells the
+    operator there is still something to revoke.
+    """
+    is_enabled, has_token = _OAUTH_STATUS[plugin_name]
+    enabled_state = (
+        "enabled" if is_enabled(config, storage, source_id, user_id) else "not enabled"
+    )
+    token_state = (
+        "connected"
+        if has_token(config, storage, source_id, user_id)
+        else "not connected"
+    )
+    return f"  {source_id} ({plugin_name}): {enabled_state}, {token_state}"
 
 
 @auth.command("connect")
@@ -1818,18 +1865,24 @@ def _is_trakt_enabled(
     required=True,
     help="Source to authenticate",
 )
+@click.option("--source-id", default=None, help=_SOURCE_ID_HELP)
 @click.option("--no-browser", is_flag=True, help="Don't open browser automatically")
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
 @click.pass_context
 def auth_connect(
-    ctx: click.Context, source: str, no_browser: bool, user_id: int
+    ctx: click.Context,
+    source: str,
+    source_id: str | None,
+    no_browser: bool,
+    user_id: int,
 ) -> None:
     """Connect an OAuth source by authenticating in browser."""
     config = ctx.obj["config"]
-    storage = ctx.obj["storage"]
+    storage = _require_storage(ctx)
+    connecting = source_id or _AUTH_PLUGINS[source]
 
     if source == "trakt":
-        _connect_trakt(config, storage, user_id)
+        _connect_trakt(config, storage, connecting, user_id)
         return
 
     if source == "gog":
@@ -1841,8 +1894,10 @@ def auth_connect(
         extract_code_fn = extract_epic_code
         exchange_fn, save_fn = exchange_epic_code, save_epic_token
 
-    if not is_enabled_fn(config):
-        click.echo(f"Error: {source} is not enabled in config.", err=True)
+    if not is_enabled_fn(config, storage, connecting, user_id):
+        click.echo(
+            f"Error: '{connecting}' is not an enabled {source} source.", err=True
+        )
         raise click.Abort()
 
     auth_url = get_auth_url_fn()
@@ -1865,7 +1920,7 @@ def auth_connect(
         if not (refresh_token and refresh_token.strip()):
             click.echo("Error: No refresh token received.", err=True)
             raise click.Abort()
-        save_fn(storage, refresh_token.strip(), user_id=user_id)
+        save_fn(storage, refresh_token.strip(), source_id=connecting, user_id=user_id)
         click.echo(f"\n{source} connected successfully.")
     except click.Abort:
         raise
@@ -1878,7 +1933,7 @@ def auth_connect(
 
 
 def _connect_trakt(
-    config: dict[str, Any], storage: StorageManager, user_id: int
+    config: dict[str, Any], storage: StorageManager, source_id: str, user_id: int
 ) -> None:
     """Run the Trakt device-code flow: print the user code, then poll to approval.
 
@@ -1888,7 +1943,7 @@ def _connect_trakt(
     """
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
-            config, storage, user_id=user_id
+            config, storage, source_id, user_id
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
@@ -1921,7 +1976,9 @@ def _connect_trakt(
                         err=True,
                     )
                     raise click.Abort()
-                save_trakt_token(storage, result.refresh_token, user_id=user_id)
+                save_trakt_token(
+                    storage, result.refresh_token, source_id=source_id, user_id=user_id
+                )
                 click.echo("\ntrakt connected successfully.")
                 return
             if result.status is DevicePollStatus.SLOW_DOWN:
@@ -1950,27 +2007,45 @@ def _connect_trakt(
     required=True,
     help="Source to disconnect",
 )
+@click.option("--source-id", default=None, help=_SOURCE_ID_HELP)
 @click.option("--yes", is_flag=True, help="Skip confirmation")
 @click.option("--user", "user_id", type=int, default=1, help="User ID")
 @click.pass_context
-def auth_disconnect(ctx: click.Context, source: str, yes: bool, user_id: int) -> None:
+def auth_disconnect(
+    ctx: click.Context,
+    source: str,
+    source_id: str | None,
+    yes: bool,
+    user_id: int,
+) -> None:
     """Disconnect an OAuth source by removing stored credentials."""
-    storage = ctx.obj["storage"]
+    config = ctx.obj["config"]
+    storage = _require_storage(ctx)
+    plugin_name = _AUTH_PLUGINS[source]
+    disconnecting = source_id or plugin_name
 
     if not yes:
-        if not click.confirm(f"Disconnect {source} for user {user_id}?"):
+        if not click.confirm(f"Disconnect '{disconnecting}' for user {user_id}?"):
             click.echo("Aborted.")
             return
 
-    source_id = _SOURCE_ID_MAP[source]
+    # Enabled state is not ownership: disabling a source is how revoking its
+    # token starts, so the plugin behind the id is the only gate here.
+    owned = (
+        resolve_input_for_plugin(
+            disconnecting, plugin_name, config, storage, user_id, require_enabled=False
+        )
+        is not None
+    )
 
-    deleted = storage.delete_credential(user_id, source_id, "refresh_token")
-    if deleted:
+    if owned and storage.delete_credential(user_id, disconnecting, "refresh_token"):
         click.echo(f"{source} disconnected.")
-    else:
-        # Mirror DELETE /api/{source}/token which returns 404 when missing.
-        click.echo(f"No active {source} connection found.", err=True)
-        raise click.Abort()
+        return
+
+    # Mirror DELETE /api/{source}/token, which answers 404 both for an id this
+    # verb may not act on and for one holding no token.
+    click.echo(f"No active {source} connection found.", err=True)
+    raise click.Abort()
 
 
 # ---------------------------------------------------------------------------
@@ -2999,7 +3074,12 @@ def source_remove(ctx: click.Context, source_id: str, skip_confirm: bool) -> Non
         click.echo("Aborted.")
         return
     try:
-        delete_source(source_id, storage, user_id=_SOURCE_DEFAULT_USER_ID)
+        delete_source(
+            source_id,
+            storage,
+            user_id=_SOURCE_DEFAULT_USER_ID,
+            config=ctx.obj.get("config"),
+        )
     except SourceConfigError as error:
         _abort_with(error.message)
     click.echo(f"Removed source '{source_id}'.")

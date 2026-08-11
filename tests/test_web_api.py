@@ -4877,7 +4877,11 @@ class TestAuthDisconnectEndpoints:
 
 
 class TestTraktStatus:
-    """Tests for GET /api/trakt/status."""
+    """Tests for GET /api/trakt/status.
+
+    Driven through a real credential store: patching the two helpers made the
+    handler answer whatever the patches said, whichever way it asked them.
+    """
 
     def test_enabled_and_connected(self, client, mock_components) -> None:
         """Configured client creds + stored token returns enabled+connected."""
@@ -4886,7 +4890,7 @@ class TestTraktStatus:
                 "src.web.api.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.web.api.is_trakt_connected", return_value=True),
+            patch("src.web.api.has_trakt_token", return_value=True),
         ):
             response = client.get("/api/trakt/status")
 
@@ -4900,28 +4904,7 @@ class TestTraktStatus:
                 "src.web.api.resolve_trakt_client_credentials",
                 side_effect=TraktAuthError("not configured"),
             ),
-            patch("src.web.api.is_trakt_connected", return_value=False),
-        ):
-            response = client.get("/api/trakt/status")
-
-        assert response.status_code == 200
-        assert response.json() == {"enabled": False, "connected": False}
-
-    def test_stored_token_but_creds_removed_is_not_connected(
-        self, client, mock_components
-    ) -> None:
-        """A stored token with unresolvable creds reports connected=False.
-
-        If client credentials are removed after connecting, the source can no
-        longer be used, so the status must stay coherent: not enabled implies
-        not connected, even though a refresh token is still in storage.
-        """
-        with (
-            patch(
-                "src.web.api.resolve_trakt_client_credentials",
-                side_effect=TraktAuthError("not configured"),
-            ),
-            patch("src.web.api.is_trakt_connected", return_value=True),
+            patch("src.web.api.has_trakt_token", return_value=False),
         ):
             response = client.get("/api/trakt/status")
 

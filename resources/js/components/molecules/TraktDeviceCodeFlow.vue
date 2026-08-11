@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
+import { domId } from '@/utils/format'
 import type { TraktPollResponse } from '@/types/api'
 
 // Timers are injected so Vitest can drive the poll loop without waiting real
@@ -25,6 +26,7 @@ const data = useDataStore()
 // that, so gate the connect action on it instead of surfacing the failure only
 // after a click.
 const canConnect = computed(() => data.oauthStatusFor(props.sourceId).enabled)
+const hintId = computed(() => domId('trakt-connect-hint', props.sourceId))
 
 type FlowState = 'idle' | 'starting' | 'awaiting' | 'connected' | 'error'
 const state = ref<FlowState>('idle')
@@ -93,10 +95,11 @@ async function poll(): Promise<void> {
   }
 
   if (result.connected) {
+    // The approved poll flips the source to connected, which unmounts this
+    // component: a message set here would be announced into a region that is
+    // gone in the same flush, so the panel's own region carries it instead.
     state.value = 'connected'
-    message.value = result.message || 'Trakt account connected.'
-    await nextTick()
-    resultPanel.value?.focus()
+    message.value = ''
     return
   }
 
@@ -141,12 +144,12 @@ onBeforeUnmount(clearPoll)
         class="btn btn-primary trakt-flow-connect"
         data-testid="trakt-connect-btn"
         :disabled="!canConnect"
-        :aria-describedby="canConnect ? undefined : 'trakt-connect-hint'"
+        :aria-describedby="canConnect ? undefined : hintId"
         @click="startFlow"
       >Connect Trakt Account</button>
       <p
         v-if="!canConnect"
-        id="trakt-connect-hint"
+        :id="hintId"
         class="trakt-flow-hint"
         data-testid="trakt-connect-hint"
       >Add the Trakt client ID and client secret in the settings below before you can connect.</p>
