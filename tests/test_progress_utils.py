@@ -5,6 +5,7 @@ import logging
 import pytest
 
 from src.utils.progress import log_progress, should_log_progress
+from src.utils.text import LINE_BREAKS
 
 
 class TestShouldLogProgress:
@@ -94,3 +95,22 @@ class TestLogProgress:
             log_progress(test_logger, "items", 1, 3)
 
         assert "(33%)" in caplog.records[0].message
+
+
+class TestTheLabelCannotForgeAnEntry:
+    """The label is a caller's f-string, so an item title reaches it.
+
+    Escaping at the call sites leaves the next caller to remember; the entry
+    is written here, so the escape belongs here.
+    """
+
+    @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0"])
+    def test_no_line_break_survives_the_label(
+        self, caplog: pytest.LogCaptureFixture, breaker: str
+    ) -> None:
+        test_logger = logging.getLogger("test.progress")
+        with caplog.at_level(logging.INFO, logger="test.progress"):
+            log_progress(test_logger, f"a{breaker}INFO forged", 1, 3)
+
+        assert breaker not in caplog.records[0].message
+        assert "INFO forged" in caplog.records[0].message

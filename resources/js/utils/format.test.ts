@@ -11,6 +11,15 @@ describe('domId', () => {
     expect(domId('oauth-code', 'gog_work')).not.toBe(domId('oauth-code', 'gog'))
   })
 
+  it('keeps the two separators a source id may use apart', () => {
+    // Both match SOURCE_ID_PATTERN and both run the gog plugin, so collapsing
+    // `_` to `-` handed two live panels the same element id.
+    expect(domId('oauth-code', 'gog_work')).toBe('oauth-code-gog_work')
+    expect(domId('oauth-code', 'gog_work')).not.toBe(
+      domId('oauth-code', 'gog-work'),
+    )
+  })
+
   it('replaces every character an id may not carry', () => {
     expect(domId('oauth-code', 'my gog:2 (work)')).toBe(
       'oauth-code-my-gog-2--work-',

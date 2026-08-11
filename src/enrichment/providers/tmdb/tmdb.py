@@ -299,9 +299,11 @@ class TMDBProvider(EnrichmentProvider):
             return None
 
         except requests.RequestException as error:
+            # ``from None``: the api_key is a query parameter, so the URL on
+            # ``__cause__`` is a credential a caller's traceback would print.
             raise ProviderError(
                 self.name, f"Failed to search TMDB: {scrub_request_error(error)}"
-            ) from error
+            ) from None
 
     def _search_movie(
         self, item: ContentItem, api_key: str, language: str
@@ -416,7 +418,7 @@ class TMDBProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name,
                 f"Failed to fetch movie details: {scrub_request_error(error)}",
-            ) from error
+            ) from None
 
     def _fetch_tv_details(
         self,
@@ -500,7 +502,7 @@ class TMDBProvider(EnrichmentProvider):
             raise ProviderError(
                 self.name,
                 f"Failed to fetch TV show details: {scrub_request_error(error)}",
-            ) from error
+            ) from None
 
     def _fetch_keywords(
         self,

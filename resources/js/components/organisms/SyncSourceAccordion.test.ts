@@ -441,7 +441,19 @@ describe('SyncSourceAccordion', () => {
       expect(connected.attributes('role')).toBeUndefined()
       const disconnect = wrapper.find('[data-testid="disconnect-btn-trakt_work"]')
       expect(disconnect.exists()).toBe(true)
-      expect(disconnect.attributes('aria-label')).toBe('Disconnect Trakt')
+      // Named for the source: two expanded Trakt panels would otherwise offer
+      // two buttons a screen-reader user cannot tell apart.
+      expect(disconnect.attributes('aria-label')).toBe(
+        'Disconnect Trakt (work) from Trakt',
+      )
+    })
+
+    it('names the focus target so landing on it is not a mystery', async () => {
+      const { wrapper } = await expandTrakt(true)
+
+      const panel = wrapper.get('.source-accordion-oauth')
+      expect(panel.attributes('role')).toBe('group')
+      expect(panel.attributes('aria-label')).toBe('Trakt (work) connection')
     })
 
     it('clicking Disconnect names the source being disconnected', async () => {
@@ -504,9 +516,9 @@ describe('SyncSourceAccordion', () => {
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      await wrapper
-        .find('[data-testid="disconnect-btn-trakt_work"]')
-        .trigger('click')
+      const disconnect = wrapper.get('[data-testid="disconnect-btn-trakt_work"]')
+      ;(disconnect.element as HTMLElement).focus()
+      await disconnect.trigger('click')
       await flushPromises()
 
       // The button unmounts itself as it succeeds; without a deliberate move
@@ -517,9 +529,12 @@ describe('SyncSourceAccordion', () => {
       wrapper.unmount()
     })
 
-    it('says so when the connection status cannot be read', async () => {
+    /** Expand a Trakt panel whose first status read fails, attached so focus
+     *  assertions are meaningful. */
+    async function expandWithFailedStatus() {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: traktSource, syncing: false },
+        attachTo: document.body,
       })
       const store = useDataStore()
       const { loadOAuthStatus } = primeStore(store, traktConfig)
@@ -527,22 +542,85 @@ describe('SyncSourceAccordion', () => {
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
+      return { wrapper, store, loadOAuthStatus }
+    }
 
-      expect(wrapper.get('[data-testid="oauth-status-error"]').attributes('role')).toBe(
-        'alert',
+    it('says so when the connection status cannot be read', async () => {
+      const { wrapper } = await expandWithFailedStatus()
+
+      expect(wrapper.get('[data-testid="oauth-status-error"]').text()).toContain(
+        'Could not read',
       )
+      // Not role="alert": it is inserted already populated, along with the
+      // whole accordion body, which JAWS reads as page content and skips.
+      expect(wrapper.get('[data-testid="oauth-status-error"]').attributes('role'))
+        .toBeUndefined()
       // The fallback status reads as "not connected", which would offer a
       // Connect button hinting at credentials that may be perfectly fine.
       expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('announces a repeated retry failure, which changes nothing else', async () => {
+      const { wrapper, loadOAuthStatus } = await expandWithFailedStatus()
+      const region = wrapper.get('[data-testid="oauth-message"]').element
+      expect(region.textContent).toBe('')
+
+      loadOAuthStatus.mockRejectedValueOnce(new Error('still down'))
+      const retry = wrapper.get('[data-testid="oauth-status-retry"]')
+      ;(retry.element as HTMLElement).focus()
+      await retry.trigger('click')
+      await flushPromises()
+
+      // Same node throughout — a region re-created with its text is skipped.
+      expect(wrapper.get('[data-testid="oauth-message"]').element).toBe(region)
+      expect(region.textContent).toContain('Still could not read')
+      // The Retry button survived a failure, so focus stays on it.
+      expect(document.activeElement).toBe(retry.element)
+      wrapper.unmount()
+    })
+
+    it('announces a recovered status and rehomes the focus Retry took with it', async () => {
+      const { wrapper, store, loadOAuthStatus } = await expandWithFailedStatus()
+      const region = wrapper.get('[data-testid="oauth-message"]').element
 
       loadOAuthStatus.mockImplementation(async (id: string) => {
         store.oauthStatus[id] = { enabled: true, connected: false, authUrl: null }
       })
-      await wrapper.find('[data-testid="oauth-status-retry"]').trigger('click')
+      const retry = wrapper.get('[data-testid="oauth-status-retry"]')
+      ;(retry.element as HTMLElement).focus()
+      await retry.trigger('click')
       await flushPromises()
 
       expect(wrapper.find('[data-testid="oauth-status-error"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="trakt-connect-btn"]').exists()).toBe(true)
+      // Success unmounts the Retry button, so it must not vanish silently...
+      expect(wrapper.get('[data-testid="oauth-message"]').element).toBe(region)
+      expect(region.textContent).toContain('Connection status updated')
+      // ...nor drop the keyboard user to <body>.
+      expect(document.activeElement).toBe(
+        wrapper.get('.source-accordion-oauth').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('ignores a second Retry click while the first is in flight', async () => {
+      const { wrapper, loadOAuthStatus } = await expandWithFailedStatus()
+      let release: () => void = () => {}
+      loadOAuthStatus.mockImplementation(
+        () => new Promise<void>((resolve) => { release = resolve }),
+      )
+      loadOAuthStatus.mockClear()
+
+      const retry = wrapper.get('[data-testid="oauth-status-retry"]')
+      await retry.trigger('click')
+      await retry.trigger('click')
+
+      expect(loadOAuthStatus).toHaveBeenCalledTimes(1)
+      expect(retry.attributes('aria-disabled')).toBe('true')
+      release()
+      await flushPromises()
+      wrapper.unmount()
     })
 
     it('does not render trakt affordances before migration', async () => {
@@ -579,7 +657,10 @@ describe('SyncSourceAccordion', () => {
       plugin_display_name: 'GOG',
     }
 
-    async function expandGog(connected: boolean) {
+    async function expandGog(
+      connected: boolean,
+      authUrl = 'https://auth.gog.com/auth',
+    ) {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: gogSource, syncing: false },
       })
@@ -587,7 +668,7 @@ describe('SyncSourceAccordion', () => {
       primeStore(store, gogConfig, {
         enabled: true,
         connected,
-        authUrl: 'https://auth.gog.com/auth',
+        authUrl,
       })
 
       await wrapper.find('button.accordion-trigger').trigger('click')
@@ -618,22 +699,23 @@ describe('SyncSourceAccordion', () => {
       expect(disconnect).toHaveBeenCalledWith('gog_work')
       expect(
         wrapper.find('[data-testid="disconnect-btn-gog_work"]').attributes('aria-label'),
-      ).toBe('Disconnect GOG')
+      ).toBe('Disconnect GOG (work) from GOG')
     })
 
-    it('gives two GOG sources distinct code field ids', async () => {
+    it('gives three GOG sources distinct code field ids', async () => {
       const store = useDataStore()
-      // Both sources run the gog plugin — the very configuration this branch
-      // exists to allow — and both panels stay in the document once opened.
+      // All three run the gog plugin — the configuration this branch exists to
+      // allow — and `gog_work`/`gog-work` are both valid source ids that a
+      // sanitiser collapsing `_` renders identical.
       primeStore(store, gogConfig, {
         enabled: true,
         connected: false,
         authUrl: 'https://login.gog.com/auth',
       })
       vi.spyOn(window, 'open').mockReturnValue(null)
-      const wrappers = [gogSource, { ...gogSource, id: 'gog' }].map((source) =>
+      const wrappers = ['gog_work', 'gog', 'gog-work'].map((id) =>
         mount(SyncSourceAccordion, {
-          props: { source, syncing: false },
+          props: { source: { ...gogSource, id }, syncing: false },
           attachTo: document.body,
         }),
       )
@@ -645,7 +727,7 @@ describe('SyncSourceAccordion', () => {
       }
 
       const ids = wrappers.map((w) => w.get('input[type="text"]').attributes('id'))
-      expect(new Set(ids).size).toBe(2)
+      expect(new Set(ids).size).toBe(wrappers.length)
       for (const id of ids) {
         expect(document.querySelectorAll(`#${id}`)).toHaveLength(1)
       }
@@ -670,6 +752,111 @@ describe('SyncSourceAccordion', () => {
       const surviving = wrapper.get('[data-testid="oauth-message"]')
       expect(surviving.element).toBe(region)
       expect(surviving.text()).toContain('GOG account connected successfully!')
+    })
+
+    it('shows a connect message once, in the panel and not inside the flow', async () => {
+      vi.spyOn(window, 'open').mockReturnValue(null)
+      // The matching origin is what gets the code step — and the message site
+      // that used to duplicate the panel's — onto the screen at all.
+      const { wrapper, store } = await expandGog(false, 'https://login.gog.com/auth')
+      await wrapper.findComponent(OAuthConnectFlow).get('button').trigger('click')
+      expect(wrapper.findComponent(OAuthConnectFlow).find('input').exists()).toBe(true)
+
+      store.oauthMessages['gog_work'] = 'Connecting to GOG...'
+      await flushPromises()
+
+      const region = wrapper.get('[data-testid="oauth-message"]')
+      expect(region.text()).toBe('Connecting to GOG...')
+      // Visible, not sr-only: with no other rendering site, a refused
+      // disconnect reached screen readers and nobody else.
+      expect(region.classes()).not.toContain('sr-only')
+      expect(wrapper.findComponent(OAuthConnectFlow).text()).not.toContain(
+        'Connecting to GOG',
+      )
+    })
+
+    it('lands focus on the panel when a successful connect unmounts Submit', async () => {
+      vi.spyOn(window, 'open').mockReturnValue(null)
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: gogSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, gogConfig, {
+        enabled: true,
+        connected: false,
+        authUrl: 'https://login.gog.com/auth',
+      })
+      vi.spyOn(store, 'submitGogCode').mockImplementation(async (id: string) => {
+        store.oauthStatus[id] = { enabled: true, connected: true, authUrl: null }
+      })
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      const flow = wrapper.findComponent(OAuthConnectFlow)
+      await flow.get('button').trigger('click')
+      await flow.get('input').setValue('auth-code')
+      const submit = flow.findAll('button')[1].element as HTMLElement
+      submit.focus()
+
+      await flow.findAll('button')[1].trigger('click')
+      await flushPromises()
+
+      // The connect unmounts the whole flow, submit button included — the
+      // mirror of the disconnect case, and the same drop to <body>.
+      expect(wrapper.findComponent(OAuthConnectFlow).exists()).toBe(false)
+      expect(document.activeElement).toBe(
+        wrapper.get('.source-accordion-oauth').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('leaves focus on Disconnect when the disconnect is refused', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: gogSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, gogConfig, {
+        enabled: true,
+        connected: true,
+        authUrl: null,
+      })
+      // disconnectOAuth swallows the refusal, so the button and the connection
+      // are both still there when it returns.
+      vi.spyOn(store, 'disconnectGog').mockImplementation(async (id: string) => {
+        store.oauthMessages[id] = 'Error: GOG is not enabled for that source.'
+      })
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      const disconnect = wrapper.get('[data-testid="disconnect-btn-gog_work"]')
+      ;(disconnect.element as HTMLElement).focus()
+      await disconnect.trigger('click')
+      await flushPromises()
+
+      // Moving focus unconditionally parked it on a panel with no children.
+      expect(document.activeElement).toBe(disconnect.element)
+      const region = wrapper.get('[data-testid="oauth-message"]')
+      expect(region.text()).toContain('not enabled for that source')
+      expect(region.classes()).not.toContain('sr-only')
+      wrapper.unmount()
+    })
+
+    it('clears a stale message before the panel is shown again', async () => {
+      const { wrapper, store } = await expandGog(true)
+      store.oauthMessages['gog_work'] = 'Disconnected. You can reconnect below.'
+      await flushPromises()
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).not.toBe('')
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+
+      // Accordion.vue hides the body with `hidden` rather than unmounting it,
+      // so re-expanding puts the region back in the accessibility tree — and a
+      // populated one is read as page content, not as a status.
+      expect(wrapper.get('[data-testid="oauth-message"]').text()).toBe('')
     })
 
     // The Epic branch is `v-else-if="isEpic"`, so a third OAuth plugin cannot
@@ -725,7 +912,9 @@ describe('SyncSourceAccordion', () => {
         .mockResolvedValue(undefined)
 
       const button = wrapper.find('[data-testid="disconnect-btn-epic_work"]')
-      expect(button.attributes('aria-label')).toBe('Disconnect Epic Games')
+      expect(button.attributes('aria-label')).toBe(
+        'Disconnect Epic (work) from Epic Games',
+      )
       await button.trigger('click')
 
       expect(disconnect).toHaveBeenCalledWith('epic_work')

@@ -143,6 +143,9 @@ touching `config.yaml`).
 - `POST /api/sync/sources/<id>/migrate` splits a YAML entry across both tables
   and is idempotent. `POST /api/sync/sources` writes only non-sensitive values,
   and secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
+- `src/storage/credential_orphans.py` reads that same view for credentials left
+  under a plugin name by an older release: every sync warns about one, and
+  deleting the last source on that plugin deletes it.
 
 **Item attribution.** `content_items.source` holds a source id. Six plugins once
 dropped theirs, labelling rows with the plugin name, so a later sync split a

@@ -342,18 +342,23 @@ class TestDisconnectTargetsTheNamedSource:
         )
 
 
-class TestYamlTokenFallbackIsPerSource:
-    """``has_*_token`` falls back to the YAML entry when the DB has no row.
+class TestStatusReportsOnlyATokenDisconnectCanDeleteRegression:
+    """Reported: status said connected where disconnect answered 404.
 
-    Nothing else reaches that branch: every other test here saves the token to
-    the credential store first, which wins before the fallback is consulted.
+    Cause: ``connected`` came off the resolved config, which layers the YAML
+    ``inputs`` entry in, while disconnect deletes the credential row alone.
+    Fix: status asks for the row.
     """
 
     @pytest.mark.parametrize(
         ("provider", "source_id", "plugin"),
-        [("gog", "gog_work", "gog"), ("epic", "epic_work", "epic_games")],
+        [
+            ("gog", "gog_work", "gog"),
+            ("epic", "epic_work", "epic_games"),
+            ("trakt", "trakt_work", "trakt"),
+        ],
     )
-    def test_status_reads_the_named_source_entry(
+    def test_a_yaml_only_token_reads_not_connected(
         self,
         storage: StorageManager,
         provider: str,
@@ -369,20 +374,27 @@ class TestYamlTokenFallbackIsPerSource:
                     "enabled": True,
                     "refresh_token": "from-yaml",
                 },
-                plugin: {"plugin": plugin, "enabled": True},
             },
         }
 
         with booted_client(storage, yaml_config) as client:
+            assert not client.get(
+                f"/api/{provider}/status?source_id={source_id}"
+            ).json()["connected"]
+
+            # The anchor: the same source reads connected once the token is
+            # somewhere the disconnect verb can reach it.
+            storage.save_credential(USER_ID, source_id, "refresh_token", "in-the-db")
+
             assert client.get(f"/api/{provider}/status?source_id={source_id}").json()[
                 "connected"
             ]
-            # The plugin-named sibling is declared and enabled but has no token,
-            # so a reader still keyed on the plugin name would answer True above
-            # for the wrong entry and False here for the right one.
-            assert not client.get(f"/api/{provider}/status?source_id={plugin}").json()[
-                "connected"
-            ]
+            assert (
+                client.delete(
+                    f"/api/{provider}/token?source_id={source_id}"
+                ).status_code
+                == 200
+            )
 
 
 class TestRouteRefusesASourceRunningAnotherPlugin:
@@ -482,20 +494,6 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
         assert body["enabled"] is False
         assert body["connected"] is False
 
-    @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
-    def test_disconnect_refuses_an_id_no_source_uses(
-        self, client: TestClient, storage: StorageManager, provider: str
-    ) -> None:
-        storage.save_credential(USER_ID, "leftover", "refresh_token", "not-addressable")
-
-        response = client.delete(f"/api/{provider}/token?source_id=leftover")
-
-        assert response.status_code == 404, response.text
-        assert (
-            storage.get_credential(USER_ID, "leftover", "refresh_token")
-            == "not-addressable"
-        )
-
     def test_trakt_disconnect_does_not_delete_a_gog_source_token(
         self, client: TestClient, storage: StorageManager
     ) -> None:
@@ -561,7 +559,41 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
         )
 
 
-class TestASourceOnAPluginThisBuildDoesNotShipIsRefused:
+class TestDisconnectingAnIdNoSourceClaimsRegression:
+    """Reported: deleting ``inputs.gog`` left its refresh token undeletable.
+
+    Cause: the gate read "no source claims this id" as "another plugin does".
+    Fix: only another plugin's source puts an id out of reach.
+    """
+
+    @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
+    def test_a_stranded_token_can_still_be_revoked(
+        self, client: TestClient, storage: StorageManager, provider: str
+    ) -> None:
+        storage.save_credential(USER_ID, "leftover", "refresh_token", "stranded")
+
+        # Status is what the operator has to notice it by, so it answers for
+        # the row this verb can reach rather than for a source there is none of.
+        body = client.get(f"/api/{provider}/status?source_id=leftover").json()
+        assert body["enabled"] is False
+        assert body["connected"] is True
+
+        response = client.delete(f"/api/{provider}/token?source_id=leftover")
+
+        assert response.status_code == 200, response.text
+        assert storage.get_credential(USER_ID, "leftover", "refresh_token") is None
+
+    @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
+    def test_an_id_holding_nothing_is_still_a_404(
+        self, client: TestClient, storage: StorageManager, provider: str
+    ) -> None:
+        """The permitted id and the empty one are told apart by the row alone."""
+        response = client.delete(f"/api/{provider}/token?source_id=leftover")
+
+        assert response.status_code == 404, response.text
+
+
+class TestASourceOnAPluginThisBuildDoesNotShip:
     """A ``source_configs`` row can name a plugin a later build dropped.
 
     Its id still spells a credential key, so the routes have to answer without
@@ -583,16 +615,18 @@ class TestASourceOnAPluginThisBuildDoesNotShipIsRefused:
         body = client.get(f"/api/{provider}/status?source_id=ghost").json()
 
         assert body["enabled"] is False
-        assert body["connected"] is False
+        # No shipped plugin reads this row, so nothing is protecting it and
+        # revoking it is the only thing left to do with it.
+        assert body["connected"] is True
 
     @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
-    def test_disconnect_leaves_the_row_alone(
+    def test_disconnect_deletes_the_row(
         self, client: TestClient, ghost: StorageManager, provider: str
     ) -> None:
         response = client.delete(f"/api/{provider}/token?source_id=ghost")
 
-        assert response.status_code == 404, response.text
-        assert ghost.get_credential(USER_ID, "ghost", "refresh_token") == "orphan"
+        assert response.status_code == 200, response.text
+        assert ghost.get_credential(USER_ID, "ghost", "refresh_token") is None
 
     @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
     def test_a_write_route_writes_nothing(

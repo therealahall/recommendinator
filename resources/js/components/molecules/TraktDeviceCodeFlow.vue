@@ -95,11 +95,13 @@ async function poll(): Promise<void> {
   }
 
   if (result.connected) {
-    // The approved poll flips the source to connected, which unmounts this
-    // component: a message set here would be announced into a region that is
-    // gone in the same flush, so the panel's own region carries it instead.
     state.value = 'connected'
-    message.value = ''
+    // The confirmation belongs to the panel's region, since the status flip
+    // unmounts this component. But that re-read is best-effort: when it fails
+    // the parent keeps this mounted, and silence here renders an empty box.
+    message.value = data.oauthStatusFor(props.sourceId).connected
+      ? ''
+      : 'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
     return
   }
 
@@ -194,15 +196,13 @@ onBeforeUnmount(clearPoll)
     </div>
 
     <!--
-      A SINGLE live region stays mounted across every non-idle state (via
-      v-show, never v-if) so screen readers — JAWS in particular — announce
-      each `message` update as a status change rather than skipping it as a
-      fresh insertion (WCAG 4.1.3 status messages). Re-creating the region
-      per state, or mounting it with content already populated, is the exact
-      pitfall this avoids.
+      A SINGLE live region, mounted unconditionally and empty. v-show is no
+      better than v-if here: display:none takes it out of the accessibility
+      tree, so it would still arrive already carrying "Requesting a device
+      code…" and JAWS would read that as page content, not a status change
+      (WCAG 4.1.3).
     -->
     <p
-      v-show="state !== 'idle'"
       class="trakt-flow-status"
       :class="{ 'trakt-flow-status--error': state === 'error' }"
       role="status"
@@ -264,6 +264,12 @@ onBeforeUnmount(clearPoll)
   margin-top: var(--space-2);
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+/* Collapse the box while the region has nothing to say. Not display:none —
+   that is the accessibility-tree removal the region exists to avoid. */
+.trakt-flow-status:empty {
+  margin-top: 0;
 }
 
 /* Error state: keep the readable text in --text-primary and convey "error"

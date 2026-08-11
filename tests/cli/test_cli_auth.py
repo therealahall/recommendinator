@@ -833,12 +833,11 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         assert result.exit_code == 0
         assert storage.get_credential(USER_ID, "gog_work", "refresh_token") is None
 
-    @pytest.mark.parametrize("source_id", ["trakt_work", "no_such_source"])
-    def test_an_id_this_verb_does_not_own_is_refused(
-        self, cli_runner: CliRunner, storage: StorageManager, source_id: str
+    def test_an_id_another_plugin_owns_is_refused(
+        self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """The id is a credential key, so the plugin behind it decides."""
-        storage.save_credential(USER_ID, source_id, "refresh_token", "not-gogs")
+        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "not-gogs")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -848,7 +847,7 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
                 "--source",
                 "gog",
                 "--source-id",
-                source_id,
+                "trakt_work",
                 "--yes",
             ],
             storage,
@@ -857,4 +856,69 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
 
         assert result.exit_code != 0
         assert "No active gog connection" in result.output
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") == "not-gogs"
+        assert (
+            storage.get_credential(USER_ID, "trakt_work", "refresh_token") == "not-gogs"
+        )
+
+
+class TestRevokingATokenNoSourceClaimsRegression:
+    """Reported: deleting ``inputs.gog`` left its refresh token undeletable.
+
+    Cause: the gate read "no source claims this id" as "another plugin does".
+    Fix: only another plugin's source puts an id out of reach.
+    """
+
+    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
+    def test_a_stranded_token_can_still_be_revoked(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        source: str,
+        plugin: str,
+    ) -> None:
+        storage.save_credential(USER_ID, plugin, "refresh_token", "stranded")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["auth", "disconnect", "--source", source, "--yes"],
+            storage,
+            _sources(),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert storage.get_credential(USER_ID, plugin, "refresh_token") is None
+
+
+class TestStatusReportsOnlyATokenDisconnectCanDeleteRegression:
+    """Reported: ``auth status`` said connected where disconnect said 404.
+
+    Cause: the token was read off the resolved config, which layers the YAML
+    entry in, while disconnect deletes the credential row. Fix: ask the row.
+    """
+
+    @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
+    def test_a_yaml_only_token_reads_not_connected(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        source: str,
+        plugin: str,
+    ) -> None:
+        source_id = f"{plugin}_work"
+        config = _sources(**{source_id: plugin})
+        config["inputs"][source_id]["refresh_token"] = "from-yaml"
+        # Trakt is enabled by its client credentials rather than its token, and
+        # the enabled half of the line must not move between the two reads.
+        config["inputs"][source_id]["client_id"] = "cid"
+        storage.save_credential(USER_ID, source_id, "client_secret", "secret")
+
+        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+
+        assert f"  {source_id} ({plugin}): enabled, not connected" in result.output
+
+        # The anchor: the same source reads connected once the token is
+        # somewhere ``auth disconnect`` can reach it.
+        storage.save_credential(USER_ID, source_id, "refresh_token", "in-the-db")
+        result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage, config)
+
+        assert f"  {source_id} ({plugin}): enabled, connected" in result.output

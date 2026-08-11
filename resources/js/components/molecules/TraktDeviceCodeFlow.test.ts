@@ -128,7 +128,7 @@ describe('TraktDeviceCodeFlow', () => {
 
     // The hint is programmatically associated with the disabled button so a
     // screen reader announces "why" alongside the control.
-    expect(hint.attributes('id')).toBe('trakt-connect-hint-trakt-work')
+    expect(hint.attributes('id')).toBe('trakt-connect-hint-trakt_work')
     expect(button.attributes('aria-describedby')).toBe(hint.attributes('id'))
   })
 
@@ -305,6 +305,45 @@ describe('TraktDeviceCodeFlow', () => {
     await timer.fire() // next poll -> connected
     expect(useDataStore().oauthMessages[SOURCE_ID]).toBe('Trakt connected!')
     expect(timer.hasPending()).toBe(false)
+  })
+
+  it('has the live region mounted and visible before the flow starts', async () => {
+    mockPost.mockResolvedValueOnce(FLOW)
+    const wrapper = mountFlow(makeTimer())
+
+    // v-show hid it until the first message existed, and display:none is out
+    // of the accessibility tree — so "Requesting a device code…" arrived with
+    // the region rather than as a change to it, and was never announced.
+    const region = wrapper.get('.trakt-flow-status').element as HTMLElement
+    expect(region.textContent).toBe('')
+    expect(region.style.display).not.toBe('none')
+
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.trakt-flow-status').element).toBe(region)
+    expect(region.textContent).toContain('Waiting for you to approve')
+  })
+
+  it('says so when the connect succeeded but the status re-read did not', async () => {
+    mockPost
+      .mockResolvedValueOnce(FLOW)
+      .mockResolvedValueOnce({ connected: true, message: 'Trakt connected!' })
+    mockGet.mockRejectedValue(new Error('status read failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const timer = makeTimer()
+    const wrapper = mountFlow(timer)
+
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+    await timer.fire()
+
+    // The failed re-read leaves `connected` false, so the parent keeps this
+    // component mounted: staying silent rendered an empty box with no controls.
+    expect(useDataStore().oauthStatusFor(SOURCE_ID).connected).toBe(false)
+    expect(wrapper.get('.trakt-flow-status').text()).toContain(
+      'could not be re-read',
+    )
   })
 
   it('keeps a single persistent live region across starting → awaiting → connected', async () => {

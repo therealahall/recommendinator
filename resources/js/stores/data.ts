@@ -617,6 +617,7 @@ export const useDataStore = defineStore('data', () => {
     triggerSync,
     checkSyncStatus,
     loadOAuthStatus,
+    setOAuthMessage,
     submitGogCode,
     submitEpicCode,
     disconnectGog,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
@@ -68,7 +68,12 @@ async function loadOAuthState(): Promise<void> {
 
 async function onToggleExpanded(value: boolean): Promise<void> {
   expanded.value = value
-  if (value) await ensureDetails()
+  if (!value) return
+  // Accordion.vue hides the body with `hidden` rather than unmounting it, so
+  // a message left from the last visit would re-enter the accessibility tree
+  // already populated — read as page content, never as a status (WCAG 4.1.3).
+  data.setOAuthMessage(props.source.id, '')
+  await ensureDetails()
 }
 
 function onSyncClick(event: MouseEvent): void {
@@ -159,9 +164,17 @@ const isGog = computed(() => plugin.value === 'gog')
 const isEpic = computed(() => plugin.value === 'epic_games')
 const isTrakt = computed(() => plugin.value === 'trakt')
 const isOAuthSource = computed(() => plugin.value in OAUTH_SERVICE_NAME)
+// Named for the source, not just the service: two expanded gog panels would
+// otherwise offer two buttons with the identical accessible name.
 const disconnectLabel = computed(
-  () => `Disconnect ${OAUTH_SERVICE_NAME[plugin.value]}`,
+  () =>
+    `Disconnect ${props.source.display_name} from ` +
+    `${OAUTH_SERVICE_NAME[plugin.value]}`,
 )
+const retryStatusLabel = computed(
+  () => `Retry the connection status check for ${props.source.display_name}`,
+)
+const oauthPanelLabel = computed(() => `${props.source.display_name} connection`)
 const oauth = computed(() => data.oauthStatusFor(props.source.id))
 const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
 const showOAuthConnect = computed(
@@ -184,15 +197,41 @@ const showDisconnect = computed(
 )
 
 const oauthPanel = ref<HTMLElement | null>(null)
+const oauthRetrying = ref(false)
+
+// Connect, disconnect and a recovered status read each swap out part of the
+// panel, and each can take the control holding focus with it — dropping the
+// keyboard user to <body> (WCAG 2.4.3). One place decides, keyed on whether
+// that element actually went away: a refused disconnect leaves its button
+// mounted and must not throw the user out of it.
+watch([() => oauth.value.connected, oauthStatusFailed], () => {
+  const focused = document.activeElement
+  void nextTick(() => {
+    if (!(focused instanceof HTMLElement) || focused.isConnected) return
+    oauthPanel.value?.focus()
+  })
+})
 
 async function onDisconnect(): Promise<void> {
   if (isGog.value) await data.disconnectGog(props.source.id)
   else if (isEpic.value) await data.disconnectEpic(props.source.id)
   else if (isTrakt.value) await data.disconnectTrakt(props.source.id)
-  // The button removes itself as it succeeds, dropping focus to <body>. Land
-  // it on the panel the connect flow has just re-entered.
-  await nextTick()
-  oauthPanel.value?.focus()
+}
+
+async function onRetryStatus(): Promise<void> {
+  if (oauthRetrying.value) return
+  oauthRetrying.value = true
+  data.setOAuthMessage(props.source.id, 'Rechecking the connection status…')
+  await loadOAuthState()
+  oauthRetrying.value = false
+  // A second failure changes nothing else on screen, so without a word here
+  // the click has no perceivable outcome at all.
+  data.setOAuthMessage(
+    props.source.id,
+    oauthStatusFailed.value
+      ? 'Still could not read the connection status. Try again in a moment.'
+      : 'Connection status updated.',
+  )
 }
 
 onBeforeUnmount(() => {
@@ -340,54 +379,75 @@ const errorBadgeAriaLabel = computed<string>(
       <template v-else>
         <!--
           Rendered for every OAuth source whatever its connection state: it is
-          the focus target after a disconnect removes the button that had focus.
+          the focus target when an outcome removes the button that had focus.
         -->
-        <div
-          v-if="isOAuthSource"
-          ref="oauthPanel"
-          class="source-accordion-oauth"
-          tabindex="-1"
-        >
-          <template v-if="showOAuthConnect">
-            <OAuthConnectFlow
-              v-if="isGog"
-              :source-id="source.id"
-              :auth-url="oauth.authUrl"
-              expected-origin="https://login.gog.com"
-              :connect-message="oauthMessage"
-              help-text="Paste the redirect URL after logging in:"
-              service-name="GOG Account"
-              @submit="data.submitGogCode(source.id, $event)"
-            />
-            <OAuthConnectFlow
-              v-else-if="isEpic"
-              :source-id="source.id"
-              :auth-url="oauth.authUrl"
-              expected-origin="https://www.epicgames.com"
-              :connect-message="oauthMessage"
-              help-text="Paste the authorization code from the JSON response:"
-              service-name="Epic Games"
-              @submit="data.submitEpicCode(source.id, $event)"
-            />
-          </template>
-
-          <TraktDeviceCodeFlow v-if="showTraktConnect" :source-id="source.id" />
-
-          <p
-            v-if="oauthStatusFailed"
-            class="source-accordion-oauth-error"
-            data-testid="oauth-status-error"
-            role="alert"
+        <template v-if="isOAuthSource">
+          <div
+            ref="oauthPanel"
+            class="source-accordion-oauth"
+            role="group"
+            :aria-label="oauthPanelLabel"
+            tabindex="-1"
           >
-            Could not read this source's connection status.
-            <button
-              type="button"
-              class="btn btn-secondary"
-              data-testid="oauth-status-retry"
-              @click="loadOAuthState"
-            >Retry</button>
-          </p>
-        </div>
+            <template v-if="showOAuthConnect">
+              <OAuthConnectFlow
+                v-if="isGog"
+                :source-id="source.id"
+                :auth-url="oauth.authUrl"
+                expected-origin="https://login.gog.com"
+                help-text="Paste the redirect URL after logging in:"
+                service-name="GOG Account"
+                @submit="data.submitGogCode(source.id, $event)"
+              />
+              <OAuthConnectFlow
+                v-else-if="isEpic"
+                :source-id="source.id"
+                :auth-url="oauth.authUrl"
+                expected-origin="https://www.epicgames.com"
+                help-text="Paste the authorization code from the JSON response:"
+                service-name="Epic Games"
+                @submit="data.submitEpicCode(source.id, $event)"
+              />
+            </template>
+
+            <TraktDeviceCodeFlow v-if="showTraktConnect" :source-id="source.id" />
+
+            <!--
+              Plain content, not role="alert": it can only appear as the body
+              first renders, where an alert arrives already populated and is
+              read as page content. The retry outcome goes to the region below,
+              which is mounted and silent before it has anything to say.
+            -->
+            <div v-if="oauthStatusFailed" class="source-accordion-oauth-error">
+              <p data-testid="oauth-status-error">
+                Could not read this source's connection status.
+              </p>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                data-testid="oauth-status-retry"
+                :aria-label="retryStatusLabel"
+                :aria-disabled="oauthRetrying || undefined"
+                @click="onRetryStatus"
+              >{{ oauthRetrying ? 'Retrying…' : 'Retry' }}</button>
+            </div>
+          </div>
+
+          <!--
+            The one live region for the whole OAuth lifecycle — connect,
+            disconnect, retry and every refusal. Visible, because a refused
+            disconnect leaves the button in place and changes nothing else on
+            screen. Outside the focus target above, so landing there does not
+            read these words a second time.
+          -->
+          <p
+            class="source-accordion-oauth-message"
+            data-testid="oauth-message"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >{{ oauthMessage }}</p>
+        </template>
 
         <SourceConfigForm
           :schema="schema.fields"
@@ -405,20 +465,6 @@ const errorBadgeAriaLabel = computed<string>(
           @toggle-enabled="onEnabledChange"
         >
           <template #actions-extra>
-            <!--
-              The one live region for the whole OAuth lifecycle. It is bound to
-              the plugin, not to the connection state, so it outlives the
-              connect ⇄ disconnect swap: a region inserted along with its text
-              is read as page content and skipped (WCAG 4.1.3).
-            -->
-            <p
-              v-if="isOAuthSource"
-              class="sr-only"
-              data-testid="oauth-message"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >{{ oauthMessage }}</p>
             <span
               v-if="showDisconnect && isTrakt"
               class="source-accordion-connected"
@@ -508,10 +554,22 @@ const errorBadgeAriaLabel = computed<string>(
   margin-bottom: var(--space-3);
 }
 
-/* Focused only programmatically, after a disconnect removes the button that
-   had focus, so the ring would read as a stray highlight. */
+/* Focused only programmatically, after an outcome removes the button that had
+   focus, so the ring would read as a stray highlight. */
 .source-accordion-oauth:focus {
   outline: none;
+}
+
+.source-accordion-oauth-message {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+/* Silent, the region still has to stay in the accessibility tree, so it earns
+   its spacing only once it says something. */
+.source-accordion-oauth-message:not(:empty) {
+  margin-bottom: var(--space-3);
 }
 
 /* A connected source keeps this panel mounted purely as that focus target,
@@ -526,6 +584,10 @@ const errorBadgeAriaLabel = computed<string>(
   gap: var(--space-2);
   font-size: var(--text-sm);
   color: var(--text-primary);
+}
+
+.source-accordion-oauth-error p {
+  margin: 0;
 }
 
 .source-accordion-connected {

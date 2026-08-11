@@ -90,6 +90,7 @@ from src.web.trakt_auth import (
     start_device_auth_flow,
 )
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
+from src.web.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
 from src.web.sync_sources import (
     ResolvedInput,
     SourceConfigError,
@@ -101,7 +102,6 @@ from src.web.sync_sources import (
     get_available_sync_sources,
     list_available_plugins,
     migrate_source,
-    resolve_input_for_plugin,
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
@@ -2029,16 +2029,9 @@ def auth_disconnect(
             click.echo("Aborted.")
             return
 
-    # Enabled state is not ownership: disabling a source is how revoking its
-    # token starts, so the plugin behind the id is the only gate here.
-    owned = (
-        resolve_input_for_plugin(
-            disconnecting, plugin_name, config, storage, user_id, require_enabled=False
-        )
-        is not None
-    )
-
-    if owned and storage.delete_credential(user_id, disconnecting, "refresh_token"):
+    if may_revoke(
+        plugin_name, disconnecting, config, storage, user_id
+    ) and storage.delete_credential(user_id, disconnecting, REFRESH_TOKEN_KEY):
         click.echo(f"{source} disconnected.")
         return
 
@@ -3039,7 +3032,7 @@ def source_create(
             storage,
             enabled=enabled,
             user_id=_SOURCE_DEFAULT_USER_ID,
-            config=ctx.obj.get("config"),
+            config=ctx.obj["config"],
         )
     except SourceConfigError as error:
         _abort_with(error.message)
@@ -3078,7 +3071,7 @@ def source_remove(ctx: click.Context, source_id: str, skip_confirm: bool) -> Non
             source_id,
             storage,
             user_id=_SOURCE_DEFAULT_USER_ID,
-            config=ctx.obj.get("config"),
+            config=ctx.obj["config"],
         )
     except SourceConfigError as error:
         _abort_with(error.message)

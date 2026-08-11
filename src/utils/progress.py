@@ -2,6 +2,8 @@
 
 import logging
 
+from src.utils.text import sanitize_for_log
+
 
 def should_log_progress(
     current: int,
@@ -50,7 +52,8 @@ def log_progress(
     Args:
         logger: Logger instance to write to.
         label: Human-readable description of the operation
-               (e.g. ``"game details"``).
+               (e.g. ``"game details"``). Escaped here, because a caller
+               naming the item it is processing puts a title in it.
         current: 1-based index of the item being processed.
         total: Total number of items.
         initial_count: How many items at the start to log unconditionally.
@@ -60,4 +63,10 @@ def log_progress(
         current, total, initial_count=initial_count, interval=interval
     ):
         percent = current * 100 // total
-        logger.info("Processing %s: %d/%d (%d%%)", label, current, total, percent)
+        logger.info(
+            "Processing %s: %d/%d (%d%%)",
+            sanitize_for_log(label),
+            current,
+            total,
+            percent,
+        )

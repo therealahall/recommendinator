@@ -82,6 +82,7 @@ from src.web.guards import (
     require_config,
     writable_config,
 )
+from src.web.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
 from src.web.responses import SurrogateSafeResponse
 from src.web.state import (
     get_config,
@@ -104,7 +105,6 @@ from src.web.sync_sources import (
     list_available_plugins,
     migrate_source,
     redact_credentials,
-    resolve_input_for_plugin,
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
@@ -2247,20 +2247,7 @@ def _disconnect_source(
     An id this route may not act on gets the same refusal as one holding no
     token: telling them apart names sources the caller did not ask about.
     """
-    # Disabling a source is how revoking its token starts, so only the plugin
-    # behind the id decides here: a credential nobody can delete is worse than
-    # one nobody can use.
-    if (
-        resolve_input_for_plugin(
-            source_id,
-            plugin_name,
-            config,
-            storage,
-            user_id,
-            require_enabled=False,
-        )
-        is None
-    ):
+    if not may_revoke(plugin_name, source_id, config, storage, user_id):
         logger.info(
             "Disconnect refused for source_id=%s on plugin %s",
             sanitize_for_log(source_id),
@@ -2268,7 +2255,7 @@ def _disconnect_source(
         )
         raise HTTPException(status_code=404, detail=detail)
 
-    if not storage.delete_credential(user_id, source_id, "refresh_token"):
+    if not storage.delete_credential(user_id, source_id, REFRESH_TOKEN_KEY):
         raise HTTPException(status_code=404, detail=detail)
 
 

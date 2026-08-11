@@ -331,19 +331,17 @@ def resolve_input_for_plugin(
     config: dict[str, Any] | None,
     storage: StorageManager | None = None,
     user_id: int = 1,
-    *,
-    require_enabled: bool = True,
 ) -> ResolvedInput | None:
-    """The source *source_id*, or ``None`` unless it runs *plugin_name*.
+    """The enabled source *source_id*, ``None`` unless it runs *plugin_name*.
 
     A client-supplied id is a credential key: unchecked, a GOG exchange files
-    its token where Trakt reads one. Ownership is not enabled state, so
-    revocation passes ``require_enabled=False``.
+    its token where Trakt reads one. Revocation asks ``may_revoke``, a disabled
+    source's token being the one to revoke.
     """
     source = _configured_source(source_id, config, storage, user_id)
     if source is None or source.plugin.name != plugin_name:
         return None
-    if require_enabled and not source.enabled:
+    if not source.enabled:
         return None
     return ResolvedInput(
         source_id=source_id,
