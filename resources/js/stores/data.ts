@@ -606,6 +606,10 @@ export const useDataStore = defineStore('data', () => {
     const remainingStatus = { ...oauthStatus.value }
     delete remainingStatus[sourceId]
     oauthStatus.value = remainingStatus
+    // A read still in flight would land after this prune and re-seed a deleted
+    // id. The counter itself stays behind: monotonic per id, it keeps a source
+    // recreated under that id outrunning its predecessor's reads.
+    oauthStatusGeneration[sourceId] = (oauthStatusGeneration[sourceId] ?? 0) + 1
     const remainingMessages = { ...oauthMessages.value }
     delete remainingMessages[sourceId]
     oauthMessages.value = remainingMessages
