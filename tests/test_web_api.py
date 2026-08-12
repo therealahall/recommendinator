@@ -38,10 +38,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import WebSocketRoute
 
+import src.sources.service
 import src.web.api
 import src.web.chat_api
-import src.web.sync_sources
-from src.cli.config import MissingApiTokenError, load_config
+from src.auth.epic import EpicAuthError
+from src.auth.gog import GogAuthError
+from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
+from src.config.service import MissingApiTokenError, load_config
 from src.conversation.engine import ConversationEngine
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import SyncResult
@@ -82,8 +85,6 @@ from src.web.enrichment_manager import (
     get_enrichment_manager,
     reset_enrichment_manager,
 )
-from src.web.epic_auth import EpicAuthError
-from src.web.gog_auth import GogAuthError
 from src.web.guards import (
     RequiredStorage,
     require_config,
@@ -119,7 +120,6 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
-from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 from tests.factories import (
     API_TOKEN,
     authenticated_client,
@@ -1611,7 +1611,7 @@ class TestUpdateResolvesTheSourceOnceRegression:
         with (
             patch("src.web.api.get_sync_manager", return_value=sync_manager),
             patch(
-                "src.web.sync_sources.get_sync_handler", return_value=None
+                "src.sources.service.get_sync_handler", return_value=None
             ) as second_lookup,
         ):
             response = client.post("/api/update", json={"source": "probe_me_42"})
@@ -8213,12 +8213,14 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         """The sibling endpoints too: an escaped value only ever gets logged."""
         assert _sanitizer_calls_outside_a_log_call(_API_TREE) == set()
 
-    def test_the_other_web_module_logging_titles_is_clean_too(self) -> None:
-        """``api`` is not the only module the web layer answers from."""
-        tree = ast.parse(
-            Path(src.web.sync_sources.__file__).read_text(encoding="utf-8")
-        )
+    def test_the_source_service_escapes_only_into_a_log_call(self) -> None:
+        """``_log_refusal`` is its one sanitizer call site: those escapes are cut
+        for a log file and reach a client as literal backslashes. A lower bound,
+        so rendering a fault through ``exception_for_log`` stays legal.
+        """
+        tree = ast.parse(Path(src.sources.service.__file__).read_text(encoding="utf-8"))
 
+        assert {"sanitize_for_log"} <= _sanitizers_reached_by_the_sweep(tree)
         assert _sanitizer_calls_outside_a_log_call(tree) == set()
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])

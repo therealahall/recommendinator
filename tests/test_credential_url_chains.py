@@ -5,6 +5,7 @@ string on ``__cause__``, which callers print with ``exc_info=True``.
 """
 
 import ast
+import re
 import textwrap
 from pathlib import Path
 
@@ -13,14 +14,29 @@ import pytest
 # parents[1] resolves /tests/test_credential_url_chains.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Every registry that reaches a third party is scanned. The OAuth modules put a
-# client secret in a query string exactly as a plugin does, and the enrichment
-# providers send their api key the same way.
+# Every tree a credential could reach a third party from. Discovery
+# over-approximates, so a tree holding no such call today still costs nothing
+# to scan, and one that leaves the list loses future coverage in silence.
 _SCANNED_TREES = (
+    Path("src/auth"),
+    Path("src/config"),
     Path("src/enrichment/providers"),
     Path("src/ingestion/sources"),
+    Path("src/sources"),
+    Path("src/utils"),
     Path("src/web"),
 )
+
+_SCAN_TEST_PATH = "tests/test_credential_url_chains.py"
+
+_DOCS_NAMING_THE_SCAN = (
+    Path("docs/PLUGIN_DEVELOPMENT.md"),
+    Path("docs/SECURITY.md"),
+)
+
+# A backticked token ending in a slash. The same paragraphs name
+# ``_CREDENTIAL_URL_FUNCTIONS`` and ``params=``, which the slash keeps out.
+_TREE_PATHS = re.compile(r"`([^`]+/)`")
 
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
@@ -28,6 +44,7 @@ _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 # client secret as query parameters; Steam's Web API takes ``key``, TMDB
 # ``api_key`` and RAWG ``key``.
 _CREDENTIAL_URL_FUNCTIONS = (
+    ("src/auth/gog.py", "exchange_code_for_tokens"),
     ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_details"),
     ("src/enrichment/providers/rawg/rawg.py", "_fetch_game_series"),
     ("src/enrichment/providers/rawg/rawg.py", "_search_game"),
@@ -39,7 +56,6 @@ _CREDENTIAL_URL_FUNCTIONS = (
     ("src/ingestion/sources/gog/gog.py", "refresh_access_token"),
     ("src/ingestion/sources/steam/steam.py", "get_owned_games"),
     ("src/ingestion/sources/steam/steam.py", "get_steam_id_from_vanity_url"),
-    ("src/web/gog_auth.py", "exchange_code_for_tokens"),
 )
 
 # Parameter names that carry a secret. Naming one of these where a ``params=``
@@ -348,6 +364,19 @@ def _credential_url_functions(root: Path, *subtrees: Path) -> set[tuple[str, str
     return found
 
 
+def _paragraph_naming_the_scan(doc: Path) -> str:
+    """The paragraph of *doc* that names this file, empty when none does.
+
+    Empty rather than raising: the caller's set equality then reports the
+    trees nobody documented, which is the answer being asked for.
+    """
+    text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
+    return next(
+        (paragraph for paragraph in text.split("\n\n") if _SCAN_TEST_PATH in paragraph),
+        "",
+    )
+
+
 def _module_with_handler(
     tmp_path: Path, handler_body: str, catching: str = "requests.RequestException"
 ) -> Path:
@@ -384,6 +413,35 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
             "`exc_info=True` will print it. Scrub the message and raise "
             "`from None`:\n  " + "\n  ".join(leaks)
         )
+
+    @pytest.mark.parametrize("doc", _DOCS_NAMING_THE_SCAN, ids=Path.as_posix)
+    def test_each_doc_names_exactly_the_trees_scanned(self, doc: Path) -> None:
+        """Both docs tell a plugin author enrolment is automatic, so the tree
+        list is the promise. Equality, not containment: naming a tree the sweep
+        does not read is the failure that shipped, and it reads as coverage.
+        """
+        named = set(_TREE_PATHS.findall(_paragraph_naming_the_scan(doc)))
+
+        assert named == {f"{subtree.as_posix()}/" for subtree in _SCANNED_TREES}
+
+    @pytest.mark.parametrize("doc", _DOCS_NAMING_THE_SCAN, ids=Path.as_posix)
+    def test_the_paragraph_read_is_the_one_describing_the_scan(self, doc: Path) -> None:
+        """A paragraph picked by luck would carry no tree at all and the
+        equality above would fail loudly, but a doc rewritten so this file is
+        named twice would be read at the wrong one silently.
+        """
+        text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
+
+        assert text.count(_SCAN_TEST_PATH) == 1
+
+    @pytest.mark.parametrize("subtree", _SCANNED_TREES, ids=Path.as_posix)
+    def test_every_scanned_tree_exists(self, subtree: Path) -> None:
+        """``rglob`` over a moved tree yields nothing and raises nothing.
+
+        Most of these hold no registered caller today, so an empty scan of one
+        reads exactly like a clean one and the rename never surfaces.
+        """
+        assert (_REPO_ROOT / subtree).is_dir()
 
     def test_every_caller_sending_a_credential_param_is_registered(self) -> None:
         """A new integration joins the list above, rather than being remembered in."""
