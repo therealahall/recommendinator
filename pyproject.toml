@@ -6,7 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "recommendinator"
 version = "0.31.0"
 description = "Privacy-focused recommendation engine for books, movies, TV shows, and video games"
-requires-python = ">=3.11"
+# Not ChromaDB, whose wheels are abi3: a CI matrix was declined, so 3.11 is the
+# only minor anything here runs on and the only one claimed.
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "pydantic>=2.0.0,<3.0.0",
     "pyyaml>=6.0,<7.0",
@@ -20,7 +22,7 @@ dependencies = [
     "requests>=2.31.0,<3.0.0",
     "watchfiles>=0.21.0,<2.0.0",
     "legendary-gl>=0.20.0,<1.0.0",
-    "cryptography>=41.0.0,<45.0.0",
+    "cryptography>=50.0.0,<51.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +32,7 @@ ai = [
 ]
 dev = [
     "pytest>=7.4.0,<9.0.0",
-    "pytest-cov>=4.1.0,<6.0.0",
+    "pytest-cov>=7.1.0,<8.0.0",
     "pytest-mock>=3.12.0,<4.0.0",
     "black>=23.11.0,<25.0.0",
     "mypy>=1.7.0,<2.0.0",
