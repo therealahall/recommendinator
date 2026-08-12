@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v0.31.0 (2026-08-12)
+
+### Bug Fixes
+
+- **ci**: Let a tag push reach the workflow that publishes it
+  ([`4220c5f`](https://github.com/therealahall/recommendinator/commit/4220c5f11bd80a7e513fcb3d7302cf84965e7dd7))
+
+- **ci**: Publish only what the gate validated
+  ([`9201c2c`](https://github.com/therealahall/recommendinator/commit/9201c2c47125f37af8987f4d3aac872b0343d520))
+
+- **ci**: Require a release to descend from every alias it claims
+  ([`d026df4`](https://github.com/therealahall/recommendinator/commit/d026df418651e2eaae04b9cc26eb44ed58d2bc87))
+
+- **ci**: Serialise tag publishes and pin the guard's own wiring
+  ([`351763f`](https://github.com/therealahall/recommendinator/commit/351763f148dea4976507720391a027ad56465c61))
+
+- **docker**: Bind release publishing to commit history, not tag names
+  ([`3888cf0`](https://github.com/therealahall/recommendinator/commit/3888cf074b34254f23aae77530ee2eb9c8b1404d))
+
+- **docker**: Stop latest moving backwards, and unbreak a fresh ai install
+  ([`29c9c50`](https://github.com/therealahall/recommendinator/commit/29c9c502137a34bc3c51fb7084d5dc12fd75a0b8))
+
+- **security**: Key OAuth credentials on the source that owns them
+  ([`e0e0850`](https://github.com/therealahall/recommendinator/commit/e0e0850dd0d9da5ecef36f3dcf61de4aefc91688))
+
+- **security**: Key OAuth credentials on the source, in both interfaces
+  ([`0233efc`](https://github.com/therealahall/recommendinator/commit/0233efc8e486dca8b242eea21137536b2680542b))
+
+- **security**: Let a disabled source still revoke its token
+  ([`c8b24d9`](https://github.com/therealahall/recommendinator/commit/c8b24d991f26f5b65c59c8c985e6ba604c043aee))
+
+- **security**: Refuse an OAuth route a source running another plugin
+  ([`8312f16`](https://github.com/therealahall/recommendinator/commit/8312f1610135de0847d36f6b9eedee11b2ea4ff6))
+
+- **security**: Report the secrets a source holds, not the ones this call moved
+  ([`ed17b1a`](https://github.com/therealahall/recommendinator/commit/ed17b1af63173bbe15fc2d5c2e6ccc0b34e552d7))
+
+- **security**: Revoke a token unless another plugin's source owns its id
+  ([`e589632`](https://github.com/therealahall/recommendinator/commit/e5896320e75f820fa4618926509e5a2ef7ae5c0e))
+
+- **security**: Validate the CLI source id, and migrate credentials at startup
+  ([`65b9622`](https://github.com/therealahall/recommendinator/commit/65b9622c4480b59206d393efd6f5d63e0f850bde))
+
+- **web**: Let the newest connect-gate read win
+  ([`862be79`](https://github.com/therealahall/recommendinator/commit/862be794667dc2dd0c63bd8514b63086e4791424))
+
+- **web**: Re-read the connect gate after a write that moves it
+  ([`71f70cf`](https://github.com/therealahall/recommendinator/commit/71f70cfe56e1de62a4b70772831682ce12ae1eeb))
+
+- **web**: Retire a status read when its source is deleted
+  ([`1637962`](https://github.com/therealahall/recommendinator/commit/1637962ac334f3b1c69433383ed5aae86c5fa713))
+
+### Testing
+
+- **security**: Make the migration tests fail when the migration is stubbed
+  ([`3abf75f`](https://github.com/therealahall/recommendinator/commit/3abf75f4c5796e5d61cd69617b126d9dd5f90e28))
+
+
 ## v0.30.0 (2026-08-11)
 
 ### Bug Fixes
