@@ -23,6 +23,7 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from tests.image_layout import pulled_versions
 from tests.workflow_layout import WORKFLOWS, workflow_files, workflow_jobs
@@ -535,41 +536,66 @@ class TestNoDocumentClaimsAnInterpreterThePackageRefuses:
         assert not attributed, f"{document} blames ChromaDB: {attributed}"
 
 
-# black pulls `packaging` in, so this module's own import resolves declared or
-# not — and stops resolving the day a resolution drops whatever provided it.
-_IMPORTED_BY_THE_SUITE = frozenset({"packaging", "pytest"})
+# Enumerated, not swept: httpx reaches the suite through starlette's TestClient,
+# so no scan of this tree's own imports would name it.
+_IMPORTED_BY_THE_SUITE = frozenset({"httpx", "packaging", "pytest"})
 
 
-class TestTheDevExtraDeclaresWhatTheSuiteImports:
-    def test_no_test_import_rides_in_on_another_package(self) -> None:
+class TestTheDevExtraDeclaresTheImportsNamedHere:
+    def test_each_name_here_is_declared_in_the_dev_extra(self) -> None:
         declared = {
-            Requirement(spec).name
+            canonicalize_name(Requirement(spec).name)
             for spec in _pyproject()["project"]["optional-dependencies"]["dev"]
         }
 
         assert _IMPORTED_BY_THE_SUITE <= declared, _IMPORTED_BY_THE_SUITE - declared
 
+    @pytest.mark.parametrize("dropped", sorted(_IMPORTED_BY_THE_SUITE))
     def test_a_dev_extra_missing_one_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, dropped: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Green against the delivered file proves nothing: `packaging` was
-        installed anyway, which is how it went undeclared for as long as it did."""
-        stripped = [
+        """Green against the delivered file proves nothing: each of these is
+        installed anyway."""
+        kept = [
             spec
             for spec in _pyproject()["project"]["optional-dependencies"]["dev"]
-            if Requirement(spec).name != "packaging"
+            if canonicalize_name(Requirement(spec).name) != dropped
         ]
         copy = tmp_path / "pyproject.toml"
+        # json.dumps per spec: a marker carries quotes, and joining those by
+        # hand emits TOML nothing can parse.
         copy.write_text(
-            '[project]\n[project.optional-dependencies]\ndev = ["'
-            + '", "'.join(stripped)
-            + '"]\n',
+            "[project]\n[project.optional-dependencies]\ndev = ["
+            + ", ".join(json.dumps(spec) for spec in kept)
+            + "]\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
 
-        with pytest.raises(AssertionError, match="packaging"):
-            self.test_no_test_import_rides_in_on_another_package()
+        with pytest.raises(AssertionError, match=dropped):
+            self.test_each_name_here_is_declared_in_the_dev_extra()
+
+
+class TestADeclarationMayCarryAnEnvironmentMarker:
+    def test_the_missing_name_is_still_what_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No dev spec carries a marker yet, so the rebuild above meets its
+        first one the day someone adds it: joined by hand rather than encoded,
+        its quotes make TOML tomllib refuses."""
+        source = tmp_path / "declared"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            "[project]\n[project.optional-dependencies]\n"
+            "dev = ['tomli>=2.0; python_version < \"3.11\"', "
+            '"httpx", "packaging", "pytest"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_MODULE, "PYPROJECT", source / "pyproject.toml")
+
+        TestTheDevExtraDeclaresTheImportsNamedHere().test_a_dev_extra_missing_one_fails(
+            "pytest", tmp_path, monkeypatch
+        )
 
 
 def _locked_versions() -> dict[str, str]:
@@ -581,46 +607,168 @@ def _locked_versions() -> dict[str, str]:
     }
 
 
-def _declared_requirements() -> list[Requirement]:
+def _declared_groups() -> dict[str, list[Requirement]]:
+    """Whole groups rather than one merged list: a group emptied by an edit
+    would otherwise be carried by whatever the others still declare."""
     project = _pyproject()["project"]
-    extras = project["optional-dependencies"]
-    return [
-        Requirement(spec)
-        for spec in chain(project["dependencies"], extras["dev"], extras["ai"])
-    ]
+    groups: dict[str, list[str]] = {
+        "dependencies": project["dependencies"],
+        **project["optional-dependencies"],
+    }
+    return {
+        name: [Requirement(spec) for spec in specs] for name, specs in groups.items()
+    }
+
+
+def _unmet(requirement: Requirement, resolved: str | None) -> str | None:
+    """Prereleases are refused here and not left to `contains`, whose default
+    reversed in packaging 25.0."""
+    if resolved is None:
+        return "no lock entry"
+    if Version(resolved).is_prerelease and not requirement.specifier.prereleases:
+        return f"lock has {resolved}, a prerelease no floor admits unless it names one"
+    if requirement.specifier.contains(resolved, prereleases=True):
+        return None
+    return f"lock has {resolved}"
 
 
 class TestTheLockResolvesEveryFloorTheDeclarationsAskFor:
     def test_every_declared_floor_is_met_by_the_locked_version(self) -> None:
         """A floor the lock does not resolve is green here, red on the pull request."""
-        declared = _declared_requirements()
-        assert declared, "no dependency declared; the comparison would be empty"
+        groups = _declared_groups()
+        empty = sorted(name for name, declared in groups.items() if not declared)
+        assert not empty, f"{empty} declares nothing to sweep"
 
         locked = _locked_versions()
         unmet: list[str] = []
-        for requirement in declared:
-            resolved = locked.get(canonicalize_name(requirement.name))
-            if resolved is None or not requirement.specifier.contains(resolved):
-                unmet.append(
-                    f"{requirement.name}{requirement.specifier}: lock has {resolved}"
+        for declared in groups.values():
+            for requirement in declared:
+                failure = _unmet(
+                    requirement, locked.get(canonicalize_name(requirement.name))
                 )
+                if failure is not None:
+                    unmet.append(
+                        f"{requirement.name}{requirement.specifier}: {failure}"
+                    )
 
         assert not unmet, f"{len(unmet)} declaration(s) the lock does not meet: {unmet}"
 
-    def test_a_floor_the_lock_cannot_reach_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("declarations", "expected"),
+        [
+            pytest.param(
+                'dependencies = ["cryptography>=999.0.0"]\n'
+                "[project.optional-dependencies]\n"
+                'dev = ["pytest"]\nai = ["ollama"]\n',
+                "cryptography>=999.0.0: lock has ",
+                id="floor-above-the-locked-version",
+            ),
+            pytest.param(
+                'dependencies = ["not-in-the-lock>=1.0"]\n'
+                "[project.optional-dependencies]\n"
+                'dev = ["pytest"]\nai = ["ollama"]\n',
+                "not-in-the-lock>=1.0: no lock entry",
+                id="declared-and-never-locked",
+            ),
+            pytest.param(
+                'dependencies = ["pytest"]\n'
+                "[project.optional-dependencies]\n"
+                'dev = []\nai = ["ollama"]\n',
+                "['dev'] declares nothing to sweep",
+                id="one-group-emptied",
+            ),
+            pytest.param(
+                'dependencies = ["pytest"]\n'
+                "[project.optional-dependencies]\n"
+                'dev = ["pytest"]\nai = ["ollama"]\ndocs = ["not-in-the-lock>=1.0"]\n',
+                "not-in-the-lock>=1.0: no lock entry",
+                id="a-group-this-file-never-names",
+            ),
+        ],
+    )
+    def test_a_declaration_the_lock_does_not_meet_fails(
+        self,
+        declarations: str,
+        expected: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Green against the delivered file proves only that `make lock` last ran."""
         copy = tmp_path / "pyproject.toml"
+        copy.write_text("[project]\n" + declarations, encoding="utf-8")
+        monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
+
+        with pytest.raises(AssertionError, match=re.escape(expected)):
+            self.test_every_declared_floor_is_met_by_the_locked_version()
+
+    def test_a_locked_prerelease_is_reported_as_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refusing a prerelease is right, but reporting it as a version below
+        the floor is not. The one that named a prerelease is admitted, or the
+        count below would read 2."""
+        copy = tmp_path / "pyproject.toml"
         copy.write_text(
             "[project]\n"
-            'dependencies = ["cryptography>=999.0.0"]\n'
+            'dependencies = ["stand-in>=1.0"]\n'
             "[project.optional-dependencies]\n"
-            "dev = []\n"
-            "ai = []\n",
+            'dev = ["stand-in-dev>=1.0rc1"]\nai = ["stand-in-ai>=1.0"]\n',
+            encoding="utf-8",
+        )
+        lock = tmp_path / "uv.lock"
+        lock.write_text(
+            '[[package]]\nname = "stand-in"\nversion = "2.0.0rc1"\n'
+            '[[package]]\nname = "stand-in-dev"\nversion = "1.0rc1"\n'
+            '[[package]]\nname = "stand-in-ai"\nversion = "1.0"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
+        monkeypatch.setattr(_MODULE, "LOCK", lock)
+
+        with pytest.raises(
+            AssertionError,
+            match=re.escape(
+                "1 declaration(s) the lock does not meet: "
+                "['stand-in>=1.0: lock has 2.0.0rc1, a prerelease"
+            ),
+        ):
+            self.test_every_declared_floor_is_met_by_the_locked_version()
+
+
+class TestANameSpelledAnotherWayIsTheSamePackage:
+    """`Stand_In` and `stand.in` install `stand-in`. Compared literally, either
+    sweep misses a package that is right there."""
+
+    def test_a_declared_import_spelled_another_way_counts_as_declared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        copy = tmp_path / "pyproject.toml"
+        copy.write_text(
+            "[project]\n[project.optional-dependencies]\n"
+            'dev = ["HTTPX>=0.27.0", "Packaging", "PyTest"]\n',
             encoding="utf-8",
         )
         monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
 
-        with pytest.raises(AssertionError, match="cryptography"):
-            self.test_every_declared_floor_is_met_by_the_locked_version()
+        TestTheDevExtraDeclaresTheImportsNamedHere().test_each_name_here_is_declared_in_the_dev_extra()
+
+    def test_a_floor_meets_a_lock_entry_spelled_another_way(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Neither spelling is the other's, so both sides must canonicalise."""
+        copy = tmp_path / "pyproject.toml"
+        copy.write_text(
+            "[project]\n"
+            'dependencies = ["stand_in>=1.0"]\n'
+            "[project.optional-dependencies]\n"
+            'dev = ["stand_in>=1.0"]\nai = ["stand_in>=1.0"]\n',
+            encoding="utf-8",
+        )
+        lock = tmp_path / "uv.lock"
+        lock.write_text(
+            '[[package]]\nname = "Stand.In"\nversion = "1.0"\n', encoding="utf-8"
+        )
+        monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
+        monkeypatch.setattr(_MODULE, "LOCK", lock)
+
+        TestTheLockResolvesEveryFloorTheDeclarationsAskFor().test_every_declared_floor_is_met_by_the_locked_version()
