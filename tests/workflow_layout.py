@@ -19,7 +19,6 @@ _EXTENSIONS = {".yml", ".yaml"}
 
 
 def workflow_files(directory: Path = WORKFLOWS) -> list[Path]:
-    """Every file in *directory* GitHub would run as a workflow."""
     paths = sorted(path for path in directory.iterdir() if path.suffix in _EXTENSIONS)
     assert paths, f"no workflow files under {directory}; a sweep would be empty"
     return paths
@@ -31,10 +30,7 @@ def parsed_workflow(path: Path) -> dict[str, Any]:
 
 
 def workflow_jobs(path: Path) -> dict[str, Any]:
-    """The `jobs:` block, or none for a file declaring none.
-
-    Anything else living in the directory is then swept over rather than
-    crashing the sweep on a KeyError.
-    """
+    """None for a file declaring none, so anything else living in the directory
+    is swept over rather than crashing the sweep on a KeyError."""
     declared: dict[str, Any] = parsed_workflow(path).get("jobs") or {}
     return declared
