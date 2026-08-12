@@ -19,10 +19,15 @@ import pytest
 import yaml
 
 from tests.image_layout import shipped_seed_path
+from tests.workflow_layout import (
+    WORKFLOWS,
+    parsed_workflow,
+    workflow_files,
+    workflow_jobs,
+)
 
 # parents[1] resolves /tests/test_workflows.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 CHANGELOG = _REPO_ROOT / "CHANGELOG.md"
 
 # A release heading and a bullet under it, as python-semantic-release writes
@@ -149,24 +154,8 @@ def _semantic_release_config() -> dict[str, Any]:
     return configured
 
 
-def _workflow(path: Path) -> dict[str, Any]:
-    loaded: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return loaded
-
-
-def _workflow_files() -> list[Path]:
-    paths = sorted(WORKFLOWS.glob("*.yml"))
-    assert paths, "no workflow files found; every assertion below would be empty"
-    return paths
-
-
-def _jobs(path: Path) -> dict[str, Any]:
-    jobs: dict[str, Any] = _workflow(path)["jobs"]
-    return jobs
-
-
 def _steps(path: Path, job: str) -> list[dict[str, Any]]:
-    steps: list[dict[str, Any]] = _jobs(path)[job]["steps"]
+    steps: list[dict[str, Any]] = workflow_jobs(path)[job]["steps"]
     return steps
 
 
@@ -200,8 +189,8 @@ def _every_run_command() -> list[tuple[str, str, str]]:
     """Return (workflow, job, command) for every shell command any workflow runs."""
     commands = [
         (path.name, job_name, str(step["run"]))
-        for path in _workflow_files()
-        for job_name, job in _jobs(path).items()
+        for path in workflow_files()
+        for job_name, job in workflow_jobs(path).items()
         for step in job.get("steps", [])
         if "run" in step
     ]
@@ -358,7 +347,7 @@ def _decide_aliases(repository: Path, tmp_path: Path, tag: str) -> dict[str, str
     )
     # Held against what the job exports, not a literal: a name written here and
     # not exported there resolves to the empty string in publish's `enable=`.
-    assert set(decided) == set(_jobs(DOCKER)["guard"]["outputs"]), decided
+    assert set(decided) == set(workflow_jobs(DOCKER)["guard"]["outputs"]), decided
     return decided
 
 
@@ -485,8 +474,8 @@ class TestWorkflowSupplyChain:
     def test_every_job_that_runs_steps_declares_its_permissions(self) -> None:
         """A job with no block inherits the repository default, which may be write-all."""
         examined = []
-        for path in _workflow_files():
-            for job_name, job in _jobs(path).items():
+        for path in workflow_files():
+            for job_name, job in workflow_jobs(path).items():
                 if "steps" not in job:
                     continue
                 examined.append(f"{path.name}:{job_name}")
@@ -499,8 +488,8 @@ class TestWorkflowSupplyChain:
     def test_no_job_holds_a_scope_nothing_consumes(self, scope: str) -> None:
         """An unused scope is only ever useful to whoever compromises the job."""
         examined = []
-        for path in _workflow_files():
-            for job_name, job in _jobs(path).items():
+        for path in workflow_files():
+            for job_name, job in workflow_jobs(path).items():
                 examined.append(f"{path.name}:{job_name}")
                 assert scope not in job.get(
                     "permissions", {}
@@ -509,7 +498,7 @@ class TestWorkflowSupplyChain:
 
     def test_the_publish_job_holds_only_what_it_pushes_with(self) -> None:
         """Pinning the block, so a scope added later is a decision rather than a drift."""
-        assert _jobs(DOCKER)["publish"]["permissions"] == {
+        assert workflow_jobs(DOCKER)["publish"]["permissions"] == {
             "contents": "read",
             "packages": "write",
         }
@@ -520,8 +509,8 @@ class TestWorkflowSupplyChain:
         `pull_request`, and this is what keeps the push scope away from it."""
         holders = {
             f"{path.name}:{job_name}"
-            for path in _workflow_files()
-            for job_name, job in _jobs(path).items()
+            for path in workflow_files()
+            for job_name, job in workflow_jobs(path).items()
             if "packages" in job.get("permissions", {})
         }
 
@@ -538,7 +527,7 @@ class TestWorkflowSupplyChain:
         """Every write it makes goes through the PAT, so `contents: write` here
         would be a second, unaudited way to push. UNUSED_SCOPES above covers
         only the scopes nothing consumes, which this is not."""
-        assert _jobs(RELEASE)["release"]["permissions"] == {"contents": "read"}
+        assert workflow_jobs(RELEASE)["release"]["permissions"] == {"contents": "read"}
 
 
 class TestComposeValidationCoverage:
@@ -592,14 +581,14 @@ class TestReleaseIntegrity:
 
     def test_ci_and_the_tag_build_run_the_same_gate(self) -> None:
         """Two copies would let the tag path be checked by the weaker of them."""
-        assert _jobs(CI)["check"]["uses"] == GATE_REFERENCE
-        assert _jobs(DOCKER)["verify"]["uses"] == GATE_REFERENCE
+        assert workflow_jobs(CI)["check"]["uses"] == GATE_REFERENCE
+        assert workflow_jobs(DOCKER)["verify"]["uses"] == GATE_REFERENCE
 
     def test_the_gate_they_both_name_is_a_workflow_they_may_call(self) -> None:
         """A `uses:` reference resolves at run time, so dropping `workflow_call`
         breaks CI and the tag build with the whole suite still green."""
         assert _REPO_ROOT / GATE_REFERENCE.removeprefix("./") == GATE
-        assert "workflow_call" in _workflow(GATE)[_ON], _workflow(GATE)[_ON]
+        assert "workflow_call" in parsed_workflow(GATE)[_ON], parsed_workflow(GATE)[_ON]
 
     def test_release_runs_only_for_a_push_to_this_repository(self) -> None:
         """Regression test: a fork's CI run could reach the release job.
@@ -608,8 +597,10 @@ class TestReleaseIntegrity:
         Root cause: `branches: [main]` matches the fork's branch name.
         Fix: gate on the upstream event and repository.
         """
-        assert _conditions(_jobs(RELEASE)["release"]["if"]) == RELEASE_CONDITIONS
-        assert _workflow(RELEASE)[_ON] == {
+        assert (
+            _conditions(workflow_jobs(RELEASE)["release"]["if"]) == RELEASE_CONDITIONS
+        )
+        assert parsed_workflow(RELEASE)[_ON] == {
             "workflow_run": {
                 "workflows": ["CI"],
                 "types": ["completed"],
@@ -623,15 +614,15 @@ class TestReleaseIntegrity:
         """publish dropped its own event condition for `needs: [guard, verify]`,
         so the guard's is the only one left — and a job holding `packages: write`
         would build and push `latest` from a pull request without it."""
-        assert _conditions(_jobs(DOCKER)["guard"]["if"]) == TAG_BUILD_CONDITIONS
-        assert "if" not in _jobs(DOCKER)["publish"]
-        assert "if" not in _jobs(DOCKER)["verify"]
+        assert _conditions(workflow_jobs(DOCKER)["guard"]["if"]) == TAG_BUILD_CONDITIONS
+        assert "if" not in workflow_jobs(DOCKER)["publish"]
+        assert "if" not in workflow_jobs(DOCKER)["verify"]
 
     def test_every_tag_publish_queues_behind_the_last_one(self) -> None:
         """Grouped per commit, two releases decide their aliases before either
         builds, both claim `latest`, and the slower build keeps it. A pull
         request keeps a group per ref, where cancelling is what is wanted."""
-        assert _workflow(DOCKER)["concurrency"] == {
+        assert parsed_workflow(DOCKER)["concurrency"] == {
             "group": (
                 "docker-${{ github.event_name == 'pull_request' "
                 "&& github.ref || 'publish' }}"
@@ -738,8 +729,8 @@ class TestReleaseIntegrity:
 
     def test_publish_waits_for_the_guard_and_the_gate(self) -> None:
         """Either one skipped and a tag on any commit at all reaches GHCR."""
-        assert _jobs(DOCKER)["publish"]["needs"] == ["guard", "verify"]
-        assert _jobs(DOCKER)["verify"]["needs"] == "guard"
+        assert workflow_jobs(DOCKER)["publish"]["needs"] == ["guard", "verify"]
+        assert workflow_jobs(DOCKER)["verify"]["needs"] == "guard"
 
     def test_every_floating_tag_is_conditional_on_being_the_newest(self) -> None:
         """`latest`, `0` and `0.22` each move backwards when a backport publishes."""
@@ -801,7 +792,7 @@ class TestReleaseIntegrity:
         `type=raw` too — its default, stated nowhere here. Change that upstream
         and both `latest` tags land in one namespace, green.
         """
-        variants = _jobs(DOCKER)["publish"]["strategy"]["matrix"]["include"]
+        variants = workflow_jobs(DOCKER)["publish"]["strategy"]["matrix"]["include"]
         assert len(variants) > 1, "one variant collides with nothing"
         namespaces = [(variant["image"], variant["tag_suffix"]) for variant in variants]
         assert len(set(namespaces)) == len(namespaces), namespaces
@@ -811,12 +802,12 @@ class TestReleaseIntegrity:
 
     def test_publish_reads_only_outputs_the_guard_declares(self) -> None:
         """A misspelt output resolves to the empty string, which enables nothing."""
-        declared = set(_jobs(DOCKER)["guard"]["outputs"])
+        declared = set(workflow_jobs(DOCKER)["guard"]["outputs"])
         assert declared, "the guard declares no outputs"
         referenced = set(
             re.findall(
                 r"needs\.guard\.outputs\.([A-Za-z0-9_]+)",
-                yaml.safe_dump(_jobs(DOCKER)["publish"]),
+                yaml.safe_dump(workflow_jobs(DOCKER)["publish"]),
             )
         )
         assert referenced, "publish consumes none of the guard's decisions"
@@ -825,7 +816,7 @@ class TestReleaseIntegrity:
     def test_the_guard_exports_exactly_the_three_decisions_it_makes(self) -> None:
         """The anchor for the test below and for `_decide_aliases`: both take
         the names off this block, so this is where they are named."""
-        assert set(_jobs(DOCKER)["guard"]["outputs"]) == GUARD_OUTPUTS
+        assert set(workflow_jobs(DOCKER)["guard"]["outputs"]) == GUARD_OUTPUTS
 
     def test_each_exported_decision_is_read_off_the_step_that_makes_it(self) -> None:
         """Regression test: nothing tied the job's `outputs:` to the step.
@@ -836,7 +827,7 @@ class TestReleaseIntegrity:
         Fix: rebuilt from the step's own `id:`.
         """
         step_id = _step_named(DOCKER, "guard", ALIAS_DECISION_STEP)["id"]
-        exported = _jobs(DOCKER)["guard"]["outputs"]
+        exported = workflow_jobs(DOCKER)["guard"]["outputs"]
 
         for name in GUARD_OUTPUTS:
             assert exported[name] == f"${{{{ steps.{step_id}.outputs.{name} }}}}"

@@ -796,7 +796,7 @@ class TestOllamaBaseUrlHostsThatOnlyLookLocal:
 
         ``IPv6Address.is_private`` counts all of 6to4 and Teredo private, and
         answered the mapped form only from CPython 3.11.10 (CVE-2024-4032) —
-        a patch level ``requires-python = ">=3.11"`` does not guarantee.
+        a patch level ``requires-python = ">=3.11,<3.12"`` does not guarantee.
         """
         with pytest.raises(SettingsValidationError) as exc_info:
             coerce_and_validate(_entry(_OLLAMA_URL_KEY), f"http://[{host}]")
