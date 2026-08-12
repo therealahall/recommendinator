@@ -2,10 +2,10 @@
 
 :data:`DETAIL_FIELDS` is the single place a detail-table field is described.
 The joined SELECT and the detail-table read and write paths in
-``src/storage/sqlite_db.py``, the import templates in
-``src/ingestion/sources/generic_csv`` and the library export in
-``src/web/export.py`` all derive their column lists from it, so adding or
-renaming a field is one edit rather than five.
+``src/storage/sqlite_db.py`` and the template column tables in
+``src/models/templates.py``, which the import plugins and
+``src/utils/export.py`` read, all derive their column lists from it, so adding
+or renaming a field is one edit rather than five.
 
 The ``CREATE TABLE`` statements in ``src/storage/schema.py`` are deliberately
 *not* generated from this declaration — generating them would put the

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.storage.manager import StorageManager
-from src.web.trakt_auth import DevicePollResult, DevicePollStatus, TraktAuthError
 from tests.factories import MALFORMED_IDS
 
 from .conftest import _invoke_with_mocks

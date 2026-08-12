@@ -42,9 +42,9 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.storage import schema
 from src.storage.sqlite_db import SQLiteDB
+from src.utils.export import export_items_csv
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import expand_tv_shows_to_seasons
-from src.web.export import export_items_csv
 
 # The pre-fix GOG value: a flag per platform, wrapped in a single-element list
 # on the way into the column by ``to_json_array``.

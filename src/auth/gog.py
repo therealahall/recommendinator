@@ -1,4 +1,4 @@
-"""GOG OAuth authentication service for web UI.
+"""GOG OAuth authentication service, called by both the web API and the CLI.
 
 Handles the OAuth flow for connecting GOG accounts:
 1. Generate auth URL for user to visit
@@ -14,9 +14,9 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
+from src.auth.oauth_sources import OAuthSourceBinding
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
 from src.utils.request_errors import scrub_request_error
-from src.web.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager

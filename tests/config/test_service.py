@@ -1,4 +1,4 @@
-"""Tests for CLI configuration, especially scorer registration.
+"""Tests for application configuration, especially scorer registration.
 
 Regression: ContinuationScorer, SeriesAffinityScorer, and ContentLengthScorer
 were missing from _SCORER_CONFIG_MAP, so they never ran in production even
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.cli.config import (
+from src.config.service import (
     _SCORER_CONFIG_MAP,
     BOOTSTRAP_WEB_DEBUG,
     BOOTSTRAP_WEB_HOST,
@@ -183,7 +183,7 @@ class TestResolveBootstrapWeb:
         string, fails the int check, and silently bound 18473 — the operator's
         browser could not reach the port they set and nothing said why.
         """
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             resolved = resolve_bootstrap_web(
                 {"web": {"host": 8080, "port": "8O80", "debug": "true"}}
             )
@@ -209,7 +209,7 @@ class TestResolveBootstrapWeb:
         launcher believes is closed.
         """
         bad = {"web": {"host": 8080, "port": "8O80", "debug": "true"}}
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             resolved = resolve_bootstrap_web(bad, warn=False)
 
         assert caplog.messages == []
@@ -223,7 +223,7 @@ class TestResolveBootstrapWeb:
 
         Warning on every default install would train operators to ignore it.
         """
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             resolve_bootstrap_web({})
 
         assert caplog.messages == []
@@ -384,7 +384,7 @@ class TestWarnIfConfigIsShared:
         """Group and world, read and write: any of the four is a leak."""
         config_file.chmod(mode)
 
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             warn_if_config_is_shared(config_file)
 
         assert oct(mode) in caplog.text
@@ -396,7 +396,7 @@ class TestWarnIfConfigIsShared:
         """Otherwise it fires on every correctly installed boot and is ignored."""
         config_file.chmod(0o600)
 
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             warn_if_config_is_shared(config_file)
 
         assert caplog.text == ""
@@ -405,7 +405,7 @@ class TestWarnIfConfigIsShared:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A warning that raised would be worse than the mode it reports on."""
-        with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+        with caplog.at_level(logging.WARNING, logger="src.config.service"):
             warn_if_config_is_shared(tmp_path / "absent.yaml")
 
         assert caplog.text == ""
@@ -536,7 +536,7 @@ class TestCreateLlmComponents:
     ) -> None:
         """A warning with install instructions is logged when ollama is absent."""
         with patch("src.llm.client.Client", None):
-            with caplog.at_level(logging.WARNING, logger="src.cli.config"):
+            with caplog.at_level(logging.WARNING, logger="src.config.service"):
                 create_llm_components(ai_enabled_config)
 
         assert any(

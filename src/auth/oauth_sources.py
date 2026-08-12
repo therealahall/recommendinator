@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.web.sync_sources import resolve_input_for_plugin, resolve_source_plugin
+from src.sources.service import resolve_input_for_plugin, resolve_source_plugin
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager

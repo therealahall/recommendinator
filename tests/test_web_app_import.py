@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli.config import resolve_config_path
+from src.config.service import resolve_config_path
 from src.storage.manager import StorageManager
 from src.web.state import app_state
 from tests.factories import booted_web_app

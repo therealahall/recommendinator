@@ -26,7 +26,7 @@ Parses and normalizes data from external sources.
   fetches, and normalizes ratings.
 - Sources are **named instances**: a user-defined id plus a `plugin:` naming the
   type, so one plugin can back several. `ContentItem.source` carries the id, not
-  the plugin name. `resolve_inputs()` (`src/web/sync_sources.py`) resolves
+  the plugin name. `resolve_inputs()` (`src/sources/service.py`) resolves
   entries to `(source_id, plugin, config)`.
 - `execute_multi_source_sync` is shared by CLI and web. Each enabled source runs
   on its own thread (`sync.max_workers`, default 4) and results keep input
@@ -78,7 +78,7 @@ existing `seasons_watched` list, and it skips ignored items.
 A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
 (`parse_ignored_field`, `src/ingestion/sources/generic_csv/generic_csv.py`). That
 protects a hand-maintained file, not this project's exports.
-`_item_to_export_dict` (`src/web/export.py`) states `true` or `false` on every
+`_item_to_export_dict` (`src/utils/export.py`) states `true` or `false` on every
 row, so re-importing an export replaces the ignore list wholesale with the state
 at export time. Storage cannot tell a stated `false` from a plugin's defaulted
 `False`, so a plugin states the flag only when its source does. See
@@ -464,9 +464,18 @@ chat at a smaller model than recommendations use. See
 ### 7. Interfaces
 
 The CLI and the web UI are **alternative interfaces to the same capabilities**,
-neither a subset of the other. Both call the same recommendation, ingestion,
-storage and conversation services. New capabilities land in both, and
-`parity-review` enforces that on any change under `src/web/` or `src/cli/`.
+neither a subset of the other. Every service both call sits outside both
+packages: recommendation, ingestion, storage, conversation, settings,
+`src/config/service.py` (YAML loading, bootstrap resolution, component
+factories), `src/sources/service.py` (source config CRUD), `src/auth/` (GOG,
+Epic and Trakt OAuth) and `src/utils/export.py`. So `parity-review` reviews every
+change but those under `docs/`, `tests/`, tooling and themes: the capability
+surface is all of `src/` and `resources/`.
+
+Neither interface package imports the other, and each
+framework stays in the package it serves: `fastapi` and `starlette` only under
+`src/web/`, `click` only under `src/cli/`. `tests/test_interface_boundaries.py`
+fails on the next module that crosses either rule.
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`,

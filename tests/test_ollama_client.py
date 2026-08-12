@@ -12,7 +12,7 @@ from _pytest.logging import LogCaptureFixture
 from ollama import ChatResponse, Client, ListResponse, ShowResponse
 from ollama._types import Message
 
-from src.cli.config import create_llm_components
+from src.config.service import create_llm_components
 from src.llm.client import OllamaClient
 from src.settings.metadata import all_entries, default_of
 from src.settings.service import apply_settings, reset_setting

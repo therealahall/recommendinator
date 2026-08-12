@@ -14,7 +14,41 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field
 
 from src import __version__ as APP_VERSION
-from src.cli.config import get_feature_flags
+from src.auth.epic import (
+    EPIC_PLUGIN,
+    EPIC_SOURCE_ID,
+    EpicAuthError,
+    get_epic_auth_url,
+    has_epic_token,
+    is_epic_enabled,
+    save_epic_token,
+)
+from src.auth.epic import exchange_code_for_tokens as exchange_epic_tokens
+from src.auth.epic import extract_code_from_input as extract_epic_code
+from src.auth.gog import (
+    GOG_PLUGIN,
+    GOG_SOURCE_ID,
+    GogAuthError,
+    get_gog_auth_url,
+    has_gog_token,
+    is_gog_enabled,
+    save_gog_token,
+)
+from src.auth.gog import exchange_code_for_tokens as exchange_gog_tokens
+from src.auth.gog import extract_code_from_input as extract_gog_code
+from src.auth.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
+from src.auth.trakt import (
+    TRAKT_PLUGIN,
+    TRAKT_SOURCE_ID,
+    DevicePollStatus,
+    TraktAuthError,
+    has_trakt_token,
+    poll_device_token,
+    resolve_trakt_client_credentials,
+    save_trakt_token,
+    start_device_auth_flow,
+)
+from src.config.service import get_feature_flags
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
@@ -41,59 +75,7 @@ from src.settings.service import (
     reset_setting,
     set_secret,
 )
-from src.storage.manager import (
-    UNSET,
-    VALID_SORT_OPTIONS,
-    StorageManager,
-    UnknownUserError,
-)
-from src.utils.item_serialization import item_to_dict
-from src.utils.series import MAX_SEASONS
-from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
-from src.web.enrichment_manager import get_enrichment_manager
-from src.web.epic_auth import (
-    EPIC_PLUGIN,
-    EPIC_SOURCE_ID,
-    EpicAuthError,
-    get_epic_auth_url,
-    has_epic_token,
-    is_epic_enabled,
-    save_epic_token,
-)
-from src.web.epic_auth import exchange_code_for_tokens as exchange_epic_tokens
-from src.web.epic_auth import extract_code_from_input as extract_epic_code
-from src.web.export import export_items_csv, export_items_json
-from src.web.gog_auth import (
-    GOG_PLUGIN,
-    GOG_SOURCE_ID,
-    GogAuthError,
-    get_gog_auth_url,
-    has_gog_token,
-    is_gog_enabled,
-    save_gog_token,
-)
-from src.web.gog_auth import exchange_code_for_tokens as exchange_gog_tokens
-from src.web.gog_auth import extract_code_from_input as extract_gog_code
-from src.web.guards import (
-    RequiredConfig,
-    RequiredEngine,
-    RequiredStorage,
-    require_config,
-    writable_config,
-)
-from src.web.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
-from src.web.responses import SurrogateSafeResponse
-from src.web.state import (
-    get_config,
-    get_embedding_gen,
-    get_engine,
-    get_storage,
-    reload_config,
-)
-from src.web.stream_limit import bounded_sse
-from src.web.sync_manager import SyncJob, get_sync_manager
-from src.web.sync_sources import (
+from src.sources.service import (
     SOURCE_ID_PATTERN,
     SourceConfigError,
     build_config_view,
@@ -111,17 +93,35 @@ from src.web.sync_sources import (
     set_source_secret_value,
     update_source_config_values,
 )
-from src.web.trakt_auth import (
-    TRAKT_PLUGIN,
-    TRAKT_SOURCE_ID,
-    DevicePollStatus,
-    TraktAuthError,
-    has_trakt_token,
-    poll_device_token,
-    resolve_trakt_client_credentials,
-    save_trakt_token,
-    start_device_auth_flow,
+from src.storage.manager import (
+    UNSET,
+    VALID_SORT_OPTIONS,
+    StorageManager,
+    UnknownUserError,
 )
+from src.utils.export import export_items_csv, export_items_json
+from src.utils.item_serialization import item_to_dict
+from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
+from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
+from src.web.enrichment_manager import get_enrichment_manager
+from src.web.guards import (
+    RequiredConfig,
+    RequiredEngine,
+    RequiredStorage,
+    require_config,
+    writable_config,
+)
+from src.web.responses import SurrogateSafeResponse
+from src.web.state import (
+    get_config,
+    get_embedding_gen,
+    get_engine,
+    get_storage,
+    reload_config,
+)
+from src.web.stream_limit import bounded_sse
+from src.web.sync_manager import SyncJob, get_sync_manager
 
 logger = logging.getLogger(__name__)
 
@@ -1738,7 +1738,7 @@ def delete_source_endpoint(
 
 
 # Per-source configuration endpoints. Business logic lives in
-# ``src.web.sync_sources``; the endpoints below adapt those helpers to
+# ``src.sources.service``; the endpoints below adapt those helpers to
 # FastAPI / Pydantic so the CLI ``source`` group can share them.
 
 
@@ -1800,7 +1800,7 @@ def _config_error_to_http(error: SourceConfigError) -> HTTPException:
     logger.info("Source config error kind=%s", sanitize_for_log(error.kind))
     if error.kind == "invalid_values":
         # The one kind whose message is returned, because nothing else can say
-        # which field to fix. ``sync_sources`` builds it from the field name
+        # which field to fix. The source service builds it from the field name
         # and the containment guard alone — never from a plugin's own words.
         return HTTPException(status_code=400, detail=error.message)
     return HTTPException(

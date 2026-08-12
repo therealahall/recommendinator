@@ -1575,7 +1575,7 @@ class TestConfigLoadingRegression:
         Fix: Removed the explicit example.yaml default from get_app().
         """
 
-        from src.cli.config import load_config
+        from src.config.service import load_config
 
         # Create a config directory with both files
         config_dir = tmp_path / "config"
@@ -1621,7 +1621,7 @@ inputs:
     def test_load_config_falls_back_to_example_when_no_config(self, tmp_path):
         """Test that load_config falls back to example.yaml when config.yaml is missing."""
 
-        from src.cli.config import load_config
+        from src.config.service import load_config
 
         # Create a config directory with only example.yaml
         config_dir = tmp_path / "config"

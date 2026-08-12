@@ -5,15 +5,15 @@ import io
 import json
 from typing import Any
 
-from src.ingestion.sources.generic_csv import (
+from src.models.content import ContentItem, ContentType, get_enum_value
+from src.models.templates import (
     CONTENT_TYPE_COLUMNS,
     CREATOR_COLUMNS,
     CREATOR_FIELD,
     LIST_VALUED_COLUMNS,
     STATUS_DISPLAY,
-    guard_csv_formula,
 )
-from src.models.content import ContentItem, ContentType, get_enum_value
+from src.utils.csv_formula import guard_csv_formula
 
 # Column order for CSV export: the common columns bracket the type-specific
 # ones, which follow the templates because both come off CONTENT_TYPE_COLUMNS.

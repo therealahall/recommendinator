@@ -19,7 +19,7 @@ from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from src.cli.config import (
+from src.config.service import (
     create_llm_components,
     create_recommendation_engine,
     create_storage_manager,

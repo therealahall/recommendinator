@@ -10,9 +10,7 @@ import pytest
 import requests
 from click.testing import CliRunner
 
-from src.ingestion.sources.gog import GOG_CLIENT_SECRET
-from src.storage.manager import StorageManager
-from src.web.gog_auth import (
+from src.auth.gog import (
     GogAuthError,
     exchange_code_for_tokens,
     extract_code_from_input,
@@ -21,12 +19,14 @@ from src.web.gog_auth import (
     is_gog_enabled,
     save_gog_token,
 )
+from src.ingestion.sources.gog import GOG_CLIENT_SECRET
+from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
-GOG_LOGGER = "src.web.gog_auth"
+GOG_LOGGER = "src.auth.gog"
 
 # Token storage is shared by the three providers, so its failures log there.
-OAUTH_LOGGER = "src.web.oauth_sources"
+OAUTH_LOGGER = "src.auth.oauth_sources"
 
 
 class TestGetGogAuthUrl:
@@ -94,7 +94,7 @@ class TestExtractCodeFromInput:
 class TestExchangeCodeForTokens:
     """Tests for exchange_code_for_tokens function."""
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_successful_exchange(self, mock_get: MagicMock) -> None:
         """Test successful token exchange."""
         mock_response = MagicMock(spec=requests.Response)
@@ -111,7 +111,7 @@ class TestExchangeCodeForTokens:
         assert result["refresh_token"] == "refresh456"
         assert result["access_token"] == "access123"
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_exchange_failure(
         self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -129,7 +129,7 @@ class TestExchangeCodeForTokens:
 
         assert "GOG token exchange failed with status 400" in caplog.text
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_missing_refresh_token(self, mock_get: MagicMock) -> None:
         """Test response missing refresh_token."""
         mock_response = MagicMock(spec=requests.Response)
@@ -142,7 +142,7 @@ class TestExchangeCodeForTokens:
 
         assert "refresh_token" in str(exc_info.value)
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_network_failure_raises_gog_auth_error(self, mock_get: MagicMock) -> None:
         """Network error during token exchange raises GogAuthError."""
         mock_get.side_effect = requests.RequestException("Connection timed out")
@@ -298,7 +298,7 @@ class TestGogAuthCredentialChainRegression:
     ``from None``, so the CLI's traceback carries only the composed message.
     """
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_connect_failure_traceback_omits_the_code_and_secret(
         self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -320,7 +320,7 @@ class TestGogAuthCredentialChainRegression:
         assert GOG_CLIENT_SECRET not in caplog.text
         assert "GOG token exchange request failed: ConnectionError" in caplog.text
 
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_unparseable_body_is_scrubbed_too(
         self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -343,7 +343,7 @@ class TestGogAuthCredentialChainRegression:
         assert "GOG token exchange request failed: JSONDecodeError" in caplog.text
 
     @patch("src.cli.commands.is_gog_enabled", return_value=True)
-    @patch("src.web.gog_auth.requests.get")
+    @patch("src.auth.gog.requests.get")
     def test_cli_connect_logs_no_code_with_its_traceback(
         self,
         mock_get: MagicMock,

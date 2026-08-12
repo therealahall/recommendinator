@@ -3,8 +3,8 @@
 The project is not published to PyPI and is installed with uv, so a
 ``pip install`` of it fails for whoever follows it. Two log messages carried
 that instruction and are asserted individually in
-``tests/cli/test_config.py`` and ``tests/test_storage_manager.py``; this guard
-covers the rest of the tree, where the next copy would otherwise be found by a
+``tests/config/test_service.py`` and ``tests/test_storage_manager.py``; this
+guard covers the rest, where the next copy would otherwise be found by a
 user rather than by CI.
 """
 
@@ -93,7 +93,7 @@ class TestInstallInstructions:
 
         assert {
             "src/storage/manager.py",
-            "src/cli/config.py",
+            "src/config/service.py",
             "docs/TROUBLESHOOTING.md",
         } <= scanned
 

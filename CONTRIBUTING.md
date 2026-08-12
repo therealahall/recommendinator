@@ -261,9 +261,12 @@ version:
 
 ```
 src/
-├── cli/              # Click CLI interface
-├── web/              # FastAPI web interface
+├── cli/              # Click commands
+├── web/              # FastAPI app: routing, guards, app state
 │   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
+├── config/           # config.yaml loading + component factories
+├── sources/          # service.py: configured-source CRUD
+├── auth/             # GOG/Epic/Trakt OAuth flows
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (<name>/<name>.py + README.md + test_<name>.py)
 ├── llm/              # Ollama interaction (optional)

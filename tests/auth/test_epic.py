@@ -11,8 +11,7 @@ import requests
 from click.testing import CliRunner
 from legendary.models.exceptions import InvalidCredentialsError
 
-from src.storage.manager import StorageManager
-from src.web.epic_auth import (
+from src.auth.epic import (
     EpicAuthError,
     exchange_code_for_tokens,
     extract_code_from_input,
@@ -21,18 +20,19 @@ from src.web.epic_auth import (
     is_epic_enabled,
     save_epic_token,
 )
+from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
-EPIC_LOGGER = "src.web.epic_auth"
+EPIC_LOGGER = "src.auth.epic"
 
 # Token storage is shared by the three providers, so its failures log there.
-OAUTH_LOGGER = "src.web.oauth_sources"
+OAUTH_LOGGER = "src.auth.oauth_sources"
 
 
 class TestGetEpicAuthUrl:
     """Tests for get_epic_auth_url function."""
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_returns_url_from_epcapi(self, mock_epcapi_cls: MagicMock) -> None:
         """Test that auth URL comes from EPCAPI.get_auth_url()."""
         mock_api = MagicMock()
@@ -118,7 +118,7 @@ class TestExtractCodeFromInput:
 class TestExchangeCodeForTokens:
     """Tests for exchange_code_for_tokens function."""
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_successful_exchange(self, mock_epcapi_cls: MagicMock) -> None:
         """Test successful token exchange."""
         mock_api = MagicMock()
@@ -135,7 +135,7 @@ class TestExchangeCodeForTokens:
         assert result["access_token"] == "access123"
         mock_api.start_session.assert_called_once_with(authorization_code="test_code")
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_invalid_credentials_raises_epic_auth_error(
         self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -150,7 +150,7 @@ class TestExchangeCodeForTokens:
 
         assert "Epic token exchange failed" in caplog.text
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_missing_refresh_token(self, mock_epcapi_cls: MagicMock) -> None:
         """Test response missing refresh_token."""
         mock_api = MagicMock()
@@ -160,7 +160,7 @@ class TestExchangeCodeForTokens:
         with pytest.raises(EpicAuthError, match="missing refresh_token"):
             exchange_code_for_tokens("test_code")
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_network_failure_raises_epic_auth_error(
         self, mock_epcapi_cls: MagicMock
     ) -> None:
@@ -319,7 +319,7 @@ class TestEpicAuthTracebackRegression:
     nothing the exception class does not, so each sink logs the class instead.
     """
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_transport_failure_logs_the_class_not_a_traceback(
         self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -338,7 +338,7 @@ class TestEpicAuthTracebackRegression:
         ]
         assert not any(record.exc_info for record in records)
 
-    @patch("src.web.epic_auth.EPCAPI")
+    @patch("src.auth.epic.EPCAPI")
     def test_invalid_credentials_logs_the_class_not_a_traceback(
         self, mock_epcapi_cls: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:

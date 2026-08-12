@@ -36,7 +36,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from src.cli.config import create_recommendation_engine
+from src.config.service import create_recommendation_engine
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine

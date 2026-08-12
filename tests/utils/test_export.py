@@ -10,21 +10,21 @@ from unittest.mock import patch
 import pytest
 
 from src.ingestion.sources.arr_base import ArrPlugin
-from src.ingestion.sources.generic_csv import (
-    COMMON_COLUMNS,
-    CONTENT_TYPE_COLUMNS,
-    CREATOR_COLUMNS,
-    CREATOR_FIELD,
-    CsvImportPlugin,
-)
+from src.ingestion.sources.generic_csv import CsvImportPlugin
 from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sources.gog.gog import GogPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.ingestion.sources.steam.steam import SteamPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.templates import (
+    COMMON_COLUMNS,
+    CONTENT_TYPE_COLUMNS,
+    CREATOR_COLUMNS,
+    CREATOR_FIELD,
+)
 from src.storage.sqlite_db import SQLiteDB
-from src.web.export import export_items_csv, export_items_json
+from src.utils.export import export_items_csv, export_items_json
 
 
 class TestExportSerialization:

@@ -310,7 +310,7 @@ class TestScoreNormalisationBounds:
         """A config.yaml threshold outside 1..5 normalises instead of raising.
 
         The settings registry validates 1..5, but the YAML path in
-        src/cli/config.py reads the key straight through with no bounds, so a
+        src/config/service.py reads the key straight through with no bounds, so a
         threshold either side of the range still has to land inside [-1.0, 1.0].
         """
         analyzer = PreferenceAnalyzer(min_rating=min_rating)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import uvicorn
 
-from src.cli.config import (
+from src.config.service import (
     MissingApiTokenError,
     load_config,
     resolve_bootstrap_web,

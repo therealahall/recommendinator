@@ -11,7 +11,7 @@ from unittest.mock import DEFAULT, Mock, NonCallableMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.cli.config import take_api_token
+from src.config.service import take_api_token
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.web.app import create_app

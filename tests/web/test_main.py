@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli.config import (
+from src.config.service import (
     BOOTSTRAP_WEB_HOST,
     BOOTSTRAP_WEB_PORT,
     MissingApiTokenError,

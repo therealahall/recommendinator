@@ -224,9 +224,9 @@ logs with `exc_info=True`, so GOG's token refresh and code exchange, Steam's two
 Web API calls and every TMDB and RAWG request raise `from None`.
 `tests/test_credential_url_chains.py` holds every such caller to both halves — a
 chain-free handler and an entry in its `_CREDENTIAL_URL_FUNCTIONS` list — and
-enrols new ones by scanning `src/enrichment/providers/`,
-`src/ingestion/sources/` and `src/web/` for a credential key beside a `params=`
-call.
+enrols new ones by scanning `src/auth/`, `src/config/`,
+`src/enrichment/providers/`, `src/ingestion/sources/`, `src/sources/`,
+`src/utils/` and `src/web/` for a credential key beside a `params=` call.
 
 A refused config write is redacted before logging, but the match is exact, so a
 truncated or encoded form of the secret survives it.

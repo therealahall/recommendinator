@@ -809,7 +809,7 @@ def _backdate_credential(storage: StorageManager, source_id: str, key: str) -> N
 class RotatingAttributingPlugin(SourcePlugin):
     """Rotates a token and attributes an item off the same method.
 
-    The rotating doubles in ``tests/test_sync_sources.py`` yield nothing, so
+    The rotating doubles in ``tests/sources/test_service.py`` yield nothing, so
     none of them can compare the owner against the id an item carries.
     """
 

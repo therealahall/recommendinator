@@ -204,7 +204,7 @@ these keys out of it, and none of them is a recognised key:
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
 | Series ordering, `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
-| Library export, `src/web/export.py` | `notes` on every type. **TV show** `seasons_watched`. **video game** `playtime_hours` |
+| Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`. **video game** `playtime_hours` |
 
 That list grows whenever a reader gains another fallback spelling, so check those
 files. Beyond it and the recognised keys, the blob is yours.
@@ -424,7 +424,7 @@ the flag, read it with `parse_ignored_field()` from `generic_csv`: it returns
 when a value was stated. Do not reach for the lower-level
 `parse_boolean_field()`, which returns `False` for a missing value.
 
-The library exporter (`src/web/export.py`) is the one deliberate exception, not a
+The library exporter (`src/utils/export.py`) is the one deliberate exception, not a
 precedent. It states `ignored` on every row, because re-importing an edited
 export is the supported bulk un-ignore. That is why a re-imported export replaces
 the whole ignore list with its state at export time, and why
@@ -457,9 +457,10 @@ A plugin that sends a credential as a query parameter owes two things, and
 `tests/test_credential_url_chains.py` fails until it has both: a handler that
 neither logs the raw error, renders a traceback, nor keeps it as `__cause__`,
 and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`. The scan enrols you
-automatically — it reads this tree, `src/enrichment/providers/` and `src/web/`,
-and reports any function naming a credential key beside a `params=` call that
-the list omits.
+automatically — it reads `src/auth/`, `src/config/`, `src/enrichment/providers/`,
+`src/ingestion/sources/`, `src/sources/`, `src/utils/` and `src/web/`, and
+reports any function naming a credential key beside a `params=` call that the
+list omits.
 
 Raise it from inside the `except` block. `from None` clears `__cause__` but
 leaves `__context__`, and the enrichment manager reads that chain to tell a

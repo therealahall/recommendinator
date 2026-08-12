@@ -943,7 +943,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         """Refusing with the reason nowhere at all would be unusable."""
         missing = tmp_path / "no-such-library.csv"
 
-        with caplog.at_level(logging.WARNING, logger="src.web.sync_sources"):
+        with caplog.at_level(logging.WARNING, logger="src.sources.service"):
             client.post(
                 "/api/sync/sources",
                 json={

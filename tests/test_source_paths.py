@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 from click.testing import CliRunner
 
-from src.cli.config import load_config
+from src.config.service import load_config
 from src.ingestion.paths import (
     DEFAULT_ALLOWED_SOURCE_ROOTS,
     PathNotAllowed,

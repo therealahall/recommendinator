@@ -11,9 +11,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.auth.trakt import DevicePollResult, DevicePollStatus
+from src.sources.service import delete_source, resolve_inputs
 from src.storage.manager import StorageManager
-from src.web.sync_sources import delete_source, resolve_inputs
-from src.web.trakt_auth import DevicePollResult, DevicePollStatus
 from tests.factories import MALFORMED_IDS, authenticated_client, booted_web_app
 
 USER_ID = 1
