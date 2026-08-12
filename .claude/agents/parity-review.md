@@ -1,7 +1,7 @@
 ---
 name: parity-review
 description: |
-  CLI/UI parity enforcement agent. Use this agent as part of the pre-commit review workflow whenever a PR touches the capability surface, which is everything under src/ and resources/ — only docs, tests, tooling and themes are outside it.
+  CLI/UI parity enforcement agent. Use this agent as part of the pre-commit review workflow whenever a PR touches the capability surface, which is everything under src/, resources/ and templates/, plus index.html — only docs, tests, tooling and themes are outside it.
 
   Examples:
   - user: "I've added a new API endpoint for wishlist management"

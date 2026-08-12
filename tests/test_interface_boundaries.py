@@ -11,6 +11,7 @@ import importlib
 import re
 from collections.abc import Iterable, Mapping
 from fnmatch import fnmatch
+from itertools import dropwhile, takewhile
 from pathlib import Path
 
 import pytest
@@ -158,18 +159,15 @@ _STAR_RE_EXPORT_CASES = sorted(
 
 
 def _auto_approved_patterns(agent_text: str) -> frozenset[str]:
-    """Step 0's whole rule, read off the agent so the pin is the file the
-    reviewer loads and not a copy that can drift.
+    """Step 0's whole rule, read off the agent the reviewer loads so the pin
+    cannot drift. Read to the blank line, so a reflow drops nothing.
     """
-    step_zero = next(
-        (
-            line
-            for line in agent_text.splitlines()
-            if line.startswith(_STEP_ZERO_OPENING)
-        ),
-        None,
+    from_opening = dropwhile(
+        lambda line: not line.startswith(_STEP_ZERO_OPENING),
+        agent_text.splitlines(),
     )
-    assert step_zero is not None, (
+    step_zero = " ".join(takewhile(str.strip, from_opening))
+    assert step_zero, (
         f"No line of {_PARITY_AGENT} opens {_STEP_ZERO_OPENING!r}, so Step 0's "
         "auto-approve rule cannot be read off the agent"
     )
@@ -191,6 +189,57 @@ def _auto_approved(path: str) -> bool:
         )
         for pattern in _AUTO_APPROVED_PATTERNS
     )
+
+
+#: ``templates/`` ships the per-content-type export templates.
+_CAPABILITY_TREES = ("src/", "resources/", "templates/")
+
+#: The SPA entry point: the whole surface outside those trees.
+_ROOT_SURFACE_FILE = "index.html"
+
+_SURFACE_CLAIM = "capability surface"
+_CLAIMED_TREE = re.compile(r"\b[a-z][\w.-]*/")
+
+_PARITY_GATE_CLASS = "TestTheParityGateReadsTheWholeCapabilitySurface"
+
+
+def _denied_capability_trees(patterns: Iterable[str]) -> set[str]:
+    return {
+        pattern
+        for pattern in patterns
+        if pattern.endswith("/") and pattern.startswith(_CAPABILITY_TREES)
+    }
+
+
+def _surface_claim(agent_text: str) -> str:
+    """The description sentence deciding whether the reviewer runs at all."""
+    claim = next(
+        (line for line in agent_text.splitlines() if _SURFACE_CLAIM in line), ""
+    )
+    assert claim, f"{_PARITY_AGENT} no longer describes its {_SURFACE_CLAIM}"
+    return claim
+
+
+def _is_path_pattern(token: str) -> bool:
+    """A bare ``/`` is the separator, quoted in prose about ``fnmatch``."""
+    return token != "/" and ("*" in token or token.endswith("/"))
+
+
+def _docstring_patterns(class_name: str) -> set[str]:
+    """Every tree or glob the docstrings of *class_name* name."""
+    module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    scope = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    return {
+        token
+        for node in ast.walk(scope)
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+        for token in re.findall(r"``([^`]+)``", ast.get_docstring(node) or "")
+        if _is_path_pattern(token)
+    }
 
 
 def _imports_of(tree: ast.AST, package: str, imported_package: str) -> set[str]:
@@ -496,7 +545,7 @@ class TestTheParityGateReadsTheWholeCapabilitySurface:
             "src/web/api.py",
             # The SPA entry point is the one root-level file on the surface, so
             # it is what a root pattern widened to ``*`` would swallow.
-            "index.html",
+            _ROOT_SURFACE_FILE,
         ],
     )
     def test_a_diff_on_the_capability_surface_reaches_the_review_body(
@@ -531,25 +580,64 @@ class TestTheParityGateReadsTheWholeCapabilitySurface:
 
     def test_the_themes_tree_is_the_only_denied_tree_inside_the_surface(self) -> None:
         """Any widened tree entry lands here, not only the paths above."""
-        assert {
-            pattern
-            for pattern in _AUTO_APPROVED_PATTERNS
-            if pattern.endswith("/") and pattern.startswith(("src/", "resources/"))
-        } == {"src/web/static/themes/"}
+        assert _denied_capability_trees(_AUTO_APPROVED_PATTERNS) == {
+            "src/web/static/themes/"
+        }
+
+    def test_a_denied_capability_tree_outside_src_is_still_caught(self) -> None:
+        """The old prefix pair, ``src/`` and ``resources/``, missed ``templates/``."""
+        assert _denied_capability_trees({"docs/", "templates/"}) == {"templates/"}
+        for tree in _CAPABILITY_TREES:
+            assert (_REPO_ROOT / tree).is_dir()
 
     def test_no_root_file_pattern_reaches_a_nested_path(self) -> None:
-        """``fnmatch`` globs span ``/``: the guard is what keeps ``*.ts`` root-only."""
+        """``fnmatch`` globs span ``/``: the guard is what keeps ``*.md`` root-only."""
         assert [
             pattern
             for pattern in _AUTO_APPROVED_PATTERNS
             if not pattern.endswith("/") and _auto_approved(f"resources/js/{pattern}")
         ] == []
 
-    def test_a_reworded_step_zero_names_the_agent_it_could_not_read(self) -> None:
+    @pytest.mark.parametrize(
+        "rule",
+        [
+            f"{_STEP_ZERO_OPENING} `docs/`,\nor `vite.config.ts`.",
+            f"{_STEP_ZERO_OPENING}\n`docs/` or `vite.config.ts`.",
+        ],
+    )
+    def test_a_wrapped_step_zero_still_yields_every_pattern(self, rule: str) -> None:
+        """A one-line parse would keep only the patterns before the wrap."""
+        patterns = _auto_approved_patterns(f"{rule}\n\nLater: `src/`\n")
+
+        assert patterns == {"docs/", "vite.config.ts"}
+
+    @pytest.mark.parametrize(
+        "rule",
+        [
+            "If any changed file is under `docs/`, approve.",
+            "If every changed\nfile is under `docs/`, approve.",
+        ],
+    )
+    def test_a_step_zero_the_parse_cannot_find_names_the_agent(self, rule: str) -> None:
         """With no default this raised ``StopIteration`` at import, taking every
-        test in the file down with it."""
+        test in the file down with it. A wrap splitting the opening lands here too.
+        """
         with pytest.raises(AssertionError, match="parity-review.md"):
-            _auto_approved_patterns("If any changed file is under `docs/`, approve.")
+            _auto_approved_patterns(rule)
+
+    def test_every_pattern_a_docstring_names_is_one_the_gate_reads(self) -> None:
+        """Prose naming a pattern nothing lists reads as a rule and is not one."""
+        named = _docstring_patterns(_PARITY_GATE_CLASS)
+
+        assert named, "the sweep found no patterns, so it proves nothing"
+        assert named <= _AUTO_APPROVED_PATTERNS | set(_CAPABILITY_TREES)
+
+    def test_the_agent_description_names_the_whole_surface(self) -> None:
+        """The description is the trigger: a tree left out is never reviewed."""
+        claim = _surface_claim(_PARITY_AGENT.read_text(encoding="utf-8"))
+
+        assert set(_CLAIMED_TREE.findall(claim)) == set(_CAPABILITY_TREES)
+        assert _ROOT_SURFACE_FILE in claim
 
 
 class TestTheSweptPopulationIsNotEmpty:
