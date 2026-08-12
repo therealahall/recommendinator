@@ -71,7 +71,7 @@ const sensitiveFields = computed(() =>
     : [],
 )
 
-// Mirrors ``_SOURCE_ID_RE`` in ``src/web/sync_sources.py``. Keep both in
+// Mirrors ``_SOURCE_ID_RE`` in ``src/sources/service.py``. Keep both in
 // sync — the server-side regex is the authoritative gate (the API rejects
 // mismatches with 400 ``invalid_id``); this client-side check is purely a
 // UX affordance for the Create button's disabled state.

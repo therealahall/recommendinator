@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.cli.config import MIN_API_TOKEN_LENGTH as _MIN_TOKEN_LENGTH
+from src.config.service import MIN_API_TOKEN_LENGTH as _MIN_TOKEN_LENGTH
 
 # parents[2] resolves /tests/docker/test_entrypoint.py -> repo root.
 # If this test file is ever moved, this constant must be updated.

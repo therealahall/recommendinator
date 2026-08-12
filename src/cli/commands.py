@@ -17,10 +17,40 @@ from typing import Any, NoReturn, cast
 import click
 from tabulate import tabulate
 
-from src.cli.config import get_feature_flags
+from src.auth.epic import (
+    EPIC_PLUGIN,
+    exchange_code_for_tokens as exchange_epic_code,
+    extract_code_from_input as extract_epic_code,
+    get_epic_auth_url,
+    has_epic_token,
+    is_epic_enabled,
+    save_epic_token,
+)
+from src.auth.gog import (
+    GOG_PLUGIN,
+    exchange_code_for_tokens as exchange_gog_code,
+    extract_code_from_input as extract_gog_code,
+    get_gog_auth_url,
+    has_gog_token,
+    is_gog_enabled,
+    save_gog_token,
+)
+from src.auth.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
+from src.auth.trakt import (
+    TRAKT_PLUGIN,
+    DevicePollStatus,
+    TraktAuthError,
+    has_trakt_token,
+    poll_device_token,
+    resolve_trakt_client_credentials,
+    save_trakt_token,
+    start_device_auth_flow,
+)
+from src.config.service import get_feature_flags
 from src.conversation.engine import ConversationEngine
 from src.conversation.profile import ProfileGenerator
 from src.enrichment.manager import EnrichmentManager
+from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     execute_multi_source_sync,
@@ -54,43 +84,7 @@ from src.settings.service import (
     set_secret,
     setting_view,
 )
-from src.storage.manager import StorageManager, UnknownUserError, unset_if_none
-from src.storage.source_migration import configured_source_plugins
-from src.utils.item_serialization import item_to_dict
-from src.utils.series import MAX_SEASONS
-from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.epic_auth import (
-    EPIC_PLUGIN,
-    exchange_code_for_tokens as exchange_epic_code,
-    extract_code_from_input as extract_epic_code,
-    get_epic_auth_url,
-    has_epic_token,
-    is_epic_enabled,
-    save_epic_token,
-)
-from src.web.export import export_items_csv, export_items_json
-from src.web.gog_auth import (
-    GOG_PLUGIN,
-    exchange_code_for_tokens as exchange_gog_code,
-    extract_code_from_input as extract_gog_code,
-    get_gog_auth_url,
-    has_gog_token,
-    is_gog_enabled,
-    save_gog_token,
-)
-from src.web.trakt_auth import (
-    TRAKT_PLUGIN,
-    DevicePollStatus,
-    TraktAuthError,
-    has_trakt_token,
-    poll_device_token,
-    resolve_trakt_client_credentials,
-    save_trakt_token,
-    start_device_auth_flow,
-)
-from src.ingestion.plugin_base import ConfigField, SourcePlugin
-from src.web.oauth_sources import REFRESH_TOKEN_KEY, may_revoke
-from src.web.sync_sources import (
+from src.sources.service import (
     SOURCE_ID_RULE,
     ResolvedInput,
     SourceConfigError,
@@ -110,6 +104,12 @@ from src.web.sync_sources import (
     update_source_config_values,
     validate_source_config,
 )
+from src.storage.manager import StorageManager, UnknownUserError, unset_if_none
+from src.storage.source_migration import configured_source_plugins
+from src.utils.export import export_items_csv, export_items_json
+from src.utils.item_serialization import item_to_dict
+from src.utils.series import MAX_SEASONS
+from src.utils.sorting import MAX_SEARCH_LENGTH
 
 logger = logging.getLogger(__name__)
 

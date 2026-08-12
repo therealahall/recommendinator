@@ -476,7 +476,7 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     # NOTE: web.host / web.port / web.debug are deliberately absent. They are
     # read by the uvicorn launcher (src/web/main.py) before any database is
     # open, so a database-backed value could never be honoured — see
-    # BOOTSTRAP_WEB_* in src/cli/config.py.
+    # BOOTSTRAP_WEB_* in src/config/service.py.
     _entry(
         "web.allowed_origins",
         label="Allowed CORS origins",

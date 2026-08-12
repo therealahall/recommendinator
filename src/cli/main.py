@@ -20,7 +20,7 @@ from src.cli.commands import (
     status,
     update,
 )
-from src.cli.config import (
+from src.config.service import (
     create_llm_components,
     create_recommendation_engine,
     create_storage_manager,

@@ -9,7 +9,7 @@ from src.utils.urls import is_local_url
 
 # Optional dependency: ollama is only installed with the [ai] extra.
 # The non-AI Docker image does not include it. ImportError is caught by
-# create_llm_components() in src/cli/config.py for graceful degradation.
+# create_llm_components() in src/config/service.py for graceful degradation.
 try:
     from ollama import Client
 except ImportError:

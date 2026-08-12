@@ -24,7 +24,7 @@ door:
   value alone. That last decision is the door's, taken from the value it is
   handed, so a plugin that says nothing cannot clear the user's ignore list by
   accident. It also means the round trip is wholesale rather than selective:
-  ``src/web/export.py`` writes a concrete ``true``/``false`` on every row it
+  ``src/utils/export.py`` writes a concrete ``true``/``false`` on every row it
   exports, so re-importing an export states the flag for every item and
   replaces the ignore list with the state it had at export time. The
   blank-cell rule protects a hand-maintained file; it protects nothing about

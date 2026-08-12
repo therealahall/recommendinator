@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import watchfiles
 
-from src.cli.config import (
+from src.config.service import (
     MissingApiTokenError,
     load_config,
     take_api_token,

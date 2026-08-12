@@ -1,4 +1,4 @@
-"""Epic Games OAuth authentication service for web UI.
+"""Epic Games OAuth authentication service, called by the web API and the CLI.
 
 Handles the OAuth flow for connecting Epic Games accounts:
 1. Generate auth URL via legendary's EPCAPI
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from legendary.api.egs import EPCAPI
 from legendary.models.exceptions import InvalidCredentialsError
 
-from src.web.oauth_sources import OAuthSourceBinding
+from src.auth.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager

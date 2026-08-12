@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 import pytest
 
-from src.ingestion.sources.generic_csv import CREATOR_COLUMNS, LIST_VALUED_COLUMNS
 from src.models import detail_fields
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import (
@@ -32,6 +31,7 @@ from src.models.detail_fields import (
     _assert_every_content_type_is_declared,
     _assert_select_aliases_are_unique,
 )
+from src.models.templates import CREATOR_COLUMNS, LIST_VALUED_COLUMNS
 from src.storage import derived, sqlite_db
 from src.storage.merge import detail_join
 from src.storage.schema import create_schema

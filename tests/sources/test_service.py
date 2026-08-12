@@ -11,8 +11,7 @@ from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.manager import StorageManager
-from src.web.sync_sources import (
+from src.sources.service import (
     SourceConfigError,
     create_source,
     delete_source,
@@ -23,6 +22,7 @@ from src.web.sync_sources import (
     update_source_config_values,
     validate_source_config,
 )
+from src.storage.manager import StorageManager
 
 
 class FakeBookPlugin(SourcePlugin):

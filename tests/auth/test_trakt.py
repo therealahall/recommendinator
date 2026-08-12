@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.storage.manager import StorageManager
-from src.web.trakt_auth import (
+from src.auth.trakt import (
     DevicePollStatus,
     TraktAuthError,
     has_trakt_token,
@@ -17,6 +16,7 @@ from src.web.trakt_auth import (
     save_trakt_token,
     start_device_auth_flow,
 )
+from src.storage.manager import StorageManager
 
 
 def _response(status_code: int, json_body: dict[str, Any] | None = None) -> MagicMock:
@@ -34,7 +34,7 @@ def _response(status_code: int, json_body: dict[str, Any] | None = None) -> Magi
 class TestStartDeviceAuthFlow:
     """Tests for start_device_auth_flow."""
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_returns_device_and_user_code(self, mock_post: MagicMock) -> None:
         """A successful request returns the device/user code fields."""
         mock_post.return_value = _response(
@@ -63,7 +63,7 @@ class TestStartDeviceAuthFlow:
         "missing_field",
         ["device_code", "user_code", "verification_url"],
     )
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_incomplete_response_raises(
         self, mock_post: MagicMock, missing_field: str
     ) -> None:
@@ -83,7 +83,7 @@ class TestStartDeviceAuthFlow:
         with pytest.raises(TraktAuthError, match="incomplete"):
             start_device_auth_flow("client_id_value")
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_non_http_verification_url_rejected(self, mock_post: MagicMock) -> None:
         """A ``javascript:`` verification URL is rejected before being returned.
 
@@ -103,7 +103,7 @@ class TestStartDeviceAuthFlow:
         with pytest.raises(TraktAuthError, match="invalid verification URL"):
             start_device_auth_flow("client_id_value")
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_network_failure_raises(self, mock_post: MagicMock) -> None:
         """A network error raises TraktAuthError."""
         mock_post.side_effect = requests.RequestException("boom")
@@ -115,7 +115,7 @@ class TestStartDeviceAuthFlow:
 class TestPollDeviceToken:
     """Tests for poll_device_token covering each documented status code."""
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_success_returns_refresh_token(self, mock_post: MagicMock) -> None:
         """A 200 response yields SUCCESS and the refresh token."""
         mock_post.return_value = _response(
@@ -134,7 +134,7 @@ class TestPollDeviceToken:
             "client_secret": "secret",
         }
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_success_missing_token_raises(self, mock_post: MagicMock) -> None:
         """A 200 response without a refresh token raises."""
         mock_post.return_value = _response(200, {"access_token": "access"})
@@ -142,7 +142,7 @@ class TestPollDeviceToken:
         with pytest.raises(TraktAuthError, match="missing refresh_token"):
             poll_device_token("dev123", "cid", "secret")
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_pending(self, mock_post: MagicMock) -> None:
         """A 400 response means the user has not approved yet."""
         mock_post.return_value = _response(400)
@@ -152,7 +152,7 @@ class TestPollDeviceToken:
         assert result.status is DevicePollStatus.PENDING
         assert result.refresh_token is None
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_slow_down(self, mock_post: MagicMock) -> None:
         """A 429 response means back off and keep polling."""
         mock_post.return_value = _response(429)
@@ -161,7 +161,7 @@ class TestPollDeviceToken:
 
         assert result.status is DevicePollStatus.SLOW_DOWN
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_expired(self, mock_post: MagicMock) -> None:
         """A 410 response means the device code expired."""
         mock_post.return_value = _response(410)
@@ -170,7 +170,7 @@ class TestPollDeviceToken:
 
         assert result.status is DevicePollStatus.EXPIRED
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_denied(self, mock_post: MagicMock) -> None:
         """A 418 response means the user denied the request."""
         mock_post.return_value = _response(418)
@@ -179,7 +179,7 @@ class TestPollDeviceToken:
 
         assert result.status is DevicePollStatus.DENIED
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_invalid_device_code_raises(self, mock_post: MagicMock) -> None:
         """A 404 response raises TraktAuthError."""
         mock_post.return_value = _response(404)
@@ -187,7 +187,7 @@ class TestPollDeviceToken:
         with pytest.raises(TraktAuthError, match="invalid or unknown"):
             poll_device_token("dev123", "cid", "secret")
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_already_used_raises(self, mock_post: MagicMock) -> None:
         """A 409 response raises TraktAuthError."""
         mock_post.return_value = _response(409)
@@ -195,7 +195,7 @@ class TestPollDeviceToken:
         with pytest.raises(TraktAuthError, match="already been used"):
             poll_device_token("dev123", "cid", "secret")
 
-    @patch("src.web.trakt_auth.requests.post")
+    @patch("src.auth.trakt.requests.post")
     def test_network_failure_raises(self, mock_post: MagicMock) -> None:
         """A network error raises TraktAuthError."""
         mock_post.side_effect = requests.RequestException("boom")

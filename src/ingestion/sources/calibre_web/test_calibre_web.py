@@ -13,9 +13,9 @@ from src.ingestion.sources.calibre_web.calibre_web import (
     _parse_opds_xml,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.sources.service import resolve_inputs, update_source_config_values
 from src.storage.manager import StorageManager
 from src.storage.sqlite_db import SQLiteDB
-from src.web.sync_sources import resolve_inputs, update_source_config_values
 
 _FEED_HEADER = (
     '<feed xmlns="http://www.w3.org/2005/Atom" '

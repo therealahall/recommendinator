@@ -1,4 +1,4 @@
-"""Trakt OAuth device-code authentication service for web UI and CLI.
+"""Trakt OAuth device-code authentication service for the web API and the CLI.
 
 Handles the device-code OAuth flow for connecting a Trakt account:
 
@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from src.web.oauth_sources import OAuthSourceBinding
+from src.auth.oauth_sources import OAuthSourceBinding
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager

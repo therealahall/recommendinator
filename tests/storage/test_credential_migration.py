@@ -7,15 +7,15 @@ from typing import Any
 import pytest
 
 from src.ingestion.registry import get_registry
-from src.storage.credential_migration import migrate_config_credentials
-from src.storage.manager import StorageManager
-from src.web.sync_sources import (
+from src.sources.service import (
     clear_source_secret_value,
     create_source,
     resolve_inputs,
     set_source_secret_value,
     update_source_config_values,
 )
+from src.storage.credential_migration import migrate_config_credentials
+from src.storage.manager import StorageManager
 
 
 class TestMigrateConfigCredentials:
