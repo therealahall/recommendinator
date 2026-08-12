@@ -1353,6 +1353,7 @@ ai = [
 dev = [
     { name = "black" },
     { name = "mypy" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -1376,6 +1377,7 @@ requires-dist = [
     { name = "legendary-gl", specifier = ">=0.20.0,<1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },
     { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.1.0,<1.0.0" },
+    { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.2" },
     { name = "pandas", specifier = ">=2.0.0,<3.0.0" },
     { name = "pydantic", specifier = ">=2.0.0,<3.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0,<9.0.0" },
