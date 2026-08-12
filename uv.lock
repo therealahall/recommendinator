@@ -1352,6 +1352,7 @@ ai = [
 ]
 dev = [
     { name = "black" },
+    { name = "httpx" },
     { name = "mypy" },
     { name = "packaging" },
     { name = "pytest" },
@@ -1374,6 +1375,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=50.0.0,<51.0.0" },
     { name = "defusedxml", specifier = ">=0.7.1,<1.0.0" },
     { name = "fastapi", specifier = ">=0.104.0,<1.0.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0,<1.0.0" },
     { name = "legendary-gl", specifier = ">=0.20.0,<1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },
     { name = "ollama", marker = "extra == 'ai'", specifier = ">=0.1.0,<1.0.0" },
