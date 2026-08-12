@@ -157,7 +157,7 @@ config = load_config(Path("config/config.yaml"))
 
 ## Technology Stack
 
-- **Python**: 3.11+ (3.11 recommended for ChromaDB)
+- **Python**: 3.11 only — `requires-python` refuses every other minor
 - **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
 - **LLM**: Ollama (local)
 - **Vector DB**: ChromaDB

@@ -2,11 +2,6 @@
 
 ## Install
 
-### `Failed to build hnswlib`
-
-ChromaDB needs Python 3.11 or 3.12. Install under 3.11, or run without AI and
-skip ChromaDB.
-
 ### `ModuleNotFoundError`
 
 ```bash

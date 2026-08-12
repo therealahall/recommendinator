@@ -1,7 +1,8 @@
 # Python Version Setup
 
-**Use Python 3.11.** ChromaDB ships wheels for 3.11 and 3.12, and the project
-targets 3.11. `.python-version` pins it and uv reads that file automatically.
+**Use Python 3.11.** It is the only minor the project builds and tests against,
+so `requires-python` refuses every other one.
+`.python-version` pins it and uv reads that file automatically.
 
 ## Setup
 
