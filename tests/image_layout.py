@@ -1,8 +1,7 @@
-"""Dockerfile reads more than one suite needs.
+"""Dockerfile parsing more than one suite needs.
 
-The seed's path is the smoke test's and the entrypoint's, and the images it
-pulls are the compose suite's and the toolchain suite's. One restructure moves
-all four.
+One restructure moves the seed's path and the images pulled alike, so neither
+is read in the suites that assert on them.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ _TAGGED = re.compile(r"^(?P<name>[^\s:@]+):(?P<version>\d+(?:\.\d+)*)")
 
 
 def pulled_images(dockerfile: Path = DOCKERFILE) -> list[str]:
-    """Every registry image *dockerfile* pulls, in file order, stages excluded."""
+    """Stages excluded: a `FROM` naming an earlier one pulls nothing."""
     source = dockerfile.read_text(encoding="utf-8")
     headers = list(STAGE_HEADER.finditer(source))
     stages = {header.group("name") for header in headers}
@@ -51,7 +50,7 @@ def pulled_images(dockerfile: Path = DOCKERFILE) -> list[str]:
 
 
 def pulled_versions(dockerfile: Path = DOCKERFILE) -> dict[str, list[str]]:
-    """The version each pulled image is tagged with, keyed by image name."""
+    """A list per image name: one image can be pulled at several stages."""
     versions: dict[str, list[str]] = {}
     for reference in pulled_images(dockerfile):
         tagged = _TAGGED.match(reference)

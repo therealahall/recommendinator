@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from tests.image_layout import pulled_versions
 from tests.workflow_layout import WORKFLOWS, workflow_files, workflow_jobs
@@ -35,13 +37,12 @@ MAKEFILE = _REPO_ROOT / "Makefile"
 DOCKERFILE = _REPO_ROOT / "Dockerfile"
 PACKAGE_JSON = _REPO_ROOT / "package.json"
 
-# The workflows that provision an interpreter of their own. Spelled out rather
-# than derived: one that stops provisioning drops silently out of the sweep.
+# Spelled out rather than derived: a workflow that stops provisioning would
+# drop silently out of the sweep.
 PYTHON_WORKFLOWS = {"quality-gate.yml", "release.yml"}
 NODE_WORKFLOWS = {"quality-gate.yml"}
 
-# Every image the Dockerfile pulls. A new one is a toolchain version nobody has
-# decided how to hold still.
+# A new image here is a toolchain version nobody has decided how to hold still.
 PULLED_IMAGES = {"python", "node", "ghcr.io/astral-sh/uv"}
 
 _MAKEFILE_INTERPRETER = re.compile(
@@ -66,17 +67,14 @@ def _pinned_minor() -> str:
 
 
 def _neighbouring_minors() -> tuple[str, str]:
-    """The releases either side of the pinned minor, neither of them supported."""
+    """Either side of the pinned minor, neither of them supported."""
     major, minor = (int(part) for part in _pinned_minor().split("."))
     return f"{major}.{minor - 1}.0", f"{major}.{minor + 1}.0"
 
 
 def _probe_versions() -> list[str]:
-    """Interpreters spanning the pin, to read a specifier by what it admits.
-
-    uv writes `==3.11.*` for `>=3.11,<3.12`, so the two spellings are compared
-    by the versions they accept rather than held character for character.
-    """
+    """uv writes `==3.11.*` for `>=3.11,<3.12`, so the two spellings are
+    compared by what they admit rather than character for character."""
     previous, following = _neighbouring_minors()
     return [
         previous,
@@ -93,7 +91,7 @@ def _pyproject() -> dict[str, Any]:
 
 
 def _sole_match(pattern: re.Pattern[str], path: Path) -> re.Match[str]:
-    """The one line of *path* matching *pattern*, or a failure naming the file."""
+    """Fails naming the file when *path* does not match *pattern* exactly once."""
     matches = list(pattern.finditer(path.read_text(encoding="utf-8")))
     assert (
         len(matches) == 1
@@ -104,11 +102,8 @@ def _sole_match(pattern: re.Pattern[str], path: Path) -> re.Match[str]:
 def _provisioned(
     action: str, field: str, directory: Path = WORKFLOWS
 ) -> dict[str, list[str]]:
-    """The versions *action* is asked for, keyed by every workflow running it.
-
-    A step naming no version reads the pin file, so it is a workflow that
-    provisions with nothing recorded under it rather than one that disagrees.
-    """
+    """A step naming no version reads the pin file, so it lands here as a
+    workflow with nothing recorded under it rather than one that disagrees."""
     provisioned: dict[str, list[str]] = {}
     for path in workflow_files(directory):
         inputs = [
@@ -134,11 +129,8 @@ class TestTheSupportedInterpreterIsOneMinor:
     """One interpreter is provisioned and tested, so one minor is claimed."""
 
     def test_requires_python_admits_the_pinned_minor_and_no_later_one(self) -> None:
-        """A bare `>=3.11` advertised 3.12 and 3.13, which nothing here runs.
-
-        Both ends: a floor above the pin refuses the interpreter every site
-        provisions, and a missing ceiling re-advertises what was never tested.
-        """
+        """A bare `>=3.11` advertised 3.12 and 3.13, which nothing here runs; a
+        floor above the pin would refuse the interpreter every site provisions."""
         requires = SpecifierSet(_pyproject()["project"]["requires-python"])
         previous, following = _neighbouring_minors()
 
@@ -160,8 +152,8 @@ class TestTheSupportedInterpreterIsOneMinor:
 
     @pytest.mark.parametrize("patch", ["", ".10"])
     def test_a_pin_naming_a_patch_level_still_names_its_minor(self, patch: str) -> None:
-        """CVE-2024-4032 is a live reason to pin one, and every site below names
-        a minor. This file must not be what stands in the way."""
+        """Every site below names a minor, and a pin naming a patch level must
+        not be what stands in the way of one."""
         assert _minor(f"{_pinned_minor()}{patch}") == _pinned_minor()
 
 
@@ -296,7 +288,7 @@ _SOLE_ENUMERATOR = "tests/workflow_layout.py"
 
 
 def _tracked_files(suffix: str) -> list[tuple[str, Path]]:
-    """Every tracked file of one suffix — what a clone receives, and no more."""
+    """What a clone receives, and no more."""
     listing = subprocess.run(
         ["git", "ls-files", "--cached", "-z"],
         cwd=_REPO_ROOT,
@@ -332,10 +324,8 @@ def _stage_workflows(directory: Path) -> Path:
 
 @pytest.fixture
 def swept_directory(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
-    """Point the delivered assertions at a staged workflow directory.
-
-    They call `_provisioned` with no directory, so the default is bound at
-    definition and only the module attribute can be moved.
+    """The delivered assertions call `_provisioned` with no directory, so the
+    default is bound at definition and only the module attribute can be moved.
     """
 
     def _point_at(staged: Path) -> None:
@@ -386,11 +376,8 @@ class TestTheAgreementItselfFailsOnAWorkflowTheSweepAdmits:
 
 
 class TestEveryShapeOfStepThatNamesNoVersion:
-    """The siblings of a missing `with:`, which read the pin file just the same.
-
-    An empty block is the `or {}` branch; a block holding another input is the
-    one that reaches the version lookup and finds nothing under it.
-    """
+    """The siblings of a missing `with:`, which read the pin file just the
+    same."""
 
     @pytest.mark.parametrize(
         "step",
@@ -444,8 +431,7 @@ class TestASecondNodeStageIsNotAVersionMismatch:
     def test_a_stage_on_another_node_still_fails(
         self, extra_node_stage: Callable[[str], None]
     ) -> None:
-        """Sets must not have made the assertion agreeable to anything: vue-tsc
-        green on one node and red on the other is what it exists to catch."""
+        """Sets must not have made the assertion agreeable to anything."""
         (node,) = set(pulled_versions(DOCKERFILE)["node"])
         extra_node_stage(str(int(node) + 2))
 
@@ -468,7 +454,6 @@ class TestThePinMayNameAPatchLevel:
     def test_every_assertion_that_reads_the_pin_stays_green(
         self, patch_level_pin: None
     ) -> None:
-        """The four that read it: two on what the pin admits, two on what names it."""
         interpreter = TestTheSupportedInterpreterIsOneMinor()
         agreement = TestTheToolchainVersionsAgree()
 
@@ -482,7 +467,6 @@ class TestOneSweepReadsTheWorkflowDirectory:
     """Two enumerators drift: one of them learns `.yaml` and the other does not."""
 
     def test_nothing_else_enumerates_the_workflow_directory(self) -> None:
-        """A second sweep is a second place to forget an extension."""
         offenders = [
             name
             for name, path in _tracked_files(".py")
@@ -505,7 +489,6 @@ class TestOneSweepReadsTheWorkflowDirectory:
         assert _WORKFLOW_ENUMERATION.search(spelling)
 
     def test_the_sole_enumerator_reads_both_extensions_github_runs(self) -> None:
-        """GitHub honours `.yaml` as readily as `.yml`."""
         assert {path.suffix for path in workflow_files(WORKFLOWS)} <= {".yml", ".yaml"}
         assert _ENUMERATION.search(
             (_REPO_ROOT / _SOLE_ENUMERATOR).read_text(encoding="utf-8")
@@ -550,3 +533,94 @@ class TestNoDocumentClaimsAnInterpreterThePackageRefuses:
         ]
 
         assert not attributed, f"{document} blames ChromaDB: {attributed}"
+
+
+# black pulls `packaging` in, so this module's own import resolves declared or
+# not — and stops resolving the day a resolution drops whatever provided it.
+_IMPORTED_BY_THE_SUITE = frozenset({"packaging", "pytest"})
+
+
+class TestTheDevExtraDeclaresWhatTheSuiteImports:
+    def test_no_test_import_rides_in_on_another_package(self) -> None:
+        declared = {
+            Requirement(spec).name
+            for spec in _pyproject()["project"]["optional-dependencies"]["dev"]
+        }
+
+        assert _IMPORTED_BY_THE_SUITE <= declared, _IMPORTED_BY_THE_SUITE - declared
+
+    def test_a_dev_extra_missing_one_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Green against the delivered file proves nothing: `packaging` was
+        installed anyway, which is how it went undeclared for as long as it did."""
+        stripped = [
+            spec
+            for spec in _pyproject()["project"]["optional-dependencies"]["dev"]
+            if Requirement(spec).name != "packaging"
+        ]
+        copy = tmp_path / "pyproject.toml"
+        copy.write_text(
+            '[project]\n[project.optional-dependencies]\ndev = ["'
+            + '", "'.join(stripped)
+            + '"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
+
+        with pytest.raises(AssertionError, match="packaging"):
+            self.test_no_test_import_rides_in_on_another_package()
+
+
+def _locked_versions() -> dict[str, str]:
+    """What `uv sync` installs, under the names the lock normalises them to."""
+    locked: dict[str, Any] = tomllib.loads(LOCK.read_text(encoding="utf-8"))
+    return {
+        canonicalize_name(package["name"]): package["version"]
+        for package in locked["package"]
+    }
+
+
+def _declared_requirements() -> list[Requirement]:
+    project = _pyproject()["project"]
+    extras = project["optional-dependencies"]
+    return [
+        Requirement(spec)
+        for spec in chain(project["dependencies"], extras["dev"], extras["ai"])
+    ]
+
+
+class TestTheLockResolvesEveryFloorTheDeclarationsAskFor:
+    def test_every_declared_floor_is_met_by_the_locked_version(self) -> None:
+        """A floor the lock does not resolve is green here, red on the pull request."""
+        declared = _declared_requirements()
+        assert declared, "no dependency declared; the comparison would be empty"
+
+        locked = _locked_versions()
+        unmet: list[str] = []
+        for requirement in declared:
+            resolved = locked.get(canonicalize_name(requirement.name))
+            if resolved is None or not requirement.specifier.contains(resolved):
+                unmet.append(
+                    f"{requirement.name}{requirement.specifier}: lock has {resolved}"
+                )
+
+        assert not unmet, f"{len(unmet)} declaration(s) the lock does not meet: {unmet}"
+
+    def test_a_floor_the_lock_cannot_reach_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Green against the delivered file proves only that `make lock` last ran."""
+        copy = tmp_path / "pyproject.toml"
+        copy.write_text(
+            "[project]\n"
+            'dependencies = ["cryptography>=999.0.0"]\n'
+            "[project.optional-dependencies]\n"
+            "dev = []\n"
+            "ai = []\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_MODULE, "PYPROJECT", copy)
+
+        with pytest.raises(AssertionError, match="cryptography"):
+            self.test_every_declared_floor_is_met_by_the_locked_version()
