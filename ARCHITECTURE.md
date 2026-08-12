@@ -639,7 +639,7 @@ one save path.
 
 ## Technology Stack
 
-Python 3.11+, SQLite, FastAPI, Click, Ollama (local, AMD-compatible) and
+Python 3.11, SQLite, FastAPI, Click, Ollama (local, AMD-compatible) and
 ChromaDB (optional, AI only). Tested with pytest, checked with Black, MyPy strict
 and Ruff.
 

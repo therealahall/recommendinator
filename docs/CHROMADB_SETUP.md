@@ -9,8 +9,7 @@ ChromaDB holds the vector embeddings. It is only used when AI features are on
 uv sync --locked --extra ai
 ```
 
-Use Python 3.11 or 3.12. Newer versions may have no ChromaDB wheel, and the
-source build fails on `hnswlib`. See [PYTHON_VERSION.md](PYTHON_VERSION.md).
+Use Python 3.11. See [PYTHON_VERSION.md](PYTHON_VERSION.md).
 
 Verify:
 

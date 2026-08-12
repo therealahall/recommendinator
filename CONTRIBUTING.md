@@ -7,8 +7,8 @@ uv sync --locked --extra ai --extra dev
 python3.11 -m pytest
 ```
 
-Python 3.11 is required, for ChromaDB compatibility. Branch, change, get the
-checks green, open a PR.
+Python 3.11 is required: `requires-python` refuses every other minor. Branch,
+change, get the checks green, open a PR.
 
 ## Local development with Docker
 

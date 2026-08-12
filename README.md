@@ -212,7 +212,7 @@ selection.
 
 ## Requirements
 
-Python 3.11 recommended (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)),
+Python 3.11 (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)),
 SQLite, and Ollama if you want the AI features.
 
 ## License
