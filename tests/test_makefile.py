@@ -144,8 +144,10 @@ class TestInterpreterSelection:
     """CI installs into a virtualenv, so the interpreter has to be overridable."""
 
     def test_the_python_variable_is_overridable(self) -> None:
-        """A plain `=` would ignore the interpreter CI hands make on the command line."""
-        assert "PYTHON ?= python3.11" in _makefile_lines()
+        """A plain `=` would ignore the interpreter CI hands make on the command
+        line. Which version it defaults to belongs to
+        tests/test_toolchain_versions.py, which ties it to `.python-version`."""
+        assert any(line.startswith("PYTHON ?= python") for line in _makefile_lines())
 
     def test_no_recipe_hardcodes_the_interpreter(self) -> None:
         """One hardcoded python3.11 in CI runs the checks outside the synced venv."""

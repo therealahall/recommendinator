@@ -1,7 +1,8 @@
-"""Where the image puts files more than one suite names.
+"""Dockerfile reads more than one suite needs.
 
-The smoke test reads the first-run seed out of the built image, the entrypoint
-defaults to the same path, and one Dockerfile restructure has to move both.
+The seed's path is the smoke test's and the entrypoint's, and the images it
+pulls are the compose suite's and the toolchain suite's. One restructure moves
+all four.
 """
 
 from __future__ import annotations
@@ -24,6 +25,39 @@ _SEED_COPY = re.compile(
     re.MULTILINE,
 )
 _WORKDIR = re.compile(r"^WORKDIR\s+(?P<path>\S+)\s*$", re.MULTILINE)
+
+# `FROM <parent> [AS <stage>]` — the only form these Dockerfiles use.
+STAGE_HEADER = re.compile(
+    r"^FROM\s+(?P<parent>\S+)(?:\s+AS\s+(?P<name>\S+))?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# `COPY --from=<image or stage>`.
+_COPY_FROM = re.compile(r"^COPY\s+(?:--\S+\s+)*--from=(?P<source>\S+)", re.MULTILINE)
+
+# The `<name>:<version>` head of a reference. What follows it — a `-slim`
+# variant, the digest — says how the image is built, not which version it is.
+_TAGGED = re.compile(r"^(?P<name>[^\s:@]+):(?P<version>\d+(?:\.\d+)*)")
+
+
+def pulled_images(dockerfile: Path = DOCKERFILE) -> list[str]:
+    """Every registry image *dockerfile* pulls, in file order, stages excluded."""
+    source = dockerfile.read_text(encoding="utf-8")
+    headers = list(STAGE_HEADER.finditer(source))
+    stages = {header.group("name") for header in headers}
+    referenced = [header.group("parent") for header in headers]
+    referenced += _COPY_FROM.findall(source)
+    return [reference for reference in referenced if reference not in stages]
+
+
+def pulled_versions(dockerfile: Path = DOCKERFILE) -> dict[str, list[str]]:
+    """The version each pulled image is tagged with, keyed by image name."""
+    versions: dict[str, list[str]] = {}
+    for reference in pulled_images(dockerfile):
+        tagged = _TAGGED.match(reference)
+        assert tagged is not None, f"{reference} names no version"
+        versions.setdefault(tagged["name"], []).append(tagged["version"])
+    return versions
 
 
 def shipped_seed_path() -> str:

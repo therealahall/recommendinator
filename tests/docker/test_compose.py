@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 from src.web import healthcheck
-from tests.image_layout import shipped_seed_path
+from tests.image_layout import STAGE_HEADER, pulled_images, shipped_seed_path
 
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,12 +38,6 @@ DOCKER_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "docker.yml"
 # reaches only that one.
 RUNTIME_BASE_STAGE = "runtime-base"
 APP_TARGETS = ["default", "ai"]
-
-# `FROM <image> AS <stage>` — the only form this Dockerfile uses.
-_STAGE_HEADER = re.compile(
-    r"^FROM\s+(?P<parent>\S+)(?:\s+AS\s+(?P<name>\S+))?\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
 
 # The arguments of an `apt-get install`, following backslash continuations onto
 # the following lines. Anything after the shell's `&&` belongs to the next
@@ -106,9 +100,6 @@ UNSHIPPABLE = [
 # A `COPY` instruction's arguments, whether or not it carries flags.
 _COPY = re.compile(r"^COPY\s+(?P<arguments>\S.*)$", re.MULTILINE)
 
-# `COPY --from=<image or stage>`.
-_COPY_FROM = re.compile(r"^COPY\s+(?:--\S+\s+)*--from=(?P<source>\S+)", re.MULTILINE)
-
 # An image reference pinned the way this repository requires: the tag stays for
 # legibility, the digest is what actually resolves.
 _PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@:]+@sha256:[0-9a-f]{64}$")
@@ -156,7 +147,7 @@ def _stages() -> dict[str, _Stage]:
     instruction is attributed to the stage that actually executes it.
     """
     source = DOCKERFILE.read_text()
-    headers = list(_STAGE_HEADER.finditer(source))
+    headers = list(STAGE_HEADER.finditer(source))
     stages: dict[str, _Stage] = {}
     for index, header in enumerate(headers):
         name = header.group("name")
@@ -290,16 +281,6 @@ def _reaches_the_builder(path: str) -> bool:
     return any(
         path == allowed or path.startswith(f"{allowed}/") for allowed in _allowlist()
     )
-
-
-def _image_references(dockerfile: Path) -> list[str]:
-    """Return the registry images *dockerfile* pulls, stage names excluded."""
-    source = dockerfile.read_text()
-    headers = list(_STAGE_HEADER.finditer(source))
-    stages = {header.group("name") for header in headers}
-    referenced = [header.group("parent") for header in headers]
-    referenced += _COPY_FROM.findall(source)
-    return [reference for reference in referenced if reference not in stages]
 
 
 def _run_bodies(dockerfile: Path) -> list[str]:
@@ -766,7 +747,7 @@ class TestBaseImagesArePinnedByDigest:
         self, dockerfile: Path
     ) -> None:
         """The tag is for whoever reads it; the digest is what resolves."""
-        references = _image_references(dockerfile)
+        references = pulled_images(dockerfile)
 
         assert references, f"no image references parsed out of {dockerfile.name}"
         assert [
@@ -778,7 +759,7 @@ class TestBaseImagesArePinnedByDigest:
         are one interpreter and one set of shared libraries, or neither."""
         python = [
             reference
-            for reference in _image_references(DOCKERFILE)
+            for reference in pulled_images(DOCKERFILE)
             if reference.startswith("python:")
         ]
 
