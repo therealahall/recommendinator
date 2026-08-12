@@ -1,7 +1,7 @@
 ---
 name: parity-review
 description: |
-  CLI/UI parity enforcement agent. Use this agent as part of the pre-commit review workflow whenever a PR touches files in src/web/ or src/cli/.
+  CLI/UI parity enforcement agent. Use this agent as part of the pre-commit review workflow whenever a PR touches the capability surface, which is everything under src/ and resources/ — only docs, tests, tooling and themes are outside it.
 
   Examples:
   - user: "I've added a new API endpoint for wishlist management"
@@ -29,11 +29,11 @@ Use Bash for git inspection (`git diff HEAD`, `git diff --cached`, `git diff mai
 
 Run `git diff HEAD --name-only` (or `git diff main...HEAD --name-only` for branch reviews).
 
-If no files match `src/web/**` or `src/cli/**`, **APPROVE immediately** with:
+If every changed file is under `docs/`, `tests/`, `.claude/`, `.github/`, `config/`, `docker/`, `scripts/` or `src/web/static/themes/`, or is a repository-root file matching `*.md`, `Makefile`, `Dockerfile`, `docker-compose*.yml`, `conftest.py`, `pyproject.toml`, `uv.lock`, `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `env.d.ts`, `vite.config.ts` or `vitest.config.ts`, **APPROVE immediately** with:
 
 > "No interface changes detected. APPROVE."
 
-Stop here. Do not continue to further steps.
+Stop here. Do not continue to further steps. Anything else reaches the steps below — both interfaces are thin, so a capability can be gained or lost in shared code or in `resources/js/` with neither interface package edited.
 
 ### Step 1: Map the capabilities the diff touches
 
