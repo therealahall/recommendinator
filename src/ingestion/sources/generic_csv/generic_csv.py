@@ -17,134 +17,30 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import DETAIL_FIELDS, FieldKind
+from src.models.templates import (
+    COMMON_COLUMNS,
+    CONTENT_TYPE_COLUMNS,
+    CREATOR_COLUMNS,
+    CREATOR_FIELD,
+    LIST_VALUED_COLUMNS,
+    STATUS_MAP,
+)
+from src.utils.csv_formula import strip_csv_formula_guard
 from src.utils.series import MAX_SEASONS
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
+# Without this, the package's star re-export would republish the shared tables above.
+__all__ = [
+    "CsvImportPlugin",
+    "parse_boolean_field",
+    "parse_ignored_field",
+    "parse_seasons_watched",
+]
+
 logger = logging.getLogger(__name__)
-
-# Required columns shared by all content types
-COMMON_COLUMNS = {
-    "title",
-    "rating",
-    "status",
-    "date_completed",
-    "review",
-    "notes",
-    "ignored",
-}
-
-# Additional columns per content type, each mapped to the metadata key the
-# library stores that value under, derived from the field declaration the
-# storage layer reads too. The two names are not always the same word — a
-# template says "year", the library stores "release_year" — and both the
-# import and the export path read this table, so a column can only ever be
-# written and read back under one name.
-#
-# The creator column (author/director/creator/developer) is never read from
-# here: it becomes ContentItem.author rather than metadata.
-CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
-    content_type: spec.template_columns for content_type, spec in DETAIL_FIELDS.items()
-}
-
-# Template columns the library stores as a list. A template cell holds a
-# single value, so an import wraps it — every other plugin writes these as
-# lists, and readers such as ``extract_raw_genres`` (which builds the
-# embedding text before the item is ever saved) only recognise the list form
-# — and an export writes the first entry back out.
-LIST_VALUED_COLUMNS: frozenset[str] = frozenset(
-    detail_field.template_column
-    for spec in DETAIL_FIELDS.values()
-    for detail_field in spec.fields
-    if detail_field.template_column is not None
-    and detail_field.kind is FieldKind.STRING_LIST
-)
-
-# Status string mapping
-STATUS_MAP: dict[str, ConsumptionStatus] = {
-    "completed": ConsumptionStatus.COMPLETED,
-    "read": ConsumptionStatus.COMPLETED,
-    "watched": ConsumptionStatus.COMPLETED,
-    "played": ConsumptionStatus.COMPLETED,
-    "finished": ConsumptionStatus.COMPLETED,
-    "in_progress": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "currently_consuming": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "reading": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "watching": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "playing": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "unread": ConsumptionStatus.UNREAD,
-    "unwatched": ConsumptionStatus.UNREAD,
-    "unplayed": ConsumptionStatus.UNREAD,
-    "to_read": ConsumptionStatus.UNREAD,
-    "to_watch": ConsumptionStatus.UNREAD,
-    "to_play": ConsumptionStatus.UNREAD,
-    "wishlist": ConsumptionStatus.UNREAD,
-}
-
-# Content-type-specific status labels for templates and exports.
-# Maps (content_type, ConsumptionStatus) → display string.
-STATUS_DISPLAY: dict[str, dict[str, str]] = {
-    "book": {
-        "completed": "read",
-        "currently_consuming": "reading",
-        "unread": "unread",
-    },
-    "movie": {
-        "completed": "watched",
-        "currently_consuming": "watching",
-        "unread": "unwatched",
-    },
-    "tv_show": {
-        "completed": "watched",
-        "currently_consuming": "watching",
-        "unread": "unwatched",
-    },
-    "video_game": {
-        "completed": "played",
-        "currently_consuming": "playing",
-        "unread": "unplayed",
-    },
-}
-
-# Map content type string to creator field name
-CREATOR_FIELD: dict[str, str] = {
-    content_type: spec.creator_column for content_type, spec in DETAIL_FIELDS.items()
-}
-
-# Every creator column, whichever type it belongs to. These become
-# ContentItem.author rather than metadata, so import and export both skip
-# them when walking the type-specific columns.
-CREATOR_COLUMNS: frozenset[str] = frozenset(CREATOR_FIELD.values())
-
-# Spreadsheets evaluate a cell opening with one of these, and an exported
-# title or genre can be text TMDB or RAWG supplied. The guard and its strip
-# live together because they only work if they agree.
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-_GUARDED_PREFIXES = tuple(f"'{prefix}" for prefix in _FORMULA_PREFIXES)
-
-
-def guard_csv_formula(value: Any) -> Any:
-    """Prefix a leading formula character with an apostrophe.
-
-    Non-string cells — a rating, a year — are returned untouched.
-    """
-    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
-        return f"'{value}"
-    return value
-
-
-def strip_csv_formula_guard(value: Any) -> Any:
-    """Undo :func:`guard_csv_formula` so a re-import restores the original.
-
-    Only an apostrophe with a formula character right behind it is a guard,
-    so a title that genuinely opens with a quote survives.
-    """
-    if isinstance(value, str) and value.startswith(_GUARDED_PREFIXES):
-        return value[1:]
-    return value
 
 
 def parse_boolean_field(value: str | bool | int | None) -> bool:

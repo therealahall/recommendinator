@@ -17,19 +17,24 @@ from src.ingestion.plugin_base import (
     SourcePlugin,
 )
 from src.ingestion.sources.generic_csv import (
+    parse_ignored_field,
+    parse_seasons_watched,
+)
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.templates import (
     CONTENT_TYPE_COLUMNS,
     CREATOR_COLUMNS,
     CREATOR_FIELD,
     LIST_VALUED_COLUMNS,
     STATUS_MAP,
-    parse_ignored_field,
-    parse_seasons_watched,
 )
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
+
+# Without this, the package's star re-export would republish the shared tables above.
+__all__ = ["JsonImportPlugin"]
 
 logger = logging.getLogger(__name__)
 
