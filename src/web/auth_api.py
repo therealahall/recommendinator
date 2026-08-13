@@ -15,11 +15,10 @@ from pydantic import BaseModel, Field
 
 from src.storage.accounts import (
     MIN_PASSWORD_LENGTH,
+    PASSWORD_TOO_SHORT,
     AccountAlreadyClaimedError,
     PasswordTooShortError,
 )
-from src.storage.manager import StorageManager
-from src.storage.schema import get_default_user_id
 from src.utils.dates import utc_now
 from src.web.api import (
     AccountDisplayName,
@@ -47,18 +46,13 @@ router = APIRouter(
 _MAX_FAILURES = 5
 _LOCKOUT = timedelta(minutes=5)
 
-# Per-username counting alone bounds nothing: an unknown username is hashed
-# against a stand-in salt so a miss cannot be timed, so varying it every
-# request buys unlimited scrypt work. Far above one operator's typing.
-_MAX_TOTAL_FAILURES = 50
-
 _SIGN_IN_REFUSED = "That username and password do not match an account."
 _TOO_MANY_ATTEMPTS = "Too many failed sign-in attempts. Wait a few minutes and retry."
 _ALREADY_CLAIMED = "This instance already has an account. Sign in instead."
 
 
 class _LoginThrottle:
-    """Failed sign-ins per username and in total, in this process only."""
+    """Failed sign-ins per username, in this process only."""
 
     def __init__(self) -> None:
         self._failures: dict[str, tuple[int, datetime]] = {}
@@ -73,18 +67,11 @@ class _LoginThrottle:
         }
         return self._failures
 
-    def locked_out(self, username: str, *, count_total: bool) -> bool:
-        """Whether *username*, or the instance, has spent its attempts.
-
-        ``count_total=False`` for the claimed account: see :func:`sign_in`.
-        """
+    def locked_out(self, username: str) -> bool:
+        """Whether *username* has spent its attempts inside the window."""
         with self._lock:
-            counts = {
-                name: count for name, (count, _) in self._prune(utc_now()).items()
-            }
-            if counts.get(username, 0) >= _MAX_FAILURES:
-                return True
-            return count_total and sum(counts.values()) >= _MAX_TOTAL_FAILURES
+            record = self._prune(utc_now()).get(username)
+            return record is not None and record[0] >= _MAX_FAILURES
 
     def record_failure(self, username: str) -> None:
         """Count one refusal, dropping every attempt that has aged out."""
@@ -144,18 +131,6 @@ class SessionResponse(BaseModel):
     min_password_length: int = MIN_PASSWORD_LENGTH
 
 
-def _is_the_claimed_username(storage: StorageManager, username: str) -> bool:
-    """Whether *username* is the one this instance belongs to.
-
-    The total ceiling exempts it: counted in, fifty throwaway usernames would
-    shut the operator out every five minutes. A ``users`` read, no hashing.
-    """
-    account = storage.describe_account(get_default_user_id())
-    return (
-        account is not None and account["claimed"] and account["username"] == username
-    )
-
-
 @router.get("/session", response_model=SessionResponse)
 def read_session(request: Request, storage: RequiredStorage) -> SessionResponse:
     """Report whether this instance is claimed, and who is signed in.
@@ -189,7 +164,7 @@ def claim_instance(
             body.username, body.display_name or None, body.password
         )
     except PasswordTooShortError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(status_code=400, detail=PASSWORD_TOO_SHORT) from error
     except AccountAlreadyClaimedError as error:
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED) from error
 
@@ -208,8 +183,7 @@ def sign_in(
         HTTPException: 429 once the attempts run out, 401 otherwise. Neither
             says which half was wrong.
     """
-    own = _is_the_claimed_username(storage, body.username)
-    if _throttle.locked_out(body.username, count_total=not own):
+    if _throttle.locked_out(body.username):
         raise HTTPException(status_code=429, detail=_TOO_MANY_ATTEMPTS)
 
     user = storage.verify_password(body.username, body.password)
