@@ -1,4 +1,4 @@
-"""Every text file ``src/web/app.py`` opens names the encoding it wants.
+"""Every text file the web app or the shared log wiring opens names its encoding.
 
 Text I/O with no ``encoding=`` takes the locale's, and a container running
 under a non-UTF-8 one drops every accented title it logs.
@@ -11,9 +11,11 @@ from pathlib import Path
 
 import pytest
 
+import src.utils.logging
 import src.web.app
 
 _APP_TREE = ast.parse(Path(src.web.app.__file__).read_text(encoding="utf-8"))
+_LOGGING_TREE = ast.parse(Path(src.utils.logging.__file__).read_text(encoding="utf-8"))
 
 _TEXT_IO_CALLS = {"open", "read_text", "write_text"}
 
@@ -73,13 +75,21 @@ class TestNoEncodingInAppIsInheritedFromTheLocaleRegression:
     Fix: name UTF-8 at both, and sweep so the third fails here.
     """
 
-    def test_every_text_io_call_names_its_encoding(self) -> None:
-        assert _unstated_encodings(_APP_TREE) == set()
+    @pytest.mark.parametrize(
+        "tree", [_LOGGING_TREE, _APP_TREE], ids=["src.utils.logging", "src.web.app"]
+    )
+    def test_every_text_io_call_names_its_encoding(self, tree: ast.Module) -> None:
+        assert _unstated_encodings(tree) == set()
 
-    def test_the_sweep_still_reaches_the_calls_it_exists_for(self) -> None:
-        """Both calls leaving app.py would make the assertion above vacuous."""
-        found = {_call_name(call) for call in _text_io_calls(_APP_TREE)}
-        assert {"FileHandler", "read_text"} <= found
+    @pytest.mark.parametrize(
+        ("tree", "opener"),
+        [(_LOGGING_TREE, "FileHandler"), (_APP_TREE, "read_text")],
+    )
+    def test_the_sweep_still_reaches_the_calls_it_exists_for(
+        self, tree: ast.Module, opener: str
+    ) -> None:
+        """Either call leaving its module would make the assertion above vacuous."""
+        assert opener in {_call_name(call) for call in _text_io_calls(tree)}
 
 
 class TestTheEncodingSweepFailsOnAnUnstatedOpen:
@@ -132,7 +142,7 @@ class TestTheEncodingSweepFailsOnAnUnstatedOpen:
             # A stated encoding must clear the suffix rule too, or it is a rule
             # no rotating handler could ever be written to satisfy.
             "logging.handlers.RotatingFileHandler(path, encoding='utf-8')",
-            # app.py's console handler, deliberately left on the process
+            # The console handler, deliberately left on the stream's own
             # encoding (see the comment there). Widening the sweep to reach it
             # would fail the module for a decision it made on purpose.
             "logging.StreamHandler(sys.stdout)",

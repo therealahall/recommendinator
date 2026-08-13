@@ -575,10 +575,10 @@ class TestCoerceAndValidate:
         """logging.file only accepts a contained ``logs/*.log`` path.
 
         Traversal is rejected HERE now, by a negative lookahead. It previously
-        validated and was caught later by ``src.web.app._safe_log_path``, which
+        validated and was caught later by ``src.utils.logging._safe_log_path``, which
         left the value persisted and displayed as the effective log file while
         the app wrote somewhere else. ``_safe_log_path`` remains the containment
-        backstop (see TestSafeLogPath in tests/test_web_api.py) — this is the
+        backstop (see TestSafeLogPath in tests/utils/test_logging.py) — this is the
         boundary check that stops the divergence.
         """
         entry = _entry("logging.file")

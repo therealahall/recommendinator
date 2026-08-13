@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import os
+import sys
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -73,9 +74,7 @@ from src.web.api import (
     _item_to_response,
 )
 from src.web.app import (
-    _LOG_BASE_DIR,
     _raised_refusal_json_can_carry,
-    _safe_log_path,
     _validation_refusal_json_can_carry,
 )
 from src.web.auth import UNAUTHORIZED_DETAIL, require_api_token
@@ -249,155 +248,6 @@ def _cors_kwargs(app) -> dict:
 def _cors_origins(app) -> list[str]:
     """Return the origin list actually handed to the CORS middleware."""
     return _cors_kwargs(app)["allow_origins"]
-
-
-class TestSafeLogPath:
-    """``logging.file`` containment — the control the registry pattern relies on.
-
-    The registry pattern now rejects traversal at the Settings API, so this is
-    no longer the only thing standing between an API caller and an arbitrary
-    write. It stays load-bearing for the inputs the pattern never sees:
-    ``config.yaml`` is unvalidated, rows persisted before the pattern gained its
-    ``..`` lookahead still overlay at boot without re-validation, and a symlink
-    under ``logs/`` satisfies any pattern.
-
-    ``tests/web/test_logging_config.py`` covers this end to end through
-    ``configure_logging``; these are the direct unit cases for the containment
-    rule itself, including the fallback value and the warning.
-    """
-
-    def test_path_inside_logs_is_returned_resolved(self) -> None:
-        assert _safe_log_path("logs/app.log") == (Path("logs") / "app.log").resolve()
-
-    def test_nested_path_inside_logs_is_allowed(self) -> None:
-        assert _safe_log_path("logs/sub/app.log") == (
-            (Path("logs") / "sub" / "app.log").resolve()
-        )
-
-    @pytest.mark.parametrize(
-        "escaping",
-        [
-            "logs/../../../tmp/pwned.log",
-            "/etc/cron.d/evil.log",
-            "logs/../secrets.log",
-        ],
-    )
-    def test_path_escaping_logs_falls_back_to_the_default(self, escaping: str) -> None:
-        """Anything resolving outside logs/ falls back — fail safe, never write.
-
-        None of these can reach here from the Settings API any more: the pattern
-        rejects both traversal and absolute paths. They can still arrive from a
-        hand-edited config.yaml, which is unvalidated, or from a row persisted
-        before the pattern gained its ``..`` lookahead.
-        """
-        assert _safe_log_path(escaping) == Path(default_of("logging.file")).resolve()
-
-    def test_the_fallback_is_itself_contained(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Closes the loop the test above leaves open.
-
-        That assertion compares the result against the same expression the
-        implementation uses, so if ``logging.file``'s registry default ever
-        moved outside ``logs/``, the fallback would hand back an escaping path
-        and the test would still pass. Containment is asserted directly here,
-        without reference to the default.
-        """
-        monkeypatch.chdir(tmp_path)
-
-        fallback = _safe_log_path("/etc/cron.d/evil.log")
-
-        assert _LOG_BASE_DIR.resolve() in fallback.parents
-        # And the fallback must satisfy the rule it is the fallback for, so
-        # feeding it back through is a fixed point rather than a second retreat.
-        assert _safe_log_path(str(fallback)) == fallback
-
-    def test_the_fallback_survives_a_symlinked_default_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The fail-safe branch must not become the escape it refuses.
-
-        Regression: the refusal branch returned ``Path(default_of(
-        "logging.file")).resolve()``, and ``resolve`` follows symlinks — so
-        planting the default log file as a link out of ``logs/`` made every
-        refused path resolve to the attacker's target instead. The fallback is
-        now built from the ``logs/`` base, so it cannot escape by construction.
-        """
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        default_name = Path(default_of("logging.file")).name
-        (tmp_path / "logs" / default_name).symlink_to(outside / "pwned.log")
-
-        fallback = _safe_log_path("logs/../../evil.log")
-
-        assert _LOG_BASE_DIR.resolve() in fallback.parents
-        assert fallback != (outside / "pwned.log").resolve()
-
-    def test_the_logs_directory_itself_is_refused(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``file: logs`` names the directory, which is never a valid log file.
-
-        Regression: containment accepted ``resolved == base``, so the directory
-        came back unchanged and the FileHandler opened on it raised
-        IsADirectoryError inside ``create_app``'s try — turning a one-word
-        config mistake into "Failed to initialize components".
-        """
-        monkeypatch.chdir(tmp_path)
-
-        fallback = _safe_log_path("logs")
-
-        assert fallback != _LOG_BASE_DIR.resolve()
-        assert _LOG_BASE_DIR.resolve() in fallback.parents
-
-    def test_escape_attempt_is_logged(self, caplog) -> None:
-        """The rejection must be visible — a silent fallback hides a live attempt."""
-        with caplog.at_level(logging.WARNING, logger="src.web.app"):
-            _safe_log_path("logs/../../../tmp/pwned.log")
-
-        assert any("outside the logs/ directory" in m for m in caplog.messages)
-
-    def test_symlink_out_of_logs_is_refused(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The third input the pattern cannot see, and the reason this is not dead code.
-
-        ``logs/app.log`` satisfies the registry pattern completely — the name is
-        clean, there is no ``..``, and it is relative. If ``logs/app.log`` is a
-        symlink, the pattern still passes it and the containment check is the
-        only thing standing between a network-set value and a FileHandler
-        opening an arbitrary file for append.
-
-        Containment therefore has to compare the RESOLVED path, which follows
-        symlinks. A check written against the unresolved string would pass this.
-        """
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").mkdir()
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        (tmp_path / "logs" / "app.log").symlink_to(outside / "pwned.log")
-
-        resolved = _safe_log_path("logs/app.log")
-
-        assert resolved != (outside / "pwned.log").resolve()
-        assert resolved == Path(default_of("logging.file")).resolve()
-
-    def test_symlink_staying_inside_logs_is_allowed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Containment is about where the path lands, not about symlinks per se.
-
-        Pins the rule as "resolves under logs/" rather than "is not a symlink",
-        so a future tightening that simply banned symlinks would fail here.
-        """
-        monkeypatch.chdir(tmp_path)
-        logs = tmp_path / "logs"
-        (logs / "real").mkdir(parents=True)
-        (logs / "app.log").symlink_to(logs / "real" / "app.log")
-
-        assert _safe_log_path("logs/app.log") == (logs / "real" / "app.log").resolve()
 
 
 class TestCreateAppSettingsMigration:
@@ -621,19 +471,27 @@ class TestCreateAppSettingsMigration:
             assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
-    def test_logging_configured_after_settings_overlay(self, mock_config, tmp_path):
-        """configure_logging runs after migrate_config_settings (overlay first).
+    def test_logging_is_configured_after_the_overlay_onto_the_servers_console(
+        self, mock_config, tmp_path
+    ):
+        """Overlay first, then the console the server logs onto.
 
-        Spies on the real hook so it still runs (no stub) while recording call
-        order against configure_logging.
+        Spies on the real settings hook so it still runs (no stub). stdout is
+        what ``docker logs`` shows, and a server has no data channel to keep
+        the traceback off.
         """
         reset_sync_manager()
         order: list[str] = []
+        console_arguments: dict[str, Any] = {}
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
 
         def _record_settings(config, storage):
             order.append("settings")
             migrate_config_settings(config, storage)
+
+        def _record_logging(config, **kwargs):
+            order.append("logging")
+            console_arguments.update(kwargs)
 
         with (
             patch(
@@ -642,15 +500,17 @@ class TestCreateAppSettingsMigration:
             ),
             # Overrides the root conftest's blanket no-op patch, which is what
             # keeps every other boot here off the production log file.
-            patch(
-                "src.web.app.configure_logging",
-                side_effect=lambda *a, **k: order.append("logging"),
-            ),
+            patch("src.utils.logging.configure_logging", side_effect=_record_logging),
             booted_web_app(storage_manager, mock_config),
         ):
             pass
 
         assert order == ["settings", "logging"]
+        assert console_arguments["console_stream"] is sys.stdout
+        assert console_arguments["console_tracebacks"] is True
+        # No floor of its own: a server's console is its log viewer, so it
+        # takes what ``logging.level`` names.
+        assert console_arguments["console_floor"] == logging.NOTSET
         # The real hook ran via the spy but wrote nothing to the DB.
         assert storage_manager.list_settings() == {}
         reset_sync_manager()

@@ -121,7 +121,7 @@ def booted_web_app(
     A real temp-DB ``StorageManager`` is as welcome as a mock:
     ``back_mock_settings_store`` lets the settings and secret boot hooks run
     for real against an empty store and no-ops for storage that isolates
-    itself. Anything this does not patch — ``configure_logging`` (already a
+    itself. Anything this does not patch — ``src.utils.logging`` (already a
     no-op via the root conftest), the source migrations — a caller wraps around
     the call.
 
