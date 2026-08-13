@@ -891,12 +891,17 @@ class StorageManager:
 
         Raises:
             AccountAlreadyClaimedError: The account already has a password.
+            PasswordTooShortError: The password is under the floor.
         """
         with self.sqlite_db.connection() as conn:
             return claim_account(conn, username, display_name, plaintext_password)
 
     def set_password(self, user_id: int, plaintext: str) -> None:
-        """Replace a user's password."""
+        """Replace a user's password.
+
+        Raises:
+            PasswordTooShortError: The password is under the floor.
+        """
         with self.sqlite_db.connection() as conn:
             set_password(conn, user_id, plaintext)
 

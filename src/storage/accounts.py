@@ -32,10 +32,16 @@ _ABSENT_ACCOUNT_SALT = b"\x00" * _SALT_BYTES
 
 _SESSION_TOKEN_BYTES = 32
 
-#: The shortest password this instance accepts, wherever one is set. Short
-#: enough that a self-hosted operator is not fought with, long enough that the
-#: scrypt cost above is what an attacker meets rather than an exhaustive search.
-MIN_PASSWORD_LENGTH = 8
+#: The shortest password this instance accepts, wherever one is set. Long
+#: enough that the scrypt cost above is what an attacker meets rather than an
+#: exhaustive search.
+MIN_PASSWORD_LENGTH = 12
+
+#: Names the rule, because both interfaces render this at the user.
+PASSWORD_TOO_SHORT = f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
+
+#: The longest username or display name either interface stores.
+MAX_ACCOUNT_NAME_LENGTH = 100
 
 #: How long a session stays valid. Rolling: every ``lookup_session`` pushes
 #: the expiry out by this much again, so only an idle session lapses.
@@ -60,6 +66,14 @@ class AccountAlreadyClaimedError(RuntimeError):
 
     A second claim would hand the library to whoever asked for it. Changing
     a password is :func:`set_password`.
+    """
+
+
+class PasswordTooShortError(ValueError):
+    """The offered password is under :data:`MIN_PASSWORD_LENGTH`.
+
+    Raised where the password is written rather than at each interface, so
+    the CLI and the web inherit one floor and a third caller cannot miss it.
     """
 
 
@@ -91,7 +105,14 @@ def _utc_text(moment: datetime) -> str:
 
 
 def _password_columns(plaintext: str) -> tuple[str, str, str]:
-    """Return the ``(hash, salt, updated_at)`` triple for a new password."""
+    """Return the ``(hash, salt, updated_at)`` triple for a new password.
+
+    Raises:
+        PasswordTooShortError: *plaintext* is under the floor. Every write
+            path runs through here, which is what makes the floor one rule.
+    """
+    if len(plaintext) < MIN_PASSWORD_LENGTH:
+        raise PasswordTooShortError(PASSWORD_TOO_SHORT)
     salt = secrets.token_bytes(_SALT_BYTES)
     return _derive_key(plaintext, salt), salt.hex(), _utc_text(utc_now())
 
@@ -144,6 +165,7 @@ def claim_account(
 
     Raises:
         AccountAlreadyClaimedError: The account already has a password.
+        PasswordTooShortError: The password is under the floor.
     """
     password_hash, salt, updated_at = _password_columns(plaintext_password)
     cursor = conn.cursor()
@@ -175,7 +197,12 @@ def claim_account(
 
 
 def set_password(conn: sqlite3.Connection, user_id: int, plaintext: str) -> None:
-    """Replace *user_id*'s password with *plaintext*."""
+    """Replace *user_id*'s password with *plaintext*.
+
+    Raises:
+        PasswordTooShortError: The password is under the floor; nothing is
+            written.
+    """
     password_hash, salt, updated_at = _password_columns(plaintext)
     cursor = conn.cursor()
     cursor.execute(

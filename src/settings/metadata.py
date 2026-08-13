@@ -480,7 +480,12 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "web.allowed_origins",
         label="Allowed CORS origins",
-        help='Origins permitted by CORS; set to ["*"] to allow all (not recommended).',
+        help=(
+            "Origins permitted by CORS. The session cookie is SameSite=Strict, "
+            "so a listed origin reaches the app shell and static files only — "
+            'never a signed-in route. Set to ["*"] to allow all (not '
+            "recommended)."
+        ),
         type="list",
         # Stored as a tuple so the registry cannot hand out a mutable it shares
         # with callers — see _public(). Declared type stays "list".

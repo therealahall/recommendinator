@@ -379,9 +379,8 @@ class TestCoerceAndValidate:
     ) -> None:
         """A bare ``scheme://host[:port]`` — and the ``"*"`` escape hatch — pass.
 
-        ``"*"`` is the documented allow-all value and ``create_app`` turns
-        ``allow_credentials`` off whenever it appears, so tightening this leaf
-        must not break it.
+        ``"*"`` is the documented allow-all value, so tightening this leaf must
+        not break it.
         """
         assert coerce_and_validate(_entry(_ORIGINS_KEY), origins) == origins
 
@@ -390,9 +389,7 @@ class TestCoerceAndValidate:
 
         Starlette compares with ``origin in self.allow_origins``, and a
         sandboxed iframe or a ``data:``/``file:`` document sends
-        ``Origin: null``. ``"null"`` is not ``"*"``, so ``allow_credentials``
-        stays on — and this app ships no authentication, so allowing it would
-        give any page the user visits full read/write of the library.
+        ``Origin: null``. It names no site, so it is an entry nobody intended.
         """
         for spelling in ("null", "NULL", "Null", "  null  "):
             with pytest.raises(SettingsValidationError) as exc_info:
