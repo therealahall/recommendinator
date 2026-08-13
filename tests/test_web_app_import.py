@@ -110,10 +110,9 @@ def _module_aliases(tree: ast.AST) -> set[str]:
     """Every name bound to the booting module, in each spelling that binds one.
 
     ``import src.web.app`` binds the dotted path itself, ``as`` binds a bare
-    name, and ``from src.web import app`` binds the module under its own name —
-    that last one is already how ``src/ingestion/sources/_isolation`` reaches
-    the module. All three then read the booting attribute off a name that is
-    not the literal import path.
+    name, and ``from src.web import app`` binds the module under its own name.
+    All three then read the booting attribute off a name that is not the
+    literal import path.
     """
     package, module_name = _BOOTING_MODULE.rsplit(".", 1)
     aliases: set[str] = set()
@@ -225,8 +224,7 @@ def test_the_scan_reaches_every_tree_pytest_collects() -> None:
             id="dotted-attribute",
         ),
         # Every other spelling that binds the module and reads the same
-        # attribute off it. The first is the one a collected module already
-        # uses to reach src.web.app for an unrelated function.
+        # attribute off it.
         pytest.param(
             "from src.web import app\nweb_app = app.app\n",
             2,
@@ -296,7 +294,7 @@ def test_the_scan_reaches_every_tree_pytest_collects() -> None:
         ),
         # Binding the module is not the offence; reading ``app`` off it is.
         pytest.param(
-            "from src.web import app\napp.configure_logging({})\n",
+            "from src.web import app\napp.logger.info('booting')\n",
             None,
             id="another-attribute-off-the-module",
         ),

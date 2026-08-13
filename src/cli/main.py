@@ -1,5 +1,6 @@
 """Main CLI entry point."""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from src.storage.source_migration import (
     migrate_source_config_plugins,
     migrate_source_labels,
 )
+from src.utils import logging as log_config
 
 
 @click.group()
@@ -61,6 +63,31 @@ def cli(ctx: click.Context, config: Path | None) -> None:
         # Assemble the effective global config (const default < YAML < DB) so
         # the database wins over YAML for the rest of the invocation.
         migrate_config_settings(ctx.obj["config"], ctx.obj["storage"])
+        # After the overlay, since logging.level and logging.file are DB-backed
+        # settings; before the migrations below, whose diagnostics went to a
+        # root logger with no handler. stderr, because stdout is the data
+        # channel `--format json` and `library export` write to.
+        try:
+            log_config.configure_logging(
+                ctx.obj["config"],
+                console_stream=sys.stderr,
+                console_tracebacks=False,
+                console_floor=logging.WARNING,
+            )
+        except OSError as error:
+            # `logs/` is routinely a bind mount the web container owns, and the
+            # CLI is run by someone else. Losing the log is not losing the
+            # command, so this reports and carries on rather than exiting 1.
+            click.echo(f"Warning: no log file for this run: {error}", err=True)
+            # Degrading to no handler at all hands the records to
+            # `logging.lastResort`, which prints the tracebacks this console
+            # withholds — on the one run with no log file to read them from.
+            log_config.configure_console_only(
+                ctx.obj["config"],
+                console_stream=sys.stderr,
+                console_tracebacks=False,
+                console_floor=logging.WARNING,
+            )
         # Per-source credentials, on every command as the web app does it on
         # every startup: while it ran inside ``update`` alone, ``auth status``
         # read a file-held token as not connected until a sync had happened.

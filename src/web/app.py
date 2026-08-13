@@ -40,6 +40,7 @@ from src.storage.source_migration import (
     migrate_source_config_plugins,
     migrate_source_labels,
 )
+from src.utils import logging as log_config
 from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
@@ -49,21 +50,6 @@ from src.web.responses import SurrogateSafeJSONResponse
 from src.web.state import app_state, get_config
 
 logger = logging.getLogger(__name__)
-
-# Every log file must live under this directory. ``logging.file`` is settable
-# over the network Settings API, so a resolved path escaping this base is
-# refused before a FileHandler ever opens it (see ``_safe_log_path``).
-_LOG_BASE_DIR = Path("logs")
-
-# The authoritative name -> level map, minus NOTSET. ``logging.NOTSET`` is a
-# real name in that mapping but not a usable threshold: the root logger has no
-# parent to inherit from, so level 0 enables every record — a DEBUG firehose
-# written to disk from a value that reads like "off".
-_LOG_LEVELS = {
-    name: level
-    for name, level in logging.getLevelNamesMapping().items()
-    if level != logging.NOTSET
-}
 
 
 def _quotable(value: float) -> float | str:
@@ -103,126 +89,6 @@ async def _raised_refusal_json_can_carry(_request: Request, exc: Exception) -> R
         content={"detail": refusal.detail},
         headers=refusal.headers,
     )
-
-
-def _safe_log_path(log_file: str) -> Path:
-    """Resolve *log_file*, refusing any path that escapes the ``logs/`` directory.
-
-    ``logging.file`` is a network-settable string. The registry ``pattern`` now
-    rejects traversal and absolute paths at the Settings API, but this backstop
-    is still load-bearing, for three inputs the pattern never sees:
-    ``config.yaml`` is unvalidated; rows persisted before the pattern gained its
-    ``..`` lookahead still overlay onto config at boot without re-validation; and
-    a symlink planted under ``logs/`` satisfies any pattern. Any path resolving
-    outside ``logs/`` falls back to the registry default's file name inside
-    ``logs/``, so logging never writes to an arbitrary location (fail safe).
-
-    Args:
-        log_file: Configured log file path (relative or absolute).
-
-    Returns:
-        The resolved, contained path, or the registry default's file name under
-        ``logs/`` when the configured path escapes ``logs/``.
-    """
-    base = _LOG_BASE_DIR.resolve()
-    resolved = Path(log_file).resolve()
-    # ``base`` itself is excluded deliberately: `file: logs` names the directory,
-    # which FileHandler cannot open (IsADirectoryError), not a log file.
-    if base in resolved.parents:
-        return resolved
-    logger.warning(
-        "Log file %r resolves outside the logs/ directory; using the default.",
-        log_file,
-    )
-    # Built from ``base`` rather than resolving the default, so the fail-safe
-    # branch cannot itself escape — via an absolute registry default or a
-    # symlinked default file.
-    return base / Path(default_of("logging.file")).name
-
-
-def configure_logging(config: dict) -> None:
-    """Configure logging from application config.
-
-    Args:
-        config: Application configuration dictionary
-    """
-    # Type-guarded like every other leaf read straight from YAML (see
-    # resolve_bootstrap_web and the CORS block): config.yaml is unvalidated, and
-    # both of these land inside create_app's try, so an unguarded `logging: 3`
-    # or `level: 3` aborts boot with "Failed to initialize components" instead of
-    # degrading. A bare `logging:` header parses to None, not {}, so the section
-    # itself needs the guard too — .get would raise on None.
-    raw_section = config.get("logging")
-    logging_config = raw_section if isinstance(raw_section, dict) else {}
-
-    raw_level = logging_config.get("level", default_of("logging.level"))
-    if isinstance(raw_level, str) and raw_level.upper() in _LOG_LEVELS:
-        log_level_str = raw_level.upper()
-    else:
-        log_level_str = default_of("logging.level")
-        logger.warning(
-            "Ignoring unusable logging.level %r in config.yaml; using %s instead. "
-            "It must be one of: %s.",
-            raw_level,
-            log_level_str,
-            ", ".join(sorted(_LOG_LEVELS)),
-        )
-
-    raw_file = logging_config.get("file", default_of("logging.file"))
-    if isinstance(raw_file, str):
-        log_file = raw_file
-    else:
-        log_file = default_of("logging.file")
-        logger.warning(
-            "Ignoring unusable logging.file %r in config.yaml; using %s instead. "
-            "It must be a string.",
-            raw_file,
-            log_file,
-        )
-
-    log_level = _LOG_LEVELS[log_level_str]
-
-    # Contain the (network-settable) log path under logs/ before opening it.
-    log_path = _safe_log_path(log_file)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Configure root logger with both file and console handlers
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-
-    # Remove existing handlers to avoid duplicates on reload
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    # UTF-8 by name, not by locale: a non-UTF-8 one silently drops every
-    # accented title. ``backslashreplace`` covers a sink that skipped
-    # ``sanitize_for_log`` — strict deletes the entry, not the character.
-    file_handler = logging.FileHandler(
-        log_path, encoding="utf-8", errors="backslashreplace"
-    )
-    file_handler.setLevel(log_level)
-    file_format = logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_format)
-    root_logger.addHandler(file_handler)
-
-    # Simpler format: this stream is what `docker logs` shows. Its encoding
-    # stays the process's — PYTHONUTF8 is the operator's lever for stdout, and
-    # rewrapping it here would close the real stdout when the wrapper is
-    # collected.
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_format = logging.Formatter("%(levelname)s | %(name)s | %(message)s")
-    console_handler.setFormatter(console_format)
-    root_logger.addHandler(console_handler)
-
-    # Reduce noise from third-party libraries
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    logging.getLogger("watchfiles").setLevel(logging.WARNING)
 
 
 _app: FastAPI | None = None
@@ -283,8 +149,22 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # the database wins over YAML for the rest of the process.
         migrate_config_settings(config, storage)
 
-        # Configure logging from the (now DB-overlaid) config
-        configure_logging(config)
+        # Configure logging from the (now DB-overlaid) config. Reached through
+        # the module so the root conftest's patch of the one definition holds
+        # for every caller; stdout because that is what `docker logs` shows.
+        log_config.configure_logging(
+            config,
+            console_stream=sys.stdout,
+            console_tracebacks=True,
+            # A server's console is its log viewer, so it takes what
+            # ``logging.level`` names rather than a floor of its own.
+            console_floor=logging.NOTSET,
+        )
+        # Left to the caller that runs a server: neither library is on the
+        # CLI's import path, so quieting them in the shared configurer would
+        # describe a dependency the CLI does not have.
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("watchfiles").setLevel(logging.WARNING)
         logger.info("Logging configured from application config")
 
         llm_client, embedding_gen, rec_gen = create_llm_components(

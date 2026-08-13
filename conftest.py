@@ -107,15 +107,12 @@ def _remove_production_log_handlers() -> None:
 def _isolate_production_log_handlers() -> Iterator[None]:
     """Prevent tests from writing to the production log file.
 
-    ``src.web.app.configure_logging`` attaches a ``FileHandler`` for
-    ``logs/recommendations.log`` to the root logger whenever ``create_app``
-    is called.  Patching it as a no-op prevents new handlers from being
-    created.  The handler-stripping in setup and teardown is a safety net
-    in case any code path bypasses the patch (e.g. a direct import that
-    triggers module-level initialisation).
+    Patched at its one definition, the file-opening entry point both interfaces
+    reach, so neither imports the name. ``configure_console_only`` opens no
+    file; a test on the CLI's degrade path takes ``restore_root_logging``.
     """
     _remove_production_log_handlers()
-    with patch("src.web.app.configure_logging"):
+    with patch("src.utils.logging.configure_logging"):
         yield
     _remove_production_log_handlers()
 
