@@ -344,7 +344,7 @@ class TestPasswordAgeReachesTheAccountScreenRegression:
 
     Bug reported: that line, on an account claimed minutes ago.
     Root cause: ``UserResponse`` drops ``password_updated_at``.
-    Fix: unmade — the field must reach the response model.
+    Fix: ``UserResponse`` carries ``password_updated_at``.
     """
 
     @pytest.fixture()
