@@ -8,9 +8,8 @@ Recommendinator — a privacy-focused recommendation engine for books, movies, T
 
 ## Scale — calibrate severity to it
 
-A self-hosted tool with a couple of users, not a fleet. Correctness, security and
-the quality gate are not negotiable. Hardening against deployment states nobody
-here runs is.
+Correctness, security and the quality gate are not negotiable. Hardening a
+self-hosted deployment against states it does not run in is.
 
 Concretely: a defect reachable by a normal invocation is real. One needing a
 root-owned bind mount, a read-only filesystem, a hostile concurrent writer or a
