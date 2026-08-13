@@ -129,7 +129,7 @@ describe('AppSidebar', () => {
     await router.isReady()
 
     const wrapper = mount(AppSidebar, {
-      props: { user: { id: 1, username: 'alice', display_name: 'Alice' } },
+      props: { user: { id: 1, username: 'alice', display_name: 'Alice', password_updated_at: null } },
       global: { plugins: [router] },
     })
 
@@ -142,7 +142,7 @@ describe('AppSidebar', () => {
     await router.isReady()
 
     const wrapper = mount(AppSidebar, {
-      props: { user: { id: 2, username: 'bob', display_name: null } },
+      props: { user: { id: 2, username: 'bob', display_name: null, password_updated_at: null } },
       global: { plugins: [router] },
     })
 
@@ -157,7 +157,7 @@ describe('AppSidebar', () => {
     await router.isReady()
 
     const wrapper = mount(AppSidebar, {
-      props: { user: { id: 3, username: 'carol', display_name: '' } },
+      props: { user: { id: 3, username: 'carol', display_name: '', password_updated_at: null } },
       global: { plugins: [router] },
     })
 
@@ -172,7 +172,9 @@ describe('AppSidebar', () => {
     await router.isReady()
 
     const wrapper = mount(AppSidebar, {
-      props: { user: { id: 4, username: 'aaron', display_name: 'Áaron 시 🎧' } },
+      props: {
+        user: { id: 4, username: 'aaron', display_name: 'Áaron 시 🎧', password_updated_at: null },
+      },
       global: { plugins: [router] },
     })
 
@@ -187,7 +189,7 @@ describe('AppSidebar', () => {
     await router.isReady()
 
     const wrapper = mount(AppSidebar, {
-      props: { user: { id: 1, username: 'alice', display_name: 'Alice' } },
+      props: { user: { id: 1, username: 'alice', display_name: 'Alice', password_updated_at: null } },
       global: { plugins: [router] },
     })
 

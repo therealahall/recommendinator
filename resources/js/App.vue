@@ -44,10 +44,8 @@ async function signUp(account: SetupRequest) {
   await gate.submit(() => auth.signUp(account))
   // A lost race for the first account: the store has already moved the app off
   // the setup form, so "sign in instead" is advice about wherever it landed
-  // rather than a refusal on the screen that is gone. Left on the gate it
-  // resurfaces as the next sign-out's error, on fields nobody has typed in.
+  // rather than a refusal on the screen that is gone.
   if (!auth.needsSetup) noticeFromGate()
-  if (auth.isAuthenticated) notice.value = ''
 }
 
 function signIn(credentials: LoginRequest) {
@@ -100,6 +98,7 @@ watch(
     v-if="auth.needsSetup"
     :error="gate.error"
     :pending="gate.pending"
+    :min-password-length="auth.minPasswordLength"
     @submit="signUp"
   />
 

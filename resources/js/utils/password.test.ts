@@ -6,26 +6,36 @@ const LONG = 'x'.repeat(PASSWORD_MIN_LENGTH)
 
 describe('passwordComplaint', () => {
   it('passes a pair that agrees and clears the length', () => {
-    expect(passwordComplaint(LONG, LONG)).toBe('')
+    expect(passwordComplaint(LONG, LONG, PASSWORD_MIN_LENGTH)).toBe('')
   })
 
   it('names the minimum, which is the rule the user has not been told', () => {
-    const complaint = passwordComplaint('x'.repeat(PASSWORD_MIN_LENGTH - 1), 'x')
+    const complaint = passwordComplaint('x'.repeat(PASSWORD_MIN_LENGTH - 1), 'x', PASSWORD_MIN_LENGTH)
 
     expect(complaint).toContain(String(PASSWORD_MIN_LENGTH))
   })
 
+  it('refuses against the floor it is given, which is the one the server sent', () => {
+    // Regression: the floor was a literal in this module, so an API that moved
+    // it left the forms accepting a password the API would refuse.
+    const server = PASSWORD_MIN_LENGTH + 4
+    const between = 'x'.repeat(server - 1)
+
+    expect(passwordComplaint(between, between, PASSWORD_MIN_LENGTH)).toBe('')
+    expect(passwordComplaint(between, between, server)).toContain(String(server))
+  })
+
   it('reports the length before the mismatch, since retyping fixes both', () => {
-    expect(passwordComplaint('short', 'other')).toBe(
-      passwordComplaint('short', 'short'),
+    expect(passwordComplaint('short', 'other', PASSWORD_MIN_LENGTH)).toBe(
+      passwordComplaint('short', 'short', PASSWORD_MIN_LENGTH),
     )
-    expect(passwordComplaint(LONG, `${LONG}x`)).toContain('do not match')
+    expect(passwordComplaint(LONG, `${LONG}x`, PASSWORD_MIN_LENGTH)).toContain('do not match')
   })
 
   it('compares untrimmed, so an account cannot be made with a password nobody can retype', () => {
-    expect(passwordComplaint(LONG, `${LONG} `)).toContain('do not match')
-    expect(passwordComplaint(' '.repeat(PASSWORD_MIN_LENGTH), ' '.repeat(PASSWORD_MIN_LENGTH))).toBe(
-      '',
-    )
+    const spaces = ' '.repeat(PASSWORD_MIN_LENGTH)
+
+    expect(passwordComplaint(LONG, `${LONG} `, PASSWORD_MIN_LENGTH)).toContain('do not match')
+    expect(passwordComplaint(spaces, spaces, PASSWORD_MIN_LENGTH)).toBe('')
   })
 })

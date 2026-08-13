@@ -7,13 +7,19 @@ import App from './App.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
 import { ApiError, useApi } from '@/composables/useApi'
+import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { useAppStore } from '@/stores/app'
 import { SESSION_ENDED, useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { deferredFetch, jsonResponse } from '@/testing/http'
 import type { UserResponse } from '@/types/api'
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
 /** Neutralise the calls App fires once the session resolves, so they can be
  *  counted rather than performed. */
@@ -27,8 +33,15 @@ function spyOnLoad() {
   }
 }
 
-function answerSession(claimed: boolean, authenticated: boolean, user: UserResponse | null = null) {
-  vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { claimed, authenticated, user }))
+function answerSession(
+  claimed: boolean,
+  authenticated: boolean,
+  user: UserResponse | null = null,
+  minPasswordLength: number = PASSWORD_MIN_LENGTH,
+) {
+  vi.mocked(fetch).mockResolvedValue(
+    jsonResponse(200, { claimed, authenticated, user, min_password_length: minPasswordLength }),
+  )
 }
 
 /** The two auth screens rendered for real, with the shell's own furniture
@@ -132,6 +145,19 @@ describe('App', () => {
     expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe('/api/auth/session')
   })
 
+  it('states the floor the session reported on the setup form it puts up', async () => {
+    // Regression: the setup screen stated a floor compiled into the bundle, so
+    // a server enforcing another one refused the password it had just invited.
+    spyOnLoad()
+    const server = PASSWORD_MIN_LENGTH + 4
+    answerSession(false, false, null, server)
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.find('#setup-password-hint').text()).toContain(String(server))
+  })
+
   it('loads the app exactly once, when the session comes back signed in', async () => {
     const load = spyOnLoad()
     answerSession(true, true, AARON)
@@ -227,7 +253,12 @@ describe('App', () => {
       Promise.resolve(
         String(url).endsWith('/setup')
           ? jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' })
-          : jsonResponse(200, { claimed: true, authenticated: false, user: null }),
+          : jsonResponse(200, {
+              claimed: true,
+              authenticated: false,
+              user: null,
+              min_password_length: PASSWORD_MIN_LENGTH,
+            }),
       ),
     )
     await wrapper.find('#setup-username').setValue('aaron')
@@ -258,7 +289,12 @@ describe('App', () => {
       Promise.resolve(
         String(url).endsWith('/setup')
           ? jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' })
-          : jsonResponse(200, { claimed: true, authenticated: true, user: AARON }),
+          : jsonResponse(200, {
+              claimed: true,
+              authenticated: true,
+              user: AARON,
+              min_password_length: PASSWORD_MIN_LENGTH,
+            }),
       ),
     )
     await wrapper.find('#setup-username').setValue('aaron')

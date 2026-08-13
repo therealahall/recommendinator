@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
-import { PASSWORD_HINT } from '@/constants/auth'
+import { PASSWORD_MIN_LENGTH, passwordHint } from '@/constants/auth'
+import { formatDate } from '@/utils/format'
 import { passwordComplaint } from '@/utils/password'
 import type { PasswordChangeRequest } from '@/types/api'
 
@@ -11,8 +12,18 @@ const props = withDefaults(
     error?: string
     pending?: boolean
     saved?: boolean
+    /** The server's floor, which the session call carries. */
+    minPasswordLength?: number
+    /** When this password was last set, or null if not since setup. */
+    passwordUpdatedAt?: string | null
   }>(),
-  { error: '', pending: false, saved: false },
+  {
+    error: '',
+    pending: false,
+    saved: false,
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    passwordUpdatedAt: null,
+  },
 )
 
 const emit = defineEmits<{
@@ -25,6 +36,11 @@ const confirmation = ref('')
 
 const complete = computed(
   () => current.value !== '' && replacement.value !== '' && confirmation.value !== '',
+)
+
+/** The same fact `account show` reports, worded the same way. */
+const changedOn = computed(() =>
+  props.passwordUpdatedAt ? formatDate(props.passwordUpdatedAt) : 'never',
 )
 
 /** A complaint about the new password this form can make on its own. */
@@ -69,7 +85,11 @@ watch(
 
 function submit(): void {
   if (props.pending || !complete.value) return
-  complaint.value = passwordComplaint(replacement.value, confirmation.value)
+  complaint.value = passwordComplaint(
+    replacement.value,
+    confirmation.value,
+    props.minPasswordLength,
+  )
   if (complaint.value) return
   emit('submit', { current_password: current.value, new_password: replacement.value })
 }
@@ -78,6 +98,9 @@ function submit(): void {
 <template>
   <form aria-labelledby="account-password-heading" @submit.prevent="submit">
     <h4 id="account-password-heading" class="account-form-heading">Change password</h4>
+    <p class="auth-lede password-age" data-testid="account-password-age">
+      Password changed: {{ changedOn }}
+    </p>
 
     <div class="auth-fields">
       <AuthField
@@ -95,7 +118,7 @@ function submit(): void {
         label="New password"
         type="password"
         autocomplete="new-password"
-        :hint="PASSWORD_HINT"
+        :hint="passwordHint(minPasswordLength)"
         :described-by="newPasswordDescribedBy"
         :invalid="Boolean(complaint)"
         :required="true"
@@ -137,3 +160,15 @@ function submit(): void {
     </div>
   </form>
 </template>
+
+<style scoped>
+/* The line belongs to the heading above it, so the heading's own gap moves
+   below the pair rather than splitting them. */
+.account-form-heading {
+  margin-bottom: var(--space-1);
+}
+
+.password-age {
+  margin-bottom: var(--space-4);
+}
+</style>

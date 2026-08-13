@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import PasswordChangeForm from './PasswordChangeForm.vue'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
+import { formatDate } from '@/utils/format'
 
 // Long enough to clear the length rule, so a test about anything else is not
 // answered by it.
@@ -74,6 +75,40 @@ describe('PasswordChangeForm', () => {
     expect(wrapper.find('#account-password-status').text()).toContain(String(PASSWORD_MIN_LENGTH))
     expect(wrapper.find('#account-new-password').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#account-current-password').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('states and enforces the floor it was handed, not one of its own', async () => {
+    // Regression: the floor was compiled into the bundle, so a server enforcing
+    // another one had this form inviting a password it would then refuse.
+    const server = PASSWORD_MIN_LENGTH + 4
+    const between = 'x'.repeat(server - 1)
+    const wrapper = mount(PasswordChangeForm, { props: { minPasswordLength: server } })
+
+    expect(wrapper.find('#account-new-password-hint').text()).toContain(String(server))
+
+    await fillIn(wrapper, { current: 'hunter2', replacement: between, confirmation: between })
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#account-password-status').text()).toContain(String(server))
+  })
+
+  it('reports when the password last changed, as `account show` does', () => {
+    const wrapper = mount(PasswordChangeForm, {
+      props: { passwordUpdatedAt: '2026-01-15T09:30:00+00:00' },
+    })
+
+    const line = wrapper.find('[data-testid="account-password-age"]').text()
+    expect(line).toContain('Password changed:')
+    expect(line).toContain(formatDate('2026-01-15T09:30:00+00:00'))
+  })
+
+  it('says never for an account whose password has not changed since setup', () => {
+    const wrapper = mount(PasswordChangeForm, { props: { passwordUpdatedAt: null } })
+
+    expect(wrapper.find('[data-testid="account-password-age"]').text()).toBe(
+      'Password changed: never',
+    )
   })
 
   it('refuses a mismatch locally and marks the two fields that disagree', async () => {

@@ -150,7 +150,10 @@ function initOf(call: number): RequestInit {
 /** Put the store where a live session leaves it, without a boot round trip. */
 function signedIn() {
   const auth = useAuthStore()
-  auth.$patch({ state: 'signed-in', user: { id: 1, username: 'aaron', display_name: null } })
+  auth.$patch({
+    state: 'signed-in',
+    user: { id: 1, username: 'aaron', display_name: null, password_updated_at: null },
+  })
   return auth
 }
 

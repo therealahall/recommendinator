@@ -77,6 +77,7 @@ function changePassword(change: PasswordChangeRequest) {
       :password-error="password.error"
       :password-pending="password.pending"
       :password-saved="password.saved"
+      :min-password-length="auth.minPasswordLength"
       @save-profile="saveProfile"
       @change-password="changePassword"
       @sign-out="auth.signOut"

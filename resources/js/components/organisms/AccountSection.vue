@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AccountProfileForm from '@/components/molecules/AccountProfileForm.vue'
 import PasswordChangeForm from '@/components/molecules/PasswordChangeForm.vue'
+import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import type { UserResponse, UserUpdateRequest, PasswordChangeRequest } from '@/types/api'
 
 withDefaults(
@@ -13,6 +14,8 @@ withDefaults(
     passwordError?: string
     passwordPending?: boolean
     passwordSaved?: boolean
+    /** The server's floor, which the session call carries. */
+    minPasswordLength?: number
   }>(),
   {
     profileError: '',
@@ -21,6 +24,7 @@ withDefaults(
     passwordError: '',
     passwordPending: false,
     passwordSaved: false,
+    minPasswordLength: PASSWORD_MIN_LENGTH,
   },
 )
 
@@ -50,6 +54,8 @@ const emit = defineEmits<{
       :error="passwordError"
       :pending="passwordPending"
       :saved="passwordSaved"
+      :min-password-length="minPasswordLength"
+      :password-updated-at="user.password_updated_at"
       @submit="emit('change-password', $event)"
     />
 
