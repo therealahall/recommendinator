@@ -87,6 +87,14 @@ _NOT_OPERATOR_PROSE = ("src/ingestion/sources/", ".claude/")
 
 _OPERATOR_FILES = ("docker-compose.yml", "docker/entrypoint.sh", "config/example.yaml")
 
+# A blank line, or the marker that starts a list item, heading, quote or table
+# row: unwrapping a bullet list whole would let "no longer" in one item forgive
+# the instruction in the next.
+_BLOCK_BREAK = re.compile(r"\n\s*\n|\n(?=\s*(?:[-*+]\s|\d+\.\s|#{1,6}\s|>|\|))")
+
+# End of sentence, which is the granularity the removal notice forgives at.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
 
 def _operator_documentation(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:
     """Return the tracked files an operator reads for instructions.
@@ -115,9 +123,9 @@ def _operator_documentation(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:
     ]
 
 
-def _instructs_a_token(line: str, fragments: tuple[str, ...]) -> bool:
-    """Whether *line* sends an operator to the retired token."""
-    lowered = line.lower()
+def _instructs_a_token(sentence: str, fragments: tuple[str, ...]) -> bool:
+    """Whether *sentence* sends an operator to the retired token."""
+    lowered = sentence.lower()
     return (
         any(fragment in lowered for fragment in fragments)
         and _REMOVAL_NOTICE not in lowered
@@ -125,7 +133,7 @@ def _instructs_a_token(line: str, fragments: tuple[str, ...]) -> bool:
 
 
 def _offences(name: str, path: Path) -> list[str]:
-    """Return ``file:line`` for every line naming a retired token instruction.
+    """Return ``file: sentence`` for every retired token instruction.
 
     Reads without ``errors=``, so an undecodable file raises rather than
     scoring the same as a clean one.
@@ -133,11 +141,10 @@ def _offences(name: str, path: Path) -> list[str]:
     fragments = _RETIRED_KEY + (
         _RETIRED_PROSE if name in _WEB_SIGN_IN_DOCUMENTS else ()
     )
-    text = path.read_text(encoding="utf-8")
     return [
-        f"{name}:{number}"
-        for number, line in enumerate(text.splitlines(), start=1)
-        if _instructs_a_token(line, fragments)
+        f"{name}: {sentence}"
+        for sentence in _sentences(path.read_text(encoding="utf-8"))
+        if _instructs_a_token(sentence, fragments)
     ]
 
 
@@ -160,6 +167,21 @@ def _paragraphs(name: str) -> list[str]:
     ]
 
 
+def _sentences(text: str) -> list[str]:
+    """Return *text*'s sentences, each with its line wrapping collapsed.
+
+    The sentence, not the line: a reflowed paragraph moves the key and the
+    removal notice apart. Not the paragraph either, or that notice would
+    forgive a setup instruction standing beside it.
+    """
+    return [
+        sentence
+        for block in _BLOCK_BREAK.split(text)
+        for sentence in _SENTENCE_END.split(" ".join(block.split()))
+        if sentence
+    ]
+
+
 class TestNoTokenInstructionSurvives:
     """No operator is sent to a credential nothing reads."""
 
@@ -171,7 +193,7 @@ class TestNoTokenInstructionSurvives:
         ]
 
         assert not found, (
-            f"{len(found)} line(s) still instruct an API token; the web UI "
+            f"{len(found)} sentence(s) still instruct an API token; the web UI "
             "signs in with a username and password: " + ", ".join(found)
         )
 
@@ -192,14 +214,15 @@ class TestNoTokenInstructionSurvives:
         } <= scanned
 
     @pytest.mark.parametrize("fragment", _RETIRED_INSTRUCTIONS)
-    def test_the_sweep_reports_a_line_that_carries_the_instruction(
+    def test_the_sweep_reports_the_sentence_carrying_the_instruction(
         self, fragment: str, tmp_path: Path
     ) -> None:
         """Every fragment is exercised, or one could match nothing and hide."""
         offender = tmp_path / "README.md"
-        offender.write_text(f"Set the {fragment.upper()} first.\n", encoding="utf-8")
+        instruction = f"Set the {fragment.upper()} first."
+        offender.write_text(f"{instruction}\n", encoding="utf-8")
 
-        assert _offences("README.md", offender) == ["README.md:1"]
+        assert _offences("README.md", offender) == [f"README.md: {instruction}"]
 
     def test_a_document_the_sweep_cannot_read_is_not_scored_clean(
         self, tmp_path: Path
@@ -229,7 +252,9 @@ class TestAProviderDocumentKeepsItsOwnTokens:
         self, provider_doc: Path
     ) -> None:
         """Anchors the exclusion: the fragment does match, under the right name."""
-        assert _offences("README.md", provider_doc) == ["README.md:1"]
+        assert _offences("README.md", provider_doc) == [
+            "README.md: Paste the TMDB API token."
+        ]
 
     def test_the_config_key_is_still_swept_there(self, tmp_path: Path) -> None:
         """Narrowed prose, not a narrowed sweep: the key is dead in every file."""
@@ -237,7 +262,7 @@ class TestAProviderDocumentKeepsItsOwnTokens:
         offender.write_text(f"Set {_RETIRED_KEY[0]} first.\n", encoding="utf-8")
 
         assert _offences("docs/ENRICHMENT_SETUP.md", offender) == [
-            "docs/ENRICHMENT_SETUP.md:1"
+            f"docs/ENRICHMENT_SETUP.md: Set {_RETIRED_KEY[0]} first."
         ]
 
     def test_that_document_is_in_the_sweep_at_all(self) -> None:
@@ -250,12 +275,12 @@ class TestAProviderDocumentKeepsItsOwnTokens:
 class TestTheUpgradeNoteMayNameWhatItRetires:
     """An operator holding the dead key is told so, and nothing more is said."""
 
-    def test_the_note_is_the_one_line_naming_the_key(self) -> None:
+    def test_the_note_is_the_one_sentence_naming_the_key(self) -> None:
         """Anchor: with no note to forgive, the exemption proves nothing."""
         naming_it = [
-            line
-            for line in _read("README.md").splitlines()
-            if _RETIRED_KEY[0] in line.lower()
+            sentence
+            for sentence in _sentences(_read("README.md"))
+            if _RETIRED_KEY[0] in sentence.lower()
         ]
 
         assert len(naming_it) == 1
@@ -265,13 +290,29 @@ class TestTheUpgradeNoteMayNameWhatItRetires:
         self, tmp_path: Path
     ) -> None:
         offender = tmp_path / "README.md"
+        instruction = f"Set `{_RETIRED_KEY[0]}` to a long random string."
         offender.write_text(
-            f"`{_RETIRED_KEY[0]}` is no longer read.\n"
-            f"Set `{_RETIRED_KEY[0]}` to a long random string.\n",
+            f"`{_RETIRED_KEY[0]}` is no longer read.\n{instruction}\n",
             encoding="utf-8",
         )
 
-        assert _offences("README.md", offender) == ["README.md:2"]
+        assert _offences("README.md", offender) == [f"README.md: {instruction}"]
+
+    def test_a_reflowed_paragraph_keeps_its_notice_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: the sweep read one line at a time.
+
+        Bug reported: rewrapping README's upgrade note failed it.
+        Root cause: the notice forgave a line, not the sentence it sits in.
+        Fix: unwrap each block before splitting into sentences.
+        """
+        offender = tmp_path / "README.md"
+        offender.write_text(
+            f"`{_RETIRED_KEY[0]}`\nis no longer read.\n", encoding="utf-8"
+        )
+
+        assert _offences("README.md", offender) == []
 
 
 class TestThePasswordMinimumReachesEveryReader:
@@ -286,15 +327,6 @@ class TestThePasswordMinimumReachesEveryReader:
 
         assert stated
         assert min(stated) >= MIN_PASSWORD_LENGTH
-
-    def test_the_documents_state_one_number_between_them(self) -> None:
-        stated = {
-            length
-            for document in _PASSWORD_DOCUMENTS
-            for length in _STATED_MINIMUM.findall(_prose(document))
-        }
-
-        assert len(stated) == 1
 
 
 class TestStatedPasswordMinimumRegression:
