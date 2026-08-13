@@ -6,7 +6,18 @@
   <title>Recommendinator</title>
 </head>
 <body>
-  <div id="app"></div>
+  <!-- Replaced by Vue on mount. It is what a phone on a slow connection reads
+       while the bundle downloads, where the alternative is a blank document. -->
+  <div id="app">
+    <main class="auth-screen">
+      <div class="card auth-card">
+        <header class="auth-head">
+          <h1 class="auth-title">Recommendinator</h1>
+        </header>
+        <p class="auth-status">Loading…</p>
+      </div>
+    </main>
+  </div>
   <script type="module" src="/resources/js/app.ts"></script>
 </body>
 </html>

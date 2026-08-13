@@ -154,6 +154,15 @@ as a source.
 
 ### Upgrading
 
+**From 0.32.0 or earlier.** The web UI signs in with a username and password
+now, so `web.api_token` is no longer read: delete it from `config/config.yaml`.
+Nothing replaces it there, because the account lives in the database.
+
+That account does not exist yet, so your instance boots claimable and the first
+visitor to reach it claims it. Claim yours before anything else — especially if
+you widened `APP_BIND_PREFIX` or `web.host` past loopback, where until you do
+the whole network can.
+
 The Goodreads CSV plugin was renamed from `goodreads` to `goodreads_csv`.
 Existing items and DB-stored source configs are relabeled automatically on first
 startup. If you configure Goodreads through `config.yaml`, rename

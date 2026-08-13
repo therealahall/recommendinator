@@ -112,6 +112,8 @@ holding the database — there is no email and no reset link.
   forward on use. **No `Secure` flag** — this app serves no TLS, so a Secure
   cookie would never be sent at all. Beyond loopback, put a
   [reverse proxy](DOCKER.md#reverse-proxy) in front.
+- **A password is at least 12 characters**, wherever it is set: the setup
+  screen, **Settings → Account** and `account set-password`.
 - Passwords are scrypt digests under a per-account salt, session tokens SHA-256
   digests. Sessions are revoked server-side, so signing out or changing the
   password really ends them.
@@ -144,6 +146,12 @@ loopback, private, link-local or `100.64.0.0/10` address, a single-label name
 (`ollama`), or a `.local`/`.internal` name — nothing else. A genuinely remote
 Ollama has to go in `config.yaml`, and the first call to a non-local URL logs a
 warning.
+
+**`web.allowed_origins` cannot authenticate a cross-origin client.** The session
+cookie is `SameSite=Strict`, so a browser never attaches it to a request from
+another origin, whatever CORS allows. What the setting still reaches is the
+ungated surface: `GET /` and `/static/*`, the SPA shell. It defaults to
+`http://localhost:18473` and applies on restart.
 
 The web interface binds `127.0.0.1` by default, and Docker publishes its port on
 `127.0.0.1` too (`APP_BIND_PREFIX`). Reaching it from another machine means a

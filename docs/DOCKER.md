@@ -139,10 +139,11 @@ sits outside `/app/config` on purpose: your `./config` mount covers that
 directory, so a copy kept inside it would be hidden on the run that reads it.
 
 Then open the published port. A new instance has no account and opens on a setup
-screen asking for a username, a display name and a password; finishing it claims
-the instance and signs that browser in. **Until someone does, whoever reaches the
-container first can** — publishing on `127.0.0.1` is what bounds that. If you
-lose the password later, there is no reset link, so set a new one from the host:
+screen asking for a username, a display name and a password of at least 12
+characters; finishing it claims the instance and signs that browser in. **Until
+someone does, whoever reaches the container first can** — publishing on
+`127.0.0.1` is what bounds that. If you lose the password later, there is no
+reset link, so set a new one from the host:
 
 ```bash
 docker compose exec app python -m src.cli account set-password
@@ -248,6 +249,10 @@ container with no health check can never report healthy.
 To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands. A pin outranks the
 `pull`, which then re-fetches the release you named rather than a newer one, so
 moving forward means raising the pin.
+
+**Coming from 0.32.0 or earlier?** Sign-in changed, one `config.yaml` key is
+dead, and the upgraded instance is claimable until someone claims it. See
+[Upgrading](../README.md#upgrading).
 
 ## Reverse proxy
 
