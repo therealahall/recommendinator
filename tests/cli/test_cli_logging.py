@@ -1,0 +1,586 @@
+"""What the CLI's boot does to the root logger, and which stream it writes on."""
+
+from __future__ import annotations
+
+import ast
+import csv
+import io
+import json
+import logging
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+from click.testing import CliRunner
+
+import src as src_package
+from src.cli.main import cli
+from src.models.content import ContentType
+from src.settings.metadata import default_of
+from src.storage.manager import StorageManager
+from src.utils import logging as log_config
+from src.utils.export import export_items_csv
+
+# Bound at import, before the root conftest's per-test patch: this is the real
+# callable, and handing it back to ``patch`` is how a test opts out of the
+# blanket no-op that keeps every other test off the production log.
+from src.utils.logging import configure_logging
+from tests.cli.conftest import _invoke_with_mocks
+
+#: One boot-time refusal from ``migrate_source_attribution``, provoked below.
+_REFUSAL = "2 sources share it"
+
+_SRC_ROOT = Path(src_package.__file__).parent
+
+#: Everything that can put a log record on a stream of its own choosing.
+_HANDLER_BUILDERS = {"StreamHandler", "basicConfig"}
+
+
+def _module_id(path: Path) -> str:
+    return str(path.relative_to(_SRC_ROOT))
+
+
+def _parse(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _names_stdout(node: ast.expr) -> bool:
+    # ``sys.__stdout__`` is the spelling reached for once ``sys.stdout`` has
+    # been redirected — the case this sweep exists to catch.
+    return isinstance(node, ast.Attribute) and node.attr in {"stdout", "__stdout__"}
+
+
+def _called_name(node: ast.Call) -> str:
+    func = node.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+def _stdout_handler_calls(tree: ast.AST) -> list[str]:
+    """Every handler construction in *tree* pinned to ``sys.stdout``."""
+    return [
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (name := _called_name(node)) in _HANDLER_BUILDERS
+        and any(
+            _names_stdout(argument)
+            for argument in (*node.args, *(kw.value for kw in node.keywords))
+        )
+    ]
+
+
+def _shared_plugin_config(log_file: str | None) -> dict[str, Any]:
+    """Two sources on one plugin — the shape the attribution pass refuses."""
+    config: dict[str, Any] = {
+        "inputs": {
+            "steam_home": {"plugin": "steam", "enabled": True},
+            "steam_work": {"plugin": "steam", "enabled": True},
+        }
+    }
+    if log_file is not None:
+        config["logging"] = {"file": log_file}
+    return config
+
+
+def _csv_source_config(csv_path: Path) -> dict[str, Any]:
+    """One offline source, so a real ``update`` has something to sync."""
+    return {
+        "inputs": {
+            "my_csv": {
+                "plugin": "csv_import",
+                "enabled": True,
+                "path": str(csv_path),
+                "content_type": "book",
+            }
+        },
+        "logging": {"file": "logs/cli.log"},
+    }
+
+
+def _strand_an_item(storage: StorageManager) -> None:
+    """Leave a row labelled with the plugin name, so the pass has work."""
+    with storage.connection() as conn:
+        conn.execute(
+            "INSERT INTO content_items (user_id, title, content_type, status, source) "
+            "VALUES (1, 'Some Title', 'book', 'completed', 'steam')"
+        )
+        conn.commit()
+
+
+def _rows(document: str) -> list[list[str]]:
+    """Parse a CSV document into its rows."""
+    return list(csv.reader(io.StringIO(document)))
+
+
+def _invoke_with_real_logging(
+    runner: CliRunner, storage: StorageManager, config: dict[str, Any], args: list[str]
+) -> Any:
+    """Run *args* with the source migrations and log wiring both unstubbed."""
+    with (
+        patch("src.utils.logging.configure_logging", configure_logging),
+        patch("src.cli.main.load_config", return_value=config),
+        patch("src.cli.main.create_storage_manager", return_value=storage),
+        patch("src.cli.main.create_llm_components", return_value=(None, None, None)),
+        patch("src.cli.main.create_recommendation_engine"),
+    ):
+        return runner.invoke(cli, args)
+
+
+class TestTheConsoleNeverWritesToTheDataChannelRegression:
+    """A record on stdout lands ahead of the JSON document or the CSV header row.
+
+    Bug risk: the CLI's console handler is one argument from the data channel.
+    Fix: the stream is required, and the CLI passes stderr.
+    """
+
+    def test_a_json_command_keeps_stdout_clean_while_a_migration_warns(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """The refusal is recorded once, so it would prefix a log line onto the
+        JSON document on exactly the first boot after an upgrade."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        _strand_an_item(storage)
+        monkeypatch.chdir(tmp_path)
+
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["status", "--format", "json"],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["status"] == "ready"
+        # Anchors the assertion above: without a record on the wire it holds
+        # over an invocation that logged nothing at all.
+        assert _REFUSAL in result.stderr
+        assert _REFUSAL in (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+
+    def test_the_csv_export_on_stdout_is_not_prefixed_by_a_log_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """``library export`` with no ``--output`` is redirected to a file.
+
+        A console record on stdout lands ahead of the header row, so every
+        column name shifts and the file no longer parses as the CSV it names.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        _strand_an_item(storage)
+        monkeypatch.chdir(tmp_path)
+
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["library", "export", "--type", "book", "--format", "csv"],
+        )
+
+        expected = export_items_csv(
+            storage.get_content_items(
+                user_id=1, content_type=ContentType.BOOK, include_ignored=True
+            ),
+            ContentType.BOOK,
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert next(csv.reader(io.StringIO(result.stdout)))[0] == "title"
+        # Parsed rather than compared as text: CliRunner hands back the document
+        # with the writer's CRLF row endings normalised.
+        assert _rows(result.stdout) == _rows(expected)
+        # Anchors the two above: they hold over an invocation that logged nothing.
+        assert _REFUSAL in result.stderr
+
+    def test_a_mutation_rendering_json_keeps_stdout_clean(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """``emit_view`` is the one renderer every settings and source write uses.
+
+        ``status`` only proves the read surface; a write emits its document after
+        the boot migrations have had their say on the same invocation.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        _strand_an_item(storage)
+        monkeypatch.chdir(tmp_path)
+
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            [
+                "settings",
+                "set",
+                "recommendations.default_count",
+                "7",
+                "--format",
+                "json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["sections"]
+        assert _REFUSAL in result.stderr
+
+
+def test_the_log_level_comes_from_the_settings_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
+) -> None:
+    """``logging.level`` is DB-backed, so the overlay has to run first."""
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    storage.set_setting("logging.level", "DEBUG")
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_with_real_logging(
+        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+    )
+
+    assert result.exit_code == 0, result.output
+    # Only the stored row says DEBUG: configuring before the overlay leaves the
+    # root logger on the registry default.
+    assert default_of("logging.level") == "INFO"
+    assert logging.getLogger().level == logging.DEBUG
+
+
+def test_the_log_file_comes_from_the_settings_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
+) -> None:
+    """``logging.file`` is DB-backed too, and the stored row outranks the YAML.
+
+    Configuring before the overlay would open the YAML path and look right in
+    every test that does not set the row.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    storage.set_setting("logging.file", "logs/from-db.log")
+    _strand_an_item(storage)
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_with_real_logging(
+        CliRunner(), storage, _shared_plugin_config("logs/from-yaml.log"), ["status"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _REFUSAL in (tmp_path / "logs" / "from-db.log").read_text(encoding="utf-8")
+    assert not (tmp_path / "logs" / "from-yaml.log").exists()
+
+
+def test_a_stored_level_the_registry_would_reject_degrades_at_boot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
+) -> None:
+    """The overlay applies stored rows without re-validating them.
+
+    ``set_setting`` writes past the Settings API exactly as a row persisted
+    under an older pattern would read back, so the boot must fall back rather
+    than take the value to ``setLevel``.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    storage.set_setting("logging.level", "verbose")
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_with_real_logging(
+        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert logging.getLogger().level == logging.INFO
+
+
+def test_a_stored_log_path_escaping_logs_is_contained_at_cli_boot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
+) -> None:
+    """The containment backstop had only ever been driven from the web boot.
+
+    A row written before the registry pattern grew its ``..`` lookahead still
+    overlays without re-validation, and the CLI now opens the handler too.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    storage.set_setting("logging.file", "logs/../../evil.log")
+    _strand_an_item(storage)
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_with_real_logging(
+        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not (tmp_path.parent / "evil.log").exists()
+    assert _REFUSAL in (
+        tmp_path / "logs" / Path(default_of("logging.file")).name
+    ).read_text(encoding="utf-8")
+
+
+def test_a_healthy_update_says_nothing_on_the_console(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
+) -> None:
+    """``update`` is the command the console chatter would have buried.
+
+    Plugin discovery and both sync banners record at INFO, the last restating
+    the command's own total, so the console floors above them and the file
+    keeps them.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    source = tmp_path / "books.csv"
+    source.write_text("title,status\nDune,completed\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_with_real_logging(
+        CliRunner(mix_stderr=False), storage, _csv_source_config(source), ["update"]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert "Total: 1 items updated." in result.stdout
+    assert result.stderr == ""
+    # Anchors the silence: those records were emitted, and the file is where
+    # "check the logs" sends the operator to read them.
+    written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+    assert "[SYNC] === Starting sync for source: csv_import ===" in written
+    assert "[SYNC] === Completed. Total items processed: 1 ===" in written
+
+
+class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
+    """Reported by QA: ``chat send`` named a log nobody was writing.
+
+    Bug: no CLI command configured logging, so every ``exc_info`` record fell
+    to a root logger with no handler.
+    Fix: the boot wires the shared file handler.
+    """
+
+    def test_the_traceback_the_command_points_at_is_on_disk(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """Its handler logs the caught exception with ``exc_info`` and then
+        prints "Check logs for details", so the traceback is what the file must
+        hold."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        monkeypatch.chdir(tmp_path)
+        config = _shared_plugin_config("logs/cli.log")
+        config["features"] = {"ai_enabled": True}
+
+        engine = MagicMock()
+        engine.process_message_sync.side_effect = RuntimeError(
+            "ollama is not listening"
+        )
+        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
+            result = _invoke_with_real_logging(
+                CliRunner(mix_stderr=False),
+                storage,
+                config,
+                ["chat", "send", "--message", "hello"],
+            )
+
+        assert result.exit_code == 1
+        assert "Check logs for details" in result.stderr
+        # The data channel stays empty on the failure path too.
+        assert result.stdout == ""
+        written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+        assert "Chat send failed" in written
+        assert "RuntimeError: ollama is not listening" in written
+
+
+class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
+    """Reported by QA: an unwritable ``logs/`` killed every CLI command.
+
+    Bug: the configure call sat inside the callback's ``except Exception``, so
+    a refusal read as "Error initializing components".
+    Fix: it degrades to the console, reporting once.
+    """
+
+    def test_the_degrade_is_reported_once_on_stderr(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """Degrading in silence leaves an operator hunting for a log nobody writes.
+
+        One line, on stderr, naming the destination — the data channel stays
+        clean, which is what makes ``--format json`` survive the degraded run.
+        """
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["status", "--format", "json"],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["status"] == "ready"
+        reported = result.stderr.splitlines()
+        assert len(reported) == 1
+        assert reported[0].startswith("Warning: no log file for this run: ")
+        assert str((tmp_path / "logs").resolve()) in reported[0]
+
+
+class TestTheConsoleWithholdsTracebacksRegression:
+    """Reported by QA: a console handler dumped a traceback above every "Check
+    logs for details" line.
+
+    Bug: ``Formatter.format`` appends it whatever the format string says.
+    Fix: the CLI's console renders the message alone, on both paths.
+    """
+
+    def test_a_caught_fault_keeps_its_traceback_off_the_terminal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        monkeypatch.chdir(tmp_path)
+        config = _shared_plugin_config("logs/cli.log")
+        config["features"] = {"ai_enabled": True}
+
+        engine = MagicMock()
+        engine.process_message_sync.side_effect = RuntimeError(
+            "ollama is not listening"
+        )
+        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
+            result = _invoke_with_real_logging(
+                CliRunner(mix_stderr=False),
+                storage,
+                config,
+                ["chat", "send", "--message", "hello"],
+            )
+
+        assert "Check logs for details" in result.stderr
+        assert "Traceback (most recent call last):" not in result.stderr
+        assert "ollama is not listening" not in result.stderr
+        # Anchors both: the record carried a traceback for the console to drop.
+        assert "Traceback (most recent call last):" in (
+            tmp_path / "logs" / "cli.log"
+        ).read_text(encoding="utf-8")
+
+    def test_a_run_whose_log_is_off_still_keeps_the_traceback_off_the_console(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """The degrade path builds a console handler of its own, and this is the
+        one run with no log file to read a withheld traceback out of."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        config = _shared_plugin_config("logs/cli.log")
+        config["features"] = {"ai_enabled": True}
+
+        engine = MagicMock()
+        engine.process_message_sync.side_effect = RuntimeError(
+            "ollama is not listening"
+        )
+        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
+            result = _invoke_with_real_logging(
+                CliRunner(mix_stderr=False),
+                storage,
+                config,
+                ["chat", "send", "--message", "hello"],
+            )
+
+        assert "Check logs for details" in result.stderr
+        # Anchors the two below: a console handler dropping the record satisfies
+        # them, and there is no log file left to read the record out of.
+        assert "ERROR | src.cli.commands._chat | Chat send failed" in result.stderr
+        assert "Traceback (most recent call last):" not in result.stderr
+        assert "ollama is not listening" not in result.stderr
+
+    def test_a_run_whose_log_is_off_still_formats_its_diagnostics(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """Anchors the test above, which a handler dropping every record
+        satisfies. The level and logger name are what say the CLI's own handler
+        rendered this."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        _strand_an_item(storage)
+
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["status", "--format", "json"],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        # The data channel survives the degraded run's console records too.
+        assert json.loads(result.stdout)["status"] == "ready"
+        reported = [line for line in result.stderr.splitlines() if _REFUSAL in line]
+        assert len(reported) == 1
+        assert reported[0].startswith("WARNING | src.storage.source_migration | ")
+
+
+class TestNothingUnderSrcHardwiresAHandlerOntoStdout:
+    """One ``--format json`` surface at a time proves nothing about the next.
+
+    The stream argument is what keeps all ~21 of them clean, so the invariant
+    is swept instead.
+    """
+
+    @pytest.mark.parametrize("path", sorted(_SRC_ROOT.rglob("*.py")), ids=_module_id)
+    def test_no_module_builds_a_log_handler_on_stdout(self, path: Path) -> None:
+        assert _stdout_handler_calls(_parse(path)) == []
+
+    def test_the_sweep_reaches_the_modules_it_exists_for(self) -> None:
+        """An empty or narrowed population would skip, not fail: no
+        ``empty_parameter_set_mark`` is configured."""
+        swept = {_module_id(path) for path in _SRC_ROOT.rglob("*.py")}
+
+        assert {"web/app.py", "cli/main.py", "utils/logging.py"} <= swept
+
+    def test_the_sweep_reports_a_planted_one(self) -> None:
+        """A predicate matching nothing would clear every module above."""
+        planted = (
+            "logging.StreamHandler(sys.stdout)\n"
+            "logging.basicConfig(stream=sys.stdout)\n"
+            "logging.StreamHandler(sys.__stdout__)\n"
+            "logging.basicConfig(stream=sys.__stdout__)\n"
+        )
+
+        assert _stdout_handler_calls(ast.parse(planted)) == [
+            "StreamHandler",
+            "basicConfig",
+            "StreamHandler",
+            "basicConfig",
+        ]
+
+    def test_passing_stdout_to_the_shared_configurer_is_not_reported(self) -> None:
+        """``src/web/app.py`` does exactly this, and it is right there:
+        ``docker logs`` shows stdout."""
+        allowed = "log_config.configure_logging(config, console_stream=sys.stdout)\n"
+
+        assert _stdout_handler_calls(ast.parse(allowed)) == []
+
+
+def test_a_cli_invocation_under_the_suite_opens_no_production_log_handler(
+    cli_runner: CliRunner,
+) -> None:
+    """A ``from`` import in ``main.py`` would resolve past the conftest's patch
+    and write the developer's own ``logs/recommendations.log``."""
+    configurer = log_config.configure_logging
+    assert isinstance(configurer, Mock), "the root conftest no longer patches it"
+    root_logger = logging.getLogger()
+    handlers_before = list(root_logger.handlers)
+
+    result = _invoke_with_mocks(cli_runner, ["status"], MagicMock(spec=StorageManager))
+
+    assert result.exit_code == 0, result.output
+    configurer.assert_called_once()
+    assert root_logger.handlers == handlers_before

@@ -19,7 +19,7 @@ one just as completely as a conftest-level one, and is easier to miss.
 
 The handler-stripping helper is exercised directly because it is the fixture's
 fall-back for a code path that opens the production log without going through
-``src.web.app.configure_logging``, and nothing else reaches it.
+``src.utils.logging.configure_logging``, and nothing else reaches it.
 
 The credential-key tests establish that the redirect is load-bearing rather than
 decorative: with the environment variable dropped, a real ``StorageManager``
