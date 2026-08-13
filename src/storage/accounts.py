@@ -12,6 +12,7 @@ import secrets
 import sqlite3
 from datetime import datetime, timedelta
 from hmac import compare_digest
+from typing import TypedDict
 
 from src.storage.schema import UserDict, get_default_user_id, get_user_by_id
 from src.utils.dates import utc_now
@@ -31,9 +32,27 @@ _ABSENT_ACCOUNT_SALT = b"\x00" * _SALT_BYTES
 
 _SESSION_TOKEN_BYTES = 32
 
+#: The shortest password this instance accepts, wherever one is set. Short
+#: enough that a self-hosted operator is not fought with, long enough that the
+#: scrypt cost above is what an attacker meets rather than an exhaustive search.
+MIN_PASSWORD_LENGTH = 8
+
 #: How long a session stays valid. Rolling: every ``lookup_session`` pushes
 #: the expiry out by this much again, so only an idle session lapses.
 SESSION_LIFETIME = timedelta(days=30)
+
+
+class AccountRecord(TypedDict):
+    """The account as an operator asks after it: who it is, and its password's age.
+
+    Neither the hash nor the salt is in it, so it is safe to render.
+    """
+
+    id: int
+    username: str
+    display_name: str | None
+    claimed: bool
+    password_updated_at: str | None
 
 
 class AccountAlreadyClaimedError(RuntimeError):
@@ -77,18 +96,39 @@ def _password_columns(plaintext: str) -> tuple[str, str, str]:
     return _derive_key(plaintext, salt), salt.hex(), _utc_text(utc_now())
 
 
+def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | None:
+    """Report *user_id*'s names and the state of its password.
+
+    Returns:
+        None when no ``users`` row carries *user_id*.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT username, display_name, password_hash, password_updated_at
+             FROM users
+            WHERE id = ?""",
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": user_id,
+        "username": row[0],
+        "display_name": row[1],
+        "claimed": row[2] is not None,
+        "password_updated_at": row[3],
+    }
+
+
 def account_is_claimed(conn: sqlite3.Connection) -> bool:
     """Report whether anyone has set a password on this instance.
 
     Returns:
         True once the account carries a password hash.
     """
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT password_hash FROM users WHERE id = ?", (get_default_user_id(),)
-    )
-    row = cursor.fetchone()
-    return row is not None and row[0] is not None
+    account = describe_account(conn, get_default_user_id())
+    return account is not None and account["claimed"]
 
 
 def claim_account(
@@ -222,6 +262,22 @@ def revoke_session(conn: sqlite3.Connection, token: str) -> None:
     """End the session *token* names."""
     cursor = conn.cursor()
     cursor.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+    conn.commit()
+
+
+def revoke_other_sessions(
+    conn: sqlite3.Connection, user_id: int, keep_token: str
+) -> None:
+    """End every session *user_id* holds except the one *keep_token* names.
+
+    What a password change does: every other browser is signed out, and the
+    one making the change is not made to sign in again.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+        (user_id, _token_hash(keep_token)),
+    )
     conn.commit()
 
 

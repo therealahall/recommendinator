@@ -44,6 +44,10 @@ T = TypeVar("T")
 
 _CONFIG_UNAVAILABLE = "Config unavailable"
 
+#: Exported because authentication answers with it too, and one server state
+#: has to read the same way on every route.
+STORAGE_UNAVAILABLE = "Storage unavailable"
+
 
 def _require(component: T | None, detail: str) -> T:
     if component is None:
@@ -53,7 +57,7 @@ def _require(component: T | None, detail: str) -> T:
 
 def require_storage() -> StorageManager:
     """Return the storage manager, or 503 when it is not initialised."""
-    return _require(get_storage(), "Storage unavailable")
+    return _require(get_storage(), STORAGE_UNAVAILABLE)
 
 
 def require_config() -> dict[str, Any]:

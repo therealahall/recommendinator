@@ -6,13 +6,16 @@ import json
 from collections.abc import Generator
 from dataclasses import fields
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.storage.manager import StorageManager
 from src.web.api import ThemeResponse, discover_themes, router
 from src.web.state import app_state
+from tests.factories import authenticated_client
 
 
 def _save_state() -> dict:
@@ -24,17 +27,27 @@ def _restore_state(saved: dict) -> None:
         setattr(app_state, key, value)
 
 
+def _mounted_bare() -> FastAPI:
+    """The router on a plain app, which is what these tests are mounting.
+
+    The session dependency rides on the router itself, so this is as
+    authenticated as the routes ``create_app`` serves — the arrangement
+    ``tests/web/test_auth.py`` pins.
+    """
+    app = FastAPI()
+    app.include_router(router)
+    return app
+
+
 @pytest.fixture
 def test_client() -> Generator[TestClient, None, None]:
     """Create a test client with minimal state for theme endpoints."""
     original_state = _save_state()
 
     app_state.config = {"web": {"theme": "nord"}}
+    app_state.storage = Mock(spec=StorageManager)
 
-    app = FastAPI()
-    app.include_router(router)
-
-    with TestClient(app) as client:
+    with authenticated_client(_mounted_bare()) as client:
         yield client
 
     _restore_state(original_state)
@@ -173,11 +186,9 @@ class TestThemeEndpoints:
         """GET /api/themes/default falls back to nord when not configured."""
         original_state = _save_state()
         app_state.config = {"web": {}}
+        app_state.storage = Mock(spec=StorageManager)
 
-        app = FastAPI()
-        app.include_router(router)
-
-        with TestClient(app) as client:
+        with authenticated_client(_mounted_bare()) as client:
             response = client.get("/api/themes/default")
 
         _restore_state(original_state)

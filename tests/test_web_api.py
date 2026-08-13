@@ -17,7 +17,6 @@ from dataclasses import dataclass, fields, replace
 from datetime import UTC, date, datetime
 from math import inf, nan
 from pathlib import Path
-from secrets import compare_digest
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
@@ -45,7 +44,7 @@ import src.web.chat_api
 from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
-from src.config.service import MissingApiTokenError, load_config
+from src.config.service import load_config
 from src.conversation.engine import ConversationEngine
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import SyncResult
@@ -77,7 +76,7 @@ from src.web.app import (
     _raised_refusal_json_can_carry,
     _validation_refusal_json_can_carry,
 )
-from src.web.auth import UNAUTHORIZED_DETAIL, require_api_token
+from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL, require_session
 from src.web.enrichment_manager import (
     WebEnrichmentManager,
     _enrichment_manager_lock,
@@ -120,10 +119,10 @@ from src.web.sync_manager import (
     reset_sync_manager,
 )
 from tests.factories import (
-    API_TOKEN,
     authenticated_client,
     back_mock_preference_store,
     booted_web_app,
+    issue_session,
 )
 
 
@@ -354,13 +353,14 @@ class TestCreateAppSettingsMigration:
             assert _cors_kwargs(app)["allow_credentials"] is True
         reset_sync_manager()
 
-    def test_a_preflight_from_an_allowed_origin_may_send_authorization(
+    def test_a_preflight_from_an_allowed_origin_may_send_the_session(
         self, mock_config, tmp_path
     ):
         """Reported: a configured origin produced no working client.
 
-        Cause: ``Authorization`` is not CORS-safelisted and was absent from
-        ``allow_headers``, so a preflight naming it got 400. Fix: allow it.
+        Cause: the header its requests carry was absent from ``allow_headers``.
+        The credential is the cookie now, which a browser attaches only when
+        the preflight allows credentials.
         """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -370,18 +370,19 @@ class TestCreateAppSettingsMigration:
         }
         with booted_web_app(storage_manager, config) as app:
             response = TestClient(app).options(
-                "/api/status",
+                "/api/auth/login",
                 headers={
                     "Origin": "https://app.example.com",
-                    "Access-Control-Request-Method": "GET",
-                    "Access-Control-Request-Headers": "authorization",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type",
                 },
             )
         reset_sync_manager()
 
         assert response.status_code == 200
         allowed = response.headers["access-control-allow-headers"].lower()
-        assert "authorization" in allowed
+        assert "content-type" in allowed
+        assert response.headers["access-control-allow-credentials"] == "true"
 
     def test_wildcard_origin_disables_credentials(self, mock_config, tmp_path):
         """``["*"]`` must turn credentials off — a browser-security invariant.
@@ -921,8 +922,18 @@ def test_complete_endpoint(client, mock_components):
     assert data["id"] == 1
 
 
+def _client_on(app, storage: StorageManager) -> TestClient:
+    """Swap *storage* into app state and sign a fresh client in against it.
+
+    Sessions live in the database, so a client made before the swap carries a
+    cookie the new database has never heard of.
+    """
+    app_state.storage = storage
+    return authenticated_client(app)
+
+
 def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
-    client, mock_components, tmp_path, host_timezone
+    mock_components, tmp_path, host_timezone
 ):
     """POST /api/complete dates a completion by the day the user is living.
 
@@ -939,7 +950,7 @@ def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
     """
     host_timezone("America/Los_Angeles")
     storage = StorageManager(sqlite_path=tmp_path / "complete.db")
-    app_state.storage = storage
+    client = _client_on(mock_components["app"], storage)
     app_state.embedding_gen = None
 
     with patch(
@@ -957,7 +968,7 @@ def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
 
 
 def test_complete_endpoint_preserves_an_imported_completion_date_regression(
-    client, mock_components, tmp_path
+    mock_components, tmp_path
 ):
     """POST /api/complete does not re-date an item that already has a date.
 
@@ -979,7 +990,7 @@ def test_complete_endpoint_preserves_an_imported_completion_date_regression(
             date_completed=date(2020, 1, 1),
         )
     )
-    app_state.storage = storage
+    client = _client_on(mock_components["app"], storage)
     app_state.embedding_gen = None
 
     response = client.post(
@@ -995,7 +1006,7 @@ def test_complete_endpoint_preserves_an_imported_completion_date_regression(
 
 
 def test_complete_endpoint_stores_a_movie_director_regression(
-    client, mock_components, tmp_path
+    mock_components, tmp_path
 ):
     """POST /api/complete keeps the creator of a non-book content type.
 
@@ -1009,7 +1020,7 @@ def test_complete_endpoint_stores_a_movie_director_regression(
     of this is in ``tests/test_cli.py``.
     """
     storage = StorageManager(sqlite_path=tmp_path / "creator.db")
-    app_state.storage = storage
+    client = _client_on(mock_components["app"], storage)
     app_state.embedding_gen = None
 
     response = client.post(
@@ -1028,7 +1039,7 @@ def test_complete_endpoint_stores_a_movie_director_regression(
 
 
 def test_complete_endpoint_overwrites_existing_rating_regression(
-    client, mock_components, tmp_path
+    mock_components, tmp_path
 ):
     """POST /api/complete replaces the rating an item already has.
 
@@ -1056,7 +1067,7 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
             review="Loved it",
         )
     )
-    app_state.storage = storage
+    client = _client_on(mock_components["app"], storage)
     # No embedding generator: this test is about the SQLite write, and the
     # endpoint skips embedding generation when there is none.
     app_state.embedding_gen = None
@@ -5520,6 +5531,20 @@ _GUARDED_ENDPOINTS = [
         url="/api/recommendations/stream?type=book",
     ),
     _Endpoint("GET", "/api/users", ("storage",)),
+    _Endpoint(
+        "PATCH",
+        "/api/users/{user_id}",
+        ("storage",),
+        url="/api/users/1",
+        body={"username": "owner", "display_name": "Owner"},
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/users/{user_id}/password",
+        ("storage",),
+        url="/api/users/1/password",
+        body={"current_password": "old", "new_password": "new-password"},
+    ),
     _Endpoint("GET", "/api/items", ("storage",)),
     _Endpoint(
         "GET",
@@ -5701,6 +5726,9 @@ _GUARDED_ENDPOINTS = [
 # so an uninitialised component is not their problem.
 _DEPENDENCY_FREE_ENDPOINTS = [
     _Endpoint("GET", "/api/status"),
+    # Serves the user authentication already resolved, so it needs nothing
+    # beyond what every route on this list needs to be reached at all.
+    _Endpoint("GET", "/api/users/me"),
     # Listed here rather than guarded: an unset ``config_path`` makes
     # ``reload_config`` return False, which the handler turns into a 500. Only
     # ``create_app`` sets that field, and it sets it or raises.
@@ -5714,6 +5742,26 @@ _DEPENDENCY_FREE_ENDPOINTS = [
 ]
 
 
+# The sign-in surface: guarded like any other route, but reachable without a
+# session, because a signed-out browser has to reach it to stop being one.
+_OPEN_ENDPOINTS = [
+    _Endpoint("GET", "/api/auth/session", ("storage",)),
+    _Endpoint(
+        "POST",
+        "/api/auth/setup",
+        ("storage",),
+        body={"username": "owner", "display_name": "", "password": "long enough"},
+    ),
+    _Endpoint(
+        "POST",
+        "/api/auth/login",
+        ("storage",),
+        body={"username": "owner", "password": "long enough"},
+    ),
+    _Endpoint("POST", "/api/auth/logout", ("storage",)),
+]
+
+
 def _endpoint_id(endpoint: _Endpoint) -> str:
     return f"{endpoint.method} {endpoint.route}"
 
@@ -5722,7 +5770,7 @@ def _endpoint_id(endpoint: _Endpoint) -> str:
 # handler is exercised on its own rather than shadowed by the first one.
 _GUARD_CASES = [
     pytest.param(endpoint, component, id=f"{_endpoint_id(endpoint)} [{component}]")
-    for endpoint in _GUARDED_ENDPOINTS
+    for endpoint in _GUARDED_ENDPOINTS + _OPEN_ENDPOINTS
     for component in endpoint.requires
 ]
 
@@ -5739,13 +5787,23 @@ def _served_api_routes(app: FastAPI) -> set[tuple[str, str]]:
 
 _CLASSIFIED_API_ROUTES = {
     (endpoint.method, endpoint.route)
-    for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
+    for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS + _OPEN_ENDPOINTS
 }
+
+# The endpoints an outage other than storage's can be measured on.
+_NON_STORAGE_ENDPOINTS = [
+    endpoint
+    for endpoint in _GUARDED_ENDPOINTS + _OPEN_ENDPOINTS
+    if set(endpoint.requires) - {"storage"}
+]
 
 
 def _clear_dependencies() -> None:
-    """Drop every component the guards check, ahead of a request."""
-    app_state.storage = None
+    """Drop every component but storage, ahead of a request.
+
+    Storage stays because authentication reads the session out of it: gone, a
+    503 answers before any handler's own guard runs.
+    """
     app_state.config = None
     app_state.engine = None
     app_state.memory_manager = None
@@ -5760,15 +5818,24 @@ class TestDependencyGuards:
     503 from ``/api/memories`` described the identical outage two ways.
     """
 
-    @pytest.mark.parametrize("endpoint", _GUARDED_ENDPOINTS, ids=_endpoint_id)
+    @pytest.mark.parametrize("endpoint", _NON_STORAGE_ENDPOINTS, ids=_endpoint_id)
     def test_guarded_endpoint_returns_503(self, client, endpoint) -> None:
-        """With everything down, every endpoint names one of its dependencies."""
+        """With the rest down, each endpoint names one of its dependencies.
+
+        Storage stays up because authentication reads it; the routes needing
+        only storage are the per-component case below.
+        """
         _clear_dependencies()
 
         response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
 
         assert response.status_code == 503
         assert response.json()["detail"] in endpoint.details
+
+    def test_that_sweep_covers_most_of_the_guarded_routes(self) -> None:
+        """The filter above is a subset, not an accidental emptying."""
+        assert len(_NON_STORAGE_ENDPOINTS) > 10
+        assert len(_NON_STORAGE_ENDPOINTS) < len(_GUARDED_ENDPOINTS)
 
     @pytest.mark.parametrize(("endpoint", "component"), _GUARD_CASES)
     def test_each_dependency_is_guarded_on_its_own(
@@ -5803,7 +5870,16 @@ class TestDependencyGuards:
         # path is the developer's real config.yaml.
         app_state.config_path = str(Path("config/example.yaml").resolve())
 
-        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+        # The source migrations that reload runs want a database, and the
+        # storage authentication needs here is a mock.
+        with (
+            patch("src.web.state.migrate_source_labels"),
+            patch("src.web.state.migrate_source_config_plugins"),
+            patch("src.web.state.migrate_source_attribution"),
+        ):
+            response = client.request(
+                endpoint.method, endpoint.target, json=endpoint.body
+            )
 
         assert response.status_code < 500
 
@@ -5822,7 +5898,9 @@ class TestDependencyGuards:
         body = response.json()
         assert body["status"] == "initializing"
         assert body["components"]["engine"] is False
-        assert body["components"]["storage"] is False
+        # Storage is what authenticated the request, so it reports up: no
+        # caller can reach this route with it down.
+        assert body["components"]["storage"] is True
 
     def test_every_api_route_is_classified(self, client, mock_components) -> None:
         """Both lists together must name every route the app serves.
@@ -5904,7 +5982,7 @@ class TestClassificationIsDerivedFromTheSignatures:
 
     @pytest.mark.parametrize(
         "endpoint",
-        _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS,
+        _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS + _OPEN_ENDPOINTS,
         ids=_endpoint_id,
     )
     def test_route_guards_exactly_the_components_it_is_classified_with(
@@ -5946,22 +6024,30 @@ class TestClassificationIsDerivedFromTheSignatures:
 # sample: ``test_every_api_route_is_classified`` pins this against the app.
 _ALL_ENDPOINTS = _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
 
-_WRONG_TOKEN = "wrong-api-token-0f0e0d0c0b0a09080706050403020100"
+_WRONG_SESSION = "wrong-session-0f0e0d0c0b0a09080706050403020100"
+
+# The sign-in surface, which a signed-out browser has to reach to sign in.
+_OPEN_API_ROUTES = {
+    ("GET", "/api/auth/session"),
+    ("POST", "/api/auth/setup"),
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+}
 
 
 def _authenticates(route: APIRoute) -> bool:
-    """Whether ``require_api_token`` is anywhere in *route*'s dependency tree."""
+    """Whether ``require_session`` is anywhere in *route*'s dependency tree."""
     pending = list(route.dependant.dependencies)
     while pending:
         dependency = pending.pop()
-        if dependency.call is require_api_token:
+        if dependency.call is require_session:
             return True
         pending.extend(dependency.dependencies)
     return False
 
 
 def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
-    """Every ``/api`` route the app serves without demanding the token."""
+    """Every ``/api`` route the app serves without demanding a session."""
     return {
         (method, route.path)
         for route in app.routes
@@ -5971,16 +6057,14 @@ def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
     }
 
 
-class TestEveryApiRouteRequiresTheToken:
-    """The token is the price of admission to ``/api``.
-
-    Attached to the routers, so a route is authenticated by being registered.
-    Nothing is exempt: ``GET /api/status`` publishes a version and feature
-    fingerprint, and nothing here probes it unauthenticated.
+class TestEveryApiRouteRequiresASession:
+    """Attached to the routers, so a route is authenticated by being
+    registered. Only the four sign-in routes are exempt: ``GET /api/status``
+    publishes a fingerprint, and nothing here probes it signed out.
     """
 
     @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
-    def test_a_request_with_no_token_is_401(self, anonymous_client, endpoint) -> None:
+    def test_a_request_with_no_cookie_is_401(self, anonymous_client, endpoint) -> None:
         """Every component is up, so a 401 is authentication and nothing else."""
         response = anonymous_client.request(
             endpoint.method, endpoint.target, json=endpoint.body
@@ -5988,43 +6072,39 @@ class TestEveryApiRouteRequiresTheToken:
 
         assert response.status_code == 401
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-        # Without the challenge a caller cannot tell this from a 401 that no
-        # credential would fix.
-        assert response.headers["WWW-Authenticate"] == "Bearer"
 
     @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
-    def test_a_request_with_the_wrong_token_is_401(
+    def test_a_request_with_an_unknown_cookie_is_401(
         self, mock_components, endpoint
     ) -> None:
-        """A presented-but-wrong token is refused exactly like an absent one."""
+        """A presented-but-dead session is refused exactly like an absent one."""
         client = TestClient(
-            mock_components["app"],
-            headers={"Authorization": f"Bearer {_WRONG_TOKEN}"},
+            mock_components["app"], cookies={SESSION_COOKIE: _WRONG_SESSION}
         )
 
         response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
 
         assert response.status_code == 401
 
-    def test_the_right_token_gets_past_authentication(self, client) -> None:
+    def test_a_live_session_gets_past_authentication(self, client) -> None:
         """The negative control: the cases above must not pass on a dead app."""
         assert client.get("/api/status").status_code == 200
 
     def test_the_spa_shell_is_served_without_one(self, anonymous_client) -> None:
-        """It is what asks for the token, so it cannot require one.
+        """It is what collects the credentials, so it cannot require them.
 
-        A browser sends no Authorization header on a top-level navigation, and
-        the shell carries no library data — only the form collecting the token.
+        A browser navigating to ``/`` carries no cookie yet, and the shell
+        holds no library data — only the sign-in form.
         """
         assert anonymous_client.get("/").status_code == 200
 
-    def test_no_served_route_is_exempt(self, mock_components) -> None:
+    def test_the_sign_in_routes_are_the_only_exempt_ones(self, mock_components) -> None:
         """Read off the dependency tree, so an exemption has to be deliberate.
 
-        The cases above cover the routes that exist today; this is what a new
-        router included without the dependency trips.
+        Named rather than counted: a new open route would otherwise arrive as
+        an edit to a number, which is not a decision anybody reviews.
         """
-        assert _exempt_api_routes(mock_components["app"]) == set()
+        assert _exempt_api_routes(mock_components["app"]) == _OPEN_API_ROUTES
 
     def test_the_deriver_reads_the_dependency_tree(self) -> None:
         """Without this, the assertion above could hold on a deriver that lies."""
@@ -6034,7 +6114,7 @@ class TestEveryApiRouteRequiresTheToken:
         def _open() -> dict[str, str]:
             return {}
 
-        @probe.get("/api/closed", dependencies=[Depends(require_api_token)])
+        @probe.get("/api/closed", dependencies=[Depends(require_session)])
         def _closed() -> dict[str, str]:
             return {}
 
@@ -6130,134 +6210,127 @@ class TestEveryUserIdParamIsBounded:
         }
 
 
-class TestAServerWithNoTokenConfiguredAcceptsNothing:
-    """``create_app`` refuses to boot without one, so nothing reaches this
-    branch today. Dropping it makes an unconfigured server 500 on every
-    request, or worse, take an empty bearer as the matching credential.
+class TestAServerWithNoStorageAcceptsNothing:
+    """``create_app`` populates storage or raises, so nothing reaches this
+    branch today. Dropping it makes a half-initialised server 500 on every
+    request instead of answering the outage.
     """
 
     @pytest.fixture()
-    def unconfigured(self, mock_components, monkeypatch) -> TestClient:
-        monkeypatch.setattr(app_state, "api_token", None)
-        return TestClient(mock_components["app"])
+    def unavailable(self, mock_components, monkeypatch) -> TestClient:
+        monkeypatch.setattr(app_state, "storage", None)
+        return mock_components["app"]
 
-    def test_a_request_carrying_no_header_is_401(self, unconfigured) -> None:
-        response = unconfigured.get("/api/status")
-
-        assert response.status_code == 401
-        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-
-    def test_an_empty_bearer_is_refused_rather_than_matched(self, unconfigured) -> None:
-        """The absent token must not read as "" and match an empty guess."""
-        response = unconfigured.get("/api/status", headers={"Authorization": "Bearer "})
+    def test_a_request_carrying_no_cookie_is_401(self, unavailable) -> None:
+        """Nobody is signed in, and no component was read to find that out."""
+        response = TestClient(unavailable).get("/api/status")
 
         assert response.status_code == 401
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
 
+    def test_a_cookie_that_cannot_be_checked_is_a_503(self, unavailable) -> None:
+        """Sessions live in the database, so an unverifiable cookie is an
+        outage rather than a refusal the caller could fix."""
+        response = TestClient(
+            unavailable, cookies={SESSION_COOKIE: _WRONG_SESSION}
+        ).get("/api/status")
 
-class TestTokenComparisonIsConstantTime:
-    """A property no response can show, so it is pinned at the call.
-
-    ``==`` returns at the first differing byte, which times how much of a
-    guess was right, and swapping it back changes no status code anywhere.
-    """
-
-    def test_the_check_goes_through_compare_digest(self, mock_components) -> None:
-        """And it is the presented token that goes through it, not a stand-in."""
-        client = TestClient(
-            mock_components["app"],
-            headers={"Authorization": f"Bearer {_WRONG_TOKEN}"},
-        )
-
-        with patch("src.web.auth.compare_digest", wraps=compare_digest) as compared:
-            assert client.get("/api/status").status_code == 401
-
-        compared.assert_called_once_with(_WRONG_TOKEN.encode(), API_TOKEN.encode())
+        assert response.status_code == 503
+        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
 
 
-class TestTheTokenStaysOutOfEverythingObservable:
-    """Boot reads it, then nothing a caller or an operator can read has it."""
+class TestTheSessionTokenStaysOutOfEverythingObservable:
+    """The cookie is a credential, so nothing a caller or an operator reads
+    back may carry it."""
 
     @pytest.fixture()
     def real_boot(self, mock_config, tmp_path, caplog):
-        """Boot for real off ``web.api_token``, capturing everything logged."""
+        """Boot on a real database, capturing everything logged."""
         reset_sync_manager()
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {**mock_config["web"], "api_token": API_TOKEN}}
         with caplog.at_level(logging.DEBUG):
-            with booted_web_app(storage, config, api_token=None) as app:
+            with booted_web_app(storage, mock_config) as app:
                 yield app
         reset_sync_manager()
 
-    def test_the_running_config_no_longer_carries_it(self, real_boot) -> None:
-        """Popped at boot, so no component is handed the credential."""
-        assert app_state.api_token == API_TOKEN
-        assert "api_token" not in app_state.config["web"]
+    def test_nothing_logged_while_signing_in_contains_it(
+        self, real_boot, caplog
+    ) -> None:
+        """A token in the server log is a token in whoever reads the log."""
+        app_state.storage.claim_account("owner", None, "correct horse battery")
+        client = TestClient(real_boot)
 
-    def test_nothing_logged_during_boot_contains_it(self, real_boot, caplog) -> None:
-        assert API_TOKEN not in caplog.text
-
-    def test_the_settings_view_never_lists_it(self, real_boot) -> None:
-        """``GET /api/settings`` renders registry leaves, and this is not one."""
-        response = authenticated_client(real_boot).get("/api/settings")
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "owner", "password": "correct horse battery"},
+        )
 
         assert response.status_code == 200
-        assert API_TOKEN not in response.text
-        assert "api_token" not in response.text
+        assert client.cookies[SESSION_COOKIE] not in caplog.text
 
-    @pytest.mark.parametrize(
-        ("method", "url", "body", "refusal"),
-        [
-            ("PUT", "/api/settings", {"updates": {"web.api_token": "x" * 40}}, 422),
-            ("DELETE", "/api/settings/web.api_token", None, 404),
-            (
-                "PUT",
-                "/api/settings/secret",
-                {"key": "web.api_token", "value": "x" * 40},
-                400,
-            ),
-        ],
-    )
-    def test_the_settings_write_surface_cannot_reach_it(
-        self, real_boot, method, url, body, refusal
-    ) -> None:
-        """Not a registry leaf, which is what makes every writer miss it.
+    def test_the_settings_view_never_lists_a_credential(self, real_boot) -> None:
+        """``GET /api/settings`` renders registry leaves, and none is one."""
+        client = authenticated_client(real_boot)
+        token = client.cookies[SESSION_COOKIE]
 
-        Otherwise a caller could change the credential they authenticated with,
-        and lock everybody else out of a shared instance.
-        """
-        response = authenticated_client(real_boot).request(method, url, json=body)
+        response = client.get("/api/settings")
 
-        assert response.status_code == refusal
-        assert app_state.api_token == API_TOKEN
+        assert response.status_code == 200
+        assert token not in response.text
+
+    def test_the_session_cookie_is_closed_to_javascript(self, real_boot) -> None:
+        """An XSS that can read the cookie is an XSS that keeps the account."""
+        response = authenticated_client(real_boot).post(
+            "/api/auth/logout",
+        )
+
+        assert response.status_code == 204
+        assert "httponly" in response.headers["set-cookie"].lower()
 
     def test_a_refusal_does_not_echo_what_was_presented(self, anonymous_client) -> None:
         """A 401 quoting the guess would put it in the caller's own logs."""
-        response = anonymous_client.get(
-            "/api/status", headers={"Authorization": f"Bearer {_WRONG_TOKEN}"}
-        )
+        anonymous_client.cookies.set(SESSION_COOKIE, _WRONG_SESSION)
+
+        response = anonymous_client.get("/api/status")
 
         assert response.status_code == 401
-        assert _WRONG_TOKEN not in response.text
-        assert API_TOKEN not in response.text
+        assert _WRONG_SESSION not in response.text
 
 
-class TestBootRefusesWithoutAToken:
-    """Auth is required, so an unconfigured deployment must not start at all."""
+class TestBootWithoutAnAccount:
+    """Refusing to start is what left the owner locked out of their instance.
 
-    def test_create_app_raises_naming_the_key_and_the_remedy(
-        self, mock_config, tmp_path
+    The window is real, so it is said loudly; it closes on first setup, and
+    only the first visitor can complete that.
+    """
+
+    def test_an_unclaimed_instance_warns_and_serves(
+        self, mock_config, tmp_path, caplog
     ) -> None:
-        """The message is the whole of the operator's instruction."""
+        """The warning is the whole of the operator's instruction."""
         reset_sync_manager()
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
-        with pytest.raises(MissingApiTokenError) as raised:
-            with booted_web_app(storage, mock_config, api_token=None):
-                pytest.fail("booted with no API token configured")
+        with caplog.at_level(logging.WARNING, logger="src.web.app"):
+            with booted_web_app(storage, mock_config) as app:
+                assert TestClient(app).get("/").status_code == 200
 
-        assert "web.api_token" in str(raised.value)
-        assert "openssl rand -hex 32" in str(raised.value)
+        assert "No account on this instance yet" in caplog.text
+        reset_sync_manager()
+
+    def test_a_claimed_instance_says_nothing(
+        self, mock_config, tmp_path, caplog
+    ) -> None:
+        """Otherwise it fires on every boot forever and is ignored."""
+        reset_sync_manager()
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        storage.claim_account("owner", "Owner", "correct horse battery")
+
+        with caplog.at_level(logging.WARNING, logger="src.web.app"):
+            with booted_web_app(storage, mock_config):
+                pass
+
+        assert "No account on this instance yet" not in caplog.text
         reset_sync_manager()
 
 
@@ -6364,8 +6437,12 @@ class TestSourceReadGuardsRegression:
         handler raised 404 — blaming the caller for the server being down.
         Fix: ``require_plugin`` takes ``RequiredStorage`` itself, so no
         caller can reach the lookup before the outage has been reported.
+        Authentication now reads the session out of storage and reports the
+        same outage first; the caller-visible claim is what this holds, and
+        ``require_plugin``'s own guard is read off the signature below.
         """
         _clear_dependencies()
+        app_state.storage = None
 
         response = client.get(url)
 
@@ -6408,13 +6485,17 @@ class TestSourceReadGuardsRegression:
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
     def test_write_on_the_same_source_answers_503(self, client) -> None:
-        """The other half of the disagreement: one server state, one resource."""
+        """The other half of the disagreement: one server state, one resource.
+
+        Paired with the config-down read above, which is the outage a request
+        can still arrive during.
+        """
         _clear_dependencies()
 
         response = client.post("/api/sync/sources/my_books/migrate")
 
         assert response.status_code == 503
-        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
+        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
 
 class TestDependencyGuardPrecedence:
@@ -6461,7 +6542,7 @@ class TestDependencyGuardPrecedence:
         response = client.post("/api/sync/sources/%F0%9F%92%A9/migrate")
 
         assert response.status_code == 503
-        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
+        assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
     def test_memory_manager_and_storage_are_separate_dependencies(
         self, client, mock_components
@@ -6484,19 +6565,20 @@ class TestDependencyGuardPrecedence:
 
 
 class TestUnguardedReadsAreOptional:
-    """A component a handler reads without guarding must really be optional.
-
-    ``requires`` proves which components produce a 503; nothing there proves the
-    unlisted ones were left out deliberately. Harden one of these reads into a
-    guard and the 200 becomes a 503 with every case above still green.
+    """``requires`` proves which components produce a 503; nothing there proves
+    the unlisted ones were left out deliberately. Harden one of these reads
+    into a guard and the 200 becomes a 503 with every case above still green.
     """
 
-    def test_recommendations_serve_with_only_the_engine_up(
+    def test_recommendations_serve_without_the_config(
         self, client, mock_components
     ) -> None:
-        """Preferences and the count bound both fall back without their reads."""
+        """The count bound falls back to the registered default without it.
+
+        Storage is no longer cleared alongside it: authentication reads the
+        session out of storage, so no request arrives with it down.
+        """
         mock_components["engine"].generate_recommendations.return_value = []
-        app_state.storage = None
         app_state.config = None
 
         response = client.get("/api/recommendations?type=book")
@@ -6504,18 +6586,13 @@ class TestUnguardedReadsAreOptional:
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_stream_serves_with_only_the_engine_up(
-        self, client, mock_components
-    ) -> None:
+    def test_stream_serves_without_the_config(self, client, mock_components) -> None:
         """The streaming sibling falls back the same way, so it is pinned too.
 
-        It reads storage and config exactly as the handler above does, and the
-        generator draws its taste signal off ``engine.storage`` rather than
-        ``app_state``. Sampling one of the pair would leave the other free to
-        grow a guard, or lose its fallback, with this class still green.
+        Sampling one of the pair would leave the other free to grow a guard,
+        or lose its fallback, with this class still green.
         """
         mock_components["engine"].generate_recommendations.return_value = []
-        app_state.storage = None
         app_state.config = None
 
         response = client.get("/api/recommendations/stream?type=book")
@@ -6923,9 +7000,10 @@ def _asgi_request(
     observable, which is why this drives the app rather than the client.
     """
     path, _, query = target.partition("?")
+    session = issue_session(app_state.storage)
     headers = [
         (b"host", b"testserver"),
-        (b"authorization", f"Bearer {API_TOKEN}".encode()),
+        (b"cookie", f"{SESSION_COOKIE}={session}".encode()),
     ]
     if request_body:
         headers += [

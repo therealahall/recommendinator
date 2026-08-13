@@ -1079,6 +1079,30 @@ def update_user_settings(
     return cursor.rowcount > 0
 
 
+def update_user_identity(
+    conn: sqlite3.Connection,
+    user_id: int,
+    username: str,
+    display_name: str | None,
+) -> UserDict | None:
+    """Write both names, leaving the credentials alone: a rename must not cost
+    anyone their password or their open sessions.
+
+    Returns:
+        None when the UPDATE matched no row.
+
+    Raises:
+        sqlite3.IntegrityError: Another row already holds *username*.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET username = ?, display_name = ? WHERE id = ?",
+        (username, display_name, user_id),
+    )
+    conn.commit()
+    return get_user_by_id(conn, user_id) if cursor.rowcount == 1 else None
+
+
 def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
     """Get all users.
 

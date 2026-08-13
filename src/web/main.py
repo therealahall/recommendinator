@@ -8,11 +8,7 @@ from pathlib import Path
 
 import uvicorn
 
-from src.config.service import (
-    MissingApiTokenError,
-    load_config,
-    resolve_bootstrap_web,
-)
+from src.config.service import load_config, resolve_bootstrap_web
 from src.web.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -103,12 +99,7 @@ def main() -> None:
     # ephemeral port, not a blank value to fall through.
     port = args.port if args.port is not None else bootstrap.port
 
-    # The remedy is the whole of the message, and a traceback above it reads
-    # like a crash rather than a thing to go and fix.
-    try:
-        app = create_app(config_path)
-    except MissingApiTokenError as error:
-        raise SystemExit(str(error)) from None
+    app = create_app(config_path)
 
     # Log accessible addresses
     logger.info("Starting Recommendinator web server...")

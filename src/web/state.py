@@ -13,12 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import watchfiles
 
-from src.config.service import (
-    MissingApiTokenError,
-    load_config,
-    take_api_token,
-    warn_if_config_is_shared,
-)
+from src.config.service import load_config
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
@@ -105,7 +100,6 @@ class AppState:
 
     config: dict[str, Any] | None = None
     config_path: str | None = None
-    api_token: str | None = None
     storage: StorageManager | None = None
     engine: RecommendationEngine | None = None
     embedding_gen: EmbeddingGenerator | None = None
@@ -161,11 +155,6 @@ def get_config() -> dict[str, Any] | None:
     return app_state.config
 
 
-def get_api_token() -> str | None:
-    """Get the API bearer token from app state."""
-    return app_state.api_token
-
-
 def get_conversation_engine() -> ConversationEngine | None:
     """Get conversation engine from app state."""
     return app_state.conversation_engine
@@ -207,17 +196,6 @@ def reload_config() -> bool:
     try:
         with _config_lock:
             config = load_config(Path(config_path))
-            # A rotated token has to take effect, or an operator replacing a
-            # leaked one is left with it still working. A file that has lost
-            # its token keeps the booted one rather than locking everybody out
-            # over a half-saved edit.
-            try:
-                app_state.api_token = take_api_token(config)
-                warn_if_config_is_shared(Path(config_path))
-            except MissingApiTokenError as error:
-                logger.warning(
-                    "Keeping the API token this server booted with. %s", error
-                )
             # Re-assemble the effective config on hot-reload. Mutates config in
             # place: in-scope sections are rebuilt from const/YAML/DB layers (DB
             # wins), and sensitive fields are popped after credential migration.

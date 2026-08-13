@@ -1,8 +1,8 @@
 """Container liveness probe, run by the image's ``HEALTHCHECK``.
 
-Every ``/api`` route requires the bearer token, so a healthy server answers an
-unauthenticated ``GET /api/status`` with 401. Reading the token here would make
-a rotation look like an outage.
+Every ``/api`` route but the four sign-in ones requires a session cookie, so a
+healthy server answers an unauthenticated ``GET /api/status`` with 401. Holding
+credentials here would make a password change look like an outage.
 """
 
 from __future__ import annotations

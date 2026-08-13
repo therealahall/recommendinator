@@ -26,6 +26,7 @@ from src.storage.accounts import (
     account_is_claimed,
     claim_account,
     create_session,
+    describe_account,
     lookup_session,
     purge_expired_sessions,
     revoke_all_sessions,
@@ -33,7 +34,7 @@ from src.storage.accounts import (
     set_password,
     verify_password,
 )
-from src.storage.manager import StorageManager
+from src.storage.manager import StorageManager, UnknownUserError
 from src.storage.schema import _SCHEMA_VERSION, create_schema, create_user
 
 _ACCOUNTS_MODULE = Path(accounts.__file__)
@@ -299,6 +300,55 @@ class TestHowThePasswordIsStored:
 
         assert "hashlib" in roots
         assert roots <= sys.stdlib_module_names | {"src", "__future__"}
+
+
+class TestDescribingTheAccount:
+    """What the ``account`` CLI group and the Settings page read.
+
+    Neither the hash nor the salt is in it, because both surfaces render it.
+    """
+
+    def test_it_reports_the_names_the_claim_and_the_stamp(
+        self, claimed: sqlite3.Connection
+    ) -> None:
+        stamp = claimed.execute(
+            "SELECT password_updated_at FROM users WHERE id = 1"
+        ).fetchone()[0]
+
+        assert describe_account(claimed, 1) == {
+            "id": 1,
+            "username": "owner",
+            "display_name": "The Owner",
+            "claimed": True,
+            "password_updated_at": stamp,
+        }
+
+    def test_an_unclaimed_account_has_no_stamp_and_is_not_claimed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        account = describe_account(conn, 1)
+
+        assert account is not None
+        assert account["claimed"] is False
+        assert account["password_updated_at"] is None
+
+    def test_a_user_id_no_row_carries_describes_nothing(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        assert describe_account(conn, 999) is None
+
+    def test_setting_a_password_moves_the_stamp(
+        self, claimed: sqlite3.Connection
+    ) -> None:
+        """``account show`` reports it as when the password last changed."""
+        before = describe_account(claimed, 1)
+
+        set_password(claimed, 1, "a longer passphrase")
+
+        after = describe_account(claimed, 1)
+        assert before is not None and after is not None
+        assert before["password_updated_at"] is not None
+        assert after["password_updated_at"] >= before["password_updated_at"]
 
 
 class TestVerifyingAPassword:
@@ -585,6 +635,29 @@ class TestTheStorageManagerSurface:
         assert storage.verify_password("owner", "a longer passphrase") is not None
         assert [storage.lookup_session(token) for token in tokens] == [None, None]
         assert storage.purge_expired_sessions() == 0
+
+    def test_a_rename_carries_the_password_to_the_new_username(
+        self, storage: StorageManager
+    ) -> None:
+        """The username is the login, so the CLI's rename must not lock it out."""
+        storage.claim_account("owner", "The Owner", "correct horse")
+
+        storage.update_user_identity(1, "keeper", None)
+
+        account = storage.describe_account(1)
+        assert account is not None
+        assert (account["username"], account["display_name"]) == ("keeper", None)
+        assert account["claimed"] is True
+        assert storage.verify_password("keeper", "correct horse") is not None
+        assert storage.verify_password("owner", "correct horse") is None
+
+    def test_renaming_a_user_no_row_carries_is_refused(
+        self, storage: StorageManager
+    ) -> None:
+        with pytest.raises(UnknownUserError):
+            storage.update_user_identity(999, "keeper", None)
+
+        assert storage.describe_account(999) is None
 
     def test_neither_secret_reaches_the_files_the_manager_writes(
         self, storage: StorageManager, tmp_path: Path

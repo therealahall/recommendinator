@@ -6,12 +6,13 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.conversation.profile import ProfileGenerator
 from src.models.content import ContentType
+from src.web.auth import require_session
 from src.web.guards import (
     RequiredConversationEngine,
     RequiredMemoryManager,
@@ -21,7 +22,11 @@ from src.web.stream_limit import bounded_sse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["chat"])
+# Carried by the router for the same reason as ``src/web/api.py``'s: a bare
+# mount must not be an unauthenticated one.
+router = APIRouter(
+    prefix="/api", tags=["chat"], dependencies=[Depends(require_session)]
+)
 
 
 # ============================================================================

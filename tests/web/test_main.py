@@ -8,11 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.service import (
-    BOOTSTRAP_WEB_HOST,
-    BOOTSTRAP_WEB_PORT,
-    MissingApiTokenError,
-)
+from src.config.service import BOOTSTRAP_WEB_HOST, BOOTSTRAP_WEB_PORT
 from src.web.main import get_local_ip_addresses, main
 
 
@@ -597,25 +593,23 @@ class TestMainReloadBehavior:
         assert "CONFIG_PATH" not in os.environ
 
 
-class TestMainWithoutAnApiToken:
-    """The launcher's half of the boot refusal.
+class TestMainOnAnUnclaimedInstance:
+    """Nothing has to be configured before the first start.
 
-    ``create_app`` raises by name; what is left to decide is what the operator
-    sees. A traceback above the remedy reads like a crash rather than a thing
-    to go and fix.
+    The account is made in the browser, so the launcher has no credential to
+    refuse over: it binds, and ``create_app`` warns about the open window.
     """
 
     @patch("src.web.main.uvicorn.run")
-    @patch("src.web.main.create_app", side_effect=MissingApiTokenError("set a token"))
+    @patch("src.web.main.create_app")
     @patch("src.web.main.load_config", return_value={})
-    def test_it_exits_with_the_message_and_never_binds(
+    def test_it_binds_rather_than_exiting(
         self,
         mock_load_config: MagicMock,
         mock_create_app: MagicMock,
         mock_uvicorn_run: MagicMock,
     ) -> None:
-        with patch("sys.argv", ["src.web"]), pytest.raises(SystemExit) as exited:
+        with patch("sys.argv", ["src.web"]):
             main()
 
-        assert str(exited.value) == "set a token"
-        mock_uvicorn_run.assert_not_called()
+        mock_uvicorn_run.assert_called_once()

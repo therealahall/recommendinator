@@ -21,6 +21,7 @@ from src.storage.schema import (
     get_user_by_id,
     get_user_by_username,
     save_cached_preference_interpretation,
+    update_user_identity,
     update_user_settings,
 )
 from src.utils.sorting import build_search_text, get_sort_title
@@ -128,6 +129,45 @@ def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
     assert user["settings"]["ai_enabled"] is True  # Preserved
     assert user["settings"]["theme"] == "dark"  # Preserved
     assert user["settings"]["language"] == "en"  # Added
+
+
+class TestUpdatingAUsersIdentity:
+    """Both names are written together, which is how a display name is cleared."""
+
+    def test_both_names_are_written_and_the_settings_are_left_alone(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        create_schema(temp_db)
+        update_user_settings(temp_db, 1, {"theme": "dark"})
+
+        renamed = update_user_identity(temp_db, 1, "owner", None)
+
+        assert renamed is not None
+        assert (renamed["username"], renamed["display_name"]) == ("owner", None)
+        assert renamed == get_user_by_id(temp_db, 1)
+        assert renamed["settings"] == {"theme": "dark"}
+
+    def test_an_unknown_user_is_reported_rather_than_inserted(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """What ``StorageManager`` turns into ``UnknownUserError``."""
+        create_schema(temp_db)
+
+        assert update_user_identity(temp_db, 999, "owner", "The Owner") is None
+        assert get_user_by_username(temp_db, "owner") is None
+
+    def test_a_username_another_row_holds_is_refused(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """``users.username`` is UNIQUE, and a rename must not merge two rows."""
+        create_schema(temp_db)
+        create_user(temp_db, username="second", display_name="Second")
+
+        with pytest.raises(sqlite3.IntegrityError):
+            update_user_identity(temp_db, 1, "second", None)
+
+        user = get_user_by_id(temp_db, 1)
+        assert user is not None and user["username"] == "default"
 
 
 # The two states the one-time content repair can be in on a given open. Named

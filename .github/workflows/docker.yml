@@ -59,27 +59,22 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
-      # Nothing generates an API token, so CI plays the operator: seed one into
-      # the config the container reads, then poll the authenticated path. Proving
-      # a 401 is the liveness probe's job, and this step runs that too.
+      # /api/auth/session is the one route a signed-out caller may reach, and it
+      # reads the database to answer, so a 200 is a server that came all the way
+      # up. Proving a 401 is the liveness probe's job, and this step runs that
+      # too.
       - name: Smoke test (default variant only)
         if: matrix.smoke_test
         env:
           IMAGE: recommendinator-${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
         run: |
-          TOKEN=$(openssl rand -hex 32)
-          echo "::add-mask::$TOKEN"
           mkdir -p smoke-config
-          docker run --rm --entrypoint cat "$IMAGE" /app/example.yaml \
-            | sed "s|^\( *api_token: \)\"\"|\1\"$TOKEN\"|" > smoke-config/config.yaml
-          # The placeholder is in the image and the substitution is here, so a
-          # rename would otherwise show up as a start-up timeout.
-          grep -q "api_token: \"$TOKEN\"" smoke-config/config.yaml
+          docker run --rm --entrypoint cat "$IMAGE" /app/example.yaml > smoke-config/config.yaml
           docker run -d --name smoke -p 8000:8000 \
             -v "$PWD/smoke-config:/app/config" "$IMAGE"
           for i in $(seq 1 30); do
-            if curl -fsS --max-time 3 -H "Authorization: Bearer $TOKEN" \
-                http://localhost:8000/api/status > /dev/null; then
+            if curl -fsS --max-time 3 \
+                http://localhost:8000/api/auth/session > /dev/null; then
               echo "App started after ${i}s"
               # The only place the shipped probe runs in the image that ships
               # it, which is how it went unhealthy for every user unnoticed.

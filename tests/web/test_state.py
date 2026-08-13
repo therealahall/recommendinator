@@ -30,7 +30,7 @@ from src.web.state import (
     locked_running_config,
     reload_config,
 )
-from tests.factories import API_TOKEN, back_mock_settings_store
+from tests.factories import back_mock_settings_store
 
 _AWATCH_PATCH_TARGET = "watchfiles.awatch"
 
@@ -51,8 +51,6 @@ def _config_yaml(tmp_path: Path, model: str) -> str:
             },
             "features": {"ai_enabled": True},
             "ollama": {"model": model},
-            # create_app refuses to boot without one.
-            "web": {"api_token": API_TOKEN},
         }
     )
 
@@ -288,54 +286,6 @@ class TestBootRunsEverySourceMigration:
         mock_labels.assert_called_once_with(storage)
         mock_plugins.assert_called_once_with(storage)
         mock_attribution.assert_called_once_with(get_config(), storage)
-
-
-_ROTATED_TOKEN = "rotated-api-token-1122334455667788990011"
-
-
-class TestReloadConfigAndTheApiToken:
-    """A hot-reload moves the token, and never locks the server out.
-
-    An operator replacing a leaked token means it, so the running server
-    adopts it. A file that has lost the key keeps serving instead.
-    """
-
-    def test_a_rotated_token_takes_effect(self, tmp_path: Path) -> None:
-        """Otherwise the leaked one keeps working until somebody restarts."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(f'web:\n  api_token: "{_ROTATED_TOKEN}"\n')
-        app_state.config_path = str(config_file)
-        app_state.api_token = "the-token-this-server-booted-with-0000"
-
-        assert reload_config() is True
-
-        assert app_state.api_token == _ROTATED_TOKEN
-
-    def test_the_reloaded_config_does_not_carry_it(self, tmp_path: Path) -> None:
-        """The strip has to happen on this path too, not just at boot."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(f'web:\n  api_token: "{_ROTATED_TOKEN}"\n')
-        app_state.config_path = str(config_file)
-
-        assert reload_config() is True
-
-        assert "api_token" not in app_state.config["web"]
-
-    def test_a_token_that_vanished_leaves_the_booted_one_in_place(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A half-saved edit must not 401 every open session."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("ollama:\n  model: test-model\n")
-        app_state.config_path = str(config_file)
-        app_state.api_token = _ROTATED_TOKEN
-
-        with caplog.at_level(logging.WARNING, logger="src.web.state"):
-            assert reload_config() is True
-
-        assert app_state.api_token == _ROTATED_TOKEN
-        assert "Keeping the API token" in caplog.text
-        assert _ROTATED_TOKEN not in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +623,6 @@ class TestLlmComponentsFollowTheRunningConfig:
                         "vector_db_path": str(tmp_path / "chroma_db"),
                     },
                     "features": {"ai_enabled": True},
-                    # create_app refuses to boot without one.
-                    "web": {"api_token": API_TOKEN},
                 }
             )
         )

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response, StreamingResponse
 from pydantic import AfterValidator, BaseModel, Field
@@ -93,17 +93,20 @@ from src.sources.service import (
     set_source_secret_value,
     update_source_config_values,
 )
+from src.storage.accounts import MIN_PASSWORD_LENGTH
 from src.storage.manager import (
     UNSET,
     VALID_SORT_OPTIONS,
     StorageManager,
     UnknownUserError,
 )
+from src.storage.schema import UserDict
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
+from src.web.auth import SESSION_COOKIE, CurrentUser, require_session
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.guards import (
     RequiredConfig,
@@ -125,7 +128,9 @@ from src.web.sync_manager import SyncJob, get_sync_manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["api"])
+# On the router rather than at ``include_router``: a route is then
+# authenticated by being registered, even where a test mounts this router bare.
+router = APIRouter(prefix="/api", tags=["api"], dependencies=[Depends(require_session)])
 
 
 def _blank_review_validator(remedy: str) -> Callable[[str], str]:
@@ -219,6 +224,20 @@ CustomRuleText = Annotated[
 #: non-positive id matches no row.
 UserIdPath = Annotated[int, PathParam(ge=1, description="User ID")]
 
+_WRONG_CURRENT_PASSWORD = "Your current password is not correct."
+
+
+def _refuse_another_account(user_id: int, user: UserDict) -> None:
+    """Answer 403 when *user_id* is not the signed-in account.
+
+    A 404 would say which ids exist, and this is the shape a Users page needs
+    anyway: an admin distinction is a change here, not a new route.
+    """
+    if user_id != user["id"]:
+        raise HTTPException(
+            status_code=403, detail="You may only change your own account."
+        )
+
 
 # Request/Response models
 class CompletionRequest(BaseModel):
@@ -270,6 +289,24 @@ class UserResponse(BaseModel):
     id: int
     username: str
     display_name: str | None
+
+
+class UserUpdateRequest(BaseModel):
+    """Rename request for an account."""
+
+    username: str = Field(..., min_length=1, max_length=100)
+    display_name: str = Field("", max_length=100)
+
+
+class PasswordChangeRequest(BaseModel):
+    """A password change, which costs the current password.
+
+    The session alone must not be enough, or a borrowed unlocked browser is a
+    permanent takeover.
+    """
+
+    current_password: str = Field(..., max_length=1000)
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=1000)
 
 
 class ContentItemResponse(BaseModel):
@@ -982,6 +1019,66 @@ def list_users(storage: RequiredStorage) -> list[UserResponse]:
         )
         for user in users
     ]
+
+
+@router.get("/users/me", response_model=UserResponse)
+def read_own_account(user: CurrentUser) -> UserResponse:
+    """Return the signed-in account.
+
+    Registered above ``/users/{user_id}/...`` so ``me`` is never read as an id.
+    """
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+def rename_account(
+    user_id: UserIdPath,
+    request: UserUpdateRequest,
+    storage: RequiredStorage,
+    user: CurrentUser,
+) -> UserResponse:
+    """Change an account's username and display name.
+
+    Returns:
+        The renamed account.
+
+    Raises:
+        HTTPException: 403 for anybody else's account, 404 when it is gone.
+    """
+    _refuse_another_account(user_id, user)
+    try:
+        renamed = storage.update_user_identity(
+            user_id, request.username, request.display_name.strip() or None
+        )
+    except UnknownUserError:
+        raise HTTPException(status_code=404, detail="User not found.") from None
+    return UserResponse.model_validate(renamed)
+
+
+@router.put("/users/{user_id}/password", status_code=204)
+def change_password(
+    user_id: UserIdPath,
+    request: PasswordChangeRequest,
+    http_request: Request,
+    storage: RequiredStorage,
+    user: CurrentUser,
+) -> None:
+    """Replace an account's password, signing every other browser out.
+
+    Raises:
+        HTTPException: 403 for anybody else's account, 401 when the current
+            password is wrong.
+    """
+    _refuse_another_account(user_id, user)
+    if storage.verify_password(user["username"], request.current_password) is None:
+        raise HTTPException(status_code=401, detail=_WRONG_CURRENT_PASSWORD)
+
+    storage.set_password(user_id, request.new_password)
+    # The token is a live session by the time this runs — the dependency that
+    # produced ``user`` looked it up — so the caller keeps the browser they
+    # changed the password in, and every other one is signed out.
+    token = http_request.cookies[SESSION_COOKIE]
+    storage.revoke_other_sessions(user_id, token)
 
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:

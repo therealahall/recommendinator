@@ -1,39 +1,79 @@
-"""Bearer-token authentication for the ``/api`` surface.
+"""Session-cookie authentication for the ``/api`` surface.
 
-Attached to the routers, not to handlers, so a route is authenticated by the
-fact of being registered. ``create_app`` refuses to boot without a token, so
-there is no open mode to fall into.
+Attached to the routers themselves rather than at ``include_router``, so a
+route is authenticated by being registered — a bare mount included.
 """
 
 from __future__ import annotations
 
-from secrets import compare_digest
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Request, Response
 
-from src.web.state import get_api_token
+from src.storage.accounts import SESSION_LIFETIME
+from src.storage.schema import UserDict
+from src.web.guards import STORAGE_UNAVAILABLE
+from src.web.state import get_storage
 
-UNAUTHORIZED_DETAIL = "Invalid or missing API token."
+SESSION_COOKIE = "recommendinator_session"
 
-# auto_error=False: the built-in refusal is a 403 with no challenge header,
-# which tells a caller nothing about what to send.
-_bearer = HTTPBearer(auto_error=False)
+#: Names neither the username nor the password, so a refusal cannot be read
+#: back as "that account exists".
+UNAUTHORIZED_DETAIL = "Not signed in."
+
+# No ``secure``: this app serves no TLS, and the documented deployment is
+# loopback or behind a reverse proxy, so a Secure cookie would never be sent at
+# all. ``strict`` is the CSRF control — nothing links into this SPA.
+_COOKIE_ATTRIBUTES: dict[str, Any] = {
+    "httponly": True,
+    "samesite": "strict",
+    "path": "/",
+}
 
 
-def require_api_token(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> None:
-    """Answer 401 unless the request carries the configured bearer token."""
-    expected = get_api_token()
-    presented = credentials.credentials if credentials is not None else ""
-    # compare_digest, not ==, which returns at the first differing byte and so
-    # times how much of a guess was right. Bytes because a header is arbitrary
-    # text and compare_digest refuses a non-ASCII str.
-    if expected is None or not compare_digest(presented.encode(), expected.encode()):
-        raise HTTPException(
-            status_code=401,
-            detail=UNAUTHORIZED_DETAIL,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+def set_session_cookie(response: Response, token: str) -> None:
+    """Put *token* in the browser's session cookie."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        **_COOKIE_ATTRIBUTES,
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    """Drop the browser's session cookie.
+
+    The same attributes as the set: a clear differing in path or SameSite
+    leaves the original cookie in place, so signing out would appear to work.
+    """
+    response.delete_cookie(SESSION_COOKIE, **_COOKIE_ATTRIBUTES)
+
+
+def signed_in_user(request: Request) -> UserDict | None:
+    """Return the user *request*'s cookie names, or None for anyone else."""
+    token = request.cookies.get(SESSION_COOKIE)
+    storage = get_storage()
+    if not token or storage is None:
+        return None
+    return storage.lookup_session(token)
+
+
+def require_session(request: Request) -> UserDict:
+    """Answer 401 unless the request carries a live session cookie.
+
+    Storage is reached through ``src.web.state`` rather than declared as a
+    dependency, so a cookieless request is refused before any component
+    resolves: an anonymous caller learns nothing about what is up.
+    """
+    if request.cookies.get(SESSION_COOKIE) and get_storage() is None:
+        raise HTTPException(status_code=503, detail=STORAGE_UNAVAILABLE)
+    user = signed_in_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail=UNAUTHORIZED_DETAIL)
+    return user
+
+
+#: The signed-in user, for a handler that needs to know who is asking. The same
+#: dependency the routers carry, so FastAPI resolves it once per request.
+CurrentUser = Annotated[UserDict, Depends(require_session)]

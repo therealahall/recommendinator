@@ -11,7 +11,6 @@ import pytest
 
 from src.utils.logging import configure_logging
 from src.web.app import create_app
-from tests.factories import API_TOKEN
 
 
 class TestAnUnopenableLogAbortsTheBoot:
@@ -29,10 +28,7 @@ class TestAnUnopenableLogAbortsTheBoot:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
-        config: dict[str, Any] = {
-            "web": {"api_token": API_TOKEN},
-            "logging": {"file": "logs/app.log"},
-        }
+        config: dict[str, Any] = {"logging": {"file": "logs/app.log"}}
 
         with (
             patch("src.utils.logging.configure_logging", configure_logging),
@@ -78,7 +74,7 @@ class TestBootFailureLoggingRegression:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """``%s`` on a bare ``RuntimeError()`` logged the colon and nothing else."""
-        config: dict[str, Any] = {"web": {"api_token": API_TOKEN}}
+        config: dict[str, Any] = {"web": {}}
         with (
             patch("src.web.app.load_config", return_value=config),
             patch("src.web.app.create_storage_manager", side_effect=RuntimeError()),
