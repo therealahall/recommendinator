@@ -1,4 +1,3 @@
-import { useAuthStore } from '@/stores/auth'
 import { stringDetail } from '@/utils/apiDetail'
 
 const API_BASE = '/api'
@@ -8,6 +7,10 @@ const API_BASE = '/api'
 interface ApiOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>
   params?: Record<string, string | number | boolean | undefined>
+  /** Set on a route that answers 401 for the request rather than for the
+   *  session — changing a password refuses a wrong current one that way, and
+   *  signing out there would cost a typo the whole screen. */
+  sessionSurvives401?: boolean
 }
 
 export class ApiError extends Error {
@@ -57,8 +60,7 @@ function buildUrl(
  *  Callers swallow their own errors, so an unhandled 401 strands the user in a
  *  half-empty app with no way back to the sign-in screen. */
 async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
-  const auth = useAuthStore()
-  const { params, headers, ...fetchOptions } = options
+  const { params, headers, sessionSurvives401, ...fetchOptions } = options
 
   const response = await fetch(buildUrl(path, params), {
     ...fetchOptions,
@@ -68,8 +70,11 @@ async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
     credentials: 'include',
   })
 
-  if (response.status === 401) {
-    auth.reject()
+  if (response.status === 401 && !sessionSurvives401) {
+    // Imported here rather than at the top: the auth store sends its own calls
+    // through this module, and a module-level import back closes that cycle.
+    const { useAuthStore } = await import('@/stores/auth')
+    useAuthStore().reject()
   }
 
   return response
@@ -109,8 +114,9 @@ export function useApi() {
       })
     },
 
-    put<T>(path: string, body?: unknown) {
+    put<T>(path: string, body?: unknown, options: Pick<ApiOptions, 'sessionSurvives401'> = {}) {
       return request<T>(path, {
+        ...options,
         method: 'PUT',
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })

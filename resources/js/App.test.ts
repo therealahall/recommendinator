@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import App from './App.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
@@ -29,6 +31,14 @@ function answerSession(claimed: boolean, authenticated: boolean, user: UserRespo
   vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { claimed, authenticated, user }))
 }
 
+/** The two auth screens rendered for real, with the shell's own furniture
+ *  stubbed: RouterView needs a router none of these tests provides. */
+function mountWithShellStubs() {
+  return mount(App, {
+    global: { stubs: { RouterView: true, AppSidebar: true, StatusBar: true, UpdateBanner: true } },
+  })
+}
+
 function sessionCalls(): number {
   return vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/auth/session').length
 }
@@ -45,7 +55,10 @@ describe('App', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders no screen, and fetches nothing, until the session resolves', async () => {
+  it('says it is working, and fetches nothing else, until the session resolves', async () => {
+    // Regression: none of the three screens rendered while the call was open,
+    // which on a slow connection is an empty document — no landmark, no
+    // heading, nothing telling a screen reader the page is not broken.
     const load = spyOnLoad()
     deferredFetch()
 
@@ -55,8 +68,35 @@ describe('App', () => {
     expect(wrapper.findComponent(SetupForm).exists()).toBe(false)
     expect(wrapper.findComponent(LoginForm).exists()).toBe(false)
     expect(wrapper.find('#main-content').exists()).toBe(false)
+
+    const pending = wrapper.find('[data-testid="session-pending"]')
+    expect(pending.text()).not.toBe('')
+    expect(wrapper.find('main').attributes('aria-busy')).toBe('true')
+    expect(wrapper.find('h1').text()).not.toBe('')
+
     expect(load.fetchStatus).not.toHaveBeenCalled()
     expect(load.fetchThemes).not.toHaveBeenCalled()
+  })
+
+  it('drops the boot screen once an answer picks one of the three', async () => {
+    spyOnLoad()
+    answerSession(true, false)
+
+    const wrapper = mount(App, { shallow: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="session-pending"]').exists()).toBe(false)
+  })
+
+  it('ships that first paint in the document, not only in the bundle', () => {
+    // The Vue branch above cannot run until the bundle has downloaded, which on
+    // the connection this matters for is the longer half of the wait.
+    const html = readFileSync(`${process.cwd()}/index.html`, 'utf8')
+    const app = html.match(/<div id="app">([\s\S]*?)<\/div>\s*<script/)
+
+    expect(app, '#app is not the container the bundle mounts into').not.toBeNull()
+    expect(app?.[1]).toMatch(/<main\b/)
+    expect(app?.[1]).toMatch(/<h1\b/)
   })
 
   it('applies the stored theme before the session is known', async () => {
@@ -118,8 +158,124 @@ describe('App', () => {
 
     expect(wrapper.findComponent(LoginForm).exists()).toBe(true)
     expect(wrapper.find('#main-content').exists()).toBe(false)
-    // A shell that empties with no word reads as a crash.
-    expect(wrapper.findComponent(LoginForm).props('error')).toBe(SESSION_ENDED)
+    // A shell that empties with no word reads as a crash. Said as a notice
+    // rather than an error: no field on this form has been touched yet.
+    expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
+    expect(wrapper.findComponent(LoginForm).props('error')).toBe('')
+  })
+
+  it('lands the session-ended words in a region that was already on screen', async () => {
+    // Regression: the watcher set the message before the render, so the form's
+    // role="status" node entered the tree already populated — which JAWS reads
+    // as page content and never announces (WCAG 4.1.3).
+    spyOnLoad()
+    answerSession(true, true, AARON)
+    const wrapper = mountWithShellStubs()
+    await flushPromises()
+
+    useAuthStore().reject()
+    await nextTick()
+    const region = wrapper.find('#login-status')
+    expect(region.exists()).toBe(true)
+    expect(region.text()).toBe('')
+
+    await flushPromises()
+
+    expect(wrapper.find('#login-status').element).toBe(region.element)
+    expect(wrapper.find('#login-status').text()).toBe(SESSION_ENDED)
+  })
+
+  it('marks nothing invalid on the form a sign-out just put up', async () => {
+    // Regression: the notice arrived as `error`, and a screen reader announced
+    // "Username, invalid entry" on a form nobody had typed into.
+    spyOnLoad()
+    answerSession(true, true, AARON)
+    const wrapper = mountWithShellStubs()
+    await flushPromises()
+
+    useAuthStore().reject()
+    await flushPromises()
+
+    expect(wrapper.find('#login-status').text()).toBe(SESSION_ENDED)
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('reports an unreachable server without blaming the empty sign-in form', async () => {
+    // Same class as the sign-out notice: nothing has been typed here, so
+    // "invalid entry" on both fields is a lie a screen reader reads out.
+    spyOnLoad()
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.find('#login-status').text()).toMatch(/did not answer/)
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('moves to the sign-in form when another tab claimed the instance first', async () => {
+    // Regression: the 409 left the setup form up, so "sign in instead" was
+    // advice with nowhere to follow it to.
+    spyOnLoad()
+    answerSession(false, false)
+    const wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.findComponent(SetupForm).exists()).toBe(true)
+
+    vi.mocked(fetch).mockImplementation((url) =>
+      Promise.resolve(
+        String(url).endsWith('/setup')
+          ? jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' })
+          : jsonResponse(200, { claimed: true, authenticated: false, user: null }),
+      ),
+    )
+    await wrapper.find('#setup-username').setValue('aaron')
+    await wrapper.find('#setup-password').setValue('hunter2-hunter2')
+    await wrapper.find('#setup-confirmation').setValue('hunter2-hunter2')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.findComponent(SetupForm).exists()).toBe(false)
+    const login = wrapper.findComponent(LoginForm)
+    expect(login.exists()).toBe(true)
+    // Advice about the screen, not a refusal of anything typed into it.
+    expect(login.props('notice')).toContain('Sign in instead')
+    expect(login.props('error')).toBe('')
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('keeps the lost race out of the sign-in form it is not about', async () => {
+    // Regression: the winning tab shares this cookie jar, so the 409 resolves
+    // signed-in and the shell goes up still holding "sign in instead". The
+    // next sign-out rendered it as `error` on two untouched fields.
+    spyOnLoad()
+    answerSession(false, false)
+    const wrapper = mountWithShellStubs()
+    await flushPromises()
+
+    vi.mocked(fetch).mockImplementation((url) =>
+      Promise.resolve(
+        String(url).endsWith('/setup')
+          ? jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' })
+          : jsonResponse(200, { claimed: true, authenticated: true, user: AARON }),
+      ),
+    )
+    await wrapper.find('#setup-username').setValue('aaron')
+    await wrapper.find('#setup-password').setValue('hunter2-hunter2')
+    await wrapper.find('#setup-confirmation').setValue('hunter2-hunter2')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('#main-content').exists()).toBe(true)
+
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(204))
+    await useAuthStore().signOut()
+    await flushPromises()
+
+    expect(wrapper.findComponent(LoginForm).props('error')).toBe('')
+    expect(wrapper.find('#login-status').text()).toBe(SESSION_ENDED)
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
   })
 
   it('puts it back when a request comes back 401, without reloading the page', async () => {
@@ -135,7 +291,7 @@ describe('App', () => {
     await flushPromises()
 
     expect(wrapper.findComponent(LoginForm).exists()).toBe(true)
-    expect(wrapper.findComponent(LoginForm).props('error')).toBe(SESSION_ENDED)
+    expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
     // Booting again is what a reload looks like from here.
     expect(sessionCalls()).toBe(1)
   })

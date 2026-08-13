@@ -207,6 +207,21 @@ describe('useApi authentication', () => {
     expect(auth.needsLogin).toBe(true)
   })
 
+  it('leaves it alone where the route answers 401 for the request itself', async () => {
+    // Changing a password is refused with a 401 when the current one is wrong,
+    // and signing the user out there would cost one typo the whole screen.
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(401, { detail: 'That is not your current password.' }),
+    )
+
+    await expect(
+      useApi().put('/users/1/password', { current_password: 'wrong' }, { sessionSurvives401: true }),
+    ).rejects.toBeInstanceOf(ApiError)
+
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
   it('ends it on a refused stream too, which returns instead of throwing', async () => {
     // Regression: raw() carried the credential but never inspected the status,
     // so a session revoked mid-session surfaced to the SSE stores as a bare

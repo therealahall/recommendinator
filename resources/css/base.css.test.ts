@@ -94,10 +94,10 @@ describe('account & sign-in surface contrast', () => {
     ['the resting field border', 'var(--text-muted)', 'var(--bg-input)'],
   ]
 
-  // Every surface an offset ring around a text field lands on. --bg-primary is
-  // there because .auth-card declares no background: on the setup and sign-in
-  // screens the ring reaches the body.
-  const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary']
+  // Every surface an offset ring lands on. --bg-primary because .auth-card
+  // declares no background, so on the auth screens the ring reaches the body;
+  // --bg-sidebar because the ring around a .nav-item lands there.
+  const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary', '--bg-sidebar']
 
   it('measures every shipped theme, with the theme layered over the base', () => {
     expect(Object.keys(THEMES)).toEqual(['Nord', 'Snowstorm'])

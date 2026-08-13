@@ -20,6 +20,9 @@ const gate = useSubmission()
 
 const sidebarOpen = ref(false)
 const mainContent = ref<HTMLElement | null>(null)
+/** Why the sign-in form is on screen, as opposed to a refusal of what was typed
+ *  into it: marking an untouched field invalid announces "invalid entry". */
+const notice = ref('')
 
 function closeSidebar() {
   sidebarOpen.value = false
@@ -30,21 +33,39 @@ function load() {
   theme.fetchThemes()
 }
 
-function signUp(account: SetupRequest) {
-  gate.submit(() => auth.signUp(account))
+/** Move what the gate is holding into the notice: it describes the screen the
+ *  user has landed on rather than anything they typed into it. */
+function noticeFromGate() {
+  notice.value = gate.error
+  gate.error = ''
+}
+
+async function signUp(account: SetupRequest) {
+  await gate.submit(() => auth.signUp(account))
+  // A lost race for the first account: the store has already moved the app off
+  // the setup form, so "sign in instead" is advice about wherever it landed
+  // rather than a refusal on the screen that is gone. Left on the gate it
+  // resurfaces as the next sign-out's error, on fields nobody has typed in.
+  if (!auth.needsSetup) noticeFromGate()
+  if (auth.isAuthenticated) notice.value = ''
 }
 
 function signIn(credentials: LoginRequest) {
+  // The user's own attempt supersedes whatever brought them to this form.
+  notice.value = ''
   gate.submit(() => auth.signIn(credentials))
 }
 
-onMounted(() => {
+onMounted(async () => {
   // Themes are static files behind no session, and the sign-in screen is the one
   // a user who cannot read light-on-dark has no way to skip.
   theme.applyStoredTheme()
   // One call decides all three screens, and every /api route 401s until it comes
   // back signed in, so nothing else is fetched before it answers.
-  gate.submit(auth.resolveSession)
+  await gate.submit(auth.resolveSession)
+  // Whatever it has to say — an unreachable server, most of all — is about the
+  // screen it chose, and there was no form to refuse anything on.
+  noticeFromGate()
 })
 
 watch(
@@ -52,8 +73,13 @@ watch(
   async (authenticated, wasAuthenticated) => {
     if (!authenticated) {
       // The shell disappearing without a word reads as a crash, and every route
-      // out of it — a revoked session or a deliberate sign-out — ended one.
-      if (wasAuthenticated) gate.error = SESSION_ENDED
+      // out of it — a revoked session or a deliberate sign-out — ended one. Said
+      // one tick late, because a live region that first enters the tree already
+      // populated is read as page content and skipped.
+      if (!wasAuthenticated) return
+      notice.value = ''
+      await nextTick()
+      notice.value = SESSION_ENDED
       return
     }
     load()
@@ -66,9 +92,10 @@ watch(
 </script>
 
 <template>
-  <!-- Three screens off one answer, and a fourth state before it lands: while
-       the session is unknown none of them render, because a guess flashes a
-       sign-in form at someone who is already signed in. -->
+  <!-- Three screens off one answer, and a fourth screen before it lands:
+       guessing which of the three would flash a sign-in form at someone already
+       signed in, but rendering nothing leaves a phone on a slow connection with
+       an empty document and no way to tell it apart from a broken one. -->
   <SetupForm
     v-if="auth.needsSetup"
     :error="gate.error"
@@ -79,6 +106,7 @@ watch(
   <LoginForm
     v-else-if="auth.needsLogin"
     :error="gate.error"
+    :notice="notice"
     :pending="gate.pending"
     @submit="signIn"
   />
@@ -107,6 +135,17 @@ watch(
       </main>
     </div>
   </template>
+
+  <main v-else class="auth-screen" aria-busy="true">
+    <!-- No live region: this is the document a screen reader arrives at, and one
+         that enters the tree already populated is skipped as page content. -->
+    <div class="card auth-card">
+      <header class="auth-head">
+        <h1 class="auth-title">Recommendinator</h1>
+      </header>
+      <p class="auth-status" data-testid="session-pending">Checking your session…</p>
+    </div>
+  </main>
 </template>
 
 <style>

@@ -7,9 +7,12 @@ const props = withDefaults(
   defineProps<{
     /** Whatever the parent's sign-in request came back with. */
     error?: string
+    /** Why this screen is on: a session that ended, or an instance another tab
+     *  claimed first. Said, but never blamed on a field nobody has touched. */
+    notice?: string
     pending?: boolean
   }>(),
-  { error: '', pending: false },
+  { error: '', notice: '', pending: false },
 )
 
 const emit = defineEmits<{
@@ -23,7 +26,9 @@ const complete = computed(() => username.value.trim() !== '' && password.value !
 
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
-const announcement = computed(() => props.error || (props.pending ? 'Signing in…' : ''))
+const announcement = computed(
+  () => props.error || (props.pending ? 'Signing in…' : props.notice),
+)
 const failed = computed(() => Boolean(props.error))
 const describedBy = computed(() => (announcement.value ? 'login-status' : undefined))
 
@@ -59,6 +64,7 @@ function submit(): void {
           autocomplete="username"
           :described-by="describedBy"
           :invalid="failed"
+          :required="true"
           :autofocus="true"
         />
         <AuthField
@@ -69,6 +75,7 @@ function submit(): void {
           autocomplete="current-password"
           :described-by="describedBy"
           :invalid="failed"
+          :required="true"
         />
       </div>
 
@@ -82,11 +89,13 @@ function submit(): void {
         role="status"
       >{{ announcement }}</p>
 
+      <!-- aria-disabled for both locks, never native disabled: a refusal clears
+           the password, and a button that goes disabled under the finger that
+           just pressed Enter throws focus to <body> (WCAG 2.4.3). -->
       <button
         type="submit"
         class="btn btn-primary auth-submit"
-        :disabled="!complete"
-        :aria-disabled="pending ? 'true' : undefined"
+        :aria-disabled="pending || !complete ? 'true' : undefined"
       >
         Sign in
       </button>

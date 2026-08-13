@@ -17,8 +17,8 @@ function callTo(index: number): [string, RequestInit] {
   return [String(url), init ?? {}]
 }
 
-// fetch is stubbed rather than useApi mocked: the store calls fetch itself, so
-// that it never imports the API layer that imports it.
+// fetch is stubbed rather than useApi mocked: the store goes through the API
+// layer like everything else, and these assertions are on what left the browser.
 describe('useAuthStore', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -134,9 +134,15 @@ describe('useAuthStore', () => {
     expect(auth.user).toEqual(AARON)
   })
 
-  it('reports a claimed instance rather than pretending setup worked', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' }),
+  it('reports a claimed instance, and moves to the form that advice needs', async () => {
+    // Regression: a second tab claiming first left the setup screen up, so
+    // "sign in instead" pointed at a form that was not on the page.
+    vi.mocked(fetch).mockImplementation((url) =>
+      Promise.resolve(
+        String(url).endsWith('/setup')
+          ? jsonResponse(409, { detail: 'This instance already has an account. Sign in instead.' })
+          : session(true, false),
+      ),
     )
     const auth = useAuthStore()
 
@@ -144,6 +150,21 @@ describe('useAuthStore', () => {
       'This instance already has an account. Sign in instead.',
     )
     expect(auth.isAuthenticated).toBe(false)
+    expect(auth.needsLogin).toBe(true)
+    expect(auth.needsSetup).toBe(false)
+  })
+
+  it('leaves the screen alone for a refusal that is not the lost race', async () => {
+    // Only a 409 says the instance is claimed; re-asking for anything else
+    // would cost a round trip and throw away what the user typed.
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(422, { detail: [{ loc: ['body', 'password'], msg: 'too short' }] }),
+    )
+    const auth = useAuthStore()
+
+    await auth.signUp({ username: 'aaron', display_name: '', password: 'x' })
+
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('signs out, and keeps nothing a reload could restore the session from', async () => {
@@ -253,13 +274,24 @@ describe('useAuthStore', () => {
     expect(auth.user).toEqual(AARON)
   })
 
-  it('never imports the API layer, which imports this store', () => {
-    // useApi calls useAuthStore(), so importing it back is the cycle
+  it('is reached by the API layer only from inside the call that needs it', () => {
+    // This store imports useApi, so a module-level import back is the cycle
     // DEVELOPMENT_PATTERNS bans. Asserted on the source because a cycle the
     // bundler has already resolved breaks at boot, not under test.
+    const source = readFileSync(`${process.cwd()}/resources/js/composables/useApi.ts`, 'utf8')
+
+    expect(source).toMatch(/await import\(['"]@\/stores\/auth['"]\)/)
+    // Anchored to the top level: an indented one is inside a function.
+    expect(source).not.toMatch(/^import[^\n]*stores\/auth/m)
+  })
+
+  it('re-implements nothing the API layer already does', () => {
+    // Its own fetch, its own error derivation and its own 401 handling were
+    // three copies kept alive by a cycle that no longer exists.
     const source = readFileSync(`${process.cwd()}/resources/js/stores/auth.ts`, 'utf8')
 
-    // Unanchored: a relative '../composables/useApi' closes the same cycle.
-    expect(source).not.toMatch(/composables\/useApi/)
+    expect(source).toMatch(/composables\/useApi/)
+    expect(source).not.toMatch(/\bfetch\s*\(/)
+    expect(source).not.toMatch(/credentials: 'include'/)
   })
 })

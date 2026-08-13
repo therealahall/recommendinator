@@ -55,6 +55,26 @@ function ownFocusRules(source: string): [string, string][] {
   )
 }
 
+/** The element a delegated ring is drawn on: `.search-input` out of
+ *  `.search-input:has(:focus-visible)`. */
+function ringHost(selector: string): string {
+  return selector.slice(0, selector.indexOf(':has(')).trim()
+}
+
+/** A cancellation is excused only by a host its own selector starts with —
+ *  `.search-input-field` under `.search-input`, which is how a wrapper and its
+ *  parts are named here. A delegated ring elsewhere in the file excuses none. */
+function cancelledRings(source: string): string[] {
+  const hosts = delegatedRings(source).map(([selector]) => ringHost(selector))
+
+  return ownFocusRules(source)
+    .filter(
+      ([selector, block]) =>
+        CANCELS.test(block) && !hosts.some((host) => host !== '' && selector.startsWith(host)),
+    )
+    .map(([selector]) => selector)
+}
+
 describe('the one focus ring', () => {
   it('is cancelled by no component that draws nothing in its place', () => {
     const sources = vueSources()
@@ -65,15 +85,24 @@ describe('the one focus ring', () => {
     let audited = 0
     const cancelled: string[] = []
     for (const [name, source] of sources) {
-      const delegated = delegatedRings(source).length > 0
-      for (const [selector, block] of ownFocusRules(source)) {
-        audited += 1
-        if (CANCELS.test(block) && !delegated) cancelled.push(`${name}: ${selector}`)
-      }
+      audited += ownFocusRules(source).length
+      cancelled.push(...cancelledRings(source).map((selector) => `${name}: ${selector}`))
     }
 
     expect(audited, 'no focus rule was read, so nothing was audited').toBeGreaterThan(0)
     expect(cancelled).toEqual([])
+  })
+
+  it('excuses only the part whose own wrapper draws the ring', () => {
+    // Per file, one delegated ring anywhere excused every cancellation in the
+    // same file — including one on an element it does not contain.
+    const source = `<style scoped>
+      .wrap:has(:focus-visible) { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+      .wrap-field:focus-visible { outline: none; }
+      .elsewhere input:focus-visible { outline: none; }
+    </style>`
+
+    expect(cancelledRings(source)).toEqual(['.elsewhere input:focus-visible'])
   })
 
   it.each(['outline: none;', 'outline: 0;', 'outline-width: 0;', 'outline-color: transparent;'])(

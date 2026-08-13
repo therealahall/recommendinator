@@ -65,6 +65,19 @@ describe('AuthField', () => {
     expect(wrapper.find('input').attributes('aria-invalid')).toBe('true')
   })
 
+  it('marks the field required both ways, or neither', async () => {
+    // aria-required as well as the attribute: the submit button locks with
+    // aria-disabled, so nothing else tells a screen reader why it refuses.
+    const wrapper = mountField()
+    expect(wrapper.find('input').attributes('required')).toBeUndefined()
+    expect(wrapper.find('input').attributes('aria-required')).toBeUndefined()
+
+    await wrapper.setProps({ required: true })
+
+    expect(wrapper.find('input').attributes('required')).toBeDefined()
+    expect(wrapper.find('input').attributes('aria-required')).toBe('true')
+  })
+
   it('takes focus on mount only where the screen asks for it', () => {
     const quiet = mountField({ id: 'quiet' }, true)
     expect(document.activeElement).not.toBe(quiet.find('input').element)
