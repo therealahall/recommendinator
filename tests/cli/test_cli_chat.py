@@ -20,7 +20,7 @@ class TestChatSend:
     def test_send_message(self, cli_runner: CliRunner) -> None:
         """Test sending a single message."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ConversationEngine") as mock_engine_cls:
+        with patch("src.cli.commands._chat.ConversationEngine") as mock_engine_cls:
             mock_engine = MagicMock(spec=ConversationEngine)
             mock_engine.process_message_sync.return_value = (
                 "I recommend Dune by Frank Herbert!"
@@ -53,7 +53,7 @@ class TestChatSend:
     def test_send_engine_error(self, cli_runner: CliRunner) -> None:
         """Test that chat send handles engine exceptions gracefully."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ConversationEngine") as mock_engine_cls:
+        with patch("src.cli.commands._chat.ConversationEngine") as mock_engine_cls:
             mock_engine = MagicMock(spec=ConversationEngine)
             mock_engine.process_message_sync.side_effect = RuntimeError(
                 "model unavailable"
@@ -73,7 +73,7 @@ class TestChatSend:
     def test_send_with_type_filter(self, cli_runner: CliRunner) -> None:
         """Test that --type forwards a ContentType filter to the engine."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ConversationEngine") as mock_engine_cls:
+        with patch("src.cli.commands._chat.ConversationEngine") as mock_engine_cls:
             mock_engine = MagicMock(spec=ConversationEngine)
             mock_engine.process_message_sync.return_value = "ok"
             mock_engine_cls.return_value = mock_engine
@@ -214,7 +214,7 @@ class TestChatStart:
     def test_start_repl_exit(self, cli_runner: CliRunner) -> None:
         """Test that REPL exits on empty input (Ctrl+D / EOF)."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ConversationEngine"):
+        with patch("src.cli.commands._chat.ConversationEngine"):
             result = _invoke_with_mocks(
                 cli_runner,
                 ["chat", "start"],
@@ -229,7 +229,7 @@ class TestChatStart:
     def test_start_repl_message_and_exit(self, cli_runner: CliRunner) -> None:
         """Test sending a message in REPL then exiting."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ConversationEngine") as mock_engine_cls:
+        with patch("src.cli.commands._chat.ConversationEngine") as mock_engine_cls:
             mock_engine = MagicMock(spec=ConversationEngine)
             mock_engine.process_message_sync.return_value = "Great choice!"
             mock_engine_cls.return_value = mock_engine

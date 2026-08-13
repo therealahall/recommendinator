@@ -541,7 +541,7 @@ class TestTheParityGateReadsTheWholeCapabilitySurface:
             "src/storage",
             # ``src/web`` does not start with ``src/web/``, so only a file path
             # catches the theme entry being shortened to the whole package.
-            "src/cli/commands.py",
+            "src/cli/commands/_source.py",
             "src/web/api.py",
             # The SPA entry point is the one root-level file on the surface, so
             # it is what a root pattern widened to ``*`` would swallow.
@@ -644,7 +644,9 @@ class TestTheSweptPopulationIsNotEmpty:
     """``set()`` is also what a sweep that found no modules at all returns."""
 
     def test_discovery_finds_both_interface_packages(self) -> None:
-        assert {"src.cli.commands", "src.cli.main"} <= _modules_under(_CLI_PACKAGE)
+        assert {"src.cli.commands._source", "src.cli.main"} <= _modules_under(
+            _CLI_PACKAGE
+        )
         assert {"src.web.api", "src.web.app"} <= _modules_under(_WEB_PACKAGE)
 
     def test_the_shared_services_are_outside_both_packages(self) -> None:
@@ -661,7 +663,9 @@ class TestTheSweptPopulationIsNotEmpty:
 
     def test_the_sweep_reads_the_imports_it_judges(self) -> None:
         """A parser matching nothing would clear every module above."""
-        reported = _imports_of(_TREES["src.cli.commands"], _CLI_PACKAGE, "src.sources")
+        reported = _imports_of(
+            _TREES["src.cli.commands._source"], _CLI_PACKAGE, "src.sources"
+        )
 
         assert {entry.split(" ")[0] for entry in reported} == {"src.sources.service"}
 

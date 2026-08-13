@@ -113,7 +113,7 @@ class TestProfileRegenerate:
     def test_regenerate_profile(self, cli_runner: CliRunner) -> None:
         """Test regenerating profile."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.ProfileGenerator") as mock_pg_cls:
+        with patch("src.cli.commands._profile.ProfileGenerator") as mock_pg_cls:
             mock_pg = MagicMock(spec=ProfileGenerator)
             mock_profile = MagicMock()
             mock_profile.genre_affinities = {"sci-fi": 4.5}

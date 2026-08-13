@@ -294,7 +294,7 @@ class TestGogAuthCredentialChainRegression:
     """Regression: the authorization code reached the log via ``__cause__``.
 
     A scrubbed message still left ``raise ... from error``, whose cause renders
-    the token URL under ``exc_info=True`` at ``src/cli/commands.py``. Fix:
+    the token URL under ``exc_info=True`` at ``src/cli/commands/_auth.py``. Fix:
     ``from None``, so the CLI's traceback carries only the composed message.
     """
 
@@ -342,7 +342,7 @@ class TestGogAuthCredentialChainRegression:
         assert GOG_CLIENT_SECRET not in rendered
         assert "GOG token exchange request failed: JSONDecodeError" in caplog.text
 
-    @patch("src.cli.commands.is_gog_enabled", return_value=True)
+    @patch("src.cli.commands._auth.is_gog_enabled", return_value=True)
     @patch("src.auth.gog.requests.get")
     def test_cli_connect_logs_no_code_with_its_traceback(
         self,

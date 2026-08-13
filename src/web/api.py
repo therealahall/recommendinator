@@ -134,8 +134,8 @@ def _blank_review_validator(remedy: str) -> Callable[[str], str]:
     The check is common to every request model carrying a review — the field's
     lower bound already refuses ``""``, and a string of spaces is the same
     claim in a form the schema cannot express — but the remedy is not, so the
-    message belongs to the model. This is the split ``src/cli/commands.py``
-    already makes around ``_is_blank_review``.
+    message belongs to the model. This is the split the CLI already makes
+    around ``is_blank_review`` in ``src/cli/_shared.py``.
     """
 
     def reject(value: str) -> str:

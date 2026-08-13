@@ -368,7 +368,7 @@ class TestEpicAuthCredentialChain:
     The CLI renders that whole chain.
     """
 
-    @patch("src.cli.commands.is_epic_enabled", return_value=True)
+    @patch("src.cli.commands._auth.is_epic_enabled", return_value=True)
     @patch("requests.sessions.Session.post")
     def test_cli_connect_logs_no_code_with_its_traceback(
         self,
