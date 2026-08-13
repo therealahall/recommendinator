@@ -479,7 +479,9 @@ fails on the next module that crosses either rule.
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`,
-`profile`, `chat`, most carrying a `--format json` view. Full reference in
+`profile`, `chat`, most carrying a `--format json` view. One module each under
+`src/cli/commands/`, re-exported from its `__init__` for `src/cli/main.py`;
+`src/cli/_shared.py` holds what more than one group uses. Full reference in
 [docs/CLI.md](docs/CLI.md).
 
 **Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA with

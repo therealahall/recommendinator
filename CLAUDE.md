@@ -30,7 +30,10 @@ Do not silently continue working after compaction. Always pause, re-orient, and 
 
 ```
 src/
-├── cli/              # Click commands
+├── cli/              # Click commands: commands/ holds one module per command
+│                     # group (underscore-prefixed, re-exported from its
+│                     # __init__), _shared.py the helpers two or more of them
+│                     # use — the value coercion, the view emitter, the guards
 ├── web/              # FastAPI app: routing, guards, app state
 │   └── static/
 │       ├── themes/     # UI themes (folder-per-theme, each with README + theme.json + colors.css)
