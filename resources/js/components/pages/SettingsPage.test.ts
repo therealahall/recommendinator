@@ -3,6 +3,7 @@ import { nextTick } from 'vue'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import SettingsPage from './SettingsPage.vue'
+import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { useAuthStore } from '@/stores/auth'
 import { jsonResponse } from '@/testing/http'
 import { formatDate } from '@/utils/format'
@@ -273,6 +274,22 @@ describe('SettingsPage account section', () => {
   // Long enough to clear the rule the form checks before it submits anything.
   const REPLACEMENT = 'hunter33-hunter33'
 
+  /** The change answers 204; the session behind it carries *changedAt*, which
+   *  is the only place the new date comes from. */
+  function passwordChanged(changedAt: string) {
+    return (url: RequestInfo | URL) =>
+      Promise.resolve(
+        String(url).endsWith('/password')
+          ? jsonResponse(204)
+          : jsonResponse(200, {
+              claimed: true,
+              authenticated: true,
+              user: { ...AARON, password_updated_at: changedAt },
+              min_password_length: PASSWORD_MIN_LENGTH,
+            }),
+      )
+  }
+
   async function changePassword(wrapper: VueWrapper): Promise<void> {
     await wrapper.find('#account-current-password').setValue('hunter2')
     await wrapper.find('#account-new-password').setValue(REPLACEMENT)
@@ -354,7 +371,7 @@ describe('SettingsPage account section', () => {
 
   it('changes the password against the account route', async () => {
     signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(204))
+    vi.mocked(fetch).mockImplementation(passwordChanged(AARON.password_updated_at as string))
     const wrapper = await openSettings()
 
     await changePassword(wrapper)
@@ -362,6 +379,23 @@ describe('SettingsPage account section', () => {
     const [url, init] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toBe('/api/users/1/password')
     expect(init?.method).toBe('PUT')
+    expect(wrapper.find('#account-password-status').text()).toBe('Password changed.')
+  })
+
+  it('dates the password from the change, not from the session it opened on', async () => {
+    // Regression: the 204 carries no body and nothing re-read the session, so
+    // the line above the form still said 15 January while the region below it
+    // announced the change — and nothing on screen said which was true.
+    const CHANGED_AT = '2026-02-01T10:00:00+00:00'
+    signedIn()
+    vi.mocked(fetch).mockImplementation(passwordChanged(CHANGED_AT))
+    const wrapper = await openSettings()
+    const age = () => wrapper.find('[data-testid="account-password-age"]').text()
+    expect(age()).toContain(formatDate(AARON.password_updated_at as string))
+
+    await changePassword(wrapper)
+
+    expect(age()).toContain(formatDate(CHANGED_AT))
     expect(wrapper.find('#account-password-status').text()).toBe('Password changed.')
   })
 

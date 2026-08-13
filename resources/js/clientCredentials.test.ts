@@ -82,6 +82,9 @@ describe('where a request may be opened', () => {
 
     expect(source).toMatch(/@\/composables\/useApi/)
     expect(source).not.toMatch(/\bfetch\s*\(/)
+    // Attaching the cookie is the API layer's job, and a second copy of that
+    // decision is how the two drifted apart before.
+    expect(source).not.toMatch(/credentials: 'include'/)
   })
 
   it.each(CREDENTIAL_CARRIERS)('%s addresses the API, and sends the session with it', (path) => {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import LoginForm from './LoginForm.vue'
+import { USERNAME_BLANK } from '@/constants/auth'
 
 // No pinia and no fetch stub anywhere in this file: the component takes props
 // in and emits events out, which is what lets it ship before the routes exist.
@@ -47,6 +48,41 @@ describe('LoginForm', () => {
 
     expect(wrapper.emitted('submit')).toBeUndefined()
     expect(wrapper.find('button[type="submit"]').attributes('aria-disabled')).toBe('true')
+  })
+
+  it('says why a username of nothing but spaces did not sign in', async () => {
+    // Regression: `required` reports only the empty string as missing, so three
+    // spaces cleared the browser's own check and the press did nothing at all.
+    const wrapper = mount(LoginForm)
+
+    await signIn(wrapper, '   ', 'hunter2')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#login-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.find('#login-username').attributes('aria-describedby')).toBe('login-status')
+    // The complaint is about the name, so the password is left unfaulted.
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#login-password').attributes('aria-describedby')).toBeUndefined()
+    const button = wrapper.find('button[type="submit"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('#login-username').setValue('aaron')
+
+    expect(wrapper.find('#login-status').text()).toBe('')
+  })
+
+  it('complains about the blank name before the gate that would return silently', async () => {
+    // Both halves are missing here, and the completeness check has nothing to
+    // say. Guard order is what decides whether anything is announced at all.
+    const wrapper = mount(LoginForm)
+
+    await signIn(wrapper, ' ', '')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#login-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#login-status').classes()).toContain('failed')
   })
 
   it('says which fields it will not go without', () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AccountProfileForm from './AccountProfileForm.vue'
-import { NAME_MAX_LENGTH } from '@/constants/auth'
+import { NAME_MAX_LENGTH, USERNAME_BLANK } from '@/constants/auth'
 import type { UserResponse } from '@/types/api'
 
 const AARON: UserResponse = {
@@ -90,6 +90,44 @@ describe('AccountProfileForm', () => {
     expect(wrapper.find('#account-profile-status').text()).toContain('Nothing to save')
     // Nothing typed is wrong, so no field is marked as such.
     expect(wrapper.find('#account-username').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('says why a username of nothing but spaces did not save', async () => {
+    // Regression: `required` reports only the empty string as missing, so three
+    // spaces cleared the browser's own check and the handler returned silently.
+    const wrapper = mountForm()
+
+    await wrapper.find('#account-username').setValue('   ')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#account-profile-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#account-username').attributes('aria-invalid')).toBe('true')
+    // The lock says nothing on its own, and going native would blur the button.
+    const button = wrapper.find('[data-testid="account-profile-save"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('#account-username').setValue('ahall')
+
+    expect(wrapper.find('#account-profile-status').text()).toBe('')
+  })
+
+  it('reads the blank name as an error, and blames only the field it is about', async () => {
+    // The region is the same node "Saved." uses, so the colour is the whole
+    // visible difference between a complaint and a receipt.
+    const wrapper = mountForm()
+
+    await wrapper.find('#account-username').setValue(' \t')
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#account-profile-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#account-profile-status').classes()).toContain('failed')
+    expect(wrapper.find('#account-display-name').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#account-display-name').attributes('aria-describedby')).toBe(
+      'account-display-name-hint',
+    )
   })
 
   it('drops that complaint on the edit that answers it', async () => {
