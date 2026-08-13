@@ -6,6 +6,21 @@ Recommendinator — a privacy-focused recommendation engine for books, movies, T
 
 **Key Features:** Multi-source ingestion, cross-content-type recommendations, optional local LLM (privacy-preserving), dual CLI/web interface, vector-based semantic search.
 
+## Scale — calibrate severity to it
+
+A self-hosted tool with a couple of users, not a fleet. Correctness, security and
+the quality gate are not negotiable. Hardening against deployment states nobody
+here runs is.
+
+Concretely: a defect reachable by a normal invocation is real. One needing a
+root-owned bind mount, a read-only filesystem, a hostile concurrent writer or a
+multi-tenant deployment is a cut, not a deferral — say it is cut and why. Don't
+brief QA to hunt those; brief it on the acceptance criteria and the paths a user
+hits.
+
+Applies to review agents too: weigh severity by what a user of this tool meets,
+not by what an enterprise threat model would.
+
 ## Required Reading
 
 Before starting work, read the relevant documentation:
@@ -64,7 +79,8 @@ src/
 │                     # and templates.py: the column tables both generic
 │                     # importers and the export read
 └── utils/            # Utility functions (list_merge, series, sorting, export,
-                      # csv_formula, urls for the bare-origin/local-host guards)
+                      # csv_formula, urls for the bare-origin/local-host guards,
+                      # logging: the root-logger wiring both interfaces call)
 
 resources/            # Frontend source (Vue 3 + Tailwind CSS v4)
 ├── js/               # Vue components, Pinia stores, composables, router, types
