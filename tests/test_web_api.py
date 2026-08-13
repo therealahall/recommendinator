@@ -349,54 +349,62 @@ class TestCreateAppSettingsMigration:
         }
         with booted_web_app(storage_manager, config) as app:
             assert _cors_origins(app) == ["https://app.example.com"]
-            # A concrete origin list may carry credentials.
-            assert _cors_kwargs(app)["allow_credentials"] is True
         reset_sync_manager()
 
-    def test_a_preflight_from_an_allowed_origin_may_send_the_session(
+    def test_a_configured_origin_reaches_only_the_ungated_surface(
         self, mock_config, tmp_path
     ):
-        """Reported: a configured origin produced no working client.
+        """Regression: this asserted a credentialed preflight, which cannot work.
 
-        Cause: the header its requests carry was absent from ``allow_headers``.
-        The credential is the cookie now, which a browser attaches only when
-        the preflight allows credentials.
+        The session cookie is ``SameSite=Strict``, so a browser never attaches
+        it cross-origin. ``allowed_origins`` buys the SPA shell and the static
+        assets; everything behind the session gate answers 401 to that client.
         """
         reset_sync_manager()
+        origin = "https://app.example.com"
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {
-            **mock_config,
-            "web": {"allowed_origins": ["https://app.example.com"]},
-        }
+        config = {**mock_config, "web": {"allowed_origins": [origin]}}
         with booted_web_app(storage_manager, config) as app:
-            response = TestClient(app).options(
+            client = TestClient(app)
+            preflight = client.options(
                 "/api/auth/login",
                 headers={
-                    "Origin": "https://app.example.com",
+                    "Origin": origin,
                     "Access-Control-Request-Method": "POST",
                     "Access-Control-Request-Headers": "content-type",
                 },
             )
+            shell = client.get("/", headers={"Origin": origin})
+            gated = client.get("/api/status", headers={"Origin": origin})
         reset_sync_manager()
 
-        assert response.status_code == 200
-        allowed = response.headers["access-control-allow-headers"].lower()
+        assert preflight.status_code == 200
+        allowed = preflight.headers["access-control-allow-headers"].lower()
         assert "content-type" in allowed
-        assert response.headers["access-control-allow-credentials"] == "true"
+        assert "access-control-allow-credentials" not in preflight.headers
+        assert shell.status_code == 200
+        assert shell.headers["access-control-allow-origin"] == origin
+        assert gated.status_code == 401
 
-    def test_wildcard_origin_disables_credentials(self, mock_config, tmp_path):
-        """``["*"]`` must turn credentials off — a browser-security invariant.
+    @pytest.mark.parametrize(
+        "origins",
+        [
+            pytest.param(["https://app.example.com"], id="one-origin"),
+            pytest.param(["*"], id="wildcard"),
+        ],
+    )
+    def test_no_origin_list_carries_credentials(self, mock_config, tmp_path, origins):
+        """Nothing a browser sends cross-origin can authenticate under Strict.
 
-        Allowing credentials against a wildcard origin is exactly the
-        combination browsers refuse and the one that would expose every
-        authenticated response to any site. It had no coverage anywhere.
+        Turning this on would promise a signed-in cross-origin client that the
+        cookie makes impossible, and against ``["*"]`` browsers refuse it flat.
         """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {"allowed_origins": ["*"]}}
+        config = {**mock_config, "web": {"allowed_origins": origins}}
         with booted_web_app(storage_manager, config) as app:
-            assert _cors_origins(app) == ["*"]
-            assert _cors_kwargs(app)["allow_credentials"] is False
+            assert _cors_origins(app) == origins
+            assert _cors_kwargs(app).get("allow_credentials", False) is False
         reset_sync_manager()
 
     def test_db_set_origins_reach_the_middleware(self, mock_config, tmp_path):
@@ -5726,9 +5734,6 @@ _GUARDED_ENDPOINTS = [
 # so an uninitialised component is not their problem.
 _DEPENDENCY_FREE_ENDPOINTS = [
     _Endpoint("GET", "/api/status"),
-    # Serves the user authentication already resolved, so it needs nothing
-    # beyond what every route on this list needs to be reached at all.
-    _Endpoint("GET", "/api/users/me"),
     # Listed here rather than guarded: an unset ``config_path`` makes
     # ``reload_config`` return False, which the handler turns into a 500. Only
     # ``create_app`` sets that field, and it sets it or raises.
@@ -6073,16 +6078,26 @@ class TestEveryApiRouteRequiresASession:
         assert response.status_code == 401
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
 
-    @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
+    @pytest.mark.parametrize(
+        "target",
+        [
+            pytest.param("/api/items", id="api"),
+            pytest.param("/api/memories", id="chat"),
+        ],
+    )
     def test_a_request_with_an_unknown_cookie_is_401(
-        self, mock_components, endpoint
+        self, mock_components, target
     ) -> None:
-        """A presented-but-dead session is refused exactly like an absent one."""
+        """A dead session is refused like an absent one.
+
+        One route per router: the branch is inside ``require_session``, and the
+        no-cookie sweep proves every route carries it.
+        """
         client = TestClient(
             mock_components["app"], cookies={SESSION_COOKIE: _WRONG_SESSION}
         )
 
-        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
+        response = client.get(target)
 
         assert response.status_code == 401
 

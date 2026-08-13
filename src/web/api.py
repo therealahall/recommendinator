@@ -93,7 +93,7 @@ from src.sources.service import (
     set_source_secret_value,
     update_source_config_values,
 )
-from src.storage.accounts import MIN_PASSWORD_LENGTH
+from src.storage.accounts import MAX_ACCOUNT_NAME_LENGTH, PasswordTooShortError
 from src.storage.manager import (
     UNSET,
     VALID_SORT_OPTIONS,
@@ -107,6 +107,7 @@ from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 from src.web.auth import SESSION_COOKIE, CurrentUser, require_session
+from src.web.csrf import refuse_cross_origin
 from src.web.enrichment_manager import get_enrichment_manager
 from src.web.guards import (
     RequiredConfig,
@@ -130,7 +131,11 @@ logger = logging.getLogger(__name__)
 
 # On the router rather than at ``include_router``: a route is then
 # authenticated by being registered, even where a test mounts this router bare.
-router = APIRouter(prefix="/api", tags=["api"], dependencies=[Depends(require_session)])
+router = APIRouter(
+    prefix="/api",
+    tags=["api"],
+    dependencies=[Depends(require_session), Depends(refuse_cross_origin)],
+)
 
 
 def _blank_review_validator(remedy: str) -> Callable[[str], str]:
@@ -170,6 +175,33 @@ CompletionReviewText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
     AfterValidator(_blank_review_validator("")),
+]
+
+
+def _reject_blank_username(value: str) -> str:
+    """Trim *value*, refusing a name that was only spaces.
+
+    Stored, "  " is a username the sign-in form — which trims — can never
+    send, and this instance has no reset link.
+    """
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError("username cannot be blank")
+    return trimmed
+
+
+AccountUsername = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_ACCOUNT_NAME_LENGTH),
+    AfterValidator(_reject_blank_username),
+]
+
+#: Trimmed but not required: "" is how a form clears it, and the handlers read
+#: an empty display name as "fall back to the username".
+AccountDisplayName = Annotated[
+    str,
+    Field(max_length=MAX_ACCOUNT_NAME_LENGTH),
+    AfterValidator(str.strip),
 ]
 
 
@@ -294,8 +326,8 @@ class UserResponse(BaseModel):
 class UserUpdateRequest(BaseModel):
     """Rename request for an account."""
 
-    username: str = Field(..., min_length=1, max_length=100)
-    display_name: str = Field("", max_length=100)
+    username: AccountUsername
+    display_name: AccountDisplayName = ""
 
 
 class PasswordChangeRequest(BaseModel):
@@ -306,7 +338,9 @@ class PasswordChangeRequest(BaseModel):
     """
 
     current_password: str = Field(..., max_length=1000)
-    new_password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=1000)
+    # No ``min_length``: the floor is enforced where the password is written
+    # and reported as a 400 — see :class:`SetupRequest`.
+    new_password: str = Field(..., max_length=1000)
 
 
 class ContentItemResponse(BaseModel):
@@ -1021,15 +1055,6 @@ def list_users(storage: RequiredStorage) -> list[UserResponse]:
     ]
 
 
-@router.get("/users/me", response_model=UserResponse)
-def read_own_account(user: CurrentUser) -> UserResponse:
-    """Return the signed-in account.
-
-    Registered above ``/users/{user_id}/...`` so ``me`` is never read as an id.
-    """
-    return UserResponse.model_validate(user)
-
-
 @router.patch("/users/{user_id}", response_model=UserResponse)
 def rename_account(
     user_id: UserIdPath,
@@ -1048,7 +1073,7 @@ def rename_account(
     _refuse_another_account(user_id, user)
     try:
         renamed = storage.update_user_identity(
-            user_id, request.username, request.display_name.strip() or None
+            user_id, request.username, request.display_name or None
         )
     except UnknownUserError:
         raise HTTPException(status_code=404, detail="User not found.") from None
@@ -1067,13 +1092,16 @@ def change_password(
 
     Raises:
         HTTPException: 403 for anybody else's account, 401 when the current
-            password is wrong.
+            password is wrong, 400 when the new one is under the floor.
     """
     _refuse_another_account(user_id, user)
     if storage.verify_password(user["username"], request.current_password) is None:
         raise HTTPException(status_code=401, detail=_WRONG_CURRENT_PASSWORD)
 
-    storage.set_password(user_id, request.new_password)
+    try:
+        storage.set_password(user_id, request.new_password)
+    except PasswordTooShortError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     # The token is a live session by the time this runs — the dependency that
     # produced ``user`` looked it up — so the caller keeps the browser they
     # changed the password in, and every other one is signed out.

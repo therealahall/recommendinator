@@ -23,7 +23,7 @@ UNAUTHORIZED_DETAIL = "Not signed in."
 
 # No ``secure``: this app serves no TLS, and the documented deployment is
 # loopback or behind a reverse proxy, so a Secure cookie would never be sent at
-# all. ``strict`` is the CSRF control — nothing links into this SPA.
+# all. ``strict`` ignores the port, which ``src/web/csrf.py`` covers.
 _COOKIE_ATTRIBUTES: dict[str, Any] = {
     "httponly": True,
     "samesite": "strict",
@@ -59,7 +59,7 @@ def signed_in_user(request: Request) -> UserDict | None:
     return storage.lookup_session(token)
 
 
-def require_session(request: Request) -> UserDict:
+def require_session(request: Request, response: Response) -> UserDict:
     """Answer 401 unless the request carries a live session cookie.
 
     Storage is reached through ``src.web.state`` rather than declared as a
@@ -71,6 +71,10 @@ def require_session(request: Request) -> UserDict:
     user = signed_in_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail=UNAUTHORIZED_DETAIL)
+    # The lookup above rolled the row's expiry forward. Re-issuing the cookie
+    # is what carries that to the browser: a ``Max-Age`` fixed at sign-in signs
+    # a daily user out on day 30 while the session behind it is still live.
+    set_session_cookie(response, request.cookies[SESSION_COOKIE])
     return user
 
 

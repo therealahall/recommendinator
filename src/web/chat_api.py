@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from src.conversation.profile import ProfileGenerator
 from src.models.content import ContentType
 from src.web.auth import require_session
+from src.web.csrf import refuse_cross_origin
 from src.web.guards import (
     RequiredConversationEngine,
     RequiredMemoryManager,
@@ -25,7 +26,9 @@ logger = logging.getLogger(__name__)
 # Carried by the router for the same reason as ``src/web/api.py``'s: a bare
 # mount must not be an unauthenticated one.
 router = APIRouter(
-    prefix="/api", tags=["chat"], dependencies=[Depends(require_session)]
+    prefix="/api",
+    tags=["chat"],
+    dependencies=[Depends(require_session), Depends(refuse_cross_origin)],
 )
 
 
