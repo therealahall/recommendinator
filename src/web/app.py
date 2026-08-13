@@ -42,6 +42,7 @@ from src.utils import logging as log_config
 from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
+from src.web.auth import set_session_cookie
 from src.web.auth_api import router as auth_router
 from src.web.chat_api import router as chat_router
 from src.web.responses import SurrogateSafeJSONResponse
@@ -314,6 +315,21 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             return response
 
     app.add_middleware(SecurityHeadersMiddleware)
+
+    # Middleware, not the dependency's own ``Response``: FastAPI merges those
+    # headers only where it serialises a return value, so every route handing
+    # back a ``Response`` — the export, chat, the 204s — missed the re-issue.
+    class RollingSessionCookieMiddleware(BaseHTTPMiddleware):
+        async def dispatch(
+            self, request: Request, call_next: RequestResponseEndpoint
+        ) -> Response:
+            response = await call_next(request)
+            token = getattr(request.state, "session_token", None)
+            if token:
+                set_session_cookie(response, token)
+            return response
+
+    app.add_middleware(RollingSessionCookieMiddleware)
 
     # FastAPI supplies both of these, and both of its own render on a stock
     # JSONResponse that default_response_class never reaches. Keyed on

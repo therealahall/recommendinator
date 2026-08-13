@@ -18,9 +18,15 @@ from src.storage.accounts import (
     AccountAlreadyClaimedError,
     PasswordTooShortError,
 )
-from src.storage.schema import UserDict
+from src.storage.manager import StorageManager
+from src.storage.schema import get_default_user_id
 from src.utils.dates import utc_now
-from src.web.api import AccountDisplayName, AccountUsername, UserResponse
+from src.web.api import (
+    AccountDisplayName,
+    AccountUsername,
+    UserResponse,
+    as_user_response,
+)
 from src.web.auth import (
     SESSION_COOKIE,
     clear_session_cookie,
@@ -67,16 +73,18 @@ class _LoginThrottle:
         }
         return self._failures
 
-    def locked_out(self, username: str) -> bool:
-        """Whether *username*, or the instance, has spent its attempts."""
+    def locked_out(self, username: str, *, count_total: bool) -> bool:
+        """Whether *username*, or the instance, has spent its attempts.
+
+        ``count_total=False`` for the claimed account: see :func:`sign_in`.
+        """
         with self._lock:
             counts = {
                 name: count for name, (count, _) in self._prune(utc_now()).items()
             }
-            return (
-                counts.get(username, 0) >= _MAX_FAILURES
-                or sum(counts.values()) >= _MAX_TOTAL_FAILURES
-            )
+            if counts.get(username, 0) >= _MAX_FAILURES:
+                return True
+            return count_total and sum(counts.values()) >= _MAX_TOTAL_FAILURES
 
     def record_failure(self, username: str) -> None:
         """Count one refusal, dropping every attempt that has aged out."""
@@ -136,8 +144,16 @@ class SessionResponse(BaseModel):
     min_password_length: int = MIN_PASSWORD_LENGTH
 
 
-def _as_user(user: UserDict) -> UserResponse:
-    return UserResponse.model_validate(user)
+def _is_the_claimed_username(storage: StorageManager, username: str) -> bool:
+    """Whether *username* is the one this instance belongs to.
+
+    The total ceiling exempts it: counted in, fifty throwaway usernames would
+    shut the operator out every five minutes. A ``users`` read, no hashing.
+    """
+    account = storage.describe_account(get_default_user_id())
+    return (
+        account is not None and account["claimed"] and account["username"] == username
+    )
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -151,7 +167,7 @@ def read_session(request: Request, storage: RequiredStorage) -> SessionResponse:
     return SessionResponse(
         claimed=storage.account_is_claimed(),
         authenticated=user is not None,
-        user=_as_user(user) if user is not None else None,
+        user=as_user_response(storage, user) if user is not None else None,
     )
 
 
@@ -179,7 +195,7 @@ def claim_instance(
 
     set_session_cookie(response, storage.create_session(user["id"]))
     logger.info("Account claimed; this instance is no longer open to setup")
-    return _as_user(user)
+    return as_user_response(storage, user)
 
 
 @router.post("/login", response_model=UserResponse)
@@ -192,7 +208,8 @@ def sign_in(
         HTTPException: 429 once the attempts run out, 401 otherwise. Neither
             says which half was wrong.
     """
-    if _throttle.locked_out(body.username):
+    own = _is_the_claimed_username(storage, body.username)
+    if _throttle.locked_out(body.username, count_total=not own):
         raise HTTPException(status_code=429, detail=_TOO_MANY_ATTEMPTS)
 
     user = storage.verify_password(body.username, body.password)
@@ -202,7 +219,7 @@ def sign_in(
 
     _throttle.clear(body.username)
     set_session_cookie(response, storage.create_session(user["id"]))
-    return _as_user(user)
+    return as_user_response(storage, user)
 
 
 @router.post("/logout", status_code=204)

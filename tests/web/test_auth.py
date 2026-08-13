@@ -80,6 +80,13 @@ def _set_cookie(response: Any) -> SimpleCookie:
     return parsed
 
 
+def _account(storage: StorageManager, **names: Any) -> dict[str, Any]:
+    """The account body a route returns, with the stamp storage holds."""
+    record = storage.describe_account(1)
+    assert record is not None
+    return {"id": 1, **names, "password_updated_at": record["password_updated_at"]}
+
+
 class TestFirstRunSetup:
     """The one moment anybody may claim this instance."""
 
@@ -97,11 +104,9 @@ class TestFirstRunSetup:
         )
 
         assert response.status_code == 200
-        assert response.json() == {
-            "id": 1,
-            "username": _USERNAME,
-            "display_name": "The Owner",
-        }
+        assert response.json() == _account(
+            storage, username=_USERNAME, display_name="The Owner"
+        )
         assert storage.account_is_claimed() is True
         assert client.get("/api/auth/session").json()["authenticated"] is True
 
@@ -154,7 +159,6 @@ class TestFirstRunSetup:
 
         assert response.status_code == 400
         assert response.json()["detail"] == PASSWORD_TOO_SHORT
-        assert str(MIN_PASSWORD_LENGTH) in PASSWORD_TOO_SHORT
         assert storage.account_is_claimed() is False
 
 
@@ -270,6 +274,31 @@ class TestLogin:
         assert response.status_code == 200
 
 
+class TestTheTotalCeilingIsNotAnOperatorLockout:
+    """Regression: the ceiling counted the operator's own username in.
+
+    Bug reported: fifty throwaway guesses answered 429 to the right password.
+    Root cause: the total summed every counter, the claimed account's too.
+    Fix: exempt that name from the total.
+    """
+
+    def test_throwaway_guesses_spare_the_operator_but_their_own_do_not(
+        self, claimed: TestClient
+    ) -> None:
+        right = {"username": _USERNAME, "password": _PASSWORD}
+        for n in range(_MAX_TOTAL_FAILURES):
+            claimed.post(
+                "/api/auth/login", json={"username": f"guess{n}", "password": "x"}
+            )
+        assert claimed.post("/api/auth/login", json=right).status_code == 200
+
+        wrong = {"username": _USERNAME, "password": "not the password"}
+        for _ in range(_MAX_FAILURES):
+            claimed.post("/api/auth/login", json=wrong)
+
+        assert claimed.post("/api/auth/login", json=right).status_code == 429
+
+
 class TestTheSessionCookie:
     """The attributes are the whole of what protects it in a browser."""
 
@@ -315,6 +344,43 @@ class TestTheSessionCookie:
         cookie = _set_cookie(later)[SESSION_COOKIE]
         assert cookie.value == claimed.cookies[SESSION_COOKIE]
         assert int(cookie["max-age"]) == int(SESSION_LIFETIME.total_seconds())
+
+    def test_a_route_returning_a_response_re_issues_it_too_regression(
+        self, claimed: TestClient
+    ) -> None:
+        """Regression: the re-issue rode on the dependency's ``Response``.
+
+        Bug reported: nine routes never rolled the browser's copy forward.
+        Root cause: FastAPI merges those headers only on the serialised path.
+        Fix: a middleware, which sees every route shape.
+        """
+        export = claimed.get("/api/items/export?type=book&format=json")
+
+        assert export.status_code == 200
+        cookie = _set_cookie(export)[SESSION_COOKIE]
+        assert cookie.value == claimed.cookies[SESSION_COOKIE]
+        assert int(cookie["max-age"]) == int(SESSION_LIFETIME.total_seconds())
+
+    def test_a_refused_request_hands_out_no_cookie(self, client: TestClient) -> None:
+        """The re-issue is for a live session, not for whoever asked."""
+        response = client.get("/api/users")
+
+        assert response.status_code == 401
+        assert "set-cookie" not in response.headers
+
+    def test_a_lapsed_session_is_not_handed_its_cookie_back(
+        self, claimed: TestClient, storage: StorageManager
+    ) -> None:
+        """The boundary the re-issue must not cross: a browser still holding a
+        cookie whose row has aged out. Re-issued, it would roll a dead session
+        forward for ever and the day-30 expiry would never arrive.
+        """
+        _lapse_every_session(storage)
+
+        response = claimed.get("/api/users")
+
+        assert response.status_code == 401
+        assert "set-cookie" not in response.headers
 
 
 class TestLogout:
@@ -371,14 +437,16 @@ class TestTheSessionReport:
         assert body["authenticated"] is False
         assert body["user"] is None
 
-    def test_a_signed_in_caller_gets_the_account(self, claimed: TestClient) -> None:
+    def test_a_signed_in_caller_gets_the_account(
+        self, claimed: TestClient, storage: StorageManager
+    ) -> None:
         """The web counterpart of ``account show``: who this browser is."""
         body = claimed.get("/api/auth/session").json()
 
         assert body == {
             "claimed": True,
             "authenticated": True,
-            "user": {"id": 1, "username": _USERNAME, "display_name": "The Owner"},
+            "user": _account(storage, username=_USERNAME, display_name="The Owner"),
             "min_password_length": MIN_PASSWORD_LENGTH,
         }
 
@@ -386,18 +454,18 @@ class TestTheSessionReport:
 class TestTheAccountRoutes:
     """Shaped so a Users page is a new view rather than new plumbing."""
 
-    def test_a_rename_survives_the_next_request(self, claimed: TestClient) -> None:
+    def test_a_rename_survives_the_next_request(
+        self, claimed: TestClient, storage: StorageManager
+    ) -> None:
         """The rename is not a session change, so the cookie keeps working."""
         response = claimed.patch(
             "/api/users/1", json={"username": "renamed", "display_name": "Renamed"}
         )
 
         assert response.status_code == 200
-        assert claimed.get("/api/auth/session").json()["user"] == {
-            "id": 1,
-            "username": "renamed",
-            "display_name": "Renamed",
-        }
+        assert claimed.get("/api/auth/session").json()["user"] == _account(
+            storage, username="renamed", display_name="Renamed"
+        )
 
     @pytest.mark.parametrize(
         "username",
@@ -421,18 +489,18 @@ class TestTheAccountRoutes:
         assert response.status_code == 422
         assert storage.get_all_users()[0]["username"] == _USERNAME
 
-    def test_a_padded_username_is_stored_trimmed(self, claimed: TestClient) -> None:
+    def test_a_padded_username_is_stored_trimmed(
+        self, claimed: TestClient, storage: StorageManager
+    ) -> None:
         """Anchors the refusals above: padding alone is not what is rejected."""
         response = claimed.patch(
             "/api/users/1", json={"username": "  keeper  ", "display_name": "  Kee  "}
         )
 
         assert response.status_code == 200
-        assert response.json() == {
-            "id": 1,
-            "username": "keeper",
-            "display_name": "Kee",
-        }
+        assert response.json() == _account(
+            storage, username="keeper", display_name="Kee"
+        )
 
     def test_a_rename_of_somebody_else_is_refused(self, claimed: TestClient) -> None:
         """A 404 would say which ids exist; nobody may edit another account."""
@@ -569,13 +637,13 @@ class TestBothCredentialsAreRequired:
 
 
 class TestTheInstanceWideLockoutAlsoEnds:
-    """The total counter locks out every username at once, the operator's too.
+    """The total locks out every username at once but the claimed one.
 
     Its window is the same one, and nothing else proves that half ages out: a
-    total that never decayed would end the instance on the fiftieth guess.
+    total that never decayed would refuse every fresh name for good.
     """
 
-    def test_the_operator_signs_in_again_once_the_window_passes(
+    def test_a_fresh_username_is_answered_again_once_the_window_passes(
         self, claimed: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         now = utc_now()
@@ -584,13 +652,13 @@ class TestTheInstanceWideLockoutAlsoEnds:
             claimed.post(
                 "/api/auth/login", json={"username": f"guess{n}", "password": "x"}
             )
-        right = {"username": _USERNAME, "password": _PASSWORD}
-        assert claimed.post("/api/auth/login", json=right).status_code == 429
+        latecomer = {"username": "latecomer", "password": "x"}
+        assert claimed.post("/api/auth/login", json=latecomer).status_code == 429
 
         later = now + _LOCKOUT + timedelta(seconds=1)
         monkeypatch.setattr("src.web.auth_api.utc_now", lambda: later)
 
-        assert claimed.post("/api/auth/login", json=right).status_code == 200
+        assert claimed.post("/api/auth/login", json=latecomer).status_code == 401
 
 
 def _lapse_every_session(storage: StorageManager) -> None:

@@ -93,7 +93,11 @@ from src.sources.service import (
     set_source_secret_value,
     update_source_config_values,
 )
-from src.storage.accounts import MAX_ACCOUNT_NAME_LENGTH, PasswordTooShortError
+from src.storage.accounts import (
+    AccountNameError,
+    PasswordTooShortError,
+    normalize_account_name,
+)
 from src.storage.manager import (
     UNSET,
     VALID_SORT_OPTIONS,
@@ -178,31 +182,28 @@ CompletionReviewText = Annotated[
 ]
 
 
-def _reject_blank_username(value: str) -> str:
-    """Trim *value*, refusing a name that was only spaces.
+def _account_name_validator(required: bool) -> Callable[[str], str]:
+    """Build one account-name field's check, over the storage door's own rule.
 
-    Stored, "  " is a username the sign-in form — which trims — can never
-    send, and this instance has no reset link.
+    No ``Field(max_length=...)`` beside it: Pydantic runs that before any
+    ``AfterValidator``, so it measured the padding the trim removes and the
+    web refused a name ``account set-name`` stored.
     """
-    trimmed = value.strip()
-    if not trimmed:
-        raise ValueError("username cannot be blank")
-    return trimmed
+
+    def normalize(value: str) -> str:
+        try:
+            return normalize_account_name(value, required=required)
+        except AccountNameError as error:
+            raise ValueError(str(error)) from error
+
+    return normalize
 
 
-AccountUsername = Annotated[
-    str,
-    Field(min_length=1, max_length=MAX_ACCOUNT_NAME_LENGTH),
-    AfterValidator(_reject_blank_username),
-]
+AccountUsername = Annotated[str, AfterValidator(_account_name_validator(True))]
 
 #: Trimmed but not required: "" is how a form clears it, and the handlers read
 #: an empty display name as "fall back to the username".
-AccountDisplayName = Annotated[
-    str,
-    Field(max_length=MAX_ACCOUNT_NAME_LENGTH),
-    AfterValidator(str.strip),
-]
+AccountDisplayName = Annotated[str, AfterValidator(_account_name_validator(False))]
 
 
 def _member_validator(noun: str, allowed: Iterable[str]) -> Callable[[str], str]:
@@ -321,6 +322,24 @@ class UserResponse(BaseModel):
     id: int
     username: str
     display_name: str | None
+    #: What ``account show`` calls "Password changed", so both interfaces
+    #: report one account shape.
+    password_updated_at: str | None = None
+
+
+def as_user_response(storage: StorageManager, user: UserDict) -> UserResponse:
+    """Render *user* as the account both interfaces report.
+
+    The stamp is fetched rather than read off *user*: no other reader of a
+    ``users`` row wants a credential column beside it.
+    """
+    account = storage.describe_account(user["id"])
+    return UserResponse(
+        id=user["id"],
+        username=user["username"],
+        display_name=user.get("display_name"),
+        password_updated_at=account["password_updated_at"] if account else None,
+    )
 
 
 class UserUpdateRequest(BaseModel):
@@ -1044,15 +1063,7 @@ def list_users(storage: RequiredStorage) -> list[UserResponse]:
     Returns:
         List of users.
     """
-    users = storage.get_all_users()
-    return [
-        UserResponse(
-            id=user["id"],
-            username=user["username"],
-            display_name=user.get("display_name"),
-        )
-        for user in users
-    ]
+    return [as_user_response(storage, user) for user in storage.get_all_users()]
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
@@ -1077,7 +1088,7 @@ def rename_account(
         )
     except UnknownUserError:
         raise HTTPException(status_code=404, detail="User not found.") from None
-    return UserResponse.model_validate(renamed)
+    return as_user_response(storage, renamed)
 
 
 @router.put("/users/{user_id}/password", status_code=204)

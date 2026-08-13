@@ -43,6 +43,10 @@ PASSWORD_TOO_SHORT = f"Password must be at least {MIN_PASSWORD_LENGTH} character
 #: The longest username or display name either interface stores.
 MAX_ACCOUNT_NAME_LENGTH = 100
 
+#: Named rules, because a caller with no validator of its own renders these raw.
+ACCOUNT_NAME_BLANK = "A username cannot be blank."
+ACCOUNT_NAME_TOO_LONG = f"A name may be at most {MAX_ACCOUNT_NAME_LENGTH} characters."
+
 #: How long a session stays valid. Rolling: every ``lookup_session`` pushes
 #: the expiry out by this much again, so only an idle session lapses.
 SESSION_LIFETIME = timedelta(days=30)
@@ -75,6 +79,29 @@ class PasswordTooShortError(ValueError):
     Raised where the password is written rather than at each interface, so
     the CLI and the web inherit one floor and a third caller cannot miss it.
     """
+
+
+class AccountNameError(ValueError):
+    """A username or display name breaks the rule both interfaces enforce.
+
+    The password floor's counterpart, raised where the name is written.
+    """
+
+
+def normalize_account_name(value: str | None, *, required: bool) -> str:
+    """Return *value* trimmed; "" is a display name the caller may clear.
+
+    The cap is measured after the trim: that is what lands in the column.
+
+    Raises:
+        AccountNameError: Blank where *required*, or past the cap.
+    """
+    trimmed = (value or "").strip()
+    if len(trimmed) > MAX_ACCOUNT_NAME_LENGTH:
+        raise AccountNameError(ACCOUNT_NAME_TOO_LONG)
+    if required and not trimmed:
+        raise AccountNameError(ACCOUNT_NAME_BLANK)
+    return trimmed
 
 
 def _derive_key(plaintext: str, salt: bytes) -> str:
@@ -165,8 +192,11 @@ def claim_account(
 
     Raises:
         AccountAlreadyClaimedError: The account already has a password.
+        AccountNameError: The username is blank or over-long.
         PasswordTooShortError: The password is under the floor.
     """
+    stored_username = normalize_account_name(username, required=True)
+    stored_display_name = normalize_account_name(display_name, required=False) or None
     password_hash, salt, updated_at = _password_columns(plaintext_password)
     cursor = conn.cursor()
     # Both invariants in one WHERE: the row the whole library is keyed to is
@@ -178,8 +208,8 @@ def claim_account(
                   password_salt = ?, password_updated_at = ?
             WHERE id = ? AND password_hash IS NULL""",
         (
-            username,
-            display_name,
+            stored_username,
+            stored_display_name,
             password_hash,
             salt,
             updated_at,

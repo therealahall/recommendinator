@@ -2028,6 +2028,9 @@ def test_list_users(client, mock_components):
             {"id": 2, "username": "alice", "display_name": "Alice"},
         ]
     )
+    # The password stamp is fetched per row, and an unstubbed Mock is not
+    # subscriptable.
+    mock_components["storage"].describe_account = Mock(return_value=None)
 
     response = client.get("/api/users")
     assert response.status_code == 200

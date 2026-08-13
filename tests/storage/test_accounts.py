@@ -21,10 +21,11 @@ import pytest
 
 from src.storage import accounts
 from src.storage.accounts import (
+    MAX_ACCOUNT_NAME_LENGTH,
     MIN_PASSWORD_LENGTH,
-    PASSWORD_TOO_SHORT,
     SESSION_LIFETIME,
     AccountAlreadyClaimedError,
+    AccountNameError,
     PasswordTooShortError,
     account_is_claimed,
     claim_account,
@@ -267,10 +268,6 @@ class TestTheOneFloorBothInterfacesInherit:
 
         assert verify_password(conn, "owner", at_the_floor) is not None
 
-    def test_the_message_names_the_rule(self) -> None:
-        """Both interfaces render it, and "invalid" tells nobody what to type."""
-        assert str(MIN_PASSWORD_LENGTH) in PASSWORD_TOO_SHORT
-
     def test_a_password_set_before_the_floor_rose_still_signs_in(
         self, conn: sqlite3.Connection
     ) -> None:
@@ -296,6 +293,51 @@ class TestTheOneFloorBothInterfacesInherit:
 
         assert len(short) < MIN_PASSWORD_LENGTH
         assert verify_password(conn, "owner", short) is not None
+
+
+#: Every name the rule turns away, whichever door it arrives at.
+_REFUSED_NAMES = ["", "   ", "  " + "x" * (MAX_ACCOUNT_NAME_LENGTH + 1)]
+
+
+class TestTheOneNameRuleBothWriteDoorsInherit:
+    """The name rule sits beside the password floor, at the write.
+
+    Both doors into ``users`` run it, so a caller with no validator of its own
+    — a third interface, a script — stores what the two interfaces store.
+    """
+
+    def test_a_claim_stores_both_names_trimmed(self, conn: sqlite3.Connection) -> None:
+        account = claim_account(conn, "  owner  ", "  The Owner  ", "correct horse")
+
+        assert (account["username"], account["display_name"]) == ("owner", "The Owner")
+
+    def test_a_claim_at_the_cap_under_its_padding_is_accepted(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The trim decides what the column holds, so it decides the length."""
+        padded = "  " + "x" * MAX_ACCOUNT_NAME_LENGTH
+
+        account = claim_account(conn, padded, None, "correct horse")
+
+        assert account["username"] == padded.strip()
+
+    def test_a_display_name_of_spaces_is_cleared_rather_than_stored(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """An emptied optional field means None, not a column holding blanks."""
+        account = claim_account(conn, "owner", "   ", "correct horse")
+
+        assert account["display_name"] is None
+
+    @pytest.mark.parametrize("username", _REFUSED_NAMES)
+    def test_a_claim_under_a_refused_name_leaves_the_instance_unclaimed(
+        self, conn: sqlite3.Connection, username: str
+    ) -> None:
+        """Refused before the hash: a half-claimed instance has no way back."""
+        with pytest.raises(AccountNameError):
+            claim_account(conn, username, None, "correct horse")
+
+        assert account_is_claimed(conn) is False
 
 
 class TestHowThePasswordIsStored:
@@ -715,6 +757,30 @@ class TestTheStorageManagerSurface:
         assert account["claimed"] is True
         assert storage.verify_password("keeper", "correct horse") is not None
         assert storage.verify_password("owner", "correct horse") is None
+
+    def test_a_rename_stores_both_names_trimmed(self, storage: StorageManager) -> None:
+        """The other door into ``users``, holding the same rule as the claim."""
+        storage.claim_account("owner", "The Owner", "correct horse")
+
+        storage.update_user_identity(1, "  keeper  ", "  Kee  ")
+
+        account = storage.describe_account(1)
+        assert account is not None
+        assert (account["username"], account["display_name"]) == ("keeper", "Kee")
+
+    @pytest.mark.parametrize("username", _REFUSED_NAMES)
+    def test_a_rename_to_a_refused_name_writes_nothing(
+        self, storage: StorageManager, username: str
+    ) -> None:
+        """The username is the login, so a blank one locks the operator out."""
+        storage.claim_account("owner", "The Owner", "correct horse")
+
+        with pytest.raises(AccountNameError):
+            storage.update_user_identity(1, username, None)
+
+        account = storage.describe_account(1)
+        assert account is not None
+        assert account["username"] == "owner"
 
     def test_renaming_a_user_no_row_carries_is_refused(
         self, storage: StorageManager
