@@ -1,6 +1,83 @@
 # CHANGELOG
 
 
+## v0.32.0 (2026-08-13)
+
+### Bug Fixes
+
+- **frontend**: Bind the dev server to IPv4 loopback
+  ([`0c5da73`](https://github.com/therealahall/recommendinator/commit/0c5da73e17e8c84e60565d09f25f7d4547be507c))
+
+### Build System
+
+- Declare httpx, which starlette's TestClient pulls into ten tests
+  ([`3767373`](https://github.com/therealahall/recommendinator/commit/376737306ffd2f00784c0a471a6a27a7f154c8e1))
+
+- Declare packaging, which the suite imports
+  ([`e851f5d`](https://github.com/therealahall/recommendinator/commit/e851f5d3e04368d3cd77aabc143a88a9a1e9c3f5))
+
+- Pin the toolchain to Python 3.11 and refresh two dependency floors
+  ([`668edcd`](https://github.com/therealahall/recommendinator/commit/668edcd91d5323ee52a5bd4643194ce93c7617dc))
+
+### Chores
+
+- **review**: Gate parity on everything but docs, tests and tooling
+  ([`aac091d`](https://github.com/therealahall/recommendinator/commit/aac091d235d15bebbd29a219e6839058dd47762a))
+
+### Documentation
+
+- Drop the user-count claim from the scale note
+  ([`6b6e678`](https://github.com/therealahall/recommendinator/commit/6b6e67843241ba77b7751af69487f784bc679099))
+
+- Point the CLI structure and anti-churn rule at the new package
+  ([`6618796`](https://github.com/therealahall/recommendinator/commit/66187964eb310ecde0e518bab102ed8d35c2f15d))
+
+- Say where CLI diagnostics go, and why the transports stay quiet
+  ([`4d3ab62`](https://github.com/therealahall/recommendinator/commit/4d3ab620ffd4c5c0577f526fb19f8677439d7c46))
+
+- State the project's scale so agents calibrate severity to it
+  ([`85bf1bf`](https://github.com/therealahall/recommendinator/commit/85bf1bf579bd22781f01a760dc0f0d89ffb923bb))
+
+- Stop advertising a Python version the package refuses
+  ([`c1a1b43`](https://github.com/therealahall/recommendinator/commit/c1a1b43eea824f1e90fbf12b74769857b0910147))
+
+- **agents**: Make test-review weigh a test's upkeep against what it proves
+  ([`a6483da`](https://github.com/therealahall/recommendinator/commit/a6483daf3f98a996d21460a28a937c889d1190d5))
+
+### Features
+
+- **cli**: Give the CLI the logging it already told users to read
+  ([`8e332da`](https://github.com/therealahall/recommendinator/commit/8e332daf93a05e6e64c6e8632aaf04a42268c8e4))
+
+### Refactoring
+
+- **architecture**: Move the shared services out of the interface packages
+  ([`30dfe35`](https://github.com/therealahall/recommendinator/commit/30dfe355b9fb3ff8843ac41dbd7323ea01cb8bbc))
+
+- **cli**: Split commands.py into one module per command group
+  ([`8c4e7f3`](https://github.com/therealahall/recommendinator/commit/8c4e7f3f4393bcd2e77e05c37d9843efb549fb43))
+
+- **export**: Give the CSV column tables and formula guard a neutral home
+  ([`d4b0be3`](https://github.com/therealahall/recommendinator/commit/d4b0be3f24780899fa70ce4417d66b1c48b9c007))
+
+### Testing
+
+- Guard the interface boundary and the parity gate's own scope
+  ([`01f1234`](https://github.com/therealahall/recommendinator/commit/01f12347a38174be796ce0359979940ed77ce6ba))
+
+- Hold every dependency floor to what the lock resolves
+  ([`6eab266`](https://github.com/therealahall/recommendinator/commit/6eab266be63fa710d35baaeb746ad2b237fc6b34))
+
+- Hold the toolchain versions together wherever they are written
+  ([`55718a3`](https://github.com/therealahall/recommendinator/commit/55718a3dc1d33aee32be4229dde305dc6a6c2a1c))
+
+- Move the logging tests to the tree that owns the code
+  ([`670e5ab`](https://github.com/therealahall/recommendinator/commit/670e5ab288e60029e0bc8acccc1f38fb8f8a5d39))
+
+- Widen the parity-gate guard past the two interface trees
+  ([`fd584cf`](https://github.com/therealahall/recommendinator/commit/fd584cfec5398227eab5410f009cc37a7968f814))
+
+
 ## v0.31.0 (2026-08-12)
 
 ### Bug Fixes
