@@ -40,6 +40,30 @@ export interface UserResponse {
   display_name: string | null
 }
 
+/** First-run account creation. Sent once, before any account exists. */
+export interface SetupRequest {
+  username: string
+  display_name: string
+  password: string
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface UserUpdateRequest {
+  username: string
+  display_name: string
+}
+
+/** The current password travels with the new one: the session alone must not be
+ *  enough to change it, or a borrowed unlocked phone is a permanent takeover. */
+export interface PasswordChangeRequest {
+  current_password: string
+  new_password: string
+}
+
 // --- Status ---
 
 export interface FeaturesStatus {

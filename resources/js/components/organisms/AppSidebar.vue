@@ -1,6 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import type { UserResponse } from '@/types/api'
+
+const props = defineProps<{
+  /** Absent until the session is resolved; the footer waits rather than
+   *  rendering a nameless row. */
+  user?: UserResponse | null
+}>()
 
 const router = useRouter()
 const route = useRoute()
@@ -10,6 +18,12 @@ const emit = defineEmits<{
   navigate: []
 }>()
 
+// Display name is optional, so the username is what is left to identify the
+// account by. There is no switcher: a second person signs in as themselves.
+const userLabel = computed(() =>
+  props.user ? props.user.display_name || props.user.username : '',
+)
+
 function navigate(name: string) {
   router.push({ name })
   emit('navigate')
@@ -17,11 +31,6 @@ function navigate(name: string) {
 
 function isActive(name: string): boolean {
   return route.name === name
-}
-
-function onUserChange(event: Event) {
-  const select = event.target as HTMLSelectElement
-  app.setUser(parseInt(select.value, 10))
 }
 </script>
 
@@ -82,13 +91,11 @@ function onUserChange(event: Event) {
         Settings
       </button>
     </nav>
-    <div class="sidebar-footer">
-      <label for="userSelect">User</label>
-      <select id="userSelect" :value="app.currentUserId" @change="onUserChange">
-        <option v-for="user in app.users" :key="user.id" :value="user.id">
-          {{ user.display_name || user.username }}
-        </option>
-      </select>
+    <div v-if="userLabel" class="sidebar-footer">
+      <p class="sidebar-user" data-testid="sidebar-user">
+        <span class="sidebar-user-label">Signed in as</span>
+        <span class="sidebar-user-name">{{ userLabel }}</span>
+      </p>
     </div>
   </aside>
 </template>

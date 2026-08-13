@@ -123,25 +123,85 @@ describe('AppSidebar', () => {
     expect(wrapper.find('.version-label').text()).toBe('v1.0.0')
   })
 
-  it('renders user select with users', async () => {
+  it('names the signed-in user by their display name', async () => {
     const router = createTestRouter()
     await router.push('/recommendations')
     await router.isReady()
 
-    const app = useAppStore()
-    app.users = [
-      { id: 1, username: 'alice', display_name: 'Alice' },
-      { id: 2, username: 'bob', display_name: null },
-    ]
-
     const wrapper = mount(AppSidebar, {
+      props: { user: { id: 1, username: 'alice', display_name: 'Alice' } },
       global: { plugins: [router] },
     })
 
-    const options = wrapper.findAll('option')
-    expect(options.length).toBe(2)
-    expect(options[0].text()).toBe('Alice')
-    expect(options[1].text()).toBe('bob')
+    expect(wrapper.find('[data-testid="sidebar-user"]').text()).toContain('Alice')
+  })
+
+  it('falls back to the username when there is no display name', async () => {
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      props: { user: { id: 2, username: 'bob', display_name: null } },
+      global: { plugins: [router] },
+    })
+
+    expect(wrapper.find('.sidebar-user-name').text()).toBe('bob')
+  })
+
+  it('falls back to the username when the display name is the empty string', async () => {
+    // SetupForm sends display_name: '' for an omitted one, so '' and not null
+    // is what the first account is created with.
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      props: { user: { id: 3, username: 'carol', display_name: '' } },
+      global: { plugins: [router] },
+    })
+
+    expect(wrapper.find('.sidebar-user-name').text()).toBe('carol')
+  })
+
+  it('shows a name the alphabet does not fit in', async () => {
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      props: { user: { id: 4, username: 'aaron', display_name: 'Áaron 시 🎧' } },
+      global: { plugins: [router] },
+    })
+
+    expect(wrapper.find('.sidebar-user-name').text()).toBe('Áaron 시 🎧')
+  })
+
+  it('offers no way to switch users', async () => {
+    // A second person signs in with their own credentials; there is no account
+    // this one can step into from here, so the footer is a label, not a control.
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      props: { user: { id: 1, username: 'alice', display_name: 'Alice' } },
+      global: { plugins: [router] },
+    })
+
+    expect(wrapper.find('.sidebar-footer select').exists()).toBe(false)
+    expect(wrapper.find('.sidebar-footer button').exists()).toBe(false)
+    expect(wrapper.findAll('option')).toHaveLength(0)
+  })
+
+  it('waits rather than rendering a nameless row before the session resolves', async () => {
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, { global: { plugins: [router] } })
+
+    expect(wrapper.find('.sidebar-footer').exists()).toBe(false)
   })
 
   it('emits navigate on nav click', async () => {

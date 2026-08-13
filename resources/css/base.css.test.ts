@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
+import { contrastRatio, themeTokens, tokenContrast } from '@/testing/contrast'
 
 // base.css is a static asset: importing it through Vite yields an empty stub
 // under Vitest, so read the file off disk to assert on its real contents.
@@ -65,6 +66,105 @@ describe('error text token', () => {
 
     expect(match[1]).toContain('var(--color-error)')
     expect(match[1]).toContain('var(--text-primary)')
+  })
+})
+
+describe('account & sign-in surface contrast', () => {
+  // Measured, not quoted: --accent and --accent-light both sit under 4.5:1 as
+  // text on a card, which is invisible until someone computes it.
+  const THEMES: Record<string, Record<string, string>> = {
+    Nord: themeTokens('resources/css/base.css'),
+    Snowstorm: themeTokens(
+      'resources/css/base.css',
+      'src/web/static/themes/snowstorm/colors.css',
+    ),
+  }
+
+  const TEXT_PAIRS: [string, string, string][] = [
+    ['field labels', 'var(--text-primary)', 'var(--bg-card)'],
+    ['field hints and status text', 'var(--text-secondary)', 'var(--bg-card)'],
+    ['a refusal message', 'var(--color-error-text)', 'var(--bg-card)'],
+    ['the sidebar user name', 'var(--text-primary)', 'var(--bg-sidebar)'],
+    ['the sidebar "signed in as" label', 'var(--text-secondary)', 'var(--bg-sidebar)'],
+  ]
+
+  const CONTROL_PAIRS: [string, string, string][] = [
+    ['the resting field border', 'var(--text-muted)', 'var(--bg-input)'],
+    ['the focus ring', 'var(--accent)', 'var(--bg-input)'],
+  ]
+
+  it('measures every shipped theme, with the theme layered over the base', () => {
+    expect(Object.keys(THEMES)).toEqual(['Nord', 'Snowstorm'])
+    expect(THEMES.Nord['--bg-card']).toBe('#3b4252')
+    expect(THEMES.Snowstorm['--bg-card']).toBe('#ffffff')
+    // Snowstorm redeclares no spacing, so the base scale has to show through.
+    expect(THEMES.Snowstorm['--space-4']).toBe('16px')
+  })
+
+  it('agrees with the reference ratio for black on white', () => {
+    expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 1)
+  })
+
+  it('measures every theme the app ships, not a list that stopped being one', () => {
+    // A hand-written theme list passes forever while a third theme goes
+    // unmeasured, so the population is read off disk and compared.
+    const shipped = readdirSync(`${process.cwd()}/src/web/static/themes`, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+
+    expect(shipped.length).toBeGreaterThan(0)
+    expect(
+      Object.keys(THEMES)
+        .map((name) => name.toLowerCase())
+        .sort(),
+    ).toEqual(shipped)
+  })
+
+  for (const [theme, tokens] of Object.entries(THEMES)) {
+    describe(theme, () => {
+      it.each(TEXT_PAIRS)('clears 4.5:1 for %s', (_what, foreground, background) => {
+        expect(tokenContrast(tokens, foreground, background)).toBeGreaterThanOrEqual(4.5)
+      })
+
+      it.each(CONTROL_PAIRS)('clears 3:1 for %s', (_what, foreground, background) => {
+        expect(tokenContrast(tokens, foreground, background)).toBeGreaterThanOrEqual(3)
+      })
+
+      it('makes keyboard focus visible against the state it replaces', () => {
+        // The resting edge above looks the same focused or not, so what a
+        // sighted keyboard user has to see is the difference: the border swap
+        // and the ring that `outline: none` leaves in place of the global one.
+        const borderSwap = tokenContrast(tokens, 'var(--accent)', 'var(--text-muted)')
+        const ringOnCard = tokenContrast(
+          tokens,
+          'color-mix(in srgb, var(--accent) 30%, var(--bg-card))',
+          'var(--bg-card)',
+        )
+
+        expect(
+          Math.max(borderSwap, ringOnCard),
+          `border swap ${borderSwap.toFixed(2)}:1, ring ${ringOnCard.toFixed(2)}:1`,
+        ).toBeGreaterThanOrEqual(3)
+      })
+    })
+  }
+})
+
+describe('one-handed reach on a phone', () => {
+  it('gives the sign-in submit a thumb-sized target', () => {
+    const match = readBase().match(/\.auth-submit\s*\{([^}]*)\}/)
+    if (!match) throw new Error('.auth-submit rule not found in base.css')
+
+    expect(match[1]).toMatch(/min-height:\s*44px/)
+  })
+
+  it('sizes the standalone screens to the visible viewport, not the tallest one', () => {
+    // 100vh alone strands the submit button under a collapsing mobile toolbar.
+    const match = readBase().match(/\.auth-screen\s*\{([^}]*)\}/)
+    if (!match) throw new Error('.auth-screen rule not found in base.css')
+
+    expect(match[1]).toMatch(/min-height:\s*100dvh/)
   })
 })
 

@@ -67,7 +67,7 @@ watch(
     />
 
     <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
-      <AppSidebar @navigate="closeSidebar" />
+      <AppSidebar :user="app.currentUser" @navigate="closeSidebar" />
       <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
         <UpdateBanner />
         <StatusBar />

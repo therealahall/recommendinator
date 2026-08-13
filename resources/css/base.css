@@ -328,27 +328,27 @@ input[type="checkbox"] {
   border-top: 1px solid var(--border-subtle);
 }
 
-.sidebar-footer label {
-  display: block;
+.sidebar-user {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-user-label {
   font-size: var(--text-xs);
-  color: var(--text-muted);
-  margin-bottom: var(--space-1);
+  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 500;
 }
 
-.sidebar-footer select {
-  width: 100%;
-  padding: var(--space-2);
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
+.sidebar-user-name {
   font-size: var(--text-sm);
-  font-family: inherit;
-  cursor: pointer;
-  appearance: auto;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 /* Update Banner */
@@ -534,6 +534,113 @@ input[type="checkbox"] {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+/* Account & sign-in forms — shared by the first-run setup screen, the login
+   screen and the Settings account section. */
+.auth-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  /* dvh second so it wins where supported: a collapsing mobile toolbar
+     otherwise pushes the submit button under the fold on the one screen a
+     locked-out user has no other way past. */
+  min-height: 100dvh;
+  padding: var(--space-4);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 26rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* The accent rule and the eyebrow carry the identity here; the accent tokens
+   themselves are below 4.5:1 as text on a card in both themes, so every word
+   stays on a text token. */
+.auth-head {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.auth-eyebrow {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+}
+
+.auth-title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.auth-lede {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.auth-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Zero-height when it has nothing to say, rather than removed: display:none
+   takes it out of the accessibility tree, which is the bug the persistent
+   mount exists to avoid. */
+.auth-status {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.auth-status.failed {
+  color: var(--color-error-text);
+}
+
+.auth-submit {
+  min-height: 44px;
+}
+
+.account-form-heading {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+}
+
+.account-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* The status text takes the leftover width so a long refusal wraps beside the
+   button instead of shoving it off the row on a narrow screen. */
+.account-form-actions .auth-status {
+  flex: 1 1 12rem;
+}
+
+/* Full width only on the standalone screens: in Settings the button sits in a
+   row of section controls and a full-bleed one would read as a page action. */
+.auth-screen .auth-submit {
+  width: 100%;
 }
 
 /* Buttons */
