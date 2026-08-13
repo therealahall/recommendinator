@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import SetupForm from './SetupForm.vue'
-import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/constants/auth'
+import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH, USERNAME_BLANK } from '@/constants/auth'
 
 /** The hint ids sit in aria-describedby too, so ask what the field points at
  *  rather than pinning the whole list. */
@@ -146,6 +146,47 @@ describe('SetupForm', () => {
     expect(wrapper.find('#setup-password').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#setup-confirmation').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#setup-username').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('says why a username of nothing but spaces created no account', async () => {
+    // Regression: `required` reports only the empty string as missing, so three
+    // spaces cleared the browser's own check and the press did nothing at all —
+    // on the one screen a first-run user cannot skip.
+    const wrapper = mount(SetupForm)
+
+    await fillIn(wrapper, { username: '   ', password: LONG, confirmation: LONG })
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#setup-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#setup-username').attributes('aria-invalid')).toBe('true')
+    expect(describedBy(wrapper, '#setup-username')).toContain('setup-status')
+    // The complaint is about the name, so the passwords are neither marked nor
+    // pointed at it.
+    expect(wrapper.find('#setup-password').attributes('aria-invalid')).toBeUndefined()
+    expect(describedBy(wrapper, '#setup-password')).not.toContain('setup-status')
+    const button = wrapper.find('button[type="submit"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await fillIn(wrapper, { username: 'aaron' })
+
+    expect(wrapper.find('#setup-status').text()).toBe('')
+  })
+
+  it('counts whitespace nobody can see as blank, and says so in red', async () => {
+    // Built rather than typed: a non-breaking space pasted out of a document is
+    // the case, and in source it is a character an editor may quietly normalise.
+    const invisible = `${String.fromCharCode(0xa0)}\t`
+    const wrapper = mount(SetupForm)
+
+    await fillIn(wrapper, { username: invisible, password: LONG, confirmation: LONG })
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#setup-status').text()).toBe(USERNAME_BLANK)
+    expect(wrapper.find('#setup-status').classes()).toContain('failed')
+    expect(describedBy(wrapper, '#setup-display-name')).not.toContain('setup-status')
   })
 
   it('points only the password fields at a mismatch, not the whole form', async () => {

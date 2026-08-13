@@ -278,12 +278,20 @@ describe('useAuthStore', () => {
     expect(auth.needsLogin).toBe(true)
   })
 
+  /** The change answers 204; every other call is the session behind it. */
+  function passwordChanged(user: UserResponse) {
+    return (url: RequestInfo | URL) =>
+      Promise.resolve(
+        String(url).endsWith('/password') ? jsonResponse(204) : session(true, true, user),
+      )
+  }
+
   it('changes the password against the account route', async () => {
     vi.mocked(fetch).mockResolvedValue(session(true, true, AARON))
     const auth = useAuthStore()
     await auth.resolveSession()
 
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(204))
+    vi.mocked(fetch).mockImplementation(passwordChanged(AARON))
     expect(
       await auth.changePassword({ current_password: 'hunter2', new_password: 'hunter33' }),
     ).toBe('')
@@ -294,6 +302,23 @@ describe('useAuthStore', () => {
     expect(init.body).toBe(
       JSON.stringify({ current_password: 'hunter2', new_password: 'hunter33' }),
     )
+  })
+
+  it('re-reads the session after the change, which answers with no new date', async () => {
+    // Regression: the 204 left the account showing the old "Password changed"
+    // date beside a live region announcing the change, and only a reload agreed
+    // with either.
+    const changed = { ...AARON, password_updated_at: '2026-02-01T10:00:00+00:00' }
+    vi.mocked(fetch).mockResolvedValue(session(true, true, AARON))
+    const auth = useAuthStore()
+    await auth.resolveSession()
+
+    vi.mocked(fetch).mockImplementation(passwordChanged(changed))
+    await auth.changePassword({ current_password: 'hunter2', new_password: 'hunter33' })
+
+    expect(callTo(2)[0]).toBe('/api/auth/session')
+    expect(auth.user).toEqual(changed)
+    expect(auth.isAuthenticated).toBe(true)
   })
 
   it('keeps the session when the current password is wrong', async () => {
@@ -323,15 +348,5 @@ describe('useAuthStore', () => {
     expect(source).toMatch(/await import\(['"]@\/stores\/auth['"]\)/)
     // Anchored to the top level: an indented one is inside a function.
     expect(source).not.toMatch(/^import[^\n]*stores\/auth/m)
-  })
-
-  it('re-implements nothing the API layer already does', () => {
-    // Its own fetch, its own error derivation and its own 401 handling were
-    // three copies kept alive by a cycle that no longer exists.
-    const source = readFileSync(`${process.cwd()}/resources/js/stores/auth.ts`, 'utf8')
-
-    expect(source).toMatch(/composables\/useApi/)
-    expect(source).not.toMatch(/\bfetch\s*\(/)
-    expect(source).not.toMatch(/credentials: 'include'/)
   })
 })

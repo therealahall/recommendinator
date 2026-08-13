@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
+import { USERNAME_BLANK } from '@/constants/auth'
 import type { LoginRequest } from '@/types/api'
 
 const props = withDefaults(
@@ -24,13 +25,27 @@ const password = ref('')
 
 const complete = computed(() => username.value.trim() !== '' && password.value !== '')
 
+/** A complaint about the username this screen can make on its own. */
+const complaint = ref('')
+
+// Typing in either field is the retry, so drop the complaint on the keystroke.
+watch([username, password], () => {
+  complaint.value = ''
+})
+
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
 const announcement = computed(
-  () => props.error || (props.pending ? 'Signing in…' : props.notice),
+  () => complaint.value || props.error || (props.pending ? 'Signing in…' : props.notice),
 )
-const failed = computed(() => Boolean(props.error))
-const describedBy = computed(() => (announcement.value ? 'login-status' : undefined))
+const failed = computed(() => Boolean(complaint.value || props.error))
+const usernameDescribedBy = computed(() => (announcement.value ? 'login-status' : undefined))
+// A refusal names neither field and so marks both; the complaint is about the
+// username alone, and a password nobody has faulted stays unmarked.
+const passwordDescribedBy = computed(() =>
+  announcement.value && !complaint.value ? 'login-status' : undefined,
+)
+const passwordFailed = computed(() => Boolean(props.error))
 
 // The username survives a refusal and the password does not: retyping a name on
 // a phone keyboard is the friction this screen exists to remove, and a masked
@@ -43,7 +58,12 @@ watch(
 )
 
 function submit(): void {
-  if (props.pending || !complete.value) return
+  if (props.pending) return
+  if (username.value.trim() === '') {
+    complaint.value = USERNAME_BLANK
+    return
+  }
+  if (!complete.value) return
   emit('submit', { username: username.value.trim(), password: password.value })
 }
 </script>
@@ -62,7 +82,7 @@ function submit(): void {
           v-model="username"
           label="Username"
           autocomplete="username"
-          :described-by="describedBy"
+          :described-by="usernameDescribedBy"
           :invalid="failed"
           :required="true"
           :autofocus="true"
@@ -73,8 +93,8 @@ function submit(): void {
           label="Password"
           type="password"
           autocomplete="current-password"
-          :described-by="describedBy"
-          :invalid="failed"
+          :described-by="passwordDescribedBy"
+          :invalid="passwordFailed"
           :required="true"
         />
       </div>

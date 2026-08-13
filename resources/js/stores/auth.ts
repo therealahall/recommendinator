@@ -143,6 +143,9 @@ export const useAuthStore = defineStore('auth', () => {
       return messageFor(error, PASSWORD_REFUSED)
     }
 
+    // The 204 carries no body, so without this the account section goes on
+    // showing the date of the password this call just replaced.
+    await resolveSession()
     return ''
   }
 

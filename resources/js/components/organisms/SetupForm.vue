@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
-import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordHint } from '@/constants/auth'
+import {
+  NAME_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  USERNAME_BLANK,
+  passwordHint,
+} from '@/constants/auth'
 import { passwordComplaint } from '@/utils/password'
 import type { SetupRequest } from '@/types/api'
 
@@ -29,8 +34,14 @@ const complete = computed(
   () => username.value.trim() !== '' && password.value !== '' && confirmation.value !== '',
 )
 
-/** A complaint about the password pair this screen can make on its own. */
+/** A complaint about the username or the password pair this screen can make on
+ *  its own. */
 const complaint = ref('')
+
+/** Which fields the local complaint is about, so only those are marked and
+ *  pointed at the region. A server refusal names none, and reaches all. */
+const blankName = computed(() => complaint.value === USERNAME_BLANK)
+const badPassword = computed(() => Boolean(complaint.value) && !blankName.value)
 
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
@@ -39,21 +50,31 @@ const announcement = computed(
 )
 const failed = computed(() => Boolean(complaint.value || props.error))
 
-// A complaint concerns the two password fields and nothing else, so the username
-// and display name are only pointed at the region for a server-side message.
-const passwordDescribedBy = computed(() => (announcement.value ? 'setup-status' : undefined))
-const generalDescribedBy = computed(() =>
+const usernameDescribedBy = computed(() =>
+  announcement.value && !badPassword.value ? 'setup-status' : undefined,
+)
+const passwordDescribedBy = computed(() =>
+  announcement.value && !blankName.value ? 'setup-status' : undefined,
+)
+// The display name is the one field no complaint here can be about, so it is
+// pointed at the region only for a server-side message.
+const displayNameDescribedBy = computed(() =>
   announcement.value && !complaint.value ? 'setup-status' : undefined,
 )
 
-// Editing either half is the retry, so drop the complaint on the keystroke
-// rather than making the user submit again to find out it is gone.
-watch([password, confirmation], () => {
+// Editing any field a complaint could be about is the retry, so drop it on the
+// keystroke rather than making the user submit again to find out it is gone.
+watch([username, password, confirmation], () => {
   complaint.value = ''
 })
 
 function submit(): void {
-  if (props.pending || !complete.value) return
+  if (props.pending) return
+  if (username.value.trim() === '') {
+    complaint.value = USERNAME_BLANK
+    return
+  }
+  if (!complete.value) return
   complaint.value = passwordComplaint(password.value, confirmation.value, props.minPasswordLength)
   if (complaint.value) return
   emit('submit', {
@@ -83,7 +104,8 @@ function submit(): void {
           label="Username"
           autocomplete="username"
           hint="What you type to sign in."
-          :described-by="generalDescribedBy"
+          :described-by="usernameDescribedBy"
+          :invalid="blankName"
           :required="true"
           :max-length="NAME_MAX_LENGTH"
           :autofocus="true"
@@ -94,7 +116,7 @@ function submit(): void {
           label="Display name (optional)"
           autocomplete="nickname"
           hint="What the app calls you. Left blank, it uses your username."
-          :described-by="generalDescribedBy"
+          :described-by="displayNameDescribedBy"
           :max-length="NAME_MAX_LENGTH"
         />
         <AuthField
@@ -105,7 +127,7 @@ function submit(): void {
           autocomplete="new-password"
           :hint="passwordHint(minPasswordLength)"
           :described-by="passwordDescribedBy"
-          :invalid="Boolean(complaint)"
+          :invalid="badPassword"
           :required="true"
         />
         <AuthField
@@ -115,7 +137,7 @@ function submit(): void {
           type="password"
           autocomplete="new-password"
           :described-by="passwordDescribedBy"
-          :invalid="Boolean(complaint)"
+          :invalid="badPassword"
           :required="true"
         />
       </div>

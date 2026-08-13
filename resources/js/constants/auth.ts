@@ -11,6 +11,11 @@ export const PASSWORD_MIN_LENGTH = 12
  *  refuses the save with a validation shape that renders as no sentence. */
 export const NAME_MAX_LENGTH = 100
 
+/** The refusal `required` cannot make: constraint validation reports only the
+ *  empty string as missing, so a field of spaces passes it and every form that
+ *  takes a username has to say this itself. */
+export const USERNAME_BLANK = 'Enter a username. Spaces on their own are not one.'
+
 export function passwordHint(minLength: number): string {
   return `At least ${minLength} characters.`
 }

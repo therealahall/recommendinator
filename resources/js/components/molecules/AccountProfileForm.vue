@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
-import { NAME_MAX_LENGTH } from '@/constants/auth'
+import { NAME_MAX_LENGTH, USERNAME_BLANK } from '@/constants/auth'
 import type { UserResponse, UserUpdateRequest } from '@/types/api'
 
 /** The one lock no browser narrates: the fields are filled and valid, so
@@ -60,20 +60,27 @@ const announcement = computed(() => {
   if (props.pending) return 'Saving…'
   return props.saved ? 'Saved.' : ''
 })
-// The complaint is not a refusal of anything typed: nothing was. Only a server
-// error paints the region red and marks the field it could not save.
-const failed = computed(() => Boolean(props.error))
+// A blank name is something typed being wrong, so it marks the field it is
+// about. Nothing-to-save refuses nothing typed, and marks nothing.
+const blankName = computed(() => complaint.value === USERNAME_BLANK)
+const failed = computed(() => blankName.value || Boolean(props.error))
 const describedBy = computed(() => (announcement.value ? 'account-profile-status' : undefined))
+// The blank-name complaint is about the username; every other message here —
+// a server refusal, a save, nothing to save — concerns both fields.
+const displayNameDescribedBy = computed(() =>
+  announcement.value && !blankName.value ? 'account-profile-status' : undefined,
+)
 
 function submit(): void {
   if (props.pending) return
+  if (username.value.trim() === '') {
+    complaint.value = USERNAME_BLANK
+    return
+  }
   if (!changed.value) {
     complaint.value = NOTHING_TO_SAVE
     return
   }
-  // An empty username reaches here only under a test harness: `required` stops
-  // the browser's own submit, and the bubble it shows is the narration.
-  if (!submittable.value) return
   emit('submit', {
     username: username.value.trim(),
     display_name: displayName.value.trim(),
@@ -103,7 +110,7 @@ function submit(): void {
         label="Display name (optional)"
         autocomplete="nickname"
         hint="What the app calls you. Left blank, it uses your username."
-        :described-by="describedBy"
+        :described-by="displayNameDescribedBy"
         :max-length="NAME_MAX_LENGTH"
       />
     </div>
