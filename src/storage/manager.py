@@ -21,6 +21,17 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.accounts import (
+    account_is_claimed,
+    claim_account,
+    create_session,
+    lookup_session,
+    purge_expired_sessions,
+    revoke_all_sessions,
+    revoke_session,
+    set_password,
+    verify_password,
+)
 from src.storage.global_secrets import GLOBAL_SECRET_USER_ID, secret_ref
 from src.storage.schema import (
     ConversationMessageDict,
@@ -841,6 +852,59 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             return get_all_users(conn)
+
+    # Account and session methods
+
+    def account_is_claimed(self) -> bool:
+        """Report whether anyone has set a password on this instance."""
+        with self.sqlite_db.connection() as conn:
+            return account_is_claimed(conn)
+
+    def claim_account(
+        self, username: str, display_name: str | None, plaintext_password: str
+    ) -> UserDict:
+        """Claim the instance: name the account and give it a password.
+
+        Raises:
+            AccountAlreadyClaimedError: The account already has a password.
+        """
+        with self.sqlite_db.connection() as conn:
+            return claim_account(conn, username, display_name, plaintext_password)
+
+    def set_password(self, user_id: int, plaintext: str) -> None:
+        """Replace a user's password."""
+        with self.sqlite_db.connection() as conn:
+            set_password(conn, user_id, plaintext)
+
+    def verify_password(self, username: str, plaintext: str) -> UserDict | None:
+        """Return the user *plaintext* logs *username* in as, or None."""
+        with self.sqlite_db.connection() as conn:
+            return verify_password(conn, username, plaintext)
+
+    def create_session(self, user_id: int) -> str:
+        """Open a session and return its token, the only copy in plaintext."""
+        with self.sqlite_db.connection() as conn:
+            return create_session(conn, user_id)
+
+    def lookup_session(self, token: str) -> UserDict | None:
+        """Return the user *token* is signed in as, extending the session."""
+        with self.sqlite_db.connection() as conn:
+            return lookup_session(conn, token)
+
+    def revoke_session(self, token: str) -> None:
+        """End one session."""
+        with self.sqlite_db.connection() as conn:
+            revoke_session(conn, token)
+
+    def revoke_all_sessions(self, user_id: int) -> None:
+        """End every session a user holds, on every device."""
+        with self.sqlite_db.connection() as conn:
+            revoke_all_sessions(conn, user_id)
+
+    def purge_expired_sessions(self) -> int:
+        """Delete the lapsed sessions, returning how many were deleted."""
+        with self.sqlite_db.connection() as conn:
+            return purge_expired_sessions(conn)
 
     def get_user_preference_config(self, user_id: int) -> UserPreferenceConfig:
         """Load user preference config from DB.
