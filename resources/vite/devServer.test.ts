@@ -41,6 +41,11 @@ describe('dev server defaults', () => {
     expect(proxyFor(options, '/static/themes').target).toBe(DEFAULT_TARGET)
   })
 
+  it('binds IPv4 loopback, which is the address Caddy proxies to', () => {
+    // Vite's default `localhost` picks ::1 here, and the proxy 502s.
+    expect(devServerOptions({}).host).toBe('127.0.0.1')
+  })
+
   it('leaves HMR entirely up to Vite', () => {
     // Vite reads every hmr field with `?.` + `||`, so undefined fields behave
     // exactly like no `hmr` key at all — the client keeps deriving its port
