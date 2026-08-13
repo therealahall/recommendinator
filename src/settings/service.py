@@ -252,11 +252,10 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
 
     Starlette matches with ``origin in self.allow_origins`` — an exact string
     comparison — so a malformed entry can never match any request and is a
-    silently inert allowance the operator believes is working. ``"null"`` is the
-    dangerous one: a sandboxed iframe and a ``data:``/``file:`` document both
-    send ``Origin: null``, and because ``"null"`` is not ``"*"`` the app keeps
-    ``allow_credentials`` on, so allowing it lets any page the user visits read
-    and write the library on the strength of the browser's own credentials.
+    silently inert allowance the operator believes is working. ``"null"`` is
+    refused outright: a sandboxed iframe and a ``data:``/``file:`` document both
+    send ``Origin: null``, so it names no site and cannot be an allowlist entry
+    anyone intended.
 
     Items are normalised before checking, and the normalised list is what gets
     persisted: a pasted origin carrying a stray space, a tab, a Unicode label
@@ -266,8 +265,8 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
     """
     normalized = [normalize_origin(origin) for origin in origins]
     for origin in normalized:
-        # The documented allow-all escape hatch. create_app turns
-        # allow_credentials off whenever it is present, so it stays supported.
+        # The documented allow-all escape hatch. It reaches only the ungated
+        # surface: no origin list carries credentials — see create_app.
         if origin == "*":
             continue
         if not origin:

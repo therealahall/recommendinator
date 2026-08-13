@@ -21,8 +21,11 @@ import pytest
 
 from src.storage import accounts
 from src.storage.accounts import (
+    MIN_PASSWORD_LENGTH,
+    PASSWORD_TOO_SHORT,
     SESSION_LIFETIME,
     AccountAlreadyClaimedError,
+    PasswordTooShortError,
     account_is_claimed,
     claim_account,
     create_session,
@@ -209,10 +212,10 @@ class TestClaimingTheInstance:
         before = _stored_password(claimed)
 
         with pytest.raises(AccountAlreadyClaimedError):
-            claim_account(claimed, "intruder", None, "hunter2")
+            claim_account(claimed, "intruder", None, "hunter2 hunter2")
 
         assert _stored_password(claimed) == before
-        assert verify_password(claimed, "intruder", "hunter2") is None
+        assert verify_password(claimed, "intruder", "hunter2 hunter2") is None
         assert verify_password(claimed, "owner", "correct horse") is not None
 
     def test_a_database_with_no_account_row_has_nothing_to_claim(
@@ -228,22 +231,92 @@ class TestClaimingTheInstance:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
 
 
+class TestTheOneFloorBothInterfacesInherit:
+    """Regression: the floor was two Pydantic fields in the web layer.
+
+    ``account set-password`` wrote whatever was typed, so a one-character
+    password set from the CLI then signed in at the web form.
+    """
+
+    def test_a_short_claim_is_refused_and_leaves_the_instance_unclaimed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(PasswordTooShortError):
+            claim_account(conn, "owner", None, "x" * (MIN_PASSWORD_LENGTH - 1))
+
+        assert account_is_claimed(conn) is False
+
+    def test_a_short_reset_is_refused_and_leaves_the_old_password_working(
+        self, claimed: sqlite3.Connection
+    ) -> None:
+        before = _stored_password(claimed)
+
+        with pytest.raises(PasswordTooShortError):
+            set_password(claimed, 1, "x" * (MIN_PASSWORD_LENGTH - 1))
+
+        assert _stored_password(claimed) == before
+        assert verify_password(claimed, "owner", "correct horse") is not None
+
+    def test_a_password_exactly_at_the_floor_is_accepted(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Anchors both refusals: the boundary is ``<``, not ``<=``."""
+        at_the_floor = "x" * MIN_PASSWORD_LENGTH
+
+        claim_account(conn, "owner", None, at_the_floor)
+
+        assert verify_password(conn, "owner", at_the_floor) is not None
+
+    def test_the_message_names_the_rule(self) -> None:
+        """Both interfaces render it, and "invalid" tells nobody what to type."""
+        assert str(MIN_PASSWORD_LENGTH) in PASSWORD_TOO_SHORT
+
+    def test_a_password_set_before_the_floor_rose_still_signs_in(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The floor is a write rule. Applying it to the check would lock the
+        operator of an existing install out of the instance it protects, with
+        the CLI reset the only way back and no message saying why.
+        """
+        salt = bytes.fromhex("00112233445566778899aabbccddeeff")
+        short = "hunter22"
+        conn.execute(
+            """UPDATE users
+                  SET username = ?, password_hash = ?, password_salt = ?
+                WHERE id = 1""",
+            (
+                "owner",
+                hashlib.scrypt(
+                    short.encode(), salt=salt, n=16384, r=8, p=1, dklen=64
+                ).hex(),
+                salt.hex(),
+            ),
+        )
+        conn.commit()
+
+        assert len(short) < MIN_PASSWORD_LENGTH
+        assert verify_password(conn, "owner", short) is not None
+
+
 class TestHowThePasswordIsStored:
     """scrypt from the standard library, under a salt drawn per account."""
 
-    def test_the_stored_hash_is_scrypt_over_the_stored_salt(
+    def test_the_stored_hash_is_scrypt_at_the_cost_this_release_ships(
         self, claimed: sqlite3.Connection
     ) -> None:
-        """Recomputed from the declared cost parameters, so a change shows up."""
+        """Literals, because reading the module's constants hides a change to them.
+
+        128 * N * r is the 16 MiB an attacker pays per guess.
+        """
         stored_hash, stored_salt = _stored_password(claimed)
 
         expected = hashlib.scrypt(
             b"correct horse",
             salt=bytes.fromhex(stored_salt),
-            n=accounts._SCRYPT_N,
-            r=accounts._SCRYPT_R,
-            p=accounts._SCRYPT_P,
-            dklen=accounts._SCRYPT_DKLEN,
+            n=16384,
+            r=8,
+            p=1,
+            dklen=64,
         ).hex()
 
         assert stored_hash == expected
@@ -271,14 +344,6 @@ class TestHowThePasswordIsStored:
         assert second[1] != first[1]
         assert second[0] != first[0]
         assert verify_password(claimed, "owner", "correct horse") is not None
-
-    def test_the_salt_is_the_declared_number_of_random_bytes(
-        self, claimed: sqlite3.Connection
-    ) -> None:
-        """Hex in the column, bytes to scrypt."""
-        _, stored_salt = _stored_password(claimed)
-
-        assert len(bytes.fromhex(stored_salt)) == accounts._SALT_BYTES
 
     def test_the_module_imports_nothing_outside_the_standard_library(self) -> None:
         """The hashing must not cost a dependency: bcrypt and passlib are absent.

@@ -9,7 +9,12 @@ from typing import NoReturn
 import click
 
 from src.cli._shared import abort_with, emit_view, require_storage
-from src.storage.accounts import AccountRecord
+from src.storage.accounts import (
+    MAX_ACCOUNT_NAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    PASSWORD_TOO_SHORT,
+    AccountRecord,
+)
 from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -101,10 +106,15 @@ def account_set_password(
     password = click.prompt(
         "New password", hide_input=True, confirmation_prompt=True, err=True
     )
+    # Ahead of the write, which raises the same rule: the refusal below reads
+    # the operator's own words rather than "check the logs".
+    if len(password) < MIN_PASSWORD_LENGTH:
+        abort_with(PASSWORD_TOO_SHORT)
 
     try:
         storage.set_password(user_id, password)
         storage.revoke_all_sessions(user_id)
+        storage.purge_expired_sessions()
     except Exception as error:
         _abort_after_failure("set the password", error, verbose)
 
@@ -145,6 +155,11 @@ def account_set_name(
         abort_with("Pass --username, --display-name, or both.")
     if username is not None and not username.strip():
         abort_with("--username cannot be blank.")
+    for option, value in (("--username", username), ("--display-name", display_name)):
+        if value is not None and len(value.strip()) > MAX_ACCOUNT_NAME_LENGTH:
+            abort_with(
+                f"{option} cannot be longer than {MAX_ACCOUNT_NAME_LENGTH} characters."
+            )
 
     storage = require_storage(ctx)
     account_record = _account_or_abort(storage, user_id)

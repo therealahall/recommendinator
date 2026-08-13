@@ -29,6 +29,7 @@ from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation, RecommendationPayload
 from src.recommendations.scorers import SCORER_NAME_MAP
+from src.storage.accounts import MIN_PASSWORD_LENGTH
 from src.storage.manager import StorageManager
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import (
@@ -44,13 +45,20 @@ from tests.factories import authenticated_client, booted_web_app
 # parents[1] resolves /tests/test_interface_parity.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_SEARCH_BOUND = "src/utils/sorting.py"
+PYTHON_PASSWORD_BOUND = "src/storage/accounts.py"
 FRONTEND_CONSTANTS = "resources/js/constants/library.ts"
+FRONTEND_AUTH_CONSTANTS = "resources/js/constants/auth.ts"
 FRONTEND_PREFERENCES = "resources/js/stores/preferences.ts"
 FRONTEND_TYPES = "resources/js/types/api.ts"
 
 # `export const MAX_SEARCH_LENGTH = 200` — the only form that file uses.
 _TS_SEARCH_LENGTH = re.compile(
     r"^export const MAX_SEARCH_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
+)
+
+# `export const PASSWORD_MIN_LENGTH = 12` — the only form that file uses.
+_TS_PASSWORD_LENGTH = re.compile(
+    r"^export const PASSWORD_MIN_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
 )
 
 # The body of `export interface RecommendationResponse { ... }`. No field of it
@@ -133,6 +141,46 @@ class TestSearchLengthBoundMatchesTheFrontend:
             f" {PYTHON_SEARCH_BOUND}; the UI and the API disagree about which"
             f" search terms are accepted."
         )
+
+
+class TestPasswordLengthBoundMatchesTheFrontend:
+    """The auth forms must refuse exactly the passwords the API refuses.
+
+    They check it themselves because the API answers a short one with a 422
+    whose detail is a list rather than a sentence.
+    """
+
+    def test_typescript_constant_equals_the_python_one(self) -> None:
+        """The exported TypeScript literal is the Python bound, exactly."""
+        source = (_REPO_ROOT / FRONTEND_AUTH_CONSTANTS).read_text()
+        match = _TS_PASSWORD_LENGTH.search(source)
+
+        assert match is not None, (
+            f"{FRONTEND_AUTH_CONSTANTS} no longer exports PASSWORD_MIN_LENGTH"
+            f" as a plain integer literal, so it can no longer be checked"
+            f" against MIN_PASSWORD_LENGTH in {PYTHON_PASSWORD_BOUND}."
+        )
+        assert int(match.group("value")) == MIN_PASSWORD_LENGTH, (
+            f"The password minimum is {match.group('value')} in"
+            f" {FRONTEND_AUTH_CONSTANTS} and {MIN_PASSWORD_LENGTH} in"
+            f" {PYTHON_PASSWORD_BOUND}; the forms refuse a password the API"
+            f" accepts and `account set-password` still sets."
+        )
+
+    def test_the_hint_and_the_refusal_name_that_bound(self) -> None:
+        """Both strings the user reads are built from the same constant."""
+        source = (_REPO_ROOT / FRONTEND_AUTH_CONSTANTS).read_text()
+
+        for name in ("PASSWORD_HINT", "PASSWORD_TOO_SHORT"):
+            declaration = re.search(
+                rf"^export const {name} = (?P<text>.+)$", source, re.MULTILINE
+            )
+            assert declaration is not None, f"{name} is no longer exported"
+            assert "${PASSWORD_MIN_LENGTH}" in declaration.group("text"), (
+                f"{name} spells the minimum out instead of interpolating"
+                f" PASSWORD_MIN_LENGTH, so the sentence on screen can drift"
+                f" from the bound the same file declares."
+            )
 
 
 class TestReviewLengthBoundIsTheSameOnBothApiSurfaces:

@@ -17,7 +17,13 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.commands._account import account
+from src.storage.accounts import (
+    MAX_ACCOUNT_NAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    PASSWORD_TOO_SHORT,
+)
 from src.storage.manager import StorageManager
+from src.storage.schema import create_user
 from tests.cli.conftest import _invoke_with_mocks
 
 _NEW_PASSWORD = "a longer passphrase"
@@ -27,6 +33,9 @@ _OLD_PASSWORD = "correct horse"
 _TYPED_TWICE = f"{_NEW_PASSWORD}\n{_NEW_PASSWORD}\n"
 
 _SET_PASSWORD = ["account", "set-password"]
+
+#: Before any session this suite opens, so a row stamped with it has lapsed.
+_LONG_AGO = "2000-01-01T00:00:00"
 
 
 @pytest.fixture
@@ -55,6 +64,18 @@ def _option_spellings(command: click.Command) -> set[str]:
     return {opt for param in command.params for opt in param.opts}
 
 
+def _stored_password(storage: StorageManager) -> Any:
+    with storage.sqlite_db.connection() as conn:
+        return conn.execute(
+            "SELECT password_hash, password_salt FROM users WHERE id = 1"
+        ).fetchone()
+
+
+def _session_rows(storage: StorageManager) -> int:
+    with storage.sqlite_db.connection() as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+
+
 class TestResettingThePasswordWithNoServerRunning:
     """The acceptance path: the stored hash verifies afterwards."""
 
@@ -80,6 +101,28 @@ class TestResettingThePasswordWithNoServerRunning:
         assert result.exit_code == 0, result.output
         assert [claimed.lookup_session(token) for token in tokens] == [None, None]
 
+    def test_it_also_sweeps_the_sessions_that_have_already_lapsed(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        """Nothing else deletes a lapsed row, so the table grew without bound.
+
+        Revoking is scoped to the account being reset, which is why the sweep
+        is only visible on a row that reset does not own.
+        """
+        with claimed.sqlite_db.connection() as conn:
+            other = create_user(conn, "second")
+            conn.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?)",
+                ("lapsed-digest", other, _LONG_AGO, _LONG_AGO, _LONG_AGO),
+            )
+            conn.commit()
+        assert _session_rows(claimed) == 1
+
+        result = _run(cli_runner, claimed, _SET_PASSWORD, _TYPED_TWICE)
+
+        assert result.exit_code == 0, result.output
+        assert _session_rows(claimed) == 0
+
     def test_the_password_stamp_moves(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
@@ -92,6 +135,41 @@ class TestResettingThePasswordWithNoServerRunning:
         assert before is not None and after is not None
         assert before["password_updated_at"] is not None
         assert after["password_updated_at"] >= before["password_updated_at"]
+
+
+class TestTheFloorTheWebFormAlsoKeeps:
+    """Regression: this command wrote whatever was typed.
+
+    The floor lived in two Pydantic fields in the web layer, so a
+    one-character password set here then signed in at the web form.
+    """
+
+    def test_a_short_password_is_refused_and_the_stored_hash_is_untouched(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        short = "x" * (MIN_PASSWORD_LENGTH - 1)
+        before = _stored_password(claimed)
+
+        result = _run(cli_runner, claimed, _SET_PASSWORD, f"{short}\n{short}\n")
+
+        assert result.exit_code != 0
+        assert PASSWORD_TOO_SHORT in result.output
+        assert _stored_password(claimed) == before
+        assert claimed.verify_password("owner", _OLD_PASSWORD) is not None
+        assert claimed.verify_password("owner", short) is None
+
+    def test_a_password_at_the_floor_is_accepted(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        """Anchors the refusal: the boundary is ``<``, not ``<=``."""
+        at_the_floor = "x" * MIN_PASSWORD_LENGTH
+
+        result = _run(
+            cli_runner, claimed, _SET_PASSWORD, f"{at_the_floor}\n{at_the_floor}\n"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert claimed.verify_password("owner", at_the_floor) is not None
 
 
 class TestThePasswordIsNeverAnArgvValue:
@@ -181,6 +259,40 @@ class TestAnUnclaimedInstanceIsRefused:
         assert "Password changed: never" in result.output
 
 
+class TestPasswordLengthRegression:
+    """The CLI is a way in, not a way around the rule the web applies."""
+
+    def test_a_password_shorter_than_the_web_accepts_is_refused_regression(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        """Regression test: the CLI sets a password the web would reject.
+
+        Bug reported: docs/SECURITY.md says the minimum holds wherever a
+        password is set, naming ``account set-password``.
+        Root cause: the group calls ``set_password`` unchecked.
+        Fix: apply ``MIN_PASSWORD_LENGTH`` here too.
+        """
+        too_short = "x" * (MIN_PASSWORD_LENGTH - 1)
+        before = claimed.describe_account(1)
+
+        result = _run(cli_runner, claimed, _SET_PASSWORD, f"{too_short}\n{too_short}\n")
+
+        assert result.exit_code != 0, result.output
+        assert claimed.verify_password("owner", too_short) is None
+        assert claimed.describe_account(1) == before
+
+    def test_the_minimum_itself_is_accepted_regression(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        """The boundary the refusal above must not swallow."""
+        exact = "y" * MIN_PASSWORD_LENGTH
+
+        result = _run(cli_runner, claimed, _SET_PASSWORD, f"{exact}\n{exact}\n")
+
+        assert result.exit_code == 0, result.output
+        assert claimed.verify_password("owner", exact) is not None
+
+
 class TestShowingTheAccount:
     def test_the_table_names_the_account_and_its_password_age(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -252,6 +364,49 @@ class TestRenamingTheAccount:
 
         assert result.exit_code != 0
         assert "--username cannot be blank." in result.output
+        assert claimed.describe_account(1) == before
+
+    def test_a_padded_name_is_stored_trimmed_as_the_web_stores_it(
+        self, cli_runner: CliRunner, claimed: StorageManager
+    ) -> None:
+        """``PATCH /api/users/{id}`` trims both names before writing them.
+
+        A username stored with the padding is one the sign-in form — which
+        trims — could never send, so the two interfaces have to agree.
+        """
+        result = _run(
+            cli_runner,
+            claimed,
+            [
+                "account",
+                "set-name",
+                "--username",
+                "  keeper  ",
+                "--display-name",
+                " K ",
+            ],
+        )
+
+        record = claimed.describe_account(1)
+        assert result.exit_code == 0, result.output
+        assert record is not None
+        assert (record["username"], record["display_name"]) == ("keeper", "K")
+
+    @pytest.mark.parametrize("option", ["--username", "--display-name"])
+    def test_a_name_past_the_column_is_refused_as_the_web_refuses_it(
+        self, cli_runner: CliRunner, claimed: StorageManager, option: str
+    ) -> None:
+        """``UserUpdateRequest`` caps both at the same width, and 422s past it."""
+        before = claimed.describe_account(1)
+
+        result = _run(
+            cli_runner,
+            claimed,
+            ["account", "set-name", option, "x" * (MAX_ACCOUNT_NAME_LENGTH + 1)],
+        )
+
+        assert result.exit_code != 0
+        assert f"cannot be longer than {MAX_ACCOUNT_NAME_LENGTH}" in result.output
         assert claimed.describe_account(1) == before
 
     def test_passing_neither_name_is_refused(
