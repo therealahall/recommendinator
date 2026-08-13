@@ -429,13 +429,6 @@ async function submit(): Promise<void> {
   font: inherit;
 }
 
-.add-source-field input:focus-visible,
-.add-source-field select:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
 .add-source-toggle {
   display: inline-flex;
   align-items: center;
