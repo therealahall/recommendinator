@@ -28,6 +28,7 @@ from src.storage.accounts import (
     create_session,
     describe_account,
     lookup_session,
+    normalize_account_name,
     purge_expired_sessions,
     revoke_all_sessions,
     revoke_other_sessions,
@@ -862,12 +863,20 @@ class StorageManager:
     ) -> UserDict:
         """Rename a user, returning the renamed row.
 
+        Normalized here: ``schema.py`` cannot import ``accounts`` without a cycle.
+
         Raises:
-            UnknownUserError: No user carries *user_id*; nothing was written.
-            sqlite3.IntegrityError: Another user already holds *username*.
+            AccountNameError: The username is blank or over-long.
+            UnknownUserError: Nobody carries *user_id*; nothing was written.
+            sqlite3.IntegrityError: Another user holds *username*.
         """
         with self.sqlite_db.connection() as conn:
-            renamed = update_user_identity(conn, user_id, username, display_name)
+            renamed = update_user_identity(
+                conn,
+                user_id,
+                normalize_account_name(username, required=True),
+                normalize_account_name(display_name, required=False) or None,
+            )
         if renamed is None:
             raise UnknownUserError(f"No user with id {user_id}.")
         return renamed

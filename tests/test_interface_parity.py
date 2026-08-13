@@ -10,6 +10,7 @@ import json
 import re
 from enum import Enum
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import click
@@ -29,7 +30,11 @@ from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation, RecommendationPayload
 from src.recommendations.scorers import SCORER_NAME_MAP
-from src.storage.accounts import MIN_PASSWORD_LENGTH
+from src.storage.accounts import (
+    MAX_ACCOUNT_NAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    AccountRecord,
+)
 from src.storage.manager import StorageManager
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import (
@@ -37,7 +42,9 @@ from src.web.api import (
     ItemEditRequest,
     RecommendationResponse,
     UserPreferenceResponse,
+    UserResponse,
 )
+from src.web.auth_api import SessionResponse
 from src.web.state import app_state
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import authenticated_client, booted_web_app
@@ -59,6 +66,11 @@ _TS_SEARCH_LENGTH = re.compile(
 # `export const PASSWORD_MIN_LENGTH = 12` — the only form that file uses.
 _TS_PASSWORD_LENGTH = re.compile(
     r"^export const PASSWORD_MIN_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
+)
+
+# `export const NAME_MAX_LENGTH = 100` — same form.
+_TS_NAME_LENGTH = re.compile(
+    r"^export const NAME_MAX_LENGTH = (?P<value>\d+)\s*$", re.MULTILINE
 )
 
 # The body of `export interface RecommendationResponse { ... }`. No field of it
@@ -105,6 +117,19 @@ def _reviewed_book(tmp_path: Path, name: str) -> tuple[StorageManager, int]:
     return storage, db_id
 
 
+def _claimed(tmp_path: Path, name: str) -> StorageManager:
+    """A real temp-DB storage whose one account is claimed by ``owner``."""
+    storage = StorageManager(sqlite_path=tmp_path / name)
+    storage.claim_account("owner", "The Owner", "correct horse battery")
+    return storage
+
+
+def _username(storage: StorageManager) -> str:
+    record = storage.describe_account(1)
+    assert record is not None
+    return record["username"]
+
+
 def _blank_review_message(model: type[BaseModel], **fields: object) -> str:
     """The single validation message a blank ``review`` produces."""
     with pytest.raises(ValidationError) as caught:
@@ -146,8 +171,8 @@ class TestSearchLengthBoundMatchesTheFrontend:
 class TestPasswordLengthBoundMatchesTheFrontend:
     """The auth forms must refuse exactly the passwords the API refuses.
 
-    They check it themselves because the API answers a short one with a 422
-    whose detail is a list rather than a sentence.
+    The session call carries the running server's floor, so this pins the
+    default the bundle ships with, which nothing at runtime can correct.
     """
 
     def test_typescript_constant_equals_the_python_one(self) -> None:
@@ -167,20 +192,105 @@ class TestPasswordLengthBoundMatchesTheFrontend:
             f" accepts and `account set-password` still sets."
         )
 
-    def test_the_hint_and_the_refusal_name_that_bound(self) -> None:
-        """Both strings the user reads are built from the same constant."""
+    def test_the_hint_and_the_refusal_name_the_bound_they_are_given(self) -> None:
+        """Both strings the user reads are built from the caller's figure."""
         source = (_REPO_ROOT / FRONTEND_AUTH_CONSTANTS).read_text()
 
-        for name in ("PASSWORD_HINT", "PASSWORD_TOO_SHORT"):
+        for name in ("passwordHint", "passwordTooShort"):
             declaration = re.search(
-                rf"^export const {name} = (?P<text>.+)$", source, re.MULTILINE
+                rf"^export function {name}\(minLength: number\): string \{{"
+                rf"(?P<body>.*?)^\}}",
+                source,
+                re.MULTILINE | re.DOTALL,
             )
-            assert declaration is not None, f"{name} is no longer exported"
-            assert "${PASSWORD_MIN_LENGTH}" in declaration.group("text"), (
-                f"{name} spells the minimum out instead of interpolating"
-                f" PASSWORD_MIN_LENGTH, so the sentence on screen can drift"
-                f" from the bound the same file declares."
+            assert declaration is not None, (
+                f"{FRONTEND_AUTH_CONSTANTS} no longer builds {name} from a"
+                f" minLength argument, so the sentence on screen cannot follow"
+                f" the floor the session call reported."
             )
+            assert "${minLength}" in declaration.group("body"), (
+                f"{name} spells a minimum out instead of interpolating the one"
+                f" it was given, so the sentence on screen can drift from the"
+                f" bound the form actually enforces."
+            )
+
+    def test_the_name_cap_equals_the_python_one(self) -> None:
+        """``maxlength`` on the name fields is the API's own cap."""
+        source = (_REPO_ROOT / FRONTEND_AUTH_CONSTANTS).read_text()
+        match = _TS_NAME_LENGTH.search(source)
+
+        assert match is not None, (
+            f"{FRONTEND_AUTH_CONSTANTS} no longer exports NAME_MAX_LENGTH as a"
+            f" plain integer literal, so it can no longer be checked against"
+            f" MAX_ACCOUNT_NAME_LENGTH in {PYTHON_PASSWORD_BOUND}."
+        )
+        assert int(match.group("value")) == MAX_ACCOUNT_NAME_LENGTH, (
+            f"The name cap is {match.group('value')} in"
+            f" {FRONTEND_AUTH_CONSTANTS} and {MAX_ACCOUNT_NAME_LENGTH} in"
+            f" {PYTHON_PASSWORD_BOUND}; the field stops accepting a name the"
+            f" API takes, or takes one it refuses."
+        )
+
+
+class TestTheAccountShapeIsTheSameOnBothInterfaces:
+    """``account show --format json`` and ``GET /api/auth/session`` agree.
+
+    The CLI prints ``AccountRecord`` whole; the web splits it between
+    ``UserResponse`` and ``claimed``. ``password_updated_at`` was on one and
+    not the other.
+    """
+
+    def test_every_field_of_the_record_reaches_both(self) -> None:
+        """``claimed`` is the session report's; the rest are the user's."""
+        assert "claimed" in SessionResponse.model_fields
+        assert set(AccountRecord.__annotations__) == set(UserResponse.model_fields) | {
+            "claimed"
+        }
+
+
+class TestTheNameBoundIsMeasuredAfterTheTrim:
+    """Regression: the interfaces measured different strings.
+
+    Bug reported: two spaces plus a full-width name was stored by the CLI and
+    422'd by the web.
+    Root cause: ``Field(max_length=...)`` runs before any ``AfterValidator``.
+    Fix: ``normalize_account_name`` caps after the trim.
+    """
+
+    @staticmethod
+    def _cli_rename(storage: StorageManager, username: str) -> Any:
+        return _invoke_with_mocks(
+            CliRunner(), ["account", "set-name", "--username", username], storage
+        )
+
+    @staticmethod
+    def _web_rename(storage: StorageManager, username: str) -> Any:
+        with booted_web_app(storage, {}) as app:
+            return authenticated_client(app).patch(
+                "/api/users/1", json={"username": username, "display_name": ""}
+            )
+
+    def test_both_interfaces_take_the_padded_name_at_the_cap(
+        self, tmp_path: Path
+    ) -> None:
+        """The trimmed name fits the column, so neither may refuse it."""
+        padded = "  " + "x" * MAX_ACCOUNT_NAME_LENGTH
+        cli, web = _claimed(tmp_path, "cli.db"), _claimed(tmp_path, "web.db")
+
+        assert self._cli_rename(cli, padded).exit_code == 0
+        assert self._web_rename(web, padded).status_code == 200
+        assert _username(cli) == _username(web) == padded.strip()
+
+    def test_both_interfaces_refuse_the_padded_name_past_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Anchors the acceptance above: the padding is not what is measured."""
+        too_long = "  " + "x" * (MAX_ACCOUNT_NAME_LENGTH + 1)
+        cli, web = _claimed(tmp_path, "cli.db"), _claimed(tmp_path, "web.db")
+
+        assert self._cli_rename(cli, too_long).exit_code != 0
+        assert self._web_rename(web, too_long).status_code == 422
+        assert _username(cli) == _username(web) == "owner"
 
 
 class TestReviewLengthBoundIsTheSameOnBothApiSurfaces:

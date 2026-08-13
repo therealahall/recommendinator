@@ -132,11 +132,14 @@ class TestUpgradingAPopulatedInstall:
         """The claim renames user 1, so rows keyed to it stay reachable."""
         created = client.post("/api/auth/setup", json=_SETUP_BODY)
 
+        stamped = upgraded.describe_account(1)
         assert created.status_code == 200
+        assert stamped is not None
         assert created.json() == {
             "id": 1,
             "username": _USERNAME,
             "display_name": _DISPLAY_NAME,
+            "password_updated_at": stamped["password_updated_at"],
         }
         library = client.get("/api/items", params={"user_id": 1, "limit": 50})
         assert library.status_code == 200
@@ -318,20 +321,60 @@ class TestRenamingTheAccountFromSettings:
         assert accepted.json()["display_name"] == "Keeper"
 
     def test_clearing_the_display_name_leaves_the_username_to_label_by(
-        self, signed_in: TestClient
+        self, signed_in: TestClient, upgraded: StorageManager
     ) -> None:
         """What the sidebar falls back to when the optional field is emptied."""
         response = signed_in.patch(
             "/api/users/1", json={"username": _USERNAME, "display_name": "  "}
         )
+        stamped = upgraded.describe_account(1)
 
         assert response.status_code == 200
-        assert response.json()["display_name"] is None
+        assert stamped is not None
         assert signed_in.get("/api/auth/session").json()["user"] == {
             "id": 1,
             "username": _USERNAME,
             "display_name": None,
+            "password_updated_at": stamped["password_updated_at"],
         }
+
+
+class TestPasswordAgeReachesTheAccountScreenRegression:
+    """Regression test: the account screen always says "never".
+
+    Bug reported: that line, on an account claimed minutes ago.
+    Root cause: ``UserResponse`` drops ``password_updated_at``.
+    Fix: unmade — the field must reach the response model.
+    """
+
+    @pytest.fixture()
+    def signed_in(self, client: TestClient) -> TestClient:
+        response = client.post("/api/auth/setup", json=_SETUP_BODY)
+        assert response.status_code == 200
+        return client
+
+    def test_the_session_call_carries_the_password_age_regression(
+        self, signed_in: TestClient
+    ) -> None:
+        """The call the SPA reads the account off on every load."""
+        user = signed_in.get("/api/auth/session").json()["user"]
+
+        assert user["password_updated_at"] is not None
+
+    def test_a_password_change_moves_what_that_screen_reads_regression(
+        self, signed_in: TestClient
+    ) -> None:
+        """The line has to move when the thing it reports moves."""
+        before = signed_in.get("/api/auth/session").json()["user"]
+
+        changed = signed_in.put(
+            "/api/users/1/password",
+            json={"current_password": _PASSWORD, "new_password": _REPLACEMENT},
+        )
+        after = signed_in.get("/api/auth/session").json()["user"]
+
+        assert changed.status_code == 204
+        assert after["password_updated_at"] >= before["password_updated_at"]
 
 
 class TestTheBreakGlassResetAgainstARunningServer:

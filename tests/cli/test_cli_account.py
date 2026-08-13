@@ -138,13 +138,15 @@ class TestResettingThePasswordWithNoServerRunning:
 
 
 class TestTheFloorTheWebFormAlsoKeeps:
-    """Regression: this command wrote whatever was typed.
+    """Regression test: the CLI set a password the web would reject.
 
-    The floor lived in two Pydantic fields in the web layer, so a
-    one-character password set here then signed in at the web form.
+    Bug reported: docs/SECURITY.md says the minimum holds wherever one is set,
+    naming ``account set-password``.
+    Root cause: the group called ``set_password`` unchecked.
+    Fix: apply ``MIN_PASSWORD_LENGTH`` here too.
     """
 
-    def test_a_short_password_is_refused_and_the_stored_hash_is_untouched(
+    def test_a_short_password_is_refused_and_the_hash_is_untouched_regression(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
         short = "x" * (MIN_PASSWORD_LENGTH - 1)
@@ -257,40 +259,6 @@ class TestAnUnclaimedInstanceIsRefused:
         assert result.exit_code == 0, result.output
         assert "Claimed: no" in result.output
         assert "Password changed: never" in result.output
-
-
-class TestPasswordLengthRegression:
-    """The CLI is a way in, not a way around the rule the web applies."""
-
-    def test_a_password_shorter_than_the_web_accepts_is_refused_regression(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """Regression test: the CLI sets a password the web would reject.
-
-        Bug reported: docs/SECURITY.md says the minimum holds wherever a
-        password is set, naming ``account set-password``.
-        Root cause: the group calls ``set_password`` unchecked.
-        Fix: apply ``MIN_PASSWORD_LENGTH`` here too.
-        """
-        too_short = "x" * (MIN_PASSWORD_LENGTH - 1)
-        before = claimed.describe_account(1)
-
-        result = _run(cli_runner, claimed, _SET_PASSWORD, f"{too_short}\n{too_short}\n")
-
-        assert result.exit_code != 0, result.output
-        assert claimed.verify_password("owner", too_short) is None
-        assert claimed.describe_account(1) == before
-
-    def test_the_minimum_itself_is_accepted_regression(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """The boundary the refusal above must not swallow."""
-        exact = "y" * MIN_PASSWORD_LENGTH
-
-        result = _run(cli_runner, claimed, _SET_PASSWORD, f"{exact}\n{exact}\n")
-
-        assert result.exit_code == 0, result.output
-        assert claimed.verify_password("owner", exact) is not None
 
 
 class TestShowingTheAccount:
