@@ -26,12 +26,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-**The container writes a starter `config/config.yaml` and then exits**, because
-`web.api_token` is unset and the app is never served unauthenticated. Put an
-`openssl rand -hex 32` value in that key, `docker restart recommendinator`, and
-the UI will ask you for it the first time you open it.
+The container writes a starter `config/config.yaml` and starts serving — see
+[First run](#first-run) below.
 
-Nothing else in that file needs editing. Under Docker the bind comes from the
+Nothing in that file needs editing. Under Docker the bind comes from the
 image's `--host` and `--port`, which beat `config.yaml`, so **publish a different
 port with the `-p` mapping** (or `APP_PORT` under Compose) rather than
 `web.port`. Sources, settings and API keys live in the database and are managed
@@ -48,9 +46,6 @@ docker compose --profile ai up -d app-ai
 
 **Naming `app-ai` is required.** The default `app` service has no profile, so
 otherwise it starts too and both fight over the same host port.
-
-It exits on the first run for the same missing `web.api_token`, not for
-anything to do with the sidecar.
 
 [docs/DOCKER.md](docs/DOCKER.md) covers parameters, GPU setup and reverse
 proxies.
@@ -70,13 +65,27 @@ make build-frontend                               # installs pnpm deps, builds t
 cp config/example.yaml config/config.yaml
 ```
 
-Then set `web.api_token` in `config/config.yaml` to an `openssl rand -hex 32`
-value. The server will not start without one.
+Nothing in `config/config.yaml` needs editing. Start the server with
+`python3.11 -m src.web`.
 
-Node.js is only needed to build the web UI. CLI-only users can skip those two
-lines, and the CLI needs no token — it works directly against the database.
-Start the server with `python3.11 -m src.web`, open <http://localhost:18473>, and
-paste the token when the UI asks.
+Node.js is only needed to build the web UI, so CLI-only users can skip those two
+lines. The CLI never signs in — it works directly against the database.
+
+## First run
+
+Open <http://localhost:18473>. A new instance has no account, so it opens on a
+setup screen: pick a username, a display name and a password. Finishing it
+claims the instance and signs that browser in; later visits show a login form.
+
+**Until someone completes setup, whoever reaches the instance first can** — the
+default loopback bind is what bounds that, so claim it now. Your session is a
+cookie the browser keeps for 30 days, renewed as you use it and ended by **Sign
+out**. Change the password from **Settings → Account**, or, if you lose it, from
+the machine holding the database:
+
+```bash
+python3.11 -m src.cli account set-password
+```
 
 ## Set up enrichment first
 

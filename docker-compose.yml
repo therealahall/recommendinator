@@ -28,10 +28,10 @@
 #                             WITH a trailing colon (default: "127.0.0.1:", so
 #                             the app is reachable from this host only). Set it
 #                             empty to publish on every interface, or to an
-#                             address to pick one. The app never serves TLS and
-#                             a bearer token over plain HTTP crosses the network
-#                             in cleartext, so anything beyond loopback belongs
-#                             behind a reverse proxy that terminates HTTPS.
+#                             address to pick one. The app never serves TLS, so
+#                             beyond loopback your password and session cookie
+#                             cross the network in cleartext: put a reverse
+#                             proxy that terminates HTTPS in front of it.
 #   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
 #   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
 #   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
@@ -82,7 +82,7 @@ x-app-common: &app-common
   restart: unless-stopped
   # The image already runs as an unprivileged user and binds a high port, so it
   # needs no capability and nothing in it should be able to acquire one. Every
-  # /api route already requires a bearer token (docs/SECURITY.md); this is the
+  # /api route already requires a session cookie (docs/SECURITY.md); this is the
   # other half — what a compromised dependency can reach once it is inside.
   security_opt:
     - no-new-privileges:true

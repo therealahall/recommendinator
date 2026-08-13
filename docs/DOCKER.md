@@ -28,15 +28,14 @@ docker run -d \
 ```
 
 The container copies the bundled `example.yaml` to `config/config.yaml` on first
-run and then exits, because `web.api_token` is unset. Put an
-`openssl rand -hex 32` value there, `docker restart recommendinator`, and open
-<http://localhost:18473> — the UI asks for that token once.
+run and starts serving. Open <http://localhost:18473> and create your account —
+see [First run](#first-run).
 
-Under Docker that file matters for the `storage` paths, `web.api_token` and
-`web.debug`, because the image passes `--host` and `--port` on its command line
-and CLI flags beat `config.yaml`. **Publish a different port with the `-p`
-mapping, not `web.port`.** Sources, settings and API keys live in the database
-and are managed from inside the app.
+Under Docker that file matters for the `storage` paths and `web.debug`, because
+the image passes `--host` and `--port` on its command line and CLI flags beat
+`config.yaml`. **Publish a different port with the `-p` mapping, not
+`web.port`.** Sources, settings and API keys live in the database and are
+managed from inside the app.
 
 ## Docker Compose
 
@@ -52,8 +51,7 @@ curl -L https://github.com/therealahall/recommendinator/releases/latest/download
 docker compose up -d
 ```
 
-**That first `up` writes `./config/config.yaml` and exits.** Set
-`web.api_token` to an `openssl rand -hex 32` value and run it again.
+That first `up` writes `./config/config.yaml` and starts serving.
 
 Pin a version with `IMAGE_TAG`, in your shell or a `.env` file beside the compose
 file:
@@ -83,7 +81,7 @@ With no private plugins, leave `./private` empty or drop that volume.
 
 Every service also carries `cap_drop: [ALL]` and
 `security_opt: [no-new-privileges:true]`. Every `/api` route already requires a
-bearer token ([SECURITY.md](SECURITY.md#api-authentication)); this is the other
+session cookie ([SECURITY.md](SECURITY.md#web-sign-in)); this is the other
 half, limiting what a compromised dependency reaches once it is inside. Nothing
 here needs a capability: the images run as an unprivileged user and bind ports
 above 1024.
@@ -103,8 +101,9 @@ above 1024.
 
 The app listens on `8000` inside the container, published on `127.0.0.1:18473` —
 **this host only**. Change the port with `APP_PORT` and the interface with
-`APP_BIND_PREFIX`, though anything wider than loopback puts a cleartext bearer
-token on your network: prefer a [reverse proxy](#reverse-proxy).
+`APP_BIND_PREFIX`, though anything wider than loopback puts your password and
+session cookie on the network in cleartext: prefer a
+[reverse proxy](#reverse-proxy).
 
 The Ollama sidecar listens on `11434` inside the network and is not published to
 the host at all.
@@ -135,13 +134,19 @@ of two dates. Only new completions get the right day.
 ## First run
 
 The entrypoint copies the image's `/app/example.yaml` to `config.yaml` when none
-exists and never overwrites an existing file, so restarts are safe. It does not
-fill in `web.api_token`: the app exits until you do. Rotating it later is an edit
-to the same file, which the config watcher picks up without a restart.
+exists and never overwrites an existing file, so restarts are safe. That seed
+sits outside `/app/config` on purpose: your `./config` mount covers that
+directory, so a copy kept inside it would be hidden on the run that reads it.
 
-That seed sits outside `/app/config` on purpose. Your `./config` mount covers
-that directory, so a copy kept inside it would be hidden on the one run that
-needs to read it.
+Then open the published port. A new instance has no account and opens on a setup
+screen asking for a username, a display name and a password; finishing it claims
+the instance and signs that browser in. **Until someone does, whoever reaches the
+container first can** — publishing on `127.0.0.1` is what bounds that. If you
+lose the password later, there is no reset link, so set a new one from the host:
+
+```bash
+docker compose exec app python -m src.cli account set-password
+```
 
 The UI comes up with no sources, so ingestion does nothing until you add them
 from the **Data** tab or `source create`, with API keys from the **Settings**
@@ -247,7 +252,7 @@ moving forward means raising the pin.
 ## Reverse proxy
 
 The app speaks plain HTTP and expects TLS to terminate in front of it, which
-beyond loopback is not optional: the bearer token is on the wire. With
+beyond loopback is not optional: your password is on the wire. With
 [Caddy](https://caddyserver.com/):
 
 ```caddyfile
@@ -262,10 +267,10 @@ With the proxy on the same host, leave `APP_BIND_PREFIX` at its default so the
 published port stays on loopback. The proxy still reaches it, nothing else on
 the network does.
 
-The token authenticates the API, and the proxy can add its own layer on top
-(forward auth, an IP allowlist, a VPN). The app does not trust `X-Forwarded-*`
-headers, so the links it emits use the host and port the request arrived on.
-That is correct wherever the proxy preserves `Host`.
+The session cookie authenticates the API, and the proxy can add its own layer
+on top (forward auth, an IP allowlist, a VPN). The app does not trust
+`X-Forwarded-*` headers, so the links it emits use the host and port the request
+arrived on. That is correct wherever the proxy preserves `Host`.
 
 ## Architectures
 
@@ -283,10 +288,13 @@ Settings badged "restart required" need `docker compose restart`. Everything els
 on the **Settings** page applies immediately. `config.yaml` is only written on
 first run, so edit it on the host and restart.
 
-### The container exits with `No API token configured`, or the API answers 401
+### I have forgotten the password
 
-`web.api_token` in `./config/config.yaml` is unset or wrong. Put an
-`openssl rand -hex 32` value there and `docker compose restart`.
+There is no reset link. Set a new one from the host and sign in again:
+
+```bash
+docker compose exec app python -m src.cli account set-password
+```
 
 ### The app is unreachable from another machine
 
