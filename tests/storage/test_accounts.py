@@ -447,15 +447,22 @@ class TestDescribingTheAccount:
     def test_setting_a_password_moves_the_stamp(
         self, claimed: sqlite3.Connection
     ) -> None:
-        """``account show`` reports it as when the password last changed."""
+        """``account show`` reports it as when the password last changed.
+
+        The clock is pinned because stamps render at whole seconds: a change
+        in the claim's own second leaves both texts equal, so a write missing
+        the column would pass.
+        """
+        changed = datetime(2026, 6, 1, 9, 15, 30, tzinfo=UTC)
         before = describe_account(claimed, 1)
 
-        set_password(claimed, 1, "a longer passphrase")
+        with patch.object(accounts, "utc_now", return_value=changed):
+            set_password(claimed, 1, "a longer passphrase")
 
         after = describe_account(claimed, 1)
         assert before is not None and after is not None
         assert before["password_updated_at"] is not None
-        assert after["password_updated_at"] >= before["password_updated_at"]
+        assert after["password_updated_at"] == changed.isoformat(timespec="seconds")
 
 
 class TestVerifyingAPassword:

@@ -147,10 +147,10 @@ Five wrong passwords lock a username out for five minutes.
 
 ### 403 "Cross-origin requests may not change anything here."
 
-Something other than the app's own page sent a write: a REST client replaying a
-copied request, a script on another site, or a second dev server on another
-port. `SameSite=Strict` treats every port on localhost as one site, so the
-browser's `Sec-Fetch-Site` header is what tells them apart.
+Something other than the app's own page sent a write: a script on another site,
+or a second dev server on another port. `SameSite=Strict` treats every port on
+localhost as one site, so the browser's `Sec-Fetch-Site` header is what tells
+them apart.
 
 Adding the origin to `web.allowed_origins` will not help. That setting reaches
 only what is ungated anyway, because the session cookie is never sent
