@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
-import { PASSWORD_MISMATCH } from '@/constants/auth'
+import { PASSWORD_HINT } from '@/constants/auth'
+import { passwordComplaint } from '@/utils/password'
 import type { SetupRequest } from '@/types/api'
 
 const props = withDefaults(
@@ -22,41 +23,37 @@ const displayName = ref('')
 const password = ref('')
 const confirmation = ref('')
 
-// Only that the required fields are filled. Length and shape are the server's
-// rules, and a second copy here would drift the first time they change.
 const complete = computed(
   () => username.value.trim() !== '' && password.value !== '' && confirmation.value !== '',
 )
 
-const mismatch = ref(false)
+/** A complaint about the password pair this screen can make on its own. */
+const complaint = ref('')
 
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
-const announcement = computed(() => {
-  if (mismatch.value) return PASSWORD_MISMATCH
-  return props.error || (props.pending ? 'Creating your account…' : '')
-})
-const failed = computed(() => mismatch.value || Boolean(props.error))
+const announcement = computed(
+  () => complaint.value || props.error || (props.pending ? 'Creating your account…' : ''),
+)
+const failed = computed(() => Boolean(complaint.value || props.error))
 
-// A mismatch concerns the two password fields and nothing else, so the username
+// A complaint concerns the two password fields and nothing else, so the username
 // and display name are only pointed at the region for a server-side message.
 const passwordDescribedBy = computed(() => (announcement.value ? 'setup-status' : undefined))
 const generalDescribedBy = computed(() =>
-  announcement.value && !mismatch.value ? 'setup-status' : undefined,
+  announcement.value && !complaint.value ? 'setup-status' : undefined,
 )
 
 // Editing either half is the retry, so drop the complaint on the keystroke
 // rather than making the user submit again to find out it is gone.
 watch([password, confirmation], () => {
-  mismatch.value = false
+  complaint.value = ''
 })
 
 function submit(): void {
   if (props.pending || !complete.value) return
-  if (password.value !== confirmation.value) {
-    mismatch.value = true
-    return
-  }
+  complaint.value = passwordComplaint(password.value, confirmation.value)
+  if (complaint.value) return
   emit('submit', {
     username: username.value.trim(),
     display_name: displayName.value.trim(),
@@ -85,6 +82,7 @@ function submit(): void {
           autocomplete="username"
           hint="What you type to sign in."
           :described-by="generalDescribedBy"
+          :required="true"
           :autofocus="true"
         />
         <AuthField
@@ -101,8 +99,10 @@ function submit(): void {
           label="Password"
           type="password"
           autocomplete="new-password"
+          :hint="PASSWORD_HINT"
           :described-by="passwordDescribedBy"
-          :invalid="mismatch"
+          :invalid="Boolean(complaint)"
+          :required="true"
         />
         <AuthField
           id="setup-confirmation"
@@ -111,7 +111,8 @@ function submit(): void {
           type="password"
           autocomplete="new-password"
           :described-by="passwordDescribedBy"
-          :invalid="mismatch"
+          :invalid="Boolean(complaint)"
+          :required="true"
         />
       </div>
 
@@ -125,11 +126,13 @@ function submit(): void {
         role="status"
       >{{ announcement }}</p>
 
+      <!-- aria-disabled for both locks, never native disabled: a button that
+           goes disabled under the finger that just pressed Enter throws focus
+           to <body> (WCAG 2.4.3). -->
       <button
         type="submit"
         class="btn btn-primary auth-submit"
-        :disabled="!complete"
-        :aria-disabled="pending ? 'true' : undefined"
+        :aria-disabled="pending || !complete ? 'true' : undefined"
       >
         Create account
       </button>

@@ -46,7 +46,18 @@ describe('LoginForm', () => {
     await wrapper.find('form').trigger('submit')
 
     expect(wrapper.emitted('submit')).toBeUndefined()
-    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('button[type="submit"]').attributes('aria-disabled')).toBe('true')
+  })
+
+  it('says which fields it will not go without', () => {
+    // The submit button locks with aria-disabled, which is focusable and
+    // silent: without this the only signal is a colour nobody can hear.
+    const wrapper = mount(LoginForm)
+
+    for (const id of ['#login-username', '#login-password']) {
+      expect(wrapper.find(id).attributes('required'), id).toBeDefined()
+      expect(wrapper.find(id).attributes('aria-required'), id).toBe('true')
+    }
   })
 
   it('mounts the live region before it has anything to say', () => {
@@ -73,6 +84,29 @@ describe('LoginForm', () => {
     expect(wrapper.find('#login-status').text()).toContain('not accepted')
     expect(wrapper.find('#login-username').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#login-password').attributes('aria-invalid')).toBe('true')
+  })
+
+  it('says why the screen is on without blaming a field nobody touched', async () => {
+    // Regression: a sign-out arrived as `error`, so an empty form announced
+    // "Username, invalid entry" before the user had typed anything.
+    const wrapper = mount(LoginForm, { props: { notice: 'Your session ended. Sign in again.' } })
+
+    expect(wrapper.find('#login-status').text()).toContain('session ended')
+    expect(wrapper.find('#login-status').classes()).not.toContain('failed')
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
+
+    await wrapper.setProps({ error: 'That sign-in was not accepted.' })
+
+    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBe('true')
+  })
+
+  it('lets the attempt in progress speak over the notice that preceded it', async () => {
+    const wrapper = mount(LoginForm, { props: { notice: 'Your session ended. Sign in again.' } })
+
+    await wrapper.setProps({ pending: true })
+
+    expect(wrapper.find('#login-status').text()).toBe('Signing in…')
   })
 
   it('describes the fields by the region only while it has something to say', async () => {
@@ -103,7 +137,12 @@ describe('LoginForm', () => {
     await wrapper.setProps({ error: 'Not accepted.' })
 
     expect(wrapper.find<HTMLInputElement>('#login-password').element.value).toBe('')
-    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+    // Regression: clearing the password made the form incomplete, and the
+    // native `disabled` that followed unfocused the button the user had just
+    // pressed Enter on, dropping focus to <body> (WCAG 2.4.3).
+    const button = wrapper.find('button[type="submit"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
   })
 
   it('leaves the password alone while the attempt is still open', async () => {

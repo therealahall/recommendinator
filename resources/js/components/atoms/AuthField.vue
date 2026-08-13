@@ -13,7 +13,9 @@ const props = withDefaults(
     /** id of the owning form's status region, when its message concerns this field. */
     describedBy?: string
     invalid?: boolean
-    disabled?: boolean
+    /** The submit button locks with aria-disabled rather than blurring itself,
+     *  so a greyed-out button is the only other signal an empty field is why. */
+    required?: boolean
     autofocus?: boolean
   }>(),
   {
@@ -21,7 +23,7 @@ const props = withDefaults(
     hint: '',
     describedBy: '',
     invalid: false,
-    disabled: false,
+    required: false,
     autofocus: false,
   },
 )
@@ -60,7 +62,8 @@ onMounted(() => {
       :spellcheck="literal ? 'false' : undefined"
       :aria-describedby="describedByIds"
       :aria-invalid="invalid || undefined"
-      :disabled="disabled"
+      :required="required || undefined"
+      :aria-required="required || undefined"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
     />
     <p v-if="hint" :id="hintId" class="auth-field-hint">{{ hint }}</p>

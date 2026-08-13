@@ -13,9 +13,9 @@ const HAND_HELD_CREDENTIAL = /apiToken|Authorization\s*[:'"\]]|Bearer\s/
  *  `fetch(`, which one store's own action is called. */
 const OWN_REQUEST = /['"`]\/api\b|new EventSource\b/
 
-// The API layer and the auth store: the store cannot go through the composable
-// that imports it, so the credential is attached in exactly these two places.
-const CREDENTIAL_CARRIERS = ['js/composables/useApi.ts', 'js/stores/auth.ts']
+// The API layer, and nothing else: the auth store went through its own fetch
+// while a module cycle stood in the way, and no longer does.
+const CREDENTIAL_CARRIERS = ['js/composables/useApi.ts']
 
 // Neither opens a request from script: devServer names the prefix Vite proxies
 // to FastAPI, and the export is a top-level navigation, which carries a
@@ -71,7 +71,17 @@ describe('client-held credentials', () => {
 describe('where a request may be opened', () => {
   it('scans the shipped tree, and finds the carriers in it', () => {
     expect(SHIPPED.length).toBeGreaterThan(50)
+    expect(SHIPPED).toContain('js/stores/auth.ts')
     for (const carrier of CREDENTIAL_CARRIERS) expect(SHIPPED).toContain(carrier)
+  })
+
+  it('sends the auth calls through the same door as every other one', () => {
+    // The one store that used to hold its own fetch: the cycle that forced it
+    // is broken in the API layer now, so nothing else attaches the cookie.
+    const source = read('js/stores/auth.ts')
+
+    expect(source).toMatch(/@\/composables\/useApi/)
+    expect(source).not.toMatch(/\bfetch\s*\(/)
   })
 
   it.each(CREDENTIAL_CARRIERS)('%s addresses the API, and sends the session with it', (path) => {

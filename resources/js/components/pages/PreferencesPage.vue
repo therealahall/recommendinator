@@ -1,19 +1,13 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onMounted } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
-import { useAppStore } from '@/stores/app'
 import ThemeSelector from '@/components/organisms/ThemeSelector.vue'
 import ScoringPrefs from '@/components/organisms/ScoringPrefs.vue'
 import RulesPrefs from '@/components/organisms/RulesPrefs.vue'
 
 const prefs = usePreferencesStore()
-const app = useAppStore()
 
 onMounted(() => {
-  prefs.load()
-})
-
-watch(() => app.currentUserId, () => {
   prefs.load()
 })
 </script>

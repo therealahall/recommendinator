@@ -165,6 +165,8 @@ describe('AppSidebar', () => {
   })
 
   it('shows a name the alphabet does not fit in', async () => {
+    // The account is named from a free-text field with no character class on
+    // it, on either surface, so the row has to render whatever was typed.
     const router = createTestRouter()
     await router.push('/recommendations')
     await router.isReady()

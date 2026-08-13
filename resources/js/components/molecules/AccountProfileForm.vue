@@ -71,6 +71,7 @@ function submit(): void {
         hint="What you type to sign in."
         :described-by="describedBy"
         :invalid="failed"
+        :required="true"
       />
       <AuthField
         id="account-display-name"
@@ -93,12 +94,15 @@ function submit(): void {
         role="status"
       >{{ announcement }}</p>
 
+      <!-- aria-disabled for both locks, never native disabled: an accepted save
+           re-seeds the fields and makes this unsubmittable, and a button that
+           goes disabled under the finger that just pressed Enter throws focus
+           to <body> (WCAG 2.4.3). -->
       <button
         type="submit"
         class="btn btn-primary auth-submit"
         data-testid="account-profile-save"
-        :disabled="!submittable"
-        :aria-disabled="pending ? 'true' : undefined"
+        :aria-disabled="pending || !submittable ? 'true' : undefined"
       >
         Save details
       </button>

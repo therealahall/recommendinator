@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, onUnmounted } from 'vue'
 import { useLibraryStore } from '@/stores/library'
-import { useAppStore } from '@/stores/app'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 
 const lib = useLibraryStore()
-const app = useAppStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
 
@@ -27,10 +25,6 @@ let observer: IntersectionObserver | null = null
 onMounted(() => {
   lib.resetAndLoad()
   setupInfiniteScroll()
-})
-
-watch(() => app.currentUserId, () => {
-  lib.resetAndLoad()
 })
 
 function setupInfiniteScroll() {

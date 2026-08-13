@@ -38,15 +38,17 @@ describe('AccountSection', () => {
   })
 
   it('forwards the password change to its parent', async () => {
+    // Long enough to clear the rule the form checks before it emits anything.
+    const replacement = 'hunter3-hunter3'
     const wrapper = mountSection()
 
     await wrapper.find('#account-current-password').setValue('hunter2')
-    await wrapper.find('#account-new-password').setValue('hunter3')
-    await wrapper.find('#account-confirm-password').setValue('hunter3')
+    await wrapper.find('#account-new-password').setValue(replacement)
+    await wrapper.find('#account-confirm-password').setValue(replacement)
     await wrapper.findAll('form')[1].trigger('submit')
 
     expect(wrapper.emitted('change-password')).toEqual([
-      [{ current_password: 'hunter2', new_password: 'hunter3' }],
+      [{ current_password: 'hunter2', new_password: replacement }],
     ])
   })
 

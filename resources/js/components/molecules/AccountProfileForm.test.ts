@@ -45,13 +45,29 @@ describe('AccountProfileForm', () => {
 
   it('will not save an unchanged account, or an empty username', async () => {
     const wrapper = mountForm()
-    expect(wrapper.find('[data-testid="account-profile-save"]').attributes('disabled')).toBeDefined()
+    const button = () => wrapper.find('[data-testid="account-profile-save"]')
+    expect(button().attributes('aria-disabled')).toBe('true')
 
     await wrapper.find('#account-username').setValue('')
 
-    expect(wrapper.find('[data-testid="account-profile-save"]').attributes('disabled')).toBeDefined()
+    expect(button().attributes('aria-disabled')).toBe('true')
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('submit')).toBeUndefined()
+  })
+
+  it('never locks the button natively, so an accepted save cannot blur it', async () => {
+    // Regression: the accepted values re-seeded the fields, the button went
+    // native `disabled`, and focus fell from it to <body> — past the whole
+    // sidebar on the Settings page (WCAG 2.4.3).
+    const wrapper = mountForm()
+    const button = () => wrapper.find('[data-testid="account-profile-save"]')
+    expect(button().attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('#account-display-name').setValue('Aaron')
+    await wrapper.setProps({ user: { id: 1, username: 'aaron', display_name: 'Aaron' } })
+
+    expect(button().attributes('aria-disabled')).toBe('true')
+    expect(button().attributes('disabled')).toBeUndefined()
   })
 
   it('offers the username autocomplete so a manager updates its entry', () => {
@@ -59,6 +75,17 @@ describe('AccountProfileForm', () => {
 
     expect(wrapper.find('#account-username').attributes('autocomplete')).toBe('username')
     expect(wrapper.find('#account-display-name').attributes('autocomplete')).toBe('nickname')
+  })
+
+  it('says which field it will not go without, and which it will', () => {
+    // The submit button locks with aria-disabled, which is focusable and
+    // silent: without this the only signal is a colour nobody can hear.
+    const wrapper = mountForm()
+
+    expect(wrapper.find('#account-username').attributes('required')).toBeDefined()
+    expect(wrapper.find('#account-username').attributes('aria-required')).toBe('true')
+    // "(optional)" in the label is prose; this is the programmatic state.
+    expect(wrapper.find('#account-display-name').attributes('aria-required')).toBeUndefined()
   })
 
   it('will not send a second save while the first is in flight', async () => {

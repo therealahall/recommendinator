@@ -11,17 +11,28 @@ const mockGet = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
-vi.mock('@/composables/useApi', () => ({
-  ApiError: class ApiError extends Error {},
-  useApi: () => ({
-    get: (...args: unknown[]) => mockGet(...args),
-    post: vi.fn(),
-    put: (...args: unknown[]) => mockPut(...args),
-    patch: vi.fn(),
-    delete: (...args: unknown[]) => mockDelete(...args),
-    raw: vi.fn(),
-  }),
-}))
+// The settings store is stubbed here. The auth store's own routes are not: the
+// account tests below assert on the request that reached the network.
+vi.mock('@/composables/useApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useApi')>()
+  const authRoute = /^\/(auth|users)\b/
+
+  return {
+    ...actual,
+    useApi: () => {
+      const real = actual.useApi()
+      return {
+        ...real,
+        get: (path: string, params?: Record<string, string | number | boolean | undefined>) =>
+          authRoute.test(path) ? real.get(path, params) : mockGet(path, params),
+        put: (path: string, body?: unknown, options?: { sessionSurvives401?: boolean }) =>
+          authRoute.test(path) ? real.put(path, body, options) : mockPut(path, body),
+        delete: (path: string, params?: Record<string, string | number | boolean | undefined>) =>
+          authRoute.test(path) ? real.delete(path, params) : mockDelete(path, params),
+      }
+    },
+  }
+})
 
 function secretSection(hasSecret: boolean) {
   return {
@@ -227,8 +238,8 @@ describe('SettingsPage', () => {
 
 const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
 
-// The account routes go through the auth store, which calls fetch itself rather
-// than the API layer that imports it, so the mock above does not cover them.
+// Asserted on the stubbed global fetch: the mock above lets the account routes
+// through to the real API layer, so what these check is the request itself.
 describe('SettingsPage account section', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -253,10 +264,13 @@ describe('SettingsPage account section', () => {
     return wrapper
   }
 
+  // Long enough to clear the rule the form checks before it submits anything.
+  const REPLACEMENT = 'hunter33-hunter33'
+
   async function changePassword(wrapper: VueWrapper): Promise<void> {
     await wrapper.find('#account-current-password').setValue('hunter2')
-    await wrapper.find('#account-new-password').setValue('hunter33')
-    await wrapper.find('#account-confirm-password').setValue('hunter33')
+    await wrapper.find('#account-new-password').setValue(REPLACEMENT)
+    await wrapper.find('#account-confirm-password').setValue(REPLACEMENT)
     await wrapper.findAll('form')[1].trigger('submit')
     await flushPromises()
   }
