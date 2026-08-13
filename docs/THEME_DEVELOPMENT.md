@@ -90,7 +90,7 @@ want to change. Anything unset keeps its dark-theme default.
 | Variable | Default | Used for |
 |----------|---------|-------------|
 | `--accent` | `#81a1c1` | Buttons, links, active states |
-| `--accent-light` | `#88c0d0` | Highlights |
+| `--accent-light` | `#88c0d0` | Highlights, and the keyboard focus ring |
 | `--accent-teal` | `#8fbcbb` | Supplementary |
 
 ### Borders
@@ -99,7 +99,7 @@ want to change. Anything unset keeps its dark-theme default.
 |----------|---------|-------------|
 | `--border-default` | `#4c566a` | Standard borders |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
-| `--border-focus` | `var(--accent)` | Focus ring |
+| `--border-focus` | `var(--accent)` | Border of a focused field |
 
 ### Semantic
 
@@ -154,6 +154,13 @@ variants yourself.
 
 4. Start the server, select the theme from the Preferences tab, and check every
    page for text readability, badge contrast and button visibility.
+
+   `--accent-light` is the one focus indicator the whole app uses, drawn just
+   outside the control. Keep it at 3:1 or better against `--bg-card`,
+   `--bg-input` and `--bg-primary` — the three surfaces a ring around a field
+   lands on — or keyboard users lose the only cue telling them where they are
+   (WCAG 1.4.11). `resources/css/base.css.test.ts` measures this for every
+   shipped theme.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override

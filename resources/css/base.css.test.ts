@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { contrastRatio, themeTokens, tokenContrast } from '@/testing/contrast'
+import { globalFocusRing } from '@/testing/focusRing'
+import { componentStyles } from '@/testing/styles'
 
 // base.css is a static asset: importing it through Vite yields an empty stub
 // under Vitest, so read the file off disk to assert on its real contents.
@@ -90,8 +92,12 @@ describe('account & sign-in surface contrast', () => {
 
   const CONTROL_PAIRS: [string, string, string][] = [
     ['the resting field border', 'var(--text-muted)', 'var(--bg-input)'],
-    ['the focus ring', 'var(--accent)', 'var(--bg-input)'],
   ]
+
+  // Every surface an offset ring around a text field lands on. --bg-primary is
+  // there because neither .auth-card nor .token-gate-card declares a
+  // background: on the two standalone screens the ring reaches the body.
+  const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary']
 
   it('measures every shipped theme, with the theme layered over the base', () => {
     expect(Object.keys(THEMES)).toEqual(['Nord', 'Snowstorm'])
@@ -103,6 +109,39 @@ describe('account & sign-in surface contrast', () => {
 
   it('agrees with the reference ratio for black on white', () => {
     expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 1)
+  })
+
+  it('refuses a pair naming a token no theme declares', () => {
+    // A resolver that defaulted a missing token would leave every ratio here
+    // measuring a colour nobody ships, and the block would check nothing.
+    expect(() => tokenContrast(THEMES.Nord, 'var(--nonexistent)', 'var(--bg-card)')).toThrow(
+      /undeclared token/,
+    )
+    // Both positions: a background nobody declares would be as silent.
+    expect(() => tokenContrast(THEMES.Nord, 'var(--accent-light)', 'var(--nonexistent)')).toThrow(
+      /undeclared token/,
+    )
+  })
+
+  it('refuses a surface the ring is measured against but no theme declares', () => {
+    for (const [theme, tokens] of Object.entries(THEMES)) {
+      for (const surface of RING_SURFACES) {
+        expect(tokens[surface], `${theme} declares no ${surface}`).toMatch(/^#[0-9a-f]{6}$/i)
+      }
+    }
+  })
+
+  it('names the colours the shipped field is actually built from', () => {
+    // The pairs are token names typed out by hand: this is what ties them to
+    // the rule that renders, so restyling the edge fails here rather than
+    // leaving a measurement of a border the field no longer has.
+    const rule = componentStyles('resources/js/components/atoms/AuthField.vue').match(
+      /\.auth-field input\s*\{([^}]*)\}/,
+    )
+    if (!rule) throw new Error('.auth-field input rule not found in AuthField.vue')
+
+    expect(rule[1]).toMatch(/background:\s*var\(--bg-input\)/)
+    expect(rule[1]).toMatch(/border:\s*1px solid var\(--text-muted\)/)
   })
 
   it('measures every theme the app ships, not a list that stopped being one', () => {
@@ -131,21 +170,20 @@ describe('account & sign-in surface contrast', () => {
         expect(tokenContrast(tokens, foreground, background)).toBeGreaterThanOrEqual(3)
       })
 
-      it('makes keyboard focus visible against the state it replaces', () => {
-        // The resting edge above looks the same focused or not, so what a
-        // sighted keyboard user has to see is the difference: the border swap
-        // and the ring that `outline: none` leaves in place of the global one.
-        const borderSwap = tokenContrast(tokens, 'var(--accent)', 'var(--text-muted)')
-        const ringOnCard = tokenContrast(
-          tokens,
-          'color-mix(in srgb, var(--accent) 30%, var(--bg-card))',
-          'var(--bg-card)',
-        )
+      it('makes keyboard focus visible on both surfaces the ring touches', () => {
+        // Regression: the field drew its own ring instead — an --accent border
+        // at 1.14:1 against the resting edge, tinted at 1.55:1 on the card.
+        const ring = globalFocusRing()
 
-        expect(
-          Math.max(borderSwap, ringOnCard),
-          `border swap ${borderSwap.toFixed(2)}:1, ring ${ringOnCard.toFixed(2)}:1`,
-        ).toBeGreaterThanOrEqual(3)
+        // Offset, so it sits in the surface behind the field rather than on
+        // the field's own edge, and has to clear 3:1 against both (1.4.11).
+        expect(ring.offsetPx).toBeGreaterThan(0)
+        for (const surface of RING_SURFACES) {
+          expect(
+            tokenContrast(tokens, ring.color, `var(${surface})`),
+            `${ring.color} on ${surface}`,
+          ).toBeGreaterThanOrEqual(3)
+        }
       })
     })
   }

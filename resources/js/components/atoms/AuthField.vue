@@ -80,8 +80,8 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
-/* --border-default is only 1.36:1 on a card, so the field has no visible edge
-   until it is focused. --text-muted clears the 3:1 a control boundary needs. */
+/* --border-default is only 1.36:1 on a card, which leaves the field with no
+   visible edge. --text-muted clears the 3:1 a control boundary needs. */
 .auth-field input {
   width: 100%;
   /* 44px so the field is a thumb-sized target, and 1rem because anything under
@@ -95,12 +95,6 @@ onMounted(() => {
   color: var(--text-primary);
   font-family: inherit;
   font-size: 1rem;
-}
-
-.auth-field input:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .auth-field input[aria-invalid='true'] {

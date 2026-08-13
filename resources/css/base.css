@@ -97,7 +97,9 @@
   padding: 0;
 }
 
-/* Global focus indicator — required for WCAG 2.4.7 */
+/* The one focus indicator (WCAG 2.4.7), offset so it lands on the surface
+   behind the control rather than on its edge: a border swap to --accent is
+   1.14:1 against a resting --text-muted edge, so no component replaces this. */
 :focus-visible {
   outline: 2px solid var(--accent-light);
   outline-offset: 2px;

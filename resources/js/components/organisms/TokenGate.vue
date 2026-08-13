@@ -91,9 +91,9 @@ onMounted(() => tokenInput.value?.focus())
   max-width: 30rem;
 }
 
-/* --border-default is only 1.36:1 on the card, so the field has no visible
-   edge until it is focused. --text-muted clears the 3:1 a control boundary
-   needs (4.26:1 on Nord, 3.58:1 on Snowstorm). */
+/* --border-default is only 1.36:1 on the card, which leaves the field with no
+   visible edge. --text-muted clears the 3:1 a control boundary needs (4.26:1
+   on Nord, 3.58:1 on Snowstorm). */
 .token-gate-card input {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
@@ -101,12 +101,6 @@ onMounted(() => tokenInput.value?.focus())
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
-}
-
-.token-gate-card input:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* Zero-height when it has nothing to say, rather than removed: display:none

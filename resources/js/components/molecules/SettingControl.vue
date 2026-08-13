@@ -253,19 +253,12 @@ function onFloatBlur(event: Event): void {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .setting-control input[type='text']:hover,
 .setting-control input[type='number']:hover {
   border-color: var(--accent);
-}
-
-.setting-control input[type='text']:focus-visible,
-.setting-control input[type='number']:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .setting-row-meta {

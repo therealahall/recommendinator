@@ -394,21 +394,13 @@ function isSecretSet(name: string): boolean {
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .source-form-field input[type="text"]:hover,
 .source-form-field input[type="number"]:hover,
 .source-form-field input[type="password"]:hover {
   border-color: var(--accent);
-}
-
-.source-form-field input[type="text"]:focus-visible,
-.source-form-field input[type="number"]:focus-visible,
-.source-form-field input[type="password"]:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .secret-status-badge {
