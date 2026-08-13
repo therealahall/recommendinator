@@ -37,6 +37,7 @@ _TABLE_JSON = ("table", "json")
 #: ``None`` marks a leaf, a dict a group — so ``custom-rules`` nests as Click
 #: nests it.
 _COMMAND_TREE: dict[str, Any] = {
+    "account": {"show": None, "set-password": None, "set-name": None},
     "auth": {"status": None, "connect": None, "disconnect": None},
     "chat": {"start": None, "send": None, "history": None, "reset": None},
     "complete": None,
@@ -158,6 +159,15 @@ _PARAM_SURFACE: dict[tuple[str, ...], tuple[str, ...]] = {
     ("library", "ignore"): ("--id", "--user"),
     ("library", "unignore"): ("--id", "--user"),
     ("library", "export"): ("--format", "--output", "--type", "--user"),
+    ("account", "show"): ("--format", "--user"),
+    ("account", "set-password"): ("--format", "--user", "--verbose"),
+    ("account", "set-name"): (
+        "--display-name",
+        "--format",
+        "--user",
+        "--username",
+        "--verbose",
+    ),
     ("auth", "status"): ("--user",),
     ("auth", "connect"): ("--no-browser", "--source", "--source-id", "--user"),
     ("auth", "disconnect"): ("--source", "--source-id", "--user", "--yes"),

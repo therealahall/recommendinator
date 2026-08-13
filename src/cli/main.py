@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from src.cli.commands import (
+    account,
     auth,
     chat,
     complete,
@@ -119,6 +120,7 @@ def cli(ctx: click.Context, config: Path | None) -> None:
 
 
 # Register commands
+cli.add_command(account)
 cli.add_command(auth)
 cli.add_command(chat)
 cli.add_command(status)

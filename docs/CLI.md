@@ -288,6 +288,28 @@ python3.11 -m src.cli auth connect --source gog --source-id gog_work
 python3.11 -m src.cli auth disconnect --source gog --source-id gog_work
 ```
 
+## Web account
+
+The web UI signs in to one account, which has no email and no reset link. The
+CLI reads the database directly rather than going over HTTP, so it is the way
+back in when that password is lost.
+
+```bash
+python3.11 -m src.cli account show
+python3.11 -m src.cli account set-password    # prompts twice, hidden
+python3.11 -m src.cli account set-name --username owner --display-name "The Owner"
+```
+
+The password is never an argument: that would leave it in the shell history and
+in every process listing. `set-password` signs every browser out, so a session
+someone else holds dies with the password it was opened under, and it refuses an
+unclaimed instance — claim that from the web setup page.
+
+`set-name` writes only the names you pass, and an empty `--display-name` clears
+it. All three commands take `--user` and `--format json`. A failed write prints
+a generic refusal and logs the detail, as the web does; `--verbose` puts the
+underlying error on the terminal too.
+
 ## Conversation and memories (requires AI)
 
 See [CONVERSATION_GUIDE.md](CONVERSATION_GUIDE.md) for the chat interface.
