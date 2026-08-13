@@ -228,6 +228,13 @@ enrols new ones by scanning `src/auth/`, `src/config/`,
 `src/enrichment/providers/`, `src/ingestion/sources/`, `src/sources/`,
 `src/utils/` and `src/web/` for a credential key beside a `params=` call.
 
+That covers how a failure is rendered. The transports carry the same URLs.
+`urllib3.connectionpool` logs each request target, query string included, at
+DEBUG — and at WARNING on its retry path. The shared wiring holds `httpx`,
+`httpcore` and `urllib3` at WARNING, which closes the DEBUG half alone; the
+retry line never runs because `requests`' default adapter builds `Retry(0)`.
+Mounting an adapter with retries would leak keys at any level.
+
 A refused config write is redacted before logging, but the match is exact, so a
 truncated or encoded form of the secret survives it.
 

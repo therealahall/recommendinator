@@ -4,6 +4,18 @@ Every Recommendinator feature is reachable from the CLI. It is a peer of the web
 UI, not a subset. Run commands as `python3.11 -m src.cli <command>`. Most
 read-only commands accept `--format json`.
 
+Diagnostics go to the same log file the web server writes, at the level
+`logging.level` names, so a startup message seen once from either interface is
+readable from the other. The console gets warnings and errors alone, whatever
+`logging.level` says, and gets them on stderr — stdout carries only the
+command's own output, so `--format json` and `library export` stay pipeable.
+
+Tracebacks are written to the log file only. On the console a command prints
+its own error line, which is why several of them say to check the log. If the
+log file cannot be opened at all — a root-owned `logs/` bind mount, say — the
+command says so once on stderr and runs anyway, with its warnings and errors on
+stderr, tracebacks still withheld, and nothing on disk.
+
 ## Import and recommend
 
 ### `update`
