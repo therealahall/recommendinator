@@ -5,6 +5,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import SettingsPage from './SettingsPage.vue'
 import { useAuthStore } from '@/stores/auth'
 import { jsonResponse } from '@/testing/http'
+import { formatDate } from '@/utils/format'
 import type { UserResponse } from '@/types/api'
 
 const mockGet = vi.fn()
@@ -236,7 +237,12 @@ describe('SettingsPage', () => {
   })
 })
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
 // Asserted on the stubbed global fetch: the mock above lets the account routes
 // through to the real API layer, so what these check is the request itself.
@@ -279,6 +285,19 @@ describe('SettingsPage account section', () => {
     const wrapper = await openSettings()
 
     expect(wrapper.find('#account-heading').exists()).toBe(false)
+  })
+
+  it('shows the account facts only the session carries', async () => {
+    // The floor and the password's age both arrive on the session call, and
+    // both used to stop at the store: one was hardcoded, one was not shown.
+    const auth = signedIn()
+    auth.$patch({ minPasswordLength: 16 })
+    const wrapper = await openSettings()
+
+    expect(wrapper.find('#account-new-password-hint').text()).toContain('16')
+    expect(wrapper.find('[data-testid="account-password-age"]').text()).toContain(
+      formatDate(AARON.password_updated_at as string),
+    )
   })
 
   it('renames the account, and shows the new name as saved', async () => {

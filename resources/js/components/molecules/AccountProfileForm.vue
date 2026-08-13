@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
+import { NAME_MAX_LENGTH } from '@/constants/auth'
 import type { UserResponse, UserUpdateRequest } from '@/types/api'
+
+/** The one lock no browser narrates: the fields are filled and valid, so
+ *  constraint validation has nothing to say about a press that does nothing. */
+const NOTHING_TO_SAVE = 'Nothing to save yet. Edit a field first.'
 
 const props = withDefaults(
   defineProps<{
@@ -39,18 +44,36 @@ const changed = computed(
 )
 const submittable = computed(() => username.value.trim() !== '' && changed.value)
 
+/** A complaint about the press this form can make on its own. */
+const complaint = ref('')
+
+// Editing either field is the retry, so drop the complaint on the keystroke.
+watch([username, displayName], () => {
+  complaint.value = ''
+})
+
 // Mounted persistently and bound to a computed, because a live region inserted
 // with v-if once it has content is read as page content and skipped.
 const announcement = computed(() => {
+  if (complaint.value) return complaint.value
   if (props.error) return props.error
   if (props.pending) return 'Saving…'
   return props.saved ? 'Saved.' : ''
 })
+// The complaint is not a refusal of anything typed: nothing was. Only a server
+// error paints the region red and marks the field it could not save.
 const failed = computed(() => Boolean(props.error))
 const describedBy = computed(() => (announcement.value ? 'account-profile-status' : undefined))
 
 function submit(): void {
-  if (props.pending || !submittable.value) return
+  if (props.pending) return
+  if (!changed.value) {
+    complaint.value = NOTHING_TO_SAVE
+    return
+  }
+  // An empty username reaches here only under a test harness: `required` stops
+  // the browser's own submit, and the bubble it shows is the narration.
+  if (!submittable.value) return
   emit('submit', {
     username: username.value.trim(),
     display_name: displayName.value.trim(),
@@ -72,6 +95,7 @@ function submit(): void {
         :described-by="describedBy"
         :invalid="failed"
         :required="true"
+        :max-length="NAME_MAX_LENGTH"
       />
       <AuthField
         id="account-display-name"
@@ -80,6 +104,7 @@ function submit(): void {
         autocomplete="nickname"
         hint="What the app calls you. Left blank, it uses your username."
         :described-by="describedBy"
+        :max-length="NAME_MAX_LENGTH"
       />
     </div>
 

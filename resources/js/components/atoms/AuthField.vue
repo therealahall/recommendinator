@@ -16,6 +16,8 @@ const props = withDefaults(
     /** The submit button locks with aria-disabled rather than blurring itself,
      *  so a greyed-out button is the only other signal an empty field is why. */
     required?: boolean
+    /** The API's cap on this field, stopping input the save would only refuse. */
+    maxLength?: number
     autofocus?: boolean
   }>(),
   {
@@ -24,6 +26,7 @@ const props = withDefaults(
     describedBy: '',
     invalid: false,
     required: false,
+    maxLength: undefined,
     autofocus: false,
   },
 )
@@ -64,6 +67,7 @@ onMounted(() => {
       :aria-invalid="invalid || undefined"
       :required="required || undefined"
       :aria-required="required || undefined"
+      :maxlength="maxLength"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
     />
     <p v-if="hint" :id="hintId" class="auth-field-hint">{{ hint }}</p>

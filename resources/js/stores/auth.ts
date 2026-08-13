@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { ApiError, useApi } from '@/composables/useApi'
+import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { stringDetail } from '@/utils/apiDetail'
 import type {
   LoginRequest,
@@ -51,6 +52,9 @@ export const useAuthStore = defineStore('auth', () => {
   // that a script on the page could read.
   const state = ref<SessionState>('unknown')
   const user = ref<UserResponse | null>(null)
+  // The server owns the floor. The constant only covers the gap before the
+  // session call answers, and the boot screen is what is up until it does.
+  const minPasswordLength = ref(PASSWORD_MIN_LENGTH)
 
   const isAuthenticated = computed(() => state.value === 'signed-in')
   const needsSetup = computed(() => state.value === 'unclaimed')
@@ -68,6 +72,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     user.value = session.user
+    minPasswordLength.value = session.min_password_length
     state.value = screenFor(session)
     return ''
   }
@@ -145,6 +150,7 @@ export const useAuthStore = defineStore('auth', () => {
     // State
     state,
     user,
+    minPasswordLength,
     // Getters
     isAuthenticated,
     needsSetup,

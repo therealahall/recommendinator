@@ -9,7 +9,12 @@ import type { UserResponse } from '@/types/api'
 // the field it knows about, while a duplicate id or a dangling
 // aria-describedby only exists once two of them are on screen together.
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
 function fields(wrapper: VueWrapper): HTMLInputElement[] {
   return Array.from(wrapper.element.querySelectorAll('input'))

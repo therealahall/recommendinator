@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
-import { PASSWORD_HINT } from '@/constants/auth'
+import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordHint } from '@/constants/auth'
 import { passwordComplaint } from '@/utils/password'
 import type { SetupRequest } from '@/types/api'
 
@@ -10,8 +10,10 @@ const props = withDefaults(
     /** Whatever the parent's account-creation request came back with. */
     error?: string
     pending?: boolean
+    /** The server's floor, which the session call carries. */
+    minPasswordLength?: number
   }>(),
-  { error: '', pending: false },
+  { error: '', pending: false, minPasswordLength: PASSWORD_MIN_LENGTH },
 )
 
 const emit = defineEmits<{
@@ -52,7 +54,7 @@ watch([password, confirmation], () => {
 
 function submit(): void {
   if (props.pending || !complete.value) return
-  complaint.value = passwordComplaint(password.value, confirmation.value)
+  complaint.value = passwordComplaint(password.value, confirmation.value, props.minPasswordLength)
   if (complaint.value) return
   emit('submit', {
     username: username.value.trim(),
@@ -83,6 +85,7 @@ function submit(): void {
           hint="What you type to sign in."
           :described-by="generalDescribedBy"
           :required="true"
+          :max-length="NAME_MAX_LENGTH"
           :autofocus="true"
         />
         <AuthField
@@ -92,6 +95,7 @@ function submit(): void {
           autocomplete="nickname"
           hint="What the app calls you. Left blank, it uses your username."
           :described-by="generalDescribedBy"
+          :max-length="NAME_MAX_LENGTH"
         />
         <AuthField
           id="setup-password"
@@ -99,7 +103,7 @@ function submit(): void {
           label="Password"
           type="password"
           autocomplete="new-password"
-          :hint="PASSWORD_HINT"
+          :hint="passwordHint(minPasswordLength)"
           :described-by="passwordDescribedBy"
           :invalid="Boolean(complaint)"
           :required="true"

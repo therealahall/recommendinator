@@ -38,6 +38,8 @@ export interface UserResponse {
   id: number
   username: string
   display_name: string | null
+  /** null for an account whose password has not changed since it was set up. */
+  password_updated_at: string | null
 }
 
 /** What the SPA needs on boot to choose setup, sign-in or the app itself. */
@@ -45,6 +47,8 @@ export interface SessionResponse {
   claimed: boolean
   authenticated: boolean
   user: UserResponse | null
+  /** The floor the API enforces, so the forms state and refuse the same one. */
+  min_password_length: number
 }
 
 /** First-run account creation. Sent once, before any account exists. */

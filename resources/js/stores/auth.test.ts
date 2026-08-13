@@ -2,13 +2,29 @@ import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from './auth'
+import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { deferredFetch, jsonResponse } from '@/testing/http'
 import type { UserResponse } from '@/types/api'
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
-function session(claimed: boolean, authenticated: boolean, user: UserResponse | null = null) {
-  return jsonResponse(200, { claimed, authenticated, user })
+function session(
+  claimed: boolean,
+  authenticated: boolean,
+  user: UserResponse | null = null,
+  minPasswordLength: number = PASSWORD_MIN_LENGTH,
+) {
+  return jsonResponse(200, {
+    claimed,
+    authenticated,
+    user,
+    min_password_length: minPasswordLength,
+  })
 }
 
 /** The request the store made, as (url, init). */
@@ -70,6 +86,30 @@ describe('useAuthStore', () => {
     await auth.resolveSession()
 
     expect(auth.user).toEqual(AARON)
+  })
+
+  it('takes the password floor from the session, not from a literal of its own', async () => {
+    // Regression: the SPA hardcoded 12, so a server enforcing anything else
+    // stated a rule it does not have and refused passwords it accepts.
+    const server = PASSWORD_MIN_LENGTH + 4
+    vi.mocked(fetch).mockResolvedValue(session(true, true, AARON, server))
+    const auth = useAuthStore()
+
+    await auth.resolveSession()
+
+    expect(auth.minPasswordLength).toBe(server)
+  })
+
+  it('keeps the built-in floor while no session has answered', async () => {
+    // The forms render before the first answer and after a failed one, and a
+    // floor of undefined would state the rule as "at least undefined".
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+    const auth = useAuthStore()
+    expect(auth.minPasswordLength).toBe(PASSWORD_MIN_LENGTH)
+
+    await auth.resolveSession()
+
+    expect(auth.minPasswordLength).toBe(PASSWORD_MIN_LENGTH)
   })
 
   it('opens on sign-in, saying so, when the server does not answer at all', async () => {

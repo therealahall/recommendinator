@@ -1,9 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AccountProfileForm from './AccountProfileForm.vue'
+import { NAME_MAX_LENGTH } from '@/constants/auth'
 import type { UserResponse } from '@/types/api'
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
 function mountForm(props: Record<string, unknown> = {}) {
   return mount(AccountProfileForm, { props: { user: AARON, ...props } })
@@ -18,7 +24,9 @@ describe('AccountProfileForm', () => {
   })
 
   it('shows an empty display name rather than the word null', () => {
-    const wrapper = mountForm({ user: { id: 2, username: 'bob', display_name: null } })
+    const wrapper = mountForm({
+      user: { id: 2, username: 'bob', display_name: null, password_updated_at: null },
+    })
 
     expect(wrapper.find<HTMLInputElement>('#account-display-name').element.value).toBe('')
   })
@@ -28,7 +36,7 @@ describe('AccountProfileForm', () => {
     // down the values the server accepted.
     const wrapper = mountForm()
 
-    await wrapper.setProps({ user: { id: 1, username: 'ahall', display_name: 'A. Hall' } })
+    await wrapper.setProps({ user: { ...AARON, username: 'ahall', display_name: 'A. Hall' } })
 
     expect(wrapper.find<HTMLInputElement>('#account-username').element.value).toBe('ahall')
     expect(wrapper.find<HTMLInputElement>('#account-display-name').element.value).toBe('A. Hall')
@@ -64,10 +72,43 @@ describe('AccountProfileForm', () => {
     expect(button().attributes('disabled')).toBeUndefined()
 
     await wrapper.find('#account-display-name').setValue('Aaron')
-    await wrapper.setProps({ user: { id: 1, username: 'aaron', display_name: 'Aaron' } })
+    await wrapper.setProps({ user: { ...AARON, display_name: 'Aaron' } })
 
     expect(button().attributes('aria-disabled')).toBe('true')
     expect(button().attributes('disabled')).toBeUndefined()
+  })
+
+  it('says why a press on an untouched form did nothing', async () => {
+    // Regression: the button locks on "nothing has changed", which no browser
+    // narrates the way it narrates an empty required field — so pressing it
+    // produced no submission, no message and an empty live region.
+    const wrapper = mountForm()
+
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#account-profile-status').text()).toContain('Nothing to save')
+    // Nothing typed is wrong, so no field is marked as such.
+    expect(wrapper.find('#account-username').attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('drops that complaint on the edit that answers it', async () => {
+    const wrapper = mountForm()
+    await wrapper.find('form').trigger('submit')
+
+    await wrapper.find('#account-display-name').setValue('Aaron')
+
+    expect(wrapper.find('#account-profile-status').text()).toBe('')
+  })
+
+  it('stops both names at the length the API accepts', async () => {
+    // Past the cap the save comes back a validation shape that renders as no
+    // sentence, so the field is where the limit has to be stated.
+    const wrapper = mountForm()
+
+    for (const id of ['#account-username', '#account-display-name']) {
+      expect(wrapper.find(id).attributes('maxlength'), id).toBe(String(NAME_MAX_LENGTH))
+    }
   })
 
   it('offers the username autocomplete so a manager updates its entry', () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import SetupForm from './SetupForm.vue'
-import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
+import { NAME_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/constants/auth'
 
 /** The hint ids sit in aria-describedby too, so ask what the field points at
  *  rather than pinning the whole list. */
@@ -108,6 +108,31 @@ describe('SetupForm', () => {
     expect(wrapper.find('#setup-status').text()).toContain(String(PASSWORD_MIN_LENGTH))
     expect(wrapper.find('#setup-password').attributes('aria-invalid')).toBe('true')
     expect(wrapper.find('#setup-confirmation').attributes('aria-invalid')).toBe('true')
+  })
+
+  it('states and enforces the floor the session reported, not one of its own', async () => {
+    // Regression: the floor was compiled into the bundle, so a server enforcing
+    // another one had the first screen of the app inviting a password it would
+    // then refuse — and no account could be created without guessing why.
+    const server = PASSWORD_MIN_LENGTH + 4
+    const between = 'x'.repeat(server - 1)
+    const wrapper = mount(SetupForm, { props: { minPasswordLength: server } })
+
+    expect(wrapper.find('#setup-password-hint').text()).toContain(String(server))
+
+    await fillIn(wrapper, { username: 'aaron', password: between, confirmation: between })
+    await wrapper.find('form').trigger('submit')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('#setup-status').text()).toContain(String(server))
+  })
+
+  it('stops both names at the length the API accepts', () => {
+    const wrapper = mount(SetupForm)
+
+    for (const id of ['#setup-username', '#setup-display-name']) {
+      expect(wrapper.find(id).attributes('maxlength'), id).toBe(String(NAME_MAX_LENGTH))
+    }
   })
 
   it('refuses a mismatch locally and says which fields disagree', async () => {

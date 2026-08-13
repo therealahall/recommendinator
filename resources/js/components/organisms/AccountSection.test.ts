@@ -3,7 +3,12 @@ import { mount } from '@vue/test-utils'
 import AccountSection from './AccountSection.vue'
 import type { UserResponse } from '@/types/api'
 
-const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+const AARON: UserResponse = {
+  id: 1,
+  username: 'aaron',
+  display_name: 'Aaron Hall',
+  password_updated_at: '2026-01-15T09:30:00+00:00',
+}
 
 function mountSection(props: Record<string, unknown> = {}) {
   return mount(AccountSection, { props: { user: AARON, ...props } })
@@ -61,6 +66,13 @@ describe('AccountSection', () => {
     await signOut.trigger('click')
 
     expect(wrapper.emitted('sign-out')).toHaveLength(1)
+  })
+
+  it('hands the password form both facts only the session knows', async () => {
+    const wrapper = mountSection({ minPasswordLength: 16 })
+
+    expect(wrapper.find('#account-new-password-hint').text()).toContain('16')
+    expect(wrapper.find('[data-testid="account-password-age"]').text()).not.toContain('never')
   })
 
   it('keeps the two reports apart', async () => {
