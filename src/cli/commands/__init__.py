@@ -4,6 +4,7 @@ Each module is underscore-prefixed because the name it exports would shadow
 it here: ``commands.auth`` has to be the group, not the module holding it.
 """
 
+from src.cli.commands._account import account
 from src.cli.commands._auth import auth
 from src.cli.commands._chat import chat
 from src.cli.commands._complete import complete
@@ -19,6 +20,7 @@ from src.cli.commands._status import status
 from src.cli.commands._update import update
 
 __all__ = [
+    "account",
     "auth",
     "chat",
     "complete",
