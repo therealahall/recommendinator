@@ -2,16 +2,21 @@
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
+import LoginForm from '@/components/organisms/LoginForm.vue'
+import SetupForm from '@/components/organisms/SetupForm.vue'
 import StatusBar from '@/components/organisms/StatusBar.vue'
-import TokenGate from '@/components/organisms/TokenGate.vue'
 import UpdateBanner from '@/components/organisms/UpdateBanner.vue'
+import { useSubmission } from '@/composables/useSubmission'
 import { useAppStore } from '@/stores/app'
-import { useAuthStore } from '@/stores/auth'
+import { SESSION_ENDED, useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
+import type { LoginRequest, SetupRequest } from '@/types/api'
 
 const app = useAppStore()
 const auth = useAuthStore()
 const theme = useThemeStore()
+// Setup and sign-in are never on screen together, so they share one report.
+const gate = useSubmission()
 
 const sidebarOpen = ref(false)
 const mainContent = ref<HTMLElement | null>(null)
@@ -22,26 +27,38 @@ function closeSidebar() {
 
 function load() {
   app.fetchStatus()
-  app.fetchUsers()
   theme.fetchThemes()
 }
 
+function signUp(account: SetupRequest) {
+  gate.submit(() => auth.signUp(account))
+}
+
+function signIn(credentials: LoginRequest) {
+  gate.submit(() => auth.signIn(credentials))
+}
+
 onMounted(() => {
-  // Themes are static files behind no token, and the gate is the one screen a
-  // user who cannot read light-on-dark has no way to skip.
+  // Themes are static files behind no session, and the sign-in screen is the one
+  // a user who cannot read light-on-dark has no way to skip.
   theme.applyStoredTheme()
-  // Every /api call 401s without a token, so nothing is fetched until the gate
-  // has one, and the first accepted token is what starts the app.
-  if (auth.isAuthenticated) load()
+  // One call decides all three screens, and every /api route 401s until it comes
+  // back signed in, so nothing else is fetched before it answers.
+  gate.submit(auth.resolveSession)
 })
 
 watch(
   () => auth.isAuthenticated,
-  async (authenticated) => {
-    if (!authenticated) return
+  async (authenticated, wasAuthenticated) => {
+    if (!authenticated) {
+      // The shell disappearing without a word reads as a crash, and every route
+      // out of it — a revoked session or a deliberate sign-out — ended one.
+      if (wasAuthenticated) gate.error = SESSION_ENDED
+      return
+    }
     load()
-    // The gate took the focused input with it, so focus would sit on <body>
-    // and the next Tab would restart from the sidebar.
+    // The sign-in screen took the focused input with it, so focus would sit on
+    // <body> and the next Tab would restart from the sidebar.
     await nextTick()
     mainContent.value?.focus()
   },
@@ -49,9 +66,24 @@ watch(
 </script>
 
 <template>
-  <TokenGate v-if="!auth.isAuthenticated" />
+  <!-- Three screens off one answer, and a fourth state before it lands: while
+       the session is unknown none of them render, because a guess flashes a
+       sign-in form at someone who is already signed in. -->
+  <SetupForm
+    v-if="auth.needsSetup"
+    :error="gate.error"
+    :pending="gate.pending"
+    @submit="signUp"
+  />
 
-  <template v-else>
+  <LoginForm
+    v-else-if="auth.needsLogin"
+    :error="gate.error"
+    :pending="gate.pending"
+    @submit="signIn"
+  />
+
+  <template v-else-if="auth.isAuthenticated">
     <!-- Mobile sidebar toggle -->
     <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" aria-label="Toggle navigation">
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -67,7 +99,7 @@ watch(
     />
 
     <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
-      <AppSidebar :user="app.currentUser" @navigate="closeSidebar" />
+      <AppSidebar :user="auth.user" @navigate="closeSidebar" />
       <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
         <UpdateBanner />
         <StatusBar />

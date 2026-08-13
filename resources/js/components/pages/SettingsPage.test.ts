@@ -1,8 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import SettingsPage from './SettingsPage.vue'
+import { useAuthStore } from '@/stores/auth'
+import { jsonResponse } from '@/testing/http'
+import type { UserResponse } from '@/types/api'
 
 const mockGet = vi.fn()
 const mockPut = vi.fn()
@@ -219,5 +222,142 @@ describe('SettingsPage', () => {
     expect(setButton.exists()).toBe(true)
     expect(document.activeElement).toBe(setButton.element)
     wrapper.unmount()
+  })
+})
+
+const AARON: UserResponse = { id: 1, username: 'aaron', display_name: 'Aaron Hall' }
+
+// The account routes go through the auth store, which calls fetch itself rather
+// than the API layer that imports it, so the mock above does not cover them.
+describe('SettingsPage account section', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockGet.mockResolvedValue({ sections: [] })
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function signedIn() {
+    const auth = useAuthStore()
+    auth.$patch({ state: 'signed-in', user: AARON })
+    return auth
+  }
+
+  async function openSettings(): Promise<VueWrapper> {
+    const wrapper = mount(SettingsPage)
+    await flushPromises()
+    return wrapper
+  }
+
+  async function changePassword(wrapper: VueWrapper): Promise<void> {
+    await wrapper.find('#account-current-password').setValue('hunter2')
+    await wrapper.find('#account-new-password').setValue('hunter33')
+    await wrapper.find('#account-confirm-password').setValue('hunter33')
+    await wrapper.findAll('form')[1].trigger('submit')
+    await flushPromises()
+  }
+
+  it('waits for the session before offering an account to edit', async () => {
+    const wrapper = await openSettings()
+
+    expect(wrapper.find('#account-heading').exists()).toBe(false)
+  })
+
+  it('renames the account, and shows the new name as saved', async () => {
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, { id: 1, username: 'aaron', display_name: 'Aaron' }),
+    )
+    const wrapper = await openSettings()
+
+    await wrapper.find('#account-display-name').setValue('Aaron')
+    await wrapper.findAll('form')[0].trigger('submit')
+    await flushPromises()
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toBe('/api/users/1')
+    expect(init?.method).toBe('PATCH')
+    expect(init?.body).toBe(JSON.stringify({ username: 'aaron', display_name: 'Aaron' }))
+    expect(auth.user?.display_name).toBe('Aaron')
+    expect(wrapper.find('#account-profile-status').text()).toBe('Saved.')
+  })
+
+  it('changes the username, which is what the next sign-in needs', async () => {
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, { id: 1, username: 'renamed', display_name: 'Aaron Hall' }),
+    )
+    const wrapper = await openSettings()
+
+    await wrapper.find('#account-username').setValue('renamed')
+    await wrapper.findAll('form')[0].trigger('submit')
+    await flushPromises()
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toBe('/api/users/1')
+    expect(init?.body).toBe(
+      JSON.stringify({ username: 'renamed', display_name: 'Aaron Hall' }),
+    )
+    expect(auth.user?.username).toBe('renamed')
+    expect(wrapper.find<HTMLInputElement>('#account-username').element.value).toBe('renamed')
+  })
+
+  it('reports a refused rename beside the form that was refused', async () => {
+    signedIn()
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(409, { detail: 'That username is taken.' }))
+    const wrapper = await openSettings()
+
+    await wrapper.find('#account-username').setValue('bob')
+    await wrapper.findAll('form')[0].trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('#account-profile-status').text()).toBe('That username is taken.')
+    expect(wrapper.find('#account-password-status').text()).toBe('')
+  })
+
+  it('changes the password against the account route', async () => {
+    signedIn()
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(204))
+    const wrapper = await openSettings()
+
+    await changePassword(wrapper)
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toBe('/api/users/1/password')
+    expect(init?.method).toBe('PUT')
+    expect(wrapper.find('#account-password-status').text()).toBe('Password changed.')
+  })
+
+  it('keeps the user on the page when the current password is wrong', async () => {
+    // A typo that emptied the whole screen would be a hard thing to recover
+    // from, and this route answers 401 for the field as well as the session.
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(401, { detail: 'That is not your current password.' }),
+    )
+    const wrapper = await openSettings()
+
+    await changePassword(wrapper)
+
+    expect(wrapper.find('#account-password-status').text()).toBe(
+      'That is not your current password.',
+    )
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('signs out through the account section', async () => {
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(204))
+    const wrapper = await openSettings()
+
+    await wrapper.find('[data-testid="account-sign-out"]').trigger('click')
+    await flushPromises()
+
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe('/api/auth/logout')
+    expect(auth.needsLogin).toBe(true)
   })
 })

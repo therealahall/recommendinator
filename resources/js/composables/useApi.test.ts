@@ -143,15 +143,15 @@ describe('useApi query parameters', () => {
   })
 })
 
-function headersOf(call: number): Record<string, string> {
-  return vi.mocked(fetch).mock.calls[call][1]?.headers as Record<string, string>
+function initOf(call: number): RequestInit {
+  return vi.mocked(fetch).mock.calls[call][1] ?? {}
 }
 
-/** Seed storage rather than calling an action: the store only persists a token
- *  it has verified, and these tests are about what happens afterwards. */
-function storedToken(value: string) {
-  localStorage.setItem('apiToken', value)
-  return useAuthStore()
+/** Put the store where a live session leaves it, without a boot round trip. */
+function signedIn() {
+  const auth = useAuthStore()
+  auth.$patch({ state: 'signed-in', user: { id: 1, username: 'aaron', display_name: null } })
+  return auth
 }
 
 describe('useApi authentication', () => {
@@ -165,26 +165,26 @@ describe('useApi authentication', () => {
     vi.unstubAllGlobals()
   })
 
-  it('sends the stored token as a bearer credential', async () => {
-    storedToken('the-token')
+  it('sends the session cookie, which is the only credential the SPA has', async () => {
+    signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
 
     await useApi().get('/users')
 
-    expect(headersOf(0)['Authorization']).toBe('Bearer the-token')
+    expect(initOf(0).credentials).toBe('include')
   })
 
   it('sends it on streaming requests too, which bypass request()', async () => {
-    storedToken('the-token')
+    signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
 
     await useApi().raw('/recommendations/stream', { method: 'GET' })
 
-    expect(headersOf(0)['Authorization']).toBe('Bearer the-token')
+    expect(initOf(0).credentials).toBe('include')
   })
 
   it('keeps the caller-supplied headers alongside it', async () => {
-    storedToken('the-token')
+    signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
 
     await useApi().raw('/chat', {
@@ -193,61 +193,49 @@ describe('useApi authentication', () => {
       body: '{}',
     })
 
-    expect(headersOf(0)).toMatchObject({
-      Authorization: 'Bearer the-token',
-      'Content-Type': 'application/json',
-    })
+    expect(initOf(0).headers).toMatchObject({ 'Content-Type': 'application/json' })
+    expect(initOf(0).credentials).toBe('include')
   })
 
-  it('sends no Authorization header when there is no token', async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
-
-    await useApi().get('/users')
-
-    expect(headersOf(0)['Authorization']).toBeUndefined()
-  })
-
-  it('drops a token the server refuses, so the gate asks again', async () => {
-    const auth = storedToken('stale-token')
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'nope' }))
+  it('ends the session the server refuses, so the sign-in screen comes back', async () => {
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'Not signed in.' }))
 
     await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
 
     expect(auth.isAuthenticated).toBe(false)
-    expect(auth.status).toBe('rejected')
+    expect(auth.needsLogin).toBe(true)
   })
 
-  it('drops it on a refused stream too, which returns instead of throwing', async () => {
-    // Regression: raw() carried the bearer header but never inspected the
-    // status, so a token revoked mid-session surfaced to the SSE stores as a
-    // bare "HTTP 401" and left the user with no way back to the gate.
-    const auth = storedToken('revoked-token')
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'nope' }))
+  it('ends it on a refused stream too, which returns instead of throwing', async () => {
+    // Regression: raw() carried the credential but never inspected the status,
+    // so a session revoked mid-session surfaced to the SSE stores as a bare
+    // "HTTP 401" and left the user with no way back to the sign-in screen.
+    const auth = signedIn()
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'Not signed in.' }))
 
     const response = await useApi().raw('/recommendations/stream')
 
     expect(response.status).toBe(401)
     expect(auth.isAuthenticated).toBe(false)
-    expect(auth.status).toBe('rejected')
+    expect(auth.needsLogin).toBe(true)
   })
 
-  it('leaves the token alone on any other failure', async () => {
-    const auth = storedToken('good-token')
+  it('leaves the session alone on any other failure', async () => {
+    const auth = signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
 
     await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
 
-    expect(auth.token).toBe('good-token')
-    expect(auth.status).toBe('idle')
+    expect(auth.isAuthenticated).toBe(true)
   })
 
   it('leaves a streaming failure that is not a refusal alone', async () => {
-    const auth = storedToken('good-token')
+    const auth = signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
 
     await useApi().raw('/recommendations/stream')
 
-    expect(auth.token).toBe('good-token')
-    expect(auth.status).toBe('idle')
+    expect(auth.isAuthenticated).toBe(true)
   })
 })

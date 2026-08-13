@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AuthField from '@/components/atoms/AuthField.vue'
 import type { LoginRequest } from '@/types/api'
 
@@ -27,8 +27,16 @@ const announcement = computed(() => props.error || (props.pending ? 'Signing inâ
 const failed = computed(() => Boolean(props.error))
 const describedBy = computed(() => (announcement.value ? 'login-status' : undefined))
 
-// Both drafts survive a refusal. Retyping a password on a phone keyboard is the
-// whole cost of one wrong character, and the phone is why this screen exists.
+// The username survives a refusal and the password does not: retyping a name on
+// a phone keyboard is the friction this screen exists to remove, and a masked
+// field nobody can proofread is where the wrong character usually is.
+watch(
+  () => props.error,
+  (message) => {
+    if (message) password.value = ''
+  },
+)
+
 function submit(): void {
   if (props.pending || !complete.value) return
   emit('submit', { username: username.value.trim(), password: password.value })

@@ -85,14 +85,34 @@ describe('LoginForm', () => {
     expect(wrapper.find('#login-password').attributes('aria-describedby')).toBe('login-status')
   })
 
-  it('keeps both drafts after a refusal, so nothing is retyped on a phone', async () => {
+  it('keeps the username after a refusal, so it is not retyped on a phone', async () => {
     const wrapper = mount(LoginForm)
     await signIn(wrapper, 'aaron', 'nearly-right')
 
     await wrapper.setProps({ error: 'Not accepted.' })
 
     expect(wrapper.find<HTMLInputElement>('#login-username').element.value).toBe('aaron')
-    expect(wrapper.find<HTMLInputElement>('#login-password').element.value).toBe('nearly-right')
+  })
+
+  it('clears the password after a refusal, which is where the typo was', async () => {
+    // Masked and unproofreadable: retyping it is the shorter path to a correct
+    // one than hunting the wrong character in a row of dots.
+    const wrapper = mount(LoginForm)
+    await signIn(wrapper, 'aaron', 'nearly-right')
+
+    await wrapper.setProps({ error: 'Not accepted.' })
+
+    expect(wrapper.find<HTMLInputElement>('#login-password').element.value).toBe('')
+    expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('leaves the password alone while the attempt is still open', async () => {
+    const wrapper = mount(LoginForm)
+    await signIn(wrapper, 'aaron', 'hunter2')
+
+    await wrapper.setProps({ pending: true })
+
+    expect(wrapper.find<HTMLInputElement>('#login-password').element.value).toBe('hunter2')
   })
 
   it('locks the submit button without blurring it while the request is in flight', async () => {

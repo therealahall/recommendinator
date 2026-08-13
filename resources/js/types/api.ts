@@ -40,6 +40,13 @@ export interface UserResponse {
   display_name: string | null
 }
 
+/** What the SPA needs on boot to choose setup, sign-in or the app itself. */
+export interface SessionResponse {
+  claimed: boolean
+  authenticated: boolean
+  user: UserResponse | null
+}
+
 /** First-run account creation. Sent once, before any account exists. */
 export interface SetupRequest {
   username: string

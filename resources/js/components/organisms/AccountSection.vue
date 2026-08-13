@@ -27,6 +27,7 @@ withDefaults(
 const emit = defineEmits<{
   'save-profile': [changes: UserUpdateRequest]
   'change-password': [change: PasswordChangeRequest]
+  'sign-out': []
 }>()
 </script>
 
@@ -51,6 +52,20 @@ const emit = defineEmits<{
       :saved="passwordSaved"
       @submit="emit('change-password', $event)"
     />
+
+    <hr class="account-divider" />
+
+    <div class="account-form-actions">
+      <p class="auth-status">Signing out ends this browser's session. Others stay signed in.</p>
+      <button
+        type="button"
+        class="btn btn-secondary"
+        data-testid="account-sign-out"
+        @click="emit('sign-out')"
+      >
+        Sign out
+      </button>
+    </div>
   </section>
 </template>
 

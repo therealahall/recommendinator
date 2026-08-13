@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth'
+import { stringDetail } from '@/utils/apiDetail'
 
 const API_BASE = '/api'
 
@@ -20,17 +21,6 @@ export class ApiError extends Error {
     super(stringDetail(body) ?? `${status} ${statusText}`)
     this.name = 'ApiError'
   }
-}
-
-/** FastAPI's `{"detail": "..."}`, the one part of an error response written for
- *  the user to read. Validation payloads put an object there instead, which is
- *  no use as a message. */
-function stringDetail(body: unknown): string | undefined {
-  if (typeof body !== 'object' || body === null || !('detail' in body)) return undefined
-  // A blank detail is still a string, so it would win the `??` above and leave
-  // the message empty — the page renders its prefix and nothing after it.
-  if (typeof body.detail !== 'string' || body.detail.trim() === '') return undefined
-  return body.detail
 }
 
 /** Read a failed response into an ApiError. Exported for the SSE callers, which
@@ -63,19 +53,20 @@ function buildUrl(
   return url
 }
 
-/** The single door out to /api, so the streaming path cannot miss the token or
- *  the refusal. Callers swallow their own errors, so an unhandled 401 strands
- *  the user in a half-empty app with no way back to the gate. */
+/** The single door out to /api, so the streaming path cannot miss the refusal.
+ *  Callers swallow their own errors, so an unhandled 401 strands the user in a
+ *  half-empty app with no way back to the sign-in screen. */
 async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
   const auth = useAuthStore()
   const { params, headers, ...fetchOptions } = options
 
-  const merged: Record<string, string> = { ...headers }
-  if (auth.token) {
-    merged['Authorization'] = `Bearer ${auth.token}`
-  }
-
-  const response = await fetch(buildUrl(path, params), { ...fetchOptions, headers: merged })
+  const response = await fetch(buildUrl(path, params), {
+    ...fetchOptions,
+    headers,
+    // The session is an httpOnly cookie, so nothing here can attach it by hand
+    // and a request that omits it is anonymous.
+    credentials: 'include',
+  })
 
   if (response.status === 401) {
     auth.reject()
