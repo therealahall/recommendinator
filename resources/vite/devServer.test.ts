@@ -125,6 +125,31 @@ describe('dev server overrides', () => {
   )
 })
 
+describe('the watcher', () => {
+  // Reported: `pnpm dev` died with a bare ENOSPC naming a .mypy_cache file
+  // inside .claude/worktrees. Agent worktrees are whole checkouts, and enough
+  // of them exhaust the inotify limit before Vite serves anything.
+  it('does not watch the agent worktrees', () => {
+    const ignored = devServerOptions({}).watch?.ignored as string[]
+
+    expect(ignored).toContain('**/.claude/worktrees/**')
+  })
+
+  it('does not watch the caches a worktree brings with it', () => {
+    const ignored = devServerOptions({}).watch?.ignored as string[]
+
+    expect(ignored).toEqual(
+      expect.arrayContaining(['**/.mypy_cache/**', '**/.pytest_cache/**', '**/.venv/**']),
+    )
+  })
+
+  it('still watches the frontend source it exists to serve', () => {
+    const ignored = devServerOptions({}).watch?.ignored as string[]
+
+    expect(ignored.some((pattern) => pattern.includes('resources'))).toBe(false)
+  })
+})
+
 describe('vite.config.ts wiring', () => {
   // These assert only what no environment can change, because the config
   // function really does read the developer's .env — asserting a default value
