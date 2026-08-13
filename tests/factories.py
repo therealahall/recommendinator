@@ -11,15 +11,25 @@ from unittest.mock import DEFAULT, Mock, NonCallableMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.config.service import take_api_token
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.schema import UserDict, get_default_user_id
 from src.web.app import create_app
+from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
 
-# The token ``booted_web_app`` boots with and ``authenticated_client``
-# presents. Long enough to satisfy ``MIN_API_TOKEN_LENGTH``.
-API_TOKEN = "test-api-token-000102030405060708090a0b"
+# The one session token a mocked StorageManager recognises. Real storage mints
+# its own, so nothing outside this module may assume the value.
+_MOCK_SESSION_TOKEN = "test-session-000102030405060708090a0b"
+
+#: Who ``authenticated_client`` is signed in as, against mocked storage.
+SESSION_USER: UserDict = {
+    "id": get_default_user_id(),
+    "username": "tester",
+    "display_name": "Tester",
+    "created_at": "2026-01-01T00:00:00",
+    "settings": None,
+}
 
 # Source ids both interfaces must refuse. `^…$` is end-of-line in Python's
 # ``re``, not end-of-string, so a trailing newline is the payload that
@@ -27,13 +37,35 @@ API_TOKEN = "test-api-token-000102030405060708090a0b"
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
 
-def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
-    """Return a ``TestClient`` presenting :data:`API_TOKEN` on every request.
+def back_mock_session_store(storage: Any) -> None:
+    """Teach a mocked StorageManager the one token tests present.
 
-    Every ``/api`` route requires the token, so a bare ``TestClient`` reaches
-    no endpoint at all.
+    Unstubbed, ``lookup_session`` returns a truthy Mock — under which every
+    cookie, and every guess, authenticates. A no-op for real storage.
     """
-    return TestClient(app, headers={"Authorization": f"Bearer {API_TOKEN}"}, **kwargs)
+    if isinstance(storage, NonCallableMock):
+        storage.lookup_session.side_effect = lambda token: (
+            SESSION_USER if token == _MOCK_SESSION_TOKEN else None
+        )
+
+
+def issue_session(storage: Any) -> str:
+    """Return a session token *storage* will recognise, minting one if real."""
+    back_mock_session_store(storage)
+    if isinstance(storage, NonCallableMock):
+        return _MOCK_SESSION_TOKEN
+    return str(storage.create_session(get_default_user_id()))
+
+
+def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
+    """Return a ``TestClient`` carrying a live session cookie.
+
+    The session is opened against the booted app's storage, which is what
+    ``app_state`` holds inside :func:`booted_web_app`.
+    """
+    return TestClient(
+        app, cookies={SESSION_COOKIE: issue_session(app_state.storage)}, **kwargs
+    )
 
 
 def _default_return(method: Any, value: Any) -> None:
@@ -106,7 +138,6 @@ def booted_web_app(
     config: dict[str, Any],
     llm_components: tuple[Any, Any, Any] = (None, None, None),
     engine: Any = None,
-    api_token: str | None = API_TOKEN,
     migrate_credentials: bool = False,
 ) -> Iterator[FastAPI]:
     """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
@@ -136,16 +167,10 @@ def booted_web_app(
     leaked into a field ``create_app`` never assigns, and a raise inside
     ``create_app`` would otherwise leave the singleton half-populated for the
     rest of the session.
-
-    ``api_token`` is supplied to the boot rather than written into *config*, so
-    a caller testing a malformed ``web:`` section still gets the section it
-    passed. ``None`` runs the real read, for the tests that are about it.
     """
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     back_mock_settings_store(storage)
-    read_token: Callable[[dict[str, Any]], str] = (
-        take_api_token if api_token is None else lambda _config: api_token
-    )
+    back_mock_session_store(storage)
     defaults = AppState()
     # Stubbed by default so a test's config keeps the secrets it declared; a
     # test about what startup does to a file-held one asks for the real pass.
@@ -165,7 +190,6 @@ def booted_web_app(
             patch("src.web.app.create_llm_components", return_value=llm_components),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
             credential_migration,
-            patch("src.web.app.take_api_token", read_token),
             # Resolved independently of the patched loader, so unpatched this
             # binds the path of whatever config file the machine has — which a
             # reload would then read for real. The raise takes create_app's own

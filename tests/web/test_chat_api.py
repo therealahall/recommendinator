@@ -18,6 +18,7 @@ from src.models.conversation import ConversationChunk
 from src.storage.manager import StorageManager
 from src.web.chat_api import router
 from src.web.state import app_state
+from tests.factories import authenticated_client
 
 
 @pytest.fixture
@@ -56,10 +57,13 @@ def test_client(
     app_state.memory_manager = MemoryManager(storage_manager)
     app_state.config = {"web": {"allowed_origins": ["*"]}}
 
+    # Mounted bare, and authenticated anyway: the session dependency rides on
+    # the router itself. Signed out, every test in this module reached the
+    # handler it was aiming at without a cookie.
     app = FastAPI()
     app.include_router(router)
 
-    with TestClient(app) as client:
+    with authenticated_client(app) as client:
         yield client
 
     for key, value in saved.items():
@@ -204,14 +208,10 @@ class TestChatEndpoint:
         app_state.storage = storage_manager
         app_state.conversation_engine = None
 
-        from fastapi import FastAPI
-
-        from src.web.chat_api import router
-
         app = FastAPI()
         app.include_router(router)
 
-        with TestClient(app) as client:
+        with authenticated_client(app) as client:
             response = client.post(
                 "/api/chat",
                 json={"user_id": 1, "message": "Hello"},

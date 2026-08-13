@@ -22,12 +22,15 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import (
+    AccountRecord,
     account_is_claimed,
     claim_account,
     create_session,
+    describe_account,
     lookup_session,
     purge_expired_sessions,
     revoke_all_sessions,
+    revoke_other_sessions,
     revoke_session,
     set_password,
     verify_password,
@@ -74,6 +77,7 @@ from src.storage.schema import (
     set_setting,
     set_source_config_enabled,
     update_core_memory,
+    update_user_identity,
     update_user_settings,
     upsert_source_config,
 )
@@ -853,12 +857,32 @@ class StorageManager:
         with self.sqlite_db.connection() as conn:
             return get_all_users(conn)
 
+    def update_user_identity(
+        self, user_id: int, username: str, display_name: str | None
+    ) -> UserDict:
+        """Rename a user, returning the renamed row.
+
+        Raises:
+            UnknownUserError: No user carries *user_id*; nothing was written.
+            sqlite3.IntegrityError: Another user already holds *username*.
+        """
+        with self.sqlite_db.connection() as conn:
+            renamed = update_user_identity(conn, user_id, username, display_name)
+        if renamed is None:
+            raise UnknownUserError(f"No user with id {user_id}.")
+        return renamed
+
     # Account and session methods
 
     def account_is_claimed(self) -> bool:
         """Report whether anyone has set a password on this instance."""
         with self.sqlite_db.connection() as conn:
             return account_is_claimed(conn)
+
+    def describe_account(self, user_id: int) -> AccountRecord | None:
+        """Report a user's names and the state of its password, or None."""
+        with self.sqlite_db.connection() as conn:
+            return describe_account(conn, user_id)
 
     def claim_account(
         self, username: str, display_name: str | None, plaintext_password: str
@@ -895,6 +919,11 @@ class StorageManager:
         """End one session."""
         with self.sqlite_db.connection() as conn:
             revoke_session(conn, token)
+
+    def revoke_other_sessions(self, user_id: int, keep_token: str) -> None:
+        """End every session a user holds but the one making the request."""
+        with self.sqlite_db.connection() as conn:
+            revoke_other_sessions(conn, user_id, keep_token)
 
     def revoke_all_sessions(self, user_id: int) -> None:
         """End every session a user holds, on every device."""

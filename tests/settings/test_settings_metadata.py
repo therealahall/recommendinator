@@ -81,19 +81,12 @@ class TestExampleConfigIsBootstrapOnly:
     def test_example_carries_only_bootstrap_web_leaves(self) -> None:
         """example.yaml's ``web`` section holds the boot settings, nothing else.
 
-        None can be a registry leaf: the launcher reads the bind settings
-        before a database exists, and ``api_token`` guards the API the
-        Settings page is served over.
+        None can be a registry leaf: the launcher reads all three before a
+        database exists to open the socket.
         """
         config = yaml.safe_load(_EXAMPLE_CONFIG.read_text())
 
-        assert set(config["web"]) == {"api_token", "host", "port", "debug"}
-
-    def test_the_example_api_token_is_a_blank_to_fill_in(self) -> None:
-        """A shipped default token would authenticate every clone alike."""
-        config = yaml.safe_load(_EXAMPLE_CONFIG.read_text())
-
-        assert config["web"]["api_token"] == ""
+        assert set(config["web"]) == {"host", "port", "debug"}
 
     def test_only_bootstrap_sections_remain(self) -> None:
         """example.yaml carries the two bootstrap sections and nothing else.

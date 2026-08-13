@@ -26,18 +26,14 @@
 # add a global section here to change a value before anything has been saved to
 # the database, but you never need to, and the database wins once it has one.
 
-# Web server bind settings and the API token.
+# Web server bind settings.
 # BOOTSTRAP: read to open the listening socket before the database exists, so
 # these cannot be managed from the Settings page.
 web:
-  # REQUIRED, and yours to set — nothing generates one for you, under Docker or
-  # from source. Every /api request must carry `Authorization: Bearer <token>`,
-  # and the server refuses to start while this is empty. Generate one with
-  # `openssl rand -hex 32`; at least 32 ASCII characters.
-  api_token: ""
   # "127.0.0.1" binds to localhost only (recommended). "0.0.0.0" allows LAN
-  # access — the token is then crossing your network in cleartext, because
-  # this app never serves TLS. Put a reverse proxy in front of it instead.
+  # access — your password and session cookie then cross the network in
+  # cleartext, because this app never serves TLS. Put a reverse proxy in front
+  # of it instead.
   host: "127.0.0.1"
   port: 18473  # Non-standard port to avoid collisions with other services
   # Development only: enables auto-reload on file changes AND exposes the
@@ -46,9 +42,9 @@ web:
 #
 # Under Docker `host` and `port` are IGNORED: the image's command line passes
 # --host 0.0.0.0 --port 8000 explicitly, and CLI flags win. Change the published
-# port with the APP_PORT environment variable instead. `debug` and `api_token`
-# ARE still honoured in the container — leave debug false, or /docs and /redoc
-# get published on that 0.0.0.0 bind. See docs/DOCKER.md.
+# port with the APP_PORT environment variable instead. `debug` IS still honoured
+# in the container — leave it false, or /docs and /redoc get published on that
+# 0.0.0.0 bind. See docs/DOCKER.md.
 
 # Storage paths.
 # BOOTSTRAP: these locate the database itself.

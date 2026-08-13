@@ -9,7 +9,7 @@ from math import isfinite
 from pathlib import Path
 from typing import cast
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,8 +26,6 @@ from src.config.service import (
     load_config,
     resolve_bootstrap_web,
     resolve_config_path,
-    take_api_token,
-    warn_if_config_is_shared,
 )
 from src.conversation.engine import create_conversation_engine
 from src.conversation.memory import MemoryManager
@@ -44,7 +42,7 @@ from src.utils import logging as log_config
 from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
-from src.web.auth import require_api_token
+from src.web.auth_api import router as auth_router
 from src.web.chat_api import router as chat_router
 from src.web.responses import SurrogateSafeJSONResponse
 from src.web.state import app_state, get_config
@@ -116,19 +114,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     Returns:
         Configured FastAPI application
-
-    Raises:
-        MissingApiTokenError: When the config carries no usable API token.
     """
     try:
         config = load_config(config_path)
     except FileNotFoundError as error:
         logger.error("Config file not found: %s", exception_for_log(error))
         raise
-
-    # Outside the try below, so a missing token fails by name rather than as
-    # one more "Failed to initialize components".
-    api_token = take_api_token(config)
 
     # Resolved from raw YAML BEFORE the database overlay, so a legacy `web.debug`
     # row in the settings table cannot open /docs here while src/web/main.py
@@ -182,9 +173,14 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         except FileNotFoundError:
             actual_config_path = config_path or Path("config/example.yaml")
 
-        # Here rather than beside take_api_token: this is the first point that
-        # knows which file the token was read out of.
-        warn_if_config_is_shared(actual_config_path)
+        # Loud, but not fatal: refusing to start is what left the owner of an
+        # instance locked out of it. The window closes the moment someone
+        # completes setup, and only the first visitor can.
+        if not storage.account_is_claimed():
+            logger.warning(
+                "No account on this instance yet — the first visitor to the web "
+                "UI claims it. Open it and create yours before anyone else can."
+            )
 
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
@@ -203,7 +199,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # Store in app state
         app_state.config = config
         app_state.config_path = str(actual_config_path.resolve())
-        app_state.api_token = api_token
         app_state.storage = storage
         app_state.embedding_gen = embedding_gen
         app_state.engine = engine
@@ -285,11 +280,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-        # Authorization is not one of the CORS-safelisted request headers, and
-        # every /api route requires it, so leaving it out makes a preflight from
-        # an allowed origin fail before routing and web.allowed_origins name a
-        # client that can never work.
-        allow_headers=["Authorization", "Content-Type", "Accept"],
+        # A cross-origin client sends the session cookie under
+        # allow_credentials; these are what its own requests carry, and a
+        # preflight naming one that is absent fails before routing, making
+        # web.allowed_origins name a client that can never work.
+        allow_headers=["Content-Type", "Accept"],
     )
 
     # Security headers middleware
@@ -326,12 +321,13 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     )
     app.add_exception_handler(HTTPException, _raised_refusal_json_can_carry)
 
-    # Router-level, so an endpoint is authenticated by being registered rather
-    # than by its author remembering. Nothing under /api is exempt — including
-    # /api/status, whose version and feature report is a free fingerprint.
-    api_auth = [Depends(require_api_token)]
-    app.include_router(api_router, dependencies=api_auth)
-    app.include_router(chat_router, dependencies=api_auth)
+    # The session dependency rides on the routers themselves (see
+    # src/web/auth.py). Nothing under /api is exempt but the four /api/auth
+    # routes — including /api/status, whose feature report is a free
+    # fingerprint.
+    app.include_router(api_router)
+    app.include_router(chat_router)
+    app.include_router(auth_router)
 
     # Serve static files (for web UI)
     static_dir = Path("src/web/static")

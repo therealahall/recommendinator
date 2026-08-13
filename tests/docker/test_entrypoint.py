@@ -14,31 +14,17 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
-
-from src.config.service import MIN_API_TOKEN_LENGTH as _MIN_TOKEN_LENGTH
 
 # parents[2] resolves /tests/docker/test_entrypoint.py -> repo root.
 # If this test file is ever moved, this constant must be updated.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
 
-# The shape of the shipped example.yaml the token substitution depends on: an
-# empty api_token inside a web section carrying other keys.
-_EXAMPLE_WITH_PLACEHOLDER = (
-    'web:\n  api_token: ""\n  host: "127.0.0.1"\n  port: 18473\n  debug: false\n'
-)
+_SHIPPED_EXAMPLE = 'web:\n  host: "127.0.0.1"\n  port: 18473\n  debug: false\n'
 
 # A run of hex as long as the token this script used to generate. Nothing the
 # entrypoint writes or prints may look like one.
-_MINTED_SECRET = re.compile(rf"[0-9a-f]{{{_MIN_TOKEN_LENGTH},}}")
-
-
-def _api_token(config: Path) -> str:
-    """Read ``web.api_token`` back out of a written config file."""
-    token = yaml.safe_load(config.read_text())["web"]["api_token"]
-    assert isinstance(token, str)
-    return token
+_MINTED_SECRET = re.compile(r"[0-9a-f]{32,}")
 
 
 def _seed_for(config_dir: Path) -> Path:
@@ -125,7 +111,7 @@ class TestTheSeedSurvivesTheConfigMount:
     ) -> None:
         """Both locations are populated, so a script reading the old one fails
         here rather than passing."""
-        seeded = 'web:\n  api_token: ""\n'
+        seeded = 'web:\n  host: "127.0.0.1"\n'
         _seed_for(config_dir).write_text(seeded)
         (config_dir / "example.yaml").write_text("hidden-by-the-mount: true\n")
 
@@ -135,31 +121,18 @@ class TestTheSeedSurvivesTheConfigMount:
         assert (config_dir / "config.yaml").read_text() == seeded
 
 
-class TestEntrypointInventsNoToken:
-    """Regression test: the container invented the operator's token.
+class TestEntrypointInventsNoSecret:
+    """Regression: the container invented the operator's credential.
 
-    Bug reported: the docs named `config.yaml`, where a from-source install had
-    never written one.
-    Root cause: only this script minted.
-    Fix: nobody does. Boot fails until the operator sets it.
+    Root cause: only this script minted one.
+    Fix: nobody does — the account is created in the browser.
     """
-
-    def test_the_copied_config_keeps_the_empty_placeholder(
-        self, config_dir: Path
-    ) -> None:
-        """What the operator replaces, left exactly as example.yaml ships it."""
-        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
-
-        result = _run(config_dir, "echo", "ok")
-
-        assert result.returncode == 0
-        assert _api_token(config_dir / "config.yaml") == ""
 
     def test_no_generated_secret_reaches_the_config_or_the_log(
         self, config_dir: Path
     ) -> None:
-        """A token this script chose is one the operator never saw go by."""
-        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        """A credential this script chose is one the operator never saw go by."""
+        _seed_for(config_dir).write_text(_SHIPPED_EXAMPLE)
 
         result = _run(config_dir, "echo", "ok")
 
@@ -167,34 +140,28 @@ class TestEntrypointInventsNoToken:
         for text in (written, result.stdout, result.stderr):
             assert _MINTED_SECRET.search(text) is None
 
-    def test_the_operator_is_told_what_to_set_and_how(self, config_dir: Path) -> None:
-        """The app's refusal to start is the next thing they hit."""
-        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
+    def test_the_operator_is_told_to_claim_the_instance(self, config_dir: Path) -> None:
+        """The open-claim window is the next thing they meet, so it is named."""
+        _seed_for(config_dir).write_text(_SHIPPED_EXAMPLE)
 
         result = _run(config_dir, "echo", "ok")
 
-        assert "web.api_token" in result.stdout
-        assert "openssl rand -hex 32" in result.stdout
+        assert "create your account" in result.stdout
+        assert "whoever reaches it first" in result.stdout
 
     def test_the_written_config_is_readable_only_by_its_owner(
         self, config_dir: Path
     ) -> None:
         """``cp`` inherits example.yaml's 0644, and ``./config`` is bind-mounted,
-        so the file the operator writes their token into is one every user on
-        the host could otherwise read.
+        so a file naming where the database lives is one every user on the host
+        could otherwise read.
         """
-        _seed_for(config_dir).write_text(_EXAMPLE_WITH_PLACEHOLDER)
+        _seed_for(config_dir).write_text(_SHIPPED_EXAMPLE)
 
         _run(config_dir, "echo", "ok")
 
         mode = (config_dir / "config.yaml").stat().st_mode & 0o777
         assert mode == 0o600
-
-    def test_the_shipped_example_carries_the_placeholder_to_fill_in(self) -> None:
-        """An example that had lost the key leaves nowhere to write a token."""
-        example = (_REPO_ROOT / "config" / "example.yaml").read_text()
-
-        assert re.search(r'^ *api_token: ""', example, re.MULTILINE) is not None
 
 
 class TestEntrypointIdempotency:

@@ -6,7 +6,6 @@ pre-database web bind settings.
 """
 
 import logging
-import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -46,81 +45,6 @@ logger = logging.getLogger(__name__)
 BOOTSTRAP_WEB_HOST = "127.0.0.1"
 BOOTSTRAP_WEB_PORT = 18473
 BOOTSTRAP_WEB_DEBUG = False
-
-# Bootstrap-only for the same reason as the bind settings, and deliberately not
-# a settings-registry leaf: no API caller may read this back or rewrite it.
-MIN_API_TOKEN_LENGTH = 32
-
-_HOW_TO_MINT = (
-    f"a random string of at least {MIN_API_TOKEN_LENGTH} characters, such as "
-    "the output of `openssl rand -hex 32`"
-)
-
-NO_API_TOKEN_MESSAGE = (
-    f"No API token configured. Set web.api_token in config.yaml to {_HOW_TO_MINT}, "
-    "then start again. Under Docker that file is ./config/config.yaml beside your "
-    "compose file, and the container writes a copy there on first start for you to "
-    "edit. Nothing generates a token for you: the API answers 401 without one, so "
-    "there is no unauthenticated mode to fall back to."
-)
-
-SHORT_API_TOKEN_MESSAGE = (
-    f"web.api_token is shorter than {MIN_API_TOKEN_LENGTH} characters. Replace "
-    f"it with {_HOW_TO_MINT}, then start again."
-)
-
-NON_ASCII_API_TOKEN_MESSAGE = (
-    "web.api_token contains a non-ASCII character. Request headers arrive "
-    "decoded as latin-1, so such a token would boot cleanly and then answer "
-    f"401 to every request. Replace it with {_HOW_TO_MINT}, then start again."
-)
-
-
-class MissingApiTokenError(RuntimeError):
-    """No usable ``web.api_token`` was configured."""
-
-
-def take_api_token(config: dict[str, Any]) -> str:
-    """Remove ``web.api_token`` from *config* and return it.
-
-    Popped, not read: the credential every request is checked against must not
-    survive in the dict handed to every component.
-
-    Raises:
-        MissingApiTokenError: Absent, blank, too short, or carrying a
-            character no request header can.
-    """
-    raw_web = config.get("web")
-    raw_token = raw_web.pop("api_token", None) if isinstance(raw_web, dict) else None
-
-    token = raw_token.strip() if isinstance(raw_token, str) else ""
-    if not token:
-        raise MissingApiTokenError(NO_API_TOKEN_MESSAGE)
-    if not token.isascii():
-        raise MissingApiTokenError(NON_ASCII_API_TOKEN_MESSAGE)
-    if len(token) < MIN_API_TOKEN_LENGTH:
-        raise MissingApiTokenError(SHORT_API_TOKEN_MESSAGE)
-    return token
-
-
-def warn_if_config_is_shared(path: Path) -> None:
-    """Log when the file holding the API token is readable beyond its owner.
-
-    A warning rather than the key file's refusal: a wrong mode here breaks
-    nothing, and failing boot would strand installs that predate the token.
-    """
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
-        logger.warning(
-            "%s holds web.api_token and is readable beyond its owner (%s). "
-            "Fix with: chmod 600 %s",
-            path,
-            oct(mode & 0o777),
-            path,
-        )
 
 
 class BootstrapWebSettings(NamedTuple):
