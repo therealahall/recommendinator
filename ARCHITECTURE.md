@@ -201,6 +201,11 @@ move a creator onto the row that survives, so it repairs a row a downgraded
 build inserted into a database already stamped 4 rather than being spent on the
 first open that sees one.
 
+Version 5 records the `users` password columns and the `sessions` table
+(`src/storage/accounts.py`) and guards nothing either: the ALTER and the CREATE
+are unconditional, and an instance nobody has claimed is exactly the one whose
+password columns are NULL.
+
 #### Derived sort and search columns
 
 `content_items.sort_title` and `content_items.search_text`

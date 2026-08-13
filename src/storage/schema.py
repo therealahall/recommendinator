@@ -144,6 +144,10 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 # guards nothing: their backfill selects the rows missing them, so it repairs a
 # row a downgraded build inserted into a database already stamped 4.
 #
+# Version 5 records the ``users`` password columns and the ``sessions`` table
+# (``src/storage/accounts.py``), and guards nothing: the unconditional ALTER
+# and CREATE add both, and an unclaimed instance is exactly the NULL columns.
+#
 # A guarded step runs once per database, so the values it wrote never follow a
 # change to the function that produced them: changing
 # ``normalize_title_for_matching``, ``get_sort_title`` or ``build_search_text``
@@ -153,7 +157,7 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 #
 # The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
 # and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -208,6 +212,27 @@ def create_schema(conn: sqlite3.Connection) -> None:
         VALUES (1, 'default', 'Default User')
         """
     )
+
+    # Login credentials for that row, NULL until someone claims the instance —
+    # which is how the web layer tells a fresh install from a claimed one.
+    _add_column_if_not_exists(cursor, "users", "password_hash", "TEXT")
+    _add_column_if_not_exists(cursor, "users", "password_salt", "TEXT")
+    _add_column_if_not_exists(cursor, "users", "password_updated_at", "TIMESTAMP")
+
+    # Web sessions, keyed by a hash of the token so that reading this table
+    # hands over no live session (see src/storage/accounts.py).
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            last_seen_at TIMESTAMP NOT NULL
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
 
     # Base content items table with user_id
     cursor.execute(
@@ -880,12 +905,23 @@ _ALLOWED_ALTER_TABLES = frozenset(
         "tv_show_details",
         "video_game_details",
         "content_items",
+        "users",
     }
 )
 _ALLOWED_ALTER_COLUMNS = frozenset(
-    {"tags", "description", "ignored", "normalized_title", "sort_title", "search_text"}
+    {
+        "tags",
+        "description",
+        "ignored",
+        "normalized_title",
+        "sort_title",
+        "search_text",
+        "password_hash",
+        "password_salt",
+        "password_updated_at",
+    }
 )
-_ALLOWED_ALTER_TYPES = frozenset({"TEXT", "BOOLEAN DEFAULT 0"})
+_ALLOWED_ALTER_TYPES = frozenset({"TEXT", "BOOLEAN DEFAULT 0", "TIMESTAMP"})
 
 
 def _add_column_if_not_exists(
