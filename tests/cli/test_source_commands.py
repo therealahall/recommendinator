@@ -342,17 +342,19 @@ class TestSourceSet:
         assert row is not None
         assert row["config"]["tags"] == ["rpg", "indie", "strategy"]
 
+    @pytest.mark.parametrize("keyword", ["yes", "on", "true"])
     def test_set_coerces_bool_truthy_keyword(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
         base_config: dict[str, Any],
+        keyword: str,
     ) -> None:
         """``"yes"`` / ``"on"`` / ``"true"`` all coerce to ``True``."""
         storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
-            ["source", "set", "my_games", "active", "yes"],
+            ["source", "set", "my_games", "active", keyword],
             mock_storage=storage,
             config=base_config,
         )
@@ -360,11 +362,13 @@ class TestSourceSet:
         row = storage.get_source_config(1, "my_games")
         assert row is not None and row["config"]["active"] is True
 
+    @pytest.mark.parametrize("keyword", ["no", "off", "false"])
     def test_set_coerces_bool_falsy_keyword(
         self,
         cli_runner: CliRunner,
         storage: StorageManager,
         base_config: dict[str, Any],
+        keyword: str,
     ) -> None:
         """``"no"`` / ``"off"`` / ``"false"`` all coerce to ``False``."""
         storage.upsert_source_config(
@@ -372,7 +376,7 @@ class TestSourceSet:
         )
         result = _invoke_with_mocks(
             cli_runner,
-            ["source", "set", "my_games", "active", "no"],
+            ["source", "set", "my_games", "active", keyword],
             mock_storage=storage,
             config=base_config,
         )
@@ -629,7 +633,7 @@ class TestSourceApply:
         base_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        """A path that does not exist aborts cleanly via ``_abort_with``.
+        """A path that does not exist aborts cleanly via ``abort_with``.
 
         Regression guard: a stray ``FileNotFoundError`` would otherwise
         surface as a Python traceback instead of the friendly error

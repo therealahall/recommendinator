@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from src.cli.commands import (
+from src.cli.commands._library import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
     MAX_GENRES,
@@ -1429,7 +1429,7 @@ class TestLibraryExport:
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_content_items.return_value = items
 
-        with patch("src.cli.commands.export_items_csv") as mock_csv:
+        with patch("src.cli.commands._library.export_items_csv") as mock_csv:
             mock_csv.return_value = "title,author\nBook One,Test Author\n"
             result = _invoke_with_mocks(
                 cli_runner,
@@ -1447,7 +1447,7 @@ class TestLibraryExport:
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_content_items.return_value = items
 
-        with patch("src.cli.commands.export_items_json") as mock_json:
+        with patch("src.cli.commands._library.export_items_json") as mock_json:
             mock_json.return_value = '[{"title": "Book One"}]'
             result = _invoke_with_mocks(
                 cli_runner,
@@ -1466,7 +1466,7 @@ class TestLibraryExport:
         mock_storage.get_content_items.return_value = items
         output_path = tmp_path / "books.csv"
 
-        with patch("src.cli.commands.export_items_csv") as mock_csv:
+        with patch("src.cli.commands._library.export_items_csv") as mock_csv:
             mock_csv.return_value = "title\nBook One\n"
             result = _invoke_with_mocks(
                 cli_runner,

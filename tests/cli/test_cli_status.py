@@ -47,7 +47,7 @@ def _status_invoke(
         p_plugins,
         p_attribution,
         patch(
-            "src.cli.commands.importlib.metadata.version",
+            "src.cli.commands._status.importlib.metadata.version",
             return_value=version,
         ),
     ):

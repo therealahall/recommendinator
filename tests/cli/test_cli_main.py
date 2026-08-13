@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from src.cli.commands import _update
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
 from src.llm.embeddings import EmbeddingGenerator
@@ -61,7 +62,7 @@ def test_non_update_command_runs_every_source_migration() -> None:
         patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
         patch("src.cli.main.migrate_source_attribution") as spy_attribution,
         patch(
-            "src.cli.commands.importlib.metadata.version",
+            "src.cli.commands._status.importlib.metadata.version",
             return_value="0.6.0",
         ),
     ):
@@ -87,9 +88,9 @@ def test_update_does_not_double_invoke_source_migrations(
     * The ``cli`` callback runs the unpatched, real migration on the seeded
       ``goodreads`` row, so its side effect (the relabel + its single
       "Relabeled" log line) is observable proof the callback migration fired.
-    * A ``create=True`` spy on ``src.cli.commands.migrate_source_labels`` /
-      ``migrate_source_config_plugins`` — the exact binding a reintroduced
-      ``from src.storage.source_migration import ...`` in ``commands.py`` plus a
+    * A ``create=True`` spy on ``src.cli.commands._update.migrate_source_labels``
+      / ``migrate_source_config_plugins`` — the exact binding a reintroduced
+      ``from src.storage.source_migration import ...`` in ``_update.py`` plus a
       call inside ``update()`` would resolve through — is asserted NEVER called.
       Because the real migration is idempotent (a second run on already-migrated
       data is a silent no-op), a re-invocation cannot be caught by its own side
@@ -138,15 +139,17 @@ def test_update_does_not_double_invoke_source_migrations(
             return_value=MagicMock(spec=RecommendationEngine),
         ),
         patch(
-            "src.cli.commands.execute_multi_source_sync", side_effect=_fake_sync
+            "src.cli.commands._update.execute_multi_source_sync", side_effect=_fake_sync
         ) as spy_sync,
         patch(
             "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
             return_value=[],
         ),
-        patch("src.cli.commands.migrate_source_labels", create=True) as guard_labels,
         patch(
-            "src.cli.commands.migrate_source_config_plugins", create=True
+            "src.cli.commands._update.migrate_source_labels", create=True
+        ) as guard_labels,
+        patch(
+            "src.cli.commands._update.migrate_source_config_plugins", create=True
         ) as guard_plugins,
     ):
         with caplog.at_level(logging.INFO):
@@ -169,6 +172,9 @@ def test_update_does_not_double_invoke_source_migrations(
     assert "content item(s)" in relabel_logs[0].getMessage()
 
     # ``update`` must NOT re-invoke either migration through its own import.
+    # ``create=True`` invents the attribute, so a spy aimed at a module the
+    # command has moved out of watches nothing and passes regardless.
+    assert cli.commands["update"] is _update.update
     guard_labels.assert_not_called()
     guard_plugins.assert_not_called()
 
@@ -240,7 +246,7 @@ class TestUpdateDbOnlySourceRegression:
                 return_value=MagicMock(spec=RecommendationEngine),
             ),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=sync_side_effect,
             ),
         ):

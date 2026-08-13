@@ -607,7 +607,7 @@ class TestMutatingCommandsEmitTheRefreshedView:
     equivalents, a scripted caller had to issue a second ``settings list`` to
     reconstruct what the API hands back in one round trip — a real asymmetry,
     not an interface-appropriate difference. The ``source`` group already
-    establishes this pattern via ``_emit_config_view``.
+    establishes this pattern via the shared ``emit_view``.
     """
 
     def test_set_emits_the_updated_view(

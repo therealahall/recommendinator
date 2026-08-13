@@ -134,7 +134,7 @@ class TestAuthConnect:
     def test_connect_source_not_enabled(self, cli_runner: CliRunner) -> None:
         """Test connecting a source that is not enabled in config."""
         mock_storage = MagicMock(spec=StorageManager)
-        with patch("src.cli.commands.is_gog_enabled", return_value=False):
+        with patch("src.cli.commands._auth.is_gog_enabled", return_value=False):
             result = _invoke_with_mocks(
                 cli_runner,
                 ["auth", "connect", "--source", "gog"],
@@ -151,16 +151,16 @@ class TestAuthConnect:
         # Auth codes must be >=20 chars to pass extract_code_from_input validation
         auth_code = "test-auth-code-abc123xyz"
         with (
-            patch("src.cli.commands.is_gog_enabled", return_value=True),
+            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
             patch(
-                "src.cli.commands.get_gog_auth_url",
+                "src.cli.commands._auth.get_gog_auth_url",
                 return_value="https://auth.gog.com/auth?client_id=test",
             ),
             patch(
-                "src.cli.commands.exchange_gog_code",
+                "src.cli.commands._auth.exchange_gog_code",
                 return_value={"refresh_token": "test-token"},
             ),
-            patch("src.cli.commands.save_gog_token") as mock_save,
+            patch("src.cli.commands._auth.save_gog_token") as mock_save,
             patch("webbrowser.open"),
         ):
             result = _invoke_with_mocks(
@@ -182,16 +182,16 @@ class TestAuthConnect:
         mock_storage = MagicMock(spec=StorageManager)
         auth_code = "test-auth-code-abc123xyz"
         with (
-            patch("src.cli.commands.is_gog_enabled", return_value=True),
+            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
             patch(
-                "src.cli.commands.get_gog_auth_url",
+                "src.cli.commands._auth.get_gog_auth_url",
                 return_value="https://auth.gog.com/auth?client_id=test",
             ),
             patch(
-                "src.cli.commands.exchange_gog_code",
+                "src.cli.commands._auth.exchange_gog_code",
                 return_value={"refresh_token": "test-token"},
             ),
-            patch("src.cli.commands.save_gog_token"),
+            patch("src.cli.commands._auth.save_gog_token"),
             patch("webbrowser.open") as mock_open,
         ):
             result = _invoke_with_mocks(
@@ -209,13 +209,13 @@ class TestAuthConnect:
         mock_storage = MagicMock(spec=StorageManager)
         auth_code = "test-auth-code-abc123xyz"
         with (
-            patch("src.cli.commands.is_gog_enabled", return_value=True),
+            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
             patch(
-                "src.cli.commands.get_gog_auth_url",
+                "src.cli.commands._auth.get_gog_auth_url",
                 return_value="https://auth.gog.com",
             ),
             patch(
-                "src.cli.commands.exchange_gog_code",
+                "src.cli.commands._auth.exchange_gog_code",
                 side_effect=RuntimeError("network error"),
             ),
             patch("webbrowser.open"),
@@ -235,16 +235,16 @@ class TestAuthConnect:
         mock_storage = MagicMock(spec=StorageManager)
         auth_code = "test-auth-code-abc123xyz"
         with (
-            patch("src.cli.commands.is_epic_enabled", return_value=True),
+            patch("src.cli.commands._auth.is_epic_enabled", return_value=True),
             patch(
-                "src.cli.commands.get_epic_auth_url",
+                "src.cli.commands._auth.get_epic_auth_url",
                 return_value="https://www.epicgames.com/id/authorize",
             ),
             patch(
-                "src.cli.commands.exchange_epic_code",
+                "src.cli.commands._auth.exchange_epic_code",
                 return_value={"refresh_token": "epic-token"},
             ),
-            patch("src.cli.commands.save_epic_token") as mock_save,
+            patch("src.cli.commands._auth.save_epic_token") as mock_save,
             patch("webbrowser.open"),
         ):
             result = _invoke_with_mocks(
@@ -271,18 +271,18 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 return_value=DevicePollResult(
                     DevicePollStatus.SUCCESS, "trakt-refresh"
                 ),
             ),
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep") as mock_sleep,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -303,7 +303,7 @@ class TestAuthConnect:
         """Trakt connect aborts when client credentials are missing."""
         mock_storage = MagicMock(spec=StorageManager)
         with patch(
-            "src.cli.commands.resolve_trakt_client_credentials",
+            "src.cli.commands._auth.resolve_trakt_client_credentials",
             side_effect=TraktAuthError("Trakt is not configured."),
         ):
             result = _invoke_with_mocks(
@@ -327,16 +327,16 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.DENIED),
             ),
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep"),
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep"),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -360,19 +360,19 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 side_effect=[
                     DevicePollResult(DevicePollStatus.PENDING),
                     DevicePollResult(DevicePollStatus.SUCCESS, "trakt-refresh"),
                 ],
             ),
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep") as mock_sleep,
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -404,20 +404,20 @@ class TestAuthConnect:
         sleep_intervals: list[float] = []
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 side_effect=[
                     DevicePollResult(DevicePollStatus.SLOW_DOWN),
                     DevicePollResult(DevicePollStatus.SUCCESS, "trakt-refresh"),
                 ],
             ),
-            patch("src.cli.commands.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
             patch(
-                "src.cli.commands.time.sleep",
+                "src.cli.commands._auth.time.sleep",
                 side_effect=lambda seconds: sleep_intervals.append(seconds),
             ),
         ):
@@ -449,15 +449,15 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.EXPIRED),
             ),
-            patch("src.cli.commands.time.sleep"),
+            patch("src.cli.commands._auth.time.sleep"),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -486,16 +486,16 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.SUCCESS, None),
             ),
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep"),
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep"),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -523,16 +523,16 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
-            patch("src.cli.commands.poll_device_token") as mock_poll,
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep") as mock_sleep,
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.poll_device_token") as mock_poll,
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep") as mock_sleep,
             # First call sets the deadline (0 + 600); the loop check then sees a
             # time already beyond it, so the body is skipped entirely.
-            patch("src.cli.commands.time.monotonic", side_effect=[0.0, 10_000.0]),
+            patch("src.cli.commands._auth.time.monotonic", side_effect=[0.0, 10_000.0]),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -558,13 +558,13 @@ class TestAuthConnect:
         }
         with (
             patch(
-                "src.cli.commands.resolve_trakt_client_credentials",
+                "src.cli.commands._auth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
-            patch("src.cli.commands.start_device_auth_flow", return_value=flow),
-            patch("src.cli.commands.poll_device_token") as mock_poll,
-            patch("src.cli.commands.save_trakt_token") as mock_save,
-            patch("src.cli.commands.time.sleep", side_effect=KeyboardInterrupt),
+            patch("src.cli.commands._auth.start_device_auth_flow", return_value=flow),
+            patch("src.cli.commands._auth.poll_device_token") as mock_poll,
+            patch("src.cli.commands._auth.save_trakt_token") as mock_save,
+            patch("src.cli.commands._auth.time.sleep", side_effect=KeyboardInterrupt),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -582,13 +582,13 @@ class TestAuthConnect:
         mock_storage = MagicMock(spec=StorageManager)
         auth_code = "test-auth-code-abc123xyz"
         with (
-            patch("src.cli.commands.is_gog_enabled", return_value=True),
+            patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
             patch(
-                "src.cli.commands.get_gog_auth_url",
+                "src.cli.commands._auth.get_gog_auth_url",
                 return_value="https://auth.gog.com",
             ),
             patch(
-                "src.cli.commands.exchange_gog_code",
+                "src.cli.commands._auth.exchange_gog_code",
                 return_value={"access_token": "only"},
             ),
             patch("webbrowser.open"),
@@ -620,10 +620,11 @@ class TestConnectingASourceTheWebCanConnectRegression:
     ) -> Any:
         with (
             patch(
-                "src.cli.commands.get_gog_auth_url", return_value="https://auth.gog.com"
+                "src.cli.commands._auth.get_gog_auth_url",
+                return_value="https://auth.gog.com",
             ),
             patch(
-                "src.cli.commands.exchange_gog_code",
+                "src.cli.commands._auth.exchange_gog_code",
                 return_value={"refresh_token": "fresh-token"},
             ),
         ):
@@ -669,7 +670,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
 
         with (
             patch(
-                "src.cli.commands.start_device_auth_flow",
+                "src.cli.commands._auth.start_device_auth_flow",
                 return_value={
                     "device_code": "dev123",
                     "user_code": "ABCD1234",
@@ -679,10 +680,10 @@ class TestConnectingASourceTheWebCanConnectRegression:
                 },
             ),
             patch(
-                "src.cli.commands.poll_device_token",
+                "src.cli.commands._auth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-token"),
             ),
-            patch("src.cli.commands.time.sleep"),
+            patch("src.cli.commands._auth.time.sleep"),
         ):
             result = _invoke_with_mocks(
                 cli_runner,

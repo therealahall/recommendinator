@@ -17,7 +17,7 @@ import pytest
 from click.testing import CliRunner
 from pydantic import BaseModel, ValidationError
 
-from src.cli.commands import preferences_set_length
+from src.cli.commands._preferences import preferences_set_length
 from src.models.content import (
     MAX_REVIEW_LENGTH,
     ConsumptionStatus,

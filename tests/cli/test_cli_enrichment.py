@@ -20,7 +20,9 @@ def _invoke_with_enrichment_manager(
     config: dict | None = None,
 ) -> object:
     """Invoke CLI with the standard mocks plus a mocked EnrichmentManager."""
-    with patch("src.cli.commands.EnrichmentManager", return_value=mock_manager):
+    with patch(
+        "src.cli.commands._enrichment.EnrichmentManager", return_value=mock_manager
+    ):
         return _invoke_with_mocks(cli_runner, args, mock_storage, config=config)
 
 

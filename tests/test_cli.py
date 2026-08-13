@@ -528,7 +528,7 @@ class TestCompleteCommandEmbeddingArgument:
     Bug reported: with AI features and embeddings enabled, `complete` fails
     with "Error marking content as completed" and stores nothing, and no
     embedding ever reaches the vector DB.
-    Root cause: ``src/cli/commands.py`` called
+    Root cause: the ``complete`` command called
     ``storage.save_content_item(item, embedding)``, but the second positional
     parameter of the storage method is ``user_id``, not ``embedding``
     (``src/storage/manager.py``: ``(self, item, user_id=None,
@@ -846,7 +846,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -881,7 +881,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -916,7 +916,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -969,7 +969,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -1004,7 +1004,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -1039,7 +1039,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
@@ -1079,7 +1079,7 @@ class TestUpdateWorkersFlag:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch(
-                "src.cli.commands.execute_multi_source_sync",
+                "src.cli.commands._update.execute_multi_source_sync",
                 side_effect=fake_execute,
             ),
             patch(
