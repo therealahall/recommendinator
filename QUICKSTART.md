@@ -74,8 +74,9 @@ lines. The CLI never signs in — it works directly against the database.
 ## First run
 
 Open <http://localhost:18473>. A new instance has no account, so it opens on a
-setup screen: pick a username, a display name and a password. Finishing it
-claims the instance and signs that browser in; later visits show a login form.
+setup screen: pick a username, a display name and a password of at least 12
+characters. Finishing it claims the instance and signs that browser in; later
+visits show a login form.
 
 **Until someone completes setup, whoever reaches the instance first can** — the
 default loopback bind is what bounds that, so claim it now. Your session is a

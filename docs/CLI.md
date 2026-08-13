@@ -300,10 +300,12 @@ python3.11 -m src.cli account set-password    # prompts twice, hidden
 python3.11 -m src.cli account set-name --username owner --display-name "The Owner"
 ```
 
-The password is never an argument: that would leave it in the shell history and
-in every process listing. `set-password` signs every browser out, so a session
-someone else holds dies with the password it was opened under, and it refuses an
-unclaimed instance — claim that from the web setup page.
+A password is at least 12 characters, the same minimum the web setup screen and
+**Settings → Account** apply. The password is never an argument: that would
+leave it in the shell history and in every process listing. `set-password` signs
+every browser out, so a session someone else holds dies with the password it was
+opened under, and it refuses an unclaimed instance — claim that from the web
+setup page.
 
 `set-name` writes only the names you pass, and an empty `--display-name` clears
 it. All three commands take `--user` and `--format json`. A failed write prints
