@@ -34,6 +34,9 @@ export function devServerOptions(env: Env): ServerOptions {
   const target = env.DEV_SERVER_API_TARGET || DEFAULT_API_TARGET
 
   return {
+    // Vite's default `localhost` resolves to ::1 on this box, and Caddy dials
+    // 127.0.0.1 — that mismatch is a 502 through the proxy.
+    host: '127.0.0.1',
     port: readPort(env, 'DEV_SERVER_PORT') ?? DEFAULT_PORT,
     proxy: Object.fromEntries(
       PROXIED_PREFIXES.map((prefix): [string, ProxyOptions] => [
