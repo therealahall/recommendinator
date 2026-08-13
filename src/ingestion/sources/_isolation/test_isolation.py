@@ -2,12 +2,13 @@
 
 import logging
 import os
+import sys
 from datetime import date
 from pathlib import Path
 
 from src.storage.manager import StorageManager
+from src.utils import logging as log_config
 from src.utils.dates import local_date_from_iso_timestamp
-from src.web import app
 
 
 class TestPluginLocalIsolationRegression:
@@ -60,7 +61,12 @@ class TestPluginLocalIsolationRegression:
         root_logger = logging.getLogger()
         handlers_before = list(root_logger.handlers)
 
-        app.configure_logging({"logging": {"file": "logs/recommendations.log"}})
+        log_config.configure_logging(
+            {"logging": {"file": "logs/recommendations.log"}},
+            console_stream=sys.stdout,
+            console_tracebacks=True,
+            console_floor=logging.NOTSET,
+        )
 
         assert not [
             handler
