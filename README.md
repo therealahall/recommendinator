@@ -31,7 +31,8 @@ docker run -d \
 
 The container writes a starter `config/config.yaml` and starts serving. Open
 **http://localhost:18473**: a new instance has no account, so it opens on a setup
-screen asking for a username, a display name and a password, and signs you in.
+screen asking for a username, a display name and a password of at least 12
+characters, and signs you in.
 Then, in order:
 
 1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first.** It fills in the

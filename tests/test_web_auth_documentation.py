@@ -21,6 +21,7 @@ from fastapi.routing import APIRoute
 from src.cli.main import cli
 from src.storage.accounts import MIN_PASSWORD_LENGTH, SESSION_LIFETIME
 from src.web.auth_api import router as auth_router
+from src.web.csrf import refuse_cross_origin
 
 # parents[1] resolves /tests/test_web_auth_documentation.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -245,6 +246,7 @@ class TestAProviderDocumentKeepsItsOwnTokens:
             name for name, _ in _operator_documentation()
         }
 
+
 class TestTheUpgradeNoteMayNameWhatItRetires:
     """An operator holding the dead key is told so, and nothing more is said."""
 
@@ -352,26 +354,25 @@ class TestSecurityDocMatchesTheShippedMechanism:
 class TestAllowedOriginsSurfaceRegression:
     """What an allowed origin reaches is what the app leaves ungated."""
 
-    def test_the_cors_paragraph_names_the_ungated_api_routes_regression(self) -> None:
-        """Regression test: the CORS paragraph understates its reach.
+    def test_the_cors_paragraph_is_the_whole_ungated_surface_regression(self) -> None:
+        """Regression test: the paragraph understates an allowed origin's reach.
 
-        Bug reported: it names the SPA shell as the whole ungated surface,
-        dropping the four `/api/auth` routes.
-        Root cause: the enumeration stopped at the shell.
-        Fix: add `/api/auth`.
+        Bug reported: naming only the SPA shell omits `POST /api/auth/setup`.
+        Root cause: session-exempt read as unguarded.
+        Fix: those routes carry ``refuse_cross_origin``.
         """
-        ungated = {
+        session_exempt = {
             route.path for route in auth_router.routes if isinstance(route, APIRoute)
         }
-        assert ungated, "no ungated /api/auth routes for the paragraph to omit"
-        assert not auth_router.dependencies
+        assert session_exempt, "no session-exempt routes for the guard to cover"
+        assert any(
+            depends.dependency is refuse_cross_origin
+            for depends in auth_router.dependencies
+        ), f"a cross-origin caller could drive {sorted(session_exempt)}"
 
         claiming_it = [
             block for block in _paragraphs("docs/SECURITY.md") if _CORS_CLAIM in block
         ]
 
         assert len(claiming_it) == 1
-        assert "/api/auth" in claiming_it[0], (
-            "an allowed origin reaches these too, and POST /api/auth/setup "
-            f"claims an unclaimed instance: {sorted(ungated)}"
-        )
+        assert "`GET /` and `/static/*`" in claiming_it[0]
