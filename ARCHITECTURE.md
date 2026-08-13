@@ -483,9 +483,10 @@ framework stays in the package it serves: `fastapi` and `starlette` only under
 fails on the next module that crosses either rule.
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
-`source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `memory`,
-`profile`, `chat`, most carrying a `--format json` view. One module each under
-`src/cli/commands/`, re-exported from its `__init__` for `src/cli/main.py`;
+`source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `account`,
+`memory`, `profile`, `chat`, most carrying a `--format json` view. One module
+each under `src/cli/commands/`, re-exported from its `__init__` for
+`src/cli/main.py`;
 `src/cli/_shared.py` holds what more than one group uses. Full reference in
 [docs/CLI.md](docs/CLI.md).
 
@@ -611,11 +612,11 @@ Enrichment (background)           Recommendation Engine
 
 ## Configuration
 
-`config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings,
-`web.api_token`, and the `storage` paths, all read before the database opens. The
-token is deliberately not a settings leaf — it guards the API the Settings page
-is served over — and boot fails without it. `config/example.yaml` is that
-template and nothing more. Everything else resolves through
+`config/config.yaml` (git-ignored) holds the bootstrap: the `web` bind settings
+and the `storage` paths, both read before the database opens. The web account
+lives in the database instead, so no credential is needed here.
+`config/example.yaml` is that template and nothing more. Everything else
+resolves through
 [global configuration precedence](#global-configuration-precedence), and sources
 through [source configuration precedence](#source-configuration-precedence).
 
@@ -706,8 +707,8 @@ especially, is too thin there.
 4. **default** / **ai**, copying the right venv, setting `ENTRYPOINT` to
    `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from
    `example.yaml` on first run), starting uvicorn through `CMD`, and setting
-   `HEALTHCHECK` to `python -m src.web.healthcheck`, which reads no token and
-   counts an unauthenticated 401 as healthy.
+   `HEALTHCHECK` to `python -m src.web.healthcheck`, which carries no
+   credentials and counts an unauthenticated 401 as healthy.
 
 `docker/Dockerfile.ollama` extends `ollama/ollama` with the model-pull
 entrypoint, a non-root `ollama` user whose home and model store are
@@ -715,9 +716,9 @@ entrypoint, a non-root `ollama` user whose home and model store are
 pull lands.
 
 `.github/workflows/docker.yml` builds all three on `linux/amd64` for a
-`pull_request`, without pushing, and smoke-tests the default variant: it seeds
-a token into a mounted config, polls the authenticated `/api/status`, then runs
-the image's own `HEALTHCHECK` inside it.
+`pull_request`, without pushing, and smoke-tests the default variant: it polls
+`/api/auth/session`, the one route a signed-out caller may reach, then runs the
+image's own `HEALTHCHECK` inside it.
 
 On a `v*` tag, `guard` refuses any tag that is not `vMAJOR.MINOR.PATCH` on a
 commit main descends from, then decides which of `latest`, `X` and `X.Y` may

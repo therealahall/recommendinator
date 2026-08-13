@@ -8,7 +8,7 @@ configure.
 
 | File | Contains |
 |------|----------|
-| `config/config.yaml` | The API token, plus bootstrap secrets migrated to the database on startup |
+| `config/config.yaml` | Bootstrap secrets migrated to the database on startup |
 | `data/recommendations.db` | Consumption history, encrypted credentials |
 | `data/.credential_key` | Fernet key for those credentials |
 | `data/chroma_db/` | Vector embeddings of your content, AI only |
@@ -93,30 +93,28 @@ sync, and neither 400 carries the plugin's own message: a write names the field
 it blames, or repeats a path-containment refusal verbatim, and a sync answers a
 fixed string. The reason goes to the log instead.
 
-## API authentication
+## Web sign-in
 
-**Every `/api` route requires `Authorization: Bearer <token>`, and the server
-refuses to start without one.** You choose it: set `web.api_token` in
-`config/config.yaml` to at least 32 ASCII characters, from
-`openssl rand -hex 32`, and `chmod 600` the file. Nothing generates one for you.
-A group- or world-readable `config.yaml` warns at boot and on reload rather than
-refusing, because a wide mode there only widens who can read a token the app
-still works with.
+**One account, username and password, and a session cookie.** A fresh instance
+has none: the first visitor to the web UI names the account and sets its
+password, and is signed in by that request. Change it later from **Settings →
+Account**, or with `python3.11 -m src.cli account set-password` on the machine
+holding the database — there is no email and no reset link.
 
-The web UI asks for the token once and keeps it in browser local storage. The
-CLI needs none: it works directly against the database.
-
-- **No `/api` route is exempt**, including `GET /api/status`.
-- **The SPA shell (`/`, `/static/*`) is not gated**, because it is what asks for
-  the token: a browser sends no `Authorization` header on a top-level
-  navigation. It carries the app's own assets, none of your data.
-- **The token is not a setting**: read once at boot, removed from the in-memory
-  config, absent from the settings registry, so `GET /api/settings` cannot list
-  it and `PUT /api/settings` cannot change it.
-- Comparison is constant-time, and the token is never logged or echoed, a 401
-  included. Rotating it in `config.yaml` takes effect without a restart.
-- **The app never serves TLS**, so anything beyond loopback belongs behind a
-  reverse proxy terminating HTTPS. See [docs/DOCKER.md](DOCKER.md#reverse-proxy).
+- **The claim window stays open until someone uses it** — boot warns while it
+  is, and the loopback default bounds who can reach it.
+- **Nothing under `/api` is exempt** but the four `/api/auth` routes.
+  `GET /api/status` stays gated: its feature report is a free fingerprint, and
+  the container health check reads that 401 as healthy.
+- **The SPA shell (`/`, `/static/*`) is not gated**: it draws the sign-in form,
+  and carries the app's assets rather than your data.
+- The cookie is `HttpOnly`, `SameSite=Strict` and good for 30 idle days, rolling
+  forward on use. **No `Secure` flag** — this app serves no TLS, so a Secure
+  cookie would never be sent at all. Beyond loopback, put a
+  [reverse proxy](DOCKER.md#reverse-proxy) in front.
+- Passwords are scrypt digests under a per-account salt, session tokens SHA-256
+  digests. Sessions are revoked server-side, so signing out or changing the
+  password really ends them.
 
 ## Entering keys
 
@@ -149,10 +147,10 @@ warning.
 
 The web interface binds `127.0.0.1` by default, and Docker publishes its port on
 `127.0.0.1` too (`APP_BIND_PREFIX`). Reaching it from another machine means a
-reverse proxy terminating TLS, or accepting that the token crosses your network
-in cleartext — the app never serves TLS itself. Do not expose it to the public
-internet without the proxy. Under Docker, services talk over an internal network
-isolated from the host by default.
+reverse proxy terminating TLS, or accepting that your password and session
+cookie cross your network in cleartext — the app never serves TLS itself. Do not
+expose it to the public internet without the proxy. Under Docker, services talk
+over an internal network isolated from the host by default.
 
 ## Where file imports may read
 
@@ -204,8 +202,8 @@ ChromaDB stores embeddings locally, and Ollama defaults to localhost.
 
 ## Deployment checklist
 
-- [ ] `config/config.yaml` is git-ignored
-- [ ] `config/config.yaml` is `0600` and holds a token you generated yourself
+- [ ] `config/config.yaml` is git-ignored and `0600`
+- [ ] The web account is claimed, with a password only you know
 - [ ] API keys are not in code
 - [ ] `logs/` is treated as sensitive and not shipped anywhere
 - [ ] Database file has restricted permissions

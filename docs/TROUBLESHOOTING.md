@@ -131,26 +131,24 @@ re-normalize every title and merge whatever that exposes.
 Is the server running (`python3.11 -m src.web`), on the port you are asking for
 (18473 by default)? Then check the browser console.
 
-### The server will not start: `No API token configured`
+### I have forgotten the password
 
-Nothing generates a token for you. Set `web.api_token` in `config/config.yaml`
-to an `openssl rand -hex 32` value and start again.
+There is no email and no reset link. Run this on the machine holding the
+database, then sign in again:
 
-### 401 Unauthorized, or the UI keeps asking for a token
+```bash
+python3.11 -m src.cli account set-password
+```
 
-The token is whatever you set `web.api_token` to in `config/config.yaml`; paste
-that value when the UI asks. A rejected token is cleared and re-prompted, so a
-prompt that keeps coming back means the value is wrong.
+### 401 Unauthorized, or the UI returns to the login form
+
+The session lapsed, or a password change signed that browser out. Sign in again.
+Five wrong passwords lock a username out for five minutes.
 
 ### Preferences reset after a refresh
 
-Click **Save Preferences**, check the network tab, and confirm the API answers.
-Every `/api` route needs the bearer token:
-
-```bash
-curl -H "Authorization: Bearer $(yq '.web.api_token' config/config.yaml)" \
-  http://localhost:18473/api/status
-```
+Click **Save Preferences** and check the network tab. A 401 there is the session
+again; anything else, read the error the API returned.
 
 ### `503 Too many streams in progress`
 

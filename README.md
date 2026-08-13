@@ -29,10 +29,10 @@ docker run -d \
   ghcr.io/therealahall/recommendinator:latest
 ```
 
-The container writes a starter `config/config.yaml`, then exits until you set
-`web.api_token` in it to an `openssl rand -hex 32` value. Restart, open
-**http://localhost:18473**, and paste that token when the UI asks. Then, in
-order:
+The container writes a starter `config/config.yaml` and starts serving. Open
+**http://localhost:18473**: a new instance has no account, so it opens on a setup
+screen asking for a username, a display name and a password, and signs you in.
+Then, in order:
 
 1. **[Set up enrichment](docs/ENRICHMENT_SETUP.md) first.** It fills in the
    genres, tags, and descriptions the scoring pipeline depends on. Skipping it
@@ -47,10 +47,10 @@ order:
 
 ## Security notice
 
-Every API request needs a bearer token you set yourself: `web.api_token` in
-`config/config.yaml`, an `openssl rand -hex 32` value. The server refuses to
-start without one. It binds to `127.0.0.1` by default, and Docker publishes on
-`127.0.0.1` too — the app **never serves TLS**, so reaching it from another
+The web UI signs in to one account, created on the first visit and held by a
+session cookie. **Until someone creates it, whoever reaches the instance first
+can**, which is why it binds to `127.0.0.1` by default and Docker publishes on
+`127.0.0.1` too. The app **never serves TLS**, so reaching it from another
 machine means a reverse proxy terminating HTTPS. See
 [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -100,12 +100,10 @@ See [Enabling AI features](#enabling-ai-features) below.
 ## Configuration
 
 Copy `config/example.yaml` to `config/config.yaml`. It holds only what is needed
-to stand the app up: the API token, where the server binds, and where the
-database lives.
+to stand the app up: where the server binds, and where the database lives.
 
 ```yaml
 web:
-  api_token: "…"        # openssl rand -hex 32; the server will not start without it
   host: "127.0.0.1"
   port: 18473
 
