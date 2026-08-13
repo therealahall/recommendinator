@@ -182,6 +182,12 @@ def create_app(config_path: Path | None = None) -> FastAPI:
                 "UI claims it. Open it and create yours before anyone else can."
             )
 
+        # Nothing else deletes a lapsed session, so without this the table
+        # grows for the life of the database.
+        purged = storage.purge_expired_sessions()
+        if purged:
+            logger.info("Purged %d expired session(s)", purged)
+
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
         # Relabel stored goodreads source values and plugin names after the
@@ -272,18 +278,15 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             )
         allowed_origins = default_of("web.allowed_origins")
 
-    # Disable credentials when wildcard origin is used (browser requirement)
-    allow_credentials = "*" not in allowed_origins
-
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=allow_credentials,
+        # No allow_credentials: under SameSite=Strict the browser never
+        # attaches the session cookie cross-origin, so a configured origin
+        # reaches the ungated surface — the SPA shell and /static — and
+        # nothing behind the gate. Turning it on would promise otherwise.
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-        # A cross-origin client sends the session cookie under
-        # allow_credentials; these are what its own requests carry, and a
-        # preflight naming one that is absent fails before routing, making
-        # web.allowed_origins name a client that can never work.
+        # A preflight naming a header that is absent fails before routing.
         allow_headers=["Content-Type", "Accept"],
     )
 

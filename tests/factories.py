@@ -47,6 +47,8 @@ def back_mock_session_store(storage: Any) -> None:
         storage.lookup_session.side_effect = lambda token: (
             SESSION_USER if token == _MOCK_SESSION_TOKEN else None
         )
+        # A count, because boot logs it with ``%d``.
+        _default_return(storage.purge_expired_sessions, 0)
 
 
 def issue_session(storage: Any) -> str:

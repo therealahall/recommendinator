@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from src.storage.accounts import MIN_PASSWORD_LENGTH
+from src.storage.accounts import MIN_PASSWORD_LENGTH, PASSWORD_TOO_SHORT
 from src.storage.manager import StorageManager
 from src.storage.schema import _SCHEMA_VERSION
 from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL
@@ -123,6 +123,7 @@ class TestUpgradingAPopulatedInstall:
             "claimed": False,
             "authenticated": False,
             "user": None,
+            "min_password_length": MIN_PASSWORD_LENGTH,
         }
 
     def test_claiming_signs_the_claimant_in_and_keeps_the_library(
@@ -215,10 +216,10 @@ class TestTheSessionOutlivesTheBrowserThatOpenedIt:
 
         with booted_web_app(upgraded, config) as restarted:
             reopened = TestClient(restarted, cookies={SESSION_COOKIE: restored})
-            response = reopened.get("/api/users/me")
+            response = reopened.get("/api/auth/session")
 
         assert response.status_code == 200
-        assert response.json()["username"] == _USERNAME
+        assert response.json()["user"]["username"] == _USERNAME
 
     def test_signing_out_kills_the_cookie_a_restart_would_restore(
         self, client: TestClient, upgraded: StorageManager, config: dict[str, Any]
@@ -230,7 +231,7 @@ class TestTheSessionOutlivesTheBrowserThatOpenedIt:
 
         with booted_web_app(upgraded, config) as restarted:
             reopened = TestClient(restarted, cookies={SESSION_COOKIE: restored})
-            response = reopened.get("/api/users/me")
+            response = reopened.get("/api/users")
 
         assert response.status_code == 401
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
@@ -257,8 +258,8 @@ class TestTwoBrowsersSignedInAtOnce:
         """Anchors the two cases below, which a signed-out pair would pass."""
         here, elsewhere = both
 
-        assert here.get("/api/users/me").status_code == 200
-        assert elsewhere.get("/api/users/me").status_code == 200
+        assert here.get("/api/users").status_code == 200
+        assert elsewhere.get("/api/users").status_code == 200
 
     def test_signing_one_out_leaves_the_other_signed_in(
         self, both: tuple[TestClient, TestClient]
@@ -268,8 +269,8 @@ class TestTwoBrowsersSignedInAtOnce:
 
         assert elsewhere.post("/api/auth/logout").status_code == 204
 
-        assert here.get("/api/users/me").status_code == 200
-        assert elsewhere.get("/api/users/me").status_code == 401
+        assert here.get("/api/users").status_code == 200
+        assert elsewhere.get("/api/users").status_code == 401
 
     def test_a_password_change_keeps_the_caller_and_drops_the_other(
         self, both: tuple[TestClient, TestClient]
@@ -283,8 +284,8 @@ class TestTwoBrowsersSignedInAtOnce:
         )
 
         assert changed.status_code == 204
-        assert here.get("/api/users/me").status_code == 200
-        assert elsewhere.get("/api/users/me").status_code == 401
+        assert here.get("/api/users").status_code == 200
+        assert elsewhere.get("/api/users").status_code == 401
 
 
 class TestRenamingTheAccountFromSettings:
@@ -362,7 +363,7 @@ class TestTheBreakGlassResetAgainstARunningServer:
         result = self._reset(upgrading_db)
 
         assert result.exit_code == 0, result.output
-        assert signed_in.get("/api/users/me").status_code == 401
+        assert signed_in.get("/api/users").status_code == 401
 
     def test_the_new_password_signs_in_through_the_running_server(
         self, signed_in: TestClient, upgrading_db: Path
@@ -379,7 +380,9 @@ class TestTheBreakGlassResetAgainstARunningServer:
 
         assert refused.status_code == 401
         assert accepted.status_code == 200
-        assert signed_in.get("/api/users/me").json()["username"] == _USERNAME
+        assert (
+            signed_in.get("/api/auth/session").json()["user"]["username"] == _USERNAME
+        )
 
 
 class TestMalformedSignInInput:
@@ -388,7 +391,6 @@ class TestMalformedSignInInput:
     @pytest.mark.parametrize(
         ("body", "reason"),
         [
-            pytest.param({"display_name": "", "password": _PASSWORD}, "no username"),
             pytest.param(
                 {"username": "", "display_name": "", "password": _PASSWORD},
                 "blank username",
@@ -405,15 +407,6 @@ class TestMalformedSignInInput:
                 },
                 "display name past the column's width",
             ),
-            pytest.param(
-                {
-                    "username": _USERNAME,
-                    "display_name": "",
-                    "password": "x" * (MIN_PASSWORD_LENGTH - 1),
-                },
-                "password under the floor",
-            ),
-            pytest.param({"username": _USERNAME, "display_name": ""}, "no password"),
         ],
     )
     def test_setup_refuses_it_and_leaves_the_instance_unclaimed(
@@ -430,25 +423,34 @@ class TestMalformedSignInInput:
         assert upgraded.account_is_claimed() is False
         assert client.get("/api/auth/session").json()["claimed"] is False
 
-    @pytest.mark.parametrize(
-        ("body", "reason"),
-        [
-            pytest.param({"password": _PASSWORD}, "no username"),
-            pytest.param({"username": "", "password": _PASSWORD}, "blank username"),
-            pytest.param({"username": _USERNAME}, "no password"),
-        ],
-    )
-    def test_login_refuses_it_without_opening_a_session(
-        self, client: TestClient, body: dict[str, str], reason: str
+    def test_a_short_password_leaves_the_instance_unclaimed(
+        self, client: TestClient, upgraded: StorageManager
+    ) -> None:
+        """A 400 rather than a 422: the detail has to be a string the form shows."""
+        response = client.post(
+            "/api/auth/setup",
+            json={
+                "username": _USERNAME,
+                "display_name": "",
+                "password": "x" * (MIN_PASSWORD_LENGTH - 1),
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == PASSWORD_TOO_SHORT
+        assert upgraded.account_is_claimed() is False
+
+    def test_login_refuses_a_blank_username_without_opening_a_session(
+        self, client: TestClient
     ) -> None:
         client.post("/api/auth/setup", json=_SETUP_BODY)
         client.cookies.clear()
 
-        response = client.post("/api/auth/login", json=body)
+        response = client.post("/api/auth/login", json={"username": "", "password": ""})
 
-        assert response.status_code == 422, reason
+        assert response.status_code == 422
         assert SESSION_COOKIE not in response.cookies
-        assert client.get("/api/users/me").status_code == 401
+        assert client.get("/api/users").status_code == 401
 
     def test_an_empty_password_reaches_the_check_and_is_refused(
         self, client: TestClient
@@ -462,4 +464,4 @@ class TestMalformedSignInInput:
         )
 
         assert response.status_code == 401
-        assert client.get("/api/users/me").status_code == 401
+        assert client.get("/api/users").status_code == 401

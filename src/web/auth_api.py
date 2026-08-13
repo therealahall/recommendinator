@@ -10,29 +10,41 @@ import logging
 import threading
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from src.storage.accounts import MIN_PASSWORD_LENGTH, AccountAlreadyClaimedError
+from src.storage.accounts import (
+    MIN_PASSWORD_LENGTH,
+    AccountAlreadyClaimedError,
+    PasswordTooShortError,
+)
 from src.storage.schema import UserDict
 from src.utils.dates import utc_now
-from src.web.api import UserResponse
+from src.web.api import AccountDisplayName, AccountUsername, UserResponse
 from src.web.auth import (
     SESSION_COOKIE,
     clear_session_cookie,
     set_session_cookie,
     signed_in_user,
 )
+from src.web.csrf import refuse_cross_origin
 from src.web.guards import RequiredStorage
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(
+    prefix="/api/auth", tags=["auth"], dependencies=[Depends(refuse_cross_origin)]
+)
 
 # One account and no shared store, so an in-process counter is the whole
 # control: enough to stop an online guesser, and it forgets on restart.
 _MAX_FAILURES = 5
 _LOCKOUT = timedelta(minutes=5)
+
+# Per-username counting alone bounds nothing: an unknown username is hashed
+# against a stand-in salt so a miss cannot be timed, so varying it every
+# request buys unlimited scrypt work. Far above one operator's typing.
+_MAX_TOTAL_FAILURES = 50
 
 _SIGN_IN_REFUSED = "That username and password do not match an account."
 _TOO_MANY_ATTEMPTS = "Too many failed sign-in attempts. Wait a few minutes and retry."
@@ -40,30 +52,39 @@ _ALREADY_CLAIMED = "This instance already has an account. Sign in instead."
 
 
 class _LoginThrottle:
-    """Consecutive failed sign-ins per username, in this process only."""
+    """Failed sign-ins per username and in total, in this process only."""
 
     def __init__(self) -> None:
         self._failures: dict[str, tuple[int, datetime]] = {}
         self._lock = threading.Lock()
 
+    def _prune(self, now: datetime) -> dict[str, tuple[int, datetime]]:
+        """Drop every username whose last failure has aged out of the window."""
+        self._failures = {
+            name: record
+            for name, record in self._failures.items()
+            if record[1] > now - _LOCKOUT
+        }
+        return self._failures
+
     def locked_out(self, username: str) -> bool:
-        """Whether *username* has spent its attempts inside the lockout window."""
+        """Whether *username*, or the instance, has spent its attempts."""
         with self._lock:
-            count, last = self._failures.get(username, (0, utc_now()))
-            return count >= _MAX_FAILURES and last > utc_now() - _LOCKOUT
+            counts = {
+                name: count for name, (count, _) in self._prune(utc_now()).items()
+            }
+            return (
+                counts.get(username, 0) >= _MAX_FAILURES
+                or sum(counts.values()) >= _MAX_TOTAL_FAILURES
+            )
 
     def record_failure(self, username: str) -> None:
         """Count one refusal, dropping every attempt that has aged out."""
         now = utc_now()
         with self._lock:
-            live = {
-                name: record
-                for name, record in self._failures.items()
-                if record[1] > now - _LOCKOUT
-            }
+            live = self._prune(now)
             count, _ = live.get(username, (0, now))
             live[username] = (count + 1, now)
-            self._failures = live
 
     def clear(self, username: str) -> None:
         """Forget *username*'s failures, after a sign-in that worked."""
@@ -85,17 +106,23 @@ def reset_login_throttle() -> None:
 
 
 class SetupRequest(BaseModel):
-    """First-run account creation."""
+    """First-run account creation.
 
-    username: str = Field(..., min_length=1, max_length=100)
-    display_name: str = Field("", max_length=100)
-    password: str = Field(..., min_length=MIN_PASSWORD_LENGTH, max_length=1000)
+    No ``min_length`` on the password: a Pydantic 422 renders ``detail`` as a
+    list, which the SPA cannot show, on the one screen nobody can skip.
+    :mod:`src.storage.accounts` holds the floor, and this route renders its
+    refusal as a 400.
+    """
+
+    username: AccountUsername
+    display_name: AccountDisplayName = ""
+    password: str = Field(..., max_length=1000)
 
 
 class LoginRequest(BaseModel):
     """Credentials for an existing account."""
 
-    username: str = Field(..., min_length=1, max_length=100)
+    username: AccountUsername
     password: str = Field(..., max_length=1000)
 
 
@@ -105,6 +132,8 @@ class SessionResponse(BaseModel):
     claimed: bool
     authenticated: bool
     user: UserResponse | None = None
+    #: So the setup form states the floor before the server has to refuse one.
+    min_password_length: int = MIN_PASSWORD_LENGTH
 
 
 def _as_user(user: UserDict) -> UserResponse:
@@ -133,16 +162,18 @@ def claim_instance(
     """Claim an unclaimed instance, and sign the claimant in.
 
     Raises:
-        HTTPException: 409 once the account exists. The claim itself refuses a
+        HTTPException: 409 once the account exists — the claim itself refuses a
             second one too, so a request that raced past the check writes
-            nothing either.
+            nothing either — and 400 for a password under the floor.
     """
     if storage.account_is_claimed():
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED)
     try:
         user = storage.claim_account(
-            body.username, body.display_name.strip() or None, body.password
+            body.username, body.display_name or None, body.password
         )
+    except PasswordTooShortError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except AccountAlreadyClaimedError as error:
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED) from error
 
