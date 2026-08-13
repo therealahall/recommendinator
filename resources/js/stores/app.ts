@@ -1,13 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
-import type { StatusResponse, UserResponse, FeaturesStatus, RecommendationsConfig } from '@/types/api'
+import type { StatusResponse, FeaturesStatus, RecommendationsConfig } from '@/types/api'
 
 export const useAppStore = defineStore('app', () => {
   const api = useApi()
 
   // State
-  const users = ref<UserResponse[]>([])
+  // The claimed account is always the first row, and there is nobody to switch
+  // to: a second person signs in with their own credentials.
   const currentUserId = ref(1)
   const status = ref<'loading' | 'ready' | 'error'>('loading')
   const statusMessage = ref('')
@@ -27,9 +28,6 @@ export const useAppStore = defineStore('app', () => {
   let versionPollTimer: ReturnType<typeof setInterval> | null = null
 
   // Getters
-  const currentUser = computed(() =>
-    users.value.find((u) => u.id === currentUserId.value),
-  )
   const chatEnabled = computed(() => features.value.ai_enabled)
   const aiReasoningEnabled = computed(
     () => features.value.ai_enabled && features.value.llm_reasoning_enabled,
@@ -64,18 +62,6 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function fetchUsers() {
-    try {
-      users.value = await api.get<UserResponse[]>('/users')
-    } catch {
-      // Silently ignore if users endpoint not available
-    }
-  }
-
-  function setUser(userId: number) {
-    currentUserId.value = userId
-  }
-
   function startVersionPolling() {
     if (versionPollTimer !== null) return
     versionPollTimer = setInterval(async () => {
@@ -103,7 +89,6 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     // State
-    users,
     currentUserId,
     status,
     statusMessage,
@@ -113,13 +98,10 @@ export const useAppStore = defineStore('app', () => {
     features,
     recommendationsConfig,
     // Getters
-    currentUser,
     chatEnabled,
     aiReasoningEnabled,
     // Actions
     fetchStatus,
-    fetchUsers,
-    setUser,
     startVersionPolling,
     stopVersionPolling,
     dismissStatus,

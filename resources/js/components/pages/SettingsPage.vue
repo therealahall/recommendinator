@@ -1,13 +1,30 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useSettingsStore } from '@/stores/settings'
+import AccountSection from '@/components/organisms/AccountSection.vue'
 import SettingsSection from '@/components/organisms/SettingsSection.vue'
+import { useSubmission } from '@/composables/useSubmission'
+import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores/settings'
+import type { PasswordChangeRequest, UserUpdateRequest } from '@/types/api'
 
 const store = useSettingsStore()
+const auth = useAuthStore()
+// Two requests, two reports: a refused password must not put an error beside
+// the Save details button.
+const profile = useSubmission()
+const password = useSubmission()
 
 onMounted(() => {
   store.load()
 })
+
+function saveProfile(changes: UserUpdateRequest) {
+  profile.submit(() => auth.updateProfile(changes))
+}
+
+function changePassword(change: PasswordChangeRequest) {
+  password.submit(() => auth.changePassword(change))
+}
 </script>
 
 <template>
@@ -50,5 +67,19 @@ onMounted(() => {
         :section="section"
       />
     </template>
+
+    <AccountSection
+      v-if="auth.user"
+      :user="auth.user"
+      :profile-error="profile.error"
+      :profile-pending="profile.pending"
+      :profile-saved="profile.saved"
+      :password-error="password.error"
+      :password-pending="password.pending"
+      :password-saved="password.saved"
+      @save-profile="saveProfile"
+      @change-password="changePassword"
+      @sign-out="auth.signOut"
+    />
   </div>
 </template>

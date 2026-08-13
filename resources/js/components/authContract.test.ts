@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 
-// The routes these surfaces will be wired to do not exist yet, so a store
-// import or a hardcoded path would have to be unpicked before they could be.
+// Props in, events out: their parents own the routes, so a store import or a
+// hardcoded path here would put the wiring in two places.
 
 const SURFACES = [
   'resources/js/components/atoms/AuthField.vue',

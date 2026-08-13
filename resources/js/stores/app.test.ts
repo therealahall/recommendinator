@@ -31,7 +31,6 @@ describe('useAppStore', () => {
     expect(store.status).toBe('loading')
     expect(store.statusMessage).toBe('')
     expect(store.currentUserId).toBe(1)
-    expect(store.users).toEqual([])
     expect(store.version).toBe('')
     expect(store.showUpdateBanner).toBe(false)
     expect(store.features.ai_enabled).toBe(false)
@@ -99,23 +98,22 @@ describe('useAppStore', () => {
     expect(store.statusMessage).toBe('Failed to connect to server')
   })
 
-  it('fetchUsers populates users list', async () => {
-    const mockUsers = [
-      { id: 1, username: 'alice', display_name: 'Alice' },
-      { id: 2, username: 'bob', display_name: null },
-    ]
-    mockGet.mockResolvedValue(mockUsers)
+  it('asks for no user list, because there is nobody to switch to', async () => {
+    // The signed-in account comes from the session now, and a second person
+    // signs in with their own credentials rather than being switched to.
+    mockGet.mockResolvedValue({
+      status: 'ready',
+      version: '1.2.3',
+      components: {},
+      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
+      recommendations_config: { max_count: 20, default_count: 5 },
+    })
 
     const store = useAppStore()
-    await store.fetchUsers()
+    await store.fetchStatus()
 
-    expect(store.users).toEqual(mockUsers)
-  })
-
-  it('setUser updates currentUserId', () => {
-    const store = useAppStore()
-    store.setUser(42)
-    expect(store.currentUserId).toBe(42)
+    expect(mockGet).toHaveBeenCalledTimes(1)
+    expect(mockGet).toHaveBeenCalledWith('/status')
   })
 
   it('chatEnabled computed depends on ai_enabled', () => {
@@ -132,15 +130,5 @@ describe('useAppStore', () => {
     expect(store.aiReasoningEnabled).toBe(false)
     store.features.llm_reasoning_enabled = true
     expect(store.aiReasoningEnabled).toBe(true)
-  })
-
-  it('currentUser returns matching user', () => {
-    const store = useAppStore()
-    store.users = [
-      { id: 1, username: 'alice', display_name: 'Alice' },
-      { id: 2, username: 'bob', display_name: null },
-    ]
-    store.currentUserId = 2
-    expect(store.currentUser?.username).toBe('bob')
   })
 })

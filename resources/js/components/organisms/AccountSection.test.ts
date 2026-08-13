@@ -50,6 +50,17 @@ describe('AccountSection', () => {
     ])
   })
 
+  it('offers a sign-out that is a button, not a form the browser may autofill', async () => {
+    const wrapper = mountSection()
+
+    const signOut = wrapper.find('[data-testid="account-sign-out"]')
+    expect(signOut.attributes('type')).toBe('button')
+
+    await signOut.trigger('click')
+
+    expect(wrapper.emitted('sign-out')).toHaveLength(1)
+  })
+
   it('keeps the two reports apart', async () => {
     // Separate endpoints, separate failures: a rejected password must not put
     // an error beside the Save details button, or vice versa.

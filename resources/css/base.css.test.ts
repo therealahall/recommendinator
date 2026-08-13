@@ -95,8 +95,8 @@ describe('account & sign-in surface contrast', () => {
   ]
 
   // Every surface an offset ring around a text field lands on. --bg-primary is
-  // there because neither .auth-card nor .token-gate-card declares a
-  // background: on the two standalone screens the ring reaches the body.
+  // there because .auth-card declares no background: on the setup and sign-in
+  // screens the ring reaches the body.
   const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary']
 
   it('measures every shipped theme, with the theme layered over the base', () => {
