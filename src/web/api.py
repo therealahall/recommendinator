@@ -94,6 +94,7 @@ from src.sources.service import (
     update_source_config_values,
 )
 from src.storage.accounts import (
+    PASSWORD_TOO_SHORT,
     AccountNameError,
     PasswordTooShortError,
     normalize_account_name,
@@ -1112,7 +1113,7 @@ def change_password(
     try:
         storage.set_password(user_id, request.new_password)
     except PasswordTooShortError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(status_code=400, detail=PASSWORD_TOO_SHORT) from error
     # The token is a live session by the time this runs — the dependency that
     # produced ``user`` looked it up — so the caller keeps the browser they
     # changed the password in, and every other one is signed out.
