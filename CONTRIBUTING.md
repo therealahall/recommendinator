@@ -261,7 +261,8 @@ version:
 
 ```
 src/
-├── cli/              # Click commands
+├── cli/              # Click commands: commands/ holds one module per group,
+│                     # _shared.py the helpers more than one of them uses
 ├── web/              # FastAPI app: routing, guards, app state
 │   └── static/themes/  # UI themes (folder-per-theme, auto-discovered)
 ├── config/           # config.yaml loading + component factories

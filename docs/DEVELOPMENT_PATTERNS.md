@@ -55,8 +55,9 @@ for the patterns it names.
 
 ### Before writing any code
 
-1. **Grep for a sibling that already does this.** New CLI subcommand? Read one in
-   `src/cli/commands.py` end to end. New endpoint? Read a sibling in
+1. **Grep for a sibling that already does this.** New CLI subcommand? Read the
+   group's module in `src/cli/commands/` end to end, and `src/cli/_shared.py`
+   for the helpers every group uses. New endpoint? Read a sibling in
    `src/web/api.py`. New test file? Read its nearest neighbour. Match structure
    exactly: import order, helper usage, naming, error handling, output branching.
 2. **Search `src/utils/` and module-local helpers before writing a helper.** If
