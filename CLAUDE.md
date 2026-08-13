@@ -20,6 +20,20 @@ hits.
 Applies to review agents too: weigh severity by what a user of this tool meets,
 not by what an enterprise threat model would.
 
+### Deleting is always on the table
+
+Ask it before proposing a fix, of the finding and of the code under it: does this
+mechanism need to exist? A defect in something that should not have been built is
+not a defect to fix. Reviewers: when removal would close a finding, say so as the
+first option, not a footnote.
+
+**A finding needs a reachable path, written as one concrete sentence** — who does
+what, on a deployment that exists. No sentence, no finding. "An attacker already
+inside the trust boundary" ends the discussion rather than starting it.
+
+**Same subsystem, a new finding every round, each caused by the last fix?** That
+is a mechanism earning its removal. Stop patching it.
+
 ## Required Reading
 
 Before starting work, read the relevant documentation:
