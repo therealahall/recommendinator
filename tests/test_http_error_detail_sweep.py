@@ -38,7 +38,6 @@ _MODULES_THAT_REFUSE = {
     "auth_api.py",
     "csrf.py",
     "guards.py",
-    "stream_limit.py",
 }
 
 _TREES = {

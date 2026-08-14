@@ -61,9 +61,7 @@ completion history sit in the database as plaintext.
   client secret leaves `connected` true and the token revocable.
 - An upgrade does not move tokens an earlier release stored under the plugin's
   name: several sources can share a plugin, and nothing records which owns the
-  token. The sync warns, names the source, and asks you to reconnect it — a copy
-  the source already holds earns no silence, since these tokens are single-use
-  and that copy may be the spent one.
+  token. Reconnect the source to store one where it reads it.
 - **No endpoint returns a credential value.** They are write-only from the API.
 - The test suite never touches the real key. An autouse fixture in the
   repository-root `conftest.py` points `RECOMMENDINATOR_KEY_PATH` at a per-test

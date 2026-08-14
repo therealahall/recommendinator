@@ -166,8 +166,8 @@ class RecommendationEngine:
     override.
 
     A provider rather than the dict itself, because scoring runs off the event
-    loop (Starlette streams the synchronous SSE generator in a threadpool
-    worker) while config writes run on it.  Holding the dict would mean reading
+    loop (Starlette runs the synchronous handler in a threadpool worker) while
+    config writes run on it.  Holding the dict would mean reading
     one a writer is part-way through rewriting; asking for it each time means
     the writer can only ever swap in a finished one.  One call asks once, at
     its start, and scores on that answer throughout: a save landing mid-request

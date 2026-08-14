@@ -79,8 +79,7 @@ src/
 │                     # One exception: _isolation/ is not a plugin. It holds the test proving
 │                     # plugin-local tests get the root conftest's isolation, and its leading
 │                     # underscore is what keeps the plugin registry from importing it.
-├── storage/          # SQLite (settings table, global_secrets, settings_migration,
-│                     # completed_migrations for one-shot startup passes)
+├── storage/          # SQLite (settings table, global_secrets, settings_migration)
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
@@ -96,9 +95,9 @@ src/
                       # csv_formula, urls for the bare-origin/local-host guards,
                       # logging: the root-logger wiring both interfaces call)
 
-resources/            # Frontend source (Vue 3 + Tailwind CSS v4)
+resources/            # Frontend source (Vue 3)
 ├── js/               # Vue components, Pinia stores, composables, router, types
-├── css/              # CSS variables (base.css) and Tailwind config (tailwind.css)
+├── css/              # base.css: the :root variable scale and every shared rule
 └── vite/             # Build-time config helpers (dev-server ports/proxy from env)
 index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
@@ -185,7 +184,7 @@ config = load_config(Path("config/config.yaml"))
 - **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
 - **SQL DB**: SQLite
 - **Web backend**: FastAPI
-- **Web frontend**: Vue 3 + Tailwind CSS v4 + Vite (source in `resources/`, build output in `src/web/static/dist/`)
+- **Web frontend**: Vue 3 + Vite (source in `resources/`, build output in `src/web/static/dist/`)
 - **CLI**: Click
 - **Testing**: pytest (Python), Vitest (frontend)
 - **Quality**: Black, MyPy (strict), Ruff, vue-tsc

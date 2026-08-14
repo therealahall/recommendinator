@@ -183,7 +183,6 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             progress_callback=cli_progress,
             mark_for_enrichment=auto_enrich,
             max_workers=max_workers,
-            config=config,
         )
 
         total_count = 0

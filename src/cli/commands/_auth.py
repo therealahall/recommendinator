@@ -39,9 +39,12 @@ from src.auth.trakt import (
     start_device_auth_flow,
 )
 from src.cli._shared import abort_after_failure, abort_with, require_storage
-from src.sources.service import SOURCE_ID_RULE, is_valid_source_id
+from src.sources.service import (
+    SOURCE_ID_RULE,
+    configured_source_plugins,
+    is_valid_source_id,
+)
 from src.storage.manager import StorageManager
-from src.storage.source_migration import configured_source_plugins
 
 #: What both Trakt device-flow endpoints answer with. The ``TraktAuthError``
 #: quotes the request it failed on, credentials in the URL and all.

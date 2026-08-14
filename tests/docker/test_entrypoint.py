@@ -78,7 +78,7 @@ class TestEntrypointFirstRun:
         storage paths. A user who followed it would open the file, find nothing
         recognisable, and conclude the app was broken.
         """
-        example_content = "features:\n  ai_enabled: false\n"
+        example_content = "web:\n  port: 18473\n"
         _seed_for(config_dir).write_text(example_content)
 
         result = _run(config_dir, "echo", "exec-target-ran")
@@ -173,9 +173,9 @@ class TestEntrypointIdempotency:
         (the entrypoint runs on every container start; spurious messages
         pollute logs at steady state).
         """
-        user_config = "features:\n  ai_enabled: true\n  custom: value\n"
+        user_config = "web:\n  port: 9000\n  host: 0.0.0.0\n"
         (config_dir / "config.yaml").write_text(user_config)
-        _seed_for(config_dir).write_text("features:\n  ai_enabled: false\n")
+        _seed_for(config_dir).write_text("web:\n  port: 18473\n")
 
         result = _run(config_dir, "echo", "ok")
 

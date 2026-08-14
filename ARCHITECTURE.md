@@ -143,21 +143,9 @@ touching `config.yaml`).
 - `POST /api/sync/sources/<id>/migrate` splits a YAML entry across both tables
   and is idempotent. `POST /api/sync/sources` writes only non-sensitive values,
   and secrets follow through `PUT /api/sync/sources/<id>/secret/<key>`.
-- `src/storage/credential_orphans.py` reads that same view for credentials left
-  under a plugin name by an older release: every sync warns about one, and
-  deleting the last source on that plugin deletes it.
-
-**Item attribution.** `content_items.source` holds a source id. Six plugins once
-dropped theirs, labelling rows with the plugin name, so a later sync split a
-library in two. `migrate_source_attribution` (`src/storage/source_migration.py`)
-moves those rows onto the single source running that plugin, and refuses when
-two do, because nothing records which one they came from.
-
-It reruns every boot until nothing is left for a later run to do, then records
-itself in `completed_migrations`. Two of its three refusals name a config change
-that resolves them, so those hold the record open. Each is logged once.
-Messages:
-[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#source-attribution-at-startup).
+- Deleting the last source on a plugin also deletes any credential left under
+  that plugin's own name by an older release; a sibling still on the plugin
+  keeps it.
 
 #### Global configuration precedence
 
@@ -440,8 +428,8 @@ each under `src/cli/commands/`, re-exported from its `__init__` for
 `src/cli/_shared.py` holds what more than one group uses. Full reference in
 [docs/CLI.md](docs/CLI.md).
 
-**Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA with
-Tailwind v4, built by Vite from `resources/js/` and `resources/css/` into
+**Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA,
+built by Vite from `resources/js/` and `resources/css/` into
 `src/web/static/dist/` with content-hashed filenames. Tabs are Recommendations,
 Library, Data, Preferences and Settings. Internal network only.
 
@@ -463,7 +451,7 @@ Library, Data, Preferences and Settings. Internal network only.
   which spans every script. An ASCII-only class normalizes a Cyrillic or
   Japanese title to the empty string and makes it unreachable.
 - Themes are folder-per-theme in `src/web/static/themes/`, each a `theme.json`
-  and a `colors.css`. Tailwind `@theme` maps the vars to utilities, and
+  and a `colors.css` overriding the `:root` vars `base.css` declares.
   `color-mix()` means a theme defines only core colors. Selection persists per
   user, defaulting to `nord`. See
   [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).

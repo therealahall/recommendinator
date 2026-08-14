@@ -2,14 +2,14 @@
 
 import json
 import logging
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field
 
 from src import __version__ as APP_VERSION
@@ -128,7 +128,6 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.stream_limit import bounded_sse
 from src.web.sync_manager import SyncJob, get_sync_manager
 
 logger = logging.getLogger(__name__)
@@ -917,86 +916,6 @@ def get_recommendations(
         ) from error
 
 
-@router.get("/recommendations/stream")
-def stream_recommendations(
-    engine: RequiredEngine,
-    type: str = Query(
-        ..., description="Content type (book, movie, tv_show, video_game)"
-    ),
-    count: int = Query(5, ge=1, description="Number of recommendations"),
-    user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
-) -> StreamingResponse:
-    """Stream recommendations as Server-Sent Events.
-
-    Emits ``{"type": "recommendations", "items": [...]}`` then
-    ``{"type": "done"}``. Concurrent streams are capped and answered 503 once
-    the budget is full.
-
-    Args:
-        type: Content type
-        count: Number of recommendations
-        user_id: User ID for loading per-user preferences
-
-    Returns:
-        SSE streaming response
-    """
-    storage = get_storage()
-    config = get_config()
-
-    max_count = _get_recommendations_config(config).max_count
-    if count > max_count:
-        raise HTTPException(
-            status_code=400,
-            detail="Requested count exceeds the maximum allowed",
-        )
-
-    try:
-        content_type = ContentType.from_string(type)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
-        ) from None
-
-    def generate_sse() -> Iterator[str]:
-        """Generate the recommendations event, then the terminator."""
-        try:
-            user_preference_config = None
-            if storage:
-                user_preference_config = storage.get_user_preference_config(user_id)
-
-            recommendations = engine.generate_recommendations(
-                content_type=content_type,
-                count=count,
-                user_preference_config=user_preference_config,
-            )
-
-            event: dict[str, Any] = {
-                "type": "recommendations",
-                "items": [rec.to_payload() for rec in recommendations],
-            }
-            yield f"data: {json.dumps(event)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        except Exception as error:
-            # Same engine call as the two sinks above, so the same item titles.
-            logger.error("Streaming recommendation error: %s", exception_for_log(error))
-            error_event = {
-                "type": "error",
-                "message": "Failed to generate recommendations",
-            }
-            yield f"data: {json.dumps(error_event)}\n\n"
-
-    return StreamingResponse(
-        bounded_sse(generate_sse()),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
-
-
 @router.get("/users", response_model=list[UserResponse])
 def list_users(storage: RequiredStorage) -> list[UserResponse]:
     """List all users.
@@ -1572,7 +1491,6 @@ def update_data(
             mark_for_enrichment=auto_enrich,
             user_id=1,
             max_workers=max_workers,
-            config=config,
         )
         return sum(result.items_synced for result in results)
 

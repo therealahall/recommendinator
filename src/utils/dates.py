@@ -39,9 +39,8 @@ def utc_now() -> datetime:
 
     The only clock read behind the storage and date layers, so that every
     stamp they take — a completion date, a season watch timestamp — moves
-    together when a test freezes it. Other layers (chat memory, sync job
-    bookkeeping) call ``datetime.now`` for themselves, and freezing this
-    does not move them.
+    together when a test freezes it. Other layers (sync job bookkeeping) call
+    ``datetime.now`` for themselves, and freezing this does not move them.
 
     Returns:
         The current instant, in UTC.

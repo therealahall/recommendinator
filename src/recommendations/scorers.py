@@ -1,7 +1,7 @@
 """Scoring components for the recommendation pipeline.
 
 Each scorer evaluates candidates on a specific dimension (genre match,
-creator match, semantic similarity, etc.) and returns a 0.0-1.0 score.
+creator match, tag overlap, etc.) and returns a 0.0-1.0 score.
 A ScoringContext pre-computes lookup structures so scorers can work
 efficiently.
 """

@@ -1,6 +1,5 @@
 """Tests for CLI __main__ entry point."""
 
-import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -10,7 +9,6 @@ import pytest
 import requests
 from click.testing import CliRunner
 
-from src.cli.commands import _update
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
 from src.recommendations.engine import RecommendationEngine
@@ -34,74 +32,19 @@ def test_cli_help_via_runner() -> None:
     assert "Recommendinator CLI" in result.output
 
 
-def test_non_update_command_runs_every_source_migration() -> None:
-    """All three source migrations run on a non-update command (``status``).
-
-    They live on the top-level ``cli`` callback, so a CLI-only user is migrated
-    even without ``update``. Attribution's completion record hides a deleted
-    call from any later side effect.
-    """
-    mock_storage = MagicMock(spec=StorageManager)
-    config: dict[str, Any] = {}
-    with (
-        patch("src.cli.main.load_config", return_value=config),
-        patch("src.cli.main.create_storage_manager", return_value=mock_storage),
-        patch(
-            "src.cli.main.create_recommendation_engine",
-            return_value=MagicMock(spec=RecommendationEngine),
-        ),
-        patch("src.cli.main.migrate_source_labels") as spy_labels,
-        patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
-        patch("src.cli.main.migrate_source_attribution") as spy_attribution,
-        patch(
-            "src.cli.commands._status.importlib.metadata.version",
-            return_value="0.6.0",
-        ),
-    ):
-        result = CliRunner().invoke(cli, ["status"])
-
-    assert result.exit_code == 0, result.output
-    spy_labels.assert_called_once_with(mock_storage)
-    spy_plugins.assert_called_once_with(mock_storage)
-    spy_attribution.assert_called_once_with(config, mock_storage)
-
-
-def test_update_does_not_double_invoke_source_migrations(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_a_source_named_goodreads_keeps_its_items_across_boots(
+    tmp_path: Path,
 ) -> None:
-    """``update`` runs each source migration exactly once, not twice.
+    """Regression: a source named ``goodreads`` lost its label on every boot.
 
-    The migrations were hoisted to the ``cli`` callback; ``update`` must no
-    longer invoke them itself. Rather than patching the ``src.cli.main``
-    bindings (which a reintroduced call through ``update``'s OWN import would
-    bypass entirely), this drives the REAL migration against a REAL on-disk
-    ``StorageManager``:
-
-    * The ``cli`` callback runs the unpatched, real migration on the seeded
-      ``goodreads`` row, so its side effect (the relabel + its single
-      "Relabeled" log line) is observable proof the callback migration fired.
-    * A ``create=True`` spy on ``src.cli.commands._update.migrate_source_labels``
-      / ``migrate_source_config_plugins`` — the exact binding a reintroduced
-      ``from src.storage.source_migration import ...`` in ``_update.py`` plus a
-      call inside ``update()`` would resolve through — is asserted NEVER called.
-      Because the real migration is idempotent (a second run on already-migrated
-      data is a silent no-op), a re-invocation cannot be caught by its own side
-      effect; the command-binding guard is what fails if the bug returns.
-
-    The sync layer and plugin validation are mocked so the command body actually
-    executes (rather than exiting early on ``--help``).
+    A startup pass rewrote ``content_items.source`` to ``goodreads_csv``, and
+    nothing reserves that id, so the library landed under a source that does
+    not exist.
     """
-    config = {
-        "inputs": {
-            "goodreads_csv": {
-                "plugin": "goodreads_csv",
-                "path": "inputs/goodreads_library_export.csv",
-                "enabled": True,
-            }
-        },
-        "recommendations": {"min_rating_for_preference": 4},
-    }
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
+    storage.upsert_source_config(
+        1, "goodreads", "goodreads_csv", {"path": "inputs/library.csv"}, enabled=True
+    )
     with storage.connection() as conn:
         conn.execute(
             "INSERT INTO content_items (user_id, title, content_type, status, source) "
@@ -109,12 +52,7 @@ def test_update_does_not_double_invoke_source_migrations(
         )
         conn.commit()
 
-    def _fake_sync(**kwargs: Any) -> list[SyncResult]:
-        sources = kwargs.get("sources") or []
-        return [
-            SyncResult(source_name=plugin.display_name) for plugin, _config in sources
-        ]
-
+    config: dict[str, Any] = {"inputs": {}}
     with (
         patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=storage),
@@ -122,45 +60,14 @@ def test_update_does_not_double_invoke_source_migrations(
             "src.cli.main.create_recommendation_engine",
             return_value=MagicMock(spec=RecommendationEngine),
         ),
-        patch(
-            "src.cli.commands._update.execute_multi_source_sync", side_effect=_fake_sync
-        ) as spy_sync,
-        patch(
-            "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-            return_value=[],
-        ),
-        patch(
-            "src.cli.commands._update.migrate_source_labels", create=True
-        ) as guard_labels,
-        patch(
-            "src.cli.commands._update.migrate_source_config_plugins", create=True
-        ) as guard_plugins,
     ):
-        with caplog.at_level(logging.INFO):
-            result = CliRunner().invoke(cli, ["update"])
+        for _ in range(2):
+            result = CliRunner().invoke(cli, ["status"])
+            assert result.exit_code == 0, result.output
 
-    assert result.exit_code == 0, result.output
-    # Proves the update body actually executed (it reached the sync call)
-    # rather than exiting early as the old ``--help`` invocation did.
-    spy_sync.assert_called_once()
-
-    # The real callback migration ran exactly once against real storage: the
-    # seeded 'goodreads' row is relabeled and exactly one "Relabeled" line logs.
     with storage.connection() as conn:
         rows = conn.execute("SELECT source FROM content_items").fetchall()
-    assert [row[0] for row in rows] == ["goodreads_csv"]
-    relabel_logs = [
-        record for record in caplog.records if "Relabeled" in record.getMessage()
-    ]
-    assert len(relabel_logs) == 1
-    assert "content item(s)" in relabel_logs[0].getMessage()
-
-    # ``update`` must NOT re-invoke either migration through its own import.
-    # ``create=True`` invents the attribute, so a spy aimed at a module the
-    # command has moved out of watches nothing and passes regardless.
-    assert cli.commands["update"] is _update.update
-    guard_labels.assert_not_called()
-    guard_plugins.assert_not_called()
+    assert [row[0] for row in rows] == ["goodreads"]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -377,16 +284,12 @@ class TestCliBootstrapFailures:
             patch("src.cli.main.migrate_config_credentials"),
             patch("src.cli.main.migrate_config_secrets"),
             patch("src.cli.main.create_recommendation_engine"),
-            patch("src.cli.main.migrate_source_labels") as spy_labels,
-            patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
-            patch("src.cli.main.migrate_source_attribution"),
             patch(f"src.cli.main.{patched}", side_effect=error),
         ):
-            result = CliRunner(mix_stderr=False).invoke(cli, ["status"])
-        return result, spy_labels, spy_plugins
+            return CliRunner(mix_stderr=False).invoke(cli, ["status"])
 
     def test_a_missing_config_file_exits_one_naming_the_fault(self) -> None:
-        result, _, _ = self._boot_failing_at(
+        result = self._boot_failing_at(
             "load_config", FileNotFoundError("config.yaml not found")
         )
 
@@ -421,7 +324,7 @@ class TestCliBootstrapFailures:
         self, patched: str, error: Exception, rendered: str
     ) -> None:
         """The migration hooks are inside the guard, not beside it."""
-        result, _, _ = self._boot_failing_at(patched, error)
+        result = self._boot_failing_at(patched, error)
 
         assert result.exit_code == 1
         assert result.stderr.startswith(f"{_COMPONENT_EXIT}{rendered}")
@@ -435,7 +338,7 @@ class TestCliBootstrapFailures:
         """
         token = "sk-live-9f3c2a"
 
-        result, _, _ = self._boot_failing_at(
+        result = self._boot_failing_at(
             "create_recommendation_engine",
             requests.ConnectionError(
                 f"HTTPConnectionPool: /api/tags?api_key={token} refused"
@@ -445,16 +348,6 @@ class TestCliBootstrapFailures:
         assert result.exit_code == 1
         assert result.stderr == f"{_COMPONENT_EXIT}ConnectionError\n"
         assert token not in result.stderr
-
-    def test_a_failed_boot_runs_no_source_migration(self) -> None:
-        """They sit after the guard, so a half-built storage never reaches them."""
-        result, spy_labels, spy_plugins = self._boot_failing_at(
-            "create_storage_manager", sqlite3.OperationalError("disk I/O error")
-        )
-
-        assert result.exit_code == 1
-        spy_labels.assert_not_called()
-        spy_plugins.assert_not_called()
 
 
 class TestAMalformedInputsBlockDoesNotAbortTheBoot:

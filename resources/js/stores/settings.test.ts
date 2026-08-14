@@ -239,10 +239,10 @@ describe('useSettingsStore', () => {
     mockGet.mockResolvedValue(view())
     const store = useSettingsStore()
 
-    await store.setSecret('llm.api_key', 'sk-123')
+    await store.setSecret('enrichment.providers.tmdb.api_key', 'sk-123')
 
     expect(mockPut).toHaveBeenCalledWith('/settings/secret', {
-      key: 'llm.api_key',
+      key: 'enrichment.providers.tmdb.api_key',
       value: 'sk-123',
     })
     expect(mockGet).toHaveBeenCalledWith('/settings')
@@ -253,9 +253,9 @@ describe('useSettingsStore', () => {
     mockGet.mockResolvedValue(view())
     const store = useSettingsStore()
 
-    await store.clearSecret('llm.api_key')
+    await store.clearSecret('enrichment.providers.tmdb.api_key')
 
-    expect(mockDelete).toHaveBeenCalledWith('/settings/secret/llm.api_key')
+    expect(mockDelete).toHaveBeenCalledWith('/settings/secret/enrichment.providers.tmdb.api_key')
     expect(mockGet).toHaveBeenCalledWith('/settings')
   })
 })

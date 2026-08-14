@@ -233,8 +233,8 @@ Rules:
   explicit allowlist. On static content it is the wrong pattern, so use inline
   template markup. Unsanitized `v-html` is CRITICAL.
 - **Reactive values must stay reactive.** `const x = props.foo.bar` captures once
-  at component creation and goes stale when the prop changes, during SSE
-  streaming for instance. Use `computed(() => props.foo.bar)`. This is a
+  at component creation and goes stale when the prop changes, after a store
+  refetch for instance. Use `computed(() => props.foo.bar)`. This is a
   functional bug, not a style issue.
 - **`defineProps` and `defineEmits` use TypeScript generics**,
   `defineProps<{ ... }>()`, not the runtime declaration syntax.
@@ -272,14 +272,11 @@ Rules:
 - **No unused imports.** `isolatedModules` catches some. Watch the Vue ones
   (`ref`, `computed`, `watch`, `onMounted`).
 
-### CSS / Tailwind
+### CSS
 
 - **The `:root` vars in `base.css` are the theming source of truth.** Components
-  use them, directly or through Tailwind `@theme` mappings. Never hardcode a
-  colour.
-- **`@theme` mappings must not be self-referential.**
-  `--color-foo: var(--color-foo)` is a circular no-op. When the `:root` var
-  already follows Tailwind naming, no mapping is needed.
+  use them. Never hardcode a colour — a theme's `colors.css` can only reach what
+  a var declares.
 
 ### Frontend performance
 

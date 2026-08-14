@@ -20,23 +20,13 @@ def _status_invoke(
     version: str = "0.6.0",
 ) -> object:
     """Invoke the status command against mocked components and a fixed version."""
-    (
-        p_config,
-        p_storage,
-        p_engine,
-        p_labels,
-        p_plugins,
-        p_attribution,
-    ) = _cli_patches()
+    p_config, p_storage, p_engine = _cli_patches()
     mock_storage = MagicMock(spec=StorageManager)
     back_mock_settings_store(mock_storage)
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
         p_engine as mock_eng,
-        p_labels,
-        p_plugins,
-        p_attribution,
         patch(
             "src.cli.commands._status.importlib.metadata.version",
             return_value=version,

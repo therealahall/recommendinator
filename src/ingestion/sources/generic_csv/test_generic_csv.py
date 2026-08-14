@@ -15,7 +15,6 @@ from src.ingestion.sources.generic_csv.generic_csv import (
 )
 from src.models.content import ConsumptionStatus, ContentType
 from src.utils.series import MAX_SEASONS
-from src.utils.text import extract_raw_genres
 
 
 @pytest.fixture()
@@ -289,7 +288,7 @@ class TestCsvImportPluginFetchVideoGames:
             plugin.fetch({"path": str(csv_file), "content_type": "video_game"})
         )
 
-        assert extract_raw_genres(items[0]) == ["RPG"]
+        assert items[0].metadata["genres"] == ["RPG"]
 
 
 class TestCsvImportPluginStatusMapping:

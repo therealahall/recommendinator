@@ -55,6 +55,10 @@ function textSetting(key: string, value: string, extra: Partial<SettingView> = {
   } as SettingView
 }
 
+function numberSetting(key: string, value: number): SettingView {
+  return { ...textSetting(key, ''), type: 'int', widget: 'number', value } as SettingView
+}
+
 function secretSetting(key: string, extra: Partial<SettingView> = {}): SettingView {
   return {
     key,
@@ -97,51 +101,57 @@ describe('SettingsSection', () => {
   it('renders one control per non-advanced value setting under a humanized heading', () => {
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434'), textSetting('enrichment.model', 'x')],
+      settings: [
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
+        numberSetting('enrichment.batch_size', 50),
+      ],
     }
     const wrapper = mountSection(section)
     expect(wrapper.find('h3').text()).toBe('Enrichment')
-    expect(wrapper.find('[data-testid="setting-enrichment.base_url"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="setting-enrichment.model"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="setting-enrichment.batch_size"]').exists()).toBe(true)
   })
 
   it('saves only the changed keys and labels the Save button by section', async () => {
     mockPut.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434'), textSetting('enrichment.model', 'x')],
+      settings: [
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
+        numberSetting('enrichment.batch_size', 50),
+      ],
     }
     const wrapper = mountSection(section)
 
     expect(wrapper.find('[data-testid="save-enrichment"]').text()).toBe('Save Enrichment')
-    await wrapper.find('[data-testid="setting-enrichment.base_url"]').setValue('http://enrichment:11434')
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
-    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'enrichment.base_url': 'http://enrichment:11434' } })
+    expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'enrichment.providers.tmdb.language': 'de-DE' } })
   })
 
   it('maps a 422 to the offending field and moves focus to it', async () => {
     mockPut.mockRejectedValue(
       new MockApiError(422, 'Unprocessable Entity', {
-        detail: { key: 'enrichment.base_url', reason: 'invalid host' },
+        detail: { key: 'enrichment.providers.tmdb.language', reason: 'invalid language tag' },
       }),
     )
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     }
     const wrapper = mountSection(section)
 
-    await wrapper.find('[data-testid="setting-enrichment.base_url"]').setValue('!!')
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('!!')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="setting-error-enrichment.base_url"]').text()).toBe('invalid host')
+    expect(wrapper.find('[data-testid="setting-error-enrichment.providers.tmdb.language"]').text()).toBe('invalid language tag')
     // Identity, not id: an id comparison is satisfied by any element carrying
     // that id, including one leaked into document.body by an earlier test.
     expect(document.activeElement).toBe(
-      wrapper.find('[data-testid="setting-enrichment.base_url"]').element,
+      wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
     )
   })
 
@@ -151,7 +161,7 @@ describe('SettingsSection', () => {
     // nothing a screen reader user can resolve.
     mockPut.mockRejectedValue(
       new MockApiError(422, 'Unprocessable Entity', {
-        detail: { key: 'enrichment.base_url', reason: 'see this setting\'s help' },
+        detail: { key: 'enrichment.providers.tmdb.language', reason: 'see this setting\'s help' },
       }),
     )
     // The label must differ from the key here: textSetting defaults label to the
@@ -161,19 +171,19 @@ describe('SettingsSection', () => {
     const wrapper = mountSection({
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.base_url', 'http://localhost:11434', {
+        textSetting('enrichment.providers.tmdb.language', 'en-US', {
           label: 'Enrichment base URL',
         }),
       ],
     })
 
-    await wrapper.find('[data-testid="setting-enrichment.base_url"]').setValue('!!')
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('!!')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
     const banner = wrapper.find('[data-testid="save-status-enrichment"]')
     expect(banner.text()).toContain('Enrichment base URL:')
-    expect(banner.text()).not.toContain('enrichment.base_url:')
+    expect(banner.text()).not.toContain('enrichment.providers.tmdb.language:')
     expect(banner.attributes('role')).toBe('alert')
   })
 
@@ -184,7 +194,7 @@ describe('SettingsSection', () => {
     // the whole group.
     const wrapper = mountSection({
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     })
 
     const group = wrapper.find('.settings-section-save-group')
@@ -201,10 +211,10 @@ describe('SettingsSection', () => {
     mockPut.mockReturnValue(new Promise((resolve) => { resolvePut = resolve }))
     const wrapper = mountSection({
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     })
 
-    await wrapper.find('[data-testid="setting-enrichment.base_url"]').setValue('http://enrichment:11434')
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
     const save = wrapper.find('[data-testid="save-enrichment"]')
     await save.trigger('click')
     expect(save.attributes('aria-disabled')).toBe('true')
@@ -225,7 +235,7 @@ describe('SettingsSection', () => {
     mockPut.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     }
     const wrapper = mountSection(section)
 
@@ -243,7 +253,7 @@ describe('SettingsSection', () => {
     // showed "Saved ✓", telling the user a write happened that did not.
     const wrapper = mountSection({
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
     })
 
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
@@ -267,7 +277,7 @@ describe('SettingsSection', () => {
     const section: SettingsSectionType = {
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.model', 'x'),
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
         textSetting('web.allowed_origins', 'http://localhost:18473', { advanced: true }),
       ],
     }
@@ -277,7 +287,7 @@ describe('SettingsSection', () => {
 
     // Edit the non-advanced field so the save has a real diff — Save is a no-op
     // when nothing changed, and this test is about the 422 response.
-    await wrapper.find('[data-testid="setting-enrichment.model"]').setValue('mistral:7b')
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
     await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
     await flushPromises()
 
@@ -291,26 +301,26 @@ describe('SettingsSection', () => {
     mockDelete.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434', { db_overridden: true })],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US', { db_overridden: true })],
     }
     const wrapper = mountSection(section)
 
-    await wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+    await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     await flushPromises()
 
-    expect(mockDelete).toHaveBeenCalledWith('/settings/enrichment.base_url')
+    expect(mockDelete).toHaveBeenCalledWith('/settings/enrichment.providers.tmdb.language')
   })
 
   it('renders restart and overridden pills for the relevant settings', () => {
     const section: SettingsSectionType = {
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.base_url', 'http://localhost:11434', { restart_required: true, db_overridden: true }),
+        textSetting('enrichment.providers.tmdb.language', 'en-US', { restart_required: true, db_overridden: true }),
       ],
     }
     const wrapper = mountSection(section)
-    expect(wrapper.find('[data-testid="restart-badge-enrichment.base_url"]').text()).toContain('Requires restart')
-    expect(wrapper.find('[data-testid="overridden-badge-enrichment.base_url"]').text()).toContain('Overridden')
+    expect(wrapper.find('[data-testid="restart-badge-enrichment.providers.tmdb.language"]').text()).toContain('Requires restart')
+    expect(wrapper.find('[data-testid="overridden-badge-enrichment.providers.tmdb.language"]').text()).toContain('Overridden')
   })
 
   it('renders secrets in a Secrets fieldset and saves them out of band', async () => {
@@ -350,7 +360,7 @@ describe('SettingsSection', () => {
     const section: SettingsSectionType = {
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.base_url', 'http://localhost:11434'),
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
         textSetting('web.allowed_origins', 'x', { advanced: true }),
       ],
     }
@@ -402,7 +412,7 @@ describe('SettingsSection', () => {
     const section: SettingsSectionType = {
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.base_url', 'http://localhost:11434'),
+        textSetting('enrichment.providers.tmdb.language', 'en-US'),
         textSetting('web.allowed_origins', 'x', { advanced: true }),
       ],
     }
@@ -420,13 +430,13 @@ describe('SettingsSection', () => {
     )
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434', { db_overridden: true })],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US', { db_overridden: true })],
     }
     const wrapper = mountSection(section)
 
-    await wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+    await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     await nextTick()
-    const btn = wrapper.find('[data-testid="reset-enrichment.base_url"]')
+    const btn = wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]')
     expect(btn.text()).toBe('Resetting…')
     expect(btn.attributes('disabled')).toBeDefined()
 
@@ -444,7 +454,7 @@ describe('SettingsSection', () => {
     const OVERRIDDEN: SettingsSectionType = {
       section: 'enrichment',
       settings: [
-        textSetting('enrichment.base_url', 'http://localhost:11434', {
+        textSetting('enrichment.providers.tmdb.language', 'en-US', {
           db_overridden: true,
         }),
       ],
@@ -458,18 +468,18 @@ describe('SettingsSection', () => {
       mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
       const wrapper = mountSection(OVERRIDDEN)
 
-      await wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+      await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
       await flushPromises()
 
       expect(wrapper.find('p.sr-only').text()).toContain('Reset failed.')
       // The control is still there and still focused — the user has not been
       // dumped at <body> with no explanation.
       expect(document.activeElement).toBe(
-        wrapper.find('[data-testid="setting-enrichment.base_url"]').element,
+        wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
       )
       // And the button is usable again for a retry.
       expect(
-        wrapper.find('[data-testid="reset-enrichment.base_url"]').attributes('disabled'),
+        wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').attributes('disabled'),
       ).toBeUndefined()
     })
 
@@ -512,16 +522,16 @@ describe('SettingsSection', () => {
     mockDelete.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434', { db_overridden: true })],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US', { db_overridden: true })],
     }
     const wrapper = mountSection(section)
 
-    await wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+    await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('p.sr-only').text()).toBe('Reset to default.')
     expect(document.activeElement).toBe(
-      wrapper.find('[data-testid="setting-enrichment.base_url"]').element,
+      wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
     )
   })
 
@@ -529,12 +539,12 @@ describe('SettingsSection', () => {
     mockDelete.mockResolvedValue({ sections: [] })
     const section: SettingsSectionType = {
       section: 'enrichment',
-      settings: [textSetting('enrichment.base_url', 'http://localhost:11434', { db_overridden: true })],
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US', { db_overridden: true })],
     }
     const wrapper = mountSection(section)
     const region = wrapper.find('p.sr-only').element
 
-    await wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+    await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     await flushPromises()
     expect(region.textContent).toBe('Reset to default.')
 
@@ -545,7 +555,7 @@ describe('SettingsSection', () => {
     // capturing that transient blank without depending on a fixed tick count
     // (which could miss it if the mocked promise resolves at a different depth).
     const seen = new Set<string>()
-    void wrapper.find('[data-testid="reset-enrichment.base_url"]').trigger('click')
+    void wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
     for (let i = 0; i < 25; i++) {
       await nextTick()
       seen.add(region.textContent ?? '')
@@ -609,11 +619,11 @@ describe('SettingsSection', () => {
       mockPut.mockResolvedValue({ sections: [] })
       const section: SettingsSectionType = {
         section: 'enrichment',
-        settings: [textSetting('enrichment.base_url', 'http://localhost:11434')],
+        settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
       }
       const wrapper = mountSection(section)
 
-      await wrapper.find('[data-testid="setting-enrichment.base_url"]').setValue('http://enrichment:11434')
+      await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
       await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
       await vi.advanceTimersByTimeAsync(0)
       await nextTick()

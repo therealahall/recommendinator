@@ -14,8 +14,8 @@ DEFAULT_USER_ID = 1
 # ``POST /api/complete``. It lives here, with the field it bounds, so those
 # three cannot drift apart — a bound one interface applies and another does not
 # is a review the user can write in one place and not the other, and one stored
-# row the other cannot round-trip. CLI ``complete`` and chat check only that a
-# review is not blank, so a longer one still reaches the column through them.
+# row the other cannot round-trip. CLI ``complete`` checks only that a review
+# is not blank, so a longer one still reaches the column through it.
 # 10000 characters is far longer than any review worth writing and short enough
 # that a pasted document is refused rather than stored whole.
 MAX_REVIEW_LENGTH = 10000

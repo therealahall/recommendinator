@@ -14,6 +14,14 @@ const NEVER_GENERATED = {
   generated_at: null,
 }
 
+// What both `GET /profile` and `POST /profile/regenerate` answer once the user
+// has regenerated on a library with nothing rated yet: a saved profile, so
+// generated_at is set, with every collection still empty.
+const GENERATED_BUT_EMPTY = {
+  ...NEVER_GENERATED,
+  generated_at: '2026-08-13T12:00:00',
+}
+
 const mockGet = vi.fn()
 const mockPost = vi.fn()
 
@@ -35,6 +43,32 @@ describe('ProfilePanel', () => {
     mockGet.mockResolvedValue(NEVER_GENERATED)
 
     const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No profile generated')
+  })
+
+  it('says no profile has been generated when the saved one is empty', async () => {
+    // Reported: an empty bordered block on Preferences. Keying on generated_at
+    // alone leaves it, because the panel's own button saves an empty profile
+    // and every later visit then renders none of its three sections.
+    mockGet.mockResolvedValue(GENERATED_BUT_EMPTY)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No profile generated')
+  })
+
+  it('still says no profile has been generated right after an empty regenerate', async () => {
+    // Regenerate assigns its response unasked, so a fix applied only where the
+    // profile is loaded leaves the click itself blanking the panel.
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockResolvedValue(GENERATED_BUT_EMPTY)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('No profile generated')
