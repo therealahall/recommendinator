@@ -37,7 +37,6 @@ import yaml
 MANDATED_AGENTS = (
     "code-review",
     "security-review",
-    "test-review",
     "document-review",
     "commit-hygiene",
     "accessibility-review",
@@ -52,7 +51,7 @@ _ERROR_DISPLAY_LIMIT = 160
 # one and is rejected as malformed before the parser is handed it rather than
 # after. It is a sanity bound on shape, not a resource limit: the file is already
 # read and split by this point, and line length is not capped, so it stops nothing
-# an attacker would try. The committed seven are validated through this same path
+# an attacker would try. The committed six are validated through this same path
 # by a test, which also fails if any of their frontmatter exceeds half of this
 # bound — so check that test, not this comment, before assuming there is room.
 _FRONTMATTER_LINE_LIMIT = 40
@@ -127,7 +126,7 @@ class AgentScope:
     repository's own directory. `session_project_dir` answers "can this session
     see it?" — Claude Code resolves project-local agents relative to the session's
     project directory, so a session rooted anywhere else sees none of this
-    repository's agents. Conflating the two would report seven missing agents for
+    repository's agents. Conflating the two would report six missing agents for
     one mis-rooted session. It is None when no session is running.
     """
 

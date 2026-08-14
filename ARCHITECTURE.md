@@ -665,19 +665,18 @@ and Ruff.
 Two plugins, configured in `.claude/settings.json`: **Pyright LSP** for real-time
 type analysis, **Frontend Design** for UI component generation.
 
-Seven review agents, all committed under `.claude/agents/`:
+Six review agents, all committed under `.claude/agents/`:
 
 | Agent | Covers |
 |-------|--------|
 | `security-review` | Credential exposure, injection, CORS, the rules in `docs/SECURITY.md` |
-| `code-review` | Dead code, DRY, naming, type safety, over/under-engineering |
-| `test-review` | Coverage, mock hygiene, regression test format, edge cases |
+| `code-review` | Dead code, DRY, naming, type safety, over/under-engineering, test quality |
 | `document-review` | Staleness, cross-document consistency, missing documentation |
 | `accessibility-review` | WCAG 2.1 AA for frontend code, approving backend-only diffs immediately |
 | `commit-hygiene` | Atomic commit structure, conventional format, message quality |
 | `parity-review` | Capabilities exposed in one interface but not the other |
 
-The first six are project-agnostic and shared across repositories, so their
+The first five are project-agnostic and shared across repositories, so their
 canonical source lives outside this repository and the committed copies are what
 a checkout gets. They read `CLAUDE.md` and `docs/` for this project's rules.
 `parity-review` is native here.
