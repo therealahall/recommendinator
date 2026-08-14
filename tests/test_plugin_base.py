@@ -7,7 +7,6 @@ import pytest
 
 from src.ingestion.plugin_base import (
     ConfigField,
-    PluginInfo,
     ProgressCallback,
     SourceError,
     SourcePlugin,
@@ -246,19 +245,6 @@ class TestSourcePlugin:
         plugin = MockPlugin()
         assert plugin.get_source_identifier() == "mock_plugin"
 
-    def test_get_info(self) -> None:
-        """Test getting plugin info."""
-        plugin = MockPlugin()
-        info = plugin.get_info()
-
-        assert isinstance(info, PluginInfo)
-        assert info.name == "mock_plugin"
-        assert info.display_name == "Mock Plugin"
-        assert info.content_types == [ContentType.BOOK]
-        assert info.requires_api_key is False
-        assert info.requires_network is False
-        assert len(info.config_schema) == 2
-
 
 class TestNormalizeRating:
     """Tests for rating normalization."""
@@ -311,40 +297,3 @@ class TestNormalizeRating:
         plugin = MockPlugin()
         assert plugin.normalize_rating([1, 2, 3]) is None
         assert plugin.normalize_rating({"rating": 5}) is None
-
-
-class TestPluginInfo:
-    """Tests for PluginInfo dataclass."""
-
-    def test_create_plugin_info(self) -> None:
-        """Test creating PluginInfo directly."""
-        info = PluginInfo(
-            name="test",
-            display_name="Test Plugin",
-            content_types=[ContentType.MOVIE],
-            requires_api_key=True,
-            requires_network=True,
-        )
-
-        assert info.name == "test"
-        assert info.display_name == "Test Plugin"
-        assert ContentType.MOVIE in info.content_types
-        assert info.requires_api_key is True
-        assert info.config_schema == []
-
-    def test_plugin_info_with_schema(self) -> None:
-        """Test PluginInfo with config schema."""
-        schema = [
-            ConfigField(name="url", field_type=str, required=True),
-        ]
-        info = PluginInfo(
-            name="test",
-            display_name="Test",
-            content_types=[ContentType.TV_SHOW],
-            requires_api_key=True,
-            requires_network=True,
-            config_schema=schema,
-        )
-
-        assert len(info.config_schema) == 1
-        assert info.config_schema[0].name == "url"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, final
 
 from src.models.config_field import ConfigField
@@ -43,22 +42,6 @@ _FRAMEWORK_OWNED_METHODS = {
         "attribution and which source owns a rotated credential."
     ),
 }
-
-
-@dataclass
-class PluginInfo:
-    """Information about a registered plugin.
-
-    Used by the registry to track plugin metadata without
-    requiring instantiation.
-    """
-
-    name: str
-    display_name: str
-    content_types: list[ContentType]
-    requires_api_key: bool
-    requires_network: bool
-    config_schema: list[ConfigField] = field(default_factory=list)
 
 
 class SourceError(Exception):
@@ -362,21 +345,3 @@ class SourcePlugin(ABC):
             if source_id is not None:
                 return str(source_id)
         return self.name
-
-    def get_info(self) -> PluginInfo:
-        """Get plugin information as a PluginInfo object.
-
-        Useful for serialization and display without needing
-        the full plugin instance.
-
-        Returns:
-            PluginInfo with this plugin's metadata
-        """
-        return PluginInfo(
-            name=self.name,
-            display_name=self.display_name,
-            content_types=self.content_types,
-            requires_api_key=self.requires_api_key,
-            requires_network=self.requires_network,
-            config_schema=self.get_config_schema(),
-        )

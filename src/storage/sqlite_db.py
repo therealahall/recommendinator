@@ -92,7 +92,6 @@ from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
     assert_known_detail_table,
-    assert_safe_identifier,
     detail_join,
     merge_detail_tables,
     merge_scalar_columns,
@@ -190,20 +189,14 @@ _ENRICHMENT_SELECT_TERMS = (
 
 
 def _select_term(table_alias: str, column: str, alias: str) -> str:
-    """One aliased column of a detail join, with its identifiers validated."""
-    assert_safe_identifier(column)
-    assert_safe_identifier(alias)
+    """One aliased column of a detail join."""
     if alias == column:
         return f"{table_alias}.{column}"
     return f"{table_alias}.{column} as {alias}"
 
 
 def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
-    """Aliased columns one detail table contributes to the joined SELECT.
-
-    The table name is checked against the fixed allow-list, and every column
-    and alias against the identifier pattern, before any of them reaches SQL.
-    """
+    """Aliased columns one detail table contributes to the joined SELECT."""
     assert_known_detail_table(spec)
 
     terms = []
@@ -798,8 +791,6 @@ class SQLiteDB:
         col_names.append("metadata")
         values.append(metadata_json)
 
-        for name in col_names:
-            assert_safe_identifier(name)
         placeholders = ", ".join("?" for _ in values)
         col_list = ", ".join(col_names)
         if existing_data:
@@ -1629,8 +1620,6 @@ class SQLiteDB:
         row_exists = cursor.fetchone() is not None
 
         columns = list(updates)
-        for name in columns:
-            assert_safe_identifier(name)
 
         if row_exists:
             set_clause = ", ".join(f"{name} = ?" for name in columns)

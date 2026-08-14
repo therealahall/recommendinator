@@ -154,136 +154,6 @@ class TestPluginRegistry:
         # Original should not be affected
         assert "injected" not in clean_registry.get_all_plugins()
 
-    def test_unregister_plugin(self, clean_registry: PluginRegistry) -> None:
-        """Test unregistering a plugin."""
-        clean_registry._discovered = True  # Prevent auto-discovery
-        clean_registry.register(FakeBookPlugin())
-        assert clean_registry.get_plugin("fake_books") is not None
-
-        result = clean_registry.unregister("fake_books")
-        assert result is True
-        assert clean_registry.get_plugin("fake_books") is None
-
-    def test_unregister_nonexistent(self, clean_registry: PluginRegistry) -> None:
-        """Test unregistering a non-existent plugin returns False."""
-        result = clean_registry.unregister("nonexistent")
-        assert result is False
-
-    def test_list_plugin_names(self, clean_registry: PluginRegistry) -> None:
-        """Test listing plugin names returns sorted list."""
-        clean_registry._discovered = True
-
-        clean_registry.register(FakeGamePlugin())
-        clean_registry.register(FakeBookPlugin())
-
-        names = clean_registry.list_plugin_names()
-
-        assert names == ["fake_books", "fake_games"]  # Sorted
-
-    def test_get_enabled_plugins_dict_config(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test getting enabled plugins with named instance config."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-        clean_registry.register(FakeGamePlugin())
-
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": False,
-                    "api_key": "test",
-                },
-            }
-        }
-
-        enabled = clean_registry.get_enabled_plugins(config)
-
-        assert len(enabled) == 1
-        assert enabled[0].name == "fake_books"
-
-    def test_get_enabled_plugins_multiple_instances_same_plugin(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test that multiple instances of the same plugin return it once."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-
-        config = {
-            "inputs": {
-                "fiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/fiction.csv",
-                },
-                "nonfiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/nonfiction.csv",
-                },
-            }
-        }
-
-        enabled = clean_registry.get_enabled_plugins(config)
-
-        assert len(enabled) == 1
-        assert enabled[0].name == "fake_books"
-
-    def test_get_enabled_plugins_empty_config(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test getting enabled plugins with no config returns empty."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-
-        enabled = clean_registry.get_enabled_plugins({})
-
-        assert len(enabled) == 0
-
-    def test_get_enabled_plugins_missing_plugin_field(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test that entries without a plugin field are skipped."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-
-        config = {
-            "inputs": {
-                "broken_entry": {
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        enabled = clean_registry.get_enabled_plugins(config)
-
-        assert len(enabled) == 0
-
-    def test_get_plugins_by_content_type(self, clean_registry: PluginRegistry) -> None:
-        """Test filtering plugins by content type."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-        clean_registry.register(FakeGamePlugin())
-
-        book_plugins = clean_registry.get_plugins_by_content_type(ContentType.BOOK)
-        game_plugins = clean_registry.get_plugins_by_content_type(
-            ContentType.VIDEO_GAME
-        )
-        movie_plugins = clean_registry.get_plugins_by_content_type(ContentType.MOVIE)
-
-        assert len(book_plugins) == 1
-        assert book_plugins[0].name == "fake_books"
-        assert len(game_plugins) == 1
-        assert game_plugins[0].name == "fake_games"
-        assert len(movie_plugins) == 0
-
     def test_discover_does_not_rediscover(self, clean_registry: PluginRegistry) -> None:
         """Test that discover_plugins only runs once unless forced."""
         clean_registry.discover_plugins()
@@ -326,7 +196,7 @@ class TestIsolationPackageIsNotAPlugin:
 
         clean_registry.discover_plugins()
 
-        assert "_isolation" not in clean_registry.list_plugin_names()
+        assert "_isolation" not in clean_registry.get_all_plugins()
         assert [
             name
             for name, plugin in clean_registry.get_all_plugins().items()
@@ -706,28 +576,3 @@ class TestGoodreadsPluginRename:
 
         assert isinstance(plugin, GoodreadsRssPlugin)
         assert plugin.name == "goodreads_rss"
-
-    def test_enabled_plugins_ignores_old_goodreads_key(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """An input entry with plugin='goodreads' yields no enabled plugin.
-
-        The registry does not fall back to the renamed plugin, so a stale
-        config block silently contributes nothing rather than resolving to
-        goodreads_csv.
-        """
-        clean_registry.discover_plugins()
-
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "goodreads",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        enabled = clean_registry.get_enabled_plugins(config)
-
-        assert enabled == []

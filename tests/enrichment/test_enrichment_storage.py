@@ -13,6 +13,7 @@ from src.recommendations.content_length import (
     score_length_match,
 )
 from src.storage.manager import StorageManager
+from src.storage.schema import create_user
 
 
 class TestEnrichmentSchema:
@@ -619,6 +620,51 @@ class TestEnrichmentStats:
 
         assert [db for db, _item in queued] == [db_id]
         assert storage_manager.get_enrichment_stats()["pending"] == 0
+
+    def test_stats_for_one_user_exclude_another_users_items(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The user-filtered stats join content_items and alias enrichment_status.
+
+        Every count and both breakdowns take a different query shape under a
+        user filter, so a mistake there is invisible to the unfiltered tests.
+        """
+        with storage_manager.sqlite_db.connection() as conn:
+            other_user = create_user(conn, username="other")
+        mine = [
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"mine{index}",
+                    title=f"Mine {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                user_id=1,
+            )
+            for index in range(3)
+        ]
+        theirs = storage_manager.save_content_item(
+            ContentItem(
+                id="theirs",
+                title="Theirs",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=other_user,
+        )
+        storage_manager.mark_enrichment_complete(mine[0], "tmdb", "high")
+        storage_manager.mark_enrichment_failed(mine[1], "tmdb: HTTP 503")
+        storage_manager.mark_enrichment_complete(theirs, "rawg", "medium")
+        # mine[2] is untracked.
+
+        stats = storage_manager.get_enrichment_stats(user_id=1)
+
+        assert stats["total"] == 3
+        assert stats["enriched"] == 1
+        assert stats["failed"] == 1
+        assert stats["pending"] == 1
+        assert stats["by_provider"] == {"tmdb": 1}
+        assert stats["by_quality"] == {"high": 1}
 
 
 class TestTagsAndDescriptionStorage:

@@ -61,8 +61,8 @@ class TestStorageRuntimeAssertionRegression:
         "source",
         [
             "def check(name):\n    if name is None:\n        raise ValueError(name)\n",
-            "from src.storage.merge import assert_safe_identifier\n",
-            "assert_safe_identifier('genres')\n",
+            "from src.storage.merge import assert_known_detail_table\n",
+            "assert_known_detail_table(spec)\n",
         ],
     )
     def test_a_raising_guard_is_not_an_offence(

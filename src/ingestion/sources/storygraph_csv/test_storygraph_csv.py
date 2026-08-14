@@ -75,16 +75,6 @@ class TestStorygraphCsvPluginProperties:
         """Test source identifier matches plugin name by default."""
         assert plugin.get_source_identifier() == "storygraph_csv"
 
-    def test_get_info(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test plugin info includes all metadata."""
-        info = plugin.get_info()
-
-        assert info.name == "storygraph_csv"
-        assert info.display_name == "The StoryGraph (CSV Export)"
-        assert info.content_types == [ContentType.BOOK]
-        assert info.requires_api_key is False
-        assert info.requires_network is False
-
 
 class TestStorygraphCsvPluginValidation:
     """Tests for StorygraphCsvPlugin config validation."""
@@ -661,10 +651,14 @@ class TestStorygraphCsvPluginDiscovery:
         assert plugin.display_name == "The StoryGraph (CSV Export)"
 
     def test_plugin_listed_among_book_sources(self) -> None:
-        """Test the plugin is discoverable via content-type filtering."""
+        """Test the discovered plugin declares itself a book source."""
         registry = PluginRegistry()
 
-        book_plugins = registry.get_plugins_by_content_type(ContentType.BOOK)
+        book_plugins = [
+            plugin
+            for plugin in registry.get_all_plugins().values()
+            if ContentType.BOOK in plugin.content_types
+        ]
 
         assert "storygraph_csv" in {plugin.name for plugin in book_plugins}
 

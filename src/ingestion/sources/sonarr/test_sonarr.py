@@ -119,13 +119,6 @@ class TestSonarrPluginProperties:
     def test_get_source_identifier(self, plugin: SonarrPlugin) -> None:
         assert plugin.get_source_identifier() == "sonarr"
 
-    def test_get_info(self, plugin: SonarrPlugin) -> None:
-        info = plugin.get_info()
-        assert info.name == "sonarr"
-        assert info.display_name == "Sonarr"
-        assert info.requires_api_key is True
-        assert info.requires_network is True
-
 
 class TestSonarrPluginValidation:
     """Tests for SonarrPlugin config validation."""

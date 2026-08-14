@@ -318,17 +318,6 @@ class TestSteamPluginProperties:
         plugin = SteamPlugin()
         assert plugin.get_source_identifier() == "steam"
 
-    def test_get_info(self) -> None:
-        """Test plugin info includes all metadata."""
-        plugin = SteamPlugin()
-        info = plugin.get_info()
-
-        assert info.name == "steam"
-        assert info.display_name == "Steam"
-        assert info.content_types == [ContentType.VIDEO_GAME]
-        assert info.requires_api_key is True
-        assert info.requires_network is True
-
 
 class TestSteamPluginValidation:
     """Tests for SteamPlugin config validation."""

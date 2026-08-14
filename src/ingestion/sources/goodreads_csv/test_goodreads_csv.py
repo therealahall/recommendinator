@@ -57,16 +57,6 @@ class TestGoodreadsCsvPluginProperties:
         """Test source identifier matches plugin name."""
         assert plugin.get_source_identifier() == "goodreads_csv"
 
-    def test_get_info(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test plugin info includes all metadata."""
-        info = plugin.get_info()
-
-        assert info.name == "goodreads_csv"
-        assert info.display_name == "Goodreads (CSV Export)"
-        assert info.content_types == [ContentType.BOOK]
-        assert info.requires_api_key is False
-        assert info.requires_network is False
-
 
 class TestGoodreadsCsvPluginValidation:
     """Tests for GoodreadsCsvPlugin config validation."""

@@ -10,9 +10,7 @@ import json
 import logging
 import threading
 import time
-import traceback
 from dataclasses import dataclass, field
-from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -96,21 +94,6 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
         scrub_request_error(request_error),
         retryable=_is_retryable(request_error),
     )
-
-
-def _failure_site(error: BaseException) -> str:
-    """Name the code that raised *error*, without a path or a local.
-
-    A traceback cannot be logged here: its frames carry item titles and this
-    machine's absolute source paths. The innermost frame alone locates the
-    code and carries neither.
-    """
-    frames = traceback.extract_tb(error.__traceback__)
-    if not frames:
-        return "no traceback"
-    innermost = frames[-1]
-    file_name = sanitize_for_log(PurePath(innermost.filename).name)
-    return f"{file_name}:{innermost.lineno} in {innermost.name}"
 
 
 def _is_retryable(error: requests.RequestException) -> bool:
@@ -457,15 +440,10 @@ class EnrichmentManager:
             )
 
         except Exception as error:
-            # No exc_info and no message: a traceback or a stringified error
-            # carries item titles, and ``status.errors`` is served to clients.
-            # The site is logged instead, so a bug is still locatable.
+            # ``status.errors`` is served to clients, so it carries the type
+            # name only. The log is the operator's own, and gets the traceback.
             rendered = type(error).__name__
-            logger.error(
-                "Enrichment job failed with error: %s (%s)",
-                rendered,
-                _failure_site(error),
-            )
+            logger.error("Enrichment job failed: %s", rendered, exc_info=True)
             with self._lock:
                 self._status.running = False
                 self._status.errors.append(f"Job error: {rendered}")

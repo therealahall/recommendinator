@@ -25,7 +25,6 @@ __all__ = [
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
     "assert_known_detail_table",
-    "assert_safe_identifier",
     "detail_join",
     "merge_detail_tables",
     "merge_scalar_columns",
@@ -33,22 +32,6 @@ __all__ = [
     "parse_json_list",
     "resolve_status_forward",
 ]
-
-# ---------------------------------------------------------------------------
-# SQL identifier validation
-# ---------------------------------------------------------------------------
-
-_SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
-
-
-def assert_safe_identifier(name: str) -> None:
-    """Validate that *name* is a safe SQL identifier (lowercase, no spaces).
-
-    Raises ValueError if the name does not match ``^[a-z_][a-z0-9_]*$``.
-    """
-    if not _SAFE_IDENTIFIER_RE.match(name):
-        raise ValueError(f"Unsafe SQL identifier: {name!r}")
-
 
 # ---------------------------------------------------------------------------
 # JSON helpers
@@ -138,19 +121,9 @@ ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
 
 
 def assert_known_detail_table(spec: ContentTypeFields) -> None:
-    """Validate the table and alias one content type's declaration names.
-
-    Every query built from ``src/models/detail_fields`` interpolates both, so
-    the check belongs beside the allow-list it reads rather than at each of
-    the three query builders.
-
-    Raises:
-        ValueError: If the table is not allow-listed, or the alias is not a
-            safe identifier.
-    """
+    """Raise unless the detail table this spec names is allow-listed."""
     if spec.table not in ALLOWED_DETAIL_TABLES:
         raise ValueError(f"Unknown detail table: {spec.table!r}")
-    assert_safe_identifier(spec.table_alias)
 
 
 def detail_join(spec: ContentTypeFields) -> str:
@@ -476,9 +449,6 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
         delete_id: Database ID of the duplicate row to delete.
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():
-        # table comes from _DETAIL_TABLE_COLUMNS.keys() (compile-time constant),
-        # which is the source of ALLOWED_DETAIL_TABLES — no runtime check needed.
-        # Column names are validated individually below as defense-in-depth.
         cursor.execute(
             f"SELECT * FROM {table} WHERE content_item_id = ?",
             (keep_id,),
@@ -504,7 +474,6 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
         detail_params: list[Any] = []
 
         for col in columns:
-            assert_safe_identifier(col)
             if col in MERGEABLE_DETAIL_COLUMNS:
                 # Genres/tags: additive merge
                 keep_list = parse_json_list(keep_detail[col])

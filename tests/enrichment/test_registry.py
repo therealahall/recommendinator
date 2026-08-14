@@ -1,13 +1,13 @@
 """Tests for the enrichment provider registry."""
 
 import threading
-import types
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from src.enrichment import registry as registry_module
 from src.enrichment.provider_base import (
     ConfigField,
     EnrichmentProvider,
@@ -27,6 +27,8 @@ _STALL_TIMEOUT_SECONDS = 5.0
 # How long the second discovery is given to prove it cannot get in. Only spent
 # on the passing path.
 _BLOCKED_GRACE_SECONDS = 0.5
+
+_BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg"}
 
 
 class MockMovieProvider(EnrichmentProvider):
@@ -308,25 +310,18 @@ class TestEnrichmentRegistry:
         assert registry.get_provider("mock_movie") is not None
 
     def test_discover_providers_force(self) -> None:
-        """Test that force=True re-discovers providers."""
+        """Test that force=True drops a manual registration and re-registers."""
         registry = EnrichmentRegistry.get_instance()
-
-        # Manually register a provider
-        provider = MockMovieProvider()
-        registry.register(provider)
+        registry.register(MockMovieProvider())
         registry._discovered = True
 
-        # Force discovery should clear and rediscover
         registry.discover_providers(force=True)
 
-        # Manual provider should be gone (was cleared)
-        # Unless it was in the discovery path
-        # For testing, we just check that force works
-        assert registry._discovered is True
+        assert set(registry.get_all_providers()) == _BUILTIN_PROVIDER_NAMES
 
 
 class TestConcurrentDiscoveryRegression:
-    """A discovery pass must not be visible half-built.
+    """A registration pass must not be visible half-built.
 
     The twin of ``tests/test_registry.py``'s case, same shape:
     ``discover_providers`` cleared ``_providers`` and refilled it in place,
@@ -335,44 +330,31 @@ class TestConcurrentDiscoveryRegression:
     """
 
     def test_a_rebuild_is_invisible_until_it_has_finished(self) -> None:
-        """Forced interleaving: the rebuild is parked mid-scan throughout.
+        """Forced interleaving: the rebuild is parked mid-build throughout.
 
-        Pins the half-built map. The cleared middle is closed by the publish
-        being one rebind, and a reader cannot be parked inside a publish
-        deterministically, so nothing here pins that half.
+        Parking inside a provider's ``__init__`` also holds the construction
+        outside the lock: under it, the read below would never return.
         """
         registry = EnrichmentRegistry()
-        first_pass_done = threading.Event()
+        registry.discover_providers()
         parked = threading.Event()
         release = threading.Event()
 
-        def register_one_builtin(self: EnrichmentRegistry) -> None:
-            # A different provider per pass, so which map the reader got is
-            # readable off its contents rather than inferred from timing.
-            if not first_pass_done.is_set():
-                self.register(MockMovieProvider())
-                first_pass_done.set()
-                return
-            self.register(MockBookProvider())
-            parked.set()
-            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
+        class StallingProvider(MockBookProvider):
+            def __init__(self) -> None:
+                super().__init__()
+                parked.set()
+                assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
         with (
-            patch.object(
-                EnrichmentRegistry, "_discover_builtin_providers", register_one_builtin
-            ),
-            patch.object(
-                EnrichmentRegistry, "_discover_private_providers", lambda self: None
-            ),
+            patch.object(registry_module, "RAWGProvider", StallingProvider),
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
-            registry.discover_providers()
             rebuild = pool.submit(registry.discover_providers, force=True)
             assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
             try:
-                # Read from a worker: with the scan under the lock this read
-                # never returns, and a wedged main thread takes the suite too.
+                # A wedged main thread would take the suite down with it.
                 during_rebuild = pool.submit(registry.get_all_providers).result(
                     timeout=_BLOCKED_GRACE_SECONDS
                 )
@@ -380,63 +362,11 @@ class TestConcurrentDiscoveryRegression:
                 release.set()
             rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
 
-        # The parked pass has already registered mock_book into a map of its
-        # own, so getting the previous pass's provider is the swap being
-        # invisible. Rebuilt in place, this read lands on the half-built map.
-        assert set(during_rebuild) == {"mock_movie"}
-        assert set(registry.get_all_providers()) == {"mock_book"}
-
-
-class TestProviderConstructedOutsideTheLockRegression:
-    """A provider that calls the registry while loading must not hang.
-
-    Bug: the lock spanned ``import_module`` and every provider ``__init__``, so
-    a provider calling ``get_enrichment_registry()`` blocked on its caller's
-    own lock, silently.
-    Fix: only the publish is locked.
-    """
-
-    def test_a_provider_whose_init_asks_for_the_registry_still_loads(self) -> None:
-        """Bounded: a regression fails here rather than hanging the suite."""
-
-        class ReentrantProvider(MockMovieProvider):
-            def __init__(self) -> None:
-                super().__init__()
-                get_enrichment_registry()
-
-        fake_module = types.ModuleType("fake_module")
-        fake_module.ReentrantProvider = ReentrantProvider  # type: ignore[attr-defined]
-        registry = EnrichmentRegistry()
-
-        def register_the_reentrant_module(self: EnrichmentRegistry) -> None:
-            self._register_providers_from_module(fake_module, "test")
-
-        EnrichmentRegistry.reset_instance()
-        try:
-            with (
-                patch.object(
-                    EnrichmentRegistry,
-                    "_discover_builtin_providers",
-                    register_the_reentrant_module,
-                ),
-                patch.object(
-                    EnrichmentRegistry, "_discover_private_providers", lambda self: None
-                ),
-            ):
-                # Daemon, because a thread deadlocked on the module lock is
-                # never joinable and pytest would never exit.
-                discovery = threading.Thread(
-                    target=registry.discover_providers, daemon=True
-                )
-                discovery.start()
-                discovery.join(timeout=_STALL_TIMEOUT_SECONDS)
-
-                assert (
-                    not discovery.is_alive()
-                ), "discovery deadlocked on a provider that called the registry"
-                assert set(registry.get_all_providers()) == {"mock_movie"}
-        finally:
-            EnrichmentRegistry.reset_instance()
+        # The parked pass is building a map of its own, so getting the previous
+        # pass's providers is the swap being invisible. Rebuilt in place, this
+        # read lands on the half-built map.
+        assert set(during_rebuild) == _BUILTIN_PROVIDER_NAMES
+        assert set(registry.get_all_providers()) == {"tmdb", "openlibrary", "mock_book"}
 
 
 class TestRegistrySingletonIsBuiltOnceRegression:
@@ -498,12 +428,8 @@ class TestEnrichmentRegistryIntegration:
         """Reset the singleton before each test."""
         EnrichmentRegistry.reset_instance()
 
-    def test_discover_builtin_providers(self) -> None:
-        """Test discovering built-in providers from src/enrichment/providers/."""
+    def test_the_three_builtin_providers_are_registered(self) -> None:
+        """Registration is by direct import, so a missing one is a typo here."""
         registry = get_enrichment_registry()
-        registry.discover_providers()
 
-        # At minimum, the discovery should complete without error
-        # Actual providers will be tested when implemented
-        all_providers = registry.get_all_providers()
-        assert isinstance(all_providers, dict)
+        assert set(registry.get_all_providers()) == _BUILTIN_PROVIDER_NAMES
