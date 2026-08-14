@@ -107,7 +107,7 @@ def profile_regenerate(ctx: click.Context, user_id: int) -> None:
     """Regenerate your preference profile from library data."""
     storage = ctx.obj["storage"]
 
-    click.echo("Analyzing your library...")
+    click.echo("Analyzing your library...", err=True)
     generator = ProfileGenerator(storage)
     profile_result = generator.regenerate_and_save(user_id)
     click.echo(

@@ -6,6 +6,7 @@ A helper only one group calls belongs in that group's module.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +15,9 @@ from typing import Any, NoReturn
 import click
 
 from src.storage.manager import StorageManager
+from src.utils.text import exception_for_log
+
+logger = logging.getLogger(__name__)
 
 #: Read by ``source set-secret`` and ``settings set-secret`` for
 #: non-interactive use: an environment variable is not exposed in shell
@@ -26,6 +30,41 @@ _FALSE_VALUES = {"false", "0", "no", "off"}
 
 def abort_with(message: str) -> NoReturn:
     click.echo(f"Error: {message}", err=True)
+    raise click.Abort()
+
+
+def report_failure(
+    ctx: click.Context,
+    message: str,
+    error: BaseException,
+    log_message: str | None = None,
+) -> None:
+    """Refuse in the web's words, keeping the fault's own out of the terminal.
+
+    Root ``--verbose`` is for the operator whose log file is unreadable — a
+    root-owned ``logs/`` bind mount, say. It adds the message, never the
+    traceback.
+    """
+    # chat's terminal wording is the web's generic sentence, which names no
+    # operation for the log to report.
+    logged = message if log_message is None else log_message
+    logger.error("%s", logged, exc_info=True)
+    if ctx.obj.get("verbose"):
+        # A control character in the fault's words would otherwise rewrite the
+        # terminal line it lands on, and a lone surrogate would raise here.
+        click.echo(f"Error: {message}: {exception_for_log(error)}", err=True)
+    else:
+        click.echo(f"Error: {message}. Check logs for details.", err=True)
+
+
+def abort_after_failure(
+    ctx: click.Context,
+    message: str,
+    error: BaseException,
+    log_message: str | None = None,
+) -> NoReturn:
+    """Refuse and stop. A loop that must keep going calls ``report_failure``."""
+    report_failure(ctx, message, error, log_message)
     raise click.Abort()
 
 

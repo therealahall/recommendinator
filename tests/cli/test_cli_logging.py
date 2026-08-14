@@ -15,6 +15,11 @@ import pytest
 from click.testing import CliRunner
 
 import src as src_package
+from src.cli.commands._chat import (
+    CHAT_FAILED,
+    CHAT_MESSAGE_LOGGED,
+    CHAT_SEND_LOGGED,
+)
 from src.cli.main import cli
 from src.models.content import ContentType
 from src.settings.metadata import default_of
@@ -114,7 +119,11 @@ def _rows(document: str) -> list[list[str]]:
 
 
 def _invoke_with_real_logging(
-    runner: CliRunner, storage: StorageManager, config: dict[str, Any], args: list[str]
+    runner: CliRunner,
+    storage: StorageManager,
+    config: dict[str, Any],
+    args: list[str],
+    input_text: str | None = None,
 ) -> Any:
     """Run *args* with the source migrations and log wiring both unstubbed."""
     with (
@@ -124,7 +133,7 @@ def _invoke_with_real_logging(
         patch("src.cli.main.create_llm_components", return_value=(None, None, None)),
         patch("src.cli.main.create_recommendation_engine"),
     ):
-        return runner.invoke(cli, args)
+        return runner.invoke(cli, args, input=input_text)
 
 
 class TestTheConsoleNeverWritesToTheDataChannelRegression:
@@ -317,14 +326,14 @@ def test_a_stored_log_path_escaping_logs_is_contained_at_cli_boot(
     ).read_text(encoding="utf-8")
 
 
-def test_a_healthy_update_says_nothing_on_the_console(
+def test_a_healthy_update_puts_no_log_record_on_the_console(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_root_logging: None
 ) -> None:
     """``update`` is the command the console chatter would have buried.
 
     Plugin discovery and both sync banners record at INFO, the last restating
-    the command's own total, so the console floors above them and the file
-    keeps them.
+    the command's own total, so the console floors above them. Its own
+    progress line is what is left.
     """
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
     source = tmp_path / "books.csv"
@@ -337,7 +346,7 @@ def test_a_healthy_update_says_nothing_on_the_console(
 
     assert result.exit_code == 0, result.stderr
     assert "Total: 1 items updated." in result.stdout
-    assert result.stderr == ""
+    assert result.stderr == "Updating data from my_csv (workers=4)...\n"
     # Anchors the silence: those records were emitted, and the file is where
     # "check the logs" sends the operator to read them.
     written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
@@ -384,8 +393,46 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         # The data channel stays empty on the failure path too.
         assert result.stdout == ""
         written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
-        assert "Chat send failed" in written
+        # The log names the operation; the terminal keeps the web's wording.
+        assert CHAT_SEND_LOGGED in written
+        assert CHAT_FAILED not in written
         assert "RuntimeError: ollama is not listening" in written
+
+    def test_the_repl_names_its_own_verb_in_the_log(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """``chat start`` shares the terminal wording and not the operation.
+
+        It reports and keeps going, so an operator reading the log after a
+        session has to tell which of the two verbs failed.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        monkeypatch.chdir(tmp_path)
+        config = _shared_plugin_config("logs/cli.log")
+        config["features"] = {"ai_enabled": True}
+
+        engine = MagicMock()
+        engine.process_message_sync.side_effect = RuntimeError("ollama is not there")
+        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
+            result = _invoke_with_real_logging(
+                CliRunner(mix_stderr=False),
+                storage,
+                config,
+                ["chat", "start"],
+                input_text="hello\n",
+            )
+
+        assert result.exit_code == 0, result.stderr
+        assert f"Error: {CHAT_FAILED}. Check logs for details." in result.stderr
+        # The session survived the bad message, which is the point of reporting.
+        assert "Chat session ended." in result.stdout
+        written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+        assert CHAT_MESSAGE_LOGGED in written
+        assert CHAT_SEND_LOGGED not in written
+        assert CHAT_FAILED not in written
 
 
 class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
@@ -494,7 +541,7 @@ class TestTheConsoleWithholdsTracebacksRegression:
         assert "Check logs for details" in result.stderr
         # Anchors the two below: a console handler dropping the record satisfies
         # them, and there is no log file left to read the record out of.
-        assert "ERROR | src.cli.commands._chat | Chat send failed" in result.stderr
+        assert f"ERROR | src.cli._shared | {CHAT_SEND_LOGGED}" in result.stderr
         assert "Traceback (most recent call last):" not in result.stderr
         assert "ollama is not listening" not in result.stderr
 

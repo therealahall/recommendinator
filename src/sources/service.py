@@ -652,6 +652,31 @@ def _moves_credential_binding(
     )
 
 
+# The plugin's own words say which path it looked for and whether it was
+# there, so the caller gets this instead and the log gets the reason.
+SOURCE_MISCONFIGURED_DETAIL = "Source is not properly configured — check its settings."
+
+
+def misconfigured_detail(plugin: SourcePlugin, errors: list[str]) -> str:
+    """Name the settings a refusal is about, not the plugin's own words.
+
+    The names come from the schema, so none of the plugin's text survives.
+    Prose naming no field gets the unqualified refusal.
+    """
+    reason = " ".join(errors).lower()
+    named = [
+        field.name
+        for field in plugin.get_config_schema()
+        if re.search(rf"\b{re.escape(field.name.lower())}\b", reason)
+    ]
+    if not named:
+        return SOURCE_MISCONFIGURED_DETAIL
+    quoted = ", ".join(f"'{name}'" for name in named)
+    if len(named) == 1:
+        return f"Source is not properly configured — check its {quoted} setting."
+    return f"Source is not properly configured — check these: {quoted}."
+
+
 def _invalid_values_detail(fields: list[str]) -> str:
     """The refusal the caller gets: which field, never the plugin's reason."""
     named = ", ".join(f"'{name}'" for name in fields)

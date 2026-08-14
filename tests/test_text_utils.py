@@ -19,6 +19,7 @@ from src.utils.text import (
     sanitize_prompt_text_long,
     sanitize_prompt_text_with_truncation,
     sanitize_rule_text,
+    strip_lone_surrogates,
 )
 from tests.factories import make_item
 
@@ -517,6 +518,26 @@ class TestSanitizeRuleText:
         space = chr(code)
 
         assert sanitize_rule_text(f"{space}avoid{space}horror{space}") == "avoid horror"
+
+
+class TestStripLoneSurrogates:
+    """Narrower than the rule sanitizer on purpose: a review is prose, and
+    flattening it to one line would lose the operator's own paragraphs.
+    """
+
+    @pytest.mark.parametrize("code", [0xD800, 0xDCFF, 0xDFFF])
+    def test_every_surrogate_half_goes(self, code: int) -> None:
+        assert strip_lone_surrogates(f"loved {chr(code)}it") == "loved it"
+
+    def test_no_codepoint_survives_unencodable(self) -> None:
+        """The whole invariant: whatever comes out, SQLite stores."""
+        every_codepoint = "".join(chr(code) for code in range(sys.maxunicode + 1))
+
+        assert strip_lone_surrogates(every_codepoint).encode("utf-8")
+
+    @pytest.mark.parametrize("kept", ["a\nb", "a\tb", "a\x07b", '"quoted" {braced}'])
+    def test_what_encodes_is_left_alone(self, kept: str) -> None:
+        assert strip_lone_surrogates(kept) == kept
 
     def test_the_prompt_sanitizer_is_the_one_that_eats_the_plus(self) -> None:
         """``sanitize_prompt_text_long``'s docstring sends rules here for this.

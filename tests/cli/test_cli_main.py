@@ -1,11 +1,13 @@
 """Tests for CLI __main__ entry point."""
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from click.testing import CliRunner
 
 from src.cli.commands import _update
@@ -378,6 +380,115 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     assert config["recommendations"]["default_count"] == 9
     # Boot seeded nothing: only the pre-existing leaf remains in the DB.
     assert storage.list_settings() == {"recommendations.default_count": 9}
+
+
+#: Both boot exits, and the prefix each one prints.
+_CONFIG_EXIT = "Error: "
+_COMPONENT_EXIT = "Error initializing components: "
+
+
+class TestCliBootstrapFailures:
+    """The first-run experience: no log exists to point the operator at.
+
+    ``configure_logging`` runs after the storage these guards build, so both
+    name the fault — sanitized, since one can quote a URL holding a token.
+    """
+
+    @staticmethod
+    def _boot_failing_at(patched: str, error: Exception) -> Any:
+        """Boot ``status`` with one component raising, everything else healthy."""
+        with (
+            patch("src.cli.main.load_config", return_value={}),
+            patch("src.cli.main.create_storage_manager", return_value=MagicMock()),
+            patch("src.cli.main.migrate_config_settings"),
+            patch("src.cli.main.migrate_config_credentials"),
+            patch("src.cli.main.migrate_config_secrets"),
+            patch(
+                "src.cli.main.create_llm_components", return_value=(None, None, None)
+            ),
+            patch("src.cli.main.create_recommendation_engine"),
+            patch("src.cli.main.migrate_source_labels") as spy_labels,
+            patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
+            patch("src.cli.main.migrate_source_attribution"),
+            patch(f"src.cli.main.{patched}", side_effect=error),
+        ):
+            result = CliRunner(mix_stderr=False).invoke(cli, ["status"])
+        return result, spy_labels, spy_plugins
+
+    def test_a_missing_config_file_exits_one_naming_the_fault(self) -> None:
+        result, _, _ = self._boot_failing_at(
+            "load_config", FileNotFoundError("config.yaml not found")
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr.startswith(
+            f"{_CONFIG_EXIT}FileNotFoundError: config.yaml not found"
+        )
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize(
+        ("patched", "error", "rendered"),
+        [
+            (
+                "create_storage_manager",
+                sqlite3.OperationalError("unable to open database file"),
+                "OperationalError: unable to open database file",
+            ),
+            (
+                "migrate_config_settings",
+                sqlite3.OperationalError("no such table: settings"),
+                "OperationalError: no such table: settings",
+            ),
+            (
+                "create_llm_components",
+                ImportError("No module named 'chromadb'"),
+                "ImportError: No module named 'chromadb'",
+            ),
+        ],
+        ids=["storage", "settings-migration", "llm-components"],
+    )
+    def test_a_component_failure_exits_one_naming_the_fault(
+        self, patched: str, error: Exception, rendered: str
+    ) -> None:
+        """The migration hooks are inside the guard, not beside it.
+
+        ``create_llm_components`` gets its own case: it is the import the
+        non-AI image does not ship.
+        """
+        result, _, _ = self._boot_failing_at(patched, error)
+
+        assert result.exit_code == 1
+        assert result.stderr.startswith(f"{_COMPONENT_EXIT}{rendered}")
+        assert result.stdout == ""
+
+    def test_a_url_borne_token_does_not_reach_the_terminal(self) -> None:
+        """A ``requests`` fault quotes the URL it failed on, query string too.
+
+        ``exception_for_log`` routes one through ``scrub_request_error``, which
+        keeps the class name and drops the URL.
+        """
+        token = "sk-live-9f3c2a"
+
+        result, _, _ = self._boot_failing_at(
+            "create_llm_components",
+            requests.ConnectionError(
+                f"HTTPConnectionPool: /api/tags?api_key={token} refused"
+            ),
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr == f"{_COMPONENT_EXIT}ConnectionError\n"
+        assert token not in result.stderr
+
+    def test_a_failed_boot_runs_no_source_migration(self) -> None:
+        """They sit after the guard, so a half-built storage never reaches them."""
+        result, spy_labels, spy_plugins = self._boot_failing_at(
+            "create_storage_manager", sqlite3.OperationalError("disk I/O error")
+        )
+
+        assert result.exit_code == 1
+        spy_labels.assert_not_called()
+        spy_plugins.assert_not_called()
 
 
 class TestAMalformedInputsBlockDoesNotAbortTheBoot:

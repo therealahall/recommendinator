@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import click
 
-from src.cli._shared import is_blank_review
+from src.cli._shared import abort_after_failure, is_blank_review
 from src.config.service import get_feature_flags
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+
+#: What ``POST /api/complete`` answers with; the title and review that failed
+#: to write stay in the log.
+COMPLETE_FAILED = "Failed to mark content as completed"
 
 
 @click.command()
@@ -75,7 +79,6 @@ def complete(
             embedding = embedding_gen.generate_content_embedding(item)
         db_id = storage.complete_content_item(item, embedding=embedding)
     except Exception as error:
-        click.echo(f"Error marking content as completed: {error}", err=True)
-        raise click.Abort() from error
+        abort_after_failure(ctx, COMPLETE_FAILED, error)
 
     click.echo(f"Marked '{title}' as completed (ID: {db_id})")

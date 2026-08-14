@@ -23,8 +23,8 @@ from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
+from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import StorageManager
-from src.web.api import SOURCE_MISCONFIGURED_DETAIL
 from tests.factories import authenticated_client, booted_web_app
 
 

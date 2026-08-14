@@ -19,6 +19,7 @@ from src.recommendations.preference_interpreter import (
 )
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager, UnknownUserError
+from src.utils.text import sanitize_rule_text
 
 
 @click.group()
@@ -259,7 +260,9 @@ def custom_rules_list(ctx: click.Context, user_id: int) -> None:
 
     click.echo(f"Custom rules for user {user_id}:")
     for index, rule in enumerate(rules):
-        click.echo(f"  {index}: {rule}")
+        # A rule reaches storage as it was typed, and ``click.echo`` encodes
+        # strictly: a lone surrogate out of argv raises here rather than print.
+        click.echo(f"  {index}: {sanitize_rule_text(rule)}")
 
 
 @custom_rules.command("add")
@@ -299,7 +302,7 @@ def custom_rules_add(ctx: click.Context, rule_text: str, user_id: int) -> None:
         preference_config.custom_rules.append(rule_text)
 
     saved = _edit_preferences(ctx, user_id, add_rule)
-    click.echo(f"Added rule: '{rule_text}' for user {user_id}")
+    click.echo(f"Added rule: '{sanitize_rule_text(rule_text)}' for user {user_id}")
     click.echo(f"Total rules: {len(saved.custom_rules)}")
 
 
@@ -330,7 +333,7 @@ def custom_rules_remove(ctx: click.Context, index: int, user_id: int) -> None:
         removed = preference_config.custom_rules.pop(index)
 
     saved = _edit_preferences(ctx, user_id, remove_rule)
-    click.echo(f"Removed rule: '{removed}'")
+    click.echo(f"Removed rule: '{sanitize_rule_text(removed)}'")
     click.echo(f"Remaining rules: {len(saved.custom_rules)}")
 
 
@@ -407,14 +410,16 @@ def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) ->
             ollama_client=llm_client,
             storage_manager=storage,
         )
-        click.echo("Using LLM interpreter...")
+        click.echo("Using LLM interpreter...", err=True)
         result = llm_interpreter.interpret(rule_text)
     else:
         pattern_interpreter = PatternBasedInterpreter()
-        click.echo("Using pattern-based interpreter...")
+        click.echo("Using pattern-based interpreter...", err=True)
         result = pattern_interpreter.interpret(rule_text)
 
-    click.echo(f"\nRule: '{rule_text}'")
+    # The interpreter sanitized it on the way in, so this is the text the
+    # parse below was actually run against.
+    click.echo(f"\nRule: '{result.original_rule}'")
     click.echo(f"Confidence: {result.confidence.value}")
     click.echo(f"Notes: {result.interpretation_notes}")
     click.echo("")

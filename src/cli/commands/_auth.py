@@ -2,7 +2,6 @@
 
 from __future__ import annotations  # noqa: I001
 
-import logging
 import time
 import webbrowser
 from collections.abc import Callable
@@ -39,12 +38,18 @@ from src.auth.trakt import (
     save_trakt_token,
     start_device_auth_flow,
 )
-from src.cli._shared import abort_with, require_storage
+from src.cli._shared import abort_after_failure, abort_with, require_storage
 from src.sources.service import SOURCE_ID_RULE, is_valid_source_id
 from src.storage.manager import StorageManager
 from src.storage.source_migration import configured_source_plugins
 
-logger = logging.getLogger(__name__)
+#: What both Trakt device-flow endpoints answer with. The ``TraktAuthError``
+#: quotes the request it failed on, credentials in the URL and all.
+TRAKT_AUTH_FAILED = "Trakt authentication failed"
+
+#: What ``POST /api/{gog,epic}/exchange`` answers when the exchange fails.
+GOG_AUTH_FAILED = "GOG authentication failed"
+EPIC_AUTH_FAILED = "Epic Games authentication failed"
 
 # The plugin behind each ``--source`` choice. The CLI accepts "epic" for
 # brevity while the plugin, and so the default source id, is "epic_games".
@@ -172,14 +177,16 @@ def auth_connect(
     connecting = _auth_source_id(source, source_id)
 
     if source == "trakt":
-        _connect_trakt(config, storage, connecting, user_id)
+        _connect_trakt(ctx, config, storage, connecting, user_id)
         return
 
     if source == "gog":
+        auth_failed = GOG_AUTH_FAILED
         is_enabled_fn, get_auth_url_fn = is_gog_enabled, get_gog_auth_url
         extract_code_fn = extract_gog_code
         exchange_fn, save_fn = exchange_gog_code, save_gog_token
     else:
+        auth_failed = EPIC_AUTH_FAILED
         is_enabled_fn, get_auth_url_fn = is_epic_enabled, get_epic_auth_url
         extract_code_fn = extract_epic_code
         exchange_fn, save_fn = exchange_epic_code, save_epic_token
@@ -194,12 +201,13 @@ def auth_connect(
     click.echo(f"\nAuthorize {source} at:\n  {auth_url}\n")
 
     if not no_browser:
-        try:
-            webbrowser.open(auth_url)
-            click.echo("(Browser opened automatically)")
-        except Exception:
-            logger.debug("Failed to open browser", exc_info=True)
-            click.echo("(Could not open browser — copy the URL above)")
+        # ``open`` answers False on a headless host rather than raising, and
+        # the URL is already on screen, so there is no fault to report here.
+        click.echo(
+            "(Browser opened automatically)"
+            if webbrowser.open(auth_url)
+            else "(Could not open browser — copy the URL above)"
+        )
 
     code = click.prompt("Paste the authorization code or redirect URL")
 
@@ -214,16 +222,16 @@ def auth_connect(
         click.echo(f"\n{source} connected successfully.")
     except click.Abort:
         raise
-    except Exception:
-        logger.error("Failed to connect %s", source, exc_info=True)
-        click.echo(
-            f"Error: Failed to connect {source}. Check logs for details.", err=True
-        )
-        raise click.Abort() from None
+    except Exception as error:
+        abort_after_failure(ctx, auth_failed, error)
 
 
 def _connect_trakt(
-    config: dict[str, Any], storage: StorageManager, source_id: str, user_id: int
+    ctx: click.Context,
+    config: dict[str, Any],
+    storage: StorageManager,
+    source_id: str,
+    user_id: int,
 ) -> None:
     """Run the Trakt device-code flow: print the user code, then poll to approval.
 
@@ -237,13 +245,12 @@ def _connect_trakt(
         )
         flow = start_device_auth_flow(client_id)
     except TraktAuthError as error:
-        click.echo(f"Error: {error}", err=True)
-        raise click.Abort() from None
+        abort_after_failure(ctx, TRAKT_AUTH_FAILED, error)
 
     click.echo(
         f"\nGo to {flow['verification_url']} and enter code: {flow['user_code']}\n"
     )
-    click.echo("Waiting for approval... (press Ctrl-C to cancel)")
+    click.echo("Waiting for approval... (press Ctrl-C to cancel)", err=True)
 
     interval = max(1, int(flow["interval"]))
     deadline = time.monotonic() + int(flow["expires_in"])
@@ -256,8 +263,7 @@ def _connect_trakt(
                     flow["device_code"], client_id, client_secret
                 )
             except TraktAuthError as error:
-                click.echo(f"Error: {error}", err=True)
-                raise click.Abort() from None
+                abort_after_failure(ctx, TRAKT_AUTH_FAILED, error)
 
             if result.status is DevicePollStatus.SUCCESS:
                 if result.refresh_token is None:

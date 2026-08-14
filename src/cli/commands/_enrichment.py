@@ -77,7 +77,7 @@ def enrichment_start(
         raise click.Abort()
 
     type_desc = content_type_str if content_type_str else "all types"
-    click.echo(f"Started enrichment for {type_desc}...")
+    click.echo(f"Started enrichment for {type_desc}...", err=True)
 
     # Poll for completion
     try:
@@ -91,12 +91,13 @@ def enrichment_start(
             click.echo(
                 f"  Progress: {progress:.1f}% - Processing: {current[:40]}",
                 nl=False,
+                err=True,
             )
-            click.echo("\r", nl=False)
+            click.echo("\r", nl=False, err=True)
             time.sleep(1)
 
         # Final status
-        click.echo("")
+        click.echo("", err=True)
         if status.cancelled:
             click.echo("Enrichment cancelled.")
         else:
@@ -116,7 +117,7 @@ def enrichment_start(
                 click.echo(f"    ... and {len(status.errors) - 5} more")
 
     except KeyboardInterrupt:
-        click.echo("\nStopping enrichment...")
+        click.echo("\nStopping enrichment...", err=True)
         manager.stop_enrichment()
         click.echo("Enrichment stopped.")
 

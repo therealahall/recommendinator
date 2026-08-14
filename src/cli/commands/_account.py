@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import json
-import logging
-from typing import NoReturn
 
 import click
 
-from src.cli._shared import abort_with, emit_view, require_storage
+from src.cli._shared import abort_after_failure, abort_with, emit_view, require_storage
 from src.storage.accounts import (
-    MAX_ACCOUNT_NAME_LENGTH,
     MIN_PASSWORD_LENGTH,
     PASSWORD_TOO_SHORT,
+    AccountNameError,
     AccountRecord,
+    normalize_account_name,
 )
 from src.storage.manager import StorageManager
 
-logger = logging.getLogger(__name__)
-
-_VERBOSE_HELP = "Also print the underlying error, not just the line in the log"
+#: The web answers a failed account write with a fixed refusal; so does this.
+PASSWORD_WRITE_FAILED = "Could not set the password"
+RENAME_FAILED = "Could not rename the account"
 
 
 @click.group()
@@ -38,16 +37,15 @@ def _account_or_abort(storage: StorageManager, user_id: int) -> AccountRecord:
     return account_record
 
 
-def _abort_after_failure(action: str, error: Exception, verbose: bool) -> NoReturn:
-    """Refuse in the web's words, keeping the database's own out of the terminal.
+def _normalized_name(option: str, value: str, *, required: bool) -> str:
+    """The storage door's own rule, named after the option that broke it.
 
-    ``--verbose`` is for the operator whose log file is unreadable — a
-    root-owned ``logs/`` bind mount, say.
+    A second copy of the cap here is what let the two refuse different widths.
     """
-    logger.error("Failed to %s", action, exc_info=True)
-    if verbose:
-        abort_with(f"Could not {action}: {error}")
-    abort_with(f"Could not {action}. Check logs for details.")
+    try:
+        return normalize_account_name(value, required=required)
+    except AccountNameError as error:
+        abort_with(f"{option}: {error}")
 
 
 @account.command("show")
@@ -83,11 +81,8 @@ def account_show(ctx: click.Context, user_id: int, output_format: str) -> None:
     default="table",
     help="Output format",
 )
-@click.option("--verbose", is_flag=True, help=_VERBOSE_HELP)
 @click.pass_context
-def account_set_password(
-    ctx: click.Context, user_id: int, output_format: str, verbose: bool
-) -> None:
+def account_set_password(ctx: click.Context, user_id: int, output_format: str) -> None:
     """Set the account password, prompting for it twice.
 
     Never an argument: that leaves the password in the shell history and in
@@ -116,7 +111,7 @@ def account_set_password(
         storage.revoke_all_sessions(user_id)
         storage.purge_expired_sessions()
     except Exception as error:
-        _abort_after_failure("set the password", error, verbose)
+        abort_after_failure(ctx, PASSWORD_WRITE_FAILED, error)
 
     emit_view(
         output_format,
@@ -140,7 +135,6 @@ def account_set_password(
     default="table",
     help="Output format",
 )
-@click.option("--verbose", is_flag=True, help=_VERBOSE_HELP)
 @click.pass_context
 def account_set_name(
     ctx: click.Context,
@@ -148,26 +142,20 @@ def account_set_name(
     display_name: str | None,
     user_id: int,
     output_format: str,
-    verbose: bool,
 ) -> None:
     """Rename the account: its username, its display name, or both."""
     if username is None and display_name is None:
         abort_with("Pass --username, --display-name, or both.")
-    if username is not None and not username.strip():
-        abort_with("--username cannot be blank.")
-    for option, value in (("--username", username), ("--display-name", display_name)):
-        if value is not None and len(value.strip()) > MAX_ACCOUNT_NAME_LENGTH:
-            abort_with(
-                f"{option} cannot be longer than {MAX_ACCOUNT_NAME_LENGTH} characters."
-            )
 
     storage = require_storage(ctx)
     account_record = _account_or_abort(storage, user_id)
     new_username = (
-        username.strip() if username is not None else account_record["username"]
+        _normalized_name("--username", username, required=True)
+        if username is not None
+        else account_record["username"]
     )
     new_display_name = (
-        (display_name.strip() or None)
+        (_normalized_name("--display-name", display_name, required=False) or None)
         if display_name is not None
         else account_record["display_name"]
     )
@@ -175,7 +163,7 @@ def account_set_name(
     try:
         storage.update_user_identity(user_id, new_username, new_display_name)
     except Exception as error:
-        _abort_after_failure("rename the account", error, verbose)
+        abort_after_failure(ctx, RENAME_FAILED, error)
 
     emit_view(
         output_format,

@@ -7,8 +7,13 @@ import json
 import click
 from tabulate import tabulate
 
+from src.cli._shared import abort_after_failure
 from src.models.content import ContentType, get_enum_value
 from src.models.detail_fields import DETAIL_FIELDS
+
+#: What ``GET /api/recommendations`` answers with. The engine walks the
+#: library, so its faults quote item titles.
+RECOMMEND_FAILED = "Failed to generate recommendations"
 
 
 @click.command()
@@ -68,7 +73,10 @@ def recommend(
     engine = ctx.obj["engine"]
     storage = ctx.obj["storage"]
 
-    click.echo(f"Generating {count} {content_type_str} recommendations...")
+    # Chatter goes to stderr because stdout is the data channel: this line ran
+    # ahead of the format branch, so `--format json` piped into a parser broke
+    # on it.
+    click.echo(f"Generating {count} {content_type_str} recommendations...", err=True)
 
     try:
         # Load user preferences
@@ -103,7 +111,9 @@ def recommend(
             for rank, rec in enumerate(recommendations, 1):
                 item = rec.item
                 author = item.author or "N/A"
-                reasoning = rec.reasoning
+                # The web card shows the blurb when there is one and the
+                # pipeline line otherwise; the one column here follows it.
+                reasoning = (rec.llm_reasoning or "").strip() or rec.reasoning
                 penalty = rec.variety_penalty
                 if penalty > 0:
                     # Surface the stepped variety penalty inline so CLI users
@@ -128,5 +138,4 @@ def recommend(
             click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     except Exception as error:
-        click.echo(f"Error generating recommendations: {error}", err=True)
-        raise click.Abort() from error
+        abort_after_failure(ctx, RECOMMEND_FAILED, error)

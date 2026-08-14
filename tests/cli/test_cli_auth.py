@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
+from src.cli.commands._auth import GOG_AUTH_FAILED, TRAKT_AUTH_FAILED
 from src.storage.manager import StorageManager
 from tests.factories import MALFORMED_IDS
 
@@ -228,7 +229,7 @@ class TestAuthConnect:
             )
 
         assert result.exit_code != 0
-        assert "Failed to connect gog" in result.output
+        assert GOG_AUTH_FAILED in result.output
 
     def test_connect_epic(self, cli_runner: CliRunner) -> None:
         """Test connecting Epic account (exercises the Epic branch)."""
@@ -300,7 +301,11 @@ class TestAuthConnect:
         mock_sleep.assert_called_once_with(flow["interval"])
 
     def test_connect_trakt_not_configured(self, cli_runner: CliRunner) -> None:
-        """Trakt connect aborts when client credentials are missing."""
+        """Trakt connect refuses in the device-flow endpoint's own words.
+
+        The ``TraktAuthError`` quotes the request it failed on, so the terminal
+        gets the fixed refusal and the log gets the reason.
+        """
         mock_storage = MagicMock(spec=StorageManager)
         with patch(
             "src.cli.commands._auth.resolve_trakt_client_credentials",
@@ -313,7 +318,8 @@ class TestAuthConnect:
             )
 
         assert result.exit_code != 0
-        assert "not configured" in result.output
+        assert f"{TRAKT_AUTH_FAILED}. Check logs for details." in result.output
+        assert "not configured" not in result.output
 
     def test_connect_trakt_denied(self, cli_runner: CliRunner) -> None:
         """Trakt connect aborts when the user denies the request."""

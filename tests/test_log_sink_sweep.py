@@ -1,7 +1,7 @@
-"""Every source plugin's log sink, swept for the shape that forges an entry.
+"""Every source plugin's and OAuth flow's log sink, swept for a forged entry.
 
-Three plugins were fixed and four were missed, so the guard is the package.
-Text slots come off the message's ``%`` conversions.
+Three plugins were fixed and four missed, so the guard is the tree. ``src/auth``
+is the second root: it was covered at neither path it has held.
 """
 
 from __future__ import annotations
@@ -12,10 +12,17 @@ from pathlib import Path
 
 import pytest
 
+import src.auth as auth_package
 import src.ingestion.sources as sources_package
 from src.utils.text import LINE_BREAKS
 
 _SOURCES_ROOT = Path(sources_package.__file__).parent
+
+_AUTH_ROOT = Path(auth_package.__file__).parent
+
+_SRC_ROOT = _AUTH_ROOT.parent
+
+_SOURCES_PREFIX = f"{_SOURCES_ROOT.relative_to(_SRC_ROOT).as_posix()}/"
 
 _LOG_SANITIZERS = {"sanitize_for_log", "exception_for_log"}
 
@@ -30,49 +37,60 @@ _TEXT_CONVERSIONS = frozenset("rsa")
 #: Text slots no imported value reaches, each with the reason it cannot end an
 #: entry. Anything else in a text slot goes through a sanitizer.
 _NON_TEXT_LOG_ARGUMENTS = {
-    "self.display_name": "a literal on each *arr subclass",
+    "self.display_name": "a literal on each *arr subclass and each OAuth binding",
     "type(error).__name__": "an identifier holds no break",
     "file_format": "'JSON' or 'JSONL', chosen from literals in the module",
 }
 
 #: Where each logger-taking helper puts its text — name and position, since
-#: either spelling reaches the sink. It is the package's only one; a second must
-#: be enrolled here or ``test_every_log_helper_names_its_text_slot`` fails.
+#: either spelling reaches the sink. It is the only one under either root; a
+#: second must be enrolled here or
+#: ``test_every_log_helper_names_its_text_slot`` fails.
 _LOG_HELPER_TEXT_SLOT = {"log_progress": ("label", 1)}
 
+#: Where ``OAuthSourceBinding`` takes the display name waived above.
+_OAUTH_DISPLAY_NAME_SLOT = ("display_name", 1)
+
 #: The modules that log at all. Named so discovery finding nothing fails here
-#: rather than reporting a clean sweep over an empty package.
+#: rather than reporting a clean sweep over an empty tree.
 _MODULES_THAT_LOG = {
-    "arr_base",
-    "calibre_web",
-    "epic_games",
-    "generic_csv",
-    "generic_json",
-    "gog",
-    "goodreads_csv",
-    "goodreads_rss",
-    "markdown",
-    "radarr",
-    "roms",
-    "steam",
-    "storygraph_csv",
-    "trakt",
+    "auth/epic.py",
+    "auth/gog.py",
+    "auth/oauth_sources.py",
+    "auth/trakt.py",
+    "ingestion/sources/arr_base.py",
+    "ingestion/sources/calibre_web/calibre_web.py",
+    "ingestion/sources/epic_games/epic_games.py",
+    "ingestion/sources/generic_csv/generic_csv.py",
+    "ingestion/sources/generic_json/generic_json.py",
+    "ingestion/sources/gog/gog.py",
+    "ingestion/sources/goodreads_csv/goodreads_csv.py",
+    "ingestion/sources/goodreads_rss/goodreads_rss.py",
+    "ingestion/sources/markdown/markdown.py",
+    "ingestion/sources/radarr/radarr.py",
+    "ingestion/sources/roms/roms.py",
+    "ingestion/sources/steam/steam.py",
+    "ingestion/sources/storygraph_csv/storygraph_csv.py",
+    "ingestion/sources/trakt/trakt.py",
 }
+
+#: The modules constructing an ``OAuthSourceBinding``, which is what puts a
+#: display name in a log line with no ``display_name`` definition anywhere.
+_MODULES_BINDING_AN_OAUTH_SOURCE = {"auth/epic.py", "auth/gog.py", "auth/trakt.py"}
 
 
 def _swept_modules() -> list[Path]:
-    """Every shipped module in the package, plugin-local tests aside."""
+    """Every shipped module under either root, module-local tests aside."""
     return sorted(
         path
-        for path in _SOURCES_ROOT.rglob("*.py")
+        for root in (_SOURCES_ROOT, _AUTH_ROOT)
+        for path in root.rglob("*.py")
         if not path.name.startswith("test_")
     )
 
 
 _TREES = {
-    path.relative_to(_SOURCES_ROOT).as_posix(): ast.parse(
-        path.read_text(encoding="utf-8")
-    )
+    path.relative_to(_SRC_ROOT).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
     for path in _swept_modules()
 }
 
@@ -83,16 +101,14 @@ def _plugin_modules() -> set[str]:
     Derived from the layout rather than listed, so tomorrow's plugin is held
     to the claims below without anyone remembering to enrol it.
     """
-    return {
-        module
-        for module in _TREES
-        if module.count("/") == 1 and _names_its_folder(module)
-    }
+    return {module for module in _TREES if _names_its_folder(module)}
 
 
 def _names_its_folder(module: str) -> bool:
-    folder, filename = module.split("/")
-    return filename == f"{folder}.py"
+    if not module.startswith(_SOURCES_PREFIX):
+        return False
+    folder, _, filename = module.rpartition("/")
+    return filename == f"{Path(folder).name}.py"
 
 
 def _log_calls(tree: ast.AST) -> list[ast.Call]:
@@ -183,6 +199,14 @@ def _logger_helper_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
+def _argument_in_slot(call: ast.Call, name: str, index: int) -> ast.expr | None:
+    """The argument at *name* or at *index*, since either spelling reaches it."""
+    for keyword in call.keywords:
+        if keyword.arg == name:
+            return keyword.value
+    return call.args[index] if index < len(call.args) else None
+
+
 def _label_argument(call: ast.Call) -> ast.expr | None:
     """Keyed on the callee, so a bare name in the text slot is judged too.
 
@@ -191,13 +215,7 @@ def _label_argument(call: ast.Call) -> ast.expr | None:
     if not isinstance(call.func, ast.Name):
         return None
     slot = _LOG_HELPER_TEXT_SLOT.get(call.func.id)
-    if slot is None:
-        return None
-    name, index = slot
-    for keyword in call.keywords:
-        if keyword.arg == name:
-            return keyword.value
-    return call.args[index] if index < len(call.args) else None
+    return None if slot is None else _argument_in_slot(call, *slot)
 
 
 def _cannot_end_an_entry(label: ast.expr, sanitized_names: set[str]) -> bool:
@@ -252,6 +270,23 @@ def _display_name_returns(tree: ast.AST) -> list[ast.expr]:
         for node in ast.walk(function)
         if isinstance(node, ast.Return) and node.value is not None
         for value in _possible_values(node.value)
+    ]
+
+
+def _oauth_binding_display_names(tree: ast.AST) -> list[ast.expr]:
+    """What each ``OAuthSourceBinding`` is handed for its display name.
+
+    A dataclass field there rather than a property, so the waiver's claim is
+    proved at the construction sites instead of at a definition.
+    """
+    return [
+        value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "OAuthSourceBinding"
+        and (given := _argument_in_slot(node, *_OAUTH_DISPLAY_NAME_SLOT)) is not None
+        for value in _possible_values(given)
     ]
 
 
@@ -392,8 +427,8 @@ def _plain_sanitizer_on_a_caught_exception(tree: ast.AST) -> set[str]:
 
 
 @pytest.mark.parametrize("module", sorted(_TREES))
-class TestNoSourcePluginInterpolatesAValueRaw:
-    """The sweep, run against every shipped module in the package.
+class TestNoSweptModuleInterpolatesAValueRaw:
+    """The sweep, run against every shipped module under either root.
 
     Parametrized over what discovery finds rather than a list, so a plugin
     added tomorrow is swept without anyone remembering to add it here.
@@ -440,17 +475,29 @@ class TestTheSweptPopulationIsNotEmpty:
     """``set()`` is also what a sweep that found no modules at all returns."""
 
     def test_discovery_finds_the_plugins(self) -> None:
-        assert {"roms/roms.py", "goodreads_csv/goodreads_csv.py"} <= set(_TREES)
+        assert {
+            "ingestion/sources/roms/roms.py",
+            "ingestion/sources/goodreads_csv/goodreads_csv.py",
+        } <= set(_TREES)
+
+    def test_discovery_finds_the_oauth_flows(self) -> None:
+        """The second root: these four hold tokens and were swept nowhere."""
+        assert {
+            "auth/epic.py",
+            "auth/gog.py",
+            "auth/oauth_sources.py",
+            "auth/trakt.py",
+        } <= set(_TREES)
 
     def test_every_module_that_logs_is_swept(self) -> None:
         assert {
-            Path(module).stem for module, tree in _TREES.items() if _log_calls(tree)
+            module for module, tree in _TREES.items() if _log_calls(tree)
         } == _MODULES_THAT_LOG
 
     def test_the_sweep_sees_the_text_slots_it_judges(self) -> None:
         """A conversion parser matching nothing would pass every module."""
         assert {
-            Path(module).stem
+            module
             for module, tree in _TREES.items()
             for call in _log_calls(tree)
             if (message := _literal_message(call)) is not None
@@ -460,17 +507,35 @@ class TestTheSweptPopulationIsNotEmpty:
     def test_the_sweep_sees_the_log_helper_call_sites(self) -> None:
         """A predicate matching no helper call would pass every module."""
         assert {
-            Path(module).stem
-            for module, tree in _TREES.items()
-            if _logger_helper_calls(tree)
-        } == {"arr_base", "epic_games", "gog"}
+            module for module, tree in _TREES.items() if _logger_helper_calls(tree)
+        } == {
+            "ingestion/sources/arr_base.py",
+            "ingestion/sources/epic_games/epic_games.py",
+            "ingestion/sources/gog/gog.py",
+        }
+
+
+class TestTheSweptModulesThemselvesFailOnANewRawSink:
+    """The controls below hand the predicate a line nobody wrote in ``src/``.
+
+    That leaves the link between them untested: whether ``_TREES`` holds the
+    text a new raw sink would land in.
+    """
+
+    @pytest.mark.parametrize("module", sorted(_MODULES_THAT_LOG))
+    def test_a_raw_sink_added_to_it_is_reported(self, module: str) -> None:
+        source = (_SRC_ROOT / module).read_text(encoding="utf-8")
+        tree = ast.parse(f"{source}\nlogger.error('failed: %s', error)\n")
+
+        assert _unsanitized_text_arguments(tree) != set()
+        assert _unsanitized_text_arguments(_TREES[module]) == set()
 
 
 class TestTheWaivedArgumentsAreWhatTheyClaim:
     """``_NON_TEXT_LOG_ARGUMENTS`` is keyed on unparsed text.
 
     A module introducing a local of the same name inherits the waiver, so each
-    claim is asserted over the whole package rather than trusted.
+    claim is asserted over both roots rather than trusted.
     """
 
     def test_every_plugin_declares_a_display_name(self) -> None:
@@ -487,13 +552,29 @@ class TestTheWaivedArgumentsAreWhatTheyClaim:
             if not _is_string_constant(value)
         } == set()
 
+    def test_only_the_oauth_flows_bind_a_source(self) -> None:
+        """The anchor for the other spelling of the same waived value."""
+        assert {
+            module
+            for module, tree in _TREES.items()
+            if _oauth_binding_display_names(tree)
+        } == _MODULES_BINDING_AN_OAUTH_SOURCE
+
+    def test_every_oauth_display_name_is_a_string_constant(self) -> None:
+        assert {
+            f"{module}: {ast.unparse(value)}"
+            for module, tree in _TREES.items()
+            for value in _oauth_binding_display_names(tree)
+            if not _is_string_constant(value)
+        } == set()
+
     def test_only_the_json_reader_binds_file_format(self) -> None:
-        """The anchor, and the reason the waiver is package-wide."""
+        """The anchor, and the reason the waiver spans both roots."""
         assert {
             module
             for module, tree in _TREES.items()
             if _bindings_of(tree, "file_format")
-        } == {"generic_json/generic_json.py"}
+        } == {"ingestion/sources/generic_json/generic_json.py"}
 
     def test_every_file_format_binding_is_a_string_constant(self) -> None:
         assert {
@@ -628,6 +709,18 @@ class TestTheSweepFailsOnANewRawSink:
 
         assert _plain_sanitizer_on_a_caught_exception(tree) == {f"{call} (line 4)"}
 
+    def test_a_scrubber_that_is_not_an_enrolled_sanitizer_is_reported(self) -> None:
+        """Only the two enrolled spellings pass, so one place holds the rule.
+
+        ``src/auth/gog.py`` wrote ``scrub_request_error`` into a text slot and
+        now writes ``exception_for_log``, which scrubs and escapes.
+        """
+        tree = ast.parse("logger.error('failed: %s', scrub_request_error(error))")
+
+        assert _unsanitized_text_arguments(tree) == {
+            "scrub_request_error(error) (line 1)"
+        }
+
     def test_the_helper_for_a_caught_exception_is_not_reported(self) -> None:
         """``exception_for_log(error)`` is the spelling the sweep asks for."""
         tree = ast.parse(
@@ -719,8 +812,24 @@ class TestTheSweepFailsOnANewRawSink:
 
         assert _unsanitized_text_handed_to_a_log_helper(tree) == set()
 
+    @pytest.mark.parametrize(
+        "construction",
+        [
+            "OAuthSourceBinding(PLUGIN, chosen_name, AuthError)",
+            "OAuthSourceBinding(PLUGIN, display_name=chosen_name)",
+        ],
+        ids=["positionally", "by keyword"],
+    )
+    def test_an_oauth_display_name_that_is_not_a_literal_is_found(
+        self, construction: str
+    ) -> None:
+        """The waiver holds only while every binding is handed fixed text."""
+        found = _oauth_binding_display_names(ast.parse(construction))
+
+        assert [ast.unparse(value) for value in found] == ["chosen_name"]
+
     def test_the_clean_shape_is_not_reported(self) -> None:
-        """The predicates accept what the plugins actually write."""
+        """The predicates accept what the swept modules actually write."""
         tree = ast.parse(
             "logger = logging.getLogger(__name__)\n"
             "safe_path = sanitize_for_log(str(file_path))\n"

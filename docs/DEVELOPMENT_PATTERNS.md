@@ -105,6 +105,9 @@ for the patterns it names.
 - **JSON output on empty results is `[]` or the empty response object**, never a
   text message. Every `if not items: click.echo("No ...")` needs an
   `if output_format == "json"` branch emitting valid empty JSON first.
+- **Progress chatter goes to stderr**, `click.echo(..., err=True)`. stdout is
+  the data channel, and a progress line printed ahead of the `--format json`
+  branch breaks every piped caller.
 - **The JSON field set must match the web Pydantic response exactly.** Diff the
   key sets against the matching `*Response` model in `src/web/api.py`. Missing or
   extra fields are blocking drift.
@@ -125,6 +128,10 @@ for the patterns it names.
 - **Click `IntRange` for bounded ints, Click choices for enums.** Do not
   hand-validate simple bounds. Do validate config-driven limits such as
   `max_count`, which Click cannot express.
+- **Never sanitize an argv value at a call site.** `SurrogateFreeGroup` in
+  `src/cli/main.py` strips lone surrogates from every token before Click binds
+  it, so a per-option `strip_lone_surrogates` is dead weight — and the option
+  added next week would be the one nobody remembered to guard.
 - **No outside-the-repository paths in docs, tooling, CI, compose and build
   files, `tests/` or `.claude/`.** Not in prose, comments, docstrings, report
   strings or tests. Neither a reader nor CI can verify a path they cannot see.

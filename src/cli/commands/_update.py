@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import click
 
+from src.cli._shared import abort_after_failure
 from src.config.service import get_feature_flags
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
@@ -15,9 +17,33 @@ from src.ingestion.sync import (
 from src.sources.service import (
     ResolvedInput,
     get_available_sync_sources,
+    misconfigured_detail,
+    redact_credentials,
     resolve_inputs,
     validate_source_config,
 )
+from src.utils.text import sanitize_for_log
+
+logger = logging.getLogger(__name__)
+
+#: What a failed sync sets on the web's job record.
+SYNC_FAILED = "Sync failed due to an internal error"
+
+
+def _refusal(entry: ResolvedInput, errors: list[str]) -> str:
+    """Name the settings, as the sync endpoint does; log the plugin's reason.
+
+    A plugin quotes the path it looked for, which is filesystem layout the
+    terminal has no business printing.
+    """
+    logger.warning(
+        "Sync config validation failed for %s: %s",
+        sanitize_for_log(entry.source_id),
+        sanitize_for_log(
+            redact_credentials("; ".join(errors), entry.plugin, entry.config)
+        ),
+    )
+    return misconfigured_detail(entry.plugin, errors)
 
 
 @click.command()
@@ -96,8 +122,7 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
 
         validation_errors = validate_source_config(source, config, storage=storage)
         if validation_errors:
-            for error in validation_errors:
-                click.echo(f"Error: {error}", err=True)
+            click.echo(f"Error: {_refusal(resolved[0], validation_errors)}", err=True)
             raise click.Abort()
 
     # Filter out resolved entries that fail validation (preserves the
@@ -108,11 +133,11 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             resolved_entry.source_id, config, storage=storage
         )
         if validation_errors:
-            for error in validation_errors:
-                click.echo(
-                    f"  {resolved_entry.plugin.display_name}: Error: {error}",
-                    err=True,
-                )
+            click.echo(
+                f"  {resolved_entry.plugin.display_name}: Error: "
+                f"{_refusal(resolved_entry, validation_errors)}",
+                err=True,
+            )
             continue
         valid.append(resolved_entry)
 
@@ -127,7 +152,8 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
     click.echo(
         f"Updating data from {', '.join(entry.source_id for entry in valid)}"
         + (f" (workers={max_workers})" if max_workers > 1 else "")
-        + "..."
+        + "...",
+        err=True,
     )
 
     # Click's echo is not thread-safe and progress messages from parallel
@@ -151,7 +177,9 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             if last_reported.get(key) == items_processed:
                 return
             last_reported[key] = items_processed
-            click.echo(f"    {prefix}Processed {items_processed}/{total_items}...")
+            click.echo(
+                f"    {prefix}Processed {items_processed}/{total_items}...", err=True
+            )
 
     try:
         results = execute_multi_source_sync(
@@ -183,5 +211,4 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             click.echo(f"Total: {total_count} items updated.")
 
     except Exception as error:
-        click.echo(f"Error updating data: {error}", err=True)
-        raise click.Abort() from error
+        abort_after_failure(ctx, SYNC_FAILED, error)

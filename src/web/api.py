@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -86,6 +85,7 @@ from src.sources.service import (
     get_available_sync_sources,
     list_available_plugins,
     migrate_source,
+    misconfigured_detail,
     redact_credentials,
     resolve_inputs,
     resolve_source_plugin,
@@ -1524,32 +1524,6 @@ def mark_complete(
     return {"message": f"Marked '{request.title}' as completed", "id": db_id}
 
 
-# The plugin's own words say which path it looked for and whether it was
-# there, so the wire gets this instead and the log gets the reason.
-SOURCE_MISCONFIGURED_DETAIL = "Source is not properly configured — check its settings."
-
-
-def _misconfigured_detail(plugin: SourcePlugin, errors: list[str]) -> str:
-    """Name the settings a refusal is about, not the plugin's own words.
-
-    Plugins quote the field they dislike, so the names come from the schema
-    and none of the text survives. Prose naming no field gets the unqualified
-    refusal.
-    """
-    reason = " ".join(errors).lower()
-    named = [
-        field.name
-        for field in plugin.get_config_schema()
-        if re.search(rf"\b{re.escape(field.name.lower())}\b", reason)
-    ]
-    if not named:
-        return SOURCE_MISCONFIGURED_DETAIL
-    quoted = ", ".join(f"'{name}'" for name in named)
-    if len(named) == 1:
-        return f"Source is not properly configured — check its {quoted} setting."
-    return f"Source is not properly configured — check these: {quoted}."
-
-
 @router.post("/update")
 def update_data(
     request: UpdateRequest, storage: RequiredStorage, config: RequiredConfig
@@ -1625,7 +1599,7 @@ def update_data(
             )
             raise HTTPException(
                 status_code=400,
-                detail=_misconfigured_detail(source_entry.plugin, validation_errors),
+                detail=misconfigured_detail(source_entry.plugin, validation_errors),
             )
 
     if not resolved:

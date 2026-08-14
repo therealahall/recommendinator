@@ -16,7 +16,7 @@ import requests
 
 from src.auth.oauth_sources import OAuthSourceBinding
 from src.ingestion.sources.gog import GOG_CLIENT_ID, GOG_CLIENT_SECRET
-from src.utils.request_errors import scrub_request_error
+from src.utils.text import exception_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -139,9 +139,7 @@ def exchange_code_for_tokens(code: str) -> dict[str, Any]:
         # The authorization code and client secret are query parameters here, so
         # the URL inside ``error`` is a secret — it may reach neither the log nor
         # the ``__cause__`` chain the CLI renders with ``exc_info=True``.
-        logger.error(
-            "GOG token exchange request failed: %s", scrub_request_error(error)
-        )
+        logger.error("GOG token exchange request failed: %s", exception_for_log(error))
         raise GogAuthError("Failed to connect to GOG servers") from None
 
 
