@@ -1,4 +1,4 @@
-.PHONY: help install install-ai install-dev lock test lint format format-check
+.PHONY: help install install-dev lock test lint format format-check
 .PHONY: type-check clean run install-frontend build-frontend check-frontend check
 
 # CI overrides this with the interpreter uv provisioned into .venv; locally the
@@ -7,9 +7,8 @@ PYTHON ?= python3.11
 
 help:
 	@echo "Available commands:"
-	@echo "  make install           - Install base dependencies (no AI)"
-	@echo "  make install-ai        - Install base + AI dependencies (ollama, chromadb)"
-	@echo "  make install-dev       - Install all dependencies (AI + dev tools)"
+	@echo "  make install           - Install runtime dependencies"
+	@echo "  make install-dev       - Install runtime + dev dependencies"
 	@echo "  make install-frontend  - Install frontend dependencies (Node.js 18+ required)"
 	@echo "  make lock              - Regenerate uv.lock from pyproject.toml"
 	@echo "  make test              - Run Python tests"
@@ -26,11 +25,8 @@ help:
 install:
 	uv sync --locked
 
-install-ai:
-	uv sync --locked --extra ai
-
 install-dev:
-	uv sync --locked --extra ai --extra dev
+	uv sync --locked --extra dev
 
 install-frontend: node_modules/.make-install
 

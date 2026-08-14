@@ -1,7 +1,7 @@
 """Tests for the individual scorers and ScoringContext."""
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.recommendations.identity import candidate_key, library_key
+from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
     AdaptationScorer,
@@ -12,7 +12,6 @@ from src.recommendations.scorers import (
     GenreMatchScorer,
     RatingPatternScorer,
     ScoringContext,
-    SemanticSimilarityScorer,
     SeriesAffinityScorer,
     SeriesOrderScorer,
     TagOverlapScorer,
@@ -22,7 +21,6 @@ from src.recommendations.scorers import (
 )
 from src.utils.series import (
     build_series_tracking,
-    expand_tv_shows_to_seasons,
     should_recommend_item,
 )
 from tests.factories import make_item
@@ -835,68 +833,6 @@ class TestRatingPatternScorer:
         candidate = make_item(status=ConsumptionStatus.UNREAD)
         scorer = RatingPatternScorer()
         assert scorer.score(candidate, context) == 0.5
-
-
-# ---------------------------------------------------------------------------
-# SemanticSimilarityScorer tests
-# ---------------------------------------------------------------------------
-
-
-class TestSemanticSimilarityScorer:
-    def test_returns_precomputed_score(self) -> None:
-        """Scorer returns the pre-computed similarity score for a candidate."""
-        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
-        context = _build_context(consumed=[])
-        context.similarity_scores = {library_key(candidate): 0.85}
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.85
-
-    def test_returns_zero_when_candidate_not_in_scores(self) -> None:
-        """Scorer returns 0.0 when the candidate's row has no score."""
-        scored = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
-        candidate = make_item(db_id=2, status=ConsumptionStatus.UNREAD)
-        context = _build_context(consumed=[])
-        context.similarity_scores = {library_key(scored): 0.85}
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.0
-
-    def test_returns_zero_when_similarity_scores_empty(self) -> None:
-        """Scorer returns 0.0 when no similarity scores are available."""
-        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
-        context = _build_context(consumed=[])
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.0
-
-    def test_scores_a_candidate_with_no_external_id(self) -> None:
-        """A candidate imported without an external id still scores."""
-        candidate = make_item(db_id=1, status=ConsumptionStatus.UNREAD)
-        assert candidate.id is None
-        context = _build_context(consumed=[])
-        context.similarity_scores = {library_key(candidate): 0.7}
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(candidate, context) == 0.7
-
-    def test_season_candidate_takes_the_shows_score(self) -> None:
-        """A season candidate scores on the row its embedding belongs to."""
-        show = ContentItem(
-            id="tvdb:123",
-            db_id=9,
-            title="Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"total_seasons": 2},
-        )
-        first_season, second_season = expand_tv_shows_to_seasons([show])
-        context = _build_context(consumed=[])
-        context.similarity_scores = {library_key(show): 0.9}
-        scorer = SemanticSimilarityScorer()
-        assert scorer.score(first_season, context) == 0.9
-        assert scorer.score(second_season, context) == 0.9
-
-    def test_default_weight(self) -> None:
-        """SemanticSimilarityScorer default weight is 1.5."""
-        scorer = SemanticSimilarityScorer()
-        assert scorer.weight == 1.5
 
 
 # ---------------------------------------------------------------------------

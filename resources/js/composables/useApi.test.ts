@@ -177,24 +177,11 @@ describe('useApi authentication', () => {
     expect(initOf(0).credentials).toBe('include')
   })
 
-  it('sends it on streaming requests too, which bypass request()', async () => {
-    signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
-
-    await useApi().raw('/recommendations/stream', { method: 'GET' })
-
-    expect(initOf(0).credentials).toBe('include')
-  })
-
   it('keeps the caller-supplied headers alongside it', async () => {
     signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
 
-    await useApi().raw('/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    })
+    await useApi().post('/users', {})
 
     expect(initOf(0).headers).toMatchObject({ 'Content-Type': 'application/json' })
     expect(initOf(0).credentials).toBe('include')
@@ -225,34 +212,11 @@ describe('useApi authentication', () => {
     expect(auth.isAuthenticated).toBe(true)
   })
 
-  it('ends it on a refused stream too, which returns instead of throwing', async () => {
-    // Regression: raw() carried the credential but never inspected the status,
-    // so a session revoked mid-session surfaced to the SSE stores as a bare
-    // "HTTP 401" and left the user with no way back to the sign-in screen.
-    const auth = signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { detail: 'Not signed in.' }))
-
-    const response = await useApi().raw('/recommendations/stream')
-
-    expect(response.status).toBe(401)
-    expect(auth.isAuthenticated).toBe(false)
-    expect(auth.needsLogin).toBe(true)
-  })
-
   it('leaves the session alone on any other failure', async () => {
     const auth = signedIn()
     vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
 
     await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
-
-    expect(auth.isAuthenticated).toBe(true)
-  })
-
-  it('leaves a streaming failure that is not a refusal alone', async () => {
-    const auth = signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
-
-    await useApi().raw('/recommendations/stream')
 
     expect(auth.isAuthenticated).toBe(true)
   })

@@ -30,16 +30,10 @@ const app = useAppStore()
 
       <div class="toolbar-zone toolbar-actions">
         <button
-          class="btn btn-secondary"
-          :disabled="recs.loading"
-          @click="recs.fetch(false)"
-        >Generate</button>
-        <button
-          v-if="app.aiReasoningEnabled"
           class="btn btn-primary"
           :disabled="recs.loading"
-          @click="recs.fetch(true)"
-        ><span aria-hidden="true">&#10024;</span> AI Recommendations</button>
+          @click="recs.fetch()"
+        >Generate</button>
       </div>
     </div>
   </div>

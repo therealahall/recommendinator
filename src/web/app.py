@@ -20,15 +20,12 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.config.service import (
-    create_llm_components,
     create_recommendation_engine,
     create_storage_manager,
     load_config,
     resolve_bootstrap_web,
     resolve_config_path,
 )
-from src.conversation.engine import create_conversation_engine
-from src.conversation.memory import MemoryManager
 from src.settings.metadata import default_of
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
@@ -44,7 +41,6 @@ from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.auth import set_session_cookie
 from src.web.auth_api import router as auth_router
-from src.web.chat_api import router as chat_router
 from src.web.responses import SurrogateSafeJSONResponse
 from src.web.state import app_state, get_config
 
@@ -159,13 +155,10 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logging.getLogger("watchfiles").setLevel(logging.WARNING)
         logger.info("Logging configured from application config")
 
-        llm_client, embedding_gen, rec_gen = create_llm_components(
-            config, config_provider=get_config
-        )
         # get_config, not the dict: a hot-reload swaps in a fresh one, and the
         # engine must score against whichever is current at the time.
         engine = create_recommendation_engine(
-            storage, embedding_gen, rec_gen, config, config_provider=get_config
+            storage, config, config_provider=get_config
         )
 
         # Determine actual config path used
@@ -207,27 +200,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         app_state.config = config
         app_state.config_path = str(actual_config_path.resolve())
         app_state.storage = storage
-        app_state.embedding_gen = embedding_gen
         app_state.engine = engine
-        app_state.ollama_client = llm_client
-
-        # Initialize conversation engine if LLM is available
-        if llm_client:
-            conversation_engine = create_conversation_engine(
-                storage_manager=storage,
-                ollama_client=llm_client,
-                recommendation_engine=engine,
-                conversation_config=config.get("conversation"),
-                config_provider=get_config,
-            )
-            app_state.conversation_engine = conversation_engine
-            logger.info("Conversation engine initialized")
-        else:
-            app_state.conversation_engine = None
-            logger.info("Conversation engine not available (LLM disabled)")
-
-        # Cache a shared MemoryManager instance
-        app_state.memory_manager = MemoryManager(storage)
     except Exception as error:
         logger.error("Failed to initialize components: %s", exception_for_log(error))
         raise
@@ -342,10 +315,9 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     # The session dependency rides on the routers themselves (see
     # src/web/auth.py). Nothing under /api is exempt but the four /api/auth
-    # routes — including /api/status, whose feature report is a free
+    # routes — including /api/status, whose component report is a free
     # fingerprint.
     app.include_router(api_router)
-    app.include_router(chat_router)
     app.include_router(auth_router)
 
     # Serve static files (for web UI)

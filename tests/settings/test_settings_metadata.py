@@ -354,7 +354,7 @@ class TestDefaults:
         nested = default_config()
         assert nested["web"]["allowed_origins"] == ["http://localhost:18473"]
         assert nested["recommendations"]["scorer_weights"]["genre_match"] == 2.0
-        assert nested["conversation"]["llm"]["temperature"] == 0.7
+        assert nested["enrichment"]["providers"]["tmdb"]["enabled"] is False
         assert set(nested).issubset(set(IN_SCOPE_SECTIONS))
 
 

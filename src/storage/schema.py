@@ -24,31 +24,6 @@ class EnrichmentStatusDict(TypedDict):
     enrichment_error: str | None
 
 
-class CoreMemoryDict(TypedDict):
-    """A core memory record."""
-
-    id: int
-    user_id: int
-    memory_text: str
-    memory_type: str
-    source: str
-    confidence: float
-    created_at: str
-    updated_at: str | None
-    is_active: bool
-
-
-class ConversationMessageDict(TypedDict):
-    """A conversation message record."""
-
-    id: int
-    user_id: int
-    role: str
-    content: str
-    tool_calls: list[dict[str, Any]] | None
-    created_at: str
-
-
 class UserDict(TypedDict):
     """A user record."""
 
@@ -139,6 +114,7 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 #   1: clear the ``settings`` rows an earlier seed-on-boot design wrote
 #   2: prune the ``settings`` leaves that are no longer registry entries
 #   3: repair the legacy content rows ``_repair_legacy_content_rows`` describes
+#   6: prune the ``settings`` leaves the AI removal left unreachable
 #
 # Version 4 records the derived columns ``src/storage/derived.py`` describes and
 # guards nothing: their backfill selects the rows missing them, so it repairs a
@@ -157,7 +133,7 @@ _ALLOWED_ENRICHMENT_FILTERS: frozenset[str] = frozenset({"", " AND ci.user_id = 
 #
 # The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
 # and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -173,6 +149,15 @@ _ORPHANED_SETTING_KEYS: tuple[str, ...] = (
     "ingestion.source_priority",
 )
 
+# Prefixes of the leaves the AI removal orphaned. By prefix rather than by key,
+# because these sections carried leaves across several releases and a row from
+# any of them is equally unreachable now.
+_ORPHANED_SETTING_PREFIXES: tuple[str, ...] = (
+    "features.",
+    "ollama.",
+    "conversation.",
+)
+
 
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
@@ -181,7 +166,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     - Users table for multi-user support
     - Content items with user_id foreign key
     - Type-specific detail tables (books, movies, TV shows, games)
-    - Preference interpretation cache
 
     Args:
         conn: SQLite database connection. ``row_factory`` is set to
@@ -200,7 +184,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             username TEXT UNIQUE NOT NULL,
             display_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            settings TEXT  -- JSON for per-user settings (AI enabled, weights, etc.)
+            settings TEXT  -- JSON for per-user settings (scorer weights, etc.)
         )
         """
     )
@@ -353,17 +337,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_game_developer ON video_game_details(developer)"
     )
 
-    # Preference interpretation cache (for LLM interpretations)
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS preference_interpretation_cache (
-            cache_key TEXT PRIMARY KEY,
-            interpretation_json TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-
     # Enrichment status tracking
     cursor.execute(
         """
@@ -422,37 +395,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_ci_sort_title "
         "ON content_items(user_id, sort_title, id)"
-    )
-
-    # Core memories: significant preference signals
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS core_memories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            memory_text TEXT NOT NULL,
-            memory_type TEXT NOT NULL,  -- "user_stated" or "inferred"
-            source TEXT,  -- "conversation", "rating_pattern", "manual"
-            confidence REAL DEFAULT 1.0,  -- 0.0-1.0 for inferred memories
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT 1  -- User can deactivate inferred memories
-        )
-    """
-    )
-
-    # Conversation history (for context rebuilding)
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversation_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            role TEXT NOT NULL,  -- "user" or "assistant"
-            content TEXT NOT NULL,
-            tool_calls TEXT,  -- JSON array of tool calls made
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """
     )
 
     # Preference profile snapshots (regenerated periodically)
@@ -534,23 +476,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Version-guarded one-time settings migrations (see _migrate_settings_table).
     _migrate_settings_table(cursor, stored_version)
 
-    # Indexes for conversation tables
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_core_memories_user " "ON core_memories(user_id)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_core_memories_active "
-        "ON core_memories(user_id, is_active)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversation_messages_user "
-        "ON conversation_messages(user_id)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_conversation_messages_user_created "
-        "ON conversation_messages(user_id, created_at DESC)"
-    )
-
     # Records that every guarded step above has run, so the next open skips
     # them. Written inside the same transaction as the steps themselves: an
     # open that raises advances nothing and the next one retries the lot.
@@ -567,6 +492,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
 
     conn.commit()
+
+
+def _like_prefix(prefix: str) -> str:
+    """Return the ``LIKE`` pattern matching every key starting with *prefix*."""
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}%"
 
 
 def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
@@ -622,8 +553,9 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
 
     **Version 1 — drop every pre-existing row.**
     An earlier iteration of the database-backed config seeded the ``settings``
-    table on every boot — both dotted-leaf rows (``features.ai_enabled``) and
-    stale whole-section JSON-blob rows (``features`` -> a dict). Seed-on-boot
+    table on every boot — both dotted-leaf rows (``recommendations.max_count``)
+    and stale whole-section JSON-blob rows (``recommendations`` -> a dict).
+    Seed-on-boot
     has since been removed; the table now holds only leaves a user explicitly
     sets via the settings UI/CLI. Because that feature is unreleased, no
     pre-existing row is genuine user input — every one is a seed artifact — so
@@ -643,6 +575,10 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
     ``migrate_config_settings``; the ``ingestion.*`` rows cannot be, since that
     section left ``IN_SCOPE_SECTIONS`` too, and are deleted simply as garbage.
     Also unreleased, so no row here is genuine user intent either.
+
+    **Version 6 — prune :data:`_ORPHANED_SETTING_PREFIXES`.** Unlike the rows
+    above these were released, so this discards values a user really set: the
+    subsystem they configured no longer exists.
     """
     if stored_version < 1:
         cursor.execute("DELETE FROM settings")
@@ -651,6 +587,13 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
         cursor.executemany(
             "DELETE FROM settings WHERE key = ?",
             [(key,) for key in _ORPHANED_SETTING_KEYS],
+        )
+
+    if stored_version < 6:
+        cursor.executemany(
+            # ESCAPE, so a prefix carrying _ or % matches itself literally.
+            r"DELETE FROM settings WHERE key LIKE ? ESCAPE '\'",
+            [(_like_prefix(prefix),) for prefix in _ORPHANED_SETTING_PREFIXES],
         )
 
 
@@ -1128,68 +1071,6 @@ def get_default_user_id() -> int:
     return 1
 
 
-# Preference interpretation cache functions
-
-
-def get_cached_preference_interpretation(
-    conn: sqlite3.Connection, cache_key: str
-) -> str | None:
-    """Get a cached preference interpretation.
-
-    Args:
-        conn: SQLite database connection
-        cache_key: The cache key to look up
-
-    Returns:
-        Cached JSON string or None if not found
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT interpretation_json FROM preference_interpretation_cache WHERE cache_key = ?",
-        (cache_key,),
-    )
-    row = cursor.fetchone()
-    return row[0] if row else None
-
-
-def save_cached_preference_interpretation(
-    conn: sqlite3.Connection, cache_key: str, interpretation_json: str
-) -> None:
-    """Save a preference interpretation to the cache.
-
-    Args:
-        conn: SQLite database connection
-        cache_key: The cache key
-        interpretation_json: JSON string of the interpretation
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT OR REPLACE INTO preference_interpretation_cache
-        (cache_key, interpretation_json, created_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        """,
-        (cache_key, interpretation_json),
-    )
-    conn.commit()
-
-
-def clear_cached_preference_interpretations(conn: sqlite3.Connection) -> int:
-    """Clear all cached preference interpretations.
-
-    Args:
-        conn: SQLite database connection
-
-    Returns:
-        Number of rows deleted
-    """
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM preference_interpretation_cache")
-    deleted = cursor.rowcount
-    conn.commit()
-    return deleted
-
-
 # Enrichment status functions
 
 
@@ -1577,255 +1458,6 @@ def get_enrichment_stats(
         "by_provider": by_provider,
         "by_quality": by_quality,
     }
-
-
-# Core memory functions
-
-
-def get_core_memories(
-    conn: sqlite3.Connection,
-    user_id: int,
-    active_only: bool = True,
-    memory_type: str | None = None,
-) -> list[CoreMemoryDict]:
-    """Get core memories for a user.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        active_only: If True, only return active memories
-        memory_type: Filter by type ("user_stated" or "inferred")
-
-    Returns:
-        List of memory dicts
-    """
-    cursor = conn.cursor()
-    query = """
-        SELECT id, user_id, memory_text, memory_type, source, confidence,
-               created_at, updated_at, is_active
-        FROM core_memories
-        WHERE user_id = ?
-    """
-    params: list[int | str] = [user_id]
-
-    if active_only:
-        query += " AND is_active = 1"
-
-    if memory_type:
-        query += " AND memory_type = ?"
-        params.append(memory_type)
-
-    query += " ORDER BY created_at DESC"
-
-    cursor.execute(query, params)
-    memories: list[CoreMemoryDict] = []
-    for row in cursor.fetchall():
-        memories.append(
-            CoreMemoryDict(
-                id=row[0],
-                user_id=row[1],
-                memory_text=row[2],
-                memory_type=row[3],
-                source=row[4],
-                confidence=row[5],
-                created_at=row[6],
-                updated_at=row[7],
-                is_active=bool(row[8]),
-            )
-        )
-    return memories
-
-
-def save_core_memory(
-    conn: sqlite3.Connection,
-    user_id: int,
-    memory_text: str,
-    memory_type: str,
-    source: str,
-    confidence: float = 1.0,
-) -> int:
-    """Save a new core memory.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        memory_text: The preference statement
-        memory_type: "user_stated" or "inferred"
-        source: "conversation", "rating_pattern", or "manual"
-        confidence: Confidence score (0.0-1.0)
-
-    Returns:
-        New memory ID
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO core_memories
-        (user_id, memory_text, memory_type, source, confidence)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (user_id, memory_text, memory_type, source, confidence),
-    )
-    conn.commit()
-    return cursor.lastrowid  # type: ignore
-
-
-def update_core_memory(
-    conn: sqlite3.Connection,
-    memory_id: int,
-    memory_text: str | None = None,
-    is_active: bool | None = None,
-) -> bool:
-    """Update a core memory.
-
-    Args:
-        conn: SQLite database connection
-        memory_id: Memory ID to update
-        memory_text: New memory text (optional)
-        is_active: New active status (optional)
-
-    Returns:
-        True if updated, False if not found
-    """
-    if memory_text is None and is_active is None:
-        return False
-
-    cursor = conn.cursor()
-    # COALESCE(?, col) — NULL means "keep existing", non-NULL means "update".
-    # is_active=None → NULL (preserves existing), False → 0, True → 1.
-    cursor.execute(
-        """UPDATE core_memories
-           SET memory_text = COALESCE(?, memory_text),
-               is_active   = COALESCE(?, is_active),
-               updated_at  = CURRENT_TIMESTAMP
-           WHERE id = ?""",
-        (
-            memory_text,
-            int(is_active) if is_active is not None else None,
-            memory_id,
-        ),
-    )
-    conn.commit()
-    return cursor.rowcount > 0
-
-
-def delete_core_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
-    """Delete a core memory.
-
-    Args:
-        conn: SQLite database connection
-        memory_id: Memory ID to delete
-
-    Returns:
-        True if deleted, False if not found
-    """
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM core_memories WHERE id = ?", (memory_id,))
-    conn.commit()
-    return cursor.rowcount > 0
-
-
-# Conversation message functions
-
-
-def get_conversation_history(
-    conn: sqlite3.Connection,
-    user_id: int,
-    limit: int = 50,
-) -> list[ConversationMessageDict]:
-    """Get recent conversation history for a user.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        limit: Maximum number of messages to return
-
-    Returns:
-        List of message dicts ordered by created_at ascending (oldest first)
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, user_id, role, content, tool_calls, created_at
-        FROM conversation_messages
-        WHERE user_id = ?
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (user_id, limit),
-    )
-    messages: list[ConversationMessageDict] = []
-    for row in cursor.fetchall():
-        tool_calls = None
-        if row[4]:
-            try:
-                tool_calls = json.loads(row[4])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        messages.append(
-            ConversationMessageDict(
-                id=row[0],
-                user_id=row[1],
-                role=row[2],
-                content=row[3],
-                tool_calls=tool_calls,
-                created_at=row[5],
-            )
-        )
-    # Return in chronological order (oldest first)
-    return list(reversed(messages))
-
-
-def save_conversation_message(
-    conn: sqlite3.Connection,
-    user_id: int,
-    role: str,
-    content: str,
-    tool_calls: list[dict] | None = None,
-) -> int:
-    """Save a conversation message.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        role: "user" or "assistant"
-        content: Message content
-        tool_calls: Optional list of tool calls made
-
-    Returns:
-        New message ID
-    """
-    cursor = conn.cursor()
-    tool_calls_json = json.dumps(tool_calls) if tool_calls else None
-    cursor.execute(
-        """
-        INSERT INTO conversation_messages
-        (user_id, role, content, tool_calls)
-        VALUES (?, ?, ?, ?)
-        """,
-        (user_id, role, content, tool_calls_json),
-    )
-    conn.commit()
-    return cursor.lastrowid  # type: ignore
-
-
-def clear_conversation_history(conn: sqlite3.Connection, user_id: int) -> int:
-    """Clear conversation history for a user (the "reset" functionality).
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-
-    Returns:
-        Number of messages deleted
-    """
-    cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM conversation_messages WHERE user_id = ?",
-        (user_id,),
-    )
-    conn.commit()
-    return cursor.rowcount
 
 
 # Preference profile functions

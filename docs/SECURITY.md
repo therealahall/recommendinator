@@ -2,16 +2,14 @@
 
 ## Data privacy
 
-Everything is local: SQLite for structured data, a local Ollama for LLM work, no
-telemetry. Nothing leaves your machine except calls to the external APIs you
-configure.
+Everything is local: SQLite for structured data, no telemetry. Nothing leaves
+your machine except calls to the external APIs you configure.
 
 | File | Contains |
 |------|----------|
 | `config/config.yaml` | Bootstrap secrets migrated to the database on startup |
 | `data/recommendations.db` | Consumption history, encrypted credentials |
 | `data/.credential_key` | Fernet key for those credentials |
-| `data/chroma_db/` | Vector embeddings of your content, AI only |
 
 **Never commit these files to version control.**
 
@@ -19,7 +17,7 @@ configure.
 
 OAuth tokens and API keys are encrypted with Fernet and stored in the
 `credentials` table. **Nothing else is encrypted.** Titles, ratings, reviews and
-completion history sit in the database as plaintext, and so do the embeddings.
+completion history sit in the database as plaintext.
 
 - The key lives at `data/.credential_key`, or wherever
   `RECOMMENDINATOR_KEY_PATH` points. It is created `0600` inside a `0700`
@@ -139,18 +137,9 @@ access to your Steam library. Rotate it by re-running `source set-secret`.
 
 | Service | Purpose | When |
 |---------|---------|------|
-| Ollama | LLM and embeddings | AI enabled |
 | Steam, GOG, Epic Games | Game library sync | That source enabled |
 | Sonarr, Radarr | Media library sync | Configured |
 | TMDB, OpenLibrary, RAWG | Metadata enrichment | Enrichment enabled |
-
-**`ollama.base_url` only accepts a host on your own machine or network**, since
-every prompt carries library titles, ratings, reviews and memories. The Settings
-page and `settings set` take a bare `scheme://host[:port]` whose host is a
-loopback, private, link-local or `100.64.0.0/10` address, a single-label name
-(`ollama`), or a `.local`/`.internal` name — nothing else. A genuinely remote
-Ollama has to go in `config.yaml`, and the first call to a non-local URL logs a
-warning.
 
 **`web.allowed_origins` cannot authenticate a cross-origin client.** The session
 cookie is `SameSite=Strict`, so a browser never attaches it to a request from
@@ -189,10 +178,10 @@ and an empty list allows nothing.
 ## Input handling
 
 Imported CSV and JSON are parsed with standard libraries, and invalid rows are
-skipped rather than executed. Custom rules are stored as typed, and collapsed to
-a single line when a prompt is built, so a rule cannot forge a second one. See
-[CUSTOM_RULES.md](CUSTOM_RULES.md#llm-interpretation). Neither path executes
-anything from user data.
+skipped rather than executed. Custom rules are stored as typed and collapsed to
+a single line before the interpreter reads them. See
+[CUSTOM_RULES.md](CUSTOM_RULES.md). Neither path executes anything from user
+data.
 
 ## Database and backups
 
@@ -208,10 +197,8 @@ gpg -c data/recommendations.db.backup   # if the backup leaves the machine
 
 ```bash
 uv pip list --outdated
-uv sync --locked --extra ai
+uv sync --locked
 ```
-
-ChromaDB stores embeddings locally, and Ollama defaults to localhost.
 
 ## Deployment checklist
 
@@ -222,7 +209,6 @@ ChromaDB stores embeddings locally, and Ollama defaults to localhost.
 - [ ] Database file has restricted permissions
 - [ ] Web interface on localhost (Docker's default), or behind a TLS proxy
 - [ ] Docker containers run as a non-root user
-- [ ] Ollama only reachable internally
 
 **The logs are not guaranteed key-free.** The integrations that put a credential
 in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as its

@@ -22,7 +22,6 @@ from click.testing import CliRunner
 
 import src.cli.commands as cli_commands
 import src.web.api
-import src.web.chat_api
 import src.web.sync_manager
 from src.auth.trakt import TraktAuthError
 from src.cli.commands._auth import (
@@ -30,7 +29,6 @@ from src.cli.commands._auth import (
     GOG_AUTH_FAILED,
     TRAKT_AUTH_FAILED,
 )
-from src.cli.commands._chat import CHAT_FAILED
 from src.cli.commands._complete import COMPLETE_FAILED
 from src.cli.commands._recommend import RECOMMEND_FAILED
 from src.cli.commands._update import SYNC_FAILED
@@ -67,7 +65,6 @@ _SHARED_REFUSALS = [
     pytest.param(
         EPIC_AUTH_FAILED, src.web.api, "exchange_epic_token", id="epic-connect"
     ),
-    pytest.param(CHAT_FAILED, src.web.chat_api, "generate_sse", id="chat"),
 ]
 
 
@@ -301,54 +298,13 @@ class TestUpdateNamesTheSettingRatherThanThePath:
 
 
 class TestVerboseIsAnsweredByEveryCommandThatRefusesRegression:
-    """Reported: ``--verbose`` is inert on ``chat`` and on OAuth connect.
+    """Reported: ``--verbose`` is inert on OAuth connect.
 
     Root cause: the funnel took the handlers that bind the fault; four bind
     nothing and hand-roll the log and the refusal. Fix: funnel those too.
     """
 
-    _AI_CONFIG = {"features": {"ai_enabled": True}, "ollama": {}}
     _CODE = "test-auth-code-abc123xyz\n"
-
-    def test_chat_send_puts_the_engines_reason_on_the_terminal(
-        self, cli_runner: CliRunner
-    ) -> None:
-        with patch("src.cli.commands._chat.ConversationEngine") as engine_class:
-            engine_class.return_value.process_message_sync.side_effect = RuntimeError(
-                _FAULT
-            )
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["--verbose", "chat", "send", "--message", "Hi"],
-                MagicMock(spec=StorageManager),
-                config=self._AI_CONFIG,
-                llm_client=MagicMock(),
-            )
-
-        assert result.exit_code != 0
-        assert _FAULT in result.output
-
-    def test_chat_start_prints_the_reason_and_keeps_the_session_open(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """The REPL reports and carries on, so the funnel must not abort here."""
-        with patch("src.cli.commands._chat.ConversationEngine") as engine_class:
-            engine_class.return_value.process_message_sync.side_effect = [
-                RuntimeError(_FAULT),
-                "Try Dune",
-            ]
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["--verbose", "chat", "start"],
-                MagicMock(spec=StorageManager),
-                config=self._AI_CONFIG,
-                llm_client=MagicMock(),
-                input_text="one\ntwo\n",
-            )
-
-        assert result.exit_code == 0
-        assert _FAULT in result.output
-        assert "Try Dune" in result.output
 
     def test_auth_connect_puts_the_exchanges_reason_on_the_terminal(
         self, cli_runner: CliRunner
@@ -513,36 +469,6 @@ class TestArgvTextIsStoredWithoutItsSurrogatesRegression:
 
     _RAW = "loved it\udcff"
     _CLEANED = "loved it"
-
-    def test_memory_add_stores_the_stripped_text_regression(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "memory.db")
-
-        result = _invoke_with_mocks(
-            cli_runner, ["memory", "add", "--text", self._RAW], storage
-        )
-
-        assert result.exit_code == 0, result.output
-        assert storage.get_core_memories(1)[0]["memory_text"] == self._CLEANED
-
-    def test_memory_edit_stores_the_stripped_text_regression(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        """Same write, second door: ``--text`` here replaces a stored memory."""
-        storage = StorageManager(sqlite_path=tmp_path / "memory.db")
-        memory_id = storage.save_core_memory(
-            user_id=1, memory_text="old", memory_type="user_stated", source="manual"
-        )
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["memory", "edit", "--id", str(memory_id), "--text", self._RAW],
-            storage,
-        )
-
-        assert result.exit_code == 0, result.output
-        assert storage.get_core_memories(1)[0]["memory_text"] == self._CLEANED
 
     @pytest.mark.parametrize(
         ("option", "field", "stored"),
@@ -743,8 +669,14 @@ class TestTheSurrogateStripIsOneGate:
         """
         kept = "Sublime — 日本語 🎉 café"
 
-        with cli.make_context("recommendinator", ["memory", "add", kept]) as ctx:
-            assert [*ctx.protected_args, *ctx.args] == ["memory", "add", kept]
+        with cli.make_context(
+            "recommendinator", ["preferences", "custom-rules", kept]
+        ) as ctx:
+            assert [*ctx.protected_args, *ctx.args] == [
+                "preferences",
+                "custom-rules",
+                kept,
+            ]
 
 
 class TestAGuardSeesTheValueStorageWillGetRegression:

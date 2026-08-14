@@ -15,11 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 import src as src_package
-from src.cli.commands._chat import (
-    CHAT_FAILED,
-    CHAT_MESSAGE_LOGGED,
-    CHAT_SEND_LOGGED,
-)
+from src.cli.commands._recommend import RECOMMEND_FAILED
 from src.cli.main import cli
 from src.models.content import ContentType
 from src.settings.metadata import default_of
@@ -124,16 +120,26 @@ def _invoke_with_real_logging(
     config: dict[str, Any],
     args: list[str],
     input_text: str | None = None,
+    engine: Any = None,
 ) -> Any:
     """Run *args* with the source migrations and log wiring both unstubbed."""
     with (
         patch("src.utils.logging.configure_logging", configure_logging),
         patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=storage),
-        patch("src.cli.main.create_llm_components", return_value=(None, None, None)),
-        patch("src.cli.main.create_recommendation_engine"),
+        patch(
+            "src.cli.main.create_recommendation_engine",
+            return_value=engine if engine is not None else MagicMock(),
+        ),
     ):
         return runner.invoke(cli, args, input=input_text)
+
+
+def _failing_engine(error: Exception) -> MagicMock:
+    """An engine whose ``recommend`` call raises, to exercise the log funnel."""
+    engine = MagicMock()
+    engine.generate_recommendations.side_effect = error
+    return engine
 
 
 class TestTheConsoleNeverWritesToTheDataChannelRegression:
@@ -355,7 +361,7 @@ def test_a_healthy_update_puts_no_log_record_on_the_console(
 
 
 class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
-    """Reported by QA: ``chat send`` named a log nobody was writing.
+    """Reported by QA: a failing command named a log nobody was writing.
 
     Bug: no CLI command configured logging, so every ``exc_info`` record fell
     to a root logger with no handler.
@@ -373,66 +379,22 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         hold."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         monkeypatch.chdir(tmp_path)
-        config = _shared_plugin_config("logs/cli.log")
-        config["features"] = {"ai_enabled": True}
 
-        engine = MagicMock()
-        engine.process_message_sync.side_effect = RuntimeError(
-            "ollama is not listening"
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["recommend", "--type", "book"],
+            engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
-        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
-            result = _invoke_with_real_logging(
-                CliRunner(mix_stderr=False),
-                storage,
-                config,
-                ["chat", "send", "--message", "hello"],
-            )
 
         assert result.exit_code == 1
         assert "Check logs for details" in result.stderr
         # The data channel stays empty on the failure path too.
         assert result.stdout == ""
         written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
-        # The log names the operation; the terminal keeps the web's wording.
-        assert CHAT_SEND_LOGGED in written
-        assert CHAT_FAILED not in written
-        assert "RuntimeError: ollama is not listening" in written
-
-    def test_the_repl_names_its_own_verb_in_the_log(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        restore_root_logging: None,
-    ) -> None:
-        """``chat start`` shares the terminal wording and not the operation.
-
-        It reports and keeps going, so an operator reading the log after a
-        session has to tell which of the two verbs failed.
-        """
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        monkeypatch.chdir(tmp_path)
-        config = _shared_plugin_config("logs/cli.log")
-        config["features"] = {"ai_enabled": True}
-
-        engine = MagicMock()
-        engine.process_message_sync.side_effect = RuntimeError("ollama is not there")
-        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
-            result = _invoke_with_real_logging(
-                CliRunner(mix_stderr=False),
-                storage,
-                config,
-                ["chat", "start"],
-                input_text="hello\n",
-            )
-
-        assert result.exit_code == 0, result.stderr
-        assert f"Error: {CHAT_FAILED}. Check logs for details." in result.stderr
-        # The session survived the bad message, which is the point of reporting.
-        assert "Chat session ended." in result.stdout
-        written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
-        assert CHAT_MESSAGE_LOGGED in written
-        assert CHAT_SEND_LOGGED not in written
-        assert CHAT_FAILED not in written
+        assert RECOMMEND_FAILED in written
+        assert "RuntimeError: the library is unreadable" in written
 
 
 class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
@@ -489,24 +451,18 @@ class TestTheConsoleWithholdsTracebacksRegression:
     ) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         monkeypatch.chdir(tmp_path)
-        config = _shared_plugin_config("logs/cli.log")
-        config["features"] = {"ai_enabled": True}
 
-        engine = MagicMock()
-        engine.process_message_sync.side_effect = RuntimeError(
-            "ollama is not listening"
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["recommend", "--type", "book"],
+            engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
-        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
-            result = _invoke_with_real_logging(
-                CliRunner(mix_stderr=False),
-                storage,
-                config,
-                ["chat", "send", "--message", "hello"],
-            )
 
         assert "Check logs for details" in result.stderr
         assert "Traceback (most recent call last):" not in result.stderr
-        assert "ollama is not listening" not in result.stderr
+        assert "the library is unreadable" not in result.stderr
         # Anchors both: the record carried a traceback for the console to drop.
         assert "Traceback (most recent call last):" in (
             tmp_path / "logs" / "cli.log"
@@ -523,27 +479,21 @@ class TestTheConsoleWithholdsTracebacksRegression:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = _shared_plugin_config("logs/cli.log")
-        config["features"] = {"ai_enabled": True}
 
-        engine = MagicMock()
-        engine.process_message_sync.side_effect = RuntimeError(
-            "ollama is not listening"
+        result = _invoke_with_real_logging(
+            CliRunner(mix_stderr=False),
+            storage,
+            _shared_plugin_config("logs/cli.log"),
+            ["recommend", "--type", "book"],
+            engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
-        with patch("src.cli.commands._chat.ConversationEngine", return_value=engine):
-            result = _invoke_with_real_logging(
-                CliRunner(mix_stderr=False),
-                storage,
-                config,
-                ["chat", "send", "--message", "hello"],
-            )
 
         assert "Check logs for details" in result.stderr
         # Anchors the two below: a console handler dropping the record satisfies
         # them, and there is no log file left to read the record out of.
-        assert f"ERROR | src.cli._shared | {CHAT_SEND_LOGGED}" in result.stderr
+        assert f"ERROR | src.cli._shared | {RECOMMEND_FAILED}" in result.stderr
         assert "Traceback (most recent call last):" not in result.stderr
-        assert "ollama is not listening" not in result.stderr
+        assert "the library is unreadable" not in result.stderr
 
     def test_a_run_whose_log_is_off_still_formats_its_diagnostics(
         self,

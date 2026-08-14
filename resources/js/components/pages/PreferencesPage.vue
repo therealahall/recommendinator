@@ -4,6 +4,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import ThemeSelector from '@/components/organisms/ThemeSelector.vue'
 import ScoringPrefs from '@/components/organisms/ScoringPrefs.vue'
 import RulesPrefs from '@/components/organisms/RulesPrefs.vue'
+import ProfilePanel from '@/components/organisms/ProfilePanel.vue'
 
 const prefs = usePreferencesStore()
 
@@ -24,6 +25,7 @@ onMounted(() => {
         <ThemeSelector v-model="prefs.pendingTheme" />
         <ScoringPrefs />
         <RulesPrefs />
+        <ProfilePanel />
         <div class="pref-actions">
           <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
             {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}

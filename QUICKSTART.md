@@ -5,7 +5,7 @@ Up and running in under five minutes.
 ## Prerequisites
 
 Docker, or Python 3.11 to run from source. Plus your data: a Goodreads export, a
-Steam account, whatever you already have. No AI and no external services needed.
+Steam account, whatever you already have.
 
 ## Install
 
@@ -35,20 +35,15 @@ port with the `-p` mapping** (or `APP_PORT` under Compose) rather than
 `web.port`. Sources, settings and API keys live in the database and are managed
 from the app.
 
-For AI features, with an Ollama sidecar that downloads models for you, use
-Compose:
+Prefer Compose? Download the manifest and bring it up:
 
 ```bash
 curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
   -o docker-compose.yml
-docker compose --profile ai up -d app-ai
+docker compose up -d
 ```
 
-**Naming `app-ai` is required.** The default `app` service has no profile, so
-otherwise it starts too and both fight over the same host port.
-
-[docs/DOCKER.md](docs/DOCKER.md) covers parameters, GPU setup and reverse
-proxies.
+[docs/DOCKER.md](docs/DOCKER.md) covers parameters and reverse proxies.
 
 ### From source
 
@@ -57,7 +52,7 @@ git clone https://github.com/therealahall/recommendinator.git
 cd recommendinator
 
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have uv
-uv sync --locked                                  # add --extra ai for AI features
+uv sync --locked
 
 corepack enable                                   # pnpm, needs Node.js 18+
 make build-frontend                               # installs pnpm deps, builds the UI
@@ -191,7 +186,7 @@ The full reference is [docs/CLI.md](docs/CLI.md). Most read-only commands take
 `--format json`.
 
 ```bash
-python3.11 -m src.cli status                    # component health and feature flags
+python3.11 -m src.cli status                    # component health
 
 python3.11 -m src.cli library list --type book --status completed --sort rating
 python3.11 -m src.cli library show --id 42
@@ -203,17 +198,10 @@ python3.11 -m src.cli auth connect --source gog     # or epic, trakt
 python3.11 -m src.cli auth status
 ```
 
-With AI on, chat and the memories behind it:
+The taste profile the engine derives from your library:
 
 ```bash
-python3.11 -m src.cli chat start
-python3.11 -m src.cli chat send --message "What should I read next?"
-
-python3.11 -m src.cli memory list
-python3.11 -m src.cli memory add --text "I love hard sci-fi"
-python3.11 -m src.cli memory toggle --id 3      # flip active/inactive
-
-python3.11 -m src.cli profile show              # what the engine learned
+python3.11 -m src.cli profile show
 python3.11 -m src.cli profile regenerate
 ```
 
@@ -223,10 +211,10 @@ python3.11 -m src.cli profile regenerate
 python3.11 -m src.web
 ```
 
-Open <http://localhost:18473>. Browsing, syncing, recommendations, a **Settings**
-page for feature flags, enrichment, scorer defaults, provider secrets and the
-advanced infrastructure options, and chat when AI is on. The sidebar shows the
-running version and banners a reload when a newer one appears.
+Open <http://localhost:18473>. Browsing, syncing, recommendations, and a
+**Settings** page for enrichment, scorer defaults, provider secrets and the
+advanced infrastructure options. The sidebar shows the running version and
+banners a reload when a newer one appears.
 
 Each recommendation card has two actions. **Ignore** drops the item out of future
 recommendations. **Mark complete** opens an edit dialog for status, rating and
@@ -250,25 +238,6 @@ takes half the penalty, nudged down rather than buried. See
 [docs/SCORING.md](docs/SCORING.md) and
 [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md).
 
-## Optional: enable AI
-
-For semantic similarity and LLM explanations:
-
-1. Install [Ollama](https://ollama.ai).
-2. `ollama pull mistral:7b` and `ollama pull nomic-embed-text`.
-3. Turn the flags on, from the **Settings** page or the CLI:
-
-   ```bash
-   python3.11 -m src.cli settings set features.ai_enabled true
-   python3.11 -m src.cli settings set features.embeddings_enabled true
-   python3.11 -m src.cli settings set features.llm_reasoning_enabled true
-   ```
-
-4. Restart the app. All three flags need one.
-
-Model guidance:
-[docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md).
-
 ## Next steps
 
 | Document | Covers |
@@ -277,7 +246,6 @@ Model guidance:
 | [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | Managing sources, parallel sync, export |
 | [docs/CLI.md](docs/CLI.md) | Full CLI reference |
 | [docs/SCORING.md](docs/SCORING.md) | How recommendations are scored |
-| [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) | The chat interface |
 | [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Writing a data source plugin |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the system works |

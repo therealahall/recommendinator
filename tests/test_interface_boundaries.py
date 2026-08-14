@@ -533,7 +533,6 @@ class TestTheParityGateReadsTheWholeCapabilitySurface:
         "path",
         [
             "resources/js",
-            "src/conversation",
             "src/enrichment",
             "src/models",
             "src/recommendations",

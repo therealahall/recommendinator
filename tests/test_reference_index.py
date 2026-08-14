@@ -146,8 +146,6 @@ class TestDerivedValuesComputedOncePerItemRegression:
         ]
         engine = RecommendationEngine(
             storage_manager=_storage_over(signal_items + candidates),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
         )
 
@@ -183,8 +181,6 @@ class TestDerivedValuesComputedOncePerItemRegression:
         )
         engine = RecommendationEngine(
             storage_manager=_storage_over([in_progress, completed, candidate]),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
         )
 
@@ -225,8 +221,6 @@ class TestDerivedValuesComputedOncePerItemRegression:
         ]
         engine = RecommendationEngine(
             storage_manager=_storage_over(signal_items + candidates),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
         )
 
@@ -379,8 +373,6 @@ class TestOneIndexServesTheWholeRequest:
         ]
         engine = RecommendationEngine(
             storage_manager=_storage_over(signal_items + candidates),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
         )
 

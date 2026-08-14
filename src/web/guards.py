@@ -1,11 +1,10 @@
 """Availability guards shared by the API routers.
 
-An absent component is unavailability (503), not a server fault (500). Only
-``conversation_engine`` is absent on a running server, when the LLM is
-disabled; ``create_app`` populates the rest or raises, so their guards defend
-that invariant rather than a state the app reaches today. Every guard lives
-here rather than in one router because the same server state has to read the
-same on every endpoint: one status code and one message per dependency.
+An absent component is unavailability (503), not a server fault (500).
+``create_app`` populates every component or raises, so these guards defend that
+invariant rather than a state the app reaches today. Every guard lives here
+rather than in one router because the same server state has to read the same on
+every endpoint: one status code and one message per dependency.
 
 Handlers ask for a component through the ``Required*`` aliases below rather
 than by calling a guard: a guard that IS the parameter cannot be forgotten
@@ -27,15 +26,11 @@ from typing import Annotated, Any, TypeVar
 
 from fastapi import Depends, HTTPException
 
-from src.conversation.engine import ConversationEngine
-from src.conversation.memory import MemoryManager
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
 from src.web.state import (
     get_config,
-    get_conversation_engine,
     get_engine,
-    get_memory_manager,
     get_storage,
     locked_running_config,
 )
@@ -89,22 +84,6 @@ def require_engine() -> RecommendationEngine:
     return _require(get_engine(), "Recommendation engine unavailable")
 
 
-def require_memory_manager() -> MemoryManager:
-    """Return the conversation memory manager, or 503 when it is not initialised."""
-    return _require(get_memory_manager(), "Memory manager unavailable")
-
-
-def require_conversation_engine() -> ConversationEngine:
-    """Return the chat engine, or 503 when the LLM is not configured."""
-    return _require(
-        get_conversation_engine(), "Chat is not available. LLM is not configured."
-    )
-
-
 RequiredStorage = Annotated[StorageManager, Depends(require_storage)]
 RequiredConfig = Annotated[dict[str, Any], Depends(require_config)]
 RequiredEngine = Annotated[RecommendationEngine, Depends(require_engine)]
-RequiredMemoryManager = Annotated[MemoryManager, Depends(require_memory_manager)]
-RequiredConversationEngine = Annotated[
-    ConversationEngine, Depends(require_conversation_engine)
-]

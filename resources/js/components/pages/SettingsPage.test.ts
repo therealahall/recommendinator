@@ -13,6 +13,9 @@ const mockGet = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 
+/** A real registry secret leaf, so the fixture matches what the API serves. */
+const SECRET_KEY = 'enrichment.providers.tmdb.api_key'
+
 // The settings store is stubbed here. The auth store's own routes are not: the
 // account tests below assert on the request that reached the network.
 vi.mock('@/composables/useApi', async (importOriginal) => {
@@ -38,11 +41,11 @@ vi.mock('@/composables/useApi', async (importOriginal) => {
 
 function secretSection(hasSecret: boolean) {
   return {
-    section: 'llm',
+    section: 'enrichment',
     settings: [
       {
-        key: 'llm.api_key',
-        section: 'llm',
+        key: SECRET_KEY,
+        section: 'enrichment',
         label: 'API Key',
         help: '',
         type: 'string',
@@ -90,13 +93,13 @@ describe('SettingsPage', () => {
   })
 
   it('renders a card with a humanized heading per section', async () => {
-    mockGet.mockResolvedValue({ sections: [section('web'), section('llm')] })
+    mockGet.mockResolvedValue({ sections: [section('web'), section('enrichment')] })
     const wrapper = mount(SettingsPage)
     await flushPromises()
 
     const headings = wrapper.findAll('h3').map((h) => h.text())
     expect(headings).toContain('Web')
-    expect(headings).toContain('LLM')
+    expect(headings).toContain('Enrichment')
   })
 
   it('shows a loading state before settings arrive', async () => {
@@ -207,14 +210,14 @@ describe('SettingsPage', () => {
     const wrapper = mount(SettingsPage, { attachTo: document.body })
     await flushPromises()
 
-    await wrapper.find('[data-testid="secret-replace-llm.api_key"]').trigger('click')
+    await wrapper.find(`[data-testid="secret-replace-${SECRET_KEY}"]`).trigger('click')
     await nextTick()
-    await wrapper.find('#secret-input-llm\\.api_key').setValue('sk-123')
-    await wrapper.find('[data-testid="secret-save-llm.api_key"]').trigger('click')
+    await wrapper.find(`#secret-input-${SECRET_KEY.replace(/\./g, '\\.')}`).setValue('sk-123')
+    await wrapper.find(`[data-testid="secret-save-${SECRET_KEY}"]`).trigger('click')
     await flushPromises()
     await nextTick()
 
-    const replace = wrapper.find('[data-testid="secret-replace-llm.api_key"]')
+    const replace = wrapper.find(`[data-testid="secret-replace-${SECRET_KEY}"]`)
     expect(replace.exists()).toBe(true)
     expect(document.activeElement).toBe(replace.element)
     wrapper.unmount()
@@ -227,11 +230,11 @@ describe('SettingsPage', () => {
     const wrapper = mount(SettingsPage, { attachTo: document.body })
     await flushPromises()
 
-    await wrapper.find('[data-testid="secret-clear-llm.api_key"]').trigger('click')
+    await wrapper.find(`[data-testid="secret-clear-${SECRET_KEY}"]`).trigger('click')
     await flushPromises()
     await nextTick()
 
-    const setButton = wrapper.find('[data-testid="secret-replace-llm.api_key"]')
+    const setButton = wrapper.find(`[data-testid="secret-replace-${SECRET_KEY}"]`)
     expect(setButton.exists()).toBe(true)
     expect(document.activeElement).toBe(setButton.element)
     wrapper.unmount()

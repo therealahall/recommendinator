@@ -6,7 +6,7 @@ import json
 
 import click
 
-from src.conversation.profile import ProfileGenerator
+from src.recommendations.profile import ProfileGenerator
 
 
 @click.group()

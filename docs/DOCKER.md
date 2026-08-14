@@ -1,17 +1,12 @@
 # Docker Deployment
 
-Official images cover `linux/amd64` and `linux/arm64`, so x86 servers, Apple
-Silicon, Synology DSM 7+, QNAP and Raspberry Pi 4/5 all work. `linux/arm/v7` is
-unsupported, since ChromaDB has no wheels there. They live in
+The official image, `ghcr.io/therealahall/recommendinator:latest`, covers
+`linux/amd64` and `linux/arm64`, so x86 servers, Apple Silicon, Synology DSM 7+,
+QNAP and Raspberry Pi 4/5 all work. `linux/arm/v7` is unsupported, since the
+Python 3.11 wheel ecosystem is too thin there. It lives in
 [GHCR](https://github.com/therealahall/recommendinator/pkgs/container/recommendinator).
 
-| Image | Contents |
-|-------|----------|
-| `ghcr.io/therealahall/recommendinator:latest` | Default. Smaller, no Ollama or ChromaDB. |
-| `ghcr.io/therealahall/recommendinator:latest-ai` | Adds the Ollama client and ChromaDB, for semantic search and LLM explanations. |
-| `ghcr.io/therealahall/recommendinator-ollama:latest` | The Ollama sidecar the AI variant needs. Pulls its models on first start. |
-
-## Quick start, no AI
+## Quick start
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs}
@@ -39,9 +34,8 @@ managed from inside the app.
 
 ## Docker Compose
 
-Compose is the only sensible way to run the AI variant, which needs the sidecar
-and a private network, and the cleaner path for the default variant on a busy
-host.
+Compose is the cleaner path on a busy host: the volumes, the port and the
+hardening options live in a file rather than in your shell history.
 
 ```bash
 mkdir -p recommendinator/{config,data,inputs}
@@ -79,11 +73,11 @@ services:
 
 With no private plugins, leave `./private` empty or drop that volume.
 
-Every service also carries `cap_drop: [ALL]` and
+The service also carries `cap_drop: [ALL]` and
 `security_opt: [no-new-privileges:true]`. Every `/api` route already requires a
 session cookie ([SECURITY.md](SECURITY.md#web-sign-in)); this is the other
 half, limiting what a compromised dependency reaches once it is inside. Nothing
-here needs a capability: the images run as an unprivileged user and bind ports
+here needs a capability: the image runs as an unprivileged user and binds a port
 above 1024.
 
 ## Parameters
@@ -93,7 +87,7 @@ above 1024.
 | Path | Mode | Holds |
 |------|------|-------|
 | `/app/config` | `rw` | `config.yaml`, created from `example.yaml` on first run and never overwritten. Edit it on the host. |
-| `/app/data` | `rw` | SQLite database, ChromaDB vectors, credential key, cache. **This is the volume to back up.** |
+| `/app/data` | `rw` | SQLite database, credential key, cache. **This is the volume to back up.** |
 | `/app/inputs` | `ro` | Source files for ingestion, such as `goodreads_library_export.csv`. |
 | `/app/private` | `ro` | Optional private plugin code. |
 
@@ -105,27 +99,17 @@ The app listens on `8000` inside the container, published on `127.0.0.1:18473` �
 session cookie on the network in cleartext: prefer a
 [reverse proxy](#reverse-proxy).
 
-The Ollama sidecar listens on `11434` inside the network and is not published to
-the host at all.
-
 ### Environment variables
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `TZ` | unset, so UTC | Timezone both app containers run in. Any IANA name resolves, the image carries `tzdata`. Completions are dated by the calendar day in this zone, so west of UTC an evening watch is dated a day forward until you set it. |
-| `IMAGE_TAG` | `latest` | Tag the compose file pulls. The `-ai` suffix is appended for the AI service. |
+| `TZ` | unset, so UTC | Timezone the container runs in. Any IANA name resolves, the image carries `tzdata`. Completions are dated by the calendar day in this zone, so west of UTC an evening watch is dated a day forward until you set it. |
+| `IMAGE_TAG` | `latest` | Tag the compose file pulls. |
 | `APP_PORT` | `18473` | Host port for the web UI. |
 | `APP_BIND_PREFIX` | `127.0.0.1:`, so this host only | Host interface to publish on, written **with a trailing colon**: `APP_BIND_PREFIX=192.168.1.5:`. Set it empty for every interface. See [Ports](#ports). |
-| `COMPOSE_PROFILES` | unset | Alternative to `--profile ai`. You still have to name `app-ai` on the up command. |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | Set for you inside the AI service. Override only for a remote Ollama. |
-| `OLLAMA_MODEL` | `mistral:7b` | Generation model the sidecar pulls. Must match the app's `ollama.model`. |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model the sidecar pulls. Must match `ollama.embedding_model`. |
-| `OLLAMA_CONVERSATION_MODEL` | unset, so reuses `OLLAMA_MODEL` | Set only when `ollama.conversation_model` names a separate chat model. |
-| `OLLAMA_MEMORY_LIMIT` | `12g` | Memory ceiling for the sidecar, the only capped service. Fits every model in [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md); raise it for anything larger. A ceiling above the host's RAM never binds, so lower it on an 8 GB NAS or Pi — then the kernel kills the model load rather than choosing a victim machine-wide. |
 
-The app services are uncapped on purpose. Loading a model is the one thing here
-whose appetite is measured in gigabytes and known in advance; a ceiling guessed
-for a sync turns a long but healthy one into an OOM kill.
+The service carries no memory ceiling on purpose: a limit guessed for a sync
+turns a long but healthy one into an OOM kill.
 
 **Setting `TZ` does not correct dates already stored, and a re-sync will not
 either.** The corrected local date is the earlier one, and a sync keeps the later
@@ -158,93 +142,12 @@ After editing `config.yaml` itself:
 docker compose restart
 ```
 
-## AI mode
-
-```bash
-docker compose --profile ai up -d app-ai
-```
-
-**Name `app-ai` explicitly.** The default `app` service has no profile, so
-leaving the name off starts it too and both fight over the same host port.
-
-That brings up `recommendinator-ai` and, through `depends_on`, the
-`recommendinator-ollama` sidecar. The sidecar pulls its models on first start,
-which runs 5 to 15 minutes for a 4 GB model on a home connection, and `app-ai`
-waits on its health check. Watch the download:
-
-```bash
-docker compose logs -f ollama
-```
-
-The sidecar reads only `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL` and
-`OLLAMA_CONVERSATION_MODEL`. It never sees `config.yaml` or the database, so keep
-those in step with the `ollama.*` settings. **Point the app at a model the
-sidecar never pulled and every Ollama request fails.** To switch models:
-
-```bash
-# in .env beside docker-compose.yml
-OLLAMA_MODEL=llama3.1:8b
-```
-
-```bash
-docker compose --profile ai up -d ollama   # recreate the sidecar and pull
-```
-
-Then set the matching value on the Settings page.
-
-### GPU support (NVIDIA)
-
-Uncomment the `deploy.resources.reservations.devices` block in the `ollama`
-service of `docker-compose.yml`:
-
-```yaml
-ollama:
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: all
-            capabilities: [gpu]
-```
-
-This needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-on the host.
-
-### Model storage
-
-Models persist in the `recommendinator-ollama-data` named volume, mounted at
-`/var/lib/ollama/.ollama`, so they survive restarts and updates.
-
-```bash
-docker volume inspect recommendinator-ollama-data
-```
-
-**Upgrading over a volume the old sidecar filled:** earlier images ran as root
-and kept their models under `/root/.ollama`. The current one runs as the
-unprivileged `ollama` user, which cannot read what root wrote. Chown the volume
-once, with the stack down:
-
-```bash
-docker run --rm --user root --entrypoint chown \
-  -v recommendinator-ollama-data:/models \
-  ghcr.io/therealahall/recommendinator-ollama:latest -R ollama:ollama /models
-```
-
-Skip it and the sidecar cannot read the models already in there. Nothing is
-lost — the chown works just as well after the fact.
-
 ## Updates
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
-
-**Never skip the `pull`.** `app-ai` waits on a health check that ships inside
-the sidecar image. A cached sidecar from before that check carries none, and
-compose fails the `service_healthy` dependency outright rather than waiting — a
-container with no health check can never report healthy.
 
 To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands. A pin outranks the
 `pull`, which then re-fetches the release you named rather than a newer one, so
@@ -314,34 +217,6 @@ APP_PORT=8080 docker compose up -d
 
 The container still listens on `8000` internally.
 
-### Models never download
-
-```bash
-docker compose logs -f ollama
-```
-
-`pull manifest unauthorized` or `connection reset` usually means a typo or a
-missing tag in one of the model variables. The sidecar logs the names it
-resolved. Confirm one by hand:
-
-```bash
-docker compose exec ollama ollama pull mistral:7b
-```
-
-### `app-ai` will not start: `has no healthcheck configured`
-
-The sidecar image in your local cache predates the health check `depends_on`
-waits on. `docker compose pull`, then bring the stack up again. With `IMAGE_TAG`
-pinned to a release older than the check, `pull` re-fetches that same image and
-nothing changes — raise the pin to a release carrying the check first.
-
-### The sidecar dies partway through loading a model
-
-The model is bigger than `OLLAMA_MEMORY_LIMIT` and the kernel killed it. Raise
-the limit past the model's size — `docker compose logs ollama` shows the load
-stopping with no error of its own, which is what an OOM kill looks like from
-inside.
-
 ### `permission denied` writing to `/app/data`
 
 The container runs as non-root. On hosts with a restrictive umask or SELinux,
@@ -362,11 +237,7 @@ it. Chown it as above.
 ## Local development
 
 ```bash
-# default variant
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# AI variant, naming app-ai so the default service is skipped
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
 ```
 
 The dev override builds locally instead of pulling, bind-mounts `./src`,

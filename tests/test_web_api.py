@@ -13,7 +13,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime
 from math import inf, nan
 from pathlib import Path
@@ -40,19 +40,13 @@ from starlette.routing import WebSocketRoute
 
 import src.sources.service
 import src.web.api
-import src.web.chat_api
 from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
-from src.conversation.engine import ConversationEngine
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import SyncErrorCallback, SyncResult
-from src.llm.client import OllamaClient
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.conversation import ConversationChunk
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
@@ -83,9 +77,7 @@ from src.web.enrichment_manager import (
 from src.web.guards import (
     RequiredStorage,
     require_config,
-    require_conversation_engine,
     require_engine,
-    require_memory_manager,
     require_storage,
     writable_config,
 )
@@ -95,9 +87,7 @@ from src.web.state import (
     _config_lock,
     app_state,
     get_config,
-    get_conversation_engine,
     get_engine,
-    get_memory_manager,
     get_storage,
     locked_running_config,
     reload_config,
@@ -128,15 +118,7 @@ from tests.factories import (
 def mock_config():
     """Create a mock configuration."""
     return {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "web": {
             "host": "0.0.0.0",
             "port": 8000,
@@ -165,13 +147,6 @@ def mock_components(mock_config):
     mock_storage_manager.list_source_configs.return_value = []
     mock_storage_manager.get_source_config.return_value = None
 
-    mock_embedding_gen = Mock(spec=EmbeddingGenerator)
-    llm_components = (
-        Mock(spec=OllamaClient),
-        mock_embedding_gen,
-        Mock(spec=RecommendationGenerator),
-    )
-
     mock_engine_instance = Mock(spec=RecommendationEngine)
     mock_engine_instance.storage = mock_storage_manager
 
@@ -182,16 +157,12 @@ def mock_components(mock_config):
         booted_web_app(
             mock_storage_manager,
             mock_config,
-            llm_components,
             engine=mock_engine_instance,
         ) as app,
     ):
-        app_state.embedding_gen = mock_embedding_gen
-
         yield {
             "app": app,
             "storage": mock_storage_manager,
-            "embedding_gen": mock_embedding_gen,
             "engine": mock_engine_instance,
             "migrate_source_labels": mock_migrate_labels,
             "migrate_source_config_plugins": mock_migrate_plugins,
@@ -749,36 +720,12 @@ class TestSecurityHeaders:
         assert client.get("/api/status").headers["X-Frame-Options"] == "DENY"
 
 
-class TestStatusEndpointRegression:
-    """Regression tests for the status endpoint."""
-
-    def test_status_ready_when_ai_disabled_regression(self, client):
-        """Regression: Status should be 'ready' when AI is disabled.
-
-        Bug reported: "System is Initializing" banner displayed perpetually
-        when AI features are disabled.
-        Root cause: The status endpoint required embedding_generator to be
-        non-None for 'ready' status, but it is always None when AI is disabled.
-        Fix: Only require embedding_generator when ai_enabled is true.
-        """
-        # Simulate AI disabled: no embedding_gen, no features config
-        app_state.embedding_gen = None
-        app_state.config = {
-            "features": {"ai_enabled": False},
-        }
-
-        response = client.get("/api/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "ready"
-
-
 class TestStatusRecommendationsConfig:
     """Tests for recommendations_config in the /api/status response."""
 
     def test_status_includes_recommendations_config_defaults(self, client):
         """GET /api/status includes default max_count and default_count."""
-        app_state.config = {"features": {"ai_enabled": False}}
+        app_state.config = {}
 
         response = client.get("/api/status")
         assert response.status_code == 200
@@ -789,7 +736,6 @@ class TestStatusRecommendationsConfig:
     def test_status_reads_recommendations_config_from_config(self, client):
         """GET /api/status surfaces max_count and default_count from config."""
         app_state.config = {
-            "features": {"ai_enabled": False},
             "recommendations": {"max_count": 50, "default_count": 10},
         }
 
@@ -907,9 +853,6 @@ def test_recommendations_invalid_type(client):
 
 def test_complete_endpoint(client, mock_components):
     """Test complete endpoint."""
-    mock_components["embedding_gen"].generate_content_embedding.return_value = [
-        0.1
-    ] * 768
     mock_components["storage"].complete_content_item.return_value = 1
 
     response = client.post(
@@ -957,7 +900,6 @@ def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
     host_timezone("America/Los_Angeles")
     storage = StorageManager(sqlite_path=tmp_path / "complete.db")
     client = _client_on(mock_components["app"], storage)
-    app_state.embedding_gen = None
 
     with patch(
         "src.utils.dates.utc_now", return_value=datetime(2026, 3, 15, 4, 0, tzinfo=UTC)
@@ -997,7 +939,6 @@ def test_complete_endpoint_preserves_an_imported_completion_date_regression(
         )
     )
     client = _client_on(mock_components["app"], storage)
-    app_state.embedding_gen = None
 
     response = client.post(
         "/api/complete",
@@ -1027,7 +968,6 @@ def test_complete_endpoint_stores_a_movie_director_regression(
     """
     storage = StorageManager(sqlite_path=tmp_path / "creator.db")
     client = _client_on(mock_components["app"], storage)
-    app_state.embedding_gen = None
 
     response = client.post(
         "/api/complete",
@@ -1074,9 +1014,6 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
         )
     )
     client = _client_on(mock_components["app"], storage)
-    # No embedding generator: this test is about the SQLite write, and the
-    # endpoint skips embedding generation when there is none.
-    app_state.embedding_gen = None
 
     response = client.post(
         "/api/complete",
@@ -1126,9 +1063,6 @@ def test_update_endpoint(client, mock_components):
             return_value=[],
         ),
     ):
-        mock_components["embedding_gen"].generate_content_embedding.return_value = [
-            0.1
-        ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
         response = client.post("/api/update", json={"source": "goodreads_csv"})
@@ -1296,9 +1230,6 @@ def test_update_endpoint_all_sources(client, mock_components):
             return_value=[],
         ),
     ):
-        mock_components["embedding_gen"].generate_content_embedding.return_value = [
-            0.1
-        ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
         response = client.post("/api/update", json={"source": "all"})
@@ -3963,20 +3894,9 @@ class TestSSEStreamingEndpoint:
     def test_phase1_recommendations_event(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """SSE stream emits a phase 1 'recommendations' event with items.
-
-        Phase 1 carries no blurb because the endpoint asks for none, not
-        because it blanks the field afterwards, so the engine here answers
-        ``use_llm=True`` with a blurb the way the real one does. An empty slot
-        is then evidence about the request the endpoint made.
-        """
+        """SSE stream emits a 'recommendations' event with items."""
         rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.side_effect = (
-            lambda use_llm, **kwargs: [
-                replace(rec, llm_reasoning="blurb from the engine") if use_llm else rec
-            ]
-        )
-        mock_components["engine"].generate_blurb_for_item.return_value = None
+        mock_components["engine"].generate_recommendations.return_value = [rec]
         mock_components["storage"].get_user_preference_config.return_value = None
         mock_components["storage"].get_completed_items.return_value = []
 
@@ -3992,15 +3912,8 @@ class TestSSEStreamingEndpoint:
         items = rec_events[0]["items"]
         assert len(items) == 1
         assert items[0]["title"] == "Test Book"
-        assert items[0]["llm_reasoning"] is None
         assert items[0]["score"] == 0.85
         assert items[0]["score_breakdown"] == {"genre_match": 0.9}
-        assert (
-            mock_components["engine"].generate_recommendations.call_args.kwargs[
-                "use_llm"
-            ]
-            is False
-        )
 
     def test_phase1_tv_season_includes_db_id(
         self, client: TestClient, mock_components: dict
@@ -4022,7 +3935,6 @@ class TestSSEStreamingEndpoint:
         )
         rec = _rec_record(season_item)
         mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["engine"].generate_blurb_for_item.return_value = None
         mock_components["storage"].get_user_preference_config.return_value = None
         mock_components["storage"].get_completed_items.return_value = []
 
@@ -4037,36 +3949,12 @@ class TestSSEStreamingEndpoint:
         items = rec_events[0]["items"]
         assert items[0]["db_id"] == 42
 
-    def test_blurb_events_streamed(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream emits 'blurb' events as LLM generates them."""
-        rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["engine"].generate_blurb_for_item.return_value = (
-            "This is a great match."
-        )
-        mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_completed_items.return_value = []
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        blurb_events = [e for e in events if e["type"] == "blurb"]
-        assert len(blurb_events) == 1
-        assert blurb_events[0]["index"] == 0
-        assert blurb_events[0]["llm_reasoning"] == "This is a great match."
-
     def test_done_event_is_final(
         self, client: TestClient, mock_components: dict
     ) -> None:
         """SSE stream ends with a 'done' event."""
         rec = self._make_recommendation()
         mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["engine"].generate_blurb_for_item.return_value = None
         mock_components["storage"].get_user_preference_config.return_value = None
         mock_components["storage"].get_completed_items.return_value = []
 
@@ -4125,30 +4013,6 @@ class TestSSEStreamingEndpoint:
         assert events[0]["type"] == "recommendations"
         assert events[0]["items"] == []
         assert events[1]["type"] == "done"
-
-    def test_blurb_failure_skips_event(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream does not emit a blurb event when blurb generation raises."""
-        rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["engine"].generate_blurb_for_item.side_effect = RuntimeError(
-            "LLM unavailable"
-        )
-        mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_completed_items.return_value = []
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        blurb_events = [e for e in events if e["type"] == "blurb"]
-        assert len(blurb_events) == 0
-        # Should still get recommendations and done
-        assert events[0]["type"] == "recommendations"
-        assert events[-1]["type"] == "done"
 
 
 def _free_stream_slots() -> int:
@@ -4210,15 +4074,12 @@ class TestStreamConcurrencyCap:
                     assert holding.acquire(timeout=_STALL_TIMEOUT_SECONDS)
 
                 refused = client.get(self.STREAM_URL)
-                refused_chat = client.post("/api/chat", json={"message": "hi"})
                 unrelated = client.get("/api/status")
             finally:
                 release.set()
 
             assert refused.status_code == 503
             assert refused.json()["detail"] == TOO_MANY_STREAMS_DETAIL
-            assert refused_chat.status_code == 503
-            assert refused_chat.json()["detail"] == TOO_MANY_STREAMS_DETAIL
             assert unrelated.status_code == 200
             assert [stream.result().status_code for stream in in_flight] == [
                 200
@@ -4254,7 +4115,7 @@ class TestStreamBudgetIsGivenBack:
     def test_a_stream_that_ends_in_an_error_event_returns_its_slot(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """The failure path is the common one while the LLM is down."""
+        """The failure path is the common one while the library is unreadable."""
         mock_components["engine"].generate_recommendations.side_effect = RuntimeError(
             "engine down"
         )
@@ -4264,23 +4125,6 @@ class TestStreamBudgetIsGivenBack:
             response = client.get(self.STREAM_URL)
             assert response.status_code == 200
             assert _parse_sse_events(response.text)[-1]["type"] == "error"
-
-    def test_a_chat_stream_returns_its_slot_to_the_shared_budget(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """One budget for two endpoints: a chat leak refuses recommendations."""
-        conversation = Mock(spec=ConversationEngine)
-        conversation.process_message.side_effect = lambda **_kwargs: iter(
-            [ConversationChunk(chunk_type="done")]
-        )
-        app_state.conversation_engine = conversation
-        mock_components["engine"].generate_recommendations.return_value = []
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        for _ in range(MAX_CONCURRENT_STREAMS + 1):
-            assert client.post("/api/chat", json={"message": "hi"}).status_code == 200
-
-        assert client.get(self.STREAM_URL).status_code == 200
 
     def test_a_stream_abandoned_before_its_first_chunk_returns_its_slot(
         self, client: TestClient, mock_components: dict
@@ -5084,71 +4928,9 @@ class TestTraktPollDeviceApproval:
         assert response.json()["detail"] == "Storage unavailable"
 
 
-class TestStreamRecommendationsSignalRegression:
-    """Bug reported: streaming blurbs cited ignored/unrated items as taste refs.
-
-    Bug reported: ``/recommendations/stream`` fetched the LLM blurb "taste
-    reference" list via ``get_completed_items(min_rating=None)`` with no
-    ignored/unrated filter, so a streamed "since you enjoyed X" blurb could
-    cite an ignored or completed-but-unrated item.
-    Root cause: ``generate_sse`` called ``get_completed_items`` directly
-    instead of the shared signal accessor.
-    Fix: it now calls ``get_signal_items``, so the blurb generator only ever
-    receives the taste-signal set.
-    """
-
-    def test_blurb_generation_receives_signal_items_regression(
-        self, client, mock_components
-    ) -> None:
-        """The blurb generator is fed the signal set, not the full completed set."""
-        engine = mock_components["engine"]
-        storage = mock_components["storage"]
-
-        candidate = ContentItem(
-            id="cand",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        engine.generate_recommendations.return_value = [
-            Recommendation(item=candidate, score=0.9, reasoning="because sci-fi")
-        ]
-
-        signal_item = ContentItem(
-            id="sig",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        ignored_item = ContentItem(
-            id="ign",
-            title="Ignored Favorite",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            ignored=True,
-        )
-        storage.get_signal_items.return_value = [signal_item]
-        storage.get_completed_items.return_value = [signal_item, ignored_item]
-        storage.get_user_preference_config.return_value = None
-        engine.generate_blurb_for_item.return_value = "a blurb"
-
-        response = client.get("/api/recommendations/stream?type=book&count=1")
-
-        assert response.status_code == 200
-        assert engine.generate_blurb_for_item.called
-        # generate_blurb_for_item(content_type, item, consumed_items, refs)
-        consumed_arg = engine.generate_blurb_for_item.call_args.args[2]
-        consumed_titles = {item.title for item in consumed_arg}
-        assert consumed_titles == {"Dune"}
-        assert "Ignored Favorite" not in consumed_titles
-
-
 # Sensitive and non-sensitive leaves reused across the settings endpoint tests.
 _SETTINGS_SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _SETTINGS_INT_KEY = "recommendations.default_count"
-_SETTINGS_OLLAMA_URL_KEY = "ollama.base_url"
 
 
 class TestSettingsEndpoints:
@@ -5186,7 +4968,7 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["sections"][0]["section"] == "features"
+        assert body["sections"][0]["section"] == "recommendations"
 
         numeric = self._find(body, _SETTINGS_INT_KEY)
         assert numeric["value"] == 5
@@ -5306,41 +5088,18 @@ class TestSettingsEndpoints:
         assert storage.list_settings() == {}
         assert get_allowed_source_roots() == before
 
-    def test_a_non_local_ollama_base_url_is_refused_over_http(
-        self, settings_env
-    ) -> None:
-        """The locality rule is tested at the service; this is the door.
-
-        A host with no ASCII dot reads as one local label until IDNA splits
-        it, which is how this one reached the service.
-        """
-        client, storage, config = settings_env
-        before = config["ollama"]["base_url"]
+    def test_a_malformed_cors_origin_is_refused_over_http(self, settings_env) -> None:
+        """The origin grammar is tested at the service; this is the door."""
+        client, storage, _config = settings_env
 
         response = client.put(
             "/api/settings",
-            json={"updates": {_SETTINGS_OLLAMA_URL_KEY: "http://ollama。example。com"}},
+            json={"updates": {"web.allowed_origins": ["not an origin"]}},
         )
 
         assert response.status_code == 422
-        assert response.json()["detail"]["key"] == _SETTINGS_OLLAMA_URL_KEY
-        assert storage.get_setting(_SETTINGS_OLLAMA_URL_KEY) is None
-        assert config["ollama"]["base_url"] == before
-
-    def test_a_local_ollama_base_url_is_stored_as_it_will_be_dialled(
-        self, settings_env
-    ) -> None:
-        """A trailing slash is a path, and the stored value is what httpx gets."""
-        client, storage, config = settings_env
-
-        response = client.put(
-            "/api/settings",
-            json={"updates": {_SETTINGS_OLLAMA_URL_KEY: " http://ollama:11434/ "}},
-        )
-
-        assert response.status_code == 200
-        assert storage.get_setting(_SETTINGS_OLLAMA_URL_KEY) == "http://ollama:11434"
-        assert config["ollama"]["base_url"] == "http://ollama:11434"
+        assert response.json()["detail"]["key"] == "web.allowed_origins"
+        assert storage.get_setting("web.allowed_origins") is None
 
     def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
         """DELETE /api/settings/{key} on a sensitive key must not 500.
@@ -5532,16 +5291,12 @@ class TestSettingsEndpoints:
 _STORAGE_UNAVAILABLE = "Storage unavailable"
 _CONFIG_UNAVAILABLE = "Config unavailable"
 _ENGINE_UNAVAILABLE = "Recommendation engine unavailable"
-_MEMORY_UNAVAILABLE = "Memory manager unavailable"
-_CHAT_UNAVAILABLE = "Chat is not available. LLM is not configured."
 
 # The 503 message each guarded component produces, keyed by its AppState field.
 _UNAVAILABLE_DETAIL = {
     "storage": _STORAGE_UNAVAILABLE,
     "config": _CONFIG_UNAVAILABLE,
     "engine": _ENGINE_UNAVAILABLE,
-    "memory_manager": _MEMORY_UNAVAILABLE,
-    "conversation_engine": _CHAT_UNAVAILABLE,
 }
 
 
@@ -5752,26 +5507,6 @@ _GUARDED_ENDPOINTS = [
         body={"device_code": "dev1234567"},
     ),
     _Endpoint("DELETE", "/api/trakt/token", ("config", "storage")),
-    _Endpoint("POST", "/api/chat", ("conversation_engine",), body={"message": "hi"}),
-    _Endpoint("POST", "/api/chat/reset", ("conversation_engine",)),
-    _Endpoint("GET", "/api/chat/history", ("memory_manager",)),
-    _Endpoint("GET", "/api/memories", ("memory_manager",)),
-    _Endpoint(
-        "POST", "/api/memories", ("memory_manager",), body={"memory_text": "sci-fi"}
-    ),
-    _Endpoint(
-        "PUT",
-        "/api/memories/{memory_id}",
-        ("memory_manager",),
-        url="/api/memories/1",
-        body={"memory_text": "sci-fi"},
-    ),
-    _Endpoint(
-        "DELETE",
-        "/api/memories/{memory_id}",
-        ("storage",),
-        url="/api/memories/1",
-    ),
     _Endpoint("GET", "/api/profile", ("storage",)),
     _Endpoint("POST", "/api/profile/regenerate", ("storage",)),
 ]
@@ -5857,8 +5592,6 @@ def _clear_dependencies() -> None:
     """
     app_state.config = None
     app_state.engine = None
-    app_state.memory_manager = None
-    app_state.conversation_engine = None
 
 
 class TestDependencyGuards:
@@ -5866,7 +5599,7 @@ class TestDependencyGuards:
 
     An absent component is unavailability, not a server fault, and one server
     state has to read the same way everywhere: a 500 from ``/api/items`` and a
-    503 from ``/api/memories`` described the identical outage two ways.
+    503 from ``/api/profile`` described the identical outage two ways.
     """
 
     @pytest.mark.parametrize("endpoint", _NON_STORAGE_ENDPOINTS, ids=_endpoint_id)
@@ -5987,8 +5720,6 @@ _GUARD_COMPONENT = {
     require_storage: "storage",
     require_config: "config",
     require_engine: "engine",
-    require_memory_manager: "memory_manager",
-    require_conversation_engine: "conversation_engine",
 }
 
 
@@ -6124,26 +5855,17 @@ class TestEveryApiRouteRequiresASession:
         assert response.status_code == 401
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
 
-    @pytest.mark.parametrize(
-        "target",
-        [
-            pytest.param("/api/items", id="api"),
-            pytest.param("/api/memories", id="chat"),
-        ],
-    )
-    def test_a_request_with_an_unknown_cookie_is_401(
-        self, mock_components, target
-    ) -> None:
+    def test_a_request_with_an_unknown_cookie_is_401(self, mock_components) -> None:
         """A dead session is refused like an absent one.
 
-        One route per router: the branch is inside ``require_session``, and the
-        no-cookie sweep proves every route carries it.
+        One route: the branch is inside ``require_session``, and the no-cookie
+        sweep proves every route carries it.
         """
         client = TestClient(
             mock_components["app"], cookies={SESSION_COOKIE: _WRONG_SESSION}
         )
 
-        response = client.get(target)
+        response = client.get("/api/items")
 
         assert response.status_code == 401
 
@@ -6605,25 +6327,6 @@ class TestDependencyGuardPrecedence:
         assert response.status_code == 503
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
-    def test_memory_manager_and_storage_are_separate_dependencies(
-        self, client, mock_components
-    ) -> None:
-        """The memory endpoints split across two components, so both are named.
-
-        ``DELETE /memories/{id}`` goes through storage because ``MemoryManager``
-        has no delete; with storage up it must keep working while the manager is
-        down, and the endpoints that do need the manager must say so.
-        """
-        app_state.memory_manager = None
-        mock_components["storage"].delete_core_memory.return_value = True
-
-        unavailable = client.get("/api/chat/history")
-        served = client.delete("/api/memories/1")
-
-        assert unavailable.status_code == 503
-        assert unavailable.json()["detail"] == _MEMORY_UNAVAILABLE
-        assert served.status_code == 200
-
 
 class TestUnguardedReadsAreOptional:
     """``requires`` proves which components produce a 503; nothing there proves
@@ -6857,13 +6560,6 @@ class TestGuardsResolveOncePerRequest:
             patch("src.web.guards.get_storage", wraps=get_storage) as storage_reads,
             patch("src.web.guards.get_config", wraps=get_config) as config_reads,
             patch("src.web.guards.get_engine", wraps=get_engine) as engine_reads,
-            patch(
-                "src.web.guards.get_memory_manager", wraps=get_memory_manager
-            ) as memory_reads,
-            patch(
-                "src.web.guards.get_conversation_engine",
-                wraps=get_conversation_engine,
-            ) as chat_reads,
         ):
             client.request(endpoint.method, endpoint.target, json=endpoint.body)
 
@@ -6871,8 +6567,6 @@ class TestGuardsResolveOncePerRequest:
             "storage": storage_reads.call_count,
             "config": config_reads.call_count,
             "engine": engine_reads.call_count,
-            "memory_manager": memory_reads.call_count,
-            "conversation_engine": chat_reads.call_count,
         } == {
             component: 1 if component in endpoint.requires else 0
             for component in _UNAVAILABLE_DETAIL
@@ -7118,34 +6812,15 @@ def _asgi_request(
 
 
 class TestStreamingStaysIncremental:
-    """A ``def`` handler returning a ``StreamingResponse`` must still trickle.
-
-    The handler moved to a threadpool worker, and the SSE generator it returns
-    is a plain iterator Starlette drives in one of its own. Materialise that
-    generator at either end and the two-phase protocol collapses: every event
-    arrives at once, after the slowest LLM call, which is the stall this whole
-    change is about rather than a cosmetic difference.
+    """Materialise the SSE generator at either end and every event arrives in
+    one body message, which is the stall this conversion was about.
     """
 
-    def test_phase_one_is_sent_before_a_blurb_has_come_back(
+    def test_each_event_leaves_the_app_as_its_own_body_message(
         self, mock_components
     ) -> None:
-        """The recommendations event leaves the app while a blurb is blocked."""
-        release_blurb = threading.Event()
-        blurb_returned = threading.Event()
-        blurb_pending_at_first_chunk: list[bool] = []
+        """One ASGI body message per ``yield``, not one for the lot."""
         chunks: list[bytes] = []
-
-        def slow_blurb(*_args, **_kwargs):
-            release_blurb.wait(timeout=_STALL_TIMEOUT_SECONDS)
-            blurb_returned.set()
-            return "a blurb"
-
-        def record(body: bytes) -> None:
-            if not chunks:
-                blurb_pending_at_first_chunk.append(not blurb_returned.is_set())
-                release_blurb.set()
-            chunks.append(body)
 
         engine = mock_components["engine"]
         engine.generate_recommendations.return_value = [
@@ -7160,73 +6835,19 @@ class TestStreamingStaysIncremental:
                 reasoning="because",
             )
         ]
-        engine.generate_blurb_for_item.side_effect = slow_blurb
-        engine.storage.get_signal_items.return_value = []
         mock_components["storage"].get_user_preference_config.return_value = None
 
         status = _asgi_request(
             mock_components["app"],
             "GET",
             "/api/recommendations/stream?type=book&count=1",
-            record,
+            chunks.append,
         )
 
         assert status == 200
-        assert blurb_pending_at_first_chunk == [True]
-        # One ASGI body message per ``yield``. Buffered, there would be one for
-        # the lot, which is the other half of what "still streams" means.
         assert [
             json.loads(chunk.removeprefix(b"data: "))["type"] for chunk in chunks
-        ] == [
-            "recommendations",
-            "blurb",
-            "done",
-        ]
-
-    def test_chat_sends_its_first_event_before_the_next_one_exists(
-        self, mock_components
-    ) -> None:
-        """The other stream the stall report named, on the same conversion.
-
-        ``chat`` became plain ``def`` returning the same synchronous-generator
-        ``StreamingResponse``, and the reported freeze was of the chat stream
-        as much as the sync poll — so proving only ``/recommendations/stream``
-        trickles leaves the reported symptom itself unpinned.
-        """
-        release_second = threading.Event()
-        second_returned = threading.Event()
-        second_pending_at_first_chunk: list[bool] = []
-        chunks: list[bytes] = []
-
-        def two_chunks(**_kwargs) -> Iterator[ConversationChunk]:
-            yield ConversationChunk(chunk_type="text", content="first")
-            release_second.wait(timeout=_STALL_TIMEOUT_SECONDS)
-            second_returned.set()
-            yield ConversationChunk(chunk_type="done")
-
-        def record(body: bytes) -> None:
-            if not chunks:
-                second_pending_at_first_chunk.append(not second_returned.is_set())
-                release_second.set()
-            chunks.append(body)
-
-        engine = Mock(spec=ConversationEngine)
-        engine.process_message.side_effect = two_chunks
-        app_state.conversation_engine = engine
-
-        status = _asgi_request(
-            mock_components["app"],
-            "POST",
-            "/api/chat",
-            record,
-            request_body=json.dumps({"message": "hi"}).encode(),
-        )
-
-        assert status == 200
-        assert second_pending_at_first_chunk == [True]
-        assert [
-            json.loads(chunk.removeprefix(b"data: "))["type"] for chunk in chunks
-        ] == ["text", "done"]
+        ] == ["recommendations", "done"]
 
 
 @pytest.fixture()
@@ -8063,37 +7684,25 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
             caplog
         )
 
-    def test_the_blurb_sink_names_it(
+    def test_the_stream_sink_names_it(
         self,
         client: TestClient,
         mock_components: dict,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        item = ContentItem(
-            id="1",
-            db_id=1,
-            title="Test Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        mock_components["engine"].generate_recommendations.return_value = [
-            _rec_record(item)
-        ]
-        mock_components["engine"].generate_blurb_for_item.side_effect = TimeoutError()
+        mock_components["engine"].generate_recommendations.side_effect = TimeoutError()
         mock_components["storage"].get_user_preference_config.return_value = None
 
         with (
-            caplog.at_level(logging.WARNING, logger="src.web.api"),
+            caplog.at_level(logging.ERROR, logger="src.web.api"),
             client.stream(
                 "GET", "/api/recommendations/stream?type=book&count=1"
             ) as response,
         ):
             response.read()
 
-        # The inner sink, not the outer one wrapping the whole generator.
-        assert (
-            "Streaming blurb failed for index 0: TimeoutError: "
-            in _api_log_messages(caplog)
+        assert "Streaming recommendation error: TimeoutError: " in _api_log_messages(
+            caplog
         )
 
     def test_the_completion_sink_names_it(
@@ -8331,9 +7940,6 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
 _LONE_SURROGATES = ["\ud800", "\udcff", "\udfff"]
 
 
-_CHAT_TREE = ast.parse(Path(src.web.chat_api.__file__).read_text(encoding="utf-8"))
-
-
 def _resolved_response_class(route: APIRoute) -> type:
     """Unwrap the placeholder a route keeps when nothing overrode the default."""
     declared = route.response_class
@@ -8474,9 +8080,7 @@ class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
         mock_components["engine"].generate_recommendations.return_value = [
             _rec_record(_item_holding(surrogate))
         ]
-        mock_components["engine"].generate_blurb_for_item.return_value = None
         mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_signal_items.return_value = []
         client = authenticated_client(
             mock_components["app"], raise_server_exceptions=False
         )
@@ -8631,19 +8235,15 @@ class TestTheEncodeIsOneBoundary:
         } <= paths
 
     def test_no_stream_chunk_turns_ensure_ascii_off(self) -> None:
-        """Both SSE endpoints encode their own chunks, and the default escape
-        is the whole reason neither ever had the defect. ``export.py`` may say
-        it: that body goes back through the raw response class.
+        """The SSE endpoint encodes its own chunks, and the default escape is
+        the whole reason it never had the defect. ``export.py`` may say it:
+        that body goes back through the raw response class.
         """
-        reported = _dumps_naming_ensure_ascii(
-            _chunk_dumps_calls(_API_TREE) + _chunk_dumps_calls(_CHAT_TREE)
-        )
-
-        assert reported == set()
+        assert _dumps_naming_ensure_ascii(_chunk_dumps_calls(_API_TREE)) == set()
 
     def test_that_sweep_reaches_the_chunks_it_exists_for(self) -> None:
-        """Either builder moving elsewhere would empty the sweep silently."""
-        assert _chunk_dumps_calls(_API_TREE) and _chunk_dumps_calls(_CHAT_TREE)
+        """The builder moving elsewhere would empty the sweep silently."""
+        assert _chunk_dumps_calls(_API_TREE)
 
 
 class TestOnlyTheAppResponseClassMakesTheBodyEncodable:
@@ -8700,35 +8300,6 @@ class TestOnlyTheAppResponseClassMakesTheBodyEncodable:
         """
         with pytest.raises(ValueError):
             SurrogateSafeJSONResponse({"weight": nan})
-
-
-@pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
-class TestTheChatStreamCarriesALoneSurrogateToo:
-    """The second SSE path. Reported as never having had the defect because
-    ``json.dumps`` escapes to ASCII before Starlette's strict chunk encode —
-    a claim about the chunk builder, so it gets a behavioural test.
-    """
-
-    def test_a_streamed_chat_chunk_holding_one_reaches_the_client(
-        self, surrogate: str, mock_components: dict
-    ) -> None:
-        conversation = Mock(spec=ConversationEngine)
-        conversation.process_message.side_effect = lambda **_kwargs: iter(
-            [
-                ConversationChunk(chunk_type="text", content=f"Dune{surrogate}"),
-                ConversationChunk(chunk_type="done"),
-            ]
-        )
-        app_state.conversation_engine = conversation
-        client = authenticated_client(
-            mock_components["app"], raise_server_exceptions=False
-        )
-
-        response = client.post("/api/chat", json={"message": "hi"})
-
-        assert response.status_code == 200
-        streamed = _parse_sse_events(response.text)
-        assert streamed[0]["content"] == f"Dune{surrogate}"
 
 
 class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:

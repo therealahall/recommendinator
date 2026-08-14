@@ -65,8 +65,7 @@ def migrate_source_labels(
 
     Updates every ``content_items`` row whose ``source`` is the literal
     historical key ``goodreads`` so it reflects the renamed default ingestion
-    block ``goodreads_csv``. ChromaDB does not store the source, so no
-    vector-store change is needed.
+    block ``goodreads_csv``.
 
     This is safe to call on every startup: once the rows are relabeled the
     UPDATE matches nothing and the call is a silent no-op.

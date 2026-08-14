@@ -1,39 +1,24 @@
 """Tests for unified storage manager."""
 
-import logging
-import sys
 import threading
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.manager import StorageManager, stored_embedding_key
-from src.storage.schema import create_user, get_user_by_id, update_user_settings
-from src.storage.vector_db import VectorDB
+from src.storage.manager import StorageManager
+from src.storage.schema import get_user_by_id, update_user_settings
 
 
 @pytest.fixture
 def temp_storage_manager(tmp_path: Path) -> StorageManager:
-    """Create a temporary storage manager for testing (AI disabled)."""
-    sqlite_path = tmp_path / "test.db"
-    return StorageManager(sqlite_path, ai_enabled=False)
+    """Create a temporary storage manager for testing."""
+    return StorageManager(tmp_path / "test.db")
 
 
-@pytest.fixture
-def temp_storage_manager_with_ai(tmp_path: Path) -> StorageManager:
-    """Create a temporary storage manager with AI enabled for testing."""
-    sqlite_path = tmp_path / "test.db"
-    vector_db_path = tmp_path / "vector_db"
-    return StorageManager(sqlite_path, vector_db_path, ai_enabled=True)
-
-
-def test_save_content_item_without_embedding(
-    temp_storage_manager: StorageManager,
-) -> None:
-    """Test saving content item without embedding."""
+def test_save_content_item(temp_storage_manager: StorageManager) -> None:
+    """Test saving a content item."""
     item = ContentItem(
         id="123",
         title="Test Book",
@@ -49,34 +34,6 @@ def test_save_content_item_without_embedding(
     retrieved = temp_storage_manager.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.title == "Test Book"
-
-
-def test_save_content_item_with_embedding(
-    temp_storage_manager_with_ai: StorageManager,
-) -> None:
-    """Test saving content item with embedding (requires AI enabled)."""
-    item = ContentItem(
-        id="123",
-        title="Test Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
-
-    db_id = temp_storage_manager_with_ai.save_content_item(item, embedding=embedding)
-    assert db_id > 0
-
-    # Check SQLite
-    retrieved = temp_storage_manager_with_ai.get_content_item(db_id)
-    assert retrieved is not None
-
-    # Check vector DB
-    retrieved_embedding = temp_storage_manager_with_ai.get_embedding("123")
-    assert retrieved_embedding is not None
-    # Use approximate equality for floating-point comparison
-    assert len(retrieved_embedding) == len(embedding)
-    for r, e in zip(retrieved_embedding, embedding, strict=True):
-        assert abs(r - e) < 1e-6
 
 
 def test_get_unconsumed_items(temp_storage_manager: StorageManager) -> None:
@@ -165,93 +122,8 @@ def test_get_completed_items(temp_storage_manager: StorageManager) -> None:
     assert len(completed) == 3
 
 
-def test_search_similar(temp_storage_manager_with_ai: StorageManager) -> None:
-    """Test searching for similar content (requires AI enabled)."""
-    # Add some items with embeddings
-    items = [
-        ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        for i in range(3)
-    ]
-
-    embeddings = [
-        [0.1, 0.2, 0.3],
-        [0.2, 0.3, 0.4],
-        [0.9, 0.8, 0.7],
-    ]
-
-    for item, embedding in zip(items, embeddings, strict=True):
-        temp_storage_manager_with_ai.save_content_item(item, embedding=embedding)
-
-    # Search for similar
-    query_embedding = [0.15, 0.25, 0.35]
-    results = temp_storage_manager_with_ai.search_similar(query_embedding, n_results=2)
-
-    assert len(results) <= 2
-
-
-def test_search_similar_without_ai_raises(temp_storage_manager: StorageManager) -> None:
-    """Test that search_similar raises when AI is not enabled."""
-    with pytest.raises(RuntimeError, match="ai_enabled=True"):
-        temp_storage_manager.search_similar([0.1, 0.2, 0.3])
-
-
-def test_delete_content_item(temp_storage_manager_with_ai: StorageManager) -> None:
-    """Test deleting content item from both databases."""
-    item = ContentItem(
-        id="123",
-        title="Test Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    embedding = [0.1, 0.2, 0.3]
-
-    db_id = temp_storage_manager_with_ai.save_content_item(item, embedding=embedding)
-    assert temp_storage_manager_with_ai.get_content_item(db_id) is not None
-    assert temp_storage_manager_with_ai.get_embedding("123") is not None
-
-    deleted = temp_storage_manager_with_ai.delete_content_item(db_id)
-    assert deleted is True
-
-    assert temp_storage_manager_with_ai.get_content_item(db_id) is None
-    # Note: ChromaDB may return empty list or None for deleted items
-    assert not temp_storage_manager_with_ai.has_embedding("123")
-
-
-def test_delete_removes_db_keyed_embedding_regression(tmp_path: Path) -> None:
-    """Regression: deleting an id-less item deletes the embedding it wrote.
-
-    Bug reported: ChromaDB accumulated embeddings for items SQLite no longer
-    held, and only ever for items imported without an external id.
-    Root cause: the embedding was written under the synthetic ``db_<db_id>``
-    key while ``delete_content_item`` deleted ``item.id``, which is ``None``
-    for exactly those items, so nothing was deleted.
-    Fix: the write and the delete derive the key the same way.
-    """
-    manager = StorageManager(tmp_path / "delete.db", ai_enabled=False)
-    manager.vector_db = Mock(spec=VectorDB)
-    item = ContentItem(
-        id=None,
-        title="CSV Import",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    db_id = manager.save_content_item(item, embedding=[0.1, 0.2, 0.3])
-    written_key = manager.vector_db.add_embedding.call_args.args[0]
-
-    assert manager.delete_content_item(db_id) is True
-
-    assert written_key == f"db_{db_id}"
-    manager.vector_db.delete_embedding.assert_called_once_with(written_key)
-
-
-def test_delete_content_item_without_ai(temp_storage_manager: StorageManager) -> None:
-    """Test deleting content item when AI is disabled."""
+def test_delete_content_item(temp_storage_manager: StorageManager) -> None:
+    """Test deleting a content item."""
     item = ContentItem(
         id="123",
         title="Test Book",
@@ -286,21 +158,6 @@ def test_count_items(temp_storage_manager: StorageManager) -> None:
 
     assert temp_storage_manager.count_items() == 5
     assert temp_storage_manager.count_items(content_type=ContentType.BOOK) == 3
-
-
-def test_ai_disabled_by_default(tmp_path: Path) -> None:
-    """Test that AI is disabled by default."""
-    sqlite_path = tmp_path / "test.db"
-    manager = StorageManager(sqlite_path)
-    assert manager.ai_enabled is False
-    assert manager.vector_db is None
-
-
-def test_has_embedding_returns_false_when_ai_disabled(
-    temp_storage_manager: StorageManager,
-) -> None:
-    """Test that has_embedding returns False when AI is disabled."""
-    assert temp_storage_manager.has_embedding("nonexistent") is False
 
 
 def test_content_item_with_user_id(temp_storage_manager: StorageManager) -> None:
@@ -444,67 +301,6 @@ def test_merge_preference_config_does_not_clobber_other_settings(
         }
     finally:
         conn.close()
-
-
-def test_chromadb_import_error_disables_ai(tmp_path: Path) -> None:
-    """When chromadb is not installed, ai_enabled is set to False.
-
-    Regression: the non-AI Docker image has no chromadb package. If a user's
-    config has ai_enabled: true, StorageManager must degrade gracefully instead
-    of crashing with ImportError.
-    """
-    sqlite_path = tmp_path / "test.db"
-    vector_db_path = tmp_path / "vector_db"
-
-    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
-        manager = StorageManager(
-            sqlite_path, vector_db_path=vector_db_path, ai_enabled=True
-        )
-
-    assert manager.ai_enabled is False
-    assert manager.vector_db is None
-
-
-def test_chromadb_import_error_logs_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """When chromadb is not installed, a warning with install instructions is logged."""
-    sqlite_path = tmp_path / "test.db"
-    vector_db_path = tmp_path / "vector_db"
-
-    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
-        with caplog.at_level(logging.WARNING, logger="src.storage.manager"):
-            StorageManager(sqlite_path, vector_db_path=vector_db_path, ai_enabled=True)
-
-    assert any(
-        "chromadb is not installed" in message
-        and "uv sync --locked --extra ai" in message
-        for message in caplog.messages
-    )
-
-
-def test_chromadb_import_error_sqlite_still_works(tmp_path: Path) -> None:
-    """SQLite operations continue working after chromadb import failure."""
-    sqlite_path = tmp_path / "test.db"
-    vector_db_path = tmp_path / "vector_db"
-    item = ContentItem(
-        id="import-error-test",
-        title="Test Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    with patch.dict(sys.modules, {"src.storage.vector_db": None}):
-        manager = StorageManager(
-            sqlite_path, vector_db_path=vector_db_path, ai_enabled=True
-        )
-
-    db_id = manager.save_content_item(item)
-    assert db_id > 0
-    retrieved = manager.get_content_item(db_id)
-    assert retrieved is not None
-    assert retrieved.title == "Test Book"
-    assert retrieved.content_type == ContentType.BOOK
 
 
 class TestConcurrentSaveContentItem:
@@ -974,173 +770,3 @@ class TestGetConsumptionItemsRegression:
         assert captured["content_type"] == ContentType.MOVIE
         assert captured["limit"] == 3
         assert captured["include_ignored"] is False
-
-
-class TestGetItemsByEmbeddingKeys:
-    """Resolving vector-DB keys back to the items they were stored for."""
-
-    @staticmethod
-    def _save(
-        manager: StorageManager,
-        item_id: str | None,
-        title: str,
-        ignored: bool = False,
-        content_type: ContentType = ContentType.BOOK,
-    ) -> int:
-        db_id = manager.save_content_item(
-            ContentItem(
-                id=item_id,
-                title=title,
-                content_type=content_type,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-        if ignored:
-            manager.set_item_ignored(db_id, True)
-        return db_id
-
-    def test_returns_empty_for_no_keys(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        assert temp_storage_manager.get_items_by_embedding_keys([]) == {}
-
-    def test_resolves_both_key_forms(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """An external id and a synthetic ``db_`` key resolve in one call."""
-        self._save(temp_storage_manager, "ext-1", "With Id")
-        db_id = self._save(temp_storage_manager, None, "Without Id")
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            ["ext-1", f"db_{db_id}"]
-        )
-
-        assert {key: item.title for key, item in found.items()} == {
-            "ext-1": "With Id",
-            f"db_{db_id}": "Without Id",
-        }
-
-    def test_omits_keys_naming_nothing(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """A stale embedding key is absent rather than raising."""
-        self._save(temp_storage_manager, "ext-1", "With Id")
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            ["ext-1", "gone", "db_9999"]
-        )
-
-        assert list(found) == ["ext-1"]
-
-    def test_omits_a_db_key_only_int_would_read_as_a_row(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """Only a plain run of decimal digits names a row.
-
-        ``int()`` also accepts a sign, surrounding whitespace and PEP 515
-        underscores, none of which ``stored_embedding_key`` ever writes. Each
-        spelling below carries the digits of a row that really exists, and
-        none of them may resolve to it.
-        """
-        db_id = self._save(temp_storage_manager, None, "Without Id")
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            [f"db_+{db_id}", f"db_ {db_id}", f"db_{db_id} "]
-        )
-
-        assert found == {}
-
-    def test_an_external_id_shaped_like_the_synthetic_form_wins(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """A real external id beats the synthetic reading of the same key."""
-        self._save(temp_storage_manager, "db_1", "Awkwardly Named")
-
-        found = temp_storage_manager.get_items_by_embedding_keys(["db_1"])
-
-        assert found["db_1"].title == "Awkwardly Named"
-
-    def test_excludes_ignored_items_when_asked(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """include_ignored=False drops an ignored item under either key form."""
-        self._save(temp_storage_manager, "ext-1", "Ignored With Id", ignored=True)
-        db_id = self._save(
-            temp_storage_manager, None, "Ignored Without Id", ignored=True
-        )
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            ["ext-1", f"db_{db_id}"], include_ignored=False
-        )
-
-        assert found == {}
-
-    def test_does_not_cross_users(self, temp_storage_manager: StorageManager) -> None:
-        """Another user's row is not resolved for the current user's search."""
-        with temp_storage_manager.connection() as conn:
-            second_user_id = create_user(conn, "second")
-        db_id = temp_storage_manager.save_content_item(
-            ContentItem(
-                user_id=second_user_id,
-                id=None,
-                title="Someone Else's Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            ),
-            user_id=second_user_id,
-        )
-
-        assert temp_storage_manager.get_items_by_embedding_keys([f"db_{db_id}"]) == {}
-
-    def test_resolves_an_external_id_within_the_requested_type(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """One external id naming two types resolves to the type asked for."""
-        self._save(temp_storage_manager, "shared", "Dune")
-        self._save(
-            temp_storage_manager, "shared", "Dune", content_type=ContentType.MOVIE
-        )
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            ["shared"], content_type=ContentType.MOVIE
-        )
-
-        assert found["shared"].content_type == ContentType.MOVIE
-
-    def test_omits_a_db_key_of_another_type(
-        self, temp_storage_manager: StorageManager
-    ) -> None:
-        """A ``db_`` key naming a movie is absent from a book lookup."""
-        db_id = self._save(
-            temp_storage_manager, None, "CSV Film", content_type=ContentType.MOVIE
-        )
-
-        found = temp_storage_manager.get_items_by_embedding_keys(
-            [f"db_{db_id}"], content_type=ContentType.BOOK
-        )
-
-        assert found == {}
-
-
-class TestStoredEmbeddingKey:
-    """The vector-DB key an item's own embedding is stored under."""
-
-    @staticmethod
-    def _item(item_id: str | None, db_id: int | None) -> ContentItem:
-        return ContentItem(
-            id=item_id,
-            db_id=db_id,
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-    def test_uses_the_external_id_when_there_is_one(self) -> None:
-        assert stored_embedding_key(self._item("ext-1", 7)) == "ext-1"
-
-    def test_falls_back_to_the_database_row(self) -> None:
-        assert stored_embedding_key(self._item(None, 7)) == "db_7"
-
-    def test_is_none_when_the_item_has_neither(self) -> None:
-        """An item with no row and no id has no embedding of its own."""
-        assert stored_embedding_key(self._item(None, None)) is None

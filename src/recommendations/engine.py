@@ -3,11 +3,9 @@
 import logging
 import random
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import BlurbRequest, RecommendationGenerator
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -15,7 +13,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.identity import candidate_key, library_key
+from src.recommendations.identity import candidate_key
 from src.recommendations.preference_interpreter import (
     InterpretedPreference,
     PatternBasedInterpreter,
@@ -31,18 +29,16 @@ from src.recommendations.scorers import (
     CustomPreferenceScorer,
     Scorer,
     ScoringContext,
-    SemanticSimilarityScorer,
     build_scorers_with_overrides,
 )
 from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
-from src.recommendations.similarity import SimilarityMatcher
 from src.recommendations.variety import (
     PenaltyFraction,
     build_variety_ladder,
     top_penalty_for_preference,
     variety_penalty_for,
 )
-from src.storage.manager import StorageManager, stored_embedding_key
+from src.storage.manager import StorageManager
 from src.utils.series import (
     build_series_tracking,
     expand_tv_shows_to_seasons,
@@ -61,9 +57,6 @@ _T = TypeVar("_T")
 #: A candidate after ranking: the item, its score, and the variety penalty
 #: fraction applied to it (0.0 when the penalty is off or did not bite).
 _RankedCandidate = tuple[ContentItem, float, float]
-
-#: Upper bound on the hits one vector-similarity search may return.
-_MAX_SIMILARITY_RESULTS = 500
 
 
 def _collapse_duplicate_db_ids(
@@ -161,11 +154,7 @@ class RecommendationEngine:
     """Main recommendation engine.
 
     The scoring pipeline **always** runs and its weight-normalised aggregate
-    *is* the score clients display: there is no second combination stage.  When
-    an ``embedding_generator`` is provided the engine pre-computes
-    vector-similarity scores and adds a ``SemanticSimilarityScorer`` to the
-    pipeline so that AI scores participate in weighted aggregation alongside
-    all other scorers.
+    *is* the score clients display: there is no second combination stage.
 
     When a *config_provider* is supplied, the ``recommendations`` knobs
     (:attr:`pipeline` weights, :attr:`preference_analyzer` and
@@ -188,11 +177,8 @@ class RecommendationEngine:
     def __init__(
         self,
         storage_manager: StorageManager,
-        embedding_generator: EmbeddingGenerator | None = None,
-        recommendation_generator: RecommendationGenerator | None = None,
         min_rating: int = 4,
         scorers: list[Scorer] | None = None,
-        semantic_similarity_weight: float = 1.5,
         custom_preference_weight: float = 1.0,
         rng: random.Random | None = None,
         config_provider: Callable[[], dict[str, Any] | None] | None = None,
@@ -201,14 +187,9 @@ class RecommendationEngine:
 
         Args:
             storage_manager: Storage manager for accessing data.
-            embedding_generator: Optional generator for creating embeddings.
-                When ``None`` the engine operates in pure non-AI mode.
-            recommendation_generator: Optional LLM-based recommendation generator.
             min_rating: Minimum rating to consider for preferences.
             scorers: Scorer instances for the pipeline.  Defaults to
                 :data:`DEFAULT_SCORERS`.
-            semantic_similarity_weight: Weight for the SemanticSimilarityScorer
-                when AI is enabled.
             custom_preference_weight: Weight for the CustomPreferenceScorer,
                 which is built per call from the user's custom rules.
             rng: Randomness used to shuffle equally relevant reference items.
@@ -220,23 +201,10 @@ class RecommendationEngine:
         """
         self.storage = storage_manager
         self.rng = rng if rng is not None else _DEFAULT_RNG
-        self.embedding_gen = embedding_generator
-        self.llm_generator = recommendation_generator
         self._config_provider = config_provider
         self._base_min_rating = min_rating
         self._base_custom_preference_weight = custom_preference_weight
         self._base_scorers = list(scorers if scorers is not None else DEFAULT_SCORERS)
-        if embedding_generator is not None:
-            self._base_scorers.append(
-                SemanticSimilarityScorer(weight=semantic_similarity_weight)
-            )
-
-        # Only create SimilarityMatcher when embeddings are available
-        self.similarity_matcher: SimilarityMatcher | None = None
-        if embedding_generator is not None:
-            self.similarity_matcher = SimilarityMatcher(
-                storage_manager, embedding_generator
-            )
 
     @property
     def pipeline(self) -> ScoringPipeline:
@@ -293,7 +261,6 @@ class RecommendationEngine:
         self,
         content_type: ContentType,
         count: int = 5,
-        use_llm: bool = False,
         user_preference_config: UserPreferenceConfig | None = None,
     ) -> list[Recommendation]:
         """Generate recommendations for a content type.
@@ -302,13 +269,9 @@ class RecommendationEngine:
         cross-content-type recommendations. For example, if you've read
         sci-fi books, it may recommend sci-fi TV shows or games.
 
-        The scoring pipeline always runs.  When ``embedding_generator``
-        is set, vector-similarity search supplements the pipeline scores.
-
         Args:
             content_type: Type of content to recommend.
             count: Number of recommendations to generate.
-            use_llm: Whether to use LLM for final recommendation generation.
             user_preference_config: Optional per-user preference config.
                 When provided, scorer weights are overridden for this call.
 
@@ -415,11 +378,6 @@ class RecommendationEngine:
             content_type.value,
         )
 
-        # Pre-compute similarity scores (AI path)
-        similarity_scores = self._compute_similarity_scores(
-            all_consumed_items, content_type, len(unconsumed_items)
-        )
-
         # One index over the signal set answers both the adaptation lookup
         # below and the reference lookup after filtering, so neither re-derives
         # a consumed item's title, genres, creator or series per candidate.
@@ -442,7 +400,6 @@ class RecommendationEngine:
             series_tracking=series_tracking,
             content_type=content_type,
             all_unconsumed_items=unconsumed_items,
-            similarity_scores=similarity_scores,
             content_length_preferences=content_length_preferences,
             adaptations=adaptations,
         )
@@ -453,7 +410,6 @@ class RecommendationEngine:
             interpreted_prefs,
             unconsumed_items,
             has_adaptations=bool(adaptations),
-            has_similarity_scores=bool(similarity_scores),
         )
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
@@ -536,17 +492,6 @@ class RecommendationEngine:
             preferences,
         )
 
-        # Optionally enhance with LLM reasoning
-        if use_llm:
-            recommendations = self._enhance_with_llm(
-                recommendations,
-                content_type,
-                all_consumed_items,
-                unconsumed_items,
-                count,
-                series_tracking,
-            )
-
         # Final fallback
         if not recommendations and unconsumed_items:
             logger.info("Using fallback: returning unconsumed items as recommendations")
@@ -559,69 +504,6 @@ class RecommendationEngine:
     # ------------------------------------------------------------------
     # Extracted steps from generate_recommendations
     # ------------------------------------------------------------------
-
-    def _compute_similarity_scores(
-        self,
-        all_consumed_items: list[ContentItem],
-        content_type: ContentType,
-        candidate_count: int,
-    ) -> dict[str, float]:
-        """Pre-compute vector-similarity scores for candidate items.
-
-        Selects reference items from highly-rated and low-rated consumed
-        content, then searches for similar unconsumed items via embeddings.
-
-        Args:
-            all_consumed_items: The taste-signal set across content types
-                (completed, rated, not ignored).
-            content_type: Target content type for recommendations.
-            candidate_count: Upper bound on similarity search results,
-                set to the number of unconsumed candidates so no candidate
-                is missed. Capped at _MAX_SIMILARITY_RESULTS internally.
-
-        Returns:
-            Mapping of library key to similarity score, so season-level
-            candidates share their show's score. Empty when AI is disabled.
-        """
-        if self.similarity_matcher is None:
-            return {}
-
-        # all_consumed_items is the signal set, so every item is already rated.
-        sorted_by_rating = sorted(
-            all_consumed_items, key=lambda item: item.rating or 0, reverse=True
-        )
-        high_rated_refs = [
-            item
-            for item in sorted_by_rating
-            if item.rating is not None and item.rating >= 4
-        ][:5]
-        low_rated_refs = [
-            item
-            for item in sorted_by_rating
-            if item.rating is not None and item.rating < 3
-        ][:3]
-
-        reference_items = high_rated_refs + low_rated_refs
-        if not reference_items:
-            reference_items = all_consumed_items[:5]
-
-        # The search returns embedding keys, so the exclusions must be keys
-        # too: an id-less consumed item is excluded by its row.
-        exclude_keys = [
-            key for item in all_consumed_items if (key := stored_embedding_key(item))
-        ]
-
-        capped_limit = min(candidate_count, _MAX_SIMILARITY_RESULTS)
-
-        similar_candidates = self.similarity_matcher.find_similar(
-            reference_items=reference_items,
-            content_type=content_type,
-            exclude_ids=exclude_keys,
-            limit=capped_limit,
-            include_ignored=False,
-        )
-
-        return {library_key(item): sim_score for item, sim_score in similar_candidates}
 
     def _apply_series_filtering(
         self,
@@ -734,7 +616,6 @@ class RecommendationEngine:
         unconsumed_items: list[ContentItem],
         *,
         has_adaptations: bool,
-        has_similarity_scores: bool,
     ) -> ScoringPipeline:
         """Assemble the pipeline for one call.
 
@@ -749,9 +630,6 @@ class RecommendationEngine:
             interpreted_prefs: Interpreted custom rules, when the user has any.
             unconsumed_items: The candidates about to be scored.
             has_adaptations: Whether any candidate adapts consumed content.
-            has_similarity_scores: Whether the vector search scored anything.
-                It finds nothing on a fresh AI install, on a reset vector store
-                and when every reference embedding fails.
 
         Returns:
             The pipeline to score this call's candidates with.
@@ -781,7 +659,6 @@ class RecommendationEngine:
             for scorer_class, has_signal in (
                 (ContinuationScorer, has_active),
                 (AdaptationScorer, has_adaptations),
-                (SemanticSimilarityScorer, has_similarity_scores),
             )
             if not has_signal
         )
@@ -901,144 +778,6 @@ class RecommendationEngine:
             )
 
         return recommendations
-
-    def _enhance_with_llm(
-        self,
-        recommendations: list[Recommendation],
-        content_type: ContentType,
-        all_consumed_items: list[ContentItem],
-        unconsumed_items: list[ContentItem],
-        count: int,
-        series_tracking: dict[str, set[float]],
-    ) -> list[Recommendation]:
-        """Enhance recommendations with LLM-generated reasoning.
-
-        When the pipeline has produced recommendations, the LLM adds natural
-        language reasoning to each.  When the pipeline is empty, the LLM
-        generates its own recommendations with series order enforcement.
-
-        Args:
-            recommendations: Current recommendations to enhance (may be empty).
-            content_type: Target content type.
-            all_consumed_items: All consumed items for LLM context.
-            unconsumed_items: Unconsumed items for LLM-only fallback.
-            count: Requested recommendation count.
-            series_tracking: Series name to consumed item numbers.
-
-        Returns:
-            The enhanced recommendations, or whatever was enhanced before the
-            LLM failed — a failure mid-way keeps the blurbs already collected.
-        """
-        if not self.llm_generator:
-            return recommendations
-
-        # LLM blurbs and fallback recs cite consumed items as taste context;
-        # in-progress items must not appear there for the same reason they
-        # are filtered from contributing references and adaptations.
-        completed_consumed_items = [
-            item
-            for item in all_consumed_items
-            if item.status != ConsumptionStatus.CURRENTLY_CONSUMING
-        ]
-
-        enhanced = list(recommendations)
-        try:
-            if enhanced:
-                blurb_requests = [
-                    BlurbRequest(
-                        key=candidate_key(rec.item),
-                        item=rec.item,
-                        references=list(rec.contributing_items),
-                    )
-                    for rec in enhanced
-                ]
-                # One LLM call per item, concurrent — returns {key: blurb}
-                blurbs = self.llm_generator.generate_blurbs_per_item(
-                    content_type=content_type,
-                    blurb_requests=blurb_requests,
-                    consumed_items=completed_consumed_items,
-                )
-                # Direct assignment by candidate key — no title matching needed
-                enhanced_count = 0
-                for index, rec in enumerate(enhanced):
-                    blurb = blurbs.get(candidate_key(rec.item), "")
-                    if blurb:
-                        enhanced[index] = replace(rec, llm_reasoning=blurb)
-                        enhanced_count += 1
-                logger.info(
-                    "LLM blurbs: %d/%d recommendations enhanced",
-                    enhanced_count,
-                    len(enhanced),
-                )
-            else:
-                logger.info("Using LLM-only recommendations")
-                llm_recs = self.llm_generator.generate_recommendations(
-                    content_type=content_type,
-                    consumed_items=completed_consumed_items,
-                    unconsumed_items=unconsumed_items,
-                    count=count,
-                )
-                for llm_rec in llm_recs:
-                    matching_item = None
-                    for item in unconsumed_items:
-                        if item.title == llm_rec.get("title") and (
-                            not llm_rec.get("author")
-                            or item.author == llm_rec.get("author")
-                        ):
-                            matching_item = item
-                            break
-
-                    if matching_item and should_recommend_item(
-                        matching_item,
-                        series_tracking,
-                        unconsumed_items=unconsumed_items,
-                    ):
-                        enhanced.append(
-                            Recommendation(
-                                item=matching_item,
-                                score=0.8,
-                                reasoning=llm_rec.get("reasoning", ""),
-                                llm_reasoning=llm_rec.get("reasoning", ""),
-                            )
-                        )
-        except Exception as error:
-            logger.warning("LLM recommendation generation failed: %s", error)
-
-        return enhanced
-
-    def generate_blurb_for_item(
-        self,
-        content_type: ContentType,
-        item: ContentItem,
-        consumed_items: list[ContentItem],
-        references: list[ContentItem] | None = None,
-    ) -> str | None:
-        """Generate a single LLM blurb for one recommendation item.
-
-        Public method for the streaming endpoint to call per-item.
-
-        Args:
-            content_type: Target content type
-            item: The item to generate a blurb for
-            consumed_items: User's consumed items for taste context
-            references: Contributing items for this recommendation
-
-        Returns:
-            Blurb text, or ``None`` if LLM is unavailable or fails
-        """
-        if not self.llm_generator:
-            return None
-        try:
-            blurb = self.llm_generator.generate_single_blurb(
-                content_type=content_type,
-                item=item,
-                consumed_items=consumed_items,
-                references=references,
-            )
-            return blurb
-        except Exception as error:
-            logger.warning("Blurb generation failed for %r: %s", item.title, error)
-            return None
 
     def _build_fallback_recommendations(
         self,

@@ -167,7 +167,6 @@ class TestRecommendJsonOutput:
                 item=_book("Book One", db_id=42),
                 score=0.9,
                 reasoning="Great match",
-                llm_reasoning="LLM says so",
                 score_breakdown={"genre": 0.5, "theme": 0.4},
             )
         )
@@ -188,12 +187,10 @@ class TestRecommendJsonOutput:
             "author",
             "score",
             "reasoning",
-            "llm_reasoning",
             "score_breakdown",
             "variety_penalty",
         }
         assert rec["db_id"] == 42
-        assert rec["llm_reasoning"] == "LLM says so"
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
 
     def test_zero_results_emit_an_empty_array_and_no_prose(self) -> None:
@@ -299,7 +296,6 @@ class TestRecommendProgressLineOnStdoutRegression:
                 "author": "Dan Simmons",
                 "score": 0.9,
                 "reasoning": "Great match",
-                "llm_reasoning": None,
                 "score_breakdown": {},
                 "variety_penalty": 0.0,
             }
@@ -368,8 +364,8 @@ class TestRecommendTableOutput:
         ]
         assert "None" not in result.stdout
 
-    def test_the_blurb_is_what_the_reasoning_column_shows(self) -> None:
-        """An LLM blurb replaces the pipeline line, as the web card does."""
+    def test_the_reasoning_column_shows_the_pipeline_line(self) -> None:
+        """The column shows the pipeline text, never None."""
         result = _invoke_recommend_with_engine(
             _piping_runner(),
             ["recommend", "--type", "book"],
@@ -378,28 +374,6 @@ class TestRecommendTableOutput:
                     item=_book("Hyperion"),
                     score=0.5,
                     reasoning="Pipeline line",
-                    llm_reasoning="Big ideas, bigger prose.",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "Author A", "0.5", "Big ideas, bigger prose."]
-        ]
-        assert "Pipeline line" not in result.stdout
-
-    def test_no_blurb_falls_back_to_the_pipeline_line(self) -> None:
-        """Without one the column shows the pipeline text, never None."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Hyperion"),
-                    score=0.5,
-                    reasoning="Pipeline line",
-                    llm_reasoning=None,
                 )
             ),
         )
@@ -409,30 +383,6 @@ class TestRecommendTableOutput:
             ["1", "Hyperion", "Author A", "0.5", "Pipeline line"]
         ]
         assert "None" not in result.stdout
-
-    def test_a_blank_blurb_falls_back_to_the_pipeline_line(self) -> None:
-        """Whitespace is not a blurb, which is the web card's rule too.
-
-        A model that answered with a newline alone would otherwise blank the
-        column, losing the pipeline line the run does have.
-        """
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Hyperion"),
-                    score=0.5,
-                    reasoning="Pipeline line",
-                    llm_reasoning="  \n  ",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "Author A", "0.5", "Pipeline line"]
-        ]
 
     def test_a_non_ascii_title_renders_intact(self) -> None:
         """Titles are not restricted to the CLI's own alphabet."""
@@ -543,37 +493,3 @@ class TestRecommendCreatorColumnRegression:
         assert "Director" in result.output
         assert "Author" not in result.output
         assert "Villeneuve" in result.output
-
-
-class TestRecommendLlmFlag:
-    """Tests for --use-llm/--no-use-llm flag behavior."""
-
-    def test_no_use_llm_disables_llm(self, cli_runner: CliRunner) -> None:
-        """--no-use-llm forwards use_llm=False to the engine."""
-        mock_engine = MagicMock(spec=RecommendationEngine)
-        mock_engine.generate_recommendations.return_value = []
-
-        result = _invoke_recommend_with_engine(
-            cli_runner,
-            ["recommend", "--type", "video_game", "--no-use-llm"],
-            mock_engine,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_engine.generate_recommendations.call_args[1]
-        assert call_kwargs["use_llm"] is False
-
-    def test_default_uses_llm(self, cli_runner: CliRunner) -> None:
-        """With no flag specified, use_llm defaults to True (matches web API)."""
-        mock_engine = MagicMock(spec=RecommendationEngine)
-        mock_engine.generate_recommendations.return_value = []
-
-        result = _invoke_recommend_with_engine(
-            cli_runner,
-            ["recommend", "--type", "video_game"],
-            mock_engine,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_engine.generate_recommendations.call_args[1]
-        assert call_kwargs["use_llm"] is True

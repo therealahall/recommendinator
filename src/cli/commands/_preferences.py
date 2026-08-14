@@ -13,10 +13,7 @@ from src.models.user_preferences import (
     PreferenceValidationError,
     UserPreferenceConfig,
 )
-from src.recommendations.preference_interpreter import (
-    LLMPreferenceInterpreter,
-    PatternBasedInterpreter,
-)
+from src.recommendations.preference_interpreter import PatternBasedInterpreter
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.storage.manager import StorageManager, UnknownUserError
 from src.utils.text import sanitize_rule_text
@@ -380,42 +377,15 @@ def custom_rules_clear(ctx: click.Context, user_id: int, yes: bool) -> None:
 
 @custom_rules.command("interpret")
 @click.argument("rule_text")
-@click.option(
-    "--use-llm",
-    is_flag=True,
-    help="Use LLM for interpretation (requires AI to be enabled)",
-)
 @click.pass_context
-def custom_rules_interpret(ctx: click.Context, rule_text: str, use_llm: bool) -> None:
+def custom_rules_interpret(ctx: click.Context, rule_text: str) -> None:
     """Interpret a custom rule and show the parsed result.
 
     RULE_TEXT is the natural language rule to interpret.
 
     This command shows how the system would interpret a rule without saving it.
     """
-    if use_llm:
-        # Check if LLM is available
-        llm_client = ctx.obj.get("llm_client")
-        if llm_client is None:
-            click.echo(
-                "Warning: LLM not available, falling back to pattern-based interpreter",
-                err=True,
-            )
-            use_llm = False
-
-    if use_llm:
-        llm_client = ctx.obj["llm_client"]
-        storage = ctx.obj["storage"]
-        llm_interpreter = LLMPreferenceInterpreter(
-            ollama_client=llm_client,
-            storage_manager=storage,
-        )
-        click.echo("Using LLM interpreter...", err=True)
-        result = llm_interpreter.interpret(rule_text)
-    else:
-        pattern_interpreter = PatternBasedInterpreter()
-        click.echo("Using pattern-based interpreter...", err=True)
-        result = pattern_interpreter.interpret(rule_text)
+    result = PatternBasedInterpreter().interpret(rule_text)
 
     # The interpreter sanitized it on the way in, so this is the text the
     # parse below was actually run against.

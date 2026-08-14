@@ -11,8 +11,8 @@ type SecretProps = Partial<InstanceType<typeof SettingSecret>['$props']>
 
 function secret(overrides: Partial<SettingViewSecret> = {}): SettingViewSecret {
   return {
+    // A real registry secret leaf, so the fixture matches what the API serves.
     key: 'enrichment.providers.tmdb.api_key',
-    // A real registry secret leaf: `llm.api_key` never existed in the registry.
     section: 'enrichment',
     label: 'TMDB API key',
     help: 'Used to reach the provider',

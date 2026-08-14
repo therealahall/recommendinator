@@ -85,7 +85,6 @@ async function onSave(dbId: number, data: ItemEditRequest) {
         :key="rec.db_id ?? index"
         :rec="rec"
         :rank="index + 1"
-        :streaming="recs.streaming"
         @ignore="recs.ignoreItem($event)"
         @complete="onComplete"
       />

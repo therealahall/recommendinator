@@ -13,8 +13,6 @@ from click.testing import CliRunner
 from src.cli.commands import _update
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.storage.global_secrets import GLOBAL_SECRET_USER_ID
 from src.storage.manager import StorageManager
@@ -48,14 +46,6 @@ def test_non_update_command_runs_every_source_migration() -> None:
     with (
         patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=mock_storage),
-        patch(
-            "src.cli.main.create_llm_components",
-            return_value=(
-                None,
-                MagicMock(spec=EmbeddingGenerator),
-                MagicMock(spec=RecommendationGenerator),
-            ),
-        ),
         patch(
             "src.cli.main.create_recommendation_engine",
             return_value=MagicMock(spec=RecommendationEngine),
@@ -128,14 +118,6 @@ def test_update_does_not_double_invoke_source_migrations(
     with (
         patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=storage),
-        patch(
-            "src.cli.main.create_llm_components",
-            return_value=(
-                None,
-                MagicMock(spec=EmbeddingGenerator),
-                MagicMock(spec=RecommendationGenerator),
-            ),
-        ),
         patch(
             "src.cli.main.create_recommendation_engine",
             return_value=MagicMock(spec=RecommendationEngine),
@@ -235,14 +217,6 @@ class TestUpdateDbOnlySourceRegression:
         with (
             patch("src.cli.main.load_config", return_value=config),
             patch("src.cli.main.create_storage_manager", return_value=storage),
-            patch(
-                "src.cli.main.create_llm_components",
-                return_value=(
-                    None,
-                    MagicMock(spec=EmbeddingGenerator),
-                    MagicMock(spec=RecommendationGenerator),
-                ),
-            ),
             patch(
                 "src.cli.main.create_recommendation_engine",
                 return_value=MagicMock(spec=RecommendationEngine),
@@ -370,7 +344,6 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     with (
         patch("src.cli.main.load_config", return_value=config),
         patch("src.cli.main.create_storage_manager", return_value=storage),
-        patch("src.cli.main.create_llm_components", return_value=(None, None, None)),
         patch("src.cli.main.create_recommendation_engine"),
     ):
         result = runner.invoke(cli, ["status"])
@@ -403,9 +376,6 @@ class TestCliBootstrapFailures:
             patch("src.cli.main.migrate_config_settings"),
             patch("src.cli.main.migrate_config_credentials"),
             patch("src.cli.main.migrate_config_secrets"),
-            patch(
-                "src.cli.main.create_llm_components", return_value=(None, None, None)
-            ),
             patch("src.cli.main.create_recommendation_engine"),
             patch("src.cli.main.migrate_source_labels") as spy_labels,
             patch("src.cli.main.migrate_source_config_plugins") as spy_plugins,
@@ -440,21 +410,17 @@ class TestCliBootstrapFailures:
                 "OperationalError: no such table: settings",
             ),
             (
-                "create_llm_components",
-                ImportError("No module named 'chromadb'"),
-                "ImportError: No module named 'chromadb'",
+                "create_recommendation_engine",
+                ValueError("bad scorer weight"),
+                "ValueError: bad scorer weight",
             ),
         ],
-        ids=["storage", "settings-migration", "llm-components"],
+        ids=["storage", "settings-migration", "engine"],
     )
     def test_a_component_failure_exits_one_naming_the_fault(
         self, patched: str, error: Exception, rendered: str
     ) -> None:
-        """The migration hooks are inside the guard, not beside it.
-
-        ``create_llm_components`` gets its own case: it is the import the
-        non-AI image does not ship.
-        """
+        """The migration hooks are inside the guard, not beside it."""
         result, _, _ = self._boot_failing_at(patched, error)
 
         assert result.exit_code == 1
@@ -470,7 +436,7 @@ class TestCliBootstrapFailures:
         token = "sk-live-9f3c2a"
 
         result, _, _ = self._boot_failing_at(
-            "create_llm_components",
+            "create_recommendation_engine",
             requests.ConnectionError(
                 f"HTTPConnectionPool: /api/tags?api_key={token} refused"
             ),

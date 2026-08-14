@@ -140,7 +140,7 @@ class TestEnrichmentStatus:
 
         ``TestEnrichmentStatusApiKeyScrubbingRegression`` pins the manager end.
         """
-        storage = StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
         save_movie(storage)
         registry = EnrichmentRegistry()
         registry._discovered = True

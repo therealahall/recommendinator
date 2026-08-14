@@ -135,17 +135,17 @@ class TestStorageManagerSettings:
         the null-valued leaf is only observable via list_settings — which the
         config overlay relies on to apply a deliberately-nulled leaf.
         """
-        storage.set_setting("ollama.conversation_model", None)
+        storage.set_setting("logging.file", None)
 
-        assert storage.get_setting("ollama.conversation_model") is None
-        assert storage.list_settings() == {"ollama.conversation_model": None}
+        assert storage.get_setting("logging.file") is None
+        assert storage.list_settings() == {"logging.file": None}
 
     def test_falsy_values_round_trip(self, storage: StorageManager) -> None:
         """Falsy scalars (False, 0) round-trip without being lost or coerced."""
-        storage.set_setting("features.ai_enabled", False)
+        storage.set_setting("enrichment.enabled", False)
         storage.set_setting("sync.max_workers", 0)
 
-        assert storage.get_setting("features.ai_enabled") is False
+        assert storage.get_setting("enrichment.enabled") is False
         assert storage.get_setting("sync.max_workers") == 0
 
     def test_delete_setting_falls_back_to_missing(

@@ -197,7 +197,7 @@ store access, prefer props and events.
 
 **Organisms** are self-contained regions of the page, composed of molecules and
 atoms, and MAY access stores directly. They are the integration layer between
-data and presentation: `AppSidebar`, `LibraryFilters`, `MemoryPanel`.
+data and presentation: `AppSidebar`, `LibraryFilters`, `ProfilePanel`.
 
 **Pages** are route-level orchestrators wired through `router/index.ts`. They
 compose organisms, handle route lifecycle (`onMounted`, `watch` on route params

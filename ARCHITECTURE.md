@@ -3,8 +3,8 @@
 ## Overview
 
 Recommendinator ingests from multiple sources and ranks recommendations through a
-scoring pipeline. AI is optional. When enabled, a local LLM via Ollama adds
-semantic similarity, natural language explanations, and chat.
+scoring pipeline. Everything runs on the local machine, and every score is
+arithmetic a reader can follow back to the library it came from.
 
 ## System Components
 
@@ -42,8 +42,7 @@ Parses and normalizes data from external sources.
 
 ### 2. Storage (`src/storage/`)
 
-SQLite holds everything structured. ChromaDB holds vector embeddings and is
-initialized only when AI is enabled.
+SQLite holds everything.
 
 | Table | Holds |
 |-------|-------|
@@ -54,7 +53,7 @@ initialized only when AI is enabled.
 | `source_configs` | Non-sensitive per-source config |
 | `settings` | Global config, dotted leaf key to JSON value, only what a user set |
 | `enrichment_status` | Enrichment tracking |
-| `core_memories`, `conversation_messages`, `preference_profiles` | Chat |
+| `preference_profiles` | The generated per-user taste profile |
 
 #### User-owned fields
 
@@ -88,13 +87,13 @@ at export time. Storage cannot tell a stated `false` from a plugin's defaulted
 The three user-action doors overwrite freely and write only what the caller
 supplied:
 
-- **`complete_content_item`** backs the `complete` CLI command,
-  `POST /api/complete` and chat's `mark_completed`. It finds or creates the row
-  and applies rating, review, status and date in one transaction. `status` is
-  written outright rather than resolved forward. Only chat can name a date, and a
-  named date is written as given even when it precedes the stored one.
-- **`update_item_from_ui`** backs the web edit modal, `library edit` and the chat
-  tool executor. "Not supplied" is spelled three ways. `status` is required.
+- **`complete_content_item`** backs the `complete` CLI command and
+  `POST /api/complete`. It finds or creates the row and applies rating, review,
+  status and date in one transaction. `status` is written outright rather than
+  resolved forward. A named date is written as given even when it precedes the
+  stored one.
+- **`update_item_from_ui`** backs the web edit modal and `library edit`.
+  "Not supplied" is spelled three ways. `status` is required.
   `rating` and `review` use the `UNSET` sentinel, because `None` has to mean
   clear. `seasons_watched`, `genres`, `tags` and `description` use `None`, so for
   those the *empty* value is the clear: `[]` or `""`. `PATCH /api/items/{id}` can
@@ -162,8 +161,8 @@ Messages:
 
 #### Global configuration precedence
 
-**const default < YAML < database**, for `features`, `ollama`,
-`recommendations`, `conversation`, `sync`, `enrichment`, `web` and `logging`.
+**const default < YAML < database**, for `recommendations`, `sync`,
+`enrichment`, `web` and `logging`.
 
 1. Const defaults for every in-scope leaf, declared in `src/settings/metadata.py`
    (`default_config()`).
@@ -283,29 +282,9 @@ parallel sync executor. `StorageManager.save_content_item`,
 would otherwise each write a `users.settings` blob read before the other
 landed, losing one wholesale.
 
-### 3. LLM (`src/llm/`), optional
+### 3. Recommendations (`src/recommendations/`)
 
-Talks to Ollama when AI is enabled, providing embeddings for similarity, natural
-language explanations, and preference rule interpretation.
-
-Flags: `features.ai_enabled` is the master toggle, and both
-`features.embeddings_enabled` and `features.llm_reasoning_enabled` require it.
-
-**All user text is sanitized before it reaches a prompt** (`src/utils/text.py`),
-against prompt injection:
-
-- `sanitize_prompt_text` strips newlines, control characters and injection
-  markers, capping at 100 chars
-- `sanitize_prompt_text_long` does the same with a configurable cap, for
-  conversation history
-- `sanitize_prompt_text_with_truncation` returns `(text, was_truncated)`, so a
-  caller appends an ellipsis only on real truncation
-- `_sanitize_genre` uses a stricter allowlist, capping at 50 chars
-
-### 4. Recommendations (`src/recommendations/`)
-
-A unified scoring pipeline that always runs, across content types. AI is an
-enhancement on top of it.
+A unified scoring pipeline that always runs, across content types.
 
 ```
 RecommendationEngine
@@ -320,12 +299,9 @@ RecommendationEngine
   |     |-- SeriesAffinityScorer    well-rated franchises (avg >= 4)
   |     |-- AdaptationScorer        cross-media adaptations (dropped when none exist)
   |     |-- [CustomPreferenceScorer]    when the user has natural language rules
-  |     |-- [SemanticSimilarityScorer]  when AI enabled and the search found
-  |     |                                something (dropped otherwise)
   |
   |-- UserPreferenceConfig (per-user weight overrides)
   |-- Variety penalty (variety.py) when variety_penalty > 0
-  |-- [LLM reasoning] when AI enabled
 ```
 
 Every contribution to the score is one of those scorers, so the Score Details
@@ -350,14 +326,14 @@ mid-request reaches the next one instead.
 Invariants:
 
 - The engine's output is one declared record (`record.py`). Every path that
-  produces recommendations — scored, LLM-only, library fallback — returns
-  `Recommendation`, and a path with nothing to say about references or blurbs
-  says so with an empty default rather than a missing field. Both interfaces
+  produces recommendations — scored or library fallback — returns
+  `Recommendation`, and a path with nothing to say about references says so with
+  an empty default rather than a missing field. Both interfaces
   serialise it through `to_payload`, which is what keeps `recommend --format
   json` and `GET /api/recommendations` one document.
 - The taste signal is completed items that are **rated** and **not ignored**,
-  across all content types. Nothing else shapes preferences, scoring, similarity
-  or explanations. Two consumption facts sit outside it and are answered from
+  across all content types. Nothing else shapes preferences or scoring. Two
+  consumption facts sit outside it and are answered from
   wider sets: series ordering, from the full completed set, and the variety
   penalty below, which multiplies the final score rather than contributing to
   it.
@@ -380,7 +356,7 @@ Invariants:
   penalty (`is_active_series_continuation`). See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
-**Cross-content-type matching works without AI.** Semantic genre clusters
+**Cross-content-type matching is a lookup, not a model.** Genre clusters
 (`genre_clusters.py`) map raw genre and tag terms onto a fixed set of thematic
 clusters, so a book tagged "space warfare" reaches a TV show tagged "war".
 Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
@@ -401,7 +377,7 @@ reaches is a same-type item the user rated 4+ with nothing else in common, which
 qualifies as a reference on its rating alone, so each type also keeps its highly
 rated items in signal order to fill the slots the lookup leaves empty.
 
-### 5. Enrichment (`src/enrichment/`)
+### 4. Enrichment (`src/enrichment/`)
 
 Background metadata gap-filling from external APIs. Providers subclass
 `EnrichmentProvider`, auto-discovered from `src/enrichment/providers/`, each with
@@ -440,38 +416,11 @@ Rules:
 - A run skips items it already attempted, so a queued failure is tried once per
   run.
 
-### 6. Conversation (`src/conversation/`), optional
-
-Requires AI. `ConversationEngine` orchestrates streaming responses over
-`MemoryManager` (core memories), `ContextAssembler`, `ToolExecutor` (mark
-completed, update rating, save memory), `IntentDetector` (`intent.py`),
-`MemoryExtractor` and `ProfileGenerator`.
-
-`IntentDetector` matches tool actions by regex before the LLM runs, and a
-high-confidence match executes without invoking it.
-
-`ContextAssembler` safeguards:
-
-- Only the single highest-ranked item enters context, never a ranked list
-- User messages are sanitized, assistant messages only length-truncated, which
-  preserves LLM formatting
-- Backlog items are tagged `[NOT YET CONSUMED]`, so the LLM cannot claim the user
-  enjoyed them
-- Only `COMPLETED` items appear under "Recently Completed"
-- Match scores become qualitative labels through `_score_to_qualitative()`, never
-  raw percentages
-
-**Compact mode** (`conversation.context.compact_mode`) swaps in a condensed
-system prompt of around 800 tokens, tighter context limits, compact item
-formatting and pre-LLM intent detection. `ollama.conversation_model` can point
-chat at a smaller model than recommendations use. See
-[MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md).
-
-### 7. Interfaces
+### 5. Interfaces
 
 The CLI and the web UI are **alternative interfaces to the same capabilities**,
 neither a subset of the other. Every service both call sits outside both
-packages: recommendation, ingestion, storage, conversation, settings,
+packages: recommendation, ingestion, storage, settings,
 `src/config/service.py` (YAML loading, bootstrap resolution, component
 factories), `src/sources/service.py` (source config CRUD), `src/auth/` (GOG,
 Epic and Trakt OAuth) and `src/utils/export.py`. So `parity-review` reviews every
@@ -485,7 +434,7 @@ fails on the next module that crosses either rule.
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `account`,
-`memory`, `profile`, `chat`, most carrying a `--format json` view. One module
+`profile`, most carrying a `--format json` view. One module
 each under `src/cli/commands/`, re-exported from its `__init__` for
 `src/cli/main.py`;
 `src/cli/_shared.py` holds what more than one group uses. Full reference in
@@ -494,8 +443,7 @@ each under `src/cli/commands/`, re-exported from its `__init__` for
 **Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA with
 Tailwind v4, built by Vite from `resources/js/` and `resources/css/` into
 `src/web/static/dist/` with content-hashed filenames. Tabs are Recommendations,
-Library, Chat, Data, Preferences and Settings, with Chat hidden when AI is off.
-SSE streams chat responses and recommendation blurbs. Internal network only.
+Library, Data, Preferences and Settings. Internal network only.
 
 - The **Settings** page is the UI peer of the `settings` CLI group, over the
   shared `src/settings/service.py`. Infra and security leaves
@@ -503,6 +451,8 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
   **restart required**. Provider secrets get masked write-only controls.
 - Recommendation cards **ignore** or **mark complete**, each removing the card
   without regenerating the list.
+- The **Preferences** page carries the generated taste profile, the UI peer of
+  `profile show` and `profile regenerate`.
 - **Library search is bounded at 200 characters in four places**
   (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in
   `resources/js/constants/library.ts`), because a candidate matching neither the
@@ -522,31 +472,22 @@ SSE streams chat responses and recommendation blurbs. Internal network only.
 - Library export: `GET /api/items/export?type=book&format=csv`.
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
-  `RequiredConfig`, `RequiredEngine`, and the chat pair). Absent, it answers
+  `RequiredConfig`, `RequiredEngine`). Absent, it answers
   **503**, never 500, with one message per dependency, so one server state gets
   one status code and one message on every route. Declaring it in the signature
   rather than calling a guard in the body means it cannot be forgotten while
   the handler still compiles, FastAPI caches it so a handler and its own
   dependencies acquire it once, and it resolves **before** request validation —
   an invalid request to an endpoint whose component is down answers 503, not
-  422. The chat engine is the one component a running server is actually
-  without, when the LLM is disabled — `create_app` populates the others or
-  raises, so their guards hold that invariant.
+  422. `create_app` populates every component or raises, so the guards hold that
+  invariant rather than describing a state a served request meets.
 - Every `/api` handler is plain `def`, so Starlette runs all of them in a
   threadpool: they do blocking SQLite, scoring and outbound OAuth work with
   nothing to await, and on the event loop one of them stalled every other
   request for its whole duration. That threadpool is anyio's, capped at **40
-  tokens**, and a streaming endpoint holds a token for the duration of each
-  generator step — so enough concurrent long streams is where the API stops
-  answering, and it is the first thing to check when it does. The config
-  watcher is not a handler and hands its reload to a worker thread for the same
-  reason.
-- The two SSE endpoints (`GET /api/recommendations/stream` and `POST /api/chat`)
-  share one budget of `MAX_CONCURRENT_STREAMS` slots in
-  `src/web/stream_limit.py` and answer **503** past it, or a handful of forgotten
-  tabs spends those 40 tokens. The slot is taken in the handler, before the
-  response starts, and released when the generator finishes or the client
-  disconnects.
+  tokens**, so enough concurrent slow requests is where the API stops answering,
+  and it is the first thing to check when it does. The config watcher is not a
+  handler and hands its reload to a worker thread for the same reason.
 - Writing the running config is serialised by one lock in `src/web/state.py`,
   not by the event loop. Four paths write it — `PUT /api/settings`,
   `DELETE /api/settings/{key}`, `POST /api/config/reload` and the config
@@ -597,18 +538,13 @@ Data Sources (APIs, CSV, JSON, Markdown)
     ↓
 Ingestion Layer (SourcePlugin → parse & normalize)
     ↓
-Storage Layer (SQLite, cross-source dedup, ChromaDB when AI is enabled)
+Storage Layer (SQLite, cross-source dedup)
     ↓                                      ↓
 Enrichment (background)           Recommendation Engine
   TMDB, OpenLibrary, RAWG           ├── Scoring Pipeline (always runs)
-  fills metadata gaps                ├── [AI: vector similarity]  ← optional
-                                     ├── Variety penalty          ← when enabled
-                                     └── [AI: LLM reasoning]     ← optional
+  fills metadata gaps               └── Variety penalty (when enabled)
                                                 ↓
                                     Interface Layer (CLI/Web) → User
-                                                ↓
-                                    [Conversation System]  ← optional, AI-only
-                                      Chat, memory, tools
 ```
 
 ## Configuration
@@ -657,9 +593,8 @@ one save path.
 
 ## Technology Stack
 
-Python 3.11, SQLite, FastAPI, Click, Ollama (local, AMD-compatible) and
-ChromaDB (optional, AI only). Tested with pytest, checked with Black, MyPy strict
-and Ruff.
+Python 3.11, SQLite, FastAPI and Click. Tested with pytest, checked with Black,
+MyPy strict and Ruff.
 
 ### Development Tooling (Claude Code)
 
@@ -679,39 +614,26 @@ and the agent enumerates this repository's capability surface.
 
 The deployment guide is [docs/DOCKER.md](docs/DOCKER.md). This is the shape.
 
-| Variant | Image | Contents |
-|---------|-------|----------|
-| Default | `ghcr.io/therealahall/recommendinator:VERSION` | Application, frontend build, base Python deps |
-| AI | `ghcr.io/therealahall/recommendinator:VERSION-ai` | Default plus the `ai` extras, `ollama` and `chromadb` |
-| Ollama sidecar | `ghcr.io/therealahall/recommendinator-ollama:VERSION` | `ollama/ollama` plus the model-pull entrypoint, required by the AI variant |
+One image, `ghcr.io/therealahall/recommendinator:VERSION`, carrying the
+application, the frontend build and the Python dependencies. It publishes a
+multi-arch manifest for `linux/amd64` and `linux/arm64`. `linux/arm/v7` is
+unsupported because the Python 3.11 wheel ecosystem is too thin there.
 
-All three publish multi-arch manifests for `linux/amd64` and `linux/arm64`.
-`linux/arm/v7` is unsupported because the Python 3.11 wheel ecosystem, ChromaDB
-especially, is too thin there.
-
-`Dockerfile` is multi-stage with two targets:
+`Dockerfile` is multi-stage:
 
 1. **frontend-builder**, `node:20-slim` running `pnpm build` into
    `src/web/static/dist/`.
-2. **builder-base** → **builder-default** / **builder-ai**, `python:3.11-slim`
-   running `uv sync --locked` (plus `--extra ai`) into `/app/.venv`.
-3. **runtime-base**, `python:3.11-slim` with the `appuser` non-root account,
-   application source, frontend dist and the entrypoint script.
-4. **default** / **ai**, copying the right venv, setting `ENTRYPOINT` to
-   `/app/docker/entrypoint.sh` (which bootstraps `config.yaml` from
-   `example.yaml` on first run), starting uvicorn through `CMD`, and setting
-   `HEALTHCHECK` to `python -m src.web.healthcheck`, which carries no
-   credentials and counts an unauthenticated 401 as healthy.
+2. **builder**, `python:3.11-slim` running `uv sync --locked` into `/app/.venv`.
+3. **runtime**, `python:3.11-slim` with the `appuser` non-root account,
+   application source, frontend dist, the venv and the entrypoint script. Its
+   `ENTRYPOINT` is `/app/docker/entrypoint.sh` (which bootstraps `config.yaml`
+   from `example.yaml` on first run), `CMD` starts uvicorn, and `HEALTHCHECK` is
+   `python -m src.web.healthcheck`, which carries no credentials and counts an
+   unauthenticated 401 as healthy.
 
-`docker/Dockerfile.ollama` extends `ollama/ollama` with the model-pull
-entrypoint, a non-root `ollama` user whose home and model store are
-`/var/lib/ollama`, and a `HEALTHCHECK` that holds `app-ai` back until the first
-pull lands.
-
-`.github/workflows/docker.yml` builds all three on `linux/amd64` for a
-`pull_request`, without pushing, and smoke-tests the default variant: it polls
-`/api/auth/session`, the one route a signed-out caller may reach, then runs the
-image's own `HEALTHCHECK` inside it.
+`.github/workflows/docker.yml` builds it on `linux/amd64` for a `pull_request`,
+without pushing, and smoke-tests it: it polls `/api/auth/session`, the one route
+a signed-out caller may reach, then runs the image's own `HEALTHCHECK` inside it.
 
 On a `v*` tag, `guard` refuses any tag that is not `vMAJOR.MINOR.PATCH` on a
 commit main descends from, then decides which of `latest`, `X` and `X.Y` may
@@ -727,8 +649,8 @@ commit is still main's tip. It uploads `docker-compose.yml` as a release asset.
 ## Security and Privacy
 
 - All processing happens locally. External calls reach data source APIs (Steam,
-  GOG, Epic, Sonarr, Radarr, Trakt), enrichment APIs (TMDB, OpenLibrary, RAWG)
-  and a local Ollama, and nothing else.
+  GOG, Epic, Sonarr, Radarr, Trakt) and enrichment APIs (TMDB, OpenLibrary,
+  RAWG), and nothing else.
 - The web interface is internal network only.
 - API keys and OAuth tokens are stored encrypted in `credentials`. A secret
   placed in git-ignored `config/config.yaml` for bootstrap is swept into

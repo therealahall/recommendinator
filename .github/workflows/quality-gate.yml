@@ -37,7 +37,7 @@ jobs:
       # re-resolving, so a pull request cannot have a dependency the lockfile
       # does not name installed into the runner.
       - name: Install Python dependencies
-        run: uv sync --locked --extra ai --extra dev
+        run: uv sync --locked --extra dev
 
       # The gate lives in the Makefile so this workflow and the command
       # contributors run cannot drift apart. PYTHON points make at the
@@ -50,23 +50,14 @@ jobs:
         with:
           dockerfile: Dockerfile
 
-      - name: Lint Dockerfile (ollama sidecar)
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
-        with:
-          dockerfile: docker/Dockerfile.ollama
-
       - name: Lint shell scripts
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
         with:
           scandir: docker
 
-      # All four combinations docker-compose.yml documents. Compose resolves
-      # only the services whose profiles are active, so without --profile ai the
-      # depends_on edge, the healthcheck and the ollama-data reference — the
-      # whole of the interesting wiring — are never validated.
+      # Both invocations docker-compose.yml documents: the deployment on its
+      # own, and the dev override layered on top.
       - name: Validate compose files
         run: |
           docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml --profile ai config --quiet
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai config --quiet

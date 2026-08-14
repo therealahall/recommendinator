@@ -232,15 +232,13 @@ class TestJsonImportPluginFetch:
         assert items[0].metadata["platforms"] == ["PC", "Switch"]
         assert items[0].metadata["genres"] == ["Roguelike", "Action"]
 
-    def test_imported_genre_reaches_the_prompt_helpers(
+    def test_imported_genre_lands_as_a_list(
         self, plugin: JsonImportPlugin, tmp_path: Path
     ) -> None:
         """The genre field lands in the shape the rest of the app reads.
 
-        ``extract_raw_genres`` builds the embedding text during sync, before
-        the item is ever saved, and only recognises a list under ``genres``.
-        A bare string there would drop the genre from every imported item's
-        embedding without failing anything.
+        Every downstream reader recognises only a list under ``genres``, so a
+        bare string there drops the genre from scoring without failing.
         """
         json_file = tmp_path / "games.json"
         data = [

@@ -156,8 +156,8 @@ def _install(handlers: list[logging.Handler], level: int, fallbacks: list[str]) 
     for handler in handlers:
         root_logger.addHandler(handler)
 
-    # Both interfaces reach httpx — the Ollama client and the enrichment
-    # providers use it from the CLI too. Server-loop noise is the web app's.
+    # Both interfaces reach httpx — the enrichment providers use it from the
+    # CLI too. Server-loop noise is the web app's.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     # urllib3 logs the request target — `?api_key=` for TMDB, RAWG, Steam,

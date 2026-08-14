@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Recommendinator — a privacy-focused recommendation engine for books, movies, TV shows, and video games, optionally using a local LLM via Ollama.
+Recommendinator — a privacy-focused recommendation engine for books, movies, TV shows, and video games.
 
-**Key Features:** Multi-source ingestion, cross-content-type recommendations, optional local LLM (privacy-preserving), dual CLI/web interface, vector-based semantic search.
+**Key Features:** Multi-source ingestion, cross-content-type recommendations through thematic genre clusters, a transparent scoring pipeline, dual CLI/web interface.
 
 ## Scale — calibrate severity to it
 
@@ -45,7 +45,7 @@ Before starting work, read the relevant documentation:
 - **ARCHITECTURE.md** - System architecture, components, data flow
 - **CONTRIBUTING.md** - Development standards for open source contributors
 - **QUICKSTART.md** - Getting started guide
-- **docs/** - Additional technical docs (DATA_SOURCES.md, CLI.md, SCORING.md, ENRICHMENT_SETUP.md, CONVERSATION_GUIDE.md, MODEL_RECOMMENDATIONS.md, CHROMADB_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, THEME_DEVELOPMENT.md, TROUBLESHOOTING.md)
+- **docs/** - Additional technical docs (DATA_SOURCES.md, CLI.md, SCORING.md, ENRICHMENT_SETUP.md, PYTHON_VERSION.md, PLUGIN_DEVELOPMENT.md, CUSTOM_RULES.md, SECURITY.md, THEME_DEVELOPMENT.md, TROUBLESHOOTING.md)
 
 ## After Conversation Compaction
 
@@ -79,15 +79,13 @@ src/
 │                     # One exception: _isolation/ is not a plugin. It holds the test proving
 │                     # plugin-local tests get the root conftest's isolation, and its leading
 │                     # underscore is what keeps the plugin registry from importing it.
-├── llm/              # Ollama interaction
-├── storage/          # SQLite + ChromaDB (settings table, global_secrets, settings_migration,
+├── storage/          # SQLite (settings table, global_secrets, settings_migration,
 │                     # completed_migrations for one-shot startup passes)
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
 ├── enrichment/       # Background metadata enrichment
 │   └── providers/    # Enrichment providers (folder-per-provider, same layout as sources)
-├── conversation/     # Conversational AI chat system
 ├── models/           # Data models (ContentItem, ContentType, UserPreferenceConfig)
 │                     # plus detail_fields.py: the single declaration of each
 │                     # content type's detail-table fields, which storage,
@@ -104,7 +102,7 @@ resources/            # Frontend source (Vue 3 + Tailwind CSS v4)
 └── vite/             # Build-time config helpers (dev-server ports/proxy from env)
 index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
-tests/                # Cross-cutting tests (CLI, web, storage, recommendations, conversation).
+tests/                # Cross-cutting tests (CLI, web, storage, recommendations).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
 conftest.py           # Five autouse fixtures, function-scoped, applying to every test in
                       # every tree: each test is kept off the real credential key and the
@@ -115,9 +113,7 @@ conftest.py           # Five autouse fixtures, function-scoped, applying to ever
                       # for a test that genuinely must)
 config/               # Configuration files (example.yaml for tests)
 docker/               # Container helpers
-├── entrypoint.sh         # First-run config.yaml bootstrap (recommendinator image)
-├── ollama-entrypoint.sh  # Ollama model-pull entrypoint (recommendinator-ollama image)
-└── Dockerfile.ollama     # Sidecar image with the entrypoint baked in
+└── entrypoint.sh         # First-run config.yaml bootstrap
 docker-compose.yml         # Production: pulls from GHCR
 docker-compose.dev.yml     # Dev override: bind-mount + --reload (committed)
 docker-compose.override.yml  # Personal mounts (gitignored)
@@ -187,15 +183,13 @@ config = load_config(Path("config/config.yaml"))
 
 - **Python**: 3.11 only — `requires-python` refuses every other minor
 - **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
-- **LLM**: Ollama (local)
-- **Vector DB**: ChromaDB
 - **SQL DB**: SQLite
 - **Web backend**: FastAPI
 - **Web frontend**: Vue 3 + Tailwind CSS v4 + Vite (source in `resources/`, build output in `src/web/static/dist/`)
 - **CLI**: Click
 - **Testing**: pytest (Python), Vitest (frontend)
 - **Quality**: Black, MyPy (strict), Ruff, vue-tsc
-- **Container**: Docker — production deployment pulls from GHCR via `docker-compose.yml`; local dev layers `docker-compose.dev.yml` for hot reload (bind-mount `src/` + uvicorn `--reload`). Both `recommendinator` (default + `-ai`) and `recommendinator-ollama` images are published multi-arch (`linux/amd64`, `linux/arm64`). See [docs/DOCKER.md](docs/DOCKER.md).
+- **Container**: Docker — production deployment pulls from GHCR via `docker-compose.yml`; local dev layers `docker-compose.dev.yml` for hot reload (bind-mount `src/` + uvicorn `--reload`). The `recommendinator` image is published multi-arch (`linux/amd64`, `linux/arm64`). See [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Versioning & Releases
 
@@ -228,7 +222,7 @@ It resolves only for sessions started at the repository root. Run it before comm
 
 ## Architecture Principles
 
-1. **Separation of Concerns**: Keep ingestion, LLM, storage separate
+1. **Separation of Concerns**: Keep ingestion, scoring, storage separate
 2. **Testability**: Design for easy mocking
 3. **Extensibility**: Easy to add new data sources/content types
 4. **Configuration**: No hardcoded values

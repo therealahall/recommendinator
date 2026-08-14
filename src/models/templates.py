@@ -29,8 +29,7 @@ CONTENT_TYPE_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 # A template cell holds one value, so an import wraps it and an export writes
-# the first entry back out. Readers such as ``extract_raw_genres`` build the
-# embedding text before the item is saved and see only the list form.
+# the first entry back out. Every reader downstream sees only the list form.
 LIST_VALUED_COLUMNS: frozenset[str] = frozenset(
     detail_field.template_column
     for spec in DETAIL_FIELDS.values()

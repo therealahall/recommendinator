@@ -34,7 +34,7 @@ _FORBIDDEN_FRAGMENTS = (
 # something anyone could fix by editing it.
 _EXEMPTIONS = frozenset({"CHANGELOG.md", "pnpm-lock.yaml", "uv.lock"})
 
-_CORRECT_COMMAND = "uv sync --locked --extra ai"
+_CORRECT_COMMAND = "uv sync --locked"
 
 
 def _shipped_files(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:

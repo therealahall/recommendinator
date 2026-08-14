@@ -60,8 +60,7 @@ python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 
 ```
 
 It takes no date. An item with no date is stamped today, and an existing date is
-kept, so completing something an import already dated does not re-date it. Only
-chat can name a different date.
+kept, so completing something an import already dated does not re-date it.
 
 `--review` replaces the stored review, so a blank one is refused rather than
 written. To erase a review, use `library edit --clear-review`.
@@ -184,8 +183,8 @@ RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
 
 ## Global settings
 
-Manages `features`, `ollama`, `recommendations`, `conversation`, `sync`,
-`enrichment`, `web` and `logging`. `web.host`, `web.port` and `web.debug` are the
+Manages `recommendations`, `sync`, `enrichment`, `web` and `logging`.
+`web.host`, `web.port` and `web.debug` are the
 exception, staying in `config.yaml` because the server binds its socket before
 the database opens.
 
@@ -264,12 +263,12 @@ python3.11 -m src.cli preferences reset
 Every one of these takes `--user`, and a `--user` naming nobody is refused
 rather than reporting a write it did not make.
 
-Custom rules are natural-language preferences interpreted by the LLM:
+Custom rules are natural-language preferences, matched against genres and tags:
 
 ```bash
 python3.11 -m src.cli preferences custom-rules add "avoid horror"
 python3.11 -m src.cli preferences custom-rules list
-python3.11 -m src.cli preferences custom-rules interpret "avoid horror" --use-llm
+python3.11 -m src.cli preferences custom-rules interpret "avoid horror"
 python3.11 -m src.cli preferences custom-rules remove 0
 python3.11 -m src.cli preferences custom-rules clear --yes
 ```
@@ -329,28 +328,6 @@ setup page.
 it. A name is trimmed and capped exactly as the web caps it, and both refuse an
 over-long one in the same sentence. All three commands take `--user` and
 `--format json`.
-
-## Conversation and memories (requires AI)
-
-See [CONVERSATION_GUIDE.md](CONVERSATION_GUIDE.md) for the chat interface.
-
-```bash
-python3.11 -m src.cli chat start
-python3.11 -m src.cli chat start --type book
-python3.11 -m src.cli chat send --message "What should I read next?"
-python3.11 -m src.cli chat history --limit 20
-python3.11 -m src.cli chat reset
-```
-
-Memories are persistent preference signals:
-
-```bash
-python3.11 -m src.cli memory list
-python3.11 -m src.cli memory add --text "I love hard sci-fi"
-python3.11 -m src.cli memory edit --id 3 --text "..." --inactive  # text and state together
-python3.11 -m src.cli memory toggle --id 3                        # flip active/inactive
-python3.11 -m src.cli memory delete --id 3
-```
 
 ## User profile
 

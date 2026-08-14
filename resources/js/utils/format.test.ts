@@ -134,13 +134,12 @@ describe('humanizeSection', () => {
   })
 
   it('keeps allow-listed acronyms fully uppercase', () => {
-    expect(humanizeSection('llm')).toBe('LLM')
     expect(humanizeSection('cors')).toBe('CORS')
     expect(humanizeSection('api')).toBe('API')
   })
 
   it('splits underscores and hyphens into words', () => {
-    expect(humanizeSection('ai_features')).toBe('AI Features')
+    expect(humanizeSection('api_key')).toBe('API Key')
     expect(humanizeSection('log-level')).toBe('Log Level')
   })
 })

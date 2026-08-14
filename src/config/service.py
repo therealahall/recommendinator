@@ -13,9 +13,6 @@ from typing import Any, NamedTuple
 import yaml
 
 from src.ingestion.paths import configure_allowed_source_roots
-from src.llm.client import OllamaClient
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.scorers import (
     AdaptationScorer,
@@ -239,35 +236,6 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     return config
 
 
-def get_feature_flags(config: dict[str, Any] | None) -> dict[str, bool]:
-    """Extract feature flags from config.
-
-    Returns a dict with pre-computed flag combinations.
-
-    Args:
-        config: Configuration dictionary (or None).
-
-    Returns:
-        Dict with keys: ai_enabled, embeddings_enabled,
-        llm_reasoning_enabled, use_embeddings.
-    """
-    features_config = config.get("features", {}) if config else {}
-    ai_enabled: bool = features_config.get(
-        "ai_enabled", default_of("features.ai_enabled")
-    )
-    embeddings_enabled: bool = features_config.get(
-        "embeddings_enabled", default_of("features.embeddings_enabled")
-    )
-    return {
-        "ai_enabled": ai_enabled,
-        "embeddings_enabled": embeddings_enabled,
-        "llm_reasoning_enabled": features_config.get(
-            "llm_reasoning_enabled", default_of("features.llm_reasoning_enabled")
-        ),
-        "use_embeddings": ai_enabled and embeddings_enabled,
-    }
-
-
 def create_storage_manager(config: dict[str, Any]) -> StorageManager:
     """Create storage manager from config.
 
@@ -279,62 +247,8 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
     """
     storage_config = config.get("storage", {})
     db_path = Path(storage_config.get("database_path", "data/recommendations.db"))
-    vector_db_path = Path(storage_config.get("vector_db_path", "data/chroma_db"))
-    flags = get_feature_flags(config)
 
-    return StorageManager(
-        sqlite_path=db_path,
-        vector_db_path=vector_db_path,
-        ai_enabled=flags["use_embeddings"],
-    )
-
-
-def create_llm_components(
-    config: dict[str, Any],
-    config_provider: Callable[[], dict[str, Any] | None] | None = None,
-) -> tuple[
-    OllamaClient | None, EmbeddingGenerator | None, RecommendationGenerator | None
-]:
-    """Create LLM components, or ``(None, None, None)`` when AI is disabled.
-
-    The ``ollama`` values read here seed the client's baseline, which
-    *config_provider* overlays per call. The web app passes ``get_config``, so
-    a hot-reload is picked up.
-    """
-    if not get_feature_flags(config)["ai_enabled"]:
-        return None, None, None
-
-    ollama_config = config.get("ollama", {})
-    base_url = ollama_config.get("base_url", default_of("ollama.base_url"))
-    model = ollama_config.get("model", default_of("ollama.model"))
-    embedding_model = ollama_config.get(
-        "embedding_model", default_of("ollama.embedding_model")
-    )
-    conversation_model = ollama_config.get(
-        "conversation_model", default_of("ollama.conversation_model")
-    )
-
-    try:
-        client = OllamaClient(
-            base_url=base_url,
-            default_model=model,
-            embedding_model=embedding_model,
-            conversation_model=conversation_model,
-            config_provider=(
-                config_provider if config_provider is not None else lambda: config
-            ),
-        )
-    except ImportError:
-        logger.warning(
-            "AI features enabled in config but ollama is not installed. "
-            "LLM features disabled. Install with: uv sync --locked --extra ai"
-        )
-        return None, None, None
-
-    embedding_gen = EmbeddingGenerator(client)
-    recommendation_gen = RecommendationGenerator(client)
-
-    return client, embedding_gen, recommendation_gen
+    return StorageManager(sqlite_path=db_path)
 
 
 _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
@@ -357,16 +271,15 @@ def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
     instances with the specified weights. Falls back to each scorer's class
     default weight for any scorer not listed in the config.
 
-    Does **not** include :class:`SemanticSimilarityScorer` or
-    :class:`CustomPreferenceScorer` — the engine builds those conditionally,
-    on whether AI is enabled and on the user's custom rules respectively, and
-    :func:`create_recommendation_engine` passes it their configured weights.
+    Does **not** include :class:`CustomPreferenceScorer` — the engine builds it
+    per call from the user's custom rules, and
+    :func:`create_recommendation_engine` passes it its configured weight.
 
     Args:
         config: Full configuration dictionary.
 
     Returns:
-        List of scorer instances (without SemanticSimilarityScorer).
+        List of scorer instances.
     """
     rec_config = config.get("recommendations", {})
     weight_overrides = rec_config.get("scorer_weights", {})
@@ -382,8 +295,6 @@ def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
 
 def create_recommendation_engine(
     storage_manager: StorageManager,
-    embedding_generator: EmbeddingGenerator | None,
-    recommendation_generator: RecommendationGenerator | None,
     config: dict[str, Any],
     config_provider: Callable[[], dict[str, Any] | None] | None = None,
 ) -> RecommendationEngine:
@@ -395,8 +306,6 @@ def create_recommendation_engine(
 
     Args:
         storage_manager: Storage manager instance
-        embedding_generator: Embedding generator instance
-        recommendation_generator: Recommendation generator instance
         config: The configuration dictionary the baseline is read from
         config_provider: Returns the running config on every read. Defaults to
             returning *config*, which is right for a process that never
@@ -412,12 +321,6 @@ def create_recommendation_engine(
         default_of("recommendations.min_rating_for_preference"),
     )
     scorer_weights = rec_config.get("scorer_weights", {})
-    semantic_similarity_weight = float(
-        scorer_weights.get(
-            "semantic_similarity",
-            default_of("recommendations.scorer_weights.semantic_similarity"),
-        )
-    )
     custom_preference_weight = float(
         scorer_weights.get(
             "custom_preference",
@@ -429,11 +332,8 @@ def create_recommendation_engine(
 
     return RecommendationEngine(
         storage_manager=storage_manager,
-        embedding_generator=embedding_generator,
-        recommendation_generator=recommendation_generator,
         min_rating=min_rating,
         scorers=scorers,
-        semantic_similarity_weight=semantic_similarity_weight,
         custom_preference_weight=custom_preference_weight,
         config_provider=(
             config_provider if config_provider is not None else lambda: config

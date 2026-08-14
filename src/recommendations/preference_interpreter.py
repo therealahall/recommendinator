@@ -1,8 +1,6 @@
-"""Pattern-based and LLM-powered natural language preference interpreter.
+"""Pattern-based natural language preference interpreter.
 
 Parses common natural language rules into structured scoring adjustments.
-The pattern-based interpreter handles common cases without an LLM.
-The LLM interpreter can handle more nuanced rules with fallback to patterns.
 
 Example rules:
 - "avoid horror" -> genre penalty for horror
@@ -13,23 +11,12 @@ Example rules:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
 
-from src.llm.preference_prompts import (
-    PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
-    build_batch_interpretation_prompt,
-)
 from src.utils.text import sanitize_rule_text
-
-if TYPE_CHECKING:
-    from src.llm.client import OllamaClient
-    from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +268,7 @@ class InterpretedPreference:
 class PatternBasedInterpreter:
     """Interprets natural language preference rules using regex patterns.
 
-    This interpreter handles common patterns without requiring an LLM.
-    It's designed to be fast and predictable for well-formed rules.
+    Fast and predictable for well-formed rules.
     """
 
     # Patterns for genre preferences (avoid, no, prefer, more, love, hate, etc.)
@@ -550,237 +536,3 @@ class PatternBasedInterpreter:
                         }
 
         return None
-
-
-class LLMPreferenceInterpreter:
-    """LLM-powered preference interpreter with pattern-based fallback.
-
-    Uses an LLM to interpret nuanced natural language rules, falling back
-    to the PatternBasedInterpreter when the LLM is unavailable or fails.
-    Caches interpretations to avoid repeated LLM calls for the same rules.
-    """
-
-    def __init__(
-        self,
-        ollama_client: OllamaClient,
-        storage_manager: StorageManager | None = None,
-        model: str = "llama3.2",
-    ) -> None:
-        """Initialize the LLM preference interpreter.
-
-        Args:
-            ollama_client: Client for making LLM requests.
-            storage_manager: Optional storage manager for caching interpretations.
-            model: Model name to use for interpretation.
-        """
-        self.client = ollama_client
-        self.storage = storage_manager
-        self.model = model
-        self.pattern_interpreter = PatternBasedInterpreter()
-
-    def _compute_cache_key(self, rules: list[str]) -> str:
-        """Compute a cache key for a set of rules.
-
-        Args:
-            rules: Sanitized rule strings. A lone surrogate raises here: the
-                encode below cannot represent one.
-
-        Returns:
-            SHA256 hash of the sorted, joined rules.
-        """
-        normalized = ";".join(sorted(r.strip().lower() for r in rules if r.strip()))
-        return hashlib.sha256(normalized.encode()).hexdigest()[:32]
-
-    def _get_cached(self, cache_key: str) -> InterpretedPreference | None:
-        """Try to get a cached interpretation.
-
-        Args:
-            cache_key: The cache key to look up.
-
-        Returns:
-            Cached InterpretedPreference or None if not found.
-        """
-        if self.storage is None:
-            return None
-        try:
-            cached_json = self.storage.get_cached_preference_interpretation(cache_key)
-            if cached_json:
-                return self._json_to_interpreted(cached_json)
-        except Exception as error:
-            logger.debug("Cache lookup failed: %s", error)
-        return None
-
-    def _save_to_cache(
-        self, cache_key: str, interpreted: InterpretedPreference
-    ) -> None:
-        """Save an interpretation to the cache.
-
-        Args:
-            cache_key: The cache key.
-            interpreted: The interpreted preference to cache.
-        """
-        if self.storage is None:
-            return
-        try:
-            cache_data = self._interpreted_to_json(interpreted)
-            self.storage.save_cached_preference_interpretation(cache_key, cache_data)
-        except Exception as error:
-            logger.debug("Cache save failed: %s", error)
-
-    def _interpreted_to_json(self, interpreted: InterpretedPreference) -> str:
-        """Convert InterpretedPreference to JSON string.
-
-        Args:
-            interpreted: The preference to serialize.
-
-        Returns:
-            JSON string representation.
-        """
-        data = {
-            "genre_boosts": interpreted.genre_boosts,
-            "genre_penalties": interpreted.genre_penalties,
-            "content_type_filters": list(interpreted.content_type_filters),
-            "content_type_exclusions": list(interpreted.content_type_exclusions),
-            "length_preferences": interpreted.length_preferences,
-            "confidence": interpreted.confidence.value,
-            "original_rule": interpreted.original_rule,
-            "interpretation_notes": interpreted.interpretation_notes,
-        }
-        return json.dumps(data)
-
-    def _json_to_interpreted(self, json_str: str) -> InterpretedPreference:
-        """Convert JSON string to InterpretedPreference.
-
-        Args:
-            json_str: JSON string representation.
-
-        Returns:
-            InterpretedPreference instance.
-        """
-        data = json.loads(json_str)
-        return InterpretedPreference(
-            genre_boosts=data.get("genre_boosts", {}),
-            genre_penalties=data.get("genre_penalties", {}),
-            content_type_filters=set(data.get("content_type_filters", [])),
-            content_type_exclusions=set(data.get("content_type_exclusions", [])),
-            length_preferences=data.get("length_preferences", {}),
-            confidence=PatternConfidence(data.get("confidence", "none")),
-            original_rule=data.get("original_rule", ""),
-            interpretation_notes=data.get("interpretation_notes", ""),
-        )
-
-    def _parse_llm_response(self, response: str) -> InterpretedPreference | None:
-        """Parse LLM response into InterpretedPreference.
-
-        Args:
-            response: Raw LLM response text.
-
-        Returns:
-            InterpretedPreference or None if parsing fails.
-        """
-        try:
-            # Extract JSON from response (handle markdown code blocks)
-            json_str = response.strip()
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in json_str:
-                json_str = json_str.split("```")[1].split("```")[0].strip()
-
-            data = json.loads(json_str)
-
-            # Map confidence string to enum
-            confidence_str = data.get("confidence", "medium").lower()
-            confidence_map = {
-                "high": PatternConfidence.HIGH,
-                "medium": PatternConfidence.MEDIUM,
-                "low": PatternConfidence.LOW,
-            }
-            confidence = confidence_map.get(confidence_str, PatternConfidence.MEDIUM)
-
-            return InterpretedPreference(
-                genre_boosts=data.get("genre_boosts", {}),
-                genre_penalties=data.get("genre_penalties", {}),
-                content_type_filters=set(data.get("content_type_filters", [])),
-                content_type_exclusions=set(data.get("content_type_exclusions", [])),
-                length_preferences=data.get("length_preferences", {}),
-                confidence=confidence,
-                original_rule="",  # Will be set by caller
-                interpretation_notes=data.get("notes", "LLM interpretation"),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            logger.debug("Failed to parse LLM response: %s", error)
-            return None
-
-    def interpret_all(self, rules: list[str]) -> InterpretedPreference:
-        """Interpret multiple rules using LLM with pattern fallback.
-
-        Args:
-            rules: List of rule strings to interpret.
-
-        Returns:
-            Merged InterpretedPreference from all rules.
-        """
-        if not rules:
-            return InterpretedPreference(
-                confidence=PatternConfidence.NONE,
-                interpretation_notes="No rules provided",
-            )
-
-        # Sanitizing here rather than per consumer keeps the cache key, the
-        # prompt and the fallback reading one text. The key is computed
-        # outside the try below, so a raw surrogate raised past the fallback.
-        safe_rules = [sanitize_rule_text(rule) for rule in rules]
-
-        # Check cache first
-        cache_key = self._compute_cache_key(safe_rules)
-        cached = self._get_cached(cache_key)
-        if cached is not None:
-            logger.debug("Using cached interpretation for %d rules", len(safe_rules))
-            return cached
-
-        # Try LLM interpretation
-        try:
-            prompt = build_batch_interpretation_prompt(safe_rules)
-            response = self.client.generate_text(
-                prompt=prompt,
-                system_prompt=PREFERENCE_INTERPRETATION_SYSTEM_PROMPT,
-                model=self.model,
-                temperature=0.1,  # Low temperature for consistent parsing
-            )
-
-            llm_result = self._parse_llm_response(response)
-            if llm_result is not None and not llm_result.is_empty():
-                llm_result.original_rule = "; ".join(safe_rules)
-                self._save_to_cache(cache_key, llm_result)
-                logger.info("LLM interpreted %d custom rules", len(safe_rules))
-                return llm_result
-
-        except Exception as error:
-            logger.warning(
-                "LLM interpretation failed, using pattern fallback: %s", error
-            )
-
-        # Fall back to pattern-based interpretation
-        pattern_result = self.pattern_interpreter.interpret_all(safe_rules)
-        if not pattern_result.is_empty():
-            self._save_to_cache(cache_key, pattern_result)
-        return pattern_result
-
-    def interpret(self, rule: str) -> InterpretedPreference:
-        """Interpret a single rule using LLM with pattern fallback.
-
-        Args:
-            rule: The rule text to interpret.
-
-        Returns:
-            InterpretedPreference with extracted preferences.
-        """
-        return self.interpret_all([rule])
-
-    def clear_cache(self) -> None:
-        """Clear all cached interpretations."""
-        if self.storage is not None:
-            try:
-                self.storage.clear_cached_preference_interpretations()
-            except Exception as error:
-                logger.warning("Failed to clear interpretation cache: %s", error)

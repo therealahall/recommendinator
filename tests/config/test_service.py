@@ -8,7 +8,6 @@ though they were listed in SCORER_NAME_MAP and DEFAULT_SCORERS.
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +17,6 @@ from src.config.service import (
     BOOTSTRAP_WEB_HOST,
     BOOTSTRAP_WEB_PORT,
     build_scorers_from_config,
-    create_llm_components,
     load_config,
     resolve_bootstrap_web,
 )
@@ -28,10 +26,9 @@ from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
 
-# These scorers are instantiated directly by RecommendationEngine, not via
-# _SCORER_CONFIG_MAP. They require special construction (embeddings client,
-# rule objects) that the config map cannot provide generically.
-_ENGINE_MANAGED_SCORERS = {"semantic_similarity", "custom_preference"}
+# Built per call by RecommendationEngine from the user's rules, not via
+# _SCORER_CONFIG_MAP, which cannot construct it generically.
+_ENGINE_MANAGED_SCORERS = {"custom_preference"}
 
 
 @pytest.fixture()
@@ -345,58 +342,28 @@ class TestBuildScorersFromConfig:
             )
 
 
-class TestCreateLlmComponents:
-    """Tests for create_llm_components including graceful degradation."""
+class TestARetiredAiConfigBlockIsIgnored:
+    """A user's ``config.yaml`` may still carry the deleted AI sections.
 
-    @pytest.fixture()
-    def ai_enabled_config(self) -> dict[str, Any]:
-        """Config with AI features enabled."""
-        return {
-            "features": {"ai_enabled": True},
-            "ollama": {
-                "base_url": "http://localhost:11434",
-                "model": "mistral:7b",
-                "embedding_model": "nomic-embed-text",
-                "conversation_model": "",
-            },
-        }
+    The AI removal ships no migration, so ``load_config`` has to merge those
+    blocks harmlessly: nothing reads them, and nothing may refuse to boot over
+    them.
+    """
 
-    def test_returns_none_tuple_when_ai_disabled(self) -> None:
-        """Returns (None, None, None) when ai_enabled is False."""
-        config: dict[str, Any] = {"features": {"ai_enabled": False}}
-        client, embedding_gen, rec_gen = create_llm_components(config)
-        assert client is None
-        assert embedding_gen is None
-        assert rec_gen is None
-
-    def test_returns_none_tuple_when_ollama_not_installed(
-        self, ai_enabled_config: dict[str, Any]
+    def test_a_config_still_naming_llm_and_ollama_loads_clean(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Returns (None, None, None) when ollama package is absent.
-
-        Regression: the non-AI Docker image has no ollama package. If a user's
-        config has ai_enabled: true, create_llm_components must degrade
-        gracefully instead of crashing with ImportError.
-        """
-        with patch("src.llm.client.Client", None):
-            client, embedding_gen, rec_gen = create_llm_components(ai_enabled_config)
-
-        assert client is None
-        assert embedding_gen is None
-        assert rec_gen is None
-
-    def test_logs_warning_when_ollama_not_installed(
-        self,
-        ai_enabled_config: dict[str, Any],
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """A warning with install instructions is logged when ollama is absent."""
-        with patch("src.llm.client.Client", None):
-            with caplog.at_level(logging.WARNING, logger="src.config.service"):
-                create_llm_components(ai_enabled_config)
-
-        assert any(
-            "ollama is not installed" in message
-            and "uv sync --locked --extra ai" in message
-            for message in caplog.messages
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "llm:\n  provider: ollama\n"
+            "ollama:\n  base_url: http://ollama:11434\n  model: mistral:7b\n"
+            "features:\n  ai_enabled: true\n"
+            "recommendations:\n  default_count: 6\n",
+            encoding="utf-8",
         )
+
+        with caplog.at_level(logging.WARNING):
+            config = load_config(config_file)
+
+        assert config["recommendations"]["default_count"] == 6
+        assert caplog.messages == []

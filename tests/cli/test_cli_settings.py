@@ -22,14 +22,10 @@ from tests.cli.conftest import _invoke_with_mocks
 # A representative leaf per behaviour, kept as constants so a registry rename
 # fails loudly in one place rather than across every assertion.
 _INT_KEY = "recommendations.default_count"  # int, non-restart, min 1
-_BOOL_KEY = "conversation.enabled"  # bool, non-restart
+_BOOL_KEY = "enrichment.enabled"  # bool, non-restart
 _LIST_KEY = "web.allowed_origins"  # list, restart_required, advanced
 _ENUM_KEY = "logging.level"  # enum, restart_required, advanced
 _ADVANCED_KEY = "logging.file"  # string, restart_required, advanced
-# Deliberately restart_required but NOT advanced, so the two flags cannot be
-# conflated: a test using a leaf that is both would pass even if the code
-# checked the wrong one.
-_RESTART_KEY = "features.ai_enabled"  # bool, restart_required, NOT advanced
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"  # sensitive string
 
 
@@ -45,24 +41,10 @@ class TestSettingsList:
         result = _invoke_with_mocks(cli_runner, ["settings", "list"], storage)
 
         assert result.exit_code == 0
-        assert "features" in result.output
+        assert "recommendations" in result.output
         assert "Default count" in result.output
         # Advanced infra/security leaves are hidden without --advanced.
         assert _ADVANCED_KEY not in result.output
-
-    def test_list_shows_restart_required_leaf_that_is_not_advanced(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        """Hiding is gated on ``advanced``, not on ``restart_required``.
-
-        Guards against conflating the two flags: gating the default listing on
-        restart_required would silently drop the whole features section. The
-        sibling test above cannot catch that, because its key is both.
-        """
-        result = _invoke_with_mocks(cli_runner, ["settings", "list"], storage)
-
-        assert result.exit_code == 0
-        assert _RESTART_KEY in result.output
 
     def test_list_advanced_flag_includes_advanced(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -85,7 +67,7 @@ class TestSettingsList:
 
         assert result.exit_code == 0
         assert _INT_KEY in result.output
-        assert "features.ai_enabled" not in result.output
+        assert "enrichment.enabled" not in result.output
 
     def test_list_unknown_section_errors(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -302,7 +284,7 @@ class TestSettingsSet:
     ) -> None:
         """Setting a restart-required leaf prints the restart advisory."""
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _RESTART_KEY, "true"], storage
+            cli_runner, ["settings", "set", _ENUM_KEY, "DEBUG"], storage
         )
 
         assert result.exit_code == 0

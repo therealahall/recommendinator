@@ -86,13 +86,13 @@ describe('SettingControl widget mapping', () => {
     // A real float leaf: the base fixture is enrichment.batch_size, which the
     // registry declares as int.
     const setting = value({
-      key: 'conversation.llm.temperature',
+      key: 'recommendations.scorer_weights.genre_match',
       type: 'float',
       widget: 'number',
-      label: 'Temperature',
+      label: 'Genre match weight',
     })
     const wrapper = mountControl(setting, 0.5)
-    const input = wrapper.find('[data-testid="setting-conversation.llm.temperature"]')
+    const input = wrapper.find('[data-testid="setting-recommendations.scorer_weights.genre_match"]')
     expect(input.attributes('type')).toBe('number')
     expect(input.attributes('step')).toBe('any')
   })
@@ -284,7 +284,7 @@ const BRANCHES: Array<{
     },
     {
       widget: 'number (float)',
-      setting: { key: 'conversation.llm.temperature', type: 'float', widget: 'number' },
+      setting: { key: 'recommendations.scorer_weights.genre_match', type: 'float', widget: 'number' },
       modelValue: 0.7,
     },
     {

@@ -3,7 +3,7 @@
 ## Getting started
 
 ```bash
-uv sync --locked --extra ai --extra dev
+uv sync --locked --extra dev
 python3.11 -m pytest
 ```
 
@@ -75,23 +75,23 @@ abbreviating:
 
 ```python
 # Good
-for item, item_embedding in zip(items, embeddings, strict=True):
-    storage_manager.save_content_item(item, embedding=item_embedding)
+for item, item_user_id in zip(items, user_ids, strict=True):
+    storage_manager.save_content_item(item, user_id=item_user_id)
 
 # Bad
-for i, emb in zip(items, embeddings):
-    storage_manager.save_content_item(i, embedding=emb)
+for i, u in zip(items, user_ids):
+    storage_manager.save_content_item(i, user_id=u)
 ```
 
-Avoid `i`, `j`, `e`, `emb`, `ct`, `cfg` and single letters. `_` for unused and
-`cls` for class methods are the exceptions.
+Avoid `i`, `j`, `e`, `ct`, `cfg` and single letters. `_` for unused and `cls`
+for class methods are the exceptions.
 
 - **DRY.** Write a pattern three times and extract a helper. Search first:
-  `get_enum_value()`, `extract_and_normalize_genres()` and `get_feature_flags()`
+  `get_enum_value()`, `extract_and_normalize_genres()` and `get_sort_title()`
   already exist.
 - **No `Any`** where a real type exists. `TYPE_CHECKING` imports break cycles
   without losing types.
-- **Keyword arguments** for non-obvious parameters: `save_item(item, embedding=emb)`.
+- **Keyword arguments** for non-obvious parameters: `save_item(item, user_id=1)`.
 - **`if x is not None:`**, not `if x:`, when the value could be `0`, `False` or `""`.
 - **Delete dead code.** No compatibility wrappers, no-op blocks, uncalled methods.
 - **No defensive `or {}`** when the model field already defaults.
@@ -255,12 +255,10 @@ src/
 ├── auth/             # GOG/Epic/Trakt OAuth flows
 ├── ingestion/        # Data ingestion
 │   └── sources/      # Source plugins (<name>/<name>.py + README.md + test_<name>.py)
-├── llm/              # Ollama interaction (optional)
-├── storage/          # SQLite + ChromaDB
+├── storage/          # SQLite
 ├── recommendations/  # Scoring pipeline and engine
 ├── enrichment/       # Background metadata enrichment
 │   └── providers/    # Enrichment providers (same layout as sources)
-├── conversation/     # Conversational AI chat system
 ├── models/           # Data models
 └── utils/            # Utility functions
 tests/                # Cross-cutting tests. Plugin tests live next to the plugin.

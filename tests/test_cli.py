@@ -1,7 +1,6 @@
 """Tests for CLI commands."""
 
 from datetime import UTC, date, datetime
-from inspect import signature
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -10,9 +9,6 @@ from click.testing import CliRunner
 
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
-from src.llm.client import OllamaClient
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
@@ -26,15 +22,7 @@ from tests.factories import back_mock_preference_store, back_mock_settings_store
 def mock_config():
     """Create a mock configuration."""
     return {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "inputs": {
             "goodreads_csv": {
                 "plugin": "goodreads_csv",
@@ -54,7 +42,6 @@ def mock_components(mock_config):
     with (
         patch("src.cli.main.load_config", return_value=mock_config),
         patch("src.cli.main.create_storage_manager") as mock_storage,
-        patch("src.cli.main.create_llm_components") as mock_llm,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
         patch("src.cli.main.migrate_config_credentials"),
         patch("src.cli.main.migrate_source_labels") as mock_migrate_labels,
@@ -71,19 +58,11 @@ def mock_components(mock_config):
         back_mock_settings_store(mock_storage_manager)
         mock_storage.return_value = mock_storage_manager
 
-        mock_client = Mock(spec=OllamaClient)
-        mock_embedding_gen = Mock(spec=EmbeddingGenerator)
-        mock_rec_gen = Mock(spec=RecommendationGenerator)
-        mock_llm.return_value = (mock_client, mock_embedding_gen, mock_rec_gen)
-
         mock_engine_instance = Mock(spec=RecommendationEngine)
         mock_engine.return_value = mock_engine_instance
 
         yield {
             "storage": mock_storage_manager,
-            "client": mock_client,
-            "embedding_gen": mock_embedding_gen,
-            "rec_gen": mock_rec_gen,
             "engine": mock_engine_instance,
             "migrate_source_labels": mock_migrate_labels,
             "migrate_source_config_plugins": mock_migrate_plugins,
@@ -164,7 +143,6 @@ def test_recommend_command_basic(mock_components):
         )
     ]
     mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
-    mock_components["storage"].search_similar.return_value = [(mock_item, 0.8)]
 
     mock_components["engine"].generate_recommendations.return_value = (
         mock_recommendations
@@ -206,7 +184,6 @@ def test_recommend_command_json(mock_components):
         )
     ]
     mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
-    mock_components["storage"].search_similar.return_value = [(mock_item, 0.8)]
 
     mock_components["engine"].generate_recommendations.return_value = (
         mock_recommendations
@@ -322,9 +299,6 @@ def test_complete_command_help(mock_components):
 
 def test_complete_command_basic(mock_components):
     """Test basic complete command."""
-    mock_components["embedding_gen"].generate_content_embedding.return_value = [
-        0.1
-    ] * 768
     mock_components["storage"].complete_content_item.return_value = 1
 
     runner = CliRunner()
@@ -522,46 +496,6 @@ class TestCompleteCommandUserOwnedFields:
         assert stored.review == "On reflection, overrated"
 
 
-class TestCompleteCommandEmbeddingArgument:
-    """Regression test: `complete` hands the embedding to the wrong parameter.
-
-    Bug reported: with AI features and embeddings enabled, `complete` fails
-    with "Error marking content as completed" and stores nothing, and no
-    embedding ever reaches the vector DB.
-    Root cause: the ``complete`` command called
-    ``storage.save_content_item(item, embedding)``, but the second positional
-    parameter of the storage method is ``user_id``, not ``embedding``
-    (``src/storage/manager.py``: ``(self, item, user_id=None,
-    embedding=None)``). The embedding vector was bound to ``user_id`` and then
-    used as a SQL bind parameter, while ``embedding`` stayed None so the vector
-    DB was never written. The web endpoint passes ``embedding=embedding`` by
-    keyword and is unaffected. Latent by default, since both feature flags
-    default to off.
-    Fix: pass the embedding by keyword, as the web endpoint does. The
-    signature is bound here rather than asserted by name so that renaming or
-    reordering the storage parameters fails this test.
-    """
-
-    def test_complete_passes_the_embedding_as_the_embedding_argument(self):
-        """The embedding must bind to ``embedding``, not to ``user_id``."""
-        mock_storage = Mock(spec=StorageManager)
-        mock_storage.complete_content_item.return_value = 1
-
-        _invoke_with_mocks(
-            CliRunner(),
-            ["complete", "--type", "book", "--title", "Dune"],
-            mock_storage,
-            config={"features": {"ai_enabled": True, "embeddings_enabled": True}},
-        )
-
-        call = mock_storage.complete_content_item.call_args
-        bound = signature(StorageManager.complete_content_item).bind(
-            mock_storage, *call.args, **call.kwargs
-        )
-        assert bound.arguments.get("user_id") is None
-        assert bound.arguments.get("embedding") is not None
-
-
 def test_complete_command_invalid_rating(mock_components):
     """Test complete command with invalid rating."""
     runner = CliRunner()
@@ -586,15 +520,7 @@ def test_update_command_steam_success(mock_components):
     """Test update command with Steam source."""
     # Update mock config to include Steam
     mock_config = {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -628,9 +554,6 @@ def test_update_command_steam_success(mock_components):
             return_value=[],
         ),
     ):
-        mock_components["embedding_gen"].generate_content_embedding.return_value = [
-            0.1
-        ] * 768
         mock_components["storage"].save_content_item.return_value = 1
 
         runner = CliRunner()
@@ -650,15 +573,7 @@ def test_update_command_steam_disabled(mock_components):
     reject a disabled source the same way.
     """
     mock_config = {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -683,15 +598,7 @@ def test_update_command_steam_disabled(mock_components):
 def test_update_command_steam_missing_api_key(mock_components):
     """Test update command with missing Steam API key."""
     mock_config = {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -719,15 +626,7 @@ def test_update_command_steam_api_error(mock_components):
     from src.ingestion.plugin_base import SourceError
 
     mock_config = {
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "mistral:7b",
-            "embedding_model": "nomic-embed-text",
-        },
-        "storage": {
-            "database_path": "data/test.db",
-            "vector_db_path": "data/test_chroma",
-        },
+        "storage": {"database_path": "data/test.db"},
         "inputs": {
             "steam": {
                 "plugin": "steam",
@@ -789,15 +688,7 @@ class TestUpdateWorkersFlag:
         sync_block: dict | None = None,
     ) -> dict:
         config: dict = {
-            "ollama": {
-                "base_url": "http://localhost:11434",
-                "model": "mistral:7b",
-                "embedding_model": "nomic-embed-text",
-            },
-            "storage": {
-                "database_path": str(self._db_path),
-                "vector_db_path": str(self._db_path.parent / "chroma"),
-            },
+            "storage": {"database_path": str(self._db_path)},
             "inputs": {
                 "steam": {
                     "plugin": "steam",
@@ -1408,7 +1299,7 @@ def test_custom_rules_interpret_pattern(mock_components):
     )
 
     assert result.exit_code == 0
-    assert "pattern-based" in result.output.lower()
+    assert "Rule: 'avoid horror'" in result.output
     assert "horror" in result.output
 
 

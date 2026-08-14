@@ -542,17 +542,17 @@ class TestTheConsoleCanBeDeniedExceptionTextRegression:
     Fix: ``console_tracebacks=False`` renders the message alone.
     """
 
-    _FAULT = "ollama is not listening"
+    _FAULT = "the library is unreadable"
 
     #: Every call that puts exception or stack text on a record. ``exc_info``
     #: is what the CLI's own handlers use; the other two are what the next one
     #: might, and each reaches the console by a different attribute.
     _EMITTERS: dict[str, Callable[[logging.Logger], None]] = {
-        "exc_info": lambda log: log.error("Chat send failed", exc_info=True),
-        "exception": lambda log: log.exception("Chat send failed"),
-        "stack_info": lambda log: log.error("Chat send failed", stack_info=True),
+        "exc_info": lambda log: log.error("Recommendation failed", exc_info=True),
+        "exception": lambda log: log.exception("Recommendation failed"),
+        "stack_info": lambda log: log.error("Recommendation failed", stack_info=True),
         "both": lambda log: log.error(
-            "Chat send failed", exc_info=True, stack_info=True
+            "Recommendation failed", exc_info=True, stack_info=True
         ),
     }
 
@@ -593,7 +593,7 @@ class TestTheConsoleCanBeDeniedExceptionTextRegression:
 
         console = self._configure_and_log(console_tracebacks=False, emit=emit)
 
-        assert console.getvalue() == "ERROR | tests.console | Chat send failed\n"
+        assert console.getvalue() == "ERROR | tests.console | Recommendation failed\n"
 
     @pytest.mark.parametrize("emit", _EMITTERS.values(), ids=_EMITTERS)
     def test_the_log_file_still_holds_what_the_console_dropped(

@@ -22,7 +22,6 @@ vi.mock('@/composables/useApi', () => ({
     put: vi.fn(),
     patch: vi.fn(),
     delete: (...args: unknown[]) => mockDelete(...args),
-    raw: vi.fn(),
   }),
 }))
 

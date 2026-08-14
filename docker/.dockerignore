@@ -1,8 +1,0 @@
-# Deny by default, for the reason the repository root's copy gives. BuildKit
-# resolves .dockerignore against the context root, and docker.yml builds
-# Dockerfile.ollama with `context: docker`, so the root file governs nothing
-# here. The exceptions are exactly what Dockerfile.ollama copies;
-# tests/docker/test_compose.py holds them equal.
-*
-
-!ollama-entrypoint.sh

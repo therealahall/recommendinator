@@ -23,7 +23,6 @@ from src.ingestion.sync import (
     execute_sync,
     resolve_max_workers,
 )
-from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.text import LINE_BREAKS
@@ -135,105 +134,6 @@ class TestExecuteSync:
         assert result.total_items == 2
         assert result.errors == []
         assert storage.save_content_item.call_count == 2
-
-    def test_sync_with_embeddings(self) -> None:
-        """Embeddings are generated when enabled."""
-        items = [make_item("Book 1", item_id="ext_1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.has_embedding.return_value = False
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=True,
-        )
-
-        assert result.items_synced == 1
-        storage.has_embedding.assert_called_once_with("ext_1")
-        embedding_gen.generate_content_embedding.assert_called_once()
-        storage.save_content_item.assert_called_once_with(
-            items[0], embedding=[0.1, 0.2]
-        )
-
-    def test_sync_skips_existing_embeddings(self) -> None:
-        """Embeddings are not regenerated for items that already have one."""
-        items = [make_item("Book 1", item_id="ext_1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.has_embedding.return_value = True
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=True,
-        )
-
-        assert result.items_synced == 1
-        storage.has_embedding.assert_called_once_with("ext_1")
-        embedding_gen.generate_content_embedding.assert_not_called()
-        storage.save_content_item.assert_called_once_with(items[0], embedding=None)
-
-    def test_sync_generates_embedding_for_items_without_external_id(self) -> None:
-        """Items without external IDs always get embeddings (can't check existence)."""
-        items = [make_item("Book 1")]  # id=None
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=True,
-        )
-
-        assert result.items_synced == 1
-        storage.has_embedding.assert_not_called()
-        embedding_gen.generate_content_embedding.assert_called_once()
-        storage.save_content_item.assert_called_once_with(
-            items[0], embedding=[0.1, 0.2]
-        )
-
-    def test_sync_without_embeddings(self) -> None:
-        """Embedding generator is not called when use_embeddings is False."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=False,
-        )
-
-        assert result.items_synced == 1
-        embedding_gen.generate_content_embedding.assert_not_called()
-        storage.save_content_item.assert_called_once_with(items[0], embedding=None)
 
     def test_sync_records_save_errors(self) -> None:
         """Errors during save are recorded but don't stop the sync."""
@@ -1342,123 +1242,6 @@ class TestAutoEnrichmentHook:
         storage.mark_item_needs_enrichment.assert_not_called()
 
 
-class TestSyncEmbeddingLogging:
-    """Tests for embedding progress logging during sync."""
-
-    def test_logs_generating_embedding(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Generating an embedding logs an INFO message with item title."""
-        items = [make_item("The Name of the Wind", item_id="ext_1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.has_embedding.return_value = False
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
-
-        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
-            execute_sync(
-                plugin=plugin,
-                plugin_config={},
-                storage_manager=storage,
-                embedding_generator=embedding_gen,
-                use_embeddings=True,
-            )
-
-        assert any(
-            "Generating embedding" in message
-            and "The Name of the Wind" in message
-            and "1/1" in message
-            for message in caplog.messages
-        )
-
-    def test_logs_skipping_existing_embedding(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Skipping an existing embedding logs a DEBUG message."""
-        items = [make_item("Dune", item_id="ext_1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.has_embedding.return_value = True
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-
-        with caplog.at_level(logging.DEBUG, logger="src.ingestion.sync"):
-            execute_sync(
-                plugin=plugin,
-                plugin_config={},
-                storage_manager=storage,
-                embedding_generator=embedding_gen,
-                use_embeddings=True,
-            )
-
-        assert any(
-            "Embedding exists, skipping" in message and "Dune" in message
-            for message in caplog.messages
-        )
-
-    def test_completion_log_includes_embedding_summary(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Completion log includes counts of generated and skipped embeddings."""
-        items = [
-            make_item("New Book", item_id="new_1"),
-            make_item("Old Book", item_id="old_1"),
-            make_item("Another New", item_id="new_2"),
-        ]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.has_embedding.side_effect = [False, True, False]
-        embedding_gen = MagicMock(spec=EmbeddingGenerator)
-        embedding_gen.generate_content_embedding.return_value = [0.1, 0.2]
-
-        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
-            execute_sync(
-                plugin=plugin,
-                plugin_config={},
-                storage_manager=storage,
-                embedding_generator=embedding_gen,
-                use_embeddings=True,
-            )
-
-        assert any(
-            "Completed" in message
-            and "2 generated" in message
-            and "1 skipped" in message
-            for message in caplog.messages
-        )
-
-    def test_completion_log_excludes_embedding_summary_when_disabled(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Completion log has no embedding summary when embeddings are disabled."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-
-        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
-            execute_sync(
-                plugin=plugin,
-                plugin_config={},
-                storage_manager=storage,
-            )
-
-        completed_messages = [
-            message for message in caplog.messages if "Completed" in message
-        ]
-        assert len(completed_messages) == 1
-        assert "Embeddings" not in completed_messages[0]
-
-
 _FORGED_TITLE = "Dune\nERROR    | src.ingestion.sync | forged"
 _ESCAPED_TITLE = "Dune\\nERROR    | src.ingestion.sync | forged"
 
@@ -1466,8 +1249,6 @@ _ESCAPED_TITLE = "Dune\\nERROR    | src.ingestion.sync | forged"
 def _sync_one_forged_title(
     *,
     title: str = _FORGED_TITLE,
-    use_embeddings: bool = False,
-    embedding_exists: bool = False,
     save_error: Exception | None = None,
     enrich_error: Exception | None = None,
 ) -> SyncResult:
@@ -1477,35 +1258,19 @@ def _sync_one_forged_title(
     plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
 
     storage = MagicMock(spec=StorageManager)
-    storage.has_embedding.return_value = embedding_exists
     storage.save_content_item.side_effect = save_error
     storage.mark_item_needs_enrichment.side_effect = enrich_error
-
-    embedding_generator = MagicMock(spec=EmbeddingGenerator)
-    embedding_generator.generate_content_embedding.return_value = [0.1, 0.2]
 
     return execute_sync(
         plugin=plugin,
         plugin_config={},
         storage_manager=storage,
-        embedding_generator=embedding_generator,
-        use_embeddings=use_embeddings,
         mark_for_enrichment=enrich_error is not None,
     )
 
 
 _TITLE_SINKS = [
     pytest.param({}, "Syncing", id="syncing-the-item"),
-    pytest.param(
-        {"use_embeddings": True},
-        "Generating embedding",
-        id="generating-an-embedding",
-    ),
-    pytest.param(
-        {"use_embeddings": True, "embedding_exists": True},
-        "Embedding exists, skipping",
-        id="skipping-an-embedding",
-    ),
     pytest.param(
         {"enrich_error": RuntimeError("enrichment queue is down")},
         "for enrichment",
@@ -1522,8 +1287,8 @@ _TITLE_SINKS = [
 class TestAnImportedTitleCannotForgeALogLine:
     """Reported: every sink in the item loop interpolated a raw title.
 
-    Bug: one CSV row forged three extra log entries a sync.
-    Fix: a single escaped copy per item, shared by all five sinks.
+    Bug: one CSV row forged extra log entries a sync.
+    Fix: a single escaped copy per item, shared by every sink.
     """
 
     @pytest.mark.parametrize(("options", "wording"), _TITLE_SINKS)
@@ -1694,7 +1459,6 @@ _NON_TEXT_LOG_ARGUMENTS = {
     "result.items_synced": "int, rendered with %d",
     "result.total_items": "int, rendered with %d",
     "total_synced": "sum of ints, rendered with %d",
-    "embedding_summary": "built in this module from two ints",
     "content_type": "one of ContentType's four values; pydantic refuses the rest",
     "type(error).__name__": "an identifier holds no break",
 }

@@ -17,7 +17,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.content_length import score_length_match
 from src.recommendations.genre_clusters import get_clusters_for_terms
 from src.recommendations.genre_normalizer import extract_and_normalize_genres
-from src.recommendations.identity import candidate_key, library_key
+from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import UserPreferences
 from src.utils.series import (
     build_series_tracking,
@@ -110,9 +110,6 @@ class ScoringContext:
     ratings_by_genre: dict[str, list[int]] = field(default_factory=dict)
     series_ratings: dict[str, list[int]] = field(default_factory=dict)
     unconsumed_series_positions: dict[str, set[float]] = field(default_factory=dict)
-
-    # Similarity scores keyed by library key (populated by engine when AI enabled)
-    similarity_scores: dict[str, float] = field(default_factory=dict)
 
     # Cross-media adaptations the user rated well, keyed by candidate key
     adaptations: dict[str, list[ContentItem]] = field(default_factory=dict)
@@ -431,26 +428,6 @@ class RatingPatternScorer(Scorer):
         return (average - 1.0) / 4.0
 
 
-class SemanticSimilarityScorer(Scorer):
-    """Score based on pre-computed embedding similarity.
-
-    This scorer looks up a candidate's similarity score from a dict that
-    the engine populates before running the pipeline.  It is only added to
-    the pipeline when AI features are enabled.
-
-    The scores are keyed by library key, because an embedding belongs to a
-    stored row: season-level candidates therefore share their show's score.
-
-    Weight default: 1.5
-    """
-
-    def __init__(self, weight: float = 1.5) -> None:
-        super().__init__(weight)
-
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        return context.similarity_scores.get(library_key(candidate), 0.0)
-
-
 class CustomPreferenceScorer(Scorer):
     """Score based on user-defined custom preference rules.
 
@@ -651,7 +628,6 @@ SCORER_NAME_MAP: dict[str, type[Scorer]] = {
     "tag_overlap": TagOverlapScorer,
     "series_order": SeriesOrderScorer,
     "rating_pattern": RatingPatternScorer,
-    "semantic_similarity": SemanticSimilarityScorer,
     "custom_preference": CustomPreferenceScorer,
     "content_length": ContentLengthScorer,
     "continuation": ContinuationScorer,

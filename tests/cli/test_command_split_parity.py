@@ -39,7 +39,6 @@ _TABLE_JSON = ("table", "json")
 _COMMAND_TREE: dict[str, Any] = {
     "account": {"show": None, "set-password": None, "set-name": None},
     "auth": {"status": None, "connect": None, "disconnect": None},
-    "chat": {"start": None, "send": None, "history": None, "reset": None},
     "complete": None,
     "enrichment": {"start": None, "status": None, "reset": None},
     "library": {
@@ -49,13 +48,6 @@ _COMMAND_TREE: dict[str, Any] = {
         "ignore": None,
         "unignore": None,
         "export": None,
-    },
-    "memory": {
-        "list": None,
-        "add": None,
-        "edit": None,
-        "toggle": None,
-        "delete": None,
     },
     "preferences": {
         "get": None,
@@ -106,13 +98,7 @@ _COMMAND_TREE: dict[str, Any] = {
 #: is its own name.
 _PARAM_SURFACE: dict[tuple[str, ...], tuple[str, ...]] = {
     ("status",): ("--format",),
-    ("recommend",): (
-        "--count",
-        "--format",
-        "--no-use-llm/--use-llm",
-        "--type",
-        "--user",
-    ),
+    ("recommend",): ("--count", "--format", "--type", "--user"),
     ("update",): ("--source", "--workers"),
     ("complete",): ("--author", "--rating", "--review", "--title", "--type"),
     ("preferences", "get"): ("--format", "--user"),
@@ -125,7 +111,7 @@ _PARAM_SURFACE: dict[tuple[str, ...], tuple[str, ...]] = {
     ("preferences", "custom-rules", "add"): ("--user", "rule_text"),
     ("preferences", "custom-rules", "remove"): ("--user", "index"),
     ("preferences", "custom-rules", "clear"): ("--user", "--yes"),
-    ("preferences", "custom-rules", "interpret"): ("--use-llm", "rule_text"),
+    ("preferences", "custom-rules", "interpret"): ("rule_text",),
     ("enrichment", "start"): ("--retry-not-found", "--type", "--user"),
     ("enrichment", "status"): ("--format", "--user"),
     ("enrichment", "reset"): ("--provider", "--type", "--user", "--yes"),
@@ -170,17 +156,8 @@ _PARAM_SURFACE: dict[tuple[str, ...], tuple[str, ...]] = {
     ("auth", "status"): ("--user",),
     ("auth", "connect"): ("--no-browser", "--source", "--source-id", "--user"),
     ("auth", "disconnect"): ("--source", "--source-id", "--user", "--yes"),
-    ("memory", "list"): ("--format", "--include-inactive", "--user"),
-    ("memory", "add"): ("--text", "--user"),
-    ("memory", "edit"): ("--active/--inactive", "--id", "--text"),
-    ("memory", "toggle"): ("--id", "--user"),
-    ("memory", "delete"): ("--id", "--yes"),
     ("profile", "show"): ("--format", "--user"),
     ("profile", "regenerate"): ("--user",),
-    ("chat", "start"): ("--type", "--user"),
-    ("chat", "send"): ("--message", "--type", "--user"),
-    ("chat", "history"): ("--format", "--limit", "--user"),
-    ("chat", "reset"): ("--user",),
     ("source", "list"): ("--format",),
     ("source", "show"): ("--format", "source_id"),
     ("source", "schema"): ("--format", "source_id"),
@@ -242,8 +219,6 @@ _FORMAT_COMMANDS = {
 #: it with — ``set-length`` takes it as an argument, the rest as ``--type``.
 _CONTENT_TYPE_DESTS = ("content_type", "content_type_str")
 _CONTENT_TYPE_COMMANDS = {
-    ("chat", "send"),
-    ("chat", "start"),
     ("complete",),
     ("enrichment", "reset"),
     ("enrichment", "start"),
@@ -253,10 +228,9 @@ _CONTENT_TYPE_COMMANDS = {
     ("recommend",),
 }
 
-#: The two ``--format`` options declared case-sensitively. Nothing makes them
-#: different in kind, so a tidying pass would even them up and ``--format JSON``
-#: would start working where it used to fail.
-_CASE_SENSITIVE_FORMATS = {("memory", "list"), ("chat", "history")}
+#: Every ``--format`` option is case-insensitive; the two that were not were
+#: declared by the chat and memory groups, which are gone.
+_CASE_SENSITIVE_FORMATS: set[tuple[str, ...]] = set()
 
 
 def _subtree(command: click.Command) -> dict[str, Any] | None:
@@ -837,9 +811,13 @@ class TestTheSettingsGroupWordsARefusedValueAsItAlwaysDid:
     @pytest.mark.parametrize(
         ("key", "value", "message"),
         [
-            ("conversation.enabled", "maybe", "Error: expected true or false"),
+            ("enrichment.enabled", "maybe", "Error: expected true or false"),
             ("recommendations.default_count", "abc", "Error: expected an integer"),
-            ("conversation.llm.temperature", "warm", "Error: expected a number"),
+            (
+                "recommendations.scorer_weights.genre_match",
+                "warm",
+                "Error: expected a number",
+            ),
         ],
     )
     def test_a_value_the_setting_type_cannot_represent_is_refused(
@@ -863,7 +841,7 @@ class TestTheSettingsGroupWordsARefusedValueAsItAlwaysDid:
     ) -> None:
         """Proof the two wordings did not converge on one of them."""
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", "conversation.enabled", "maybe"], storage
+            cli_runner, ["settings", "set", "enrichment.enabled", "maybe"], storage
         )
 
         assert "Field '" not in result.output
@@ -873,11 +851,11 @@ class TestTheSettingsGroupWordsARefusedValueAsItAlwaysDid:
         self, cli_runner: CliRunner, storage: StorageManager, raw: str
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", "conversation.enabled", raw], storage
+            cli_runner, ["settings", "set", "enrichment.enabled", raw], storage
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting("conversation.enabled") is True
+        assert storage.get_setting("enrichment.enabled") is True
 
 
 def _returned_string_constants(tree: ast.AST, function_name: str) -> set[str]:
@@ -1078,18 +1056,17 @@ class TestBothOutputModesSayWhatTheyAlwaysSaidAndLeaveTheSameState:
         still in force and not the one just stored. Pre-existing.
         """
         table_result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", "features.ai_enabled", "true"], storage
+            cli_runner, ["settings", "set", "logging.level", "DEBUG"], storage
         )
         json_result = _invoke_with_mocks(
             cli_runner,
-            ["settings", "set", "features.ai_enabled", "true", "--format", "json"],
+            ["settings", "set", "logging.level", "DEBUG", "--format", "json"],
             storage,
         )
 
-        assert storage.get_setting("features.ai_enabled") is True
+        assert storage.get_setting("logging.level") == "DEBUG"
         assert table_result.output == (
-            "Set features.ai_enabled = false.\n"
-            "This change takes effect after a restart.\n"
+            "Set logging.level = INFO.\nThis change takes effect after a restart.\n"
         )
         assert "This change takes effect" not in json_result.output
         assert set(json.loads(json_result.output)) == {"sections"}
@@ -1099,8 +1076,8 @@ class TestBothOutputModesSayWhatTheyAlwaysSaidAndLeaveTheSameState:
     ) -> None:
         """The counterpart, so the sibling above cannot be read as the rule."""
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", "conversation.enabled", "off"], storage
+            cli_runner, ["settings", "set", "enrichment.enabled", "off"], storage
         )
 
-        assert result.output == "Set conversation.enabled = false.\n"
-        assert storage.get_setting("conversation.enabled") is False
+        assert result.output == "Set enrichment.enabled = false.\n"
+        assert storage.get_setting("enrichment.enabled") is False

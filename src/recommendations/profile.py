@@ -3,18 +3,33 @@
 import json
 import logging
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from src.models.content import ContentItem, ContentType
-from src.models.conversation import PreferenceProfile
 from src.recommendations.scorers import extract_genres
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PreferenceProfile:
+    """A distilled summary of user preferences.
+
+    Generated from the user's ratings, reviews and completions, and shown by
+    ``profile show`` and ``GET /api/profile``.
+    """
+
+    user_id: int
+    genre_affinities: dict[str, float] = field(default_factory=dict)
+    theme_preferences: list[str] = field(default_factory=list)
+    anti_preferences: list[str] = field(default_factory=list)
+    cross_media_patterns: list[str] = field(default_factory=list)
+    generated_at: datetime | None = None
 
 
 # Theme keywords that indicate preference signals
@@ -408,9 +423,9 @@ class ProfileGenerator:
         # Check theme/tag fields
         theme_fields = ["themes", "tags", "keywords", "features"]
 
-        for field in theme_fields:
-            if field in metadata:
-                value = metadata[field]
+        for theme_field in theme_fields:
+            if theme_field in metadata:
+                value = metadata[theme_field]
                 if isinstance(value, list):
                     themes.extend(str(v).lower() for v in value)
                 elif isinstance(value, str):

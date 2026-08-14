@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
-import type { StatusResponse, FeaturesStatus, RecommendationsConfig } from '@/types/api'
+import type { StatusResponse, RecommendationsConfig } from '@/types/api'
 
 export const useAppStore = defineStore('app', () => {
   const api = useApi()
@@ -15,23 +15,12 @@ export const useAppStore = defineStore('app', () => {
   const version = ref('')
   const loadedVersion = ref('')
   const showUpdateBanner = ref(false)
-  const features = ref<FeaturesStatus>({
-    ai_enabled: false,
-    embeddings_enabled: false,
-    llm_reasoning_enabled: false,
-  })
   const recommendationsConfig = ref<RecommendationsConfig>({
     max_count: 20,
     default_count: 5,
   })
 
   let versionPollTimer: ReturnType<typeof setInterval> | null = null
-
-  // Getters
-  const chatEnabled = computed(() => features.value.ai_enabled)
-  const aiReasoningEnabled = computed(
-    () => features.value.ai_enabled && features.value.llm_reasoning_enabled,
-  )
 
   // Actions
   async function fetchStatus() {
@@ -45,10 +34,6 @@ export const useAppStore = defineStore('app', () => {
         if (!loadedVersion.value) {
           loadedVersion.value = data.version
         }
-      }
-
-      if (data.features) {
-        features.value = data.features
       }
 
       if (data.recommendations_config) {
@@ -95,11 +80,7 @@ export const useAppStore = defineStore('app', () => {
     version,
     loadedVersion,
     showUpdateBanner,
-    features,
     recommendationsConfig,
-    // Getters
-    chatEnabled,
-    aiReasoningEnabled,
     // Actions
     fetchStatus,
     startVersionPolling,

@@ -27,8 +27,8 @@ class UserPreferenceConfig:
             it by ``MAX_VARIETY_PENALTY`` to derive the ladder's top penalty
             fraction (see ``src/recommendations/variety.py``), so ``5.0`` fully
             zeroes a just-finished genre. Default 0.0 (disabled).
-        custom_rules: Free-form rule descriptions interpreted by the
-            pattern-based or LLM-powered preference interpreter.
+        custom_rules: Free-form rule descriptions read by the pattern-based
+            preference interpreter.
         content_length_preferences: Per-content-type length preference.
             Maps content type string to length preference string
             (e.g. ``{"book": "short", "movie": "any"}``).
@@ -59,8 +59,7 @@ class UserPreferenceConfig:
     #: Longest theme id.
     MAX_THEME_ID_LENGTH: ClassVar[int] = 64
 
-    #: A rule feeds the LLM preference interpreter, so its length is prompt
-    #: size as much as it is storage.
+    #: Longest single rule. Free text with no closed key set to bound it.
     MAX_CUSTOM_RULE_LENGTH: ClassVar[int] = 500
 
     #: Strength a legacy ``variety_after_completion = true`` migrates to. The old

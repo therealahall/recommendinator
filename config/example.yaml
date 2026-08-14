@@ -11,9 +11,9 @@
 #
 # Everything else is managed from inside the app and stored in the database:
 #
-#   * Global settings — features, ollama, recommendations, conversation, sync,
-#     enrichment, logging, and CORS origins. Settings page, or the `settings`
-#     CLI (`python3.11 -m src.cli settings --help`).
+#   * Global settings — recommendations, sync, enrichment, logging, and CORS
+#     origins. Settings page, or the `settings` CLI
+#     (`python3.11 -m src.cli settings --help`).
 #   * Data sources — Data tab -> "+ Add source", or the `source` CLI
 #     (`python3.11 -m src.cli source create <id> <plugin>`). See
 #     docs/DATA_SOURCES.md for the available plugins and their fields.
@@ -51,9 +51,6 @@ web:
 storage:
   # SQLite database path
   database_path: "data/recommendations.db"
-
-  # Vector database (ChromaDB) path
-  vector_db_path: "data/chroma_db"
 
   # Cache directory
   cache_dir: "data/cache"
