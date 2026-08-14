@@ -626,15 +626,16 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
         storage.get_user_preference_config.return_value = None
 
         result = _invoke_with_mocks(
-            CliRunner(),
+            # Split streams, so this is the document a pipe receives: the
+            # command's progress line goes to stderr.
+            CliRunner(mix_stderr=False),
             ["recommend", "--type", "book", "--format", "json"],
             storage,
             engine=engine,
         )
 
         assert result.exit_code == 0
-        # The command prints a progress line before the document.
-        return result.output[result.output.index("[") :]
+        return result.stdout
 
     @staticmethod
     def _web_document(engine: MagicMock) -> str:

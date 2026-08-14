@@ -54,6 +54,8 @@ _LOG_UNSAFE_RE = re.compile(
 # rule is prose.
 _RULE_UNSAFE_RE = re.compile(rf'["{{}}{_CONTROL_RANGE}{_SURROGATE_RANGE}]')
 
+_LONE_SURROGATE_RE = re.compile(f"[{_SURROGATE_RANGE}]")
+
 _UPPERCASE_WORDS: dict[str, str] = {
     "tv": "TV",
     "gog": "GOG",
@@ -159,6 +161,15 @@ def sanitize_rule_text(raw: str) -> str:
     the operator's own word. Uncapped; the caller applies its storage cap.
     """
     return _clean_for_prompt(raw, _RULE_UNSAFE_RE)
+
+
+def strip_lone_surrogates(raw: str) -> str:
+    """Drop what argv carries and no strict UTF-8 encoder takes.
+
+    ``surrogateescape`` hands an undecodable byte over as a lone surrogate, and
+    SQLite and ``click.echo`` both raise on one. Line breaks stay: they encode.
+    """
+    return _LONE_SURROGATE_RE.sub("", raw)
 
 
 def sanitize_prompt_text(raw: str) -> str:

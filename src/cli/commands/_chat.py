@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import json
-import logging
 
 import click
 
+from src.cli._shared import abort_after_failure, report_failure
 from src.config.service import get_feature_flags
 from src.conversation.engine import ConversationEngine
 from src.models.content import ContentType
 
-logger = logging.getLogger(__name__)
+#: What the chat SSE stream sends when the engine raises mid-answer, so both
+#: interfaces refuse a message in the same words.
+CHAT_FAILED = "An internal error occurred"
+
+#: The log's half of that pair, one per verb, since the wording above names
+#: neither the command nor the operation.
+CHAT_SEND_LOGGED = "Chat send failed"
+CHAT_MESSAGE_LOGGED = "Chat message processing failed"
 
 
 @click.group()
@@ -84,12 +91,10 @@ def chat_start(ctx: click.Context, content_type_str: str | None, user_id: int) -
                 user_id=user_id, message=message, content_type=content_type
             )
             click.echo(f"\nAssistant: {response}\n")
-        except Exception:
-            logger.error("Chat message processing failed", exc_info=True)
-            click.echo(
-                "\nError: Could not process message. Please try again.\n",
-                err=True,
-            )
+        except Exception as error:
+            # Reported rather than aborted: one bad message must not end the
+            # session the operator is still typing into.
+            report_failure(ctx, CHAT_FAILED, error, CHAT_MESSAGE_LOGGED)
 
 
 @chat.command("send")
@@ -118,10 +123,8 @@ def chat_send(
             user_id=user_id, message=message, content_type=content_type
         )
         click.echo(response)
-    except Exception:
-        logger.error("Chat send failed", exc_info=True)
-        click.echo("Error: Failed to get a response. Check logs for details.", err=True)
-        raise click.Abort() from None
+    except Exception as error:
+        abort_after_failure(ctx, CHAT_FAILED, error, CHAT_SEND_LOGGED)
 
 
 @chat.command("history")

@@ -16,8 +16,14 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from src.cli.commands._account import account
+from src.cli.commands._account import (
+    PASSWORD_WRITE_FAILED,
+    RENAME_FAILED,
+    account,
+)
 from src.storage.accounts import (
+    ACCOUNT_NAME_BLANK,
+    ACCOUNT_NAME_TOO_LONG,
     MAX_ACCOUNT_NAME_LENGTH,
     MIN_PASSWORD_LENGTH,
     PASSWORD_TOO_SHORT,
@@ -324,14 +330,16 @@ class TestRenamingTheAccount:
     def test_a_blank_username_is_refused_and_writes_nothing(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """An empty ``--username`` is a shell accident, and it would leave the
-        login form with no name that works."""
+        """The storage door's own refusal, named after the option that broke it.
+
+        The web renders the same sentence for the same value.
+        """
         before = claimed.describe_account(1)
 
         result = _run(cli_runner, claimed, ["account", "set-name", "--username", "  "])
 
         assert result.exit_code != 0
-        assert "--username cannot be blank." in result.output
+        assert f"--username: {ACCOUNT_NAME_BLANK}" in result.output
         assert claimed.describe_account(1) == before
 
     def test_a_padded_name_is_stored_trimmed_as_the_web_stores_it(
@@ -364,7 +372,11 @@ class TestRenamingTheAccount:
     def test_a_name_past_the_column_is_refused_as_the_web_refuses_it(
         self, cli_runner: CliRunner, claimed: StorageManager, option: str
     ) -> None:
-        """``UserUpdateRequest`` caps both at the same width, and 422s past it."""
+        """``UserUpdateRequest`` caps both at the same width, and 422s past it.
+
+        Regression: the group carried its own copy of the cap and its own
+        sentence, so the two interfaces could refuse different widths.
+        """
         before = claimed.describe_account(1)
 
         result = _run(
@@ -374,8 +386,22 @@ class TestRenamingTheAccount:
         )
 
         assert result.exit_code != 0
-        assert f"cannot be longer than {MAX_ACCOUNT_NAME_LENGTH}" in result.output
+        assert f"{option}: {ACCOUNT_NAME_TOO_LONG}" in result.output
         assert claimed.describe_account(1) == before
+
+    @pytest.mark.parametrize("option", ["--username", "--display-name"])
+    def test_a_name_at_the_cap_is_accepted(
+        self, cli_runner: CliRunner, claimed: StorageManager, option: str
+    ) -> None:
+        """Anchors the refusal above: the boundary is ``>``, not ``>=``."""
+        at_the_cap = "x" * MAX_ACCOUNT_NAME_LENGTH
+
+        result = _run(cli_runner, claimed, ["account", "set-name", option, at_the_cap])
+
+        record = claimed.describe_account(1)
+        assert result.exit_code == 0, result.output
+        assert record is not None
+        assert at_the_cap in (record["username"], record["display_name"])
 
     def test_passing_neither_name_is_refused(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -476,13 +502,13 @@ class TestAFailedWriteSaysWhatTheWebSays:
         monkeypatch.setattr(storage, "update_user_identity", refuse)
 
     @pytest.mark.parametrize(
-        ("args", "input_text", "action"),
+        ("args", "input_text", "message"),
         [
-            (_SET_PASSWORD, _TYPED_TWICE, "set the password"),
+            (_SET_PASSWORD, _TYPED_TWICE, PASSWORD_WRITE_FAILED),
             (
                 ["account", "set-name", "--username", "keeper"],
                 None,
-                "rename the account",
+                RENAME_FAILED,
             ),
         ],
         ids=["set-password", "set-name"],
@@ -495,23 +521,23 @@ class TestAFailedWriteSaysWhatTheWebSays:
         caplog: pytest.LogCaptureFixture,
         args: list[str],
         input_text: str | None,
-        action: str,
+        message: str,
     ) -> None:
         self._refuse_every_write(monkeypatch, claimed)
 
-        with caplog.at_level(logging.ERROR, logger="src.cli.commands._account"):
+        with caplog.at_level(logging.ERROR, logger="src.cli._shared"):
             result = _run(cli_runner, claimed, args, input_text)
 
         assert result.exit_code != 0
-        assert f"Could not {action}. Check logs for details." in result.output
+        assert f"{message}. Check logs for details." in result.output
         assert "readonly database" not in result.output
         assert "readonly database" in caplog.text
 
     @pytest.mark.parametrize(
         ("args", "input_text"),
         [
-            ([*_SET_PASSWORD, "--verbose"], _TYPED_TWICE),
-            (["account", "set-name", "--username", "keeper", "--verbose"], None),
+            (_SET_PASSWORD, _TYPED_TWICE),
+            (["account", "set-name", "--username", "keeper"], None),
         ],
         ids=["set-password", "set-name"],
     )
@@ -523,10 +549,13 @@ class TestAFailedWriteSaysWhatTheWebSays:
         args: list[str],
         input_text: str | None,
     ) -> None:
-        """For the operator whose log file is unreadable."""
+        """For the operator whose log file is unreadable.
+
+        ``--verbose`` is the root group's, so it comes before the subcommand.
+        """
         self._refuse_every_write(monkeypatch, claimed)
 
-        result = _run(cli_runner, claimed, args, input_text)
+        result = _run(cli_runner, claimed, ["--verbose", *args], input_text)
 
         assert result.exit_code != 0
-        assert "attempt to write a readonly database" in result.output
+        assert "OperationalError: attempt to write a readonly database" in result.output

@@ -60,6 +60,7 @@ from src.recommendations.record import Recommendation
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import default_of
 from src.settings.service import build_settings_view
+from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import UNSET, StorageManager
 from src.storage.schema import update_user_settings
 from src.storage.settings_migration import migrate_config_settings
@@ -67,11 +68,7 @@ from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import LINE_BREAKS
-from src.web.api import (
-    APP_VERSION,
-    SOURCE_MISCONFIGURED_DETAIL,
-    _item_to_response,
-)
+from src.web.api import APP_VERSION, _item_to_response
 from src.web.app import (
     _raised_refusal_json_can_carry,
     _validation_refusal_json_can_carry,
@@ -118,6 +115,7 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
+from tests.ast_sweeps import renders_a_value_as_text
 from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
@@ -7514,23 +7512,6 @@ def _sanitizers_reached_by_the_sweep(tree: ast.AST) -> set[str]:
     }
 
 
-def _renders_a_value_as_text(node: ast.expr) -> bool:
-    """Python's four ways of interpolating a value into a string.
-
-    Pinning ``str(...)`` alone left ``f"{error}"`` and ``"%s" % error`` reaching
-    the same sanitizer with the class name already gone.
-    """
-    if isinstance(node, ast.JoinedStr):
-        return True
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
-        return True
-    if not isinstance(node, ast.Call):
-        return False
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr == "format"
-    return isinstance(node.func, ast.Name) and node.func.id == "str"
-
-
 def _stringified_exception_log_arguments(tree: ast.AST) -> set[str]:
     """Sanitized log arguments stringified before they got there.
 
@@ -7546,7 +7527,7 @@ def _stringified_exception_log_arguments(tree: ast.AST) -> set[str]:
         and isinstance(argument.func, ast.Name)
         and argument.func.id == "sanitize_for_log"
         and argument.args
-        and _renders_a_value_as_text(argument.args[0])
+        and renders_a_value_as_text(argument.args[0])
     }
 
 

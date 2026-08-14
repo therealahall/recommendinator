@@ -103,40 +103,83 @@ def _invoke_recommend_with_engine(
     )
 
 
+def _piping_runner() -> CliRunner:
+    """A runner keeping the streams apart, the way a shell pipe sees them.
+
+    The shared ``cli_runner`` fixture merges stderr into stdout, which cannot
+    tell a document from the chatter printed alongside it.
+    """
+    return CliRunner(mix_stderr=False)
+
+
+def _book(
+    title: str,
+    author: str | None = "Author A",
+    db_id: int = 1,
+) -> ContentItem:
+    """An unread book to recommend."""
+    return ContentItem(
+        id=f"ext-{db_id}",
+        db_id=db_id,
+        title=title,
+        author=author,
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+    )
+
+
+def _engine_returning(*recommendations: Recommendation) -> MagicMock:
+    """An engine that recommends exactly these, in this order."""
+    engine = MagicMock(spec=RecommendationEngine)
+    engine.generate_recommendations.return_value = list(recommendations)
+    return engine
+
+
+def _data_rows(output: str) -> list[list[str]]:
+    """The table's body rows, as stripped cells.
+
+    Keyed on the rank digit, which the header and wrapped cells lack. Scores
+    arrive as tabulate re-rendered them: it parses numeric cells, so the
+    command's ``0.50`` prints as ``0.5``.
+    """
+    rows: list[list[str]] = []
+    for line in output.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells[0].isdigit():
+            rows.append(cells)
+    return rows
+
+
+def _rule_widths(output: str) -> set[int]:
+    """Widths of the table's horizontal rules; one value means it lines up."""
+    return {len(line) for line in output.splitlines() if line.startswith("+")}
+
+
 class TestRecommendJsonOutput:
     """Tests for recommend --format json matching web RecommendationResponse."""
 
-    def test_json_output_matches_web_shape(self, cli_runner: CliRunner) -> None:
+    def test_json_output_matches_web_shape(self) -> None:
         """Test JSON output includes all RecommendationResponse fields."""
-        item = ContentItem(
-            id="ext-1",
-            title="Book One",
-            author="Author A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        item.db_id = 42
-        mock_engine = MagicMock(spec=RecommendationEngine)
-        mock_engine.generate_recommendations.return_value = [
+        mock_engine = _engine_returning(
             Recommendation(
-                item=item,
+                item=_book("Book One", db_id=42),
                 score=0.9,
                 reasoning="Great match",
                 llm_reasoning="LLM says so",
                 score_breakdown={"genre": 0.5, "theme": 0.4},
             )
-        ]
+        )
 
         result = _invoke_recommend_with_engine(
-            cli_runner,
+            _piping_runner(),
             ["recommend", "--type", "book", "--format", "json"],
             mock_engine,
         )
 
         assert result.exit_code == 0
-        # Strip the "Generating..." preamble to parse JSON
-        json_start = result.output.find("[")
-        parsed = json.loads(result.output[json_start:])
+        parsed = json.loads(result.stdout)
         rec = parsed[0]
         # Field set matches web RecommendationResponse
         assert set(rec.keys()) == {
@@ -152,6 +195,317 @@ class TestRecommendJsonOutput:
         assert rec["db_id"] == 42
         assert rec["llm_reasoning"] == "LLM says so"
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
+
+    def test_zero_results_emit_an_empty_array_and_no_prose(self) -> None:
+        """Nothing to recommend is ``[]``, as GET /api/recommendations answers.
+
+        The empty-state sentence belongs to the table branch alone: a caller
+        parsing this document cannot read a paragraph.
+        """
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book", "--format", "json"],
+            _engine_returning(),
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == "[]\n"
+        assert "No recommendations available" not in result.stderr
+
+    def test_a_missing_author_is_null_and_the_title_survives_encoding(self) -> None:
+        """The document carries the values, not the table's stand-ins.
+
+        ``N/A`` is a thing to read; a parser wants the null the web route
+        answers with, and a title outside ASCII back as it was stored.
+        """
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book", "--format", "json"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Sátántangó", author=None),
+                    score=0.5,
+                    reasoning="Great match",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)[0]["author"] is None
+        assert json.loads(result.stdout)[0]["title"] == "Sátántangó"
+
+
+class TestRecommendFailuresLeaveStdoutParseable:
+    """A refusal is stderr's, so a pipe gets a document or nothing at all."""
+
+    def test_an_engine_failure_writes_nothing_to_stdout(self) -> None:
+        engine = MagicMock(spec=RecommendationEngine)
+        engine.generate_recommendations.side_effect = RuntimeError("boom")
+
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book", "--format", "json"],
+            engine,
+        )
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert "Failed to generate recommendations" in result.stderr
+
+    def test_a_refused_count_writes_nothing_to_stdout(self) -> None:
+        """The guard runs before the engine, so the document never starts."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book", "--count", "21", "--format", "json"],
+            _engine_returning(),
+        )
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert "exceeds configured max_count=20" in result.stderr
+
+
+class TestRecommendProgressLineOnStdoutRegression:
+    """`recommend --format json` wrote its progress line to stdout.
+
+    Reported: piping the document into a parser broke on that line. Root
+    cause: the echo ran before the format branch, on the data stream. Fix:
+    chatter goes to stderr.
+    """
+
+    ARGS = ["recommend", "--type", "book", "--count", "1"]
+    PROGRESS = "Generating 1 book recommendations..."
+
+    def _engine(self) -> MagicMock:
+        return _engine_returning(
+            Recommendation(
+                item=_book("Hyperion", author="Dan Simmons", db_id=42),
+                score=0.9,
+                reasoning="Great match",
+            )
+        )
+
+    def test_the_json_document_is_the_whole_of_stdout_regression(self) -> None:
+        """stdout parses whole, and the progress line is on stderr."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(), [*self.ARGS, "--format", "json"], self._engine()
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == [
+            {
+                "db_id": 42,
+                "title": "Hyperion",
+                "author": "Dan Simmons",
+                "score": 0.9,
+                "reasoning": "Great match",
+                "llm_reasoning": None,
+                "score_breakdown": {},
+                "variety_penalty": 0.0,
+            }
+        ]
+        assert self.PROGRESS in result.stderr
+
+    def test_the_table_run_still_reports_progress_regression(self) -> None:
+        """The human default keeps the line, off the data channel."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(), self.ARGS, self._engine()
+        )
+
+        assert result.exit_code == 0
+        assert self.PROGRESS in result.stderr
+        assert self.PROGRESS not in result.stdout
+        assert _data_rows(result.stdout) == [
+            ["1", "Hyperion", "Dan Simmons", "0.9", "Great match"]
+        ]
+
+
+class TestRecommendTableOutput:
+    """What the default format renders, which is what a human reads."""
+
+    def test_recommendations_render_as_ranked_rows_in_engine_order(self) -> None:
+        """Rank, title, creator and score per row, best-scoring first."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion", author="Dan Simmons", db_id=1),
+                    score=0.9,
+                    reasoning="Great match",
+                ),
+                Recommendation(
+                    item=_book("Dune", author="Frank Herbert", db_id=2),
+                    score=0.42,
+                    reasoning="Also good",
+                ),
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Hyperion", "Dan Simmons", "0.9", "Great match"],
+            ["2", "Dune", "Frank Herbert", "0.42", "Also good"],
+        ]
+
+    def test_an_unknown_author_renders_a_placeholder(self) -> None:
+        """A book with no author shows N/A, never the literal None."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Nowhere Man", author=None),
+                    score=0.5,
+                    reasoning="Pipeline line",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Nowhere Man", "N/A", "0.5", "Pipeline line"]
+        ]
+        assert "None" not in result.stdout
+
+    def test_the_blurb_is_what_the_reasoning_column_shows(self) -> None:
+        """An LLM blurb replaces the pipeline line, as the web card does."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion"),
+                    score=0.5,
+                    reasoning="Pipeline line",
+                    llm_reasoning="Big ideas, bigger prose.",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Hyperion", "Author A", "0.5", "Big ideas, bigger prose."]
+        ]
+        assert "Pipeline line" not in result.stdout
+
+    def test_no_blurb_falls_back_to_the_pipeline_line(self) -> None:
+        """Without one the column shows the pipeline text, never None."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion"),
+                    score=0.5,
+                    reasoning="Pipeline line",
+                    llm_reasoning=None,
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Hyperion", "Author A", "0.5", "Pipeline line"]
+        ]
+        assert "None" not in result.stdout
+
+    def test_a_blank_blurb_falls_back_to_the_pipeline_line(self) -> None:
+        """Whitespace is not a blurb, which is the web card's rule too.
+
+        A model that answered with a newline alone would otherwise blank the
+        column, losing the pipeline line the run does have.
+        """
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion"),
+                    score=0.5,
+                    reasoning="Pipeline line",
+                    llm_reasoning="  \n  ",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Hyperion", "Author A", "0.5", "Pipeline line"]
+        ]
+
+    def test_a_non_ascii_title_renders_intact(self) -> None:
+        """Titles are not restricted to the CLI's own alphabet."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Sátántangó", author="Krasznahorkai"),
+                    score=0.5,
+                    reasoning="Great match",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert _data_rows(result.stdout) == [
+            ["1", "Sátántangó", "Krasznahorkai", "0.5", "Great match"]
+        ]
+        assert len(_rule_widths(result.stdout)) == 1
+
+    def test_a_title_holding_the_column_separator_keeps_the_grid_square(
+        self,
+    ) -> None:
+        """A pipe in a title is data, not a cell boundary."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Kill Bill | Vol. 1"),
+                    score=0.5,
+                    reasoning="Great match",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert "Kill Bill | Vol. 1" in result.stdout
+        assert len(_rule_widths(result.stdout)) == 1
+
+    def test_a_title_holding_a_newline_keeps_the_grid_square(self) -> None:
+        """A title broken over two lines still renders one aligned row."""
+        result = _invoke_recommend_with_engine(
+            _piping_runner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Infinite\nJest"),
+                    score=0.5,
+                    reasoning="Great match",
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert "Infinite" in result.stdout
+        assert "Jest" in result.stdout
+        assert len(_rule_widths(result.stdout)) == 1
+
+    def test_count_one_renders_one_row(self) -> None:
+        """--count 1 asks the engine for one and renders the one it returns."""
+        engine = _engine_returning(
+            Recommendation(item=_book("Hyperion"), score=0.9, reasoning="Great match")
+        )
+
+        result = _invoke_recommend_with_engine(
+            _piping_runner(), ["recommend", "--type", "book", "--count", "1"], engine
+        )
+
+        assert result.exit_code == 0
+        assert engine.generate_recommendations.call_args[1]["count"] == 1
+        assert len(_data_rows(result.stdout)) == 1
 
 
 class TestRecommendCreatorColumnRegression:

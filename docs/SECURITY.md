@@ -224,6 +224,12 @@ in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as
 status code or error class, and every OAuth connect flow logs only an error type
 name or a status code. None of them attaches a traceback.
 
+`tests/test_log_sink_sweep.py` sweeps two roots for that: `src/auth/` and
+`src/ingestion/sources/`, where Steam and GOG live. TMDB, RAWG and OpenLibrary
+sit under `src/enrichment/providers/`, which it does not reach. Each provider's
+own module-local test holds its request failures to `scrub_request_error`, and
+the chain scan below covers the traceback half.
+
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`
 logs with `exc_info=True`, so GOG's token refresh and code exchange, Steam's two
@@ -270,7 +276,7 @@ The shared security-review agent, committed at
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden)
+  forbidden), swept over `src/web/` by `tests/test_http_error_detail_sweep.py`
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values
@@ -352,7 +358,7 @@ unguarded here.** What asks an agent not to use it that way is the agents' own
 prose, and the two primitives are covered by different sentences: the read-only
 rule answers the write, while the read is answered only by a clause in the
 search section telling an agent not to route around the file tool with
-`--no-index`. Both are maintained upstream, in the repository the six shared
+`--no-index`. Both are maintained upstream, in the repository the five shared
 agents are vendored from. Nothing in this checkout asserts a committed agent
 still carries either, so a copy arriving without them reads as ordinary drift
 and the whole suite stays green.
@@ -365,12 +371,12 @@ can edit the pin in the same commit. It is the same bet as reviewing the
 
 ### For contributors
 
-security-review is one of the six shared agents committed under
+security-review is one of the five shared agents committed under
 `.claude/agents/`, and reads this file and CLAUDE.md for the rules above. It
-runs in parallel with **code-review**, **test-review**, **document-review**,
+runs in parallel with **code-review**, **document-review**,
 **accessibility-review** and this repository's own **parity-review**.
-**commit-hygiene** runs afterwards, once those six have approved, to plan the
-commit split. All seven must approve before anything is committed. Each finding
+**commit-hygiene** runs afterwards, once those five have approved, to plan the
+commit split. All six must approve before anything is committed. Each finding
 carries severity, CWE classification, evidence, impact and remediation.
 
 ## Reporting security issues

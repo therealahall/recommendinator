@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
+from src.cli.commands._chat import CHAT_FAILED
 from src.conversation.engine import ConversationEngine
 from src.models.content import ContentType
 from src.storage.manager import StorageManager
@@ -68,7 +69,7 @@ class TestChatSend:
             )
 
         assert result.exit_code != 0
-        assert "Failed to get a response" in result.output
+        assert CHAT_FAILED in result.output
 
     def test_send_with_type_filter(self, cli_runner: CliRunner) -> None:
         """Test that --type forwards a ContentType filter to the engine."""

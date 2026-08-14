@@ -26,6 +26,7 @@ from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 from src.utils.text import LINE_BREAKS
+from tests.ast_sweeps import renders_a_value_as_text
 from tests.factories import make_item
 
 
@@ -1728,19 +1729,6 @@ def _unsanitized_log_arguments(tree: ast.AST) -> set[str]:
     }
 
 
-def _renders_a_value_as_text(node: ast.expr) -> bool:
-    """Python's four ways of interpolating a value into a string."""
-    if isinstance(node, ast.JoinedStr):
-        return True
-    if isinstance(node, ast.BinOp):
-        return isinstance(node.op, ast.Mod)
-    if not isinstance(node, ast.Call):
-        return False
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr == "format"
-    return isinstance(node.func, ast.Name) and node.func.id == "str"
-
-
 def _hand_rendered_sanitizer_inputs(tree: ast.AST) -> set[str]:
     """Sanitizer calls handed a value someone rendered as text first.
 
@@ -1755,7 +1743,7 @@ def _hand_rendered_sanitizer_inputs(tree: ast.AST) -> set[str]:
         and isinstance(call.func, ast.Name)
         and call.func.id in _LOG_SANITIZERS
         and call.args
-        and _renders_a_value_as_text(call.args[0])
+        and renders_a_value_as_text(call.args[0])
     }
 
 

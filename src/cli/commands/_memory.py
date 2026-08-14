@@ -105,7 +105,9 @@ def memory_edit(
         raise click.Abort()
     storage = ctx.obj["storage"]
     updated = storage.update_core_memory(
-        memory_id=memory_id, memory_text=text, is_active=is_active
+        memory_id=memory_id,
+        memory_text=text,
+        is_active=is_active,
     )
     if updated:
         click.echo(f"Memory {memory_id} updated.")

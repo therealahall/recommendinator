@@ -10,11 +10,29 @@ readable from the other. The console gets warnings and errors alone, whatever
 `logging.level` says, and gets them on stderr — stdout carries only the
 command's own output, so `--format json` and `library export` stay pipeable.
 
+Progress lines are on stderr for the same reason, so `recommend --format json`
+pipes cleanly while a plain run still shows what it is doing.
+
+Bytes the locale cannot decode are dropped from an argument before the command
+reads it, so a review pasted out of a Latin-1 file stores and prints as text.
+The trade: a file path in that shape is refused as missing.
+
 Tracebacks are written to the log file only. On the console a command prints
 its own error line, which is why several of them say to check the log. If the
 log file cannot be opened at all — a root-owned `logs/` bind mount, say — the
 command says so once on stderr and runs anyway, with its warnings and errors on
 stderr, tracebacks still withheld, and nothing on disk.
+
+A failing command refuses in the same words the matching web route answers
+with, and the underlying error goes to the log. `--verbose` puts that error on
+the terminal too. It is a root option, so it comes before the subcommand:
+
+```bash
+python3.11 -m src.cli --verbose recommend --type book
+```
+
+Startup is the exception, reported in full: it happens before there is a log
+file to send anyone to.
 
 ## Import and recommend
 
@@ -308,9 +326,9 @@ opened under, and it refuses an unclaimed instance — claim that from the web
 setup page.
 
 `set-name` writes only the names you pass, and an empty `--display-name` clears
-it. All three commands take `--user` and `--format json`. A failed write prints
-a generic refusal and logs the detail, as the web does; `--verbose` puts the
-underlying error on the terminal too.
+it. A name is trimmed and capped exactly as the web caps it, and both refuse an
+over-long one in the same sentence. All three commands take `--user` and
+`--format json`.
 
 ## Conversation and memories (requires AI)
 

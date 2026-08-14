@@ -110,8 +110,12 @@ class TestProfileShow:
 class TestProfileRegenerate:
     """Tests for profile regenerate command."""
 
-    def test_regenerate_profile(self, cli_runner: CliRunner) -> None:
-        """Test regenerating profile."""
+    def test_regenerate_profile(self) -> None:
+        """The result lands on stdout and the progress line on stderr.
+
+        Chatter shares the channel `recommend` uses for it, so a run whose
+        result is piped is not interleaved with what it was doing.
+        """
         mock_storage = MagicMock(spec=StorageManager)
         with patch("src.cli.commands._profile.ProfileGenerator") as mock_pg_cls:
             mock_pg = MagicMock(spec=ProfileGenerator)
@@ -123,8 +127,10 @@ class TestProfileRegenerate:
             mock_pg.regenerate_and_save.return_value = mock_profile
             mock_pg_cls.return_value = mock_pg
             result = _invoke_with_mocks(
-                cli_runner, ["profile", "regenerate"], mock_storage
+                CliRunner(mix_stderr=False), ["profile", "regenerate"], mock_storage
             )
 
         assert result.exit_code == 0
-        assert "Profile regenerated with 1 genre affinities." in result.output
+        assert "Profile regenerated with 1 genre affinities." in result.stdout
+        assert "Analyzing your library..." in result.stderr
+        assert "Analyzing your library..." not in result.stdout

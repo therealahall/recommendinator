@@ -3,6 +3,7 @@
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -37,25 +38,54 @@ from src.storage.source_migration import (
     migrate_source_labels,
 )
 from src.utils import logging as log_config
+from src.utils.text import exception_for_log, strip_lone_surrogates
 
 
-@click.group()
+class SurrogateFreeGroup(click.Group):
+    """``surrogateescape`` turns an undecodable byte into a lone surrogate,
+    which ``click.echo`` and a SQLite bind both raise on. Guarded here rather
+    than per option, so the next option added is not the next crash.
+    """
+
+    def make_context(
+        self,
+        info_name: str,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: Any,
+    ) -> click.Context:
+        # Cost accepted: a path whose bytes are undecodable in the locale
+        # encoding is refused as missing rather than opened.
+        return super().make_context(
+            info_name, [strip_lone_surrogates(arg) for arg in args], parent, **extra
+        )
+
+
+@click.group(cls=SurrogateFreeGroup)
 @click.option(
     "--config",
     type=click.Path(exists=True, path_type=Path),  # type: ignore[type-var]
     default=None,
     help="Path to configuration file",
 )
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Also print the underlying error, not just the line in the log",
+)
 @click.pass_context
-def cli(ctx: click.Context, config: Path | None) -> None:
+def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
     """Recommendinator CLI - Get intelligent recommendations based on your consumption history."""
     ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
 
-    # Load configuration
+    # Both exits below sanitize rather than saying "check the logs": there is
+    # no log yet. ``configure_logging`` runs after the storage built below,
+    # which is inside the second guard.
     try:
         ctx.obj["config"] = load_config(config)
     except FileNotFoundError as error:
-        click.echo(f"Error: {error}", err=True)
+        click.echo(f"Error: {exception_for_log(error)}", err=True)
         sys.exit(1)
 
     # Initialize components
@@ -79,7 +109,10 @@ def cli(ctx: click.Context, config: Path | None) -> None:
             # `logs/` is routinely a bind mount the web container owns, and the
             # CLI is run by someone else. Losing the log is not losing the
             # command, so this reports and carries on rather than exiting 1.
-            click.echo(f"Warning: no log file for this run: {error}", err=True)
+            click.echo(
+                f"Warning: no log file for this run: {exception_for_log(error)}",
+                err=True,
+            )
             # Degrading to no handler at all hands the records to
             # `logging.lastResort`, which prints the tracebacks this console
             # withholds — on the one run with no log file to read them from.
@@ -106,7 +139,11 @@ def cli(ctx: click.Context, config: Path | None) -> None:
             ctx.obj["config"],
         )
     except Exception as error:
-        click.echo(f"Error initializing components: {error}", err=True)
+        # Blanket, and ``migrate_config_secrets`` is under it: the one fault
+        # here whose words could quote a credential.
+        click.echo(
+            f"Error initializing components: {exception_for_log(error)}", err=True
+        )
         sys.exit(1)
 
     # Relabel stored goodreads source values and plugin names after the plugin

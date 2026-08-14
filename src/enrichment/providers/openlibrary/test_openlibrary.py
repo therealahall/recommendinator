@@ -436,3 +436,39 @@ class TestIsbnLookupCannotForgeALogLineRegression:
         assert "978\\nWARNING" in caplog.text
         assert self._FORGED not in caplog.text
         assert "ConnectionError" in caplog.text
+
+
+class TestIsbnLookupRendersItsFailureThroughTheScrubberRegression:
+    """Reported: ``docs/SECURITY.md`` points here for OpenLibrary's
+    ``scrub_request_error`` claim; nothing held it. Root cause: the transport
+    error above carries no status, so ``exception_for_log`` clears the same
+    assertions. Fix: an ``HTTPError``, where the two renderers differ.
+    """
+
+    _URL = "https://openlibrary.org/isbn/9780441013593.json"
+
+    def test_an_http_failure_reaches_the_log_as_a_status_alone(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        provider = OpenLibraryProvider()
+        response = MagicMock(spec=requests.Response)
+        response.status_code = 500
+
+        with (
+            patch(
+                "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+            ) as mock_get,
+            caplog.at_level(
+                logging.WARNING,
+                logger="src.enrichment.providers.openlibrary.openlibrary",
+            ),
+        ):
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.raise_for_status.side_effect = requests.HTTPError(
+                f"500 Server Error for url: {self._URL}", response=response
+            )
+            assert provider._lookup_by_isbn("978-0-441-01359-3") is None
+
+        assert "HTTP 500" in caplog.text
+        assert self._URL not in caplog.text
+        assert "Server Error" not in caplog.text
