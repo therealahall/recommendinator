@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 
 from src.storage.manager import StorageManager
 from src.web.auth import SESSION_COOKIE
-from src.web.auth_api import reset_login_throttle
 from src.web.csrf import CROSS_ORIGIN_DETAIL
 from tests.factories import booted_web_app
 
@@ -50,14 +49,6 @@ def _state_changing_routes(client: TestClient) -> list[tuple[str, str]]:
         if isinstance(route, APIRoute)
         for method in route.methods - _READ_ONLY_METHODS
     )
-
-
-@pytest.fixture(autouse=True)
-def _forget_failed_logins() -> Iterator[None]:
-    """The throttle is process-wide, so one test's failures reach the next."""
-    reset_login_throttle()
-    yield
-    reset_login_throttle()
 
 
 @pytest.fixture()

@@ -20,6 +20,14 @@ DEFAULT_USER_ID = 1
 # that a pasted document is refused rather than stored whole.
 MAX_REVIEW_LENGTH = 10000
 
+# The manual-metadata bounds `library edit` and ``PATCH /api/items/{id}`` share.
+# The CLI writes past Pydantic, so a description it stored over the web's bound
+# leaves that item unsavable in the edit dialog, which resends it every save.
+MAX_GENRES = 50
+MAX_TAGS = 100
+MAX_GENRE_TAG_LENGTH = 100
+MAX_DESCRIPTION_LENGTH = 10000
+
 # Enrichment-state filter for content listings. ``None`` (no filter) returns
 # every item; the two states partition the library.
 EnrichmentFilter = Literal["enriched", "not_enriched"]

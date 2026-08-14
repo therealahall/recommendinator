@@ -19,7 +19,6 @@ from src.storage.accounts import MIN_PASSWORD_LENGTH, PASSWORD_TOO_SHORT
 from src.storage.manager import StorageManager
 from src.storage.schema import _SCHEMA_VERSION
 from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL
-from src.web.auth_api import reset_login_throttle
 from src.web.healthcheck import HEALTHY_STATUS
 from src.web.state import app_state
 from tests.cli.conftest import _invoke_with_mocks
@@ -43,14 +42,6 @@ _SETUP_BODY = {
     "display_name": _DISPLAY_NAME,
     "password": _PASSWORD,
 }
-
-
-@pytest.fixture(autouse=True)
-def _forget_failed_logins() -> Iterator[None]:
-    """The throttle is process-wide, so one module's failures reach the next."""
-    reset_login_throttle()
-    yield
-    reset_login_throttle()
 
 
 @pytest.fixture()

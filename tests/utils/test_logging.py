@@ -624,6 +624,62 @@ class TestTheConsoleCanBeDeniedExceptionTextRegression:
         assert f"RuntimeError: {self._FAULT}" in console.getvalue()
 
 
+class TestTheConsoleKeepsARecordItsCodecCannotEncodeRegression:
+    """Reported: a ROM scan lost the line naming a Latin-1 filename.
+
+    Bug: the console inherited ``strict`` from ``sys.stdout``, so a lone
+    surrogate raised inside ``emit`` and ``handleError`` swallowed the record.
+    The log file, opened ``backslashreplace``, kept it.
+    """
+
+    #: What ``os.scandir`` hands the ROMs plugin for a name that is not UTF-8.
+    _SCANNED = "/roms/Pok\udce9mon.zip"
+
+    def test_the_line_still_reaches_the_terminal(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        raw = io.BytesIO()
+        # Encoding exactly as an unredirected ``sys.stdout`` does, strict
+        # errors included: a StringIO takes a surrogate without complaint and
+        # so cannot see this bug.
+        console = io.TextIOWrapper(raw, encoding="utf-8")
+        _configure(
+            {"logging": {"level": "INFO", "file": "logs/app.log"}}, console=console
+        )
+
+        logging.getLogger("tests.console_encoding").info("Scanning %s", self._SCANNED)
+        console.flush()
+
+        assert "Scanning /roms/Pok\\udce9mon.zip" in raw.getvalue().decode("utf-8")
+
+    def test_an_accented_title_survives_a_console_that_cannot_spell_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        """The same bug where stdout is ASCII rather than UTF-8.
+
+        Escaping the surrogate range alone leaves this record dropped and the
+        case above green, so the escape has to follow the stream's own codec.
+        """
+        monkeypatch.chdir(tmp_path)
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding="ascii")
+        _configure(
+            {"logging": {"level": "INFO", "file": "logs/app.log"}}, console=console
+        )
+
+        logging.getLogger("tests.console_encoding").info("Imported %s", "Pokémon Red")
+        console.flush()
+
+        assert "Imported Pok\\xe9mon Red" in raw.getvalue().decode("ascii")
+
+
 #: Every transport the wiring holds at WARNING, named by the child that emits:
 #: ``urllib3.connectionpool`` is what writes the request target, and the level
 #: on its parent is what silences it.

@@ -351,8 +351,12 @@ class TestSanitizeForLog:
 
 
 def _write_one_record(message: str, log_file: Path) -> None:
-    """Put one record through a real single-line file handler."""
-    handler = logging.FileHandler(log_file, encoding="utf-8")
+    """Put one record through a handler built as ``configure_logging`` builds it.
+
+    Strict errors here would test a sink the app does not configure, and the
+    line-forging these cases are about is the same either way.
+    """
+    handler = logging.FileHandler(log_file, encoding="utf-8", errors="backslashreplace")
     handler.setFormatter(logging.Formatter("%(levelname)s | %(message)s"))
     writer = logging.getLogger("tests.sanitize_for_log")
     writer.propagate = False
@@ -393,15 +397,9 @@ class TestExceptionForLog:
 
         assert len(log_file.read_text(encoding="utf-8").splitlines()) == 1
 
-    def test_a_lone_surrogate_in_the_message_leaves_the_entry_standing(
-        self, tmp_path: Path
-    ) -> None:
-        """Unescaped it deletes the entry, so the fault reports nothing at all."""
-        log_file = tmp_path / "app.log"
-
-        _write_one_record(exception_for_log(OSError("Dune\udcff")), log_file)
-
-        assert "OSError: Dune\\udcff" in log_file.read_text(encoding="utf-8")
+    def test_a_lone_surrogate_in_the_message_is_escaped(self) -> None:
+        """The fault's words are a filename as often as not."""
+        assert exception_for_log(OSError("Dune\udcff")) == "OSError: Dune\\udcff"
 
     def test_a_keyboard_interrupt_renders_like_any_other(self) -> None:
         """``BaseException``, not ``Exception``: the annotation admits these."""
@@ -486,36 +484,25 @@ class TestTheEscapedValueReachesTheFileAsOneLine:
         assert "\x9b" not in written
 
 
-class TestALoneSurrogateDeletesTheLogEntry:
-    """Reported by QA: a surrogate deleted the entry, not one character.
+class TestALoneSurrogateIsEscaped:
+    """Reported by QA: a surrogate deleted the whole entry, not one character.
 
-    Bug: unescaped ``\\udcff`` made the handler's encoder raise inside
-    ``emit``, and ``handleError`` swallowed it. ``discover_themes`` hits it
-    on a non-UTF-8 directory name.
-    Fix: escape the surrogate range too.
+    The handlers escape it themselves now, so what turns on this is one
+    readable escape at every sink rather than each codec's own.
     """
-
-    def test_the_entry_survives_a_lone_surrogate(self, tmp_path: Path) -> None:
-        log_file = tmp_path / "app.log"
-
-        _write_one_record(sanitize_for_log("Dune\udcff"), log_file)
-
-        assert "Dune" in log_file.read_text(encoding="utf-8", errors="replace")
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udbff", "\udc00", "\udfff"])
     def test_each_end_of_the_range_is_escaped(self, surrogate: str) -> None:
         """Both halves of the range, not only the ``\\udcff`` QA reported."""
         assert sanitize_for_log(f"Dune{surrogate}") == f"Dune\\u{ord(surrogate):04x}"
 
-    def test_every_surrogate_at_once_reaches_the_file(self, tmp_path: Path) -> None:
-        log_file = tmp_path / "app.log"
+    def test_every_surrogate_at_once_escapes_to_one_line(self) -> None:
         raw = "Dune" + "".join(chr(code) for code in range(0xD800, 0xE000))
 
-        _write_one_record(sanitize_for_log(raw), log_file)
+        escaped = sanitize_for_log(raw)
 
-        written = log_file.read_text(encoding="utf-8")
-        assert "Dune\\ud800" in written
-        assert len(written.splitlines()) == 1
+        assert escaped.startswith("Dune\\ud800")
+        assert len(escaped.splitlines()) == 1
 
     @pytest.mark.parametrize("neighbour", ["퟿", "", "\U0001f600"])
     def test_the_characters_either_side_of_the_range_survive(

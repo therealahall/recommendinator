@@ -368,8 +368,9 @@ rated items in signal order to fill the slots the lookup leaves empty.
 ### 4. Enrichment (`src/enrichment/`)
 
 Background metadata gap-filling from external APIs. Providers subclass
-`EnrichmentProvider`, auto-discovered from `src/enrichment/providers/`, each with
-its own token-bucket rate limiter. A background worker runs them in configurable
+`EnrichmentProvider`, live under `src/enrichment/providers/` and are registered
+by name in `EnrichmentRegistry.discover_providers`, each with its own
+token-bucket rate limiter. A background worker runs them in configurable
 batches, and an optional hook fires it after a sync.
 
 | Provider | Content | Franchise source |
@@ -487,17 +488,12 @@ Library, Data, Preferences and Settings. Internal network only.
   resolved *inside* the lock — a dependency resolves and is released before the
   handler body runs. `RequiredConfig` stays on those routes as the 503 guard.
 - The plugin and enrichment-provider registries publish under a module-level
-  lock too. Discovery used to clear and refill the live map, so a threadpool
-  worker reading mid-pass — or a second pass — left the registry flagged
-  discovered over a partial map for the life of the process: 404 for a source
-  that exists, and a sync of "all" reporting success having skipped it. A pass
-  now fills a map of its own and swaps it in. The scanning stays *outside* the
-  lock, because importing a module and constructing a plugin both run
-  third-party code from `private/plugins/`, and a plugin calling
-  `get_registry()` under the lock would hang the process with nothing logged.
-  The cost is that a re-entering plugin reads the pre-pass map, and that two
-  cold passes each do the work; both publish complete maps and the later swap
-  wins.
+  lock too. A pass used to clear and refill the live map, so a threadpool
+  worker reading mid-pass left the registry flagged discovered over a partial
+  map for good: 404 for a source that exists. A pass now fills a map of its own
+  and swaps it in. Building it stays *outside* the lock, because a
+  `private/plugins/` plugin calling `get_registry()` under it would hang the
+  process silently.
 - The lazily-built process singletons behind `/api/sync/*` and
   `/api/enrichment/*` (`get_sync_manager`, `get_enrichment_manager`) build under
   a module-level lock for the same reason: two threadpool requests on a cold

@@ -10,14 +10,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from src.cli.commands._library import (
+from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
     MAX_GENRES,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
 )
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import UNSET, StorageManager
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
