@@ -118,14 +118,15 @@ docker-compose.dev.yml     # Dev override: bind-mount + --reload (committed)
 docker-compose.override.yml  # Personal mounts (gitignored)
 .claude/agents/       # The native parity-review agent
 private/              # Gitignored — private plugins NOT in the open source repo
-└── plugins/          # Private source plugins (personal_site_games.py, etc.)
+└── plugins/          # Private source plugins and enrichment providers, both
+                      # registries scan here (personal_site_games.py, etc.)
 ```
 
 ## Private Plugins (gitignored)
 
 **IMPORTANT:** The `private/` directory is in `.gitignore` and invisible to Glob/Grep tools (which respect gitignore). Always check it explicitly with `Read` or `ls` when investigating plugin issues.
 
-- Private plugins follow the same `SourcePlugin` interface as `src/ingestion/sources/` plugins.
+- Private plugins follow the same `SourcePlugin` interface as `src/ingestion/sources/` plugins. A private enrichment provider goes in the same directory and implements `EnrichmentProvider`; each registry keeps the subclasses it recognises.
 - Tests for private plugins live alongside them or in a local test runner — they are NOT in the `tests/` directory.
 
 ## Development Standards

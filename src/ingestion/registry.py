@@ -27,7 +27,7 @@ class PluginRegistry:
 
     Discovers and manages plugins from:
     1. Built-in plugins in src/ingestion/sources/
-    2. Private plugins in plugins/private/ (if exists)
+    2. Private plugins in private/plugins/ (if exists)
 
     Uses singleton pattern - get instance via get_registry() or
     PluginRegistry.get_instance().

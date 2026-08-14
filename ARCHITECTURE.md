@@ -368,10 +368,10 @@ rated items in signal order to fill the slots the lookup leaves empty.
 ### 4. Enrichment (`src/enrichment/`)
 
 Background metadata gap-filling from external APIs. Providers subclass
-`EnrichmentProvider`, live under `src/enrichment/providers/` and are registered
-by name in `EnrichmentRegistry.discover_providers`, each with its own
-token-bucket rate limiter. A background worker runs them in configurable
-batches, and an optional hook fires it after a sync.
+`EnrichmentProvider` and are discovered by name from `src/enrichment/providers/`
+and from `private/plugins/`, each with its own token-bucket rate limiter. A
+background worker runs them in configurable batches, and an optional hook fires
+it after a sync.
 
 | Provider | Content | Franchise source |
 |----------|---------|------------------|
@@ -563,8 +563,7 @@ and `test_<name>.py` with mocked APIs. `PluginRegistry` discovers it. See
 
 **An enrichment provider**: the same layout under
 `src/enrichment/providers/<name>/`, with rate limiting configured in the provider
-class. Nothing discovers it: add the class to the tuple in
-`EnrichmentRegistry.discover_providers`.
+class. `EnrichmentRegistry` discovers it, so no core file changes.
 
 **A content type**: extend the `ContentType` enum, declare its fields in
 `src/models/detail_fields.py`, add its detail table to the schema, register

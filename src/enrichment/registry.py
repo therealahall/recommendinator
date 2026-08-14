@@ -1,13 +1,15 @@
-"""Registry for the enrichment providers."""
+"""Registry for discovering and managing enrichment providers."""
 
+import importlib
+import inspect
 import logging
+import pkgutil
+import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 from src.enrichment.provider_base import EnrichmentProvider
-from src.enrichment.providers.openlibrary.openlibrary import OpenLibraryProvider
-from src.enrichment.providers.rawg.rawg import RAWGProvider
-from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +20,11 @@ _registry_lock = threading.Lock()
 
 
 class EnrichmentRegistry:
-    """Registry for the enrichment providers in ``src/enrichment/providers/``.
+    """The enrichment providers, discovered rather than listed.
 
-    Uses singleton pattern - get instance via get_enrichment_registry() or
-    EnrichmentRegistry.get_instance().
-
-    Example usage:
-        registry = get_enrichment_registry()
-
-        # Get a specific provider
-        provider = registry.get_provider("tmdb")
-
-        # Get all enabled providers based on config
-        enabled = registry.get_enabled_providers(config)
+    Built-in ones come from ``src/enrichment/providers/``, private ones from
+    ``private/plugins/``: shipping a provider is dropping a folder in, never
+    editing this file. Get the singleton from :func:`get_enrichment_registry`.
     """
 
     _instance: "EnrichmentRegistry | None" = None
@@ -65,28 +59,133 @@ class EnrichmentRegistry:
         cls._instance = None
 
     def discover_providers(self, force: bool = False) -> None:
-        """Register the built-in providers.
+        """Register every provider the two directories hold.
 
-        The map is built whole and swapped in rather than rebuilt in place:
-        two concurrent passes doing the latter left the process serving a
-        partial map for good.
+        A pass fills a registry of its own and swaps the finished map in, and
+        scans outside ``_registry_lock``: it constructs code this repo does not
+        control. :meth:`PluginRegistry.discover_plugins` spells out both.
         """
         with _registry_lock:
             if self._discovered and not force:
                 return
 
-        built_in: tuple[EnrichmentProvider, ...] = (
-            TMDBProvider(),
-            OpenLibraryProvider(),
-            RAWGProvider(),
-        )
-        providers = {provider.name: provider for provider in built_in}
+        staging = EnrichmentRegistry()
+        staging._discover_builtin_providers()
+        staging._discover_private_providers()
+        providers = staging._providers
 
         with _registry_lock:
             self._providers = providers
             self._discovered = True
 
-        logger.info("Registered enrichment providers: %s", list(providers))
+        logger.info(
+            "Discovered %d enrichment providers: %s", len(providers), list(providers)
+        )
+
+    def _discover_builtin_providers(self) -> None:
+        """Discover built-in providers from src/enrichment/providers/."""
+        try:
+            import src.enrichment.providers as providers_package
+
+            package_path = Path(providers_package.__file__).parent
+
+            for module_info in pkgutil.iter_modules([str(package_path)]):
+                module_name = module_info.name
+                if module_name.startswith("_"):
+                    continue
+
+                try:
+                    module = importlib.import_module(
+                        f"src.enrichment.providers.{module_name}"
+                    )
+                    self._register_providers_from_module(
+                        module, f"builtin:{module_name}"
+                    )
+                except Exception as error:
+                    logger.warning(
+                        "Failed to load built-in provider module %s: %s",
+                        module_name,
+                        error,
+                    )
+        except ImportError as error:
+            logger.warning("Failed to import enrichment providers package: %s", error)
+
+    def _discover_private_providers(self) -> None:
+        """Discover private providers from private/plugins/.
+
+        The same directory the source-plugin registry scans: what a private
+        module holds decides which registry keeps it, not where it sits.
+        """
+        project_root = Path(__file__).parent.parent.parent
+        private_path = project_root / "private" / "plugins"
+
+        if not private_path.exists():
+            logger.debug("No private plugins directory found at %s", private_path)
+            return
+
+        private_init = private_path.parent / "__init__.py"
+        plugins_init = private_path / "__init__.py"
+
+        if not private_init.exists():
+            logger.debug("private/__init__.py not found, skipping private providers")
+            return
+
+        if not plugins_init.exists():
+            logger.debug(
+                "private/plugins/__init__.py not found, skipping private providers"
+            )
+            return
+
+        project_root_str = str(project_root.absolute())
+        if project_root_str not in sys.path:
+            sys.path.insert(0, project_root_str)
+
+        for py_file in private_path.glob("*.py"):
+            if py_file.name.startswith("_"):
+                continue
+
+            module_name = py_file.stem
+            try:
+                module = importlib.import_module(f"private.plugins.{module_name}")
+                self._register_providers_from_module(module, f"private:{module_name}")
+            except Exception as error:
+                logger.warning(
+                    "Failed to load private provider %s: %s", module_name, error
+                )
+
+    def _register_providers_from_module(self, module: Any, source: str) -> None:
+        """Register all EnrichmentProvider subclasses from a module.
+
+        Args:
+            module: Imported module to scan
+            source: Description of source for logging (e.g., "builtin:tmdb")
+        """
+        for attr_name in dir(module):
+            if attr_name.startswith("_"):
+                continue
+
+            attr = getattr(module, attr_name)
+
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, EnrichmentProvider)
+                and not inspect.isabstract(attr)
+            ):
+                try:
+                    provider_instance = attr()
+                    self.register(provider_instance)
+                    logger.debug(
+                        "Registered enrichment provider %s from %s",
+                        provider_instance.name,
+                        source,
+                    )
+                except Exception as error:
+                    logger.warning(
+                        "Failed to instantiate enrichment provider %s from %s: %s",
+                        attr_name,
+                        source,
+                        error,
+                    )
 
     def register(self, provider: EnrichmentProvider) -> None:
         """Register a provider instance.

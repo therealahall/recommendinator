@@ -2050,9 +2050,9 @@ class TestManualEditEnrichmentProtectionRegression:
 class TestARunReachesTMDBThroughTheGlobalRegistry:
     """Every other case here injects a registry of mocks.
 
-    So dropping the ``TMDBProvider`` import from ``discover_providers``, or
-    renaming either half of the name/config-key pair, leaves the suite green
-    and enriches nothing.
+    So a ``tmdb`` folder that stops being discovered, or a rename of either
+    half of the name/config-key pair, leaves the suite green and enriches
+    nothing.
     """
 
     _API_KEY = "tmdb-secret-key"
