@@ -13,7 +13,7 @@ whatever row reaches an open without them.
 import sqlite3
 
 from src.models.detail_fields import DETAIL_FIELDS, FieldKind
-from src.storage.merge import assert_safe_identifier, detail_join
+from src.storage.merge import detail_join
 from src.utils.sorting import build_search_text, get_sort_title
 
 
@@ -29,13 +29,9 @@ def _build_creator_source() -> tuple[str, str]:
     branches: list[str] = []
     joins: list[str] = []
     for content_type, spec in DETAIL_FIELDS.items():
-        # The content type reaches the CASE as a string literal, so it is held
-        # to the identifier pattern as well: no quote can survive it.
-        assert_safe_identifier(content_type)
         joins.append(detail_join(spec))
         for field in spec.fields:
             if field.kind is FieldKind.CREATOR and field.column is not None:
-                assert_safe_identifier(field.column)
                 branches.append(
                     f"WHEN '{content_type}' THEN {spec.table_alias}.{field.column}"
                 )

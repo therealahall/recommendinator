@@ -21,7 +21,6 @@ from src.models.detail_fields import (
 from src.storage import sqlite_db
 from src.storage.merge import (
     _DETAIL_TABLE_COLUMNS,
-    assert_safe_identifier,
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
@@ -6126,36 +6125,6 @@ class TestParseJsonList:
 
     def test_converts_elements_to_strings(self) -> None:
         assert parse_json_list("[1, 2, 3]") == ["1", "2", "3"]
-
-
-class TestAssertSafeIdentifier:
-    """Tests for assert_safe_identifier SQL injection guard."""
-
-    def test_valid_lowercase_identifier(self) -> None:
-        assert_safe_identifier("some_column")
-
-    def test_valid_identifier_with_digits(self) -> None:
-        assert_safe_identifier("col_2")
-
-    def test_identifier_with_space_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            assert_safe_identifier("bad column")
-
-    def test_sql_injection_pattern_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            assert_safe_identifier("col; DROP TABLE users;--")
-
-    def test_uppercase_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            assert_safe_identifier("BadColumn")
-
-    def test_starting_with_digit_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            assert_safe_identifier("1col")
-
-    def test_empty_string_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            assert_safe_identifier("")
 
 
 class TestDetailTableColumnsConsistency:

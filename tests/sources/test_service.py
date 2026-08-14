@@ -1221,8 +1221,9 @@ def _registry_with_rotating_doubles(_real_registry: None) -> Iterator[None]:
     for plugin_name in ROTATING_PLUGINS:
         real_plugin = registry.get_plugin(plugin_name)
         assert real_plugin is not None
-        registry.unregister(plugin_name)
-        registry.register(_rotates_on_fetch(real_plugin))
+        # Swapped in place because ``register`` refuses a name already taken.
+        # ``_real_registry`` discards this registry when the test ends.
+        registry._plugins[plugin_name] = _rotates_on_fetch(real_plugin)
     yield
 
 

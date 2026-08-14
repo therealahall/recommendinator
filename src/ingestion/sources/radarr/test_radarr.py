@@ -129,13 +129,6 @@ class TestRadarrPluginProperties:
     def test_get_source_identifier(self, plugin: RadarrPlugin) -> None:
         assert plugin.get_source_identifier() == "radarr"
 
-    def test_get_info(self, plugin: RadarrPlugin) -> None:
-        info = plugin.get_info()
-        assert info.name == "radarr"
-        assert info.display_name == "Radarr"
-        assert info.requires_api_key is True
-        assert info.requires_network is True
-
 
 class TestRadarrPluginValidation:
     """Tests for RadarrPlugin config validation."""

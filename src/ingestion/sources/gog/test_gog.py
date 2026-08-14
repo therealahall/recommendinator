@@ -352,17 +352,6 @@ class TestGogPluginProperties:
         plugin = GogPlugin()
         assert plugin.get_source_identifier() == "gog"
 
-    def test_get_info(self) -> None:
-        """Test plugin info includes all metadata."""
-        plugin = GogPlugin()
-        info = plugin.get_info()
-
-        assert info.name == "gog"
-        assert info.display_name == "GOG"
-        assert info.content_types == [ContentType.VIDEO_GAME]
-        assert info.requires_api_key is True
-        assert info.requires_network is True
-
 
 class TestGogPluginValidation:
     """Tests for GogPlugin config validation."""

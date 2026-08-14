@@ -330,14 +330,6 @@ class TestTraktPluginProperties:
         assert by_name["include_watchlist"].required is False
         assert by_name["include_watchlist"].default is True
 
-    def test_get_info(self) -> None:
-        """Test plugin info includes all metadata."""
-        info = TraktPlugin().get_info()
-        assert info.name == "trakt"
-        assert info.display_name == "Trakt"
-        assert info.content_types == [ContentType.TV_SHOW, ContentType.MOVIE]
-        assert info.requires_api_key is True
-
 
 class TestTraktNormalizeRating:
     """Tests for the 10-point to 5-point rating normalization."""
@@ -878,7 +870,7 @@ class TestTraktAutoDiscovery:
         registry = PluginRegistry()
         registry.discover_plugins()
 
-        assert "trakt" in registry.list_plugin_names()
+        assert "trakt" in registry.get_all_plugins()
         plugin = registry.get_plugin("trakt")
         assert plugin is not None
         assert plugin.display_name == "Trakt"
@@ -904,20 +896,15 @@ class TestTraktAutoDiscovery:
         assert by_name["include_watchlist"].required is False
         assert by_name["include_watchlist"].default is True
 
-    def test_discovered_via_content_type_filter(self) -> None:
-        """Trakt is returned when filtering the registry by movie/TV content type."""
+    def test_discovered_plugin_declares_both_content_types(self) -> None:
+        """The discovered Trakt plugin offers movies and TV, not just one."""
         registry = PluginRegistry()
         registry.discover_plugins()
+        plugin = registry.get_plugin("trakt")
+        assert plugin is not None
 
-        movie_names = {
-            p.name for p in registry.get_plugins_by_content_type(ContentType.MOVIE)
-        }
-        tv_names = {
-            p.name for p in registry.get_plugins_by_content_type(ContentType.TV_SHOW)
-        }
-
-        assert "trakt" in movie_names
-        assert "trakt" in tv_names
+        assert ContentType.MOVIE in plugin.content_types
+        assert ContentType.TV_SHOW in plugin.content_types
 
 
 class TestTraktSeasonExpansionHandoff:

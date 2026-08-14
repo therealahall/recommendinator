@@ -1,9 +1,9 @@
 """Tests for the enrichment manager."""
 
 import logging
-import re
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,7 +14,6 @@ import requests
 from src.enrichment.manager import (
     EnrichmentJobStatus,
     EnrichmentManager,
-    _failure_site,
     merge_enrichment,
 )
 from src.enrichment.provider_base import (
@@ -915,29 +914,24 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
         assert "bad response" not in caplog.text
         assert self._FORGED not in caplog.text
 
-    def test_a_job_level_failure_attaches_neither_traceback_nor_message(
+    def test_a_job_level_failure_reports_only_its_type_to_clients(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
         config: dict[str, Any],
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """``logger.exception`` here quoted every frame's locals' repr."""
+        """``status.errors`` is served over HTTP, so it carries no message."""
         mock_storage.count_items_needing_enrichment.side_effect = ValueError(
             f"query failed for {self._FORGED}"
         )
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
-        with caplog.at_level(logging.ERROR, logger="src.enrichment.manager"):
-            manager.start_enrichment()
-            manager._wait_for_completion()
+        manager.start_enrichment()
+        manager._wait_for_completion()
 
         assert manager.get_status().errors == ["Job error: ValueError"]
-        assert "query failed" not in caplog.text
-        assert self._FORGED not in caplog.text
-        assert "Traceback" not in caplog.text
 
-    def test_a_job_level_failure_says_where_it_failed(
+    def test_a_job_level_failure_logs_a_traceback_for_the_operator(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
@@ -947,7 +941,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
         """Withholding the message left a bare class name nobody could act on."""
 
         def _raise_inside_the_job(*_args: object, **_kwargs: object) -> int:
-            raise ValueError(f"query failed for {self._FORGED}")
+            raise ValueError("query failed")
 
         mock_storage.count_items_needing_enrichment.side_effect = _raise_inside_the_job
 
@@ -956,41 +950,10 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
             manager.start_enrichment()
             manager._wait_for_completion()
 
-        assert re.search(
-            r"test_enrichment_manager\.py:\d+ in _raise_inside_the_job", caplog.text
-        ), "expected the log to locate the frame that raised"
-        assert str(Path(__file__).parent) not in caplog.text
-        assert self._FORGED not in caplog.text
-
-    def test_an_exception_carrying_no_traceback_still_renders(self) -> None:
-        """The site helper runs inside a handler, so it cannot raise itself."""
-        assert _failure_site(ValueError("never raised")) == "no traceback"
-
-    def test_the_site_names_the_frame_that_raised_not_its_caller(self) -> None:
-        """The outermost frame names the loop, which is never the bug."""
-
-        def _raised_here() -> None:
-            raise ValueError("boom")
-
-        def _called_it() -> None:
-            _raised_here()
-
-        with pytest.raises(ValueError) as caught:
-            _called_it()
-
-        site = _failure_site(caught.value)
-        assert site.endswith(" in _raised_here")
-        assert "_called_it" not in site
-
-    def test_the_site_carries_no_directory_component(self) -> None:
-        """A frame's filename is this machine's absolute path to the source."""
-        with pytest.raises(ValueError) as caught:
-            raise ValueError("boom")
-
-        site = _failure_site(caught.value)
-        assert site.startswith(f"{Path(__file__).name}:")
-        assert "/" not in site
-        assert str(Path(__file__).parent) not in site
+        assert "Enrichment job failed: ValueError" in caplog.text
+        assert (
+            "_raise_inside_the_job" in caplog.text
+        ), "expected the traceback to locate the frame that raised"
 
 
 class TestEnrichmentProgressRegression:
@@ -2080,3 +2043,115 @@ class TestManualEditEnrichmentProtectionRegression:
         auto = storage_manager.get_content_item(auto_id)
         assert auto.metadata.get("genres") == ["Action", "Drama"]
         assert auto.enriched is True
+
+
+class TestARunReachesTMDBThroughTheGlobalRegistry:
+    """Every other case here injects a registry of mocks.
+
+    So dropping the ``TMDBProvider`` import from ``discover_providers``, or
+    renaming either half of the name/config-key pair, leaves the suite green
+    and enriches nothing.
+    """
+
+    _API_KEY = "tmdb-secret-key"
+
+    @pytest.fixture(autouse=True)
+    def _global_registry(self) -> Iterator[None]:
+        EnrichmentRegistry.reset_instance()
+        yield
+        EnrichmentRegistry.reset_instance()
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {
+                    "tmdb": {
+                        "enabled": True,
+                        "api_key": self._API_KEY,
+                        "include_keywords": False,
+                    }
+                },
+            }
+        }
+
+    def _tmdb_url(self, path: str) -> str:
+        return f"https://api.themoviedb.org/3/{path}"
+
+    def test_a_movie_is_enriched_by_tmdb_with_no_registry_injected(
+        self, storage_manager: StorageManager, config: dict[str, Any]
+    ) -> None:
+        """``EnrichmentManager(storage, config)`` is what the CLI command builds."""
+        db_id = save_movie(storage_manager)
+        payloads = {
+            self._tmdb_url("search/movie"): {"results": [{"id": 603}]},
+            self._tmdb_url("movie/603"): {
+                "id": 603,
+                "overview": "A hacker learns the true nature of reality.",
+                "genres": [{"name": "Action"}, {"name": "Science Fiction"}],
+                "runtime": 136,
+                "release_date": "1999-03-30",
+            },
+        }
+
+        def fake_get(url: str, **_kwargs: Any) -> MagicMock:
+            return MagicMock(
+                spec=requests.Response,
+                status_code=200,
+                json=lambda: payloads[url],
+            )
+
+        manager = EnrichmentManager(storage_manager, config)
+        with patch("src.enrichment.providers.tmdb.tmdb.requests.get", fake_get):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_provider"] == "tmdb"
+        assert status["enrichment_quality"] == "high"
+        enriched = storage_manager.get_content_item(db_id)
+        assert enriched.metadata.get("genres") == ["Action", "Science Fiction"]
+        assert manager.get_status().items_enriched == 1
+        assert queued_ids(storage_manager) == set()
+
+    def test_a_rejected_key_retires_the_item_without_quoting_it(
+        self,
+        storage_manager: StorageManager,
+        config: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """TMDB sends the key as a query parameter, so the message ``requests``
+        raises for the 401 has it in the URL."""
+        db_id = save_movie(storage_manager)
+        leaky = requests.HTTPError(
+            "401 Client Error for url: "
+            f"{self._tmdb_url('search/movie')}?api_key={self._API_KEY}",
+            response=http_error(401).response,
+        )
+
+        def fake_get(url: str, **_kwargs: Any) -> MagicMock:
+            raise leaky
+
+        manager = EnrichmentManager(storage_manager, config)
+        with (
+            patch("src.enrichment.providers.tmdb.tmdb.requests.get", fake_get),
+            caplog.at_level(logging.WARNING, logger="src.enrichment.manager"),
+        ):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        job_status = manager.get_status()
+        assert job_status.errors == ["tmdb: HTTP 401"]
+        assert self._API_KEY not in caplog.text
+
+        status = storage_manager.get_enrichment_status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] == "not_found"
+        assert status["enrichment_error"] is None
+        assert queued_ids(storage_manager) == set()

@@ -9,12 +9,9 @@ import pkgutil
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.ingestion.plugin_base import SourcePlugin
-
-if TYPE_CHECKING:
-    from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +38,6 @@ class PluginRegistry:
 
         # Get a specific plugin
         plugin = registry.get_plugin("goodreads_csv")
-
-        # Get all enabled plugins based on config
-        enabled = registry.get_enabled_plugins(config)
 
         # List all available plugins
         for name, plugin in registry.get_all_plugins().items():
@@ -230,20 +224,6 @@ class PluginRegistry:
         self._plugins[plugin.name] = plugin
         logger.debug("Registered plugin: %s (%s)", plugin.name, plugin.display_name)
 
-    def unregister(self, name: str) -> bool:
-        """Unregister a plugin by name.
-
-        Args:
-            name: Plugin name to unregister
-
-        Returns:
-            True if plugin was found and removed, False otherwise
-        """
-        if name in self._plugins:
-            del self._plugins[name]
-            return True
-        return False
-
     def get_plugin(self, name: str) -> SourcePlugin | None:
         """Get a plugin by name.
 
@@ -268,72 +248,6 @@ class PluginRegistry:
         """
         self.discover_plugins()
         return dict(self._plugins)
-
-    def get_enabled_plugins(self, config: dict[str, Any]) -> list[SourcePlugin]:
-        """Get the unique set of plugins referenced by enabled input entries.
-
-        Each entry in ``config['inputs']`` must have a ``plugin`` field
-        identifying the plugin type.  Returns the deduplicated set of plugin
-        instances that have at least one enabled input entry.
-
-        Args:
-            config: Full application config
-
-        Returns:
-            List of enabled plugin instances (deduplicated)
-        """
-        self.discover_plugins()
-
-        inputs_config = config.get("inputs", {})
-        seen_plugin_names: set[str] = set()
-        enabled_plugins: list[SourcePlugin] = []
-
-        for _source_id, entry in inputs_config.items():
-            if not isinstance(entry, dict):
-                continue
-            if not entry.get("enabled", False):
-                continue
-
-            plugin_name = entry.get("plugin")
-            if not plugin_name or plugin_name in seen_plugin_names:
-                continue
-
-            plugin = self._plugins.get(plugin_name)
-            if plugin is not None:
-                enabled_plugins.append(plugin)
-                seen_plugin_names.add(plugin_name)
-
-        return enabled_plugins
-
-    def get_plugins_by_content_type(
-        self, content_type: ContentType
-    ) -> list[SourcePlugin]:
-        """Get plugins that provide a specific content type.
-
-        Args:
-            content_type: ContentType to filter by
-
-        Returns:
-            List of plugins that can provide this content type
-        """
-        self.discover_plugins()
-
-        return [
-            plugin
-            for plugin in self._plugins.values()
-            if content_type in plugin.content_types
-        ]
-
-    def list_plugin_names(self) -> list[str]:
-        """Get list of all registered plugin names.
-
-        Triggers discovery if not already done.
-
-        Returns:
-            Sorted list of plugin names
-        """
-        self.discover_plugins()
-        return sorted(self._plugins.keys())
 
 
 def get_registry() -> PluginRegistry:

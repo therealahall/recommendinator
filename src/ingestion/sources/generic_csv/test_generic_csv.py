@@ -57,13 +57,6 @@ class TestCsvImportPluginProperties:
     def test_get_source_identifier(self, plugin: CsvImportPlugin) -> None:
         assert plugin.get_source_identifier() == "csv_import"
 
-    def test_get_info(self, plugin: CsvImportPlugin) -> None:
-        info = plugin.get_info()
-        assert info.name == "csv_import"
-        assert info.display_name == "CSV Import"
-        assert info.requires_api_key is False
-        assert info.requires_network is False
-
 
 class TestCsvImportPluginValidation:
     """Tests for CsvImportPlugin config validation."""

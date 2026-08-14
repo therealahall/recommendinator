@@ -342,17 +342,6 @@ class TestEpicGamesPluginProperties:
         plugin = EpicGamesPlugin()
         assert plugin.get_source_identifier() == "epic_games"
 
-    def test_get_info(self) -> None:
-        """Test plugin info includes all metadata."""
-        plugin = EpicGamesPlugin()
-        info = plugin.get_info()
-
-        assert info.name == "epic_games"
-        assert info.display_name == "Epic Games Store"
-        assert info.content_types == [ContentType.VIDEO_GAME]
-        assert info.requires_api_key is True
-        assert info.requires_network is True
-
 
 # ===========================================================================
 # EpicGamesPlugin — validation
