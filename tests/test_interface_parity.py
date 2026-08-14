@@ -20,7 +20,11 @@ from pydantic import BaseModel, ValidationError
 
 from src.cli.commands._preferences import preferences_set_length
 from src.models.content import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_GENRE_TAG_LENGTH,
+    MAX_GENRES,
     MAX_REVIEW_LENGTH,
+    MAX_TAGS,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -328,6 +332,52 @@ class TestReviewLengthBoundIsTheSameOnBothApiSurfaces:
         errors = caught.value.errors()
         assert [error["loc"] for error in errors] == [("review",)]
         assert errors[0]["type"] == "string_too_long"
+
+
+class TestManualMetadataBoundsAreTheSameOnBothSurfaces:
+    """What ``library edit`` stores, the web edit dialog can still save.
+
+    ``EditModal`` resends the description on every save, so an item the CLI
+    wrote past the web's bound answers 422 forever, on a save that changed
+    only the rating.
+    """
+
+    _AT_THE_CLI_BOUND: dict[str, Any] = {
+        "status": "completed",
+        "genres": ["g" * MAX_GENRE_TAG_LENGTH] * MAX_GENRES,
+        "tags": ["t" * MAX_GENRE_TAG_LENGTH] * MAX_TAGS,
+        "description": "x" * MAX_DESCRIPTION_LENGTH,
+    }
+
+    def test_the_largest_edit_the_cli_accepts_validates_on_the_web(self) -> None:
+        accepted = ItemEditRequest(**self._AT_THE_CLI_BOUND)
+
+        assert accepted.model_dump()["description"] == "x" * MAX_DESCRIPTION_LENGTH
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("genres", ["g"] * (MAX_GENRES + 1), id="too-many-genres"),
+            pytest.param("tags", ["t"] * (MAX_TAGS + 1), id="too-many-tags"),
+            pytest.param(
+                "genres", ["g" * (MAX_GENRE_TAG_LENGTH + 1)], id="over-long-genre"
+            ),
+            pytest.param(
+                "tags", ["t" * (MAX_GENRE_TAG_LENGTH + 1)], id="over-long-tag"
+            ),
+            pytest.param(
+                "description",
+                "x" * (MAX_DESCRIPTION_LENGTH + 1),
+                id="over-long-description",
+            ),
+        ],
+    )
+    def test_one_past_each_bound_is_refused_as_the_cli_refuses_it(
+        self, field: str, value: object
+    ) -> None:
+        """Anchors the acceptance above: the bounds are where the CLI's are."""
+        with pytest.raises(ValidationError):
+            ItemEditRequest(**{**self._AT_THE_CLI_BOUND, field: value})
 
 
 class TestBlankReviewRefusedByBothCompletionSurfaces:

@@ -7,7 +7,6 @@ is a credential check and a session row rather than a call being made.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import timedelta
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
@@ -22,23 +21,13 @@ from src.storage.accounts import (
     SESSION_LIFETIME,
 )
 from src.storage.manager import StorageManager
-from src.utils.dates import utc_now
 from src.web.api import router as api_router
 from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL
-from src.web.auth_api import _LOCKOUT, _MAX_FAILURES, reset_login_throttle
 from src.web.auth_api import router as auth_router
 from tests.factories import booted_web_app
 
 _USERNAME = "owner"
 _PASSWORD = "correct horse battery"
-
-
-@pytest.fixture(autouse=True)
-def _forget_failed_logins() -> Iterator[None]:
-    """The throttle is process-wide, so one test's failures reach the next."""
-    reset_login_throttle()
-    yield
-    reset_login_throttle()
 
 
 @pytest.fixture()
@@ -73,21 +62,6 @@ def _set_cookie(response: Any) -> SimpleCookie:
     parsed = SimpleCookie()
     parsed.load(response.headers["set-cookie"])
     return parsed
-
-
-def _spy_on(
-    monkeypatch: pytest.MonkeyPatch, storage: StorageManager, method: str
-) -> list[tuple[Any, ...]]:
-    """Record the arguments of every call to *method*, which still runs."""
-    calls: list[tuple[Any, ...]] = []
-    original = getattr(storage, method)
-
-    def record(*args: Any, **kwargs: Any) -> Any:
-        calls.append(args)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(storage, method, record)
-    return calls
 
 
 def _account(storage: StorageManager, **names: Any) -> dict[str, Any]:
@@ -201,137 +175,21 @@ class TestLogin:
         assert detail == "That username and password do not match an account."
         assert username not in detail
 
-    def test_repeated_failures_are_throttled(self, claimed: TestClient) -> None:
-        """An online guesser gets a handful of tries, not an unbounded run."""
+    def test_a_typo_costs_the_operator_nothing_but_the_retry(
+        self, claimed: TestClient
+    ) -> None:
+        """A failure counter locked the one account out of its own instance."""
         wrong = {"username": _USERNAME, "password": "not the password"}
         refusals = [
-            claimed.post("/api/auth/login", json=wrong).status_code
-            for _ in range(_MAX_FAILURES + 1)
+            claimed.post("/api/auth/login", json=wrong).status_code for _ in range(10)
         ]
-
-        assert refusals[:_MAX_FAILURES] == [401] * _MAX_FAILURES
-        assert refusals[-1] == 429
-
-    def test_the_throttle_holds_against_the_right_password_too(
-        self, claimed: TestClient
-    ) -> None:
-        """Otherwise a guesser who lands on it is simply let through."""
-        wrong = {"username": _USERNAME, "password": "not the password"}
-        for _ in range(_MAX_FAILURES):
-            claimed.post("/api/auth/login", json=wrong)
 
         response = claimed.post(
             "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
         )
 
-        assert response.status_code == 429
-
-    def test_a_sign_in_that_works_clears_the_count(self, claimed: TestClient) -> None:
-        """A typo before the right password must not spend the allowance."""
-        wrong = {"username": _USERNAME, "password": "not the password"}
-        for _ in range(_MAX_FAILURES - 1):
-            claimed.post("/api/auth/login", json=wrong)
-        claimed.post(
-            "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
-        )
-
-        again = [
-            claimed.post("/api/auth/login", json=wrong).status_code
-            for _ in range(_MAX_FAILURES)
-        ]
-
-        assert again == [401] * _MAX_FAILURES
-
-    def test_the_lockout_ends_when_the_window_does(
-        self, claimed: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The refusal tells the operator to wait, so waiting has to work.
-
-        Every other case reads the counter from inside the window: drop the
-        comparison against it and they all stay green.
-        """
-        now = utc_now()
-        monkeypatch.setattr("src.web.auth_api.utc_now", lambda: now)
-        wrong = {"username": _USERNAME, "password": "not the password"}
-        for _ in range(_MAX_FAILURES):
-            claimed.post("/api/auth/login", json=wrong)
-        assert claimed.post("/api/auth/login", json=wrong).status_code == 429
-
-        later = now + _LOCKOUT + timedelta(seconds=1)
-        monkeypatch.setattr("src.web.auth_api.utc_now", lambda: later)
-        response = claimed.post(
-            "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
-        )
-
+        assert refusals == [401] * 10
         assert response.status_code == 200
-
-    def test_padding_the_username_buys_no_further_attempts(
-        self, claimed: TestClient
-    ) -> None:
-        """The counter is keyed by the stored name, not by what was typed.
-
-        Keying it on the raw field would hand a guesser a fresh allowance per
-        space typed around the same account.
-        """
-        padded = {"username": f"  {_USERNAME}  ", "password": "not the password"}
-        for _ in range(_MAX_FAILURES):
-            claimed.post("/api/auth/login", json=padded)
-
-        response = claimed.post(
-            "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
-        )
-
-        assert response.status_code == 429
-
-    def test_guesses_at_other_names_never_lock_the_operator_out(
-        self, claimed: TestClient
-    ) -> None:
-        """Only the guessed name spends its own allowance.
-
-        Anyone may reach this route, so a counter shared across usernames is a
-        way to shut the operator out of their own instance from outside.
-        """
-        for n in range(_MAX_FAILURES * 3):
-            claimed.post(
-                "/api/auth/login", json={"username": f"guess{n}", "password": "x"}
-            )
-
-        latecomer = claimed.post(
-            "/api/auth/login", json={"username": "latecomer", "password": "x"}
-        )
-        response = claimed.post(
-            "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
-        )
-
-        assert latecomer.status_code == 401
-        assert response.status_code == 200
-
-
-class TestWhatARefusedSignInCosts:
-    """The throttle answers from its own counter alone.
-
-    Both costs below are ones an anonymous caller orders by typing, so each
-    has to be bounded by the counter rather than paid before it is read.
-    """
-
-    def test_no_refusal_reads_the_account_and_a_lockout_hashes_nothing(
-        self,
-        claimed: TestClient,
-        storage: StorageManager,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        reads = _spy_on(monkeypatch, storage, "describe_account")
-        verifications = _spy_on(monkeypatch, storage, "verify_password")
-        wrong = {"username": _USERNAME, "password": "not the password"}
-
-        refusals = [
-            claimed.post("/api/auth/login", json=wrong).status_code
-            for _ in range(_MAX_FAILURES + 1)
-        ]
-
-        assert refusals[-1] == 429
-        assert reads == []
-        assert len(verifications) == _MAX_FAILURES
 
 
 class TestTheSessionCookie:

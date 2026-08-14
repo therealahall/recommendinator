@@ -213,11 +213,8 @@ in the request URL — Steam, TMDB, RAWG and GOG — render a request failure as
 status code or error class, and every OAuth connect flow logs only an error type
 name or a status code. None of them attaches a traceback.
 
-`tests/test_log_sink_sweep.py` sweeps two roots for that: `src/auth/` and
-`src/ingestion/sources/`, where Steam and GOG live. TMDB, RAWG and OpenLibrary
-sit under `src/enrichment/providers/`, which it does not reach. Each provider's
-own module-local test holds its request failures to `scrub_request_error`, and
-the chain scan below covers the traceback half.
+Each provider's own module-local test holds its request failures to
+`scrub_request_error`, and the chain scan below covers the traceback half.
 
 Rendering the message is only half of it: a traceback walks `__cause__`, so an
 exception chained from a request error prints that request's URL. `auth connect`

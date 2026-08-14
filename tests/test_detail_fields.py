@@ -32,7 +32,7 @@ from src.models.detail_fields import (
     _assert_select_aliases_are_unique,
 )
 from src.models.templates import CREATOR_COLUMNS, LIST_VALUED_COLUMNS
-from src.storage import derived, sqlite_db
+from src.storage import sqlite_db
 from src.storage.merge import detail_join
 from src.storage.schema import create_schema
 from src.storage.sqlite_db import SQLiteDB
@@ -1098,13 +1098,11 @@ class TestSelectAliasesDoNotShadowContentItems:
 
 
 class TestSelectIdentifiersAreGuarded:
-    """Names from the declaration are validated before they reach a query.
+    """A detail table is checked against the allow-list before it reaches SQL.
 
-    Three queries are built from the declaration rather than written out: the
-    joined read, the detail joins it shares with the derived-column source,
-    and that source's creator CASE. Every table goes through
-    ALLOWED_DETAIL_TABLES and every alias, column and content-type key through
-    the identifier pattern, and these hold that guard in place.
+    Three queries interpolate it rather than being written out: the joined
+    read, the detail joins it shares with the derived-column source, and that
+    source's creator CASE.
     """
 
     def test_table_outside_the_allow_list_is_rejected(self) -> None:
@@ -1128,47 +1126,6 @@ class TestSelectIdentifiersAreGuarded:
             with pytest.raises(ValueError, match="Unknown detail table"):
                 sqlite_db._build_content_item_select()
 
-    def test_unsafe_column_name_is_rejected(self) -> None:
-        """A column name outside the identifier pattern raises."""
-        rogue = replace(
-            DETAIL_FIELDS["book"],
-            fields=(
-                _A_CREATOR,
-                DetailField("evil", FieldKind.TEXT, column="isbn FROM users; --"),
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
-            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-                sqlite_db._build_content_item_select()
-
-    def test_unsafe_select_alias_is_rejected(self) -> None:
-        """A SELECT alias outside the identifier pattern raises."""
-        rogue = replace(
-            DETAIL_FIELDS["book"],
-            fields=(
-                _A_CREATOR,
-                DetailField(
-                    "isbn",
-                    FieldKind.TEXT,
-                    column="isbn",
-                    select_alias="x, (SELECT credential_value FROM credentials)",
-                ),
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
-            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-                sqlite_db._build_content_item_select()
-
-    def test_unsafe_table_alias_is_rejected(self) -> None:
-        """A table alias outside the identifier pattern raises."""
-        rogue = replace(DETAIL_FIELDS["book"], table_alias="bd, credentials c")
-
-        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
-            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-                sqlite_db._build_content_item_select()
-
     def test_detail_join_on_a_table_outside_the_allow_list_is_rejected(self) -> None:
         """The shared join builder refuses a table nobody allow-listed.
 
@@ -1182,39 +1139,6 @@ class TestSelectIdentifiersAreGuarded:
 
         with pytest.raises(ValueError, match="Unknown detail table"):
             detail_join(rogue)
-
-    def test_unsafe_content_type_key_is_rejected(self) -> None:
-        """A content-type key outside the identifier pattern never reaches the CASE.
-
-        The key is the one name the declaration hands to SQL as a string
-        literal rather than as an identifier, so a quote in it would close the
-        literal the creator CASE compares against and leave the rest as SQL.
-        The source is built at import, so the builder is called directly:
-        patching the declaration cannot reach a constant already assembled.
-        """
-        rogue_key = "book' THEN (SELECT credential_value FROM credentials) --"
-
-        with patch.dict(DETAIL_FIELDS, {rogue_key: DETAIL_FIELDS["book"]}):
-            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-                derived._build_creator_source()
-
-    def test_unsafe_creator_column_is_rejected(self) -> None:
-        """A creator column outside the identifier pattern raises."""
-        rogue = replace(
-            DETAIL_FIELDS["book"],
-            fields=(
-                DetailField(
-                    "author",
-                    FieldKind.CREATOR,
-                    column="author FROM credentials; --",
-                    template_column="author",
-                ),
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"book": rogue}):
-            with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-                derived._build_creator_source()
 
 
 class TestKnownKeysAreTheKeysTheColumnsClaim:

@@ -54,7 +54,11 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.models.content import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_GENRE_TAG_LENGTH,
+    MAX_GENRES,
     MAX_REVIEW_LENGTH,
+    MAX_TAGS,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -533,14 +537,14 @@ class ItemEditRequest(BaseModel):
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
     )
-    genres: list[Annotated[str, Field(max_length=100)]] | None = Field(
-        None, max_length=50, description="Manual genres (overwrite)"
+    genres: list[Annotated[str, Field(max_length=MAX_GENRE_TAG_LENGTH)]] | None = Field(
+        None, max_length=MAX_GENRES, description="Manual genres (overwrite)"
     )
-    tags: list[Annotated[str, Field(max_length=100)]] | None = Field(
-        None, max_length=100, description="Manual tags (overwrite)"
+    tags: list[Annotated[str, Field(max_length=MAX_GENRE_TAG_LENGTH)]] | None = Field(
+        None, max_length=MAX_TAGS, description="Manual tags (overwrite)"
     )
     description: str | None = Field(
-        None, max_length=10000, description="Manual description"
+        None, max_length=MAX_DESCRIPTION_LENGTH, description="Manual description"
     )
 
 

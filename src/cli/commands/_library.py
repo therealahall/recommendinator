@@ -11,7 +11,11 @@ from tabulate import tabulate
 
 from src.cli._shared import is_blank_review
 from src.models.content import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_GENRE_TAG_LENGTH,
+    MAX_GENRES,
     MAX_REVIEW_LENGTH,
+    MAX_TAGS,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -24,13 +28,6 @@ from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-
-# Manual-enrichment bounds, mirroring the web ItemEditRequest so both
-# interfaces reject the same oversized genres/tags/descriptions.
-MAX_GENRES = 50
-MAX_TAGS = 100
-MAX_GENRE_TAG_LENGTH = 100
-MAX_DESCRIPTION_LENGTH = 10000
 
 
 @click.group()

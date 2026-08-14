@@ -124,13 +124,27 @@ def _resolve_path(section: dict[str, Any]) -> tuple[Path, list[str]]:
     return log_path, fallbacks
 
 
+class _EscapingStreamHandler(logging.StreamHandler[TextIO]):
+    """Escape what the stream's codec cannot encode.
+
+    ``StreamHandler`` takes no ``errors=``, so a lone surrogate (``os.scandir``
+    yields them for non-UTF-8 filenames) raised against strict ``sys.stdout``
+    inside ``emit``, and ``handleError`` swallowed the record with it.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        encoding = getattr(self.stream, "encoding", None) or "utf-8"
+        rendered = super().format(record).encode(encoding, "backslashreplace")
+        return rendered.decode(encoding, "backslashreplace")
+
+
 def _console_handler(
     stream: TextIO, level: int, tracebacks: bool
 ) -> logging.StreamHandler[TextIO]:
     # The stream keeps its own encoding: PYTHONUTF8 is the operator's lever for
     # the console, and rewrapping it here would close the real stream when the
     # wrapper is collected.
-    handler = logging.StreamHandler(stream)
+    handler = _EscapingStreamHandler(stream)
     handler.setLevel(level)
     console_format = "%(levelname)s | %(name)s | %(message)s"
     handler.setFormatter(
