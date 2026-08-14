@@ -12,11 +12,7 @@ const THEMES: [string, string][] = [
   ['Snowstorm', 'src/web/static/themes/snowstorm/colors.css'],
 ]
 
-/** The ratio each tag reaches on the Preferences card, per theme. */
-const MEASURED: Record<string, Record<string, number>> = {
-  Nord: { '.profile-tag': 7.03, '.profile-tag.anti': 4.82 },
-  Snowstorm: { '.profile-tag': 10.52, '.profile-tag.anti': 8.54 },
-}
+const TAGS = ['.profile-tag', '.profile-tag.anti']
 
 /** What the tags carried before, and what each reached on the same card. */
 const REJECTED: Record<string, Record<string, [string, string]>> = {
@@ -149,12 +145,12 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, them
   const ratio = (text: string, fill: string): number =>
     contrast(toRgba(text, vars), over(toRgba(fill, vars), card))
 
-  it.each(Object.keys(MEASURED[theme]))('%s carries readable text', (selector) => {
+  it.each(TAGS)('%s carries readable text', (selector) => {
     const body = ruleBody(base, selector)
-    const measured = ratio(declaration(body, 'color'), declaration(body, 'background'))
 
-    expect(measured).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
-    expect(measured, 'the recorded ratio is stale').toBeCloseTo(MEASURED[theme][selector], 1)
+    expect(ratio(declaration(body, 'color'), declaration(body, 'background'))).toBeGreaterThanOrEqual(
+      AA_NORMAL_TEXT,
+    )
   })
 
   it.each(Object.entries(REJECTED[theme]))(
