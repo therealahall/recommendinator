@@ -475,7 +475,11 @@ class TestPrivateProviderDiscoveryRegression:
     def test_a_provider_dropped_into_private_plugins_is_registered(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The scan reaches a module the repo does not ship, under the real name."""
+        """A discovery pass reaches a module the repo does not ship.
+
+        Driven through the public entry point, so dropping the private scan out
+        of it fails here: nothing else can register ``mock_book``.
+        """
         private_plugins = tmp_path / "private" / "plugins"
         private_plugins.mkdir(parents=True)
         (private_plugins.parent / "__init__.py").write_text("")
@@ -496,14 +500,16 @@ class TestPrivateProviderDiscoveryRegression:
 
         registry = EnrichmentRegistry()
         try:
-            registry._discover_private_providers()
+            registry.discover_providers()
         finally:
             for name in _private_module_names():
                 del sys.modules[name]
             if str(tmp_path) in sys.path:
                 sys.path.remove(str(tmp_path))
 
-        assert set(registry._providers) == {"mock_book"}
+        discovered = set(registry.get_all_providers())
+        assert "mock_book" in discovered
+        assert _BUILTIN_PROVIDER_NAMES <= discovered
 
 
 class TestEnrichmentRegistryIntegration:
