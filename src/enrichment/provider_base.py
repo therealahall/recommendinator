@@ -28,21 +28,6 @@ def log_search_title(
 
 
 @dataclass
-class ProviderInfo:
-    """Information about a registered enrichment provider.
-
-    Used by the registry to track provider metadata without
-    requiring instantiation.
-    """
-
-    name: str
-    display_name: str
-    content_types: list[ContentType]
-    requires_api_key: bool
-    config_schema: list[ConfigField] = field(default_factory=list)
-
-
-@dataclass
 class EnrichmentResult:
     """Result of enriching a content item.
 
@@ -288,20 +273,3 @@ class EnrichmentProvider(ABC):
             Transformed config dict ready for ``validate_config`` / ``enrich``.
         """
         return dict(raw_config)
-
-    def get_info(self) -> ProviderInfo:
-        """Get provider information as a ProviderInfo object.
-
-        Useful for serialization and display without needing
-        the full provider instance.
-
-        Returns:
-            ProviderInfo with this provider's metadata
-        """
-        return ProviderInfo(
-            name=self.name,
-            display_name=self.display_name,
-            content_types=self.content_types,
-            requires_api_key=self.requires_api_key,
-            config_schema=self.get_config_schema(),
-        )

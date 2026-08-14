@@ -103,7 +103,6 @@ def booted_app(tmp_path: Path) -> Iterator[TestClient]:
             {
                 "storage": {
                     "database_path": str(tmp_path / "recommendations.db"),
-                    "vector_db_path": str(tmp_path / "chroma_db"),
                 },
             }
         )

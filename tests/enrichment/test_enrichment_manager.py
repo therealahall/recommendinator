@@ -1211,11 +1211,13 @@ class TestTransientProviderFailureIsRetryable:
             "failed": 1,
         }
 
-        # Network is back: the same provider name now answers.
-        registry.unregister("raw_request")
+        # Network is back: a working provider answers under the same name.
         recovered = MockProvider(name="raw_request")
-        registry.register(recovered)
+        recovered_registry = EnrichmentRegistry()
+        recovered_registry._discovered = True
+        recovered_registry.register(recovered)
 
+        manager = EnrichmentManager(storage_manager, config, recovered_registry)
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 

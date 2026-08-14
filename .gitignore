@@ -58,8 +58,6 @@ dmypy.json
 *.db-wal
 *.sqlite
 *.sqlite3
-chroma_db/
-vector_db/
 *.log
 .env
 .env.local

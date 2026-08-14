@@ -315,7 +315,6 @@ class TestOutOfScope:
         "key",
         [
             "storage.database_path",
-            "storage.vector_db_path",
             "storage.cache_dir",
             "inputs.steam.api_key",
             "inputs.goodreads.path",
