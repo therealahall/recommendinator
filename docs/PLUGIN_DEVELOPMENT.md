@@ -517,12 +517,14 @@ Providers fill metadata gaps from external APIs. They use the same folder layout
 as source plugins, under `src/enrichment/providers/<name>/`, and subclass
 `EnrichmentProvider` from `src/enrichment/provider_base.py`.
 
-There is no provider discovery: add the class to the tuple in
-`EnrichmentRegistry.discover_providers` (`src/enrichment/registry.py`).
+`EnrichmentRegistry` discovers the folder the same way `PluginRegistry`
+discovers a source plugin, so shipping a provider edits no core file.
 
-Private source plugins (`private/plugins/`) stay **flat single-file modules**.
-The private discovery code globs `*.py` rather than walking subpackages, so a
-private plugin folder is silently skipped.
+A provider you do not want in the repo goes in `private/plugins/`, the
+directory private source plugins already live in: both registries scan it and
+each keeps the classes it recognises. Private modules stay **flat single-file
+modules** — that scan globs `*.py` rather than walking subpackages, so a
+private folder is silently skipped.
 
 `name`, `display_name`, `content_types`, `requires_api_key`,
 `get_config_schema` and `validate_config` work as they do on a source plugin. The

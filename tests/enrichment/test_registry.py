@@ -1,12 +1,18 @@
 """Tests for the enrichment provider registry."""
 
+import importlib
+import logging
+import sys
 import threading
+import types
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from src.enrichment import providers as providers_package
 from src.enrichment import registry as registry_module
 from src.enrichment.provider_base import (
     ConfigField,
@@ -29,6 +35,15 @@ _STALL_TIMEOUT_SECONDS = 5.0
 _BLOCKED_GRACE_SECONDS = 0.5
 
 _BUILTIN_PROVIDER_NAMES = {"tmdb", "openlibrary", "rawg"}
+
+
+def _private_module_names() -> list[str]:
+    """The imported ``private`` package and its submodules, if any."""
+    return [
+        name
+        for name in list(sys.modules)
+        if name == "private" or name.startswith("private.")
+    ]
 
 
 class MockMovieProvider(EnrichmentProvider):
@@ -265,7 +280,9 @@ class TestEnrichmentRegistry:
 
         registry.discover_providers(force=True)
 
-        assert set(registry.get_all_providers()) == _BUILTIN_PROVIDER_NAMES
+        discovered = registry.get_all_providers()
+        assert "mock_movie" not in discovered
+        assert _BUILTIN_PROVIDER_NAMES <= set(discovered)
 
 
 class TestConcurrentDiscoveryRegression:
@@ -278,26 +295,44 @@ class TestConcurrentDiscoveryRegression:
     """
 
     def test_a_rebuild_is_invisible_until_it_has_finished(self) -> None:
-        """Forced interleaving: the rebuild is parked mid-build throughout.
+        """Forced interleaving: the rebuild is parked mid-scan throughout.
 
         Parking inside a provider's ``__init__`` also holds the construction
         outside the lock: under it, the read below would never return.
         """
         registry = EnrichmentRegistry()
-        registry.discover_providers()
+        first_pass_done = threading.Event()
         parked = threading.Event()
         release = threading.Event()
 
-        class StallingProvider(MockBookProvider):
+        class StallingProvider(MockMovieProvider):
             def __init__(self) -> None:
                 super().__init__()
                 parked.set()
                 assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
+        stalling_module = types.ModuleType("stalling_module")
+        stalling_module.StallingProvider = StallingProvider  # type: ignore[attr-defined]
+
+        def register_one_builtin(self: EnrichmentRegistry) -> None:
+            # A different provider per pass, so which map the reader got is
+            # readable off its contents rather than inferred from timing.
+            if not first_pass_done.is_set():
+                self.register(MockBookProvider())
+                first_pass_done.set()
+                return
+            self._register_providers_from_module(stalling_module, "test")
+
         with (
-            patch.object(registry_module, "RAWGProvider", StallingProvider),
+            patch.object(
+                EnrichmentRegistry, "_discover_builtin_providers", register_one_builtin
+            ),
+            patch.object(
+                EnrichmentRegistry, "_discover_private_providers", lambda self: None
+            ),
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
+            registry.discover_providers()
             rebuild = pool.submit(registry.discover_providers, force=True)
             assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
@@ -311,10 +346,10 @@ class TestConcurrentDiscoveryRegression:
             rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
 
         # The parked pass is building a map of its own, so getting the previous
-        # pass's providers is the swap being invisible. Rebuilt in place, this
+        # pass's provider is the swap being invisible. Rebuilt in place, this
         # read lands on the half-built map.
-        assert set(during_rebuild) == _BUILTIN_PROVIDER_NAMES
-        assert set(registry.get_all_providers()) == {"tmdb", "openlibrary", "mock_book"}
+        assert set(during_rebuild) == {"mock_book"}
+        assert set(registry.get_all_providers()) == {"mock_movie"}
 
 
 class TestRegistrySingletonIsBuiltOnceRegression:
@@ -368,6 +403,109 @@ class TestRegistrySingletonIsBuiltOnceRegression:
             EnrichmentRegistry.reset_instance()
 
 
+class TestProviderModuleScan:
+    """Tests for the class scan a discovered module goes through."""
+
+    def test_only_concrete_provider_classes_are_registered(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Every provider module imports the ABC it subclasses.
+
+        A scan keeping every ``EnrichmentProvider`` subclass instantiates the
+        abstract ones too, and warns about the failure on every module.
+        """
+        module = types.ModuleType("fake_provider_module")
+        module.EnrichmentProvider = EnrichmentProvider  # type: ignore[attr-defined]
+        module.MockBookProvider = MockBookProvider  # type: ignore[attr-defined]
+        module._Hidden = MockMovieProvider  # type: ignore[attr-defined]
+        module.not_a_provider = "just a string"  # type: ignore[attr-defined]
+
+        registry = EnrichmentRegistry()
+        with caplog.at_level(logging.WARNING, logger="src.enrichment.registry"):
+            registry._register_providers_from_module(module, "test")
+
+        assert set(registry._providers) == {"mock_book"}
+        assert [record.message for record in caplog.records] == []
+
+
+class TestBuiltinProviderDiscoveryRegression:
+    """A provider folder registers by being there, not by being imported.
+
+    The registry listed its three providers as imports for a while, so a fourth
+    folder stayed invisible until someone edited ``registry.py``.
+    """
+
+    def test_a_folder_dropped_into_the_providers_directory_is_discovered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dropped provider is the only one the registry ends up holding."""
+        dropped = tmp_path / "dropped_provider"
+        dropped.mkdir()
+        (dropped / "__init__.py").write_text(
+            f"from {__name__} import MockBookProvider\n"
+        )
+        # The scan lists the package's own directory and imports through its
+        # ``__path__``, so both have to point at the directory under test.
+        monkeypatch.setattr(
+            providers_package, "__file__", str(tmp_path / "__init__.py")
+        )
+        monkeypatch.setattr(providers_package, "__path__", [str(tmp_path)])
+        monkeypatch.setattr(
+            EnrichmentRegistry, "_discover_private_providers", lambda self: None
+        )
+        importlib.invalidate_caches()
+
+        registry = EnrichmentRegistry()
+        try:
+            registry.discover_providers()
+        finally:
+            sys.modules.pop("src.enrichment.providers.dropped_provider", None)
+
+        assert set(registry.get_all_providers()) == {"mock_book"}
+
+
+class TestPrivateProviderDiscoveryRegression:
+    """A provider shipped outside the repo must load from private/plugins/.
+
+    The scan read ``plugins/private/enrichment/``, which this repo has never
+    had, so an out-of-tree provider could not be loaded at all. The
+    source-plugin registry has always read ``private/plugins/``.
+    """
+
+    def test_a_provider_dropped_into_private_plugins_is_registered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The scan reaches a module the repo does not ship, under the real name."""
+        private_plugins = tmp_path / "private" / "plugins"
+        private_plugins.mkdir(parents=True)
+        (private_plugins.parent / "__init__.py").write_text("")
+        (private_plugins / "__init__.py").write_text("")
+        (private_plugins / "dropped.py").write_text(
+            f"from {__name__} import MockBookProvider\n"
+        )
+        # The scan derives the project root from this module's location, so a
+        # registry.py three levels down makes tmp_path the root.
+        monkeypatch.setattr(
+            registry_module,
+            "__file__",
+            str(tmp_path / "src" / "enrichment" / "registry.py"),
+        )
+        for name in _private_module_names():
+            monkeypatch.delitem(sys.modules, name)
+        importlib.invalidate_caches()
+
+        registry = EnrichmentRegistry()
+        try:
+            registry._discover_private_providers()
+        finally:
+            for name in _private_module_names():
+                del sys.modules[name]
+            if str(tmp_path) in sys.path:
+                sys.path.remove(str(tmp_path))
+
+        assert set(registry._providers) == {"mock_book"}
+
+
 class TestEnrichmentRegistryIntegration:
     """Integration tests for provider registry with real providers."""
 
@@ -376,8 +514,8 @@ class TestEnrichmentRegistryIntegration:
         """Reset the singleton before each test."""
         EnrichmentRegistry.reset_instance()
 
-    def test_the_three_builtin_providers_are_registered(self) -> None:
-        """Registration is by direct import, so a missing one is a typo here."""
+    def test_the_three_builtin_provider_folders_are_discovered(self) -> None:
+        """A folder that fails to import is skipped with a log, so check for real."""
         registry = get_enrichment_registry()
 
-        assert set(registry.get_all_providers()) == _BUILTIN_PROVIDER_NAMES
+        assert _BUILTIN_PROVIDER_NAMES <= set(registry.get_all_providers())

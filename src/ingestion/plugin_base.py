@@ -68,7 +68,7 @@ class SourcePlugin(ABC):
     """Abstract base class for data source plugins.
 
     All source plugins must implement this interface. Plugins are discovered
-    and registered automatically from src/ingestion/sources/ and plugins/private/.
+    and registered automatically from src/ingestion/sources/ and private/plugins/.
 
     Example implementation:
 
