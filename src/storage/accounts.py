@@ -26,6 +26,10 @@ _SCRYPT_DKLEN = 64
 
 _SALT_BYTES = 16
 
+# Stands in for a salt when the username matches no row, so a miss costs the
+# same scrypt run as a wrong password and cannot be timed apart from one.
+_ABSENT_ACCOUNT_SALT = b"\x00" * _SALT_BYTES
+
 _SESSION_TOKEN_BYTES = 32
 
 #: The shortest password this instance accepts, wherever one is set. Long
@@ -245,8 +249,9 @@ def verify_password(
 ) -> UserDict | None:
     """Return the user *plaintext* logs *username* in as, or None.
 
-    An unknown username, and an account nobody has claimed yet, have no stored
-    digest to match, so neither can be logged into whatever is typed.
+    An unknown username and an unclaimed account are hashed against
+    :data:`_ABSENT_ACCOUNT_SALT` and matched against nothing, so no rejection
+    is the cheap one.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -254,9 +259,9 @@ def verify_password(
         (username,),
     )
     row = cursor.fetchone()
-    if row is None or not row[1] or not row[2]:
-        return None
-    if not compare_digest(_derive_key(plaintext, bytes.fromhex(row[2])), row[1]):
+    stored_hash = row[1] if row else None
+    salt = bytes.fromhex(row[2]) if row and row[2] else _ABSENT_ACCOUNT_SALT
+    if not compare_digest(_derive_key(plaintext, salt), stored_hash or ""):
         return None
     return get_user_by_id(conn, row[0])
 

@@ -466,7 +466,18 @@ class TestDescribingTheAccount:
 
 
 class TestVerifyingAPassword:
-    """What a password buys, and what a wrong one does not."""
+    """A wrong password and an unknown username must be indistinguishable."""
+
+    @staticmethod
+    def _attempt(
+        conn: sqlite3.Connection, username: str, password: str
+    ) -> tuple[Any, int, int]:
+        """Return the result, the scrypt runs it cost, and the salt length."""
+        with patch.object(
+            accounts, "_derive_key", wraps=accounts._derive_key
+        ) as derive:
+            result = verify_password(conn, username, password)
+        return result, derive.call_count, len(derive.call_args.args[1])
 
     def test_the_right_password_returns_the_account(
         self, claimed: sqlite3.Connection
@@ -478,17 +489,26 @@ class TestVerifyingAPassword:
         assert account["id"] == 1
         assert account["username"] == "owner"
 
-    def test_a_wrong_password_is_refused(self, claimed: sqlite3.Connection) -> None:
-        assert verify_password(claimed, "owner", "hunter2") is None
+    def test_a_wrong_password_and_an_unknown_username_cost_the_same(
+        self, claimed: sqlite3.Connection
+    ) -> None:
+        """One scrypt run over a salt of the same size, so neither is the faster.
 
-    def test_an_unknown_username_is_refused(self, claimed: sqlite3.Connection) -> None:
-        assert verify_password(claimed, "nobody", "correct horse") is None
+        Returning early on an unknown name made a miss ~100x cheaper than a
+        wrong password: a username oracle. Asserted structurally, not by wall
+        clock.
+        """
+        missing = self._attempt(claimed, "nobody", "correct horse")
+        wrong = self._attempt(claimed, "owner", "hunter2")
+
+        assert missing == wrong
+        assert missing == (None, 1, accounts._SALT_BYTES)
 
     def test_an_unclaimed_account_cannot_be_logged_into(
         self, conn: sqlite3.Connection
     ) -> None:
-        """The username exists and the hash is NULL, which matches nothing."""
-        assert verify_password(conn, "default", "") is None
+        """The username exists and the hash is NULL, and it costs a run too."""
+        assert self._attempt(conn, "default", "") == (None, 1, accounts._SALT_BYTES)
 
 
 class TestSessions:
@@ -933,11 +953,13 @@ class TestWhatDoesNotDeleteASession:
 
 
 class TestUsernamesThatDoNotMatch:
-    """The lookup is an exact parameterised match, not a fuzzy one."""
+    """A near-miss username must cost what a wrong password costs."""
 
     @pytest.mark.parametrize("username", ["Owner", "owner ", "owner' OR 1=1 --", ""])
-    def test_a_near_miss_username_is_refused(
+    def test_a_near_miss_username_is_refused_at_the_same_cost(
         self, claimed: sqlite3.Connection, username: str
     ) -> None:
-        """Case, padding and a quote that would close the SQL string alike."""
-        assert verify_password(claimed, username, "correct horse") is None
+        """No login, and no oracle telling an attacker which name is the real one."""
+        attempt = TestVerifyingAPassword._attempt(claimed, username, "correct horse")
+
+        assert attempt == (None, 1, accounts._SALT_BYTES)

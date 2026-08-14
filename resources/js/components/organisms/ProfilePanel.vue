@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useProfileStore } from '@/stores/profile'
 
 const profileStore = useProfileStore()
@@ -7,6 +7,18 @@ const profileStore = useProfileStore()
 onMounted(() => {
   profileStore.load()
 })
+
+// Bound to a computed on a persistently mounted region, because one inserted
+// with v-if once it has content is read as page content and skipped.
+const announcement = computed(() => {
+  if (profileStore.error) return profileStore.error
+  return profileStore.regenerating ? 'Generating…' : ''
+})
+
+function regenerate(): void {
+  if (profileStore.regenerating) return
+  profileStore.regenerate()
+}
 </script>
 
 <template>
@@ -19,6 +31,12 @@ onMounted(() => {
           <h4>Genres You Love</h4>
           <div class="profile-tags">
             <span v-for="g in Object.keys(profileStore.profile.genre_affinities).slice(0, 6)" :key="g" class="profile-tag">{{ g }}</span>
+          </div>
+        </div>
+        <div v-if="profileStore.profile.theme_preferences.length > 0" class="profile-section">
+          <h4>Themes You Enjoy</h4>
+          <div class="profile-tags">
+            <span v-for="t in profileStore.profile.theme_preferences.slice(0, 6)" :key="t" class="profile-tag">{{ t }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.anti_preferences.length > 0" class="profile-section">
@@ -34,10 +52,19 @@ onMounted(() => {
       </template>
       <div v-else class="empty-state">No profile generated</div>
     </div>
+    <p
+      class="profile-status"
+      :class="{ failed: Boolean(profileStore.error) }"
+      role="status"
+      aria-live="polite"
+    >{{ announcement }}</p>
+    <!-- aria-disabled, never native disabled: a button that goes disabled under
+         the finger that just pressed Enter throws focus to <body> (WCAG 2.4.3). -->
     <button
+      type="button"
       class="btn btn-small btn-secondary mt-2"
-      :disabled="profileStore.regenerating"
-      @click="profileStore.regenerate()"
-    >{{ profileStore.regenerating ? 'Generating...' : 'Regenerate' }}</button>
+      :aria-disabled="profileStore.regenerating ? 'true' : undefined"
+      @click="regenerate"
+    >Regenerate</button>
   </div>
 </template>

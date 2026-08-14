@@ -10,6 +10,7 @@ your machine except calls to the external APIs you configure.
 | `config/config.yaml` | Bootstrap secrets migrated to the database on startup |
 | `data/recommendations.db` | Consumption history, encrypted credentials |
 | `data/.credential_key` | Fernet key for those credentials |
+| `data/chroma_db/` | Vector embeddings of your content, left by a pre-AI-removal release |
 
 **Never commit these files to version control.**
 

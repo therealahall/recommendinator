@@ -58,6 +58,10 @@ dmypy.json
 *.db-wal
 *.sqlite
 *.sqlite3
+# Written by releases before the AI removal, and still sitting in installs
+# that ran one. Un-ignoring it would sweep a personal library into a commit.
+chroma_db/
+vector_db/
 *.log
 .env
 .env.local
