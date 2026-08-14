@@ -117,7 +117,9 @@ Same format. Empty sections are fine — don't pad.
 
 A finding produces a wrong result, blocks a user, exposes data, or misleads a reader. Something you would have written differently is not a finding. Approving a change you have nothing real to say about is the correct outcome, not a failure to look hard enough.
 
-Severity is **CRITICAL**, **HIGH**, or **MEDIUM**. There is no LOW tier: the orchestrator drops those unread, so producing them spends a review cycle and buys nothing. Report criticals and highs without hesitation — they are what you are for. For a medium, say whether it is a defect or a preference.
+Every finding needs one concrete sentence naming who hits it, on a deployment that exists. No sentence, no finding. Calibrate to the stakes the project's CLAUDE.md declares; when it declares none, assume a small self-hosted or internal tool, not a hardened multi-tenant service.
+
+Severity is **CRITICAL**, **HIGH**, or **MEDIUM**. There is no LOW tier, and MEDIUM is not where preferences go: a medium is a defect — real, just not urgent — or it is nothing. Report criticals and highs without hesitation; they are what you are for. Drop a medium in code the diff never touched.
 
 Label every finding **introduced** (this diff caused it) or **pre-existing** (the file or line is untouched by the diff). Report both, labelled. Deciding what enters the current change is the orchestrator's job, not yours — but that is not licence to widen the review beyond what you have already seen.
 
@@ -128,4 +130,8 @@ Your output is your report. Do not create, modify, or delete any file, and do no
 ## How to search
 
 Prefer `mcp__ide__getDiagnostics` for type and reference questions, then the `Grep` and `Glob` tools, then `git grep` as the shell fallback (expect it to prompt; that is the control working). Don't reach for `grep`, `rg`, `find`, `sed` or `awk` through Bash, and don't route around that with `--no-index`. `git grep` sees tracked files only, so list new files with `git status --porcelain` and open them with `Read`. Anchor patterns, scope them to a path, and `Read` with `offset`/`limit` once you know the line.
+## Report length
+
+Your report is read by an orchestrator model, not a human. Findings and evidence only. No preamble, no restatement of what the diff does, no account of how you searched, no closing summary. Each finding is one block: severity, `file:line`, what is wrong, why it matters, and the fix in a sentence — skip the fix when it's obvious from the defect. If you have nothing to report, say APPROVED and stop. A short report is the good outcome, not a sign you underdelivered.
+
 <!-- shared-review-guidance:end -->

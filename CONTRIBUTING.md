@@ -147,7 +147,7 @@ class TestMyFeatureRegression:
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, **test-review**, **document-review**,
+1. Run **security-review**, **code-review**, **document-review**,
    **parity-review** and **accessibility-review** in parallel. An agent that
    cannot be launched is a hard stop: it reviewed nothing and said nothing, and
    unlike a skipped approval that gap is silent.
@@ -157,7 +157,7 @@ class TestMyFeatureRegression:
    this is a lookup, and a finding belonging to another stream is filed there,
    not fixed here and not dropped.
 3. Fix what survives triage.
-4. Re-run **all six**, not just the ones with findings. A fix satisfying one agent
+4. Re-run **all five**, not just the ones with findings. A fix satisfying one agent
    can break another's domain, so approval is on the final tree, not the delta.
    Repeat 2-4 until every agent approves the **same** tree.
 5. Stop once the review **converges**: a round returns no criticals and no highs,
@@ -175,14 +175,13 @@ class TestMyFeatureRegression:
 
 ### The review agents
 
-Seven agents, all committed under `.claude/agents/`, so a plain clone has the
+Six agents, all committed under `.claude/agents/`, so a plain clone has the
 whole gate.
 
 | Agent | Covers |
 |-------|--------|
-| **code-review** | Design, naming, DRY, project standards |
+| **code-review** | Design, naming, DRY, project standards, test quality |
 | **security-review** | Credential leaks, injection, unsafe patterns ([docs/SECURITY.md](docs/SECURITY.md)) |
-| **test-review** | Coverage, mock hygiene, regression format, edge cases |
 | **document-review** | Accuracy, completeness, cross-document consistency |
 | **accessibility-review** | WCAG 2.1 AA. Self-gates on frontend file presence |
 | **commit-hygiene** | Atomic commits, conventional format |
@@ -285,7 +284,7 @@ scripts/              # Developer tooling (check_review_agents.py)
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
-.claude/agents/       # All seven mandated review agents
+.claude/agents/       # All six mandated review agents
 ```
 
 `src/ingestion/sources/_isolation/` is not a plugin. It holds the test proving

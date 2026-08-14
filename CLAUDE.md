@@ -8,8 +8,11 @@ Recommendinator — a privacy-focused recommendation engine for books, movies, T
 
 ## Scale — calibrate severity to it
 
-Correctness, security and the quality gate are not negotiable. Hardening a
-self-hosted deployment against states it does not run in is.
+This is a single-user, self-hosted FOSS tool: the operator is the only user, and
+untrusted input is limited to metadata fetched from external services. Grade
+every finding against that deployment. Correctness, security and the quality
+gate are not negotiable. Hardening a self-hosted deployment against states it
+does not run in is.
 
 Concretely: a defect reachable by a normal invocation is real. One needing a
 root-owned bind mount, a read-only filesystem, a hostile concurrent writer or a
@@ -119,7 +122,7 @@ docker/               # Container helpers
 docker-compose.yml         # Production: pulls from GHCR
 docker-compose.dev.yml     # Dev override: bind-mount + --reload (committed)
 docker-compose.override.yml  # Personal mounts (gitignored)
-.claude/agents/       # All seven mandated review agents (six shared, vendored; parity-review native)
+.claude/agents/       # All six mandated review agents (five shared, vendored; parity-review native)
 private/              # Gitignored — private plugins NOT in the open source repo
 └── plugins/          # Private source plugins (personal_site_games.py, etc.)
 ```
@@ -163,19 +166,18 @@ Note: Use `command make check` (not bare `make check`) to bypass a zsh shell sna
 
 ### Agent-Enforced Standards
 
-Code quality rules (naming, DRY, type safety, dead code, imports, mutation), security rules, test standards, regression test format, commit conventions, and documentation completeness are enforced by review subagents. All seven are committed at `.claude/agents/<name>.md`, so a plain checkout gets the whole gate. Six of them are project-agnostic and shared across repositories, and they orient by reading this CLAUDE.md and the docs it links, so this project's specifics (Python version, `config.yaml` rules, coverage target, regression-test format, frontend conventions) must live in those docs, not in the agents. `parity-review` is native to this repository. The main agent's job is to write clean code, follow the workflows below, and run the agents before committing. What each covers:
+Code quality, security, test, commit and documentation standards are enforced by review subagents. All six are committed at `.claude/agents/<name>.md`, so a plain checkout gets the whole gate. Five are project-agnostic and shared across repositories; they orient by reading this CLAUDE.md and the docs it links, so this project's specifics (Python version, `config.yaml` rules, coverage target, regression-test format, frontend conventions) live in those docs, not in the agents. `parity-review` is native here. Run the agents before committing. What each covers:
 
-- **code-review** — naming, DRY, type safety, dead code, imports, mutation, over/under-engineering (frontend/Vue rules in [docs/DEVELOPMENT_PATTERNS.md](docs/DEVELOPMENT_PATTERNS.md))
+- **code-review** — naming, DRY, type safety, dead code, imports, mutation, over/under-engineering, and test quality: coverage, mock hygiene, vacuous or deletable tests (frontend/Vue rules in [docs/DEVELOPMENT_PATTERNS.md](docs/DEVELOPMENT_PATTERNS.md))
 - **security-review** — credential exposure, injection, CORS, error disclosure, dependencies (project rules in [docs/SECURITY.md](docs/SECURITY.md))
-- **test-review** — coverage, mock hygiene, regression test format, edge cases, performance
-- **document-review** — accuracy, completeness, cross-document consistency, staleness
+- **document-review** — accuracy, completeness, cross-document consistency, staleness; self-gates when the diff touches nothing a doc describes
 - **commit-hygiene** — atomic commits, conventional format, message quality, documentation gaps
 - **accessibility-review** — WCAG 2.1 AA, semantic HTML, keyboard navigation, ARIA, color/contrast, focus management
 - **parity-review** — CLI/web feature parity (native to this repository)
 
-**Project-local agents only resolve for a session whose project directory is the repository root.** Claude Code takes that directory from wherever the session was started and discovers `.claude/agents/` relative to it, so a session started anywhere else — including a subdirectory of this repository — has none of these seven agents, and does not load `.claude/settings.json` or this file either. Start Claude Code at the repository root, or the mandated gate below cannot be satisfied.
+**Project-local agents only resolve for a session whose project directory is the repository root.** Claude Code takes that directory from wherever the session was started and discovers `.claude/agents/` relative to it, so a session started anywhere else — including a subdirectory of this repository — has none of these six agents, and does not load `.claude/settings.json` or this file either. Start Claude Code at the repository root, or the mandated gate below cannot be satisfied.
 
-**The six shared agents are vendored copies.** Their canonical source is maintained outside this repository, because they are reused across several repositories — but the committed copies are what anyone working in this checkout gets, and there is no sync command here. To improve one of them, edit the committed copy and say so in the PR; an accepted change is carried back to the canonical source separately. Re-vendoring one can trip `tests/test_repository_self_contained.py` if the new text names a path outside this checkout — that failure is the guard working, not a mystery.
+**The five shared agents are vendored copies.** Their canonical source is maintained outside this repository, because they are reused across several repositories — but the committed copies are what anyone working in this checkout gets, and there is no sync command here. To improve one of them, edit the committed copy and say so in the PR; an accepted change is carried back to the canonical source separately. Re-vendoring one can trip `tests/test_repository_self_contained.py` if the new text names a path outside this checkout — that failure is the guard working, not a mystery.
 
 `parity-review` is native here deliberately: CLI/web parity is this repository's invariant, and the agent enumerates this repository's capability surface, so it means nothing anywhere else.
 
@@ -221,7 +223,7 @@ The project uses **python-semantic-release** for automatic semantic versioning d
 
 ## Claude Code Tooling
 
-The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` — `enabledPlugins` and `permissions.allow`, deliberately no hooks (see [Review Agent Preflight](#review-agent-preflight)) — and `.claude/agents/`, which holds all seven mandated review agents: six vendored shared agents plus the native `parity-review`. Both settings keys are pinned exactly by `tests/test_review_agents.py`, because both grant ambient authority to every clone: see [docs/SECURITY.md](docs/SECURITY.md#how-the-review-gate-is-started) before adding to either.
+The project uses Claude Code plugins and custom agents to maintain code quality and security. Configuration lives in `.claude/settings.json` — `enabledPlugins` and `permissions.allow`, deliberately no hooks (see [Review Agent Preflight](#review-agent-preflight)) — and `.claude/agents/`, which holds all six mandated review agents: five vendored shared agents plus the native `parity-review`. Both settings keys are pinned exactly by `tests/test_review_agents.py`, because both grant ambient authority to every clone: see [docs/SECURITY.md](docs/SECURITY.md#how-the-review-gate-is-started) before adding to either.
 
 ### Enabled Plugins
 
@@ -233,8 +235,7 @@ The project uses Claude Code plugins and custom agents to maintain code quality 
 Shared, project-agnostic agents, vendored into `.claude/agents/` — they learn this project's stack and rules by reading this CLAUDE.md and `docs/`:
 
 - **security-review** — Pre-commit security audit.
-- **code-review** — Pre-commit code quality review.
-- **test-review** — Pre-commit test coverage and quality audit.
+- **code-review** — Pre-commit code quality review, including test coverage and quality.
 - **document-review** — Documentation accuracy and completeness audit.
 - **commit-hygiene** — Atomic commit structure and conventional format.
 - **accessibility-review** — WCAG 2.1 AA compliance for frontend code.
@@ -243,9 +244,9 @@ Native to this repository:
 
 - **parity-review** — CLI/UI parity enforcement. See `.claude/agents/parity-review.md`.
 
-All seven resolve only for sessions started inside this repository — see [Agent-Enforced Standards](#agent-enforced-standards).
+All six resolve only for sessions started inside this repository — see [Agent-Enforced Standards](#agent-enforced-standards).
 
-**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, test-review, document-review, parity-review, and accessibility-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure). The accessibility-review agent self-gates on frontend file presence — it immediately approves when no frontend files are in the diff.
+**All agents must approve changes before marking tasks as complete.** Run security-review, code-review, document-review, parity-review, and accessibility-review before `command make check`. Run commit-hygiene before committing (to plan the split) and before pushing (to verify commit structure). The accessibility-review agent self-gates on frontend file presence — it immediately approves when no frontend files are in the diff.
 
 ### Review Agent Preflight
 
@@ -326,7 +327,7 @@ For Plan Mode, Adding Features, Adding Data Sources, Bug Fixes, and the Anti-Chu
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, **test-review**, **document-review**, **parity-review**, and **accessibility-review** agents in parallel. **An agent that fails to load is a hard stop, not something to work around** — an agent that never ran reviewed nothing, and unlike a skipped approval that gap is silent. Fix the resolution first (usually: restart Claude Code from the repository root so project-local agents are discovered), and run `command make check-agents` if you want the reason spelled out.
+1. Run **security-review**, **code-review**, **document-review**, **parity-review**, and **accessibility-review** agents in parallel. **An agent that fails to load is a hard stop, not something to work around** — an agent that never ran reviewed nothing, and unlike a skipped approval that gap is silent. Fix the resolution first (usually: restart Claude Code from the repository root so project-local agents are discovered), and run `command make check-agents` if you want the reason spelled out.
 2. **Triage every finding against the frozen scope.** Once a change is under review its scope is frozen: nothing new enters it unless it is a correctness or security defect in code that change introduced. Every agent labels each finding as introduced by the diff or pre-existing, so this is a lookup rather than a judgement call. A real finding belonging to another stream is filed against that stream — it does not get fixed here, and it does not get dropped.
 3. Address the findings that survive triage.
 4. **Re-run all six agents from step 1** — not just the ones that had findings. A fix that satisfies one agent can introduce a new issue in another agent's domain (e.g., a security fix that changes test mock setup, or a test refactor that adds a new file requiring documentation). Approval is on the *final state*, not the delta. Repeat steps 2–4 until every agent returns APPROVE on the **same** tree. Never skip an agent because it approved on an earlier round — that approval is invalidated by every subsequent edit.
