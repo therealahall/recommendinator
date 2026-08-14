@@ -567,7 +567,6 @@ class TestTheParityGateReadsTheWholeCapabilitySurface:
             "docker/entrypoint.sh",
             "docs/CLI.md",
             "pyproject.toml",
-            "scripts/check_review_agents.py",
             "src/web/static/themes/nord/colors.css",
             "tests/test_interface_boundaries.py",
         ],

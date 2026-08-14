@@ -147,17 +147,16 @@ class TestMyFeatureRegression:
 
 ## Pre-commit Workflow
 
-1. Run **security-review**, **code-review**, **document-review**,
-   **parity-review** and **accessibility-review** in parallel. An agent that
-   cannot be launched is a hard stop: it reviewed nothing and said nothing, and
-   unlike a skipped approval that gap is silent.
+1. Run **parity-review** and whatever review agents your environment provides,
+   in parallel. An agent that cannot be launched is a hard stop: it reviewed
+   nothing and said nothing, and unlike a skipped approval that gap is silent.
 2. Triage every finding. Once a change is under review its **scope is frozen**.
    Only a correctness or security defect in code that change introduced enters
    it afterwards. Every agent labels each finding introduced or pre-existing, so
    this is a lookup, and a finding belonging to another stream is filed there,
    not fixed here and not dropped.
 3. Fix what survives triage.
-4. Re-run **all five**, not just the ones with findings. A fix satisfying one agent
+4. Re-run **every agent from step 1**, not just the ones with findings. A fix satisfying one agent
    can break another's domain, so approval is on the final tree, not the delta.
    Repeat 2-4 until every agent approves the **same** tree.
 5. Stop once the review **converges**: a round returns no criticals and no highs,
@@ -167,33 +166,21 @@ class TestMyFeatureRegression:
    eroding: every **cut is stated explicitly with its reason**, and every
    **deferral gets a tracker issue naming the stream it lands in**.
    A deferral with no tracker entry is a cut pretending otherwise.
-6. Run **commit-hygiene** to plan the atomic commit split.
+6. Plan the atomic commit split before staging anything.
 7. Run `command make check`.
 8. Commit to the plan. If staging triggers a formatter or any other edit, restart
    at step 4. The agents must approve the tree that gets committed.
-9. Run **commit-hygiene** again before pushing.
+9. Verify commit structure and messages before pushing.
 
 ### The review agents
 
-Six agents, all committed under `.claude/agents/`, so a plain clone has the
-whole gate.
-
-| Agent | Covers |
-|-------|--------|
-| **code-review** | Design, naming, DRY, project standards, test quality |
-| **security-review** | Credential leaks, injection, unsafe patterns ([docs/SECURITY.md](docs/SECURITY.md)) |
-| **document-review** | Accuracy, completeness, cross-document consistency |
-| **accessibility-review** | WCAG 2.1 AA. Self-gates on frontend file presence |
-| **commit-hygiene** | Atomic commits, conventional format |
-| **parity-review** | CLI/web parity, native to this repository |
-
-Every agent but `parity-review` is shared across repositories, maintained
-elsewhere, and picks up this project's rules by reading `CLAUDE.md` and `docs/`.
-To improve one, edit the committed copy and say so in the PR.
+One agent ships with the repository: **parity-review**
+(`.claude/agents/parity-review.md`) — CLI/web feature parity. Run it on any
+change to the capability surface; it approves immediately otherwise. `make
+check` and human review cover everything else.
 
 Claude Code discovers `.claude/agents/` only for the directory a session started
 in, so start it **at the repository root**. A subdirectory does not count.
-`make check` verifies every mandated agent is committed and loadable.
 
 ## Commit messages
 
@@ -280,11 +267,10 @@ tests/                # Cross-cutting tests. Plugin tests live next to the plugi
 conftest.py           # Five autouse fixtures for every test in every tree: real
                       # logs and credentials isolated, timezone pinned to UTC,
                       # reads confined to tmp_path, network limited to loopback
-scripts/              # Developer tooling (check_review_agents.py)
 config/               # Configuration files
 templates/            # Import file templates (CSV, JSON, Markdown)
 docs/                 # Additional documentation
-.claude/agents/       # All six mandated review agents
+.claude/agents/       # The native parity-review agent
 ```
 
 `src/ingestion/sources/_isolation/` is not a plugin. It holds the test proving

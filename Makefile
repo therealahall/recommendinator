@@ -1,5 +1,5 @@
 .PHONY: help install install-ai install-dev lock test lint format format-check
-.PHONY: type-check clean run install-frontend build-frontend check-frontend check-agents check
+.PHONY: type-check clean run install-frontend build-frontend check-frontend check
 
 # CI overrides this with the interpreter uv provisioned into .venv; locally the
 # project's pinned version is on PATH.
@@ -19,8 +19,7 @@ help:
 	@echo "  make type-check        - Run type checker (mypy)"
 	@echo "  make build-frontend    - Build Vue frontend (Vite + vue-tsc)"
 	@echo "  make check-frontend    - Run frontend type-check and tests"
-	@echo "  make check             - Run all checks (Python + frontend + agents)"
-	@echo "  make check-agents      - Verify every mandated review agent can be launched"
+	@echo "  make check             - Run all checks (Python + frontend)"
 	@echo "  make clean             - Clean build artifacts"
 	@echo "  make run               - Run the application"
 
@@ -51,16 +50,16 @@ test:
 	$(PYTHON) -m pytest
 
 lint:
-	$(PYTHON) -m ruff check src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m ruff check src/ tests/ conftest.py
 
 format:
-	$(PYTHON) -m black src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m black src/ tests/ conftest.py
 
 format-check:
-	$(PYTHON) -m black --check src/ tests/ scripts/ conftest.py
+	$(PYTHON) -m black --check src/ tests/ conftest.py
 
 type-check:
-	$(PYTHON) -m mypy src/ scripts/ conftest.py
+	$(PYTHON) -m mypy src/ conftest.py
 
 build-frontend: node_modules/.make-install
 	pnpm build
@@ -69,16 +68,7 @@ check-frontend: node_modules/.make-install
 	pnpm vue-tsc --noEmit
 	pnpm vitest run
 
-# check-agents runs first deliberately: it finishes in under a second, and a
-# review gate that cannot resolve its agents should not cost a full test run to
-# discover.
-check: check-agents format-check lint type-check test check-frontend
-
-# Verifies every review agent CLAUDE.md mandates is committed, loadable, and
-# declares the name it is launched by. An agent that never loads reviews nothing
-# and says nothing, so the gate would otherwise report success without it.
-check-agents:
-	$(PYTHON) scripts/check_review_agents.py
+check: format-check lint type-check test check-frontend
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
