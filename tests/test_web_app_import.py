@@ -338,9 +338,9 @@ def test_the_supported_helper_restores_app_state_when_the_boot_raises() -> None:
 
     ``app_state`` is a module-level singleton, so a half-populated one outlives
     the test that caused it and fails somewhere unrelated later in the session.
-    ``create_conversation_engine`` is the raise point because it is one of the
-    few steps that run *after* ``create_app`` starts assigning to ``app_state``
-    — a raise from any earlier step restores a state nothing had changed yet.
+    Building the ``FastAPI`` object is the raise point because it is the first
+    step *after* ``create_app`` has assigned to ``app_state`` — a raise from any
+    earlier step restores a state nothing had changed yet.
     """
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     mid_boot = {}
@@ -350,10 +350,9 @@ def test_the_supported_helper_restores_app_state_when_the_boot_raises() -> None:
         raise RuntimeError
 
     with (
-        patch("src.web.app.create_conversation_engine", side_effect=explode),
+        patch("src.web.app.FastAPI", side_effect=explode),
         pytest.raises(RuntimeError),
-        # A truthy client is what makes create_app take the branch that raises.
-        booted_web_app(MagicMock(spec=StorageManager), {}, (MagicMock(), None, None)),
+        booted_web_app(MagicMock(spec=StorageManager), {}),
     ):
         pass
 

@@ -15,58 +15,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # On PRs: build each image (amd64 only, no push) so a broken Dockerfile
-  # fails before merge. Smoke-test the default variant by hitting /api/status.
+  # On PRs: build the image (amd64 only, no push) so a broken Dockerfile fails
+  # before merge, then smoke-test it.
   build-pr:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: default
-            dockerfile: Dockerfile
-            target: default
-            context: .
-            smoke_test: true
-          - name: ai
-            dockerfile: Dockerfile
-            target: ai
-            context: .
-            smoke_test: false
-          - name: ollama
-            dockerfile: docker/Dockerfile.ollama
-            target: ""
-            context: docker
-            smoke_test: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
-      - name: Build ${{ matrix.name }}
+      - name: Build
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          target: ${{ matrix.target }}
+          context: .
+          file: Dockerfile
           platforms: linux/amd64
           push: false
           load: true
-          tags: recommendinator-${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          tags: recommendinator:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha,scope=default
+          cache-to: type=gha,scope=default,mode=max
 
       # /api/auth/session is the one route a signed-out caller may reach, and it
       # reads the database to answer, so a 200 is a server that came all the way
       # up. Proving a 401 is the liveness probe's job, and this step runs that
       # too.
-      - name: Smoke test (default variant only)
-        if: matrix.smoke_test
+      - name: Smoke test
         env:
-          IMAGE: recommendinator-${{ matrix.name }}:pr-${{ github.event.pull_request.number }}
+          IMAGE: recommendinator:pr-${{ github.event.pull_request.number }}
         run: |
           mkdir -p smoke-config
           docker run --rm --entrypoint cat "$IMAGE" /app/example.yaml > smoke-config/config.yaml
@@ -196,36 +175,16 @@ jobs:
     needs: guard
     uses: ./.github/workflows/quality-gate.yml
 
-  # On version tags: build each image multi-arch and push to GHCR with semver
-  # tags (X.Y.Z, X.Y, X, latest) plus the AI variant suffix where applicable.
+  # On version tags: build the image multi-arch and push to GHCR with semver
+  # tags (X.Y.Z, X.Y, X, latest).
   publish:
     needs: [guard, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: default
-            image: ghcr.io/${{ github.repository_owner }}/recommendinator
-            dockerfile: Dockerfile
-            target: default
-            context: .
-            tag_suffix: ""
-          - name: ai
-            image: ghcr.io/${{ github.repository_owner }}/recommendinator
-            dockerfile: Dockerfile
-            target: ai
-            context: .
-            tag_suffix: "-ai"
-          - name: ollama
-            image: ghcr.io/${{ github.repository_owner }}/recommendinator-ollama
-            dockerfile: docker/Dockerfile.ollama
-            target: ""
-            context: docker
-            tag_suffix: ""
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/recommendinator
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -244,39 +203,36 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
-          images: ${{ matrix.image }}
+          images: ${{ env.IMAGE_NAME }}
           # `latest=auto`, the default, appends `latest` to any non-prerelease
           # semver tag on its own — the guard's decision to make. Off, the
-          # guarded entry below is the only source, and the global suffix is
-          # what makes it `latest-ai`.
+          # guarded entry below is the only source.
           flavor: |
             latest=false
-            suffix=${{ matrix.tag_suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.guard.outputs.highest_in_minor == 'true' }}
             type=semver,pattern={{major}},enable=${{ needs.guard.outputs.highest_in_major == 'true' }}
             type=raw,value=latest,enable=${{ needs.guard.outputs.highest_overall == 'true' }}
 
-      - name: Build and push ${{ matrix.name }}
+      - name: Build and push
         id: build
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          target: ${{ matrix.target }}
+          context: .
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.name }}-publish
-          cache-to: type=gha,scope=${{ matrix.name }}-publish,mode=max
+          cache-from: type=gha,scope=default-publish
+          cache-to: type=gha,scope=default-publish,mode=max
           provenance: true
           sbom: true
 
       - name: Verify multi-arch manifest
         env:
-          IMAGE: ${{ matrix.image }}
+          IMAGE: ${{ env.IMAGE_NAME }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           docker buildx imagetools inspect "${IMAGE}@${DIGEST}" \

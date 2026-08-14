@@ -11,7 +11,6 @@ vi.mock('@/composables/useApi', () => ({
     put: vi.fn(),
     patch: vi.fn(),
     delete: vi.fn(),
-    raw: vi.fn(),
   }),
 }))
 
@@ -33,7 +32,6 @@ describe('useAppStore', () => {
     expect(store.currentUserId).toBe(1)
     expect(store.version).toBe('')
     expect(store.showUpdateBanner).toBe(false)
-    expect(store.features.ai_enabled).toBe(false)
   })
 
   it('fetchStatus sets state on success', async () => {
@@ -41,7 +39,6 @@ describe('useAppStore', () => {
       status: 'ready',
       version: '1.2.3',
       components: {},
-      features: { ai_enabled: true, embeddings_enabled: true, llm_reasoning_enabled: false },
       recommendations_config: { max_count: 20, default_count: 10 },
     })
 
@@ -51,7 +48,6 @@ describe('useAppStore', () => {
     expect(store.status).toBe('ready')
     expect(store.statusMessage).toBe('')
     expect(store.version).toBe('1.2.3')
-    expect(store.features.ai_enabled).toBe(true)
     expect(store.recommendationsConfig.default_count).toBe(10)
   })
 
@@ -60,7 +56,6 @@ describe('useAppStore', () => {
       status: 'loading',
       version: '',
       components: {},
-      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
       recommendations_config: { max_count: 20, default_count: 5 },
     })
 
@@ -76,7 +71,6 @@ describe('useAppStore', () => {
       status: 'loading',
       version: '',
       components: {},
-      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
       recommendations_config: { max_count: 20, default_count: 5 },
     })
 
@@ -105,7 +99,6 @@ describe('useAppStore', () => {
       status: 'ready',
       version: '1.2.3',
       components: {},
-      features: { ai_enabled: false, embeddings_enabled: false, llm_reasoning_enabled: false },
       recommendations_config: { max_count: 20, default_count: 5 },
     })
 
@@ -114,21 +107,5 @@ describe('useAppStore', () => {
 
     expect(mockGet).toHaveBeenCalledTimes(1)
     expect(mockGet).toHaveBeenCalledWith('/status')
-  })
-
-  it('chatEnabled computed depends on ai_enabled', () => {
-    const store = useAppStore()
-    expect(store.chatEnabled).toBe(false)
-    store.features.ai_enabled = true
-    expect(store.chatEnabled).toBe(true)
-  })
-
-  it('aiReasoningEnabled requires both ai and llm_reasoning', () => {
-    const store = useAppStore()
-    expect(store.aiReasoningEnabled).toBe(false)
-    store.features.ai_enabled = true
-    expect(store.aiReasoningEnabled).toBe(false)
-    store.features.llm_reasoning_enabled = true
-    expect(store.aiReasoningEnabled).toBe(true)
   })
 })

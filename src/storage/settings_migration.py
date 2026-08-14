@@ -42,10 +42,7 @@ if TYPE_CHECKING:
 # itself and must stay in YAML/env. ``inputs`` (sources) and credentials are
 # owned by their own migrations (source_configs / credentials tables).
 IN_SCOPE_SECTIONS: tuple[str, ...] = (
-    "features",
-    "ollama",
     "recommendations",
-    "conversation",
     "sync",
     "enrichment",
     "web",

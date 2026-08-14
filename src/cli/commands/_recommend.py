@@ -38,11 +38,6 @@ RECOMMEND_FAILED = "Failed to generate recommendations"
     help="Output format",
 )
 @click.option(
-    "--use-llm/--no-use-llm",
-    default=True,
-    help="Use LLM for enhanced recommendation reasoning (default: enabled).",
-)
-@click.option(
     "--user",
     "user_id",
     type=int,
@@ -55,7 +50,6 @@ def recommend(
     content_type_str: str,
     count: int,
     output_format: str,
-    use_llm: bool,
     user_id: int,
 ) -> None:
     """Get personalized recommendations."""
@@ -85,7 +79,6 @@ def recommend(
         recommendations = engine.generate_recommendations(
             content_type=content_type,
             count=count,
-            use_llm=use_llm,
             user_preference_config=user_preference_config,
         )
 
@@ -111,9 +104,7 @@ def recommend(
             for rank, rec in enumerate(recommendations, 1):
                 item = rec.item
                 author = item.author or "N/A"
-                # The web card shows the blurb when there is one and the
-                # pipeline line otherwise; the one column here follows it.
-                reasoning = (rec.llm_reasoning or "").strip() or rec.reasoning
+                reasoning = rec.reasoning
                 penalty = rec.variety_penalty
                 if penalty > 0:
                     # Surface the stepped variety penalty inline so CLI users

@@ -31,7 +31,6 @@ _ECHO_SINKS = {"click.echo", "click.secho"}
 _MODULES_THAT_PRINT_PROGRESS = {
     "commands/_auth.py",
     "commands/_enrichment.py",
-    "commands/_preferences.py",
     "commands/_profile.py",
     "commands/_recommend.py",
     "commands/_update.py",
@@ -203,11 +202,7 @@ class TestInterpretProgressIsOffTheDataChannel:
         result = self._run()
 
         assert result.exit_code == 0
-        assert "Rule: 'avoid horror'" in result.stdout
-        assert "interpreter..." not in result.stdout
-
-    def test_the_interpreter_it_chose_still_reaches_the_operator(self) -> None:
-        assert "Using pattern-based interpreter..." in self._run().stderr
+        assert result.stdout.startswith("\nRule: 'avoid horror'")
 
 
 class TestTraktConnectProgressIsOffTheDataChannel:

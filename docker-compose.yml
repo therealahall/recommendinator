@@ -8,15 +8,10 @@
 #     -o docker-compose.yml
 #
 # Usage:
-#   docker compose up -d                            # default variant (no AI)
-#   docker compose --profile ai up -d app-ai        # AI variant + Ollama sidecar
-#
-# The AI invocation must name `app-ai` explicitly. The default `app` service
-# has no profile so it always starts unless excluded by service-name selection;
-# omitting `app-ai` leaves both variants competing for the same host port.
+#   docker compose up -d
 #
 # Environment overrides (set in your shell or a .env file next to this file):
-#   TZ                      — timezone the app containers run in, e.g.
+#   TZ                      — timezone the app container runs in, e.g.
 #                             "America/Los_Angeles" (default: unset, meaning
 #                             UTC). Watch and read timestamps arrive as UTC
 #                             instants and are dated by the calendar day in this
@@ -32,135 +27,57 @@
 #                             beyond loopback your password and session cookie
 #                             cross the network in cleartext: put a reverse
 #                             proxy that terminates HTTPS in front of it.
-#   OLLAMA_MODEL            — model the sidecar pulls (default: mistral:7b)
-#   OLLAMA_EMBEDDING_MODEL  — embedding model to pull (default: nomic-embed-text)
-#   OLLAMA_CONVERSATION_MODEL — separate chat model to pull (default: reuse OLLAMA_MODEL)
-#   OLLAMA_MEMORY_LIMIT     — memory ceiling for the sidecar (default: 12g, which
-#                             holds every model docs/MODEL_RECOMMENDATIONS.md
-#                             names). Raise it for a larger model. A ceiling
-#                             above the host's own RAM never binds, so on an
-#                             8 GB NAS or Pi lower it: the kernel then kills the
-#                             model load instead of choosing a victim from every
-#                             process on the machine.
 #
 # For local development with hot reload, layer docker-compose.dev.yml on top:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ai up -d app-ai
-
-x-app-common: &app-common
-  environment:
-    # A container has no timezone of its own — it runs on UTC unless TZ is set
-    # inside it, and compose only carries a host variable in when the file names
-    # it. Empty by default so a host that sets nothing keeps UTC exactly as
-    # before; the app dates completions by this zone's calendar day.
-    - TZ=${TZ:-}
-  ports:
-    # A prefix, not an address, because the every-interface publish is the
-    # ABSENCE of a host part: the long `host_ip:` form cannot express that at
-    # all (compose rejects an empty one with "invalid ip address"), and
-    # spelling 0.0.0.0 silently drops the IPv6 binding. Hence the trailing
-    # colon in the value. `-` and not `:-`, so `APP_BIND_PREFIX=` is honoured
-    # as the opt-in to every interface rather than read as unset.
-    - "${APP_BIND_PREFIX-127.0.0.1:}${APP_PORT:-18473}:8000"
-  volumes:
-    # config is mounted read-write so the entrypoint can copy example.yaml to
-    # config.yaml on first run. Under Docker it holds only the storage paths
-    # and web.debug — the bind comes from the image's --host/--port CMD, which
-    # beats config.yaml, so set APP_PORT above rather than editing web.port.
-    # Sources, settings, and secrets live in the database under ./data and are
-    # managed from the app.
-    # Once config.yaml exists, you can switch this to `./config:/app/config:ro`
-    # for a tighter security posture (the app never needs to write to it
-    # at steady state).
-    - ./config:/app/config
-    # persistent application data (SQLite DB, ChromaDB, credential keys)
-    - ./data:/app/data
-    # input files for ingestion sources
-    - ./inputs:/app/inputs:ro
-    # optional private plugin directory; leave empty if you don't have any
-    - ./private:/app/private:ro
-  restart: unless-stopped
-  # The image already runs as an unprivileged user and binds a high port, so it
-  # needs no capability and nothing in it should be able to acquire one. Every
-  # /api route already requires a session cookie (docs/SECURITY.md); this is the
-  # other half — what a compromised dependency can reach once it is inside.
-  security_opt:
-    - no-new-privileges:true
-  cap_drop:
-    - ALL
-  networks:
-    - recommendinator-net
 
 services:
-  # Default variant — no AI dependencies. Smallest image.
   app:
-    <<: *app-common
     image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}
     container_name: recommendinator
-
-  # AI variant — includes Ollama client and ChromaDB. Requires the ollama
-  # sidecar below; only starts under the `ai` profile.
-  app-ai:
-    <<: *app-common
-    image: ghcr.io/therealahall/recommendinator:${IMAGE_TAG:-latest}-ai
-    container_name: recommendinator-ai
-    profiles: ["ai"]
     environment:
-      # A YAML merge key replaces `environment` wholesale rather than appending
-      # to the anchor's list, so TZ has to be repeated here to survive.
+      # A container has no timezone of its own — it runs on UTC unless TZ is set
+      # inside it, and compose only carries a host variable in when the file
+      # names it. Empty by default so a host that sets nothing keeps UTC exactly
+      # as before; the app dates completions by this zone's calendar day.
       - TZ=${TZ:-}
-      - OLLAMA_BASE_URL=http://ollama:11434
-    depends_on:
-      ollama:
-        condition: service_healthy
-
-  # Ollama LLM sidecar (only starts with --profile ai).
-  # Models are auto-pulled on first start from the environment below. The app's
-  # global config is database-backed, so these are set here rather than read
-  # from config.yaml — keep them in sync with the ollama.model /
-  # ollama.embedding_model settings on the Settings page.
-  ollama:
-    # The liveness check ships in the image, so `docker run` gets it too — which
-    # makes `docker compose pull` before an upgrade mandatory: a cached sidecar
-    # from before it has none, and app-ai's service_healthy dependency on a
-    # container with no health check fails outright.
-    image: ghcr.io/therealahall/recommendinator-ollama:${IMAGE_TAG:-latest}
-    container_name: recommendinator-ollama
-    profiles: ["ai"]
-    environment:
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral:7b}
-      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
-      # Only set this if you point ollama.conversation_model at a separate chat
-      # model; empty means the sidecar reuses OLLAMA_MODEL, matching the app.
-      - OLLAMA_CONVERSATION_MODEL=${OLLAMA_CONVERSATION_MODEL:-}
+    ports:
+      # A prefix, not an address, because the every-interface publish is the
+      # ABSENCE of a host part: the long `host_ip:` form cannot express that at
+      # all (compose rejects an empty one with "invalid ip address"), and
+      # spelling 0.0.0.0 silently drops the IPv6 binding. Hence the trailing
+      # colon in the value. `-` and not `:-`, so `APP_BIND_PREFIX=` is honoured
+      # as the opt-in to every interface rather than read as unset.
+      - "${APP_BIND_PREFIX-127.0.0.1:}${APP_PORT:-18473}:8000"
     volumes:
-      # The image runs as the `ollama` user, and this is that user's model
-      # store. See docs/DOCKER.md for the one-time chown when upgrading from a
-      # sidecar that ran as root.
-      - ollama-data:/var/lib/ollama/.ollama
+      # config is mounted read-write so the entrypoint can copy example.yaml to
+      # config.yaml on first run. Under Docker it holds only the storage paths
+      # and web.debug — the bind comes from the image's --host/--port CMD, which
+      # beats config.yaml, so set APP_PORT above rather than editing web.port.
+      # Sources, settings, and secrets live in the database under ./data and are
+      # managed from the app.
+      # Once config.yaml exists, you can switch this to `./config:/app/config:ro`
+      # for a tighter security posture (the app never needs to write to it
+      # at steady state).
+      - ./config:/app/config
+      # persistent application data (SQLite DB, credential keys)
+      - ./data:/app/data
+      # input files for ingestion sources
+      - ./inputs:/app/inputs:ro
+      # optional private plugin directory; leave empty if you don't have any
+      - ./private:/app/private:ro
     restart: unless-stopped
-    # The only capped service. Loading a model is the one operation here
-    # measured in gigabytes; a ceiling guessed for the app services would turn a
-    # long but healthy sync into an OOM kill.
-    mem_limit: ${OLLAMA_MEMORY_LIMIT:-12g}
+    # The image already runs as an unprivileged user and binds a high port, so
+    # it needs no capability and nothing in it should be able to acquire one.
+    # Every /api route already requires a session cookie (docs/SECURITY.md);
+    # this is the other half — what a compromised dependency can reach once it
+    # is inside.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     networks:
       - recommendinator-net
-    # Uncomment for GPU support (NVIDIA)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-
-volumes:
-  ollama-data:
-    name: recommendinator-ollama-data
 
 networks:
   recommendinator-net:

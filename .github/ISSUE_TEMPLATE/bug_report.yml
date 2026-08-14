@@ -32,7 +32,6 @@ body:
       value: |
         - Install method: [Docker / uv / pip]
         - OS: [e.g., Fedora 43, macOS 15]
-        - AI features enabled: [yes / no]
 
   - type: dropdown
     id: interface

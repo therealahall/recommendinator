@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from src.conversation.profile import ProfileGenerator
+from src.recommendations.profile import ProfileGenerator
 from src.storage.manager import StorageManager
 
 from .conftest import _invoke_with_mocks

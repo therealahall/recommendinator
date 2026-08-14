@@ -138,7 +138,6 @@ def back_mock_preference_store(
 def booted_web_app(
     storage: Any,
     config: dict[str, Any],
-    llm_components: tuple[Any, Any, Any] = (None, None, None),
     engine: Any = None,
     migrate_credentials: bool = False,
 ) -> Iterator[FastAPI]:
@@ -159,9 +158,7 @@ def booted_web_app(
     the call.
 
     No ``engine`` means no recommendation engine, so ``/api/recommendations``
-    and its stream answer 503 until one is passed, and a truthy LLM client in
-    ``llm_components`` wires the conversation engine with
-    ``recommendation_engine=None``.
+    and its stream answer 503 until one is passed.
 
     ``app_state`` is a module-level singleton, so the boot starts from
     ``AppState()`` defaults and the caller's fields are restored afterwards.
@@ -189,7 +186,6 @@ def booted_web_app(
         with (
             patch("src.web.app.load_config", return_value=config),
             patch("src.web.app.create_storage_manager", return_value=storage),
-            patch("src.web.app.create_llm_components", return_value=llm_components),
             patch("src.web.app.create_recommendation_engine", return_value=engine),
             credential_migration,
             # Resolved independently of the patched loader, so unpatched this

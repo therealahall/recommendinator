@@ -8,7 +8,6 @@ import threading
 import click
 
 from src.cli._shared import abort_after_failure
-from src.config.service import get_feature_flags
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     execute_multi_source_sync,
@@ -66,7 +65,6 @@ def _refusal(entry: ResolvedInput, errors: list[str]) -> str:
 def update(ctx: click.Context, source: str, workers: int | None) -> None:
     """Update data from configured sources."""
     storage = ctx.obj["storage"]
-    embedding_gen = ctx.obj["embedding_gen"]
     config = ctx.obj["config"]
 
     # Handle 'list' to show available sources (read-only — no migration needed).
@@ -84,9 +82,6 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             status = "enabled" if info.enabled else "disabled"
             click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
         return
-
-    # Check if embeddings are enabled
-    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Check if auto-enrichment is enabled
     enrichment_config = config.get("enrichment", {})
@@ -185,8 +180,6 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
         results = execute_multi_source_sync(
             sources=[(entry.plugin, entry.config) for entry in valid],
             storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=use_embeddings,
             progress_callback=cli_progress,
             mark_for_enrichment=auto_enrich,
             max_workers=max_workers,

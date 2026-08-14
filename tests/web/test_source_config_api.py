@@ -19,9 +19,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.ingestion.sync import SyncResult
-from src.llm.client import OllamaClient
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.recommendations.engine import RecommendationEngine
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import StorageManager
@@ -37,7 +34,6 @@ def storage(tmp_path: Path) -> StorageManager:
 def base_config() -> dict[str, Any]:
     """A minimal config with two YAML-defined sources."""
     return {
-        "ollama": {"base_url": "http://localhost:11434", "model": "x"},
         "storage": {"database_path": "data/test.db"},
         "inputs": {
             "my_books": {
@@ -68,22 +64,16 @@ def client(
     """TestClient with a real StorageManager and an in-memory test config.
 
     ``booted_web_app`` patches the boot's I/O boundaries so the suite never
-    touches the real config file or LLM stack — only ``app_state.config``
-    drives behaviour, and tests may mutate it (e.g. to assert the YAML purge
-    after a migrate).
+    touches the real config file — only ``app_state.config`` drives behaviour,
+    and tests may mutate it (e.g. to assert the YAML purge after a migrate).
     """
     engine = Mock(spec=RecommendationEngine)
     engine.storage = storage
-    llm_components = (
-        Mock(spec=OllamaClient),
-        Mock(spec=EmbeddingGenerator),
-        Mock(spec=RecommendationGenerator),
-    )
 
     with (
         patch("src.web.app.migrate_source_labels"),
         patch("src.web.app.migrate_source_config_plugins"),
-        booted_web_app(storage, base_config, llm_components, engine=engine) as app,
+        booted_web_app(storage, base_config, engine=engine) as app,
     ):
         yield authenticated_client(app)
 

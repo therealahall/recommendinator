@@ -6,8 +6,6 @@ import pytest
 from click.testing import CliRunner
 
 from src.cli.main import cli
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.storage.manager import StorageManager
 from tests.factories import back_mock_settings_store
 
@@ -34,7 +32,6 @@ def _cli_patches():
     return (
         patch("src.cli.main.load_config"),
         patch("src.cli.main.create_storage_manager"),
-        patch("src.cli.main.create_llm_components"),
         patch("src.cli.main.create_recommendation_engine"),
         patch("src.cli.main.migrate_source_labels"),
         patch("src.cli.main.migrate_source_config_plugins"),
@@ -48,7 +45,6 @@ def _invoke_with_mocks(
     mock_storage: MagicMock | StorageManager,
     config: dict | None = None,
     input_text: str | None = None,
-    llm_client: MagicMock | None = None,
     engine: MagicMock | None = None,
 ) -> object:
     """Invoke CLI with standard mock setup.
@@ -60,14 +56,12 @@ def _invoke_with_mocks(
             StorageManager when a test needs the command to hit real storage
         config: Config dict (default: empty)
         input_text: Simulated stdin input
-        llm_client: Optional LLM client mock (default: None/AI disabled)
         engine: Pre-configured engine mock, for a command whose output is
             built from what the engine returns (default: a bare mock)
     """
     (
         p_config,
         p_storage,
-        p_llm,
         p_engine,
         p_labels,
         p_plugins,
@@ -76,7 +70,6 @@ def _invoke_with_mocks(
     with (
         p_config as mock_load,
         p_storage as mock_storage_fn,
-        p_llm as mock_llm,
         p_engine as mock_engine_fn,
         p_labels,
         p_plugins,
@@ -85,11 +78,6 @@ def _invoke_with_mocks(
         mock_load.return_value = config or {}
         back_mock_settings_store(mock_storage)
         mock_storage_fn.return_value = mock_storage
-        mock_llm.return_value = (
-            llm_client,
-            MagicMock(spec=EmbeddingGenerator),
-            MagicMock(spec=RecommendationGenerator),
-        )
         if engine is not None:
             mock_engine_fn.return_value = engine
         return cli_runner.invoke(cli, args, input=input_text)

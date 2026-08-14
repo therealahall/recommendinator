@@ -4,15 +4,15 @@ A privacy-focused recommendation engine that learns from your ratings and review
 across books, movies, TV shows, and video games.
 
 - **Runs locally**. Your data never leaves your machine
-- **Works without AI**. Smart scoring algorithms that don't need an LLM
-- **AI is optional**. Enable Ollama integration when you want deeper insights
+- **No model, no service**. Scoring is arithmetic over your own library, and
+  every score can be read back
 - **You own your data**. A SQLite database you can query, back up, or delete
 
 It imports from sources you already use, enriches items with metadata, and ranks
 recommendations through a transparent scoring pipeline. Your love of sci-fi books
-can influence game and movie suggestions through semantic genre clusters. Browse
-and tune everything from a themeable web UI or the CLI, which are
-[interchangeable interfaces](ARCHITECTURE.md#7-interfaces) to the same engine.
+can influence game and movie suggestions through genre clusters. Browse and tune
+everything from a themeable web UI or the CLI, which are
+[interchangeable interfaces](ARCHITECTURE.md#5-interfaces) to the same engine.
 
 ## 30-second start
 
@@ -43,8 +43,8 @@ Then, in order:
    `python3.11 -m src.cli recommend --type book --count 5`.
 
 > Running from source instead of Docker? See the [Quick Start guide](QUICKSTART.md).
-> For AI features, GPU support, reverse proxies, and the full deployment
-> reference, see [docs/DOCKER.md](docs/DOCKER.md).
+> For reverse proxies and the full deployment reference, see
+> [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Security notice
 
@@ -79,10 +79,8 @@ export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 
 ## Features
 
-**Core, no AI required**
-
-- Multi-source ingestion, with cross-content recommendations through semantic
-  genre clusters
+- Multi-source ingestion, with cross-content recommendations through genre
+  clusters
 - A transparent scoring pipeline over genre, creator, series order, tag overlap
   and rating patterns ([how it works](docs/SCORING.md))
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
@@ -90,13 +88,6 @@ export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
   RAWG, automatic or edited by hand
 - Content-length filtering, multi-user support, typo-tolerant library search,
   themes
-
-**Optional AI, opt-in and local**
-
-- Conversational chat over your library, with memory and user profiling
-- Semantic similarity, LLM-reasoned explanations, smart rule interpretation
-
-See [Enabling AI features](#enabling-ai-features) below.
 
 ## Configuration
 
@@ -122,12 +113,12 @@ from the Settings API. See
 [docs/SECURITY.md](docs/SECURITY.md#where-file-imports-may-read).
 
 Everything else lives in the database and is set from the app. Data sources come
-from the **Data** tab or the `source` CLI. Global settings, from AI toggles to
-scorer weights to logging, come from the **Settings** page or the `settings` CLI.
+from the **Data** tab or the `source` CLI. Global settings, from scorer weights
+to enrichment to logging, come from the **Settings** page or the `settings` CLI.
 
 ```bash
 python3.11 -m src.cli settings list
-python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set recommendations.default_count 10
 python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 ```
 
@@ -176,24 +167,9 @@ python3.11 -m src.cli update --source all
 python3.11 -m src.cli recommend --type book --count 10
 python3.11 -m src.cli library list --type book --status completed --sort rating
 python3.11 -m src.cli library list --search "die hard"
-python3.11 -m src.cli chat start
 ```
 
 Full command reference: **[docs/CLI.md](docs/CLI.md)**.
-
-## Enabling AI features
-
-For semantic similarity and LLM-powered explanations:
-
-- **Docker**: `docker compose --profile ai up -d app-ai` sets up Ollama and the
-  models for you.
-- **Local**: install [Ollama](https://ollama.ai), run `ollama pull mistral:7b`,
-  then turn on `features.ai_enabled`, `features.embeddings_enabled` and
-  `features.llm_reasoning_enabled` from the Settings page. All three are
-  restart-required.
-
-See [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) for model
-selection.
 
 ## Documentation
 
@@ -206,22 +182,17 @@ selection.
 | [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md) | Metadata enrichment setup (critical) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design and components |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing guidelines |
-| [docs/DOCKER.md](docs/DOCKER.md) | Docker deployment, AI mode, GPU, reverse proxy |
-| [docs/CONVERSATION_GUIDE.md](docs/CONVERSATION_GUIDE.md) | Chat interface and AI conversation |
+| [docs/DOCKER.md](docs/DOCKER.md) | Docker deployment and reverse proxy |
 | [docs/CUSTOM_RULES.md](docs/CUSTOM_RULES.md) | Custom preference rules |
 | [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) | Adding new data sources |
 | [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md) | Creating custom web UI themes |
-| [docs/MODEL_RECOMMENDATIONS.md](docs/MODEL_RECOMMENDATIONS.md) | Ollama model selection |
-| [docs/CHROMADB_SETUP.md](docs/CHROMADB_SETUP.md) | ChromaDB setup (AI-only) |
-| [docs/OLLAMA_SETUP_GUIDE.md](docs/OLLAMA_SETUP_GUIDE.md) | Ollama installation and setup |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security considerations |
 | [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md) | Python version requirements |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ## Requirements
 
-Python 3.11 (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)),
-SQLite, and Ollama if you want the AI features.
+Python 3.11 (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)) and SQLite.
 
 ## License
 

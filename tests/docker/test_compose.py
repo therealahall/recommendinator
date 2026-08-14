@@ -28,16 +28,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = _REPO_ROOT / "docker-compose.yml"
 DEV_COMPOSE = _REPO_ROOT / "docker-compose.dev.yml"
 DOCKERFILE = _REPO_ROOT / "Dockerfile"
-OLLAMA_DOCKERFILE = _REPO_ROOT / "docker" / "Dockerfile.ollama"
 DOCKERIGNORE = _REPO_ROOT / ".dockerignore"
 ENTRYPOINT = _REPO_ROOT / "docker" / "entrypoint.sh"
 DOCKER_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "docker.yml"
 
-# The stage both shipped targets build on, and the targets themselves. Anything
-# installed in the shared stage reaches both; anything installed in one target
-# reaches only that one.
-RUNTIME_BASE_STAGE = "runtime-base"
-APP_TARGETS = ["default", "ai"]
+# The stage the published image is: everything the deployment runs is installed
+# here, and the builder stages above it ship nothing.
+RUNTIME_STAGE = "runtime"
 
 # The arguments of an `apt-get install`, following backslash continuations onto
 # the following lines. Anything after the shell's `&&` belongs to the next
@@ -52,10 +49,8 @@ _INSTRUCTION = r"^{name}\b(?P<arguments>(?:[^\n\\]|\\\n)*)"
 # a path that no longer imports.
 HEALTHCHECK_COMMAND = f'CMD ["python", "-m", "{healthcheck.__name__}"]'
 
-# Services that publish the web UI. Both inherit the mapping from the
-# x-app-common anchor, so both must be checked — a mapping moved onto one
-# service only would leave the other unreachable.
-APP_SERVICES = ["app", "app-ai"]
+# The service that publishes the web UI.
+APP_SERVICE = "app"
 
 # The mapping compose renders when nothing is set. Container port 8000 is fixed
 # by the image's CMD; the host side is the part operators change.
@@ -77,10 +72,7 @@ _DOCUMENTED = re.compile(r"^#\s{3}([A-Z][A-Z0-9_]*)\s+—", re.MULTILINE)
 
 # Every service in the deployment. Named here rather than derived so that adding
 # one without deciding how it is confined fails a test.
-ALL_SERVICES = ["app", "app-ai", "ollama"]
-
-# The services the dev override reshapes; the sidecar it only rebuilds.
-DEV_SERVICES = ["app", "app-ai"]
+ALL_SERVICES = ["app"]
 
 # Paths that must never reach a builder. Some are gitignored secrets, the rest
 # are simply nobody's business on the far side of a `docker build`.
@@ -103,26 +95,6 @@ _COPY = re.compile(r"^COPY\s+(?P<arguments>\S.*)$", re.MULTILINE)
 # An image reference pinned the way this repository requires: the tag stays for
 # legibility, the digest is what actually resolves.
 _PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@:]+@sha256:[0-9a-f]{64}$")
-
-# Where the sidecar's model store lives, which follows the user's home.
-_OLLAMA_HOME = re.compile(r"^ENV\s+HOME=(?P<path>\S+)\s*$", re.MULTILINE)
-
-# A `RUN`'s shell command, following backslash continuations onto the next line.
-_RUN = re.compile(r"^RUN\s+(?P<body>(?:[^\n\\]|\\\n)*)", re.MULTILINE)
-
-# `chown [-R] <owner>[:<group>] <path>...`, stopping at the next shell operator
-# so a following command cannot be mistaken for an operand. `COPY --chown=` is
-# not this form and does not match.
-_CHOWN = re.compile(
-    r"\bchown\s+(?P<recursive>-R\s+)?(?P<owner>\S+)(?P<paths>(?:\s+[^\s&|;]+)+)"
-)
-
-# `mkdir [-p] <path>...`, bounded the same way.
-_MKDIR = re.compile(r"\bmkdir(?P<arguments>(?:\s+[^\s&|;]+)+)")
-
-# A store path shaped like the sidecar's, for the parse tests that drive the
-# branches the real Dockerfile only ever takes one of.
-_SYNTHETIC_STORE = "/var/lib/ollama/.ollama"
 
 # The entrypoint's fallback for the seed it copies on first run, as `sh`'s
 # assign-if-unset form spells it.
@@ -228,9 +200,12 @@ def _build_contexts() -> dict[str, set[Path]]:
     workflow = yaml.safe_load(DOCKER_WORKFLOW.read_text())
     contexts: dict[str, set[Path]] = {}
     for job in workflow["jobs"].values():
-        for variant in job.get("strategy", {}).get("matrix", {}).get("include", []):
-            contexts.setdefault(variant["context"], set()).add(
-                _REPO_ROOT / variant["dockerfile"]
+        for step in job.get("steps", []):
+            if not str(step.get("uses", "")).startswith("docker/build-push-action@"):
+                continue
+            arguments = step["with"]
+            contexts.setdefault(arguments["context"], set()).add(
+                _REPO_ROOT / arguments["file"]
             )
     assert contexts, "docker.yml builds nothing; every sweep below would be empty"
     return contexts
@@ -283,36 +258,11 @@ def _reaches_the_builder(path: str) -> bool:
     )
 
 
-def _run_bodies(dockerfile: Path) -> list[str]:
-    """Return each ``RUN``'s shell command in *dockerfile*, on one line each."""
-    source = "\n".join(
-        line
-        for line in dockerfile.read_text().splitlines()
-        if not line.lstrip().startswith("#")
-    )
-    return [
-        " ".join(match.group("body").replace("\\\n", " ").split())
-        for match in _RUN.finditer(source)
-    ]
-
-
-def _ollama_model_store() -> str:
-    """The directory the sidecar keeps models and its signing key in."""
-    home = _OLLAMA_HOME.search(OLLAMA_DOCKERFILE.read_text())
-    assert home is not None, "the sidecar image does not set HOME"
-    return f"{home.group('path')}/.ollama"
-
-
-def _ollama_image() -> _Stage:
-    """The sidecar image as one stage: it has a single ``FROM`` and no ``AS``."""
-    return _Stage(parent="", body=OLLAMA_DOCKERFILE.read_text())
-
-
 def _runtime_workdir() -> str:
-    """The directory a relative COPY destination in a shipped stage lands in."""
+    """The directory a relative COPY destination in the shipped stage lands in."""
     match = re.search(
         r"^WORKDIR\s+(?P<path>\S+)",
-        _instructions(_stages()[RUNTIME_BASE_STAGE]),
+        _instructions(_stages()[RUNTIME_STAGE]),
         re.MULTILINE,
     )
     assert match is not None, "the runtime stage sets no WORKDIR"
@@ -323,7 +273,7 @@ def _bundle_copy() -> str:
     """The runtime stage's ``COPY`` of the built Vue bundle, on one line."""
     match = re.search(
         r"^COPY --from=frontend-builder\s.*$",
-        _instructions(_stages()[RUNTIME_BASE_STAGE]),
+        _instructions(_stages()[RUNTIME_STAGE]),
         re.MULTILINE,
     )
     assert match is not None, "the runtime stage does not copy the built bundle"
@@ -338,20 +288,18 @@ def _built_frontend_path() -> str:
 
 
 def _shipped_paths() -> set[str]:
-    """Every container path the *shipped* stages copy a file to.
+    """Every container path the *shipped* stage copies a file to.
 
     Builder stages are excluded: what they write never leaves them.
     """
-    stages = _stages()
     paths: set[str] = set()
-    for name in [RUNTIME_BASE_STAGE, *APP_TARGETS]:
-        for match in _COPY.finditer(_instructions(stages[name])):
-            words = [
-                word
-                for word in match.group("arguments").split()
-                if not word.startswith("--")
-            ]
-            paths.add(posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1])))
+    for match in _COPY.finditer(_instructions(_stages()[RUNTIME_STAGE])):
+        words = [
+            word
+            for word in match.group("arguments").split()
+            if not word.startswith("--")
+        ]
+        paths.add(posixpath.normpath(posixpath.join(_runtime_workdir(), words[-1])))
     return paths
 
 
@@ -383,60 +331,17 @@ def _chowned_to(user: str) -> re.Pattern[str]:
     return re.compile(rf"chown=?\s*(?:-R\s+)?{re.escape(user)}[:\s]")
 
 
-def _operands(arguments: str) -> list[str]:
-    """The non-flag operands of a shell command, trailing separators dropped.
-
-    ``chown u /srv/store/`` names the directory ``chown u /srv/store`` does.
-    """
-    return [
-        posixpath.normpath(word)
-        for word in arguments.split()
-        if not word.startswith("-")
-    ]
-
-
-def _run_creates_directory(run: str, directory: str) -> bool:
-    """Whether *run* creates *directory* itself, rather than an ancestor."""
-    return any(
-        directory in _operands(match.group("arguments"))
-        for match in _MKDIR.finditer(run)
-    )
-
-
-def _run_gives_directory_to(run: str, directory: str, user: str) -> bool:
-    """Whether *run* both creates *directory* and leaves it owned by *user*.
-
-    ``useradd --create-home`` does not create the store beneath the home it
-    makes, so a recursive chown of an ancestor passes for a directory the image
-    never had.
-    """
-    # Split across two RUNs this is a false negative, deliberately: the image
-    # does not split them, and a loud failure beats a weaker claim.
-    if not _run_creates_directory(run, directory):
-        return False
-    for chown in _CHOWN.finditer(run):
-        if chown.group("owner").split(":")[0] != user:
-            continue
-        for path in _operands(chown.group("paths")):
-            if path == directory or (
-                chown.group("recursive") and directory.startswith(f"{path}/")
-            ):
-                return True
-    return False
-
-
 class TestComposeDefaultPortMapping:
     """What a clone with no `.env` and no exported variables publishes."""
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_renders_the_short_form_bound_to_loopback(self, service: str) -> None:
+    def test_renders_the_short_form_bound_to_loopback(self) -> None:
         """Regression: `docker compose up -d` published the app to the whole LAN.
 
         The short form defaulted to no host part, which publishes on every
         interface. Rendered rather than read: the expression says nothing about
         what compose makes of it.
         """
-        (spec,) = _port_specs(service)
+        (spec,) = _port_specs(APP_SERVICE)
         rendered = _render(spec)
 
         assert isinstance(spec, str), "must be the short form, not a long-form mapping"
@@ -448,7 +353,7 @@ class TestComposeDefaultPortMapping:
         ), f"{rendered} is published beyond this host by default"
 
     def test_no_service_publishes_beyond_loopback_by_default(self) -> None:
-        """Every mapping in the file, not only the two app services.
+        """Every mapping in the file, not only the app service.
 
         A port added to another service later is published on the same terms
         or not at all, and this is what says so before it ships.
@@ -465,9 +370,8 @@ class TestComposeDefaultPortMapping:
             entry for entry in published if not entry[1].startswith(LOOPBACK_PREFIX)
         } == set()
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_publishes_18473_to_the_fixed_container_port(self, service: str) -> None:
-        (spec,) = _port_specs(service)
+    def test_publishes_18473_to_the_fixed_container_port(self) -> None:
+        (spec,) = _port_specs(APP_SERVICE)
 
         _host, published, target = _render(spec).split(":")
 
@@ -480,18 +384,16 @@ class TestComposeDefaultPortMapping:
 class TestComposePortOverrides:
     """The two variables that reshape the mapping, together and apart."""
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_app_port_moves_the_host_port_only(self, service: str) -> None:
-        (spec,) = _port_specs(service)
+    def test_app_port_moves_the_host_port_only(self) -> None:
+        (spec,) = _port_specs(APP_SERVICE)
 
         assert _render(spec, APP_PORT="8080") == "127.0.0.1:8080:8000"
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_bind_prefix_picks_another_interface(self, service: str) -> None:
+    def test_bind_prefix_picks_another_interface(self) -> None:
         """The prefix carries its own trailing colon, which is what lets the
         every-interface value be empty. A value without one renders a nonsense
         host:port that compose rejects — loud, which is acceptable here."""
-        (spec,) = _port_specs(service)
+        (spec,) = _port_specs(APP_SERVICE)
 
         assert (
             _render(spec, APP_BIND_PREFIX="192.168.1.10:", APP_PORT="9000")
@@ -503,14 +405,13 @@ class TestComposePortOverrides:
             _render(spec, APP_BIND_PREFIX="192.168.1.10:") == "192.168.1.10:18473:8000"
         )
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_an_empty_prefix_publishes_on_every_interface(self, service: str) -> None:
+    def test_an_empty_prefix_publishes_on_every_interface(self) -> None:
         """The documented opt-in, and the reason the default uses ``-``.
 
         With ``:-`` compose reads an empty value as unset and hands back the
         loopback default, so the escape hatch would silently do nothing.
         """
-        (spec,) = _port_specs(service)
+        (spec,) = _port_specs(APP_SERVICE)
 
         assert _render(spec, APP_BIND_PREFIX="") == "18473:8000"
 
@@ -537,7 +438,7 @@ class TestComposeOverridesAreDocumented:
 
 
 class TestComposeTimezonePassthrough:
-    """The app services hand the operator's ``TZ`` to the container.
+    """The app service hands the operator's ``TZ`` to the container.
 
     Completion dates are narrowed to the calendar day of the zone the *process*
     runs in (``src.utils.dates.local_date_from_iso_timestamp``), and a container
@@ -548,8 +449,7 @@ class TestComposeTimezonePassthrough:
     keeps seeing every evening watch dated a day forward.
     """
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_tz_reaches_the_container(self, service: str) -> None:
+    def test_tz_reaches_the_container(self) -> None:
         """Regression test: the documented ``TZ`` override did nothing.
 
         Bug reported: DOCKER.md documents ``TZ`` as the way a Docker user fixes
@@ -558,24 +458,23 @@ class TestComposeTimezonePassthrough:
         Root cause: ``docker-compose.yml`` never names ``TZ``. Compose passes a
         host variable into a container only via ``environment``/``env_file``, so
         an unnamed one is dropped at the container boundary.
-        Fix: both app services pass ``TZ`` through, empty by default so a host
+        Fix: the app service passes ``TZ`` through, empty by default so a host
         that does not set it keeps today's UTC behaviour.
         """
         assert any(
-            entry.startswith("TZ=") for entry in _environment(service)
-        ), f"{service} does not pass TZ into the container"
+            entry.startswith("TZ=") for entry in _environment(APP_SERVICE)
+        ), f"{APP_SERVICE} does not pass TZ into the container"
 
-    @pytest.mark.parametrize("service", APP_SERVICES)
-    def test_tz_defaults_to_empty_rather_than_a_guessed_zone(
-        self, service: str
-    ) -> None:
+    def test_tz_defaults_to_empty_rather_than_a_guessed_zone(self) -> None:
         """An operator who sets nothing is left exactly where they were.
 
         Rendering with no environment must produce an empty value, not a
         hardcoded zone: guessing one would silently re-date every completion for
         someone who never asked for it.
         """
-        spec = next(entry for entry in _environment(service) if entry.startswith("TZ="))
+        spec = next(
+            entry for entry in _environment(APP_SERVICE) if entry.startswith("TZ=")
+        )
         assert _render(spec) == "TZ="
         assert _render(spec, TZ="America/Los_Angeles") == "TZ=America/Los_Angeles"
 
@@ -600,64 +499,41 @@ class TestRuntimeImageCarriesTheZoneDatabase:
         installed nothing into it, so whether ``/usr/share/zoneinfo`` existed
         was a property of an upstream base image this repository neither pins
         nor asserts — it could stop being true on any base-image bump, silently.
-        Fix: the shared runtime stage installs ``tzdata`` outright, so the
-        guarantee belongs to this repository and this test can hold it.
+        Fix: the runtime stage installs ``tzdata`` outright, so the guarantee
+        belongs to this repository and this test can hold it.
 
         Matched against the install instruction rather than the stage text: the
         instruction is explained by a comment that names ``tzdata`` too, so a
         substring search over the stage would keep passing on a Dockerfile that
         had lost the install and kept the comment.
         """
-        runtime_base = _stages()[RUNTIME_BASE_STAGE]
-
-        assert "tzdata" in _apt_packages(runtime_base), (
-            f"the {RUNTIME_BASE_STAGE} stage does not install tzdata, so a zone "
+        assert "tzdata" in _apt_packages(_stages()[RUNTIME_STAGE]), (
+            f"the {RUNTIME_STAGE} stage does not install tzdata, so a zone "
             "passed via TZ may not resolve inside the container"
         )
 
-    @pytest.mark.parametrize("target", APP_TARGETS)
-    def test_every_shipped_target_builds_on_the_runtime_stage(
-        self, target: str
-    ) -> None:
-        """Both published images inherit the install rather than one of them.
 
-        Same reasoning as the two app services in compose: a target that
-        branched off somewhere else would ship without the zone database while
-        the test above kept passing.
-        """
-        assert _stages()[target].parent == RUNTIME_BASE_STAGE
+class TestTheShippedImageRunsTheLivenessProbe:
+    """A probe is only worth writing if the image actually invokes it.
 
-
-class TestEveryShippedTargetRunsTheLivenessProbe:
-    """A probe is only worth writing if the images actually invoke it.
-
-    ``test_healthcheck.py`` holds what it answers; these hold that both targets
-    ask it, identically, about the port the image serves.
+    ``test_healthcheck.py`` holds what it answers; these hold that the image
+    asks it, about the port it serves.
     """
 
-    @pytest.mark.parametrize("target", APP_TARGETS)
-    def test_the_healthcheck_runs_the_probe(self, target: str) -> None:
+    def test_the_healthcheck_runs_the_probe(self) -> None:
         """Regression: the healthcheck called ``urlopen`` on ``/api/status``.
 
         Bearer auth made 401 the only answer and ``urlopen`` raises on it, so
-        both images went permanently unhealthy.
+        the image went permanently unhealthy.
         """
-        assert _instruction(_stages()[target], "HEALTHCHECK").endswith(
+        assert _instruction(_stages()[RUNTIME_STAGE], "HEALTHCHECK").endswith(
             HEALTHCHECK_COMMAND
         )
 
-    def test_both_targets_carry_the_same_healthcheck(self) -> None:
-        """One line duplicated per target is how one defect shipped twice."""
-        assert (
-            len({_instruction(_stages()[name], "HEALTHCHECK") for name in APP_TARGETS})
-            == 1
-        )
-
-    @pytest.mark.parametrize("target", APP_TARGETS)
-    def test_the_probe_asks_the_port_the_image_serves(self, target: str) -> None:
+    def test_the_probe_asks_the_port_the_image_serves(self) -> None:
         """Nothing else ties the two, and a probe aimed past the server would
         report an outage that is entirely its own."""
-        command = json.loads(_instruction(_stages()[target], "CMD"))
+        command = json.loads(_instruction(_stages()[RUNTIME_STAGE], "CMD"))
 
         assert "--port" in command
         assert urlparse(healthcheck.STATUS_URL).port == int(
@@ -742,14 +618,11 @@ class TestBaseImagesArePinnedByDigest:
     on tags alone a PR build and the release build a week later are different
     artifacts, with nothing in the repository to say so."""
 
-    @pytest.mark.parametrize("dockerfile", [DOCKERFILE, OLLAMA_DOCKERFILE])
-    def test_every_pulled_image_carries_a_tag_and_a_digest(
-        self, dockerfile: Path
-    ) -> None:
+    def test_every_pulled_image_carries_a_tag_and_a_digest(self) -> None:
         """The tag is for whoever reads it; the digest is what resolves."""
-        references = pulled_images(dockerfile)
+        references = pulled_images(DOCKERFILE)
 
-        assert references, f"no image references parsed out of {dockerfile.name}"
+        assert references, f"no image references parsed out of {DOCKERFILE.name}"
         assert [
             reference for reference in references if not _PINNED_IMAGE.match(reference)
         ] == []
@@ -770,35 +643,30 @@ class TestBaseImagesArePinnedByDigest:
 class TestTheDevOverrideKeepsTheBuiltFrontend:
     """The bind mount that makes hot reload work must not eat the bundle."""
 
-    @pytest.mark.parametrize("service", DEV_SERVICES)
-    def test_the_bundle_directory_is_exempt_from_the_source_mount(
-        self, service: str
-    ) -> None:
+    def test_the_bundle_directory_is_exempt_from_the_source_mount(self) -> None:
         """Regression: the dev container served a blank page on a fresh clone.
 
         ``./src:/app/src`` mounts the host tree over the image's, and the built
         bundle underneath it is gitignored. A volume at that path survives it.
         """
-        volumes = _services(DEV_COMPOSE)[service]["volumes"]
+        volumes = _services(DEV_COMPOSE)[APP_SERVICE]["volumes"]
 
         assert "./src:/app/src" in volumes
         assert _built_frontend_path() in volumes
 
-    def test_those_are_every_service_that_mounts_the_source_tree(self) -> None:
-        """``DEV_SERVICES`` is a constant; this is the population it claims to
-        be. A third dev service added later keeps the bundle or fails here."""
+    def test_that_is_every_service_that_mounts_the_source_tree(self) -> None:
+        """A second dev service added later keeps the bundle or fails here."""
         mounting = {
             name
             for name, service in _services(DEV_COMPOSE).items()
             if "./src:/app/src" in (service.get("volumes") or [])
         }
 
-        assert mounting == set(DEV_SERVICES)
+        assert mounting == {APP_SERVICE}
 
-    @pytest.mark.parametrize("service", DEV_SERVICES)
-    def test_python_edits_still_restart_uvicorn(self, service: str) -> None:
+    def test_python_edits_still_restart_uvicorn(self) -> None:
         """The exemption is worthless if it costs the reason the file exists."""
-        service_definition = _services(DEV_COMPOSE)[service]
+        service_definition = _services(DEV_COMPOSE)[APP_SERVICE]
 
         assert "--reload" in service_definition["command"]
         assert "./src:/app/src" in service_definition["volumes"]
@@ -849,9 +717,9 @@ class TestTheEntrypointReadsTheSeedWhereTheImagePutsIt:
         assert default.group("path") == shipped_seed_path()
 
     def test_the_path_it_agrees_on_is_one_a_shipped_stage_copies_to(self) -> None:
-        """`shipped_seed_path` reads the whole Dockerfile, and `builder-base`
-        holds the same `WORKDIR /app`. Moved there the seed reaches no image,
-        while the entrypoint and the smoke test still agree with it."""
+        """`shipped_seed_path` reads the whole Dockerfile, and `builder` holds
+        the same `WORKDIR /app`. Moved there the seed reaches no image, while
+        the entrypoint and the smoke test still agree with it."""
         assert shipped_seed_path() in _shipped_paths()
 
 
@@ -860,21 +728,19 @@ class TestEveryImageOwnedMountPointExistsInItsImage:
     at the mount point, ownership included. With nothing there it creates one
     root-owned, which a container that dropped root cannot write."""
 
-    def test_those_are_every_mount_that_takes_its_ownership_from_an_image(
+    def test_that_is_every_mount_that_takes_its_ownership_from_an_image(
         self,
     ) -> None:
-        """The population the two below cover. A third volume added to either
+        """The population the one below covers. A second volume added to either
         compose file is checked against its image or it fails here."""
         assert _image_owned_mounts(COMPOSE) | _image_owned_mounts(DEV_COMPOSE) == {
-            _ollama_model_store(),
             _built_frontend_path(),
         }
 
     def test_the_bundle_volume_mounts_over_a_directory_the_image_owns(self) -> None:
-        """The dev override's anonymous volume, same class as the sidecar's
-        model store — and the reason to check every mount, not the reported one.
-        """
-        user = _instruction(_stages()[APP_TARGETS[0]], "USER")
+        """The dev override's anonymous volume, and the reason to check every
+        mount rather than the reported one."""
+        user = _instruction(_stages()[RUNTIME_STAGE], "USER")
 
         assert _chowned_to(user).search(_bundle_copy()), (
             f"the bundle is not copied to {user}; the dev override's anonymous "
@@ -912,104 +778,3 @@ class TestEveryServiceIsConfined:
             for name, service in services.items()
             if service.get("cap_add") or service.get("privileged")
         } == set()
-
-    def test_the_sidecar_has_a_memory_ceiling(self) -> None:
-        """Loading a model is the one operation here measured in gigabytes, and
-        an unbounded OOM on a NAS kills the host rather than the container."""
-        assert _render(_services()["ollama"]["mem_limit"]) == "12g"
-
-    def test_the_sidecar_is_the_only_service_capped(self) -> None:
-        """The asymmetry is a decision, not an oversight: a ceiling guessed for
-        an app service turns a long but healthy sync into an OOM kill."""
-        assert {
-            name for name, service in _services().items() if "mem_limit" in service
-        } == {"ollama"}
-
-
-class TestTheMountPointParseReadsTheCommand:
-    """The predicate the sidecar assertion rests on, over strings of its own.
-
-    Run against the Dockerfile alone it answers True and nothing says why, so
-    every branch of it is driven here instead.
-    """
-
-    @pytest.mark.parametrize(
-        ("run", "expected"),
-        [
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama {_SYNTHETIC_STORE}", True),
-            (f"mkdir -p {_SYNTHETIC_STORE}/ && chown ollama {_SYNTHETIC_STORE}", True),
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama {_SYNTHETIC_STORE}/", True),
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R ollama /var/lib", True),
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown ollama /var/lib/ollama", False),
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R ollama /var/lib/ollam", False),
-            (f"mkdir -p {_SYNTHETIC_STORE} && chown -R root {_SYNTHETIC_STORE}", False),
-            (f"chown -R ollama {_SYNTHETIC_STORE}", False),
-            ("chown -R ollama /var/lib/ollam", False),
-            ("useradd --create-home ollama && chown -R ollama /var/lib/ollama", False),
-        ],
-    )
-    def test_a_run_gives_the_directory_away_only_when_it_makes_one(
-        self, run: str, expected: bool
-    ) -> None:
-        """The last case is the regression: `useradd` makes the home and not the
-        store under it, so the recursive chown lands on a path the image does
-        not have. A trailing separator names the same directory, either side."""
-        assert _run_gives_directory_to(run, _SYNTHETIC_STORE, "ollama") is expected
-
-
-class TestTheSidecarImageStandsOnItsOwn:
-    """The published image is a supported way to run this, so what keeps the
-    sidecar honest belongs in it rather than in a compose file the person running
-    it may never have read."""
-
-    def test_it_does_not_run_as_root(self) -> None:
-        """The base image runs as root and keeps its model store under /root."""
-        assert _instruction(_ollama_image(), "USER") not in ("root", "0")
-
-    def test_the_liveness_check_travels_with_the_image(self) -> None:
-        """Regression: the check existed only in docker-compose.yml.
-
-        ``ollama list`` answers minutes before the first model lands, so the
-        models-ready file is the half that keeps ``app-ai`` from starting early.
-        """
-        healthcheck_command = _instruction(_ollama_image(), "HEALTHCHECK")
-
-        assert "ollama list" in healthcheck_command
-        assert "/tmp/models-ready" in healthcheck_command
-
-    def test_compose_does_not_define_a_second_one(self) -> None:
-        """Two copies drift, and the image's is the one a ``docker run`` sees."""
-        assert "healthcheck" not in _services()["ollama"]
-
-    def test_the_ai_app_waits_for_that_signal(self) -> None:
-        """What makes the image's healthcheck load-bearing rather than advisory:
-        without it this dependency never resolves."""
-        assert (
-            _services()["app-ai"]["depends_on"]["ollama"]["condition"]
-            == "service_healthy"
-        )
-
-    def test_the_model_volume_is_mounted_where_the_image_stores_models(self) -> None:
-        """Ollama's store follows ``HOME``, and nothing else ties the two. A
-        volume mounted elsewhere works perfectly and vanishes on recreate."""
-        assert (
-            f"ollama-data:{_ollama_model_store()}" in _services()["ollama"]["volumes"]
-        )
-
-    def test_the_image_owns_the_directory_the_model_volume_mounts_over(self) -> None:
-        """Regression: a clean ``--profile ai`` start pulled no model.
-
-        Docker takes a fresh volume's ownership from the image's directory at
-        the mount point. With none there the daemon creates it root-owned,
-        where the ``ollama`` user cannot write.
-        """
-        store = _ollama_model_store()
-        user = _instruction(_ollama_image(), "USER")
-        runs = _run_bodies(OLLAMA_DOCKERFILE)
-
-        assert runs, "no RUN parsed out of the sidecar Dockerfile"
-        assert any(_run_gives_directory_to(run, store, user) for run in runs), (
-            f"no single RUN both creates {store} and gives it to {user}, so the "
-            "model volume mounts root-owned — splitting the mkdir and the chown "
-            "across two RUNs fails here too, by design"
-        )

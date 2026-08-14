@@ -861,11 +861,10 @@ class TestTheEscapeIsNotReversible:
 
 
 class TestPromptSanitizersEmitOneLine:
-    """Every prompt sanitizer collapses line breaks, for all its callers.
+    """Every text sanitizer collapses line breaks, for all its callers.
 
-    Conversation history, memories, series names, reviews and custom rules
-    all reach an LLM prompt through these four functions, so proving the
-    invariant here covers each caller.
+    Series names, reviews and custom rules all reach a single-line sink
+    through these four functions, so the invariant is proved once here.
     """
 
     @pytest.mark.parametrize("breaker", ALL_LINE_BREAKS)

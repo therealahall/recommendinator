@@ -13,9 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 import yaml
 
-from src.conversation.engine import ConversationEngine
-from src.llm.client import OllamaClient
-from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
 from src.web.api import SettingsUpdateRequest, update_settings
 from src.web.app import create_app
@@ -24,8 +21,6 @@ from src.web.state import (
     ConfigWatcher,
     app_state,
     get_config,
-    get_conversation_engine,
-    get_ollama_client,
     get_storage,
     locked_running_config,
     reload_config,
@@ -41,16 +36,12 @@ _LOCK_TIMEOUT_SECONDS = 5.0
 _BLOCKED_SECONDS = 0.2
 
 
-def _config_yaml(tmp_path: Path, model: str) -> str:
-    """A config file naming a tmp database, AI on, and *model* to generate with."""
+def _config_yaml(tmp_path: Path, default_count: int = 5) -> str:
+    """A config file naming a tmp database and one recommendations leaf."""
     return yaml.safe_dump(
         {
-            "storage": {
-                "database_path": str(tmp_path / "recommendations.db"),
-                "vector_db_path": str(tmp_path / "chroma_db"),
-            },
-            "features": {"ai_enabled": True},
-            "ollama": {"model": model},
+            "storage": {"database_path": str(tmp_path / "recommendations.db")},
+            "recommendations": {"default_count": default_count},
         }
     )
 
@@ -79,7 +70,7 @@ class TestReloadConfig:
     def test_reload_config_success(self, tmp_path: Path) -> None:
         """reload_config returns True and updates app_state on success."""
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("ollama:\n  model: test-model\n")
+        config_file.write_text("recommendations:\n  default_count: 7\n")
 
         app_state.config_path = str(config_file)
         app_state.config = {"old": "config"}
@@ -87,7 +78,7 @@ class TestReloadConfig:
         result = reload_config()
 
         assert result is True
-        assert app_state.config["ollama"]["model"] == "test-model"
+        assert app_state.config["recommendations"]["default_count"] == 7
         assert "old" not in app_state.config
 
     def test_reload_config_runs_every_source_migration(self, tmp_path: Path) -> None:
@@ -97,7 +88,7 @@ class TestReloadConfig:
         migration web startup runs.
         """
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("ollama:\n  model: test-model\n")
+        config_file.write_text("recommendations:\n  default_count: 7\n")
 
         app_state.config_path = str(config_file)
         storage = Mock(spec=StorageManager)
@@ -272,7 +263,7 @@ class TestBootRunsEverySourceMigration:
     def test_create_app_runs_all_three(self, tmp_path: Path) -> None:
         """Each fires exactly once, against the storage boot just built."""
         config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
+        config_path.write_text(_config_yaml(tmp_path))
 
         with (
             patch("src.web.app.migrate_source_labels") as mock_labels,
@@ -286,54 +277,6 @@ class TestBootRunsEverySourceMigration:
         mock_labels.assert_called_once_with(storage)
         mock_plugins.assert_called_once_with(storage)
         mock_attribution.assert_called_once_with(get_config(), storage)
-
-
-# ---------------------------------------------------------------------------
-# get_conversation_engine tests
-# ---------------------------------------------------------------------------
-
-
-class TestGetConversationEngine:
-    """Tests for get_conversation_engine() function."""
-
-    def test_returns_none_when_not_set(self) -> None:
-        """get_conversation_engine returns None when not in app_state."""
-        result = get_conversation_engine()
-
-        assert result is None
-
-    def test_returns_engine_when_set(self) -> None:
-        """get_conversation_engine returns the stored engine."""
-        mock_engine = MagicMock(spec=ConversationEngine)
-        app_state.conversation_engine = mock_engine
-
-        result = get_conversation_engine()
-
-        assert result is mock_engine
-
-
-# ---------------------------------------------------------------------------
-# get_ollama_client tests
-# ---------------------------------------------------------------------------
-
-
-class TestGetOllamaClient:
-    """Tests for get_ollama_client() function."""
-
-    def test_returns_none_when_not_set(self) -> None:
-        """get_ollama_client returns None when not in app_state."""
-        result = get_ollama_client()
-
-        assert result is None
-
-    def test_returns_client_when_set(self) -> None:
-        """get_ollama_client returns the stored client."""
-        mock_client = MagicMock(spec=OllamaClient)
-        app_state.ollama_client = mock_client
-
-        result = get_ollama_client()
-
-        assert result is mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -604,92 +547,39 @@ class TestLifespan:
         assert "Config watcher not started" in caplog.text
 
 
-class TestLlmComponentsFollowTheRunningConfig:
-    """A settings save must reach the components ``create_app`` built.
-
-    Both froze their section at boot, so the Settings page reported success
-    while the process kept its old model and temperature.
+class TestAHotReloadReachesTheRunningConfig:
+    """A reader holding the dict boot handed it would keep the old file's
+    values for the life of the process, so each resolves via ``get_config``.
     """
 
-    @pytest.fixture()
-    def booted(self, tmp_path: Path) -> None:
-        """Boot the real app on a tmp database with AI on."""
+    def test_a_reloaded_leaf_reaches_the_running_config(self, tmp_path: Path) -> None:
+        """An edited ``config.yaml`` is what the next request scores on."""
         config_path = tmp_path / "config.yaml"
-        config_path.write_text(
-            yaml.safe_dump(
-                {
-                    "storage": {
-                        "database_path": str(tmp_path / "recommendations.db"),
-                        "vector_db_path": str(tmp_path / "chroma_db"),
-                    },
-                    "features": {"ai_enabled": True},
-                }
-            )
-        )
+        config_path.write_text(_config_yaml(tmp_path, default_count=5))
         create_app(config_path)
+        config = get_config()
+        assert config is not None
+        assert config["recommendations"]["default_count"] == 5
 
-    @staticmethod
-    def _apply(updates: dict[str, Any]) -> None:
-        config, storage = get_config(), get_storage()
-        assert config is not None and storage is not None
-        apply_settings(config, storage, updates)
-
-    def test_an_ollama_save_reaches_the_client_boot_built(self, booted: None) -> None:
-        """The model the next generation asks for is the saved one."""
-        self._apply({"ollama.model": "qwen2.5:14b"})
-
-        client = get_ollama_client()
-        assert client is not None
-        assert client.default_model == "qwen2.5:14b"
-
-    def test_a_chat_save_reaches_the_engine_boot_built(self, booted: None) -> None:
-        """The temperature the next turn samples at is the saved one."""
-        self._apply({"conversation.llm.temperature": 0.15})
-
-        engine = get_conversation_engine()
-        assert engine is not None
-        assert engine.temperature == 0.15
-
-
-class TestAHotReloadReachesTheLlmComponents:
-    """The config file is the other writer, and it rebinds rather than mutates.
-
-    A component reading the dict it was handed at boot would keep the old
-    file's values for the life of the process.
-    """
-
-    def test_a_reloaded_model_reaches_the_client_boot_built(
-        self, tmp_path: Path
-    ) -> None:
-        """An edited ``config.yaml`` is what the next generation asks for."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
-        create_app(config_path)
-        client = get_ollama_client()
-        assert client is not None
-        assert client.default_model == "mistral:7b"
-
-        config_path.write_text(_config_yaml(tmp_path, "qwen2.5:14b"))
+        config_path.write_text(_config_yaml(tmp_path, default_count=12))
 
         assert reload_config() is True
-        assert client.default_model == "qwen2.5:14b"
+        reloaded = get_config()
+        assert reloaded is not None
+        assert reloaded["recommendations"]["default_count"] == 12
 
 
 class TestSettingsWritesStillRunUnderTheConfigLock:
-    """The ollama rule runs inside the critical section, so it must not block.
-
-    It is text-only for that reason, and the save it is part of still has to
-    be the serialised read-copy-store every other config writer is.
-    """
+    """A save is a read-copy-store, serialised against every config writer."""
 
     def test_a_save_waits_for_the_lock_and_then_lands(self, tmp_path: Path) -> None:
         """The uncontended save is the control.
 
         Without it the ``TimeoutError`` below holds just as well for a save
-        that is merely slow, and this one rewrites ``config.yaml``.
+        that is merely slow.
         """
         config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path, "mistral:7b"))
+        config_path.write_text(_config_yaml(tmp_path))
         create_app(config_path)
         storage = get_storage()
         assert storage is not None
@@ -701,17 +591,18 @@ class TestSettingsWritesStillRunUnderTheConfigLock:
                 lock_held.set()
                 release.wait(timeout=_LOCK_TIMEOUT_SECONDS)
 
-        def save(model: str) -> None:
+        def save(count: int) -> None:
             update_settings(
-                SettingsUpdateRequest(updates={"ollama.model": model}), storage
+                SettingsUpdateRequest(updates={"recommendations.default_count": count}),
+                storage,
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            pool.submit(save, "llama3.1:8b").result(timeout=_BLOCKED_SECONDS)
+            pool.submit(save, 8).result(timeout=_BLOCKED_SECONDS)
 
             holder = pool.submit(hold_the_lock)
             assert lock_held.wait(timeout=_LOCK_TIMEOUT_SECONDS)
-            saver = pool.submit(save, "qwen2.5:14b")
+            saver = pool.submit(save, 14)
 
             with pytest.raises(TimeoutError):
                 saver.result(timeout=_BLOCKED_SECONDS)
@@ -720,6 +611,6 @@ class TestSettingsWritesStillRunUnderTheConfigLock:
             holder.result(timeout=_LOCK_TIMEOUT_SECONDS)
             saver.result(timeout=_LOCK_TIMEOUT_SECONDS)
 
-        client = get_ollama_client()
-        assert client is not None
-        assert client.default_model == "qwen2.5:14b"
+        config = get_config()
+        assert config is not None
+        assert config["recommendations"]["default_count"] == 14

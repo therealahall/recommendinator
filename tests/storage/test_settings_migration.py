@@ -76,7 +76,7 @@ class TestMigrateConfigSettings:
 
         migrate_config_settings(config, storage)
 
-        assert config["conversation"]["enabled"] is True
+        assert config["enrichment"]["enabled"] is False
         assert config["sync"]["max_workers"] == 4
         assert config["recommendations"]["default_count"] == 5
 
@@ -89,12 +89,12 @@ class TestMigrateConfigSettings:
         so a stored leaf in an omitted section never resolved. It must now win
         over the const default regardless of the YAML shape.
         """
-        storage.set_setting("conversation.enabled", False)
+        storage.set_setting("enrichment.enabled", True)
         config: dict[str, Any] = {}
 
         migrate_config_settings(config, storage)
 
-        assert config["conversation"]["enabled"] is False
+        assert config["enrichment"]["enabled"] is True
 
     def test_new_yaml_leaf_not_in_db_flows_through(
         self, storage: StorageManager

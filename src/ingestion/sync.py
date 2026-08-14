@@ -1,7 +1,7 @@
 """Shared sync executor for plugin-based data import.
 
-Provides a single save-and-embed loop used by both the web API and CLI,
-eliminating duplicated sync logic across callers.
+Provides a single save loop used by both the web API and CLI, eliminating
+duplicated sync logic across callers.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from src.storage.credential_orphans import warn_about_orphaned_credentials
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
-    from src.llm.embeddings import EmbeddingGenerator
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -79,8 +78,6 @@ def execute_sync(
     plugin: SourcePlugin,
     plugin_config: dict[str, Any],
     storage_manager: StorageManager,
-    embedding_generator: EmbeddingGenerator | None = None,
-    use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     mark_for_enrichment: bool = False,
     user_id: int = 1,
@@ -88,15 +85,13 @@ def execute_sync(
 ) -> SyncResult:
     """Execute a sync for a single plugin source.
 
-    Fetches items from the plugin, optionally generates embeddings, and saves
-    each item to storage. Progress is reported via the callback.
+    Fetches items from the plugin and saves each to storage. Progress is
+    reported via the callback.
 
     Args:
         plugin: The source plugin to fetch from.
         plugin_config: Plugin-ready configuration dict.
         storage_manager: Storage manager for saving items.
-        embedding_generator: Optional embedding generator.
-        use_embeddings: Whether to generate embeddings for each item.
         progress_callback: Optional callback(items_processed, total, current_item).
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
         user_id: User ID for credential storage (default 1).
@@ -173,8 +168,6 @@ def execute_sync(
     )
 
     # Save each item
-    embeddings_generated = 0
-    embeddings_skipped = 0
     for index, item in enumerate(items):
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
@@ -198,30 +191,7 @@ def execute_sync(
                 safe_title,
             )
 
-            embedding = None
-            if use_embeddings and embedding_generator:
-                # Skip if embedding already exists (only checkable with external ID)
-                if not item.id or not storage_manager.has_embedding(item.id):
-                    logger.info(
-                        "[SYNC] %s: Generating embedding %d/%d - %s",
-                        safe_source_name,
-                        item_num,
-                        result.total_items,
-                        safe_title,
-                    )
-                    embedding = embedding_generator.generate_content_embedding(item)
-                    embeddings_generated += 1
-                else:
-                    logger.debug(
-                        "[SYNC] %s: Embedding exists, skipping %d/%d - %s",
-                        safe_source_name,
-                        item_num,
-                        result.total_items,
-                        safe_title,
-                    )
-                    embeddings_skipped += 1
-
-            db_id = storage_manager.save_content_item(item, embedding=embedding)
+            db_id = storage_manager.save_content_item(item)
             result.items_synced += 1
 
             # Mark for enrichment if enabled
@@ -249,18 +219,11 @@ def execute_sync(
             )
             result.errors.append(f"Failed to process '{item.title}'")
 
-    embedding_summary = ""
-    if use_embeddings and embedding_generator:
-        embedding_summary = (
-            f" Embeddings: {embeddings_generated} generated, "
-            f"{embeddings_skipped} skipped."
-        )
     logger.info(
-        "[SYNC] %s: Completed. %d/%d items saved.%s",
+        "[SYNC] %s: Completed. %d/%d items saved.",
         safe_source_name,
         result.items_synced,
         result.total_items,
-        embedding_summary,
     )
     return result
 
@@ -273,8 +236,6 @@ def _error_source_name(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> s
 def execute_multi_source_sync(
     sources: list[tuple[SourcePlugin, dict[str, Any]]],
     storage_manager: StorageManager,
-    embedding_generator: EmbeddingGenerator | None = None,
-    use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
     error_callback: SyncErrorCallback | None = None,
     mark_for_enrichment: bool = False,
@@ -299,8 +260,6 @@ def execute_multi_source_sync(
     Args:
         sources: List of (plugin, plugin_config) tuples to sync.
         storage_manager: Storage manager for saving items.
-        embedding_generator: Optional embedding generator.
-        use_embeddings: Whether to generate embeddings.
         progress_callback: Optional callback for progress updates. Must be
             thread-safe when ``max_workers > 1``.
         error_callback: Optional callback for error reporting, called with the
@@ -324,8 +283,6 @@ def execute_multi_source_sync(
                 plugin=plugin,
                 plugin_config=plugin_config,
                 storage_manager=storage_manager,
-                embedding_generator=embedding_generator,
-                use_embeddings=use_embeddings,
                 progress_callback=progress_callback,
                 mark_for_enrichment=mark_for_enrichment,
                 user_id=user_id,

@@ -1171,7 +1171,7 @@ class TestTransientProviderFailureIsRetryable:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:
@@ -1616,7 +1616,7 @@ class TestPermanentProviderFailureStopsRetrying:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:
@@ -1788,7 +1788,7 @@ class TestPersistedEnrichmentErrorIsDerived:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:
@@ -1850,7 +1850,7 @@ class TestEnrichmentTitleCannotForgeALogLineRegression:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:
@@ -1931,7 +1931,7 @@ class TestEnrichmentFetchWindowRegression:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:
@@ -2007,7 +2007,7 @@ class TestManualEditEnrichmentProtectionRegression:
 
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db", ai_enabled=False)
+        return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @pytest.fixture
     def registry(self) -> EnrichmentRegistry:

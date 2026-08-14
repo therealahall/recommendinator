@@ -37,11 +37,8 @@ vi.mock('@/composables/useApi', () => ({
     put: vi.fn(),
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: vi.fn(),
-    raw: vi.fn(),
   }),
 }))
-
-vi.mock('@/composables/useSse', () => ({ readSseStream: vi.fn() }))
 
 const stubs = {
   RecControls: true,
@@ -68,10 +65,10 @@ describe('RecommendationsPage', () => {
     wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
-      { db_id: 2, title: 'B', score: 0.8, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {}, variety_penalty: 0 },
     ])
-    await store.fetch(false)
+    await store.fetch()
     await flushPromises()
     return { wrapper, store }
   }
@@ -165,9 +162,9 @@ describe('RecommendationsPage', () => {
     wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, reasoning: '', llm_reasoning: null, score_breakdown: {}, variety_penalty: 0 },
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {}, variety_penalty: 0 },
     ])
-    await store.fetch(false)
+    await store.fetch()
     await flushPromises()
 
     const onlyTrigger = wrapper.find('.btn-complete').element as HTMLElement

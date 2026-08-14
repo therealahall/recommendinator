@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.conversation.profile import ProfileGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.conversation import PreferenceProfile
+from src.recommendations.profile import PreferenceProfile, ProfileGenerator
 from src.storage.manager import StorageManager
 
 
@@ -748,11 +747,11 @@ class TestProfileRegression:
 
 
 class TestProfileIgnoredSignalRegression:
-    """Bug reported: ignored items shaped the conversational preference profile.
+    """Bug reported: ignored items shaped the preference profile.
 
     Bug reported: ``generate_profile`` analyzed the user's whole completed
-    library, so items the user marked ``ignored`` still influenced the chat
-    assistant's genre affinities and theme preferences.
+    library, so items the user marked ``ignored`` still influenced the
+    profile's genre affinities and theme preferences.
     Root cause: it fetched via ``get_completed_items`` with the default
     ``include_ignored=True``.
     Fix: it routes through ``get_signal_items`` (completed, rated, not

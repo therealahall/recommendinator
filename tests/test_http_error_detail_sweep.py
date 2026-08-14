@@ -27,16 +27,15 @@ _ROUTE_DECORATOR_HOLDERS = {"app", "router"}
 
 #: The modules declaring a route. Named so discovery finding nothing fails here
 #: rather than reporting a clean sweep over an empty route list.
-_ROUTE_MODULES = {"api.py", "app.py", "auth_api.py", "chat_api.py"}
+_ROUTE_MODULES = {"api.py", "app.py", "auth_api.py"}
 
 #: The modules constructing an ``HTTPException``. A dependency refuses the
 #: caller exactly as a route does, so the sweep is the package rather than the
-#: four modules above.
+#: three modules above.
 _MODULES_THAT_REFUSE = {
     "api.py",
     "auth.py",
     "auth_api.py",
-    "chat_api.py",
     "csrf.py",
     "guards.py",
     "stream_limit.py",

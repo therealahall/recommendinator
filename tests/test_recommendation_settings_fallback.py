@@ -82,18 +82,9 @@ def storage(tmp_path: Path) -> StorageManager:
 
 
 def _build_engine(config: dict[str, Any], storage: StorageManager) -> Any:
-    """Assemble the config (const<YAML<DB) then build the engine, as boot does.
-
-    Uses the non-AI path (no embedding generator) so the pipeline holds exactly
-    the config-driven scorers with no ``SemanticSimilarityScorer`` appended.
-    """
+    """Assemble the config (const<YAML<DB) then build the engine, as boot does."""
     migrate_config_settings(config, storage)
-    return create_recommendation_engine(
-        storage_manager=storage,
-        embedding_generator=None,
-        recommendation_generator=None,
-        config=config,
-    )
+    return create_recommendation_engine(storage_manager=storage, config=config)
 
 
 @pytest.fixture()
@@ -334,7 +325,6 @@ class TestCustomPreferenceWeightRegression:
             for rec in engine.generate_recommendations(
                 content_type=ContentType.BOOK,
                 count=5,
-                use_llm=False,
                 user_preference_config=config,
             )
         }
@@ -432,7 +422,7 @@ class TestLiveSettingsApply:
         """Return the book recommendations the API serves right now."""
         response = client.get(
             "/api/recommendations",
-            params={"type": "book", "count": 5, "use_llm": False},
+            params={"type": "book", "count": 5},
         )
         assert response.status_code == 200, response.text
         return list(response.json())
@@ -521,8 +511,6 @@ class TestUnusableRunningConfig:
         """An engine whose running config is *config* and nothing else."""
         return RecommendationEngine(
             storage_manager=Mock(spec=StorageManager),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
             config_provider=lambda: config,
         )
@@ -699,8 +687,6 @@ class TestSettingsWriteDuringScoringRegression:
         config.update(self._config_written_mid_read(interrupt))
         engine = create_recommendation_engine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             config=config,
         )
 
@@ -720,8 +706,6 @@ class TestSettingsWriteDuringScoringRegression:
         config.update(self._config_written_mid_read(interrupt))
         engine = create_recommendation_engine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             config=config,
         )
 
@@ -754,8 +738,6 @@ class TestSettingsWriteDuringScoringRegression:
 
         engine = create_recommendation_engine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             config=config,
             config_provider=running_config,
         )
@@ -795,8 +777,6 @@ class TestSettingsWriteDuringScoringRegression:
         config: dict[str, Any] = {}
         engine = create_recommendation_engine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             config=config,
         )
         mid_save: list[list[str]] = []
@@ -819,8 +799,6 @@ class TestSettingsWriteDuringScoringRegression:
         # shows. A comparison of two engines alone would pass on either.
         saved_from_the_start = create_recommendation_engine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             config=copy.deepcopy(config),
         )
         after_the_save = self._ranked_titles(engine)

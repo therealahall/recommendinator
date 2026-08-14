@@ -7,8 +7,6 @@ import json
 
 import click
 
-from src.config.service import get_feature_flags
-
 
 @click.command()
 @click.option(
@@ -20,29 +18,17 @@ from src.config.service import get_feature_flags
 )
 @click.pass_context
 def status(ctx: click.Context, output_format: str) -> None:
-    """Show system health, component readiness, and feature flags.
+    """Show system health and component readiness.
 
     Mirrors the web API GET /api/status StatusResponse shape.
     """
     version = importlib.metadata.version("recommendinator")
     config = ctx.obj["config"]
-    flags = get_feature_flags(config)
-    ai_enabled = flags["ai_enabled"]
 
-    # Component readiness (keys and AI-gating match web API)
+    # Component readiness (keys match web API)
     components = {
         "engine": ctx.obj.get("engine") is not None,
         "storage": ctx.obj.get("storage") is not None,
-        "embedding_generator": (
-            ctx.obj.get("embedding_gen") is not None if ai_enabled else True
-        ),
-    }
-
-    # Features (key set matches web FeaturesStatus exactly)
-    features = {
-        "ai_enabled": ai_enabled,
-        "embeddings_enabled": flags["embeddings_enabled"],
-        "llm_reasoning_enabled": flags["llm_reasoning_enabled"],
     }
 
     rec_config = config.get("recommendations", {})
@@ -59,7 +45,6 @@ def status(ctx: click.Context, output_format: str) -> None:
             "status": status_str,
             "version": version,
             "components": components,
-            "features": features,
             "recommendations_config": recommendations_config,
         }
         click.echo(json.dumps(output, indent=2))
@@ -69,11 +54,6 @@ def status(ctx: click.Context, output_format: str) -> None:
         click.echo("Components:")
         for name, ready in components.items():
             label = "ready" if ready else "not available"
-            click.echo(f"  {name}: {label}")
-
-        click.echo("\nFeatures:")
-        for name, enabled in features.items():
-            label = "enabled" if enabled else "disabled"
             click.echo(f"  {name}: {label}")
 
         click.echo(

@@ -10,11 +10,9 @@ import click
 from src.cli.commands import (
     account,
     auth,
-    chat,
     complete,
     enrichment,
     library,
-    memory,
     preferences,
     profile,
     recommend,
@@ -24,7 +22,6 @@ from src.cli.commands import (
     update,
 )
 from src.config.service import (
-    create_llm_components,
     create_recommendation_engine,
     create_storage_manager,
     load_config,
@@ -129,14 +126,8 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
         migrate_config_secrets(ctx.obj["config"], ctx.obj["storage"])
-        ctx.obj["llm_client"], ctx.obj["embedding_gen"], ctx.obj["rec_gen"] = (
-            create_llm_components(ctx.obj["config"])
-        )
         ctx.obj["engine"] = create_recommendation_engine(
-            ctx.obj["storage"],
-            ctx.obj["embedding_gen"],
-            ctx.obj["rec_gen"],
-            ctx.obj["config"],
+            ctx.obj["storage"], ctx.obj["config"]
         )
     except Exception as error:
         # Blanket, and ``migrate_config_secrets`` is under it: the one fault
@@ -159,7 +150,6 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
 # Register commands
 cli.add_command(account)
 cli.add_command(auth)
-cli.add_command(chat)
 cli.add_command(status)
 cli.add_command(recommend)
 cli.add_command(update)
@@ -167,7 +157,6 @@ cli.add_command(complete)
 cli.add_command(preferences)
 cli.add_command(enrichment)
 cli.add_command(library)
-cli.add_command(memory)
 cli.add_command(profile)
 cli.add_command(source)
 cli.add_command(settings)

@@ -26,9 +26,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Read a failed response into an ApiError. Exported for the SSE callers, which
- *  hold the raw Response and would otherwise each re-invent the parse. */
-export async function errorFromResponse(response: Response): Promise<ApiError> {
+async function errorFromResponse(response: Response): Promise<ApiError> {
   let body: unknown
   try {
     body = await response.json()
@@ -56,9 +54,9 @@ function buildUrl(
   return url
 }
 
-/** The single door out to /api, so the streaming path cannot miss the refusal.
- *  Callers swallow their own errors, so an unhandled 401 strands the user in a
- *  half-empty app with no way back to the sign-in screen. */
+/** The single door out to /api. Callers swallow their own errors, so an
+ *  unhandled 401 strands the user in a half-empty app with no way back to the
+ *  sign-in screen. */
 async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
   const { params, headers, sessionSurvives401, ...fetchOptions } = options
 
@@ -131,11 +129,6 @@ export function useApi() {
 
     delete<T>(path: string, params?: ApiOptions['params']) {
       return request<T>(path, { method: 'DELETE', params })
-    },
-
-    /** Return raw Response for SSE / streaming endpoints */
-    raw(path: string, options: ApiOptions = {}) {
-      return apiFetch(path, options)
     },
   }
 }

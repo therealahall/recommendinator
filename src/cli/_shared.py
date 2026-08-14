@@ -37,7 +37,6 @@ def report_failure(
     ctx: click.Context,
     message: str,
     error: BaseException,
-    log_message: str | None = None,
 ) -> None:
     """Refuse in the web's words, keeping the fault's own out of the terminal.
 
@@ -45,10 +44,7 @@ def report_failure(
     root-owned ``logs/`` bind mount, say. It adds the message, never the
     traceback.
     """
-    # chat's terminal wording is the web's generic sentence, which names no
-    # operation for the log to report.
-    logged = message if log_message is None else log_message
-    logger.error("%s", logged, exc_info=True)
+    logger.error("%s", message, exc_info=True)
     if ctx.obj.get("verbose"):
         # A control character in the fault's words would otherwise rewrite the
         # terminal line it lands on, and a lone surrogate would raise here.
@@ -61,10 +57,9 @@ def abort_after_failure(
     ctx: click.Context,
     message: str,
     error: BaseException,
-    log_message: str | None = None,
 ) -> NoReturn:
     """Refuse and stop. A loop that must keep going calls ``report_failure``."""
-    report_failure(ctx, message, error, log_message)
+    report_failure(ctx, message, error)
     raise click.Abort()
 
 

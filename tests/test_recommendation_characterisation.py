@@ -8,9 +8,8 @@ Every expected value here is an observation of current behaviour, not a
 specification. When a scoring stage changes, these constants change with it and
 the behavioural delta is reviewed rather than guessed.
 
-Storage is a spec'd mock over the module-level library and the engine runs
-without an embedding generator, so the harness needs no LLM, no vector database
-and no network.
+Storage is a spec'd mock over the module-level library, so the harness needs no
+network.
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.llm.embeddings import EmbeddingGenerator
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
@@ -34,10 +32,8 @@ from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
-    SemanticSimilarityScorer,
     build_scorers_with_overrides,
 )
-from src.recommendations.similarity import SimilarityMatcher
 from src.settings.metadata import get_entry
 from src.storage.manager import StorageManager
 
@@ -639,23 +635,11 @@ def _library_storage(items: Sequence[ContentItem]) -> Mock:
 def _engine_over(
     items: Sequence[ContentItem], rng: random.Random | None = None
 ) -> RecommendationEngine:
-    """Build a non-AI engine over *items* (no LLM, no vector DB, no network)."""
+    """Build an engine over *items* (no network)."""
     return RecommendationEngine(
         storage_manager=_library_storage(items),
-        embedding_generator=None,
-        recommendation_generator=None,
         min_rating=4,
         rng=rng,
-    )
-
-
-def _ai_engine() -> RecommendationEngine:
-    """Build an AI engine over the full library, its search left to the caller."""
-    return RecommendationEngine(
-        storage_manager=_library_storage(LIBRARY),
-        embedding_generator=Mock(spec=EmbeddingGenerator),
-        recommendation_generator=None,
-        min_rating=4,
     )
 
 
@@ -903,101 +887,6 @@ class TestScoreMatchesItsBreakdown:
                 1.0 - recommendation.variety_penalty
             )
             assert recommendation.score == pytest.approx(expected, abs=SCORE_TOLERANCE)
-
-
-class TestSemanticSimilarityStaysOptional:
-    """Embedding similarity is one scorer, and only when AI is enabled."""
-
-    def test_absent_from_the_equation_when_ai_is_disabled(self, engine):
-        """No semantic scorer in the pipeline, and no row in any breakdown."""
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.MOVIE, count=20
-        )
-
-        assert not any(
-            isinstance(scorer, SemanticSimilarityScorer)
-            for scorer in engine.pipeline.scorers
-        )
-        assert recommendations
-        for recommendation in recommendations:
-            assert "semantic_similarity" not in recommendation.score_breakdown
-
-    def test_present_when_an_embedding_generator_is_supplied(self):
-        """Positive control: the scorer is conditional, not simply gone."""
-        assert any(
-            isinstance(scorer, SemanticSimilarityScorer)
-            for scorer in _ai_engine().pipeline.scorers
-        )
-
-    def test_absent_from_the_equation_when_the_search_finds_nothing(self):
-        """An AI engine whose search returns nothing scores like a non-AI one.
-
-        A fresh AI install, a reset vector store and a reference item whose
-        embedding fails all leave the similarity scores empty, and the scorer
-        then rates every candidate 0.0 — deflating every aggregate by its share
-        of the weight and showing a 0.0 row on every card. It is inert in
-        exactly the sense the other dropped scorers are.
-        """
-        ai_engine = _ai_engine()
-
-        with patch.object(SimilarityMatcher, "find_similar", return_value=[]):
-            recommendations = ai_engine.generate_recommendations(
-                content_type=ContentType.MOVIE, count=20
-            )
-
-        assert tuple(_titles(recommendations)) == MOVIE_ORDER
-        assert _scores(recommendations) == pytest.approx(
-            list(MOVIE_SCORES), abs=SCORE_TOLERANCE
-        )
-        for recommendation in recommendations:
-            assert "semantic_similarity" not in recommendation.score_breakdown
-
-    def test_present_in_the_equation_when_the_search_finds_something(self):
-        """Positive control: one hit puts the row back on every candidate.
-
-        Without this, dropping the scorer unconditionally would satisfy the
-        assertions above.
-        """
-        ai_engine = _ai_engine()
-        hit = next(item for item in LIBRARY if item.id == "m-nice-guys")
-
-        with patch.object(SimilarityMatcher, "find_similar", return_value=[(hit, 0.9)]):
-            recommendations = ai_engine.generate_recommendations(
-                content_type=ContentType.MOVIE, count=20
-            )
-
-        assert recommendations
-        for recommendation in recommendations:
-            assert "semantic_similarity" in recommendation.score_breakdown
-        assert _by_title(recommendations, "The Nice Guys").score_breakdown[
-            "semantic_similarity"
-        ] == pytest.approx(0.9, abs=SCORE_TOLERANCE)
-
-    def test_absent_even_when_the_user_weighted_it(self):
-        """A user's own weight does not put the inert scorer back.
-
-        The drop runs after the per-user override pass. Somebody who moved the
-        slider and has a vector store with nothing in it is the realistic
-        combination, and the one that would show a 0.0 row on every card if
-        the order of those two steps were ever swapped.
-        """
-        ai_engine = _ai_engine()
-
-        with patch.object(SimilarityMatcher, "find_similar", return_value=[]):
-            recommendations = ai_engine.generate_recommendations(
-                content_type=ContentType.MOVIE,
-                count=20,
-                user_preference_config=UserPreferenceConfig(
-                    scorer_weights={"semantic_similarity": 3.0}
-                ),
-            )
-
-        assert tuple(_titles(recommendations)) == MOVIE_ORDER
-        assert _scores(recommendations) == pytest.approx(
-            list(MOVIE_SCORES), abs=SCORE_TOLERANCE
-        )
-        for recommendation in recommendations:
-            assert "semantic_similarity" not in recommendation.score_breakdown
 
 
 class TestReferencesResolveAfterTheSlice:
@@ -1272,8 +1161,6 @@ class TestBaselineSensitivity:
         """
         reweighted = RecommendationEngine(
             storage_manager=_library_storage(LIBRARY),
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
             scorers=build_scorers_with_overrides(
                 list(DEFAULT_SCORERS), {"genre_match": 8.0}

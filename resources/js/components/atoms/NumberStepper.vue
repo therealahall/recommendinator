@@ -21,8 +21,8 @@ const props = withDefaults(defineProps<{
 // Neither `min` nor `max` has a default: a control must never report or enforce a
 // bound its registry entry does not declare. A default cap silently rewrites a
 // typed value and announces the wrong limit to assistive tech — which is exactly
-// what `max: 100` did to every min-only leaf (conversation.llm.max_tokens,
-// enrichment.batch_size, recommendations.max_count, sync.max_workers).
+// what `max: 100` did to every min-only leaf (enrichment.batch_size,
+// recommendations.max_count, sync.max_workers).
 
 const attrs = useAttrs()
 const resolvedLabel = computed(() =>
@@ -164,8 +164,8 @@ function onInput(event: Event) {
 }
 
 .stepper-input {
-  /* Sized for the widest int leaf (conversation.llm.context_window_size, max
-     131072 — six digits). The base.css `box-sizing: border-box` reset makes
+  /* Sized for a six-digit value, the widest a registry int leaf declares. The
+     base.css `box-sizing: border-box` reset makes
      `width` include the horizontal padding, so it has to be added back: a bare
      4ch left a ~3-character content box, NARROWER than the 40px this replaced.
      ch scales with font size, so resizing text keeps working (1.4.4).

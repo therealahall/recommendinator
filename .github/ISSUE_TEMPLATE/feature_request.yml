@@ -34,9 +34,7 @@ body:
         - Web UI
         - CLI
         - Configuration
-        - AI / LLM Features
         - Enrichment / Metadata
-        - Conversation / Chat
         - Storage / Database
         - Documentation
         - Other / Not sure

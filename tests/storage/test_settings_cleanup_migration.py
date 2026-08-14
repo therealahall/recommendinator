@@ -1,22 +1,22 @@
 """Tests for the one-time settings-table cleanup migration.
 
 An earlier iteration of the database-backed config seeded the ``settings``
-table on every boot: both dotted-leaf rows (``features.ai_enabled``) and stale
-whole-section JSON-blob rows (``features`` -> a dict). Seed-on-boot has since
-been removed — the table now holds only leaves a user explicitly sets via the
-settings UI/CLI. Because that feature is unreleased, every pre-existing row is a
-seed artifact, so ``create_schema`` clears the table exactly once on upgrade.
+table on every boot: both dotted-leaf rows (``recommendations.max_count``) and
+stale whole-section JSON-blob rows (``recommendations`` -> a dict). Seed-on-boot
+has since been removed — the table now holds only leaves a user explicitly sets
+via the settings UI/CLI. Because that feature is unreleased, every pre-existing
+row is a seed artifact, so ``create_schema`` clears the table once on upgrade.
 
 The migration is guarded by SQLite's ``PRAGMA user_version`` so it runs on the
 first upgrade and never again: a leaf a user sets after the upgrade must survive
 every subsequent init.
 
-There are two version-guarded steps, and the difference matters. Version 1 wipes
-the WHOLE table (every row was a seed artifact). Version 2 deletes only the five
-keys in ``_ORPHANED_SETTING_KEYS`` — leaves that were briefly registry entries on
-this branch and no longer are — and must spare everything else. A test that only
-exercises version 0 cannot tell the two apart, because the version-1 wipe empties
-the table before the version-2 prune runs.
+There are three version-guarded steps, and the differences matter. Version 1
+wipes the WHOLE table (every row was a seed artifact). Version 2 deletes only the
+five keys in ``_ORPHANED_SETTING_KEYS``, and version 6 only the leaves under
+``_ORPHANED_SETTING_PREFIXES``; both must spare everything else. A test that only
+exercises version 0 cannot tell them apart, because the version-1 wipe empties
+the table before either prune runs.
 """
 
 import sqlite3
@@ -26,6 +26,7 @@ from src.settings.metadata import flat_defaults
 from src.storage.manager import StorageManager
 from src.storage.schema import (
     _ORPHANED_SETTING_KEYS,
+    _ORPHANED_SETTING_PREFIXES,
     _SCHEMA_VERSION,
     create_schema,
 )
@@ -56,9 +57,8 @@ def _seed_pre_upgrade_db(path: Path) -> None:
             "INSERT INTO settings (key, value_json) VALUES (?, ?)",
             [
                 # Stale whole-section JSON-blob row from the earliest design.
-                ("features", '{"ai_enabled": false}'),
+                ("recommendations", '{"max_count": 20}'),
                 # Auto-seeded dotted-leaf rows from the later design.
-                ("features.ai_enabled", "false"),
                 ("web.port", "18473"),
                 ("recommendations.max_count", "20"),
                 ("recommendations.default_count", "5"),
@@ -161,6 +161,73 @@ class TestOrphanedSettingsPrune:
         assert StorageManager(sqlite_path=db_path).get_setting("web.debug") is True
 
 
+def _seed_v2_db_with_ai_leaves(path: Path) -> None:
+    """Write a version-2 DB carrying the leaves the AI removal orphaned.
+
+    These were released, so a real operator's database has them.
+    """
+    conn = sqlite3.connect(path)
+    try:
+        create_schema(conn)
+        conn.execute("DELETE FROM settings")
+        conn.executemany(
+            "INSERT INTO settings (key, value_json) VALUES (?, ?)",
+            [
+                ("features.ai_enabled", "true"),
+                ("ollama.model", '"mistral:7b"'),
+                ("ollama.base_url", '"http://ollama:11434"'),
+                ("conversation.llm.temperature", "0.7"),
+                # A leaf the AI removal did not touch, which must survive.
+                ("recommendations.default_count", "9"),
+            ],
+        )
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestTheAiRemovalPrunesItsOwnLeaves:
+    """``settings reset`` and ``DELETE /api/settings`` both refuse a key with
+    no registry entry, so an ``ollama.*`` row would survive every later boot
+    with no door left to remove it by.
+    """
+
+    def test_no_orphaned_prefix_covers_a_live_registry_leaf(self) -> None:
+        """The prune drives an unrecoverable DELETE against real user rows."""
+        live = {
+            key for key in flat_defaults() if key.startswith(_ORPHANED_SETTING_PREFIXES)
+        }
+
+        assert live == set(), f"prune would delete live registry leaves: {sorted(live)}"
+
+    def test_a_database_holding_them_boots_clean(self, tmp_path: Path) -> None:
+        """Opening it prunes them rather than raising, and spares the rest."""
+        db_path = tmp_path / "test.db"
+        _seed_v2_db_with_ai_leaves(db_path)
+
+        storage = StorageManager(sqlite_path=db_path)
+
+        assert storage.list_settings() == {"recommendations.default_count": 9}
+        assert _user_version(db_path) == _SCHEMA_VERSION
+
+    def test_the_prune_does_not_re_run_after_the_upgrade(self, tmp_path: Path) -> None:
+        """One-time, like its siblings: a row written back afterwards survives.
+
+        ``set_setting`` is raw storage with no registry validation, so this
+        reproduces a row the migration would delete if it ever fired again.
+        """
+        db_path = tmp_path / "test.db"
+        _seed_v2_db_with_ai_leaves(db_path)
+        storage = StorageManager(sqlite_path=db_path)
+        assert storage.get_setting("ollama.model") is None
+
+        storage.set_setting("ollama.model", "mistral:7b")
+
+        reopened = StorageManager(sqlite_path=db_path)
+        assert reopened.get_setting("ollama.model") == "mistral:7b"
+
+
 class TestSettingsCleanupMigration:
     """The upgrade clears seeded settings rows exactly once."""
 
@@ -212,8 +279,8 @@ class TestSettingsCleanupMigration:
         # First init performs the one-time clear and advances the version.
         StorageManager(sqlite_path=db_path)
         # A real user edit lands after the feature ships.
-        StorageManager(sqlite_path=db_path).set_setting("features.ai_enabled", True)
+        StorageManager(sqlite_path=db_path).set_setting("enrichment.enabled", True)
 
         reopened = StorageManager(sqlite_path=db_path)
 
-        assert reopened.get_setting("features.ai_enabled") is True
+        assert reopened.get_setting("enrichment.enabled") is True

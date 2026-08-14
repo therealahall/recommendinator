@@ -15,15 +15,12 @@ const varietyPenaltyPct = computed(() => Math.round(varietyPenalty.value * 100))
 
 <template>
   <details
-    v-if="sortedKeys.length > 0 || varietyPenalty > 0 || (rec.llm_reasoning && rec.reasoning)"
+    v-if="sortedKeys.length > 0 || varietyPenalty > 0"
     class="score-details"
     :open="defaultOpen"
   >
     <summary>Score Details</summary>
-    <div v-if="rec.llm_reasoning && rec.reasoning" class="rec-reasoning rec-reasoning-folded">
-      {{ rec.reasoning }}
-    </div>
-    <div v-if="sortedKeys.length > 0 || varietyPenalty > 0" class="score-breakdown">
+    <div class="score-breakdown">
       <div v-for="key in sortedKeys" :key="key" class="score-row">
         <span class="score-label">{{ formatScorerName(key) }}</span>
         <div class="score-bar-bg" aria-hidden="true">

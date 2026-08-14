@@ -1,4 +1,4 @@
-"""Unified storage manager for SQLite and optionally ChromaDB."""
+"""Unified storage manager for the SQLite library."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from src.models.content import (
     ContentItem,
     ContentType,
     EnrichmentFilter,
-    get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import (
@@ -38,26 +37,17 @@ from src.storage.accounts import (
 )
 from src.storage.global_secrets import GLOBAL_SECRET_USER_ID, secret_ref
 from src.storage.schema import (
-    ConversationMessageDict,
-    CoreMemoryDict,
     EnrichmentStatusDict,
     SourceConfigDict,
     UserDict,
-    clear_cached_preference_interpretations,
-    clear_conversation_history,
     credential_row_exists,
-    delete_core_memory,
     delete_credential,
     delete_credentials_for_source,
     delete_setting,
     delete_source_config,
     get_all_users,
-    get_cached_preference_interpretation,
-    get_conversation_history,
-    get_core_memories,
     get_credential,
     get_credentials_for_source,
-    get_default_user_id,
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
@@ -70,14 +60,10 @@ from src.storage.schema import (
     mark_enrichment_failed,
     mark_item_needs_enrichment,
     reset_enrichment_status,
-    save_cached_preference_interpretation,
-    save_conversation_message,
-    save_core_memory,
     save_credential,
     save_preference_profile,
     set_setting,
     set_source_config_enabled,
-    update_core_memory,
     update_user_identity,
     update_user_settings,
     upsert_source_config,
@@ -97,125 +83,30 @@ from src.storage.sqlite_db import unset_if_none as unset_if_none
 
 if TYPE_CHECKING:
     from src.storage.encryption import CredentialEncryptor
-    from src.storage.vector_db import VectorDB
 
 logger = logging.getLogger(__name__)
-
-#: Prefix of the synthetic vector-DB key used for an item with no external id.
-_DB_EMBEDDING_PREFIX = "db_"
 
 
 class UnknownUserError(LookupError):
     """A write named a user id no ``users`` row carries."""
 
 
-def _embedding_key(item: ContentItem, db_id: int) -> str:
-    """Return the vector-DB key for *item* as stored under *db_id*.
-
-    Items imported without an external id — CSV, chat, manual completion —
-    all have ``id is None``, so they key on their database row instead.  Every
-    read and delete must derive the key the same way or it misses the row that
-    was written.
-
-    Args:
-        item: The item as written to SQLite.
-        db_id: Database ID it was written under.
-
-    Returns:
-        The item's external id, or ``db_<db_id>`` when it has none.
-    """
-    return item.id if item.id else f"{_DB_EMBEDDING_PREFIX}{db_id}"
-
-
-def stored_embedding_key(item: ContentItem) -> str | None:
-    """Return the vector-DB key *item*'s own embedding is stored under.
-
-    Callers that search or exclude by key must derive it the same way the
-    write did, so an item with no external id is named by its row rather than
-    dropped.
-
-    Args:
-        item: An item read back from the library.
-
-    Returns:
-        The key, or ``None`` for an item with neither an external id nor a
-        row, which therefore has no embedding of its own.
-    """
-    if item.db_id is None:
-        return item.id
-    return _embedding_key(item, item.db_id)
-
-
-def _db_id_from_embedding_key(key: str) -> int | None:
-    """Return the database ID *key* names, or ``None`` if it names none.
-
-    Args:
-        key: A vector-DB content id.
-
-    Returns:
-        The database ID for a synthetic ``db_`` key, otherwise ``None``.
-    """
-    suffix = key.removeprefix(_DB_EMBEDDING_PREFIX)
-    if suffix == key or not suffix.isdecimal():
-        return None
-    try:
-        return int(suffix)
-    except ValueError:
-        # Both guards earn their place. isdecimal rejects spellings int()
-        # would happily take (padding whitespace, a sign, PEP 515
-        # underscores), none of which this writer ever produces, so a key
-        # spelled that way names no row. The try catches what no character
-        # check can see: int() refuses any string past 4300 digits, however
-        # plain its characters.
-        return None
-
-
 class StorageManager:
-    """Unified storage manager for SQLite and optionally ChromaDB.
+    """Unified storage manager for the SQLite library."""
 
-    When ai_enabled is False (default), only SQLite is used.
-    When ai_enabled is True, ChromaDB is also initialized for embeddings.
-    """
-
-    def __init__(
-        self,
-        sqlite_path: Path,
-        vector_db_path: Path | None = None,
-        vector_collection_name: str = "content_embeddings",
-        ai_enabled: bool = False,
-    ) -> None:
+    def __init__(self, sqlite_path: Path) -> None:
         """Initialize storage manager.
 
         Args:
             sqlite_path: Path to SQLite database file
-            vector_db_path: Path to ChromaDB database directory (optional)
-            vector_collection_name: Name of ChromaDB collection
-            ai_enabled: Whether to enable AI features (embeddings)
         """
         self.sqlite_db = SQLiteDB(sqlite_path)
-        self.vector_db: VectorDB | None = None
-        self.ai_enabled = ai_enabled
         self._credential_key_path = self._resolve_key_path(sqlite_path)
         # Serialises every read-then-write on this manager: each `with` site
         # below leaves a gap between read and write that WAL's concurrent
         # readers do not close, and the callers that collide there are parallel
         # sync workers and FastAPI threadpool workers alike.
         self._save_lock = threading.Lock()
-
-        # Only initialize vector DB if AI is enabled and path provided.
-        # Deferred import: chromadb is heavy (~500 MB+) and should not load
-        # when AI features are disabled.
-        if ai_enabled and vector_db_path:
-            try:
-                from src.storage.vector_db import VectorDB
-
-                self.vector_db = VectorDB(vector_db_path, vector_collection_name)
-            except ImportError:
-                logger.warning(
-                    "AI features enabled in config but chromadb is not installed. "
-                    "Vector DB disabled. Install with: uv sync --locked --extra ai"
-                )
-                self.ai_enabled = False
 
     @staticmethod
     def _resolve_key_path(sqlite_path: Path) -> Path:
@@ -260,54 +151,37 @@ class StorageManager:
         with self.sqlite_db.connection() as conn:
             yield conn
 
-    def save_content_item(
-        self,
-        item: ContentItem,
-        user_id: int | None = None,
-        embedding: list[float] | None = None,
-    ) -> int:
-        """Save a content item to SQLite and optionally ChromaDB.
+    def save_content_item(self, item: ContentItem, user_id: int | None = None) -> int:
+        """Save a content item.
 
         Upsert-by-external-id and cross-source dedup by normalized title are
         both handled by :meth:`SQLiteDB.save_content_item`; this wrapper
-        serialises that read-then-write under ``_save_lock`` and mirrors the
-        embedding into the vector DB.
+        serialises that read-then-write under ``_save_lock``.
 
         Args:
             item: ContentItem to save
             user_id: User ID (defaults to item.user_id)
-            embedding: Optional embedding vector to store (requires ai_enabled)
 
         Returns:
             Database ID of the saved item
         """
         with self._save_lock:
-            # Save to SQLite. Upsert-by-external-id and cross-source dedup by
-            # normalized title both live in SQLiteDB.save_content_item.
-            db_id = self.sqlite_db.save_content_item(item, user_id=user_id)
-            self._mirror_embedding(item, db_id, user_id, embedding)
-
-        return db_id
+            return self.sqlite_db.save_content_item(item, user_id=user_id)
 
     def complete_content_item(
-        self,
-        item: ContentItem,
-        user_id: int | None = None,
-        embedding: list[float] | None = None,
+        self, item: ContentItem, user_id: int | None = None
     ) -> int:
         """Record an explicit completion, adding the item if it is new.
 
         The single entry point behind every completion — the ``complete`` CLI
-        command, ``POST /api/complete`` and chat's ``mark_completed``:
+        command and ``POST /api/complete``:
         :meth:`SQLiteDB.complete_content_item` finds or creates the row and
         applies the user's rating, review and completion date in one
-        transaction, and this wrapper serialises it under ``_save_lock`` and
-        mirrors the embedding, as ``save_content_item`` does for sync.
+        transaction, and this wrapper serialises it under ``_save_lock``.
 
         Args:
             item: ContentItem being completed
             user_id: User ID (defaults to item.user_id)
-            embedding: Optional embedding vector to store (requires ai_enabled)
 
         Returns:
             Database ID of the completed item
@@ -317,38 +191,7 @@ class StorageManager:
                 has lived yet. Nothing is written.
         """
         with self._save_lock:
-            db_id = self.sqlite_db.complete_content_item(item, user_id=user_id)
-            self._mirror_embedding(item, db_id, user_id, embedding)
-
-        return db_id
-
-    def _mirror_embedding(
-        self,
-        item: ContentItem,
-        db_id: int,
-        user_id: int | None,
-        embedding: list[float] | None,
-    ) -> None:
-        """Store *item*'s embedding in the vector DB, if there is one to store.
-
-        Args:
-            item: The item as written to SQLite.
-            db_id: Database ID it was written under.
-            user_id: User ID the caller supplied, if any.
-            embedding: Embedding vector, or None when embeddings are off.
-        """
-        if embedding is None or not self.vector_db:
-            return
-
-        content_id = _embedding_key(item, db_id)
-        metadata = {
-            "content_type": get_enum_value(item.content_type),
-            "title": item.title,
-            "author": item.author or "",
-            "status": get_enum_value(item.status),
-            "user_id": str(user_id or item.user_id),
-        }
-        self.vector_db.add_embedding(content_id, embedding, metadata)
+            return self.sqlite_db.complete_content_item(item, user_id=user_id)
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None
@@ -374,63 +217,6 @@ class StorageManager:
             List of ContentItem objects found
         """
         return self.sqlite_db.get_content_items_by_db_ids(db_ids)
-
-    def get_items_by_embedding_keys(
-        self,
-        keys: list[str],
-        user_id: int | None = None,
-        content_type: ContentType | None = None,
-        include_ignored: bool = True,
-    ) -> dict[str, ContentItem]:
-        """Resolve vector-DB keys back to the items they were stored for.
-
-        An embedding is keyed by its item's external id, or by ``db_<db_id>``
-        when the item has none, so a caller holding search hits gets both
-        forms back.  Fetching exactly the keys asked for keeps a similarity
-        search independent of how large the library is.
-
-        Args:
-            keys: Vector-DB content ids, typically from a similarity search.
-            user_id: User whose library to resolve against (defaults to the
-                default user).
-            content_type: Type the caller searched, if any. One external id
-                may name a row of each type, so a search must say which one
-                it means or it can resolve a hit to the wrong item.
-            include_ignored: Whether ignored items may be returned.
-
-        Returns:
-            The item found for each key. A key naming no item is absent.
-        """
-        if not keys:
-            return {}
-
-        effective_user_id = user_id if user_id is not None else get_default_user_id()
-
-        # External ids first: a stored external id is a real identity, so it
-        # wins over the synthetic form should an id ever look like one.
-        by_key: dict[str, ContentItem] = {
-            item.id: item
-            for item in self.sqlite_db.get_content_items_by_external_ids(
-                keys, user_id=effective_user_id, content_type=content_type
-            )
-            if item.id
-        }
-        db_ids = [
-            db_id
-            for key in keys
-            if key not in by_key
-            and (db_id := _db_id_from_embedding_key(key)) is not None
-        ]
-        for item in self.sqlite_db.get_content_items_by_db_ids(db_ids):
-            if item.user_id != effective_user_id:
-                continue
-            if content_type is not None and item.content_type != content_type:
-                continue
-            by_key[f"{_DB_EMBEDDING_PREFIX}{item.db_id}"] = item
-
-        if include_ignored:
-            return by_key
-        return {key: item for key, item in by_key.items() if not item.ignored}
 
     def get_content_items(
         self,
@@ -616,61 +402,8 @@ class StorageManager:
             include_ignored=False,
         )
 
-    def search_similar(
-        self,
-        query_embedding: list[float],
-        user_id: int | None = None,
-        n_results: int = 10,
-        content_type: ContentType | None = None,
-        exclude_consumed: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Search for similar content using vector similarity.
-
-        Requires ai_enabled=True.
-
-        Args:
-            query_embedding: Query embedding vector
-            user_id: Filter by user ID
-            n_results: Number of results to return
-            content_type: Optional filter by content type
-            exclude_consumed: If True, exclude consumed items
-
-        Returns:
-            List of similar content items with scores and metadata
-
-        Raises:
-            RuntimeError: If called when AI is not enabled
-        """
-        if not self.vector_db:
-            raise RuntimeError(
-                "Vector search requires ai_enabled=True in StorageManager"
-            )
-
-        # Exclude the consumed items by the keys their embeddings are stored
-        # under, not by their external ids: an id-less item has an embedding
-        # in the store and would otherwise take a result slot.
-        exclude_ids: list[str] | None = None
-        if exclude_consumed:
-            consumed = self.get_completed_items(
-                user_id=user_id, content_type=content_type
-            )
-            exclude_ids = [
-                key for item in consumed if (key := stored_embedding_key(item))
-            ]
-
-        content_type_str = get_enum_value(content_type) if content_type else None
-
-        results = self.vector_db.search_similar(
-            query_embedding=query_embedding,
-            n_results=n_results,
-            content_type=content_type_str,
-            exclude_ids=exclude_ids,
-        )
-
-        return results
-
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
-        """Delete a content item from both databases.
+        """Delete a content item.
 
         Args:
             db_id: Database ID
@@ -679,17 +412,7 @@ class StorageManager:
         Returns:
             True if item was deleted, False if not found
         """
-        # Read the item first: its embedding key is derived from it.
-        item = self.sqlite_db.get_content_item(db_id, user_id=user_id)
-        if not item:
-            return False
-
-        deleted = self.sqlite_db.delete_content_item(db_id, user_id=user_id)
-
-        if deleted and self.vector_db:
-            self.vector_db.delete_embedding(_embedding_key(item, db_id))
-
-        return deleted
+        return self.sqlite_db.delete_content_item(db_id, user_id=user_id)
 
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
@@ -773,59 +496,6 @@ class StorageManager:
         return self.sqlite_db.count_items(
             user_id=user_id, content_type=content_type, status=status
         )
-
-    def add_embedding(
-        self,
-        content_id: str,
-        embedding: list[float],
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Add or update an embedding for a content item.
-
-        Requires ai_enabled=True.
-
-        Args:
-            content_id: Unique identifier for the content item
-            embedding: Vector embedding
-            metadata: Optional metadata dictionary
-
-        Raises:
-            RuntimeError: If called when AI is not enabled
-        """
-        if not self.vector_db:
-            raise RuntimeError("Embeddings require ai_enabled=True in StorageManager")
-        self.vector_db.add_embedding(content_id, embedding, metadata)
-
-    def get_embedding(self, content_id: str) -> list[float] | None:
-        """Get embedding for a content item.
-
-        Requires ai_enabled=True.
-
-        Args:
-            content_id: Unique identifier for the content item
-
-        Returns:
-            Embedding vector if found, None otherwise
-
-        Raises:
-            RuntimeError: If called when AI is not enabled
-        """
-        if not self.vector_db:
-            raise RuntimeError("Embeddings require ai_enabled=True in StorageManager")
-        return self.vector_db.get_embedding(content_id)
-
-    def has_embedding(self, content_id: str) -> bool:
-        """Check if an embedding exists for a content item.
-
-        Args:
-            content_id: Unique identifier for the content item
-
-        Returns:
-            True if embedding exists, False otherwise (or if AI disabled)
-        """
-        if not self.vector_db:
-            return False
-        return self.vector_db.has_embedding(content_id)
 
     def get_content_item_by_external_id(
         self,
@@ -1026,39 +696,6 @@ class StorageManager:
             self._write_preference_config(user_id, preference_config)
             return preference_config
 
-    def get_cached_preference_interpretation(self, cache_key: str) -> str | None:
-        """Get a cached preference interpretation.
-
-        Args:
-            cache_key: The cache key to look up.
-
-        Returns:
-            Cached JSON string or None if not found.
-        """
-        with self.sqlite_db.connection() as conn:
-            return get_cached_preference_interpretation(conn, cache_key)
-
-    def save_cached_preference_interpretation(
-        self, cache_key: str, interpretation_json: str
-    ) -> None:
-        """Save a preference interpretation to the cache.
-
-        Args:
-            cache_key: The cache key.
-            interpretation_json: JSON string of the interpretation.
-        """
-        with self.sqlite_db.connection() as conn:
-            save_cached_preference_interpretation(conn, cache_key, interpretation_json)
-
-    def clear_cached_preference_interpretations(self) -> int:
-        """Clear all cached preference interpretations.
-
-        Returns:
-            Number of rows deleted.
-        """
-        with self.sqlite_db.connection() as conn:
-            return clear_cached_preference_interpretations(conn)
-
     # Enrichment status methods
 
     def get_items_needing_enrichment(
@@ -1231,155 +868,6 @@ class StorageManager:
             content_type=content_type,
             user_id=user_id,
         )
-
-    # Core memory methods
-
-    def get_core_memories(
-        self,
-        user_id: int,
-        active_only: bool = True,
-        memory_type: str | None = None,
-    ) -> list[CoreMemoryDict]:
-        """Get core memories for a user.
-
-        Args:
-            user_id: User ID
-            active_only: If True, only return active memories
-            memory_type: Filter by type ("user_stated" or "inferred")
-
-        Returns:
-            List of memory dicts
-        """
-        with self.sqlite_db.connection() as conn:
-            return get_core_memories(
-                conn, user_id, active_only=active_only, memory_type=memory_type
-            )
-
-    def save_core_memory(
-        self,
-        user_id: int,
-        memory_text: str,
-        memory_type: str,
-        source: str,
-        confidence: float = 1.0,
-    ) -> int:
-        """Save a new core memory.
-
-        Args:
-            user_id: User ID
-            memory_text: The preference statement
-            memory_type: "user_stated" or "inferred"
-            source: "conversation", "rating_pattern", or "manual"
-            confidence: Confidence score (0.0-1.0)
-
-        Returns:
-            New memory ID
-        """
-        with self.sqlite_db.connection() as conn:
-            return save_core_memory(
-                conn,
-                user_id=user_id,
-                memory_text=memory_text,
-                memory_type=memory_type,
-                source=source,
-                confidence=confidence,
-            )
-
-    def update_core_memory(
-        self,
-        memory_id: int,
-        memory_text: str | None = None,
-        is_active: bool | None = None,
-    ) -> bool:
-        """Update a core memory.
-
-        Args:
-            memory_id: Memory ID to update
-            memory_text: New memory text (optional)
-            is_active: New active status (optional)
-
-        Returns:
-            True if updated, False if not found
-        """
-        with self.sqlite_db.connection() as conn:
-            return update_core_memory(
-                conn,
-                memory_id=memory_id,
-                memory_text=memory_text,
-                is_active=is_active,
-            )
-
-    def delete_core_memory(self, memory_id: int) -> bool:
-        """Delete a core memory.
-
-        Args:
-            memory_id: Memory ID to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
-        with self.sqlite_db.connection() as conn:
-            return delete_core_memory(conn, memory_id)
-
-    # Conversation history methods
-
-    def get_conversation_history(
-        self,
-        user_id: int,
-        limit: int = 50,
-    ) -> list[ConversationMessageDict]:
-        """Get recent conversation history for a user.
-
-        Args:
-            user_id: User ID
-            limit: Maximum number of messages to return
-
-        Returns:
-            List of message dicts ordered chronologically (oldest first)
-        """
-        with self.sqlite_db.connection() as conn:
-            return get_conversation_history(conn, user_id, limit=limit)
-
-    def save_conversation_message(
-        self,
-        user_id: int,
-        role: str,
-        content: str,
-        tool_calls: list[dict] | None = None,
-    ) -> int:
-        """Save a conversation message.
-
-        Args:
-            user_id: User ID
-            role: "user" or "assistant"
-            content: Message content
-            tool_calls: Optional list of tool calls made
-
-        Returns:
-            New message ID
-        """
-        with self.sqlite_db.connection() as conn:
-            return save_conversation_message(
-                conn,
-                user_id=user_id,
-                role=role,
-                content=content,
-                tool_calls=tool_calls,
-            )
-
-    def clear_conversation_history(self, user_id: int) -> int:
-        """Clear conversation history for a user (the "reset" functionality).
-
-        Note: This clears the conversation but preserves core memories.
-
-        Args:
-            user_id: User ID
-
-        Returns:
-            Number of messages deleted
-        """
-        with self.sqlite_db.connection() as conn:
-            return clear_conversation_history(conn, user_id)
 
     # Preference profile methods
 

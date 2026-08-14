@@ -44,7 +44,7 @@ from src.settings.metadata import (
 # ``migrate_config_settings`` overlays DB leaves at, but publishes a whole save
 # at once rather than writing in place (see ``_apply_live``).
 from src.utils.dotted_path import get_leaf, set_leaves_atomically
-from src.utils.urls import is_bare_origin, is_local_url, normalize_origin
+from src.utils.urls import is_bare_origin, normalize_origin
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -53,10 +53,6 @@ if TYPE_CHECKING:
 # rule they must satisfy is CORS semantics rather than anything generic about
 # lists — see :func:`_validated_cors_origins`.
 _ALLOWED_ORIGINS_KEY = "web.allowed_origins"
-
-# Where every prompt goes. Checked beyond its type for the reason given on
-# :func:`_validated_ollama_base_url`.
-_OLLAMA_BASE_URL_KEY = "ollama.base_url"
 
 
 class SettingsValidationError(Exception):
@@ -203,8 +199,7 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
     Returns the coerced value on success. Raises
     :class:`SettingsValidationError` (with the offending key + reason) on a type
     mismatch, an out-of-range number, an over-long/non-matching string, an enum
-    value outside ``choices``, a CORS origin a browser could never send, or an
-    Ollama base URL that would leave the local network.
+    value outside ``choices``, or a CORS origin a browser could never send.
     """
     setting_type = entry.type
     if setting_type == "bool":
@@ -233,8 +228,6 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
         if not isinstance(value, str):
             raise SettingsValidationError(entry.key, "expected a string")
         _check_string_constraints(entry, value)
-        if entry.key == _OLLAMA_BASE_URL_KEY:
-            return _validated_ollama_base_url(entry, value)
         return value
     if setting_type == "list":
         if not isinstance(value, list):
@@ -285,32 +278,6 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
                 'scheme://host[:port] (for example http://localhost:18473), or "*"',
             )
     return normalized
-
-
-def _validated_ollama_base_url(entry: SettingMetadata, value: str) -> str:
-    """Return the normalised base URL, rejecting a host off the local network.
-
-    One request sets where every prompt goes, so a remote Ollama needs a file
-    on the box: ``config.yaml``, which this never checks.
-    """
-    # Persist what was validated: the stored value is what reaches
-    # ollama.Client, and urlsplit reads a spelling of its own unless the two
-    # are normalised to one first.
-    url = normalize_origin(value)
-    if not is_bare_origin(url):
-        raise SettingsValidationError(
-            entry.key,
-            "must be http(s)://host[:port] with no path, query or credentials "
-            "(for example http://ollama:11434)",
-        )
-    if not is_local_url(url):
-        raise SettingsValidationError(
-            entry.key,
-            "must be a loopback, private-network or single-label host, so your "
-            "prompts and library stay on your network — point it at a remote "
-            "Ollama in config.yaml if you mean to",
-        )
-    return url
 
 
 def _coerce_int(entry: SettingMetadata, value: Any) -> int:

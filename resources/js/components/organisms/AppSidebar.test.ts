@@ -19,7 +19,6 @@ function createTestRouter() {
       { path: '/', redirect: '/recommendations' },
       { path: '/recommendations', name: 'recommendations', component: { template: '<div />' } },
       { path: '/library', name: 'library', component: { template: '<div />' } },
-      { path: '/chat', name: 'chat', component: { template: '<div />' } },
       { path: '/data', name: 'data', component: { template: '<div />' } },
       { path: '/preferences', name: 'preferences', component: { template: '<div />' } },
       { path: '/settings', name: 'settings', component: { template: '<div />' } },
@@ -37,30 +36,13 @@ describe('AppSidebar', () => {
     await router.push('/recommendations')
     await router.isReady()
 
-    const app = useAppStore()
-    app.features.ai_enabled = true
-
     const wrapper = mount(AppSidebar, {
       global: { plugins: [router] },
     })
 
     const navItems = wrapper.findAll('.nav-item')
     const labels = navItems.map((n) => n.text().trim())
-    expect(labels).toEqual(['Recommendations', 'Library', 'Chat', 'Data', 'Preferences', 'Settings'])
-  })
-
-  it('hides chat when AI is disabled', async () => {
-    const router = createTestRouter()
-    await router.push('/recommendations')
-    await router.isReady()
-
-    const wrapper = mount(AppSidebar, {
-      global: { plugins: [router] },
-    })
-
-    // Chat should not be in the DOM (v-if removes it)
-    const chatBtn = wrapper.findAll('.nav-item').find((n) => n.text().includes('Chat'))
-    expect(chatBtn).toBeUndefined()
+    expect(labels).toEqual(['Recommendations', 'Library', 'Data', 'Preferences', 'Settings'])
   })
 
   it('highlights active route', async () => {

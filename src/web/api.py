@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
@@ -47,7 +47,6 @@ from src.auth.trakt import (
     save_trakt_token,
     start_device_auth_flow,
 )
-from src.config.service import get_feature_flags
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
@@ -64,6 +63,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.content_length import LengthPreference
+from src.recommendations.profile import ProfileGenerator
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import get_entry
 from src.settings.service import (
@@ -124,7 +124,6 @@ from src.web.guards import (
 from src.web.responses import SurrogateSafeResponse
 from src.web.state import (
     get_config,
-    get_embedding_gen,
     get_engine,
     get_storage,
     reload_config,
@@ -398,19 +397,21 @@ class RecommendationResponse(BaseModel):
     author: str | None
     score: float
     reasoning: str
-    llm_reasoning: str | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     # Stepped genre-fatigue penalty applied when the variety_penalty preference
     # is set (0.0 when off or the item's genre was not recently finished).
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
 
 
-class FeaturesStatus(BaseModel):
-    """Feature flags status."""
+class ProfileResponse(BaseModel):
+    """Response model for a user's preference profile."""
 
-    ai_enabled: bool = False
-    embeddings_enabled: bool = False
-    llm_reasoning_enabled: bool = False
+    user_id: int
+    genre_affinities: dict[str, float]
+    theme_preferences: list[str]
+    anti_preferences: list[str]
+    cross_media_patterns: list[str]
+    generated_at: datetime | None = None
 
 
 class RecommendationsConfig(BaseModel):
@@ -429,7 +430,6 @@ class StatusResponse(BaseModel):
     status: str
     version: str
     components: dict[str, bool]
-    features: FeaturesStatus = Field(default_factory=FeaturesStatus)
     recommendations_config: RecommendationsConfig = Field(
         default_factory=RecommendationsConfig
     )
@@ -861,7 +861,6 @@ def get_recommendations(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
     count: int = Query(5, ge=1, description="Number of recommendations"),
-    use_llm: bool = Query(True, description="Use LLM for enhanced reasoning"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
     """Get personalized recommendations.
@@ -869,7 +868,6 @@ def get_recommendations(
     Args:
         type: Content type
         count: Number of recommendations
-        use_llm: Whether to use LLM enhancement
         user_id: User ID for loading per-user preferences
 
     Returns:
@@ -903,7 +901,6 @@ def get_recommendations(
         recommendations = engine.generate_recommendations(
             content_type=content_type,
             count=count,
-            use_llm=use_llm,
             user_preference_config=user_preference_config,
         )
 
@@ -929,18 +926,11 @@ def stream_recommendations(
     count: int = Query(5, ge=1, description="Number of recommendations"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> StreamingResponse:
-    """Stream recommendations with progressive LLM blurb generation.
+    """Stream recommendations as Server-Sent Events.
 
-    Returns Server-Sent Events in two phases:
-
-    - Phase 1 (immediate): ``{"type": "recommendations", "items": [...]}``
-      — pipeline results without LLM reasoning.
-    - Phase 2 (progressive): ``{"type": "blurb", "index": N, "llm_reasoning": "..."}``
-      per item as each LLM call completes.
-    - Final: ``{"type": "done"}``
-
-    Shares one concurrency budget with ``POST /api/chat`` and answers 503 once
-    it is full.
+    Emits ``{"type": "recommendations", "items": [...]}`` then
+    ``{"type": "done"}``. Concurrent streams are capped and answered 503 once
+    the budget is full.
 
     Args:
         type: Content type
@@ -969,77 +959,23 @@ def stream_recommendations(
         ) from None
 
     def generate_sse() -> Iterator[str]:
-        """Generate SSE events: recommendations first, then blurbs."""
+        """Generate the recommendations event, then the terminator."""
         try:
             user_preference_config = None
             if storage:
                 user_preference_config = storage.get_user_preference_config(user_id)
 
-            # Generate recommendations without LLM reasoning
             recommendations = engine.generate_recommendations(
                 content_type=content_type,
                 count=count,
-                use_llm=False,
                 user_preference_config=user_preference_config,
             )
 
-            if not recommendations:
-                yield f"data: {json.dumps({'type': 'recommendations', 'items': []})}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                return
-
-            # Phase 1: send recommendations immediately.  ``use_llm=False``
-            # above, so every blurb slot is still empty — they arrive as
-            # Phase 2 events.
             event: dict[str, Any] = {
                 "type": "recommendations",
                 "items": [rec.to_payload() for rec in recommendations],
             }
             yield f"data: {json.dumps(event)}\n\n"
-
-            # Phase 2: generate blurbs per item, stream as they complete.
-            # Blurbs cite consumed items as taste context, so they must draw
-            # from the signal set only — never ignored or unrated items
-            # (issue #99).
-            consumed_items = engine.storage.get_signal_items(content_type=None)
-
-            items_with_index: list[tuple[int, ContentItem, list[ContentItem]]] = [
-                (idx, rec.item, list(rec.contributing_items))
-                for idx, rec in enumerate(recommendations)
-            ]
-
-            with ThreadPoolExecutor(
-                max_workers=min(len(items_with_index), 4)
-            ) as executor:
-                future_to_index = {
-                    executor.submit(
-                        engine.generate_blurb_for_item,
-                        content_type,
-                        item,
-                        consumed_items,
-                        refs or None,
-                    ): idx
-                    for idx, item, refs in items_with_index
-                }
-                for future in as_completed(future_to_index):
-                    idx = future_to_index[future]
-                    try:
-                        blurb = future.result()
-                    except Exception as exc:
-                        logger.warning(
-                            "Streaming blurb failed for index %d: %s",
-                            idx,
-                            exception_for_log(exc),
-                        )
-                        blurb = None
-                    if blurb:
-                        blurb_event = {
-                            "type": "blurb",
-                            "index": idx,
-                            "llm_reasoning": blurb,
-                        }
-                        yield f"data: {json.dumps(blurb_event)}\n\n"
-
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as error:
@@ -1488,12 +1424,6 @@ def mark_complete(
     Returns:
         Success message
     """
-    embedding_gen = get_embedding_gen()
-    config = get_config()
-
-    # Check if embeddings are enabled
-    use_embeddings = get_feature_flags(config)["use_embeddings"]
-
     try:
         content_type = ContentType.from_string(request.content_type)
     except ValueError:
@@ -1513,11 +1443,7 @@ def mark_complete(
     )
 
     try:
-        # Only generate embedding if AI features are enabled
-        embedding = None
-        if use_embeddings and embedding_gen:
-            embedding = embedding_gen.generate_content_embedding(item)
-        db_id = storage.complete_content_item(item, embedding=embedding)
+        db_id = storage.complete_content_item(item)
     except Exception as error:
         # The failing write is this request's title, author and review.
         logger.error("Error marking content as completed: %s", exception_for_log(error))
@@ -1544,8 +1470,6 @@ def update_data(
     Returns:
         Message indicating sync was started or error if already running.
     """
-    embedding_gen = get_embedding_gen()
-
     sync_manager = get_sync_manager()
     source = request.source
     source_label = humanize_source_id(source) if source != "all" else "All Sources"
@@ -1611,8 +1535,6 @@ def update_data(
 
     sources_to_sync = [entry.source_id for entry in resolved]
 
-    use_embeddings = get_feature_flags(config)["use_embeddings"]
-
     # Check if auto-enrichment is enabled
     enrichment_config = config.get("enrichment", {})
     auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
@@ -1645,8 +1567,6 @@ def update_data(
         results = execute_multi_source_sync(
             sources=source_pairs,
             storage_manager=storage,
-            embedding_generator=embedding_gen,
-            use_embeddings=use_embeddings,
             progress_callback=progress_callback,
             error_callback=error_callback,
             mark_for_enrichment=auto_enrich,
@@ -1722,24 +1642,11 @@ def get_status() -> StatusResponse:
     """
     engine = get_engine()
     storage = get_storage()
-    embedding_gen = get_embedding_gen()
     config = get_config()
 
-    # Read feature flags from config
-    flags = get_feature_flags(config)
-    features = FeaturesStatus(
-        ai_enabled=flags["ai_enabled"],
-        embeddings_enabled=flags["embeddings_enabled"],
-        llm_reasoning_enabled=flags["llm_reasoning_enabled"],
-    )
-
-    # Only require embedding_generator when AI features are enabled
     components = {
         "engine": engine is not None,
         "storage": storage is not None,
-        "embedding_generator": (
-            embedding_gen is not None if flags["ai_enabled"] else True
-        ),
     }
 
     all_ready = all(components.values())
@@ -1748,7 +1655,6 @@ def get_status() -> StatusResponse:
         status="ready" if all_ready else "initializing",
         version=APP_VERSION,
         components=components,
-        features=features,
         recommendations_config=_get_recommendations_config(config),
     )
 
@@ -2311,6 +2217,56 @@ def reset_enrichment(
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}
+
+
+@router.get("/profile")
+def get_profile(
+    storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
+) -> ProfileResponse:
+    """Get a user's preference profile summary."""
+    profile_data = storage.get_preference_profile(user_id)
+
+    if profile_data:
+        # The stored row nests the profile under "profile".
+        profile = profile_data.get("profile", {})
+        return ProfileResponse(
+            user_id=user_id,
+            genre_affinities=profile.get("genre_affinities", {}),
+            theme_preferences=profile.get("theme_preferences", []),
+            anti_preferences=profile.get("anti_preferences", []),
+            cross_media_patterns=profile.get("cross_media_patterns", []),
+            generated_at=(
+                datetime.fromisoformat(profile["generated_at"])
+                if profile.get("generated_at")
+                else None
+            ),
+        )
+
+    return ProfileResponse(
+        user_id=user_id,
+        genre_affinities={},
+        theme_preferences=[],
+        anti_preferences=[],
+        cross_media_patterns=[],
+        generated_at=None,
+    )
+
+
+@router.post("/profile/regenerate")
+def regenerate_profile(
+    storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
+) -> ProfileResponse:
+    """Force regeneration of a user's preference profile."""
+    profile = ProfileGenerator(storage).regenerate_and_save(user_id)
+
+    return ProfileResponse(
+        user_id=profile.user_id,
+        genre_affinities=profile.genre_affinities,
+        theme_preferences=profile.theme_preferences,
+        anti_preferences=profile.anti_preferences,
+        cross_media_patterns=profile.cross_media_patterns,
+        generated_at=profile.generated_at,
+    )
 
 
 # ---------------------------------------------------------------------------

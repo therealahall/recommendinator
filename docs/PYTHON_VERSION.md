@@ -8,7 +8,7 @@ so `requires-python` refuses every other one.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have uv
-uv sync --locked --extra ai --extra dev
+uv sync --locked --extra dev
 ```
 
 uv creates and manages the virtual environment at `.venv/`.

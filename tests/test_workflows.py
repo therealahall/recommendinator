@@ -519,7 +519,7 @@ class TestWorkflowSupplyChain:
     def test_the_pull_request_build_pushes_nothing(self) -> None:
         """The other half of that: the scope is only one of the two things a
         publishing pull-request build would need."""
-        build = _step_named(DOCKER, "build-pr", "Build ${{ matrix.name }}")
+        build = _step_named(DOCKER, "build-pr", "Build")
 
         assert build["with"]["push"] is False
 
@@ -531,32 +531,17 @@ class TestWorkflowSupplyChain:
 
 
 class TestComposeValidationCoverage:
-    """Compose resolves only the active profiles, so an inactive one goes unchecked."""
+    """The dev override is a separate document, and only a merged parse catches
+    a key it puts in the wrong place."""
 
     def test_every_documented_combination_is_validated(self) -> None:
-        """`--profile ai` is where depends_on, the healthcheck and the volume live."""
         validation = _step_named(GATE, "check", "Validate compose files")["run"]
         base = "docker compose -f docker-compose.yml"
-        overridden = f"{base} -f docker-compose.dev.yml"
         for command in (
             f"{base} config",
-            f"{base} --profile ai config",
-            f"{overridden} config",
-            f"{overridden} --profile ai config",
+            f"{base} -f docker-compose.dev.yml config",
         ):
             assert command in validation, f"CI never runs `{command}`"
-
-    def test_the_profile_the_validation_names_is_the_one_compose_declares(self) -> None:
-        """A renamed profile would leave the extra invocations resolving nothing."""
-        services = yaml.safe_load(
-            (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        )["services"]
-        profiled = {
-            profile
-            for service in services.values()
-            for profile in service.get("profiles", [])
-        }
-        assert profiled == {"ai"}, profiled
 
 
 class TestTheSmokeTestReadsTheImageItJustBuilt:
@@ -569,7 +554,7 @@ class TestTheSmokeTestReadsTheImageItJustBuilt:
         """The step runs under `bash -e` without `pipefail`, so a `cat` of the
         wrong path writes an empty config and the job dies two lines later on a
         grep that says nothing about the rename that caused it."""
-        smoke = _step_named(DOCKER, "build-pr", "Smoke test (default variant only)")
+        smoke = _step_named(DOCKER, "build-pr", "Smoke test")
         referenced = set(_SEED_REFERENCE.findall(str(smoke["run"])))
 
         assert referenced, "the smoke test reads no seed out of the image"
@@ -784,21 +769,6 @@ class TestReleaseIntegrity:
         """Guarded too, a backport would reach GHCR under no tag of its own."""
         version = _tag_entries(DOCKER, "publish")[("semver", "{{version}}")]
         assert "enable" not in version, version
-
-    def test_each_published_variant_tags_a_namespace_of_its_own(self) -> None:
-        """Sharing one, the AI variant's `latest` would overwrite the default's.
-
-        Rests on metadata-action applying the global `flavor` suffix to
-        `type=raw` too — its default, stated nowhere here. Change that upstream
-        and both `latest` tags land in one namespace, green.
-        """
-        variants = workflow_jobs(DOCKER)["publish"]["strategy"]["matrix"]["include"]
-        assert len(variants) > 1, "one variant collides with nothing"
-        namespaces = [(variant["image"], variant["tag_suffix"]) for variant in variants]
-        assert len(set(namespaces)) == len(namespaces), namespaces
-
-        metadata = _step_named(DOCKER, "publish", "Generate image metadata")
-        assert "suffix=${{ matrix.tag_suffix }}" in str(metadata["with"]["flavor"])
 
     def test_publish_reads_only_outputs_the_guard_declares(self) -> None:
         """A misspelt output resolves to the empty string, which enables nothing."""

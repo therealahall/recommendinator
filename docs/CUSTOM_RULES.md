@@ -49,27 +49,13 @@ Rules merge, and a later rule wins a conflict. They influence the score rather
 than overriding it, so a strong candidate can still surface despite a penalty.
 Check your scorer weights too, see [SCORING.md](SCORING.md).
 
-## LLM interpretation
+Rules are sanitised before the interpreter sees them, narrowly. Whitespace runs
+collapse to one space and the ends are trimmed, so a rule occupies exactly one
+line. Control characters and lone surrogates go because a rule is prose, and one
+would break the terminal reading it back.
 
-With AI enabled, `--use-llm` handles compound and nuanced rules:
-
-```bash
-python3.11 -m src.cli preferences custom-rules interpret \
-  "I'm burnt out on grimdark fantasy but still enjoy lighter fantasy with humor" \
-  --use-llm
-```
-
-Results are cached, so a repeated rule costs no further LLM calls.
-
-Rules are sanitised before either interpreter sees them, narrowly. Whitespace
-runs collapse to one space and the ends are trimmed, so a rule occupies exactly
-one prompt line and cannot forge a second to smuggle instructions past the
-interpreter. Quotes and braces go because the rule sits in a quoted slot beside
-a JSON template; control characters and lone surrogates go because a rule is
-prose, and one would break the request or the terminal reading it back.
-
-Everything else reaches the model as you typed it — `prefer 4+ star ratings`,
-`no more than 20% horror`, `rating >= 4`, accents, CJK and emoji.
+Everything else reaches the interpreter as you typed it — `prefer 4+ star
+ratings`, `no more than 20% horror`, `rating >= 4`, accents, CJK and emoji.
 
 ## If a rule is not working
 

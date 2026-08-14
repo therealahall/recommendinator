@@ -32,7 +32,6 @@ def config() -> dict[str, Any]:
     so each source is declared there as well as in the database.
     """
     return {
-        "ollama": {"base_url": "http://localhost:11434", "model": "x"},
         "storage": {"database_path": "data/test.db"},
         "inputs": {
             "gog_work": {"plugin": "gog", "enabled": True},
@@ -216,7 +215,6 @@ def db_only_config() -> dict[str, Any]:
     config.yaml.
     """
     return {
-        "ollama": {"base_url": "http://localhost:11434", "model": "x"},
         "storage": {"database_path": "data/test.db"},
         "inputs": {},
     }
@@ -354,7 +352,6 @@ YAML_HELD_SOURCES = [
 def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
     """A source whose refresh token is still written in config.yaml."""
     return {
-        "ollama": {"base_url": "http://localhost:11434", "model": "x"},
         "storage": {"database_path": "data/test.db"},
         "inputs": {
             source_id: {

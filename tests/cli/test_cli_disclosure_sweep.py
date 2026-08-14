@@ -90,7 +90,6 @@ _MODULES_CALLING_THE_FUNNEL = {
     "_shared.py",
     "commands/_account.py",
     "commands/_auth.py",
-    "commands/_chat.py",
     "commands/_complete.py",
     "commands/_recommend.py",
     "commands/_update.py",
@@ -103,7 +102,6 @@ _MODULES_THAT_CATCH = {
     "main.py",
     "commands/_account.py",
     "commands/_auth.py",
-    "commands/_chat.py",
     "commands/_complete.py",
     "commands/_preferences.py",
     "commands/_recommend.py",
@@ -284,8 +282,8 @@ class TestNoCliModuleDisclosesAFaultOutsideTheFunnel:
         """Binding nothing exempts a handler from disclosure, not from the funnel.
 
         Reported: ``--verbose`` is documented as a promise the whole CLI keeps,
-        and ``chat send`` and ``auth connect --source gog`` answer it with the
-        same generic line either way.
+        and ``auth connect --source gog`` answered it with the same generic
+        line either way.
         """
         assert _refusals_the_funnel_should_own(_TREES[module]) == set()
 
@@ -435,7 +433,7 @@ class TestTheCliDisclosureSweepFailsOnANewRawSink:
 
     @pytest.mark.parametrize("funnel", sorted(_FUNNELS))
     def test_either_funnel_spelling_answers_the_handler(self, funnel: str) -> None:
-        """``chat start`` prints and keeps going, so it calls the other one."""
+        """A loop that must keep going calls the reporting half instead."""
         tree = self._handler(f"{funnel}(ctx, MESSAGE, error)")
 
         assert _handlers_that_say_nothing(tree) == set()

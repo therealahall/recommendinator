@@ -1,9 +1,9 @@
 """The recommendation record the engine emits and every consumer reads.
 
-One declared shape for all three producer paths in
-:mod:`src.recommendations.engine` — the scored path, the LLM-only path and the
-library fallback — so a path with nothing to say about references, blurbs or
-per-scorer rows says so with an empty default instead of a missing key.
+One declared shape for both producer paths in
+:mod:`src.recommendations.engine` — the scored path and the library fallback —
+so a path with nothing to say about references or per-scorer rows says so with
+an empty default instead of a missing key.
 """
 
 from dataclasses import dataclass, field
@@ -25,7 +25,6 @@ class RecommendationPayload(TypedDict):
     author: str | None
     score: float
     reasoning: str
-    llm_reasoning: str | None
     score_breakdown: dict[str, float]
     variety_penalty: float
 
@@ -45,7 +44,6 @@ class Recommendation:
             finished).
         contributing_items: Consumed items cited as the reason for this pick.
         adaptations: Consumed items this candidate adapts across media.
-        llm_reasoning: LLM blurb, ``None`` until one is generated.
     """
 
     item: ContentItem
@@ -55,7 +53,6 @@ class Recommendation:
     variety_penalty: float = 0.0
     contributing_items: list[ContentItem] = field(default_factory=list)
     adaptations: list[ContentItem] = field(default_factory=list)
-    llm_reasoning: str | None = None
 
     def to_payload(self) -> RecommendationPayload:
         """Serialise to the shared CLI/web JSON shape.
@@ -70,7 +67,6 @@ class Recommendation:
             "author": self.item.author,
             "score": self.score,
             "reasoning": self.reasoning,
-            "llm_reasoning": self.llm_reasoning,
             "score_breakdown": self.score_breakdown,
             "variety_penalty": self.variety_penalty,
         }

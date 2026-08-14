@@ -27,7 +27,6 @@ export interface RecommendationResponse {
   author: string | null
   score: number
   reasoning: string
-  llm_reasoning: string | null
   score_breakdown: Record<string, number>
   variety_penalty: number
 }
@@ -77,12 +76,6 @@ export interface PasswordChangeRequest {
 
 // --- Status ---
 
-export interface FeaturesStatus {
-  ai_enabled: boolean
-  embeddings_enabled: boolean
-  llm_reasoning_enabled: boolean
-}
-
 export interface RecommendationsConfig {
   max_count: number
   default_count: number
@@ -92,7 +85,6 @@ export interface StatusResponse {
   status: string
   version: string
   components: Record<string, boolean>
-  features: FeaturesStatus
   recommendations_config: RecommendationsConfig
 }
 
@@ -251,41 +243,7 @@ export interface ThemeResponse {
   theme_type: string
 }
 
-// --- Chat ---
-
-export interface ChatRequest {
-  user_id: number
-  message: string
-  content_type?: string
-}
-
-export interface MessageResponse {
-  id: number
-  role: string
-  content: string
-  tool_calls: Record<string, unknown>[] | null
-  created_at: string
-}
-
-export interface MemoryResponse {
-  id: number
-  memory_text: string
-  memory_type: string
-  confidence: number
-  is_active: boolean
-  source: string
-  created_at: string
-}
-
-export interface MemoryCreateRequest {
-  user_id: number
-  memory_text: string
-}
-
-export interface MemoryUpdateRequest {
-  memory_text?: string
-  is_active?: boolean
-}
+// --- Preference profile ---
 
 export interface ProfileResponse {
   user_id: number
@@ -295,16 +253,6 @@ export interface ProfileResponse {
   cross_media_patterns: string[]
   generated_at: string | null
 }
-
-// --- SSE Chunk Types ---
-
-export type SseChunk =
-  | { type: 'text'; content: string }
-  | { type: 'tool_call'; tool: string; params: Record<string, unknown> }
-  | { type: 'tool_result'; tool: string; result: Record<string, unknown> }
-  | { type: 'memory'; content: string }
-  | { type: 'done' }
-  | { type: 'error'; content: string }
 
 // --- Auth ---
 

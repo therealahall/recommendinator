@@ -56,13 +56,6 @@ function isActive(name: string): boolean {
         </svg>
         Library
       </button>
-      <!-- Chat (AI only) -->
-      <button v-if="app.chatEnabled" class="nav-item" :class="{ active: isActive('chat') }" :aria-current="isActive('chat') ? 'page' : undefined" @click="navigate('chat')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        Chat
-      </button>
       <!-- Data -->
       <button class="nav-item" :class="{ active: isActive('data') }" :aria-current="isActive('data') ? 'page' : undefined" @click="navigate('data')">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

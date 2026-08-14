@@ -12,10 +12,6 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
-vi.mock('@/composables/useSse', () => ({
-  readSseStream: vi.fn(),
-}))
-
 describe('RecControls', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -93,41 +89,17 @@ describe('RecControls', () => {
     expect(genBtn.exists()).toBe(true)
   })
 
-  it('hides AI Recommendations button when AI reasoning is disabled', () => {
-    const wrapper = mount(RecControls)
-
-    expect(wrapper.text()).not.toContain('AI Recommendations')
-  })
-
-  it('shows AI Recommendations button when AI reasoning is enabled', () => {
-    const app = useAppStore()
-    app.features.ai_enabled = true
-    app.features.llm_reasoning_enabled = true
-
-    const wrapper = mount(RecControls)
-
-    const aiBtn = wrapper.findAll('.btn').find(b => b.text().includes('AI'))
-    expect(aiBtn).toBeDefined()
-  })
-
-  it('disables buttons when loading', () => {
+  it('disables Generate when loading', () => {
     const recs = useRecommendationsStore()
     recs.loading = true
-
-    const app = useAppStore()
-    app.features.ai_enabled = true
-    app.features.llm_reasoning_enabled = true
 
     const wrapper = mount(RecControls)
 
     const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')!
     expect(genBtn.attributes('disabled')).toBeDefined()
-
-    const aiBtn = wrapper.findAll('.btn').find(b => b.text().includes('AI'))!
-    expect(aiBtn.attributes('disabled')).toBeDefined()
   })
 
-  it('calls fetch with false on Generate click', async () => {
+  it('calls fetch on Generate click', async () => {
     const recs = useRecommendationsStore()
     recs.fetch = vi.fn()
 
@@ -136,23 +108,7 @@ describe('RecControls', () => {
     const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')!
     await genBtn.trigger('click')
 
-    expect(recs.fetch).toHaveBeenCalledWith(false)
-  })
-
-  it('calls fetch with true on AI Recommendations click', async () => {
-    const recs = useRecommendationsStore()
-    recs.fetch = vi.fn()
-
-    const app = useAppStore()
-    app.features.ai_enabled = true
-    app.features.llm_reasoning_enabled = true
-
-    const wrapper = mount(RecControls)
-
-    const aiBtn = wrapper.findAll('.btn').find(b => b.text().includes('AI'))!
-    await aiBtn.trigger('click')
-
-    expect(recs.fetch).toHaveBeenCalledWith(true)
+    expect(recs.fetch).toHaveBeenCalled()
   })
 
   it('renders TypeSelect for mobile with no All option', () => {
@@ -236,22 +192,14 @@ describe('RecControls layout regression (issue #58)', () => {
   })
 
   it('action buttons live in .toolbar-actions which is a direct child of .rec-toolbar', () => {
-    const app = useAppStore()
-    app.features.ai_enabled = true
-    app.features.llm_reasoning_enabled = true
-
     const wrapper = mount(RecControls)
 
     const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')
-    const aiBtn = wrapper.findAll('.btn').find(b => b.text().includes('AI'))
     expect(genBtn).toBeDefined()
-    expect(aiBtn).toBeDefined()
 
     const actions = genBtn!.element.parentElement
     expect(actions).not.toBeNull()
     expect(actions!.classList.contains('toolbar-actions')).toBe(true)
     expect(actions!.parentElement?.classList.contains('rec-toolbar')).toBe(true)
-
-    expect(aiBtn!.element.parentElement).toBe(actions)
   })
 })

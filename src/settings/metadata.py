@@ -128,64 +128,6 @@ def _entry(
 
 
 _REGISTRY: tuple[SettingMetadata, ...] = (
-    # features — capability gates that decide subsystem loading (restart_required).
-    _entry(
-        "features.ai_enabled",
-        label="AI features",
-        help="Master toggle for all AI features; when off, only content-based and rule-based scoring is used.",
-        type="bool",
-        default=False,
-        restart_required=True,
-    ),
-    _entry(
-        "features.embeddings_enabled",
-        label="Vector embeddings",
-        help="Enable ChromaDB semantic-similarity embeddings (requires AI features).",
-        type="bool",
-        default=False,
-        restart_required=True,
-    ),
-    _entry(
-        "features.llm_reasoning_enabled",
-        label="LLM reasoning",
-        help="Use Ollama to generate natural-language recommendation explanations (requires AI features).",
-        type="bool",
-        default=False,
-        restart_required=True,
-    ),
-    # ollama
-    _entry(
-        "ollama.base_url",
-        label="Ollama base URL",
-        help="Base URL of the Ollama server: scheme://host[:port] on a loopback, private-network or single-label host (http://ollama:11434, http://192.168.1.5:11434). A host beyond your network would receive every prompt, so it can only be set in config.yaml.",
-        type="string",
-        default="http://ollama:11434",
-        # No pattern: the host rule is a category check (see
-        # _validated_ollama_base_url), and a regex claiming to be it would
-        # under-reject while looking authoritative.
-        validation=Validation(max_length=255),
-    ),
-    _entry(
-        "ollama.model",
-        label="Recommendation model",
-        help="Ollama model used for recommendation text generation.",
-        type="string",
-        default="mistral:7b",
-    ),
-    _entry(
-        "ollama.embedding_model",
-        label="Embedding model",
-        help="Ollama model used to generate embeddings.",
-        type="string",
-        default="nomic-embed-text",
-    ),
-    _entry(
-        "ollama.conversation_model",
-        label="Conversation model",
-        help="Ollama model for chat; falls back to the recommendation model when empty.",
-        type="string",
-        default="",
-    ),
     # recommendations
     _entry(
         "recommendations.default_count",
@@ -252,14 +194,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         validation=Validation(min=0.0),
     ),
     _entry(
-        "recommendations.scorer_weights.semantic_similarity",
-        label="Semantic similarity weight",
-        help="Weight for embedding similarity (0 disables); only active with AI features.",
-        type="float",
-        default=1.5,
-        validation=Validation(min=0.0),
-    ),
-    _entry(
         "recommendations.scorer_weights.content_length",
         label="Content length weight",
         help="Soft penalty weight for items not matching length preferences (0 disables).",
@@ -298,94 +232,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         type="float",
         default=1.0,
         validation=Validation(min=0.0),
-    ),
-    # conversation
-    _entry(
-        "conversation.enabled",
-        label="Chat enabled",
-        help="Enable the conversational chat interface (requires AI features).",
-        type="bool",
-        default=True,
-    ),
-    _entry(
-        "conversation.max_history_messages",
-        label="Max history messages",
-        help="Maximum conversation messages kept in context.",
-        type="int",
-        default=50,
-        validation=Validation(min=1),
-    ),
-    _entry(
-        "conversation.memory_extraction_enabled",
-        label="Memory extraction",
-        help="Automatically extract memories and preferences from conversations.",
-        type="bool",
-        default=True,
-    ),
-    _entry(
-        "conversation.profile_regeneration_interval",
-        label="Profile regeneration interval",
-        help="Hours between automatic preference-profile regeneration (0 disables).",
-        type="int",
-        default=24,
-        validation=Validation(min=0),
-    ),
-    _entry(
-        "conversation.llm.temperature",
-        label="Temperature",
-        help="Sampling temperature for chat responses (higher is more creative).",
-        type="float",
-        default=0.7,
-        validation=Validation(min=0.0, max=2.0),
-    ),
-    _entry(
-        "conversation.llm.max_tokens",
-        label="Max tokens",
-        help="Maximum tokens generated in a chat response.",
-        type="int",
-        default=2000,
-        validation=Validation(min=1),
-    ),
-    _entry(
-        "conversation.llm.context_window_size",
-        label="Context window size",
-        help="Ollama context window (num_ctx) for chat; 0 uses the model's default.",
-        type="int",
-        # Bounded above deliberately: this becomes Ollama's num_ctx, which sizes
-        # the KV cache, so an unbounded value set over the network could OOM the
-        # server. 131072 covers the largest context length in common models.
-        default=0,
-        validation=Validation(min=0, max=131072),
-    ),
-    _entry(
-        "conversation.context.max_relevant_items",
-        label="Max relevant items",
-        help="Maximum items retrieved via semantic search for chat context.",
-        type="int",
-        default=10,
-        validation=Validation(min=1),
-    ),
-    _entry(
-        "conversation.context.max_unconsumed_items",
-        label="Max backlog items",
-        help="Maximum unconsumed/backlog items included in chat context.",
-        type="int",
-        default=20,
-        validation=Validation(min=0),
-    ),
-    _entry(
-        "conversation.context.include_algorithmic_recs",
-        label="Include recommendations in context",
-        help="Include algorithmic recommendations in chat context.",
-        type="bool",
-        default=True,
-    ),
-    _entry(
-        "conversation.context.compact_mode",
-        label="Compact mode",
-        help="Reduce prompt size for small (3B) models via a condensed context.",
-        type="bool",
-        default=False,
     ),
     # sync
     _entry(

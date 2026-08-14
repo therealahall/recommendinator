@@ -5,13 +5,9 @@ import ScoringPrefs from './ScoringPrefs.vue'
 import ScorerSlider from '@/components/atoms/ScorerSlider.vue'
 import {
   usePreferencesStore,
+  SCORER_KEYS,
   VARIETY_PENALTY_TOOLTIP,
 } from '@/stores/preferences'
-import { useAppStore } from '@/stores/app'
-
-function labelStartsWith(wrapper: ReturnType<typeof mount>, text: string): boolean {
-  return wrapper.findAll('.slider-label').some((labelEl) => labelEl.text().startsWith(text))
-}
 
 describe('ScoringPrefs', () => {
   beforeEach(() => {
@@ -33,24 +29,13 @@ describe('ScoringPrefs', () => {
     expect(wrapper.text()).not.toContain('Toggles')
   })
 
-  it('renders 10 scorer sliders plus 1 variety slider by default (AI off)', () => {
+  it('renders one slider per scorer plus the variety slider', () => {
     const wrapper = mount(ScoringPrefs)
 
-    // 10 scorer sliders (semantic_similarity is gated off when AI is disabled)
-    // plus 1 variety slider = 11.
     const sliders = wrapper.findAll('input[type="range"]')
-    expect(sliders).toHaveLength(11)
-    // Every slider now uses the shared 0–5 ScorerSlider scale.
+    expect(sliders).toHaveLength(SCORER_KEYS.length + 1)
+    // Every slider uses the shared 0–5 ScorerSlider scale.
     expect(sliders.every((s) => s.attributes('max') === '5')).toBe(true)
-  })
-
-  it('shows the semantic_similarity slider only when AI + embeddings are on', () => {
-    expect(labelStartsWith(mount(ScoringPrefs), 'Semantic Similarity')).toBe(false)
-
-    const app = useAppStore()
-    app.features.ai_enabled = true
-    app.features.embeddings_enabled = true
-    expect(labelStartsWith(mount(ScoringPrefs), 'Semantic Similarity')).toBe(true)
   })
 
   it('renders the variety slider as a 0–5 ScorerSlider after the scorer weights', () => {

@@ -22,7 +22,7 @@ class TestEnrichmentSchema:
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_enrichment_status_table_created(
         self, storage_manager: StorageManager
@@ -104,7 +104,7 @@ class TestEnrichmentStatusMethods:
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     @pytest.fixture
     def sample_item(self) -> ContentItem:
@@ -226,7 +226,7 @@ class TestGetItemsNeedingEnrichment:
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_get_items_no_status(self, storage_manager: StorageManager) -> None:
         """Test getting items with no enrichment status (new items)."""
@@ -376,7 +376,7 @@ class TestCountItemsNeedingEnrichment:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_count_empty_database_returns_zero(
         self, storage_manager: StorageManager
@@ -503,7 +503,7 @@ class TestEnrichmentStats:
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_stats_empty_database(self, storage_manager: StorageManager) -> None:
         """Test stats on empty database."""
@@ -628,7 +628,7 @@ class TestTagsAndDescriptionStorage:
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_save_and_load_book_with_tags(
         self, storage_manager: StorageManager
@@ -762,7 +762,7 @@ class TestEnrichmentFilter:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def _save(self, storage: StorageManager, external_id: str) -> int:
         return storage.save_content_item(
@@ -892,7 +892,7 @@ class TestManualMetadataEdit:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     def test_manual_edit_persists_and_marks_enriched(
         self, storage_manager: StorageManager
@@ -1158,7 +1158,7 @@ class TestGameLengthAfterEnrichment:
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
-        return StorageManager(sqlite_path=db_path, ai_enabled=False)
+        return StorageManager(sqlite_path=db_path)
 
     @staticmethod
     def _steam_game() -> ContentItem:

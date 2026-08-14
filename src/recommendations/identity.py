@@ -14,8 +14,7 @@ def library_key(item: ContentItem) -> str:
     """Return the identity of the library row *item* came from.
 
     Season-level candidates expanded from a TV show share their parent's row
-    and therefore share this key: the row is what carries the embedding, and
-    with it the similarity score.
+    and therefore share this key.
 
     Args:
         item: A candidate or a library item.

@@ -265,16 +265,9 @@ class TestTheSweepReadsWhateverGitHubWouldRun:
 
 _MODULE = sys.modules[__name__]
 
-# Only these three are held to naming no cause for the pin: a page about
-# ChromaDB says its name on lines about other things.
-_PIN_RATIONALE_DOCUMENTS = ("CLAUDE.md", "CONTRIBUTING.md", "docs/TROUBLESHOOTING.md")
-
 # `Python 3.11`, `python3.11`, `**Python**: 3.11+`. The trailing `+` is the claim
 # that matters most: it advertises every later minor at once.
 _MINOR_CLAIM = re.compile(r"[Pp]ython\*{0,2}[:\s]*(?P<version>3\.\d+)(?P<open>\+)?")
-
-# Nothing else here names hnswlib, and the pin is not its doing.
-_CHROMADB_ATTRIBUTION = re.compile(r"chromadb|hnswlib", re.IGNORECASE)
 
 # Written by the release tooling, so a claim in one is nobody's to edit.
 _UNEDITABLE = frozenset({"CHANGELOG.md"})
@@ -523,18 +516,6 @@ class TestNoDocumentClaimsAnInterpreterThePackageRefuses:
 
         assert not claims, f"{len(claims)} unsupported claim(s): {claims}"
 
-    @pytest.mark.parametrize("document", _PIN_RATIONALE_DOCUMENTS)
-    def test_no_page_attributes_the_pin_to_chromadb(self, document: str) -> None:
-        """A declined CI matrix is the reason; ChromaDB ships abi3 wheels. The
-        wrong cause sends whoever wants 3.12 off to fix the wrong thing."""
-        attributed = [
-            line
-            for line in (_REPO_ROOT / document).read_text(encoding="utf-8").splitlines()
-            if _CHROMADB_ATTRIBUTION.search(line) and _MINOR_CLAIM.search(line)
-        ]
-
-        assert not attributed, f"{document} blames ChromaDB: {attributed}"
-
 
 # Enumerated, not swept: httpx reaches the suite through starlette's TestClient,
 # so no scan of this tree's own imports would name it.
@@ -659,28 +640,28 @@ class TestTheLockResolvesEveryFloorTheDeclarationsAskFor:
             pytest.param(
                 'dependencies = ["cryptography>=999.0.0"]\n'
                 "[project.optional-dependencies]\n"
-                'dev = ["pytest"]\nai = ["ollama"]\n',
+                'dev = ["pytest"]\ndocs = ["pytest"]\n',
                 "cryptography>=999.0.0: lock has ",
                 id="floor-above-the-locked-version",
             ),
             pytest.param(
                 'dependencies = ["not-in-the-lock>=1.0"]\n'
                 "[project.optional-dependencies]\n"
-                'dev = ["pytest"]\nai = ["ollama"]\n',
+                'dev = ["pytest"]\ndocs = ["pytest"]\n',
                 "not-in-the-lock>=1.0: no lock entry",
                 id="declared-and-never-locked",
             ),
             pytest.param(
                 'dependencies = ["pytest"]\n'
                 "[project.optional-dependencies]\n"
-                'dev = []\nai = ["ollama"]\n',
+                'dev = []\ndocs = ["pytest"]\n',
                 "['dev'] declares nothing to sweep",
                 id="one-group-emptied",
             ),
             pytest.param(
                 'dependencies = ["pytest"]\n'
                 "[project.optional-dependencies]\n"
-                'dev = ["pytest"]\nai = ["ollama"]\ndocs = ["not-in-the-lock>=1.0"]\n',
+                'dev = ["pytest"]\ndocs = ["not-in-the-lock>=1.0"]\n',
                 "not-in-the-lock>=1.0: no lock entry",
                 id="a-group-this-file-never-names",
             ),
@@ -712,14 +693,14 @@ class TestTheLockResolvesEveryFloorTheDeclarationsAskFor:
             "[project]\n"
             'dependencies = ["stand-in>=1.0"]\n'
             "[project.optional-dependencies]\n"
-            'dev = ["stand-in-dev>=1.0rc1"]\nai = ["stand-in-ai>=1.0"]\n',
+            'dev = ["stand-in-dev>=1.0rc1"]\ndocs = ["stand-in-docs>=1.0"]\n',
             encoding="utf-8",
         )
         lock = tmp_path / "uv.lock"
         lock.write_text(
             '[[package]]\nname = "stand-in"\nversion = "2.0.0rc1"\n'
             '[[package]]\nname = "stand-in-dev"\nversion = "1.0rc1"\n'
-            '[[package]]\nname = "stand-in-ai"\nversion = "1.0"\n',
+            '[[package]]\nname = "stand-in-docs"\nversion = "1.0"\n',
             encoding="utf-8",
         )
         monkeypatch.setattr(_MODULE, "PYPROJECT", copy)

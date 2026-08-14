@@ -8,10 +8,9 @@ The engine scores every candidate through weighted factors. Setting a weight to
 |------------|----------------------|---------|
 | `genre_match` | Boosts genres you rate highly, and sinks ones you rate badly | 2.0 |
 | `creator_match` | Prefers authors, directors and developers you have enjoyed, and demotes ones you have not | 1.5 |
-| `tag_overlap` | Threshold tag matching, bridged by semantic genre clusters | 1.0 |
+| `tag_overlap` | Threshold tag matching, bridged by thematic genre clusters | 1.0 |
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
-| `semantic_similarity` | Conceptually similar content, active only when `features.ai_enabled` is true and the vector search finds something | 1.5 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
 | `continuation` | Boosts items you are actively consuming. Dropped from the pipeline when you have none | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |
@@ -123,8 +122,7 @@ The show's next season is a series continuation, so it takes the softened
 penalty.
 
 Completions are ordered by completion date, so something you finish today
-outranks an import dated years ago. Chat is the only surface that can name a
-date. Which surface stamps which is in
+outranks an import dated years ago. Which surface stamps which is in
 [ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
 
 The date is the calendar day in the host's timezone, not UTC. See
@@ -135,8 +133,8 @@ of two dates and a corrected local date is the earlier one.
 ## Ignored items
 
 An ignored item stays in your library and shapes nothing you are recommended. It
-never feeds preference analysis, scoring, similarity search or the "since you
-enjoyed X" references, is never offered as a candidate, and claims no variety
+never feeds preference analysis, scoring or the "since you enjoyed X"
+references, is never offered as a candidate, and claims no variety
 rung. It still counts as consumed for series ordering, one of the two
 consumption facts spelled out at the end of this page. Ignore it from the web
 Library or Recommendations page, from `library ignore --id <id>`, or with
@@ -151,8 +149,7 @@ with a duplicate row never un-ignores it, because an ignore on either row wins.
 Completed-but-unrated items are excluded from the taste *signal* the same way,
 since something you finished but never rated says nothing about your taste. They
 still appear as candidates, a backlog being unrated by nature. The filtering
-lives in the storage layer's signal-set accessor, so the ranking engine, chat
-and the web's streaming blurbs all respect it.
+lives in the storage layer's signal-set accessor, so every caller respects it.
 
 The two deliberate exceptions are the consumption facts. Series *ordering* asks
 whether you have consumed an earlier entry, which is independent of rating and

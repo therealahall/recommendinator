@@ -8,9 +8,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.llm.client import OllamaClient
-from src.llm.embeddings import EmbeddingGenerator
-from src.llm.recommendations import RecommendationGenerator
 from src.models.content import (
     ConsumptionStatus,
     ContentItem,
@@ -35,7 +32,6 @@ from src.recommendations.variety import (
     VARIETY_TOP_PENALTY,
 )
 from src.storage.manager import StorageManager
-from src.storage.vector_db import VectorDB
 from src.utils.series import expand_tv_shows_to_seasons
 from tests.factories import make_item
 
@@ -51,9 +47,6 @@ def mock_storage():
     accessors' own filtering is covered in ``tests/test_storage_manager.py``.
     """
     storage = Mock(spec=StorageManager)
-    storage.vector_db = Mock(spec=VectorDB)
-    storage.vector_db.has_embedding = Mock(return_value=False)
-    storage.vector_db.get_embedding = Mock(return_value=None)
 
     # Each fake narrows get_completed_items itself, the way the real accessors
     # do, so a call recorded on one is a call the engine made and not one its
@@ -84,50 +77,27 @@ def mock_storage():
 
 
 @pytest.fixture
-def mock_embedding_gen():
-    """Create a mock embedding generator."""
-    embedding_gen = Mock(spec=EmbeddingGenerator)
-    embedding_gen.generate_content_embedding = Mock(return_value=[0.1] * 768)
-    return embedding_gen
-
-
-@pytest.fixture
-def engine(mock_storage, mock_embedding_gen):
-    """Create a recommendation engine with mocked dependencies (AI mode)."""
-    return RecommendationEngine(
-        storage_manager=mock_storage,
-        embedding_generator=mock_embedding_gen,
-        recommendation_generator=None,
-        min_rating=4,
-    )
+def engine(mock_storage):
+    """Create a recommendation engine with mocked dependencies."""
+    return RecommendationEngine(storage_manager=mock_storage, min_rating=4)
 
 
 @pytest.fixture
 def non_ai_engine(mock_storage):
-    """Create a recommendation engine without embedding generator (non-AI mode)."""
-    return RecommendationEngine(
-        storage_manager=mock_storage,
-        embedding_generator=None,
-        recommendation_generator=None,
-        min_rating=4,
-    )
+    """The same engine under the name the non-AI cases below ask for."""
+    return RecommendationEngine(storage_manager=mock_storage, min_rating=4)
 
 
 @pytest.fixture
 def real_storage(tmp_path):
     """Create a real StorageManager backed by a temporary SQLite database."""
-    return StorageManager(tmp_path / "engine_signal.db", ai_enabled=False)
+    return StorageManager(tmp_path / "engine_signal.db")
 
 
 @pytest.fixture
 def real_engine(real_storage):
-    """Create a non-AI RecommendationEngine over real storage."""
-    return RecommendationEngine(
-        storage_manager=real_storage,
-        embedding_generator=None,
-        recommendation_generator=None,
-        min_rating=4,
-    )
+    """Create a RecommendationEngine over real storage."""
+    return RecommendationEngine(storage_manager=real_storage, min_rating=4)
 
 
 def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngine:
@@ -145,39 +115,6 @@ def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngin
     engine = RecommendationEngine.__new__(RecommendationEngine)
     engine.rng = rng if rng is not None else random.Random()
     return engine
-
-
-def _recommendation_of(item: ContentItem) -> Recommendation:
-    """A pipeline recommendation of *item*, for the blurb helpers.
-
-    Those helpers read the item and its references only, so the score and the
-    reasoning are placeholders and the references stay empty.
-    """
-    return Recommendation(item=item, score=0.9, reasoning="Pipeline")
-
-
-def _ai_engine_over_real_storage(tmp_path, mock_embedding_gen, db_name):
-    """Build an AI-mode engine over real storage with a stubbed vector DB.
-
-    Args:
-        tmp_path: Directory for the SQLite file.
-        mock_embedding_gen: Stand-in embedding generator.
-        db_name: File name for the SQLite database.
-
-    Returns:
-        The engine and the storage manager behind it.
-    """
-    storage = StorageManager(tmp_path / db_name, ai_enabled=False)
-    storage.vector_db = Mock(spec=VectorDB)
-    storage.vector_db.has_embedding = Mock(return_value=False)
-    storage.vector_db.get_embedding = Mock(return_value=None)
-    engine = RecommendationEngine(
-        storage_manager=storage,
-        embedding_generator=mock_embedding_gen,
-        recommendation_generator=None,
-        min_rating=4,
-    )
-    return engine, storage
 
 
 def _save_book(
@@ -324,221 +261,11 @@ class TestSingleWeightingStageRegression:
         assert scores["Dune"] > scores["Solaris"]
 
 
-# ---------------------------------------------------------------------------
-# AI engine tests (engine with embedding_generator)
-# ---------------------------------------------------------------------------
-
-
-class TestAIEngine:
-    """Tests for the recommendation engine with embeddings enabled."""
-
-    def test_cross_content_type_preferences(
-        self, engine, mock_storage, mock_embedding_gen
-    ):
-        """Test that preferences are extracted from all content types."""
-        sci_fi_book = ContentItem(
-            id="1",
-            title="Dune",
-            author="Frank Herbert",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        sci_fi_game = ContentItem(
-            id="2",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Action", "RPG", "Science Fiction"]},
-        )
-
-        sci_fi_tv = ContentItem(
-            id="3",
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        unconsumed_game = ContentItem(
-            id="4",
-            title="Mass Effect 2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Action", "RPG", "Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [sci_fi_book, sci_fi_game, sci_fi_tv]
-                if content_type is None
-                else ([sci_fi_game] if content_type == ContentType.VIDEO_GAME else [])
-            )
-        )
-
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_game])
-
-        mock_storage.search_similar = Mock(
-            return_value=[
-                {
-                    "content_id": "4",
-                    "score": 0.85,
-                    "metadata": {"title": "Mass Effect 2"},
-                }
-            ]
-        )
-
-        mock_storage.get_content_items = Mock(return_value=[unconsumed_game])
-        mock_storage.vector_db.has_embedding = Mock(return_value=False)
-
-        engine.generate_recommendations(content_type=ContentType.VIDEO_GAME, count=1)
-
-        assert mock_storage.get_completed_items.call_count >= 1
-        call_args = mock_storage.get_completed_items.call_args_list
-        assert any(
-            call.kwargs.get("content_type") is None for call in call_args
-        ), "Should fetch consumed items from all content types"
-
-    def test_cross_content_type_similarity(
-        self, engine, mock_storage, mock_embedding_gen
-    ):
-        """Test that similarity search uses reference items from all content types."""
-        sci_fi_book = ContentItem(
-            id="1",
-            title="Dune",
-            author="Frank Herbert",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        sci_fi_game = ContentItem(
-            id="2",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        unconsumed_tv = ContentItem(
-            id="3",
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [sci_fi_book, sci_fi_game] if content_type is None else []
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_tv])
-        mock_storage.search_similar = Mock(
-            return_value=[
-                {
-                    "content_id": "3",
-                    "score": 0.9,
-                    "metadata": {"title": "The Expanse"},
-                }
-            ]
-        )
-        mock_storage.get_content_items = Mock(return_value=[unconsumed_tv])
-        mock_storage.vector_db.has_embedding = Mock(return_value=False)
-
-        engine.generate_recommendations(content_type=ContentType.TV_SHOW, count=1)
-
-        assert mock_storage.search_similar.called
-        assert mock_embedding_gen.generate_content_embedding.call_count >= 1
-
-    def test_cold_start_with_other_content_types(self, engine, mock_storage):
-        """Test cold start when requesting type has no items but other types do."""
-        sci_fi_book = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [sci_fi_book] if content_type is None else []
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.VIDEO_GAME, count=5
-        )
-
-        assert recommendations == []
-
-    def test_reasoning_mentions_cross_content_type(
-        self, engine, mock_storage, mock_embedding_gen
-    ):
-        """Test that reasoning mentions cross-content-type preferences."""
-        sci_fi_book = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        unconsumed_game = ContentItem(
-            id="2",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [sci_fi_book] if content_type is None else []
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_game])
-        mock_storage.search_similar = Mock(
-            return_value=[
-                {
-                    "content_id": "2",
-                    "score": 0.8,
-                    "metadata": {"title": "Mass Effect"},
-                }
-            ]
-        )
-        mock_storage.get_content_items = Mock(return_value=[unconsumed_game])
-        mock_storage.vector_db.has_embedding = Mock(return_value=False)
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.VIDEO_GAME, count=1
-        )
-
-        assert len(recommendations) == 1
-        reasoning = recommendations[0].reasoning
-        # Reasoning should mention the specific cross-type item that contributed
-        assert "dune" in reasoning.lower()
-
-
-# ---------------------------------------------------------------------------
-# Non-AI engine tests (Phase 3)
-# ---------------------------------------------------------------------------
-
-
 class TestNonAIEngine:
-    """Tests for the recommendation engine operating without embeddings."""
+    """Tests for the recommendation engine's scoring pipeline."""
 
     def test_non_ai_engine_produces_recommendations(self, non_ai_engine, mock_storage):
-        """Engine with embedding_generator=None still produces ranked recs."""
+        """The pipeline alone produces ranked recommendations."""
         consumed_book = ContentItem(
             id="1",
             title="Dune",
@@ -1634,7 +1361,6 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert recommendations[0].variety_penalty == 0.0
         assert recommendations[0].contributing_items == []
         assert recommendations[0].adaptations == []
-        assert recommendations[0].llm_reasoning is None
 
 
 class TestCollapseDuplicateDbIds:
@@ -2289,8 +2015,6 @@ class TestSeededReferenceOrderRegression:
         """
         engine = RecommendationEngine(
             storage_manager=storage,
-            embedding_generator=None,
-            recommendation_generator=None,
             min_rating=4,
             rng=random.Random(seed) if seed is not None else None,
         )
@@ -2375,8 +2099,6 @@ class TestSeededReferenceOrderRegression:
         runs = [
             RecommendationEngine(
                 storage_manager=mock_storage,
-                embedding_generator=None,
-                recommendation_generator=None,
                 min_rating=4,
                 rng=random.Random(11),
             ).generate_recommendations(content_type=ContentType.BOOK, count=1)[0]
@@ -3627,149 +3349,6 @@ class TestContinuationScorerExclusion:
         assert "continuation" not in recommendations[0].score_breakdown
 
 
-# ---------------------------------------------------------------------------
-# generate_blurb_for_item tests
-# ---------------------------------------------------------------------------
-
-
-class TestGenerateBlurbForItem:
-    """Tests for RecommendationEngine.generate_blurb_for_item."""
-
-    def test_success_path_returns_blurb(self, mock_storage, mock_embedding_gen) -> None:
-        """generate_blurb_for_item returns blurb text on success."""
-        mock_llm_gen = Mock(spec=RecommendationGenerator)
-        mock_llm_gen.generate_single_blurb.return_value = "A gripping sci-fi epic."
-
-        engine = RecommendationEngine(
-            storage_manager=mock_storage,
-            embedding_generator=mock_embedding_gen,
-            recommendation_generator=mock_llm_gen,
-        )
-
-        item = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        consumed = [
-            ContentItem(
-                id="2",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-        ]
-
-        result = engine.generate_blurb_for_item(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=consumed,
-        )
-
-        assert result == "A gripping sci-fi epic."
-        mock_llm_gen.generate_single_blurb.assert_called_once_with(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=consumed,
-            references=None,
-        )
-
-    def test_failure_returns_none(self, mock_storage, mock_embedding_gen) -> None:
-        """generate_blurb_for_item returns None when LLM raises."""
-        mock_llm_gen = Mock(spec=RecommendationGenerator)
-        mock_llm_gen.generate_single_blurb.side_effect = RuntimeError("LLM down")
-
-        engine = RecommendationEngine(
-            storage_manager=mock_storage,
-            embedding_generator=mock_embedding_gen,
-            recommendation_generator=mock_llm_gen,
-        )
-
-        item = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        result = engine.generate_blurb_for_item(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=[],
-        )
-
-        assert result is None
-
-    def test_references_forwarded_to_llm(
-        self, mock_storage, mock_embedding_gen
-    ) -> None:
-        """generate_blurb_for_item forwards references to the LLM generator."""
-        mock_llm_gen = Mock(spec=RecommendationGenerator)
-        mock_llm_gen.generate_single_blurb.return_value = "Blurb with refs."
-
-        engine = RecommendationEngine(
-            storage_manager=mock_storage,
-            embedding_generator=mock_embedding_gen,
-            recommendation_generator=mock_llm_gen,
-        )
-
-        item = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        refs = [
-            ContentItem(
-                id="3",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-        ]
-
-        result = engine.generate_blurb_for_item(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=[],
-            references=refs,
-        )
-
-        assert result == "Blurb with refs."
-        mock_llm_gen.generate_single_blurb.assert_called_once_with(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=[],
-            references=refs,
-        )
-
-    def test_no_llm_returns_none(self, mock_storage, mock_embedding_gen) -> None:
-        """generate_blurb_for_item returns None when no LLM generator."""
-        engine = RecommendationEngine(
-            storage_manager=mock_storage,
-            embedding_generator=mock_embedding_gen,
-            recommendation_generator=None,
-        )
-
-        item = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        result = engine.generate_blurb_for_item(
-            content_type=ContentType.BOOK,
-            item=item,
-            consumed_items=[],
-        )
-
-        assert result is None
-
-
 class TestSameSeriesReferenceExclusionRegression:
     """Regression tests for same-series exclusion in contributing references.
 
@@ -4071,13 +3650,11 @@ class TestInProgressItemsExcludedFromBasisRegression:
     Root cause: `get_completed_items()` correctly includes CURRENTLY_CONSUMING
     so in-progress media still informs preference scoring, but the display
     helpers (now SignalIndex.references_for and SignalIndex.adaptations_of)
-    and the LLM-prompt callsites in _enhance_with_llm had no secondary
-    status filter, so the in-progress items leaked into the user-visible
-    reasoning.
+    had no secondary status filter, so the in-progress items leaked into the
+    user-visible reasoning.
 
-    Fix: the signal index leaves CURRENTLY_CONSUMING items out entirely, and
-    the LLM-prompt callsites skip them, so the "recommended because you liked
-    X" surface only cites completed media.
+    Fix: the signal index leaves CURRENTLY_CONSUMING items out entirely, so the
+    "recommended because you liked X" surface only cites completed media.
     """
 
     def test_contributing_excludes_currently_consuming(self) -> None:
@@ -4154,88 +3731,6 @@ class TestInProgressItemsExcludedFromBasisRegression:
         assert result_ids == {"lotr_book_done"}, (
             "CURRENTLY_CONSUMING items must be excluded from adaptations "
             "while completed adaptations must still appear"
-        )
-
-    def test_llm_blurb_call_excludes_currently_consuming(self) -> None:
-        """LLM blurb context must not include CURRENTLY_CONSUMING items."""
-        engine = _engine_for_helpers()
-        engine.llm_generator = Mock(spec=RecommendationGenerator)
-        engine.llm_generator.generate_blurbs_per_item.return_value = {}
-
-        completed = ContentItem(
-            id="sopranos",
-            title="The Sopranos",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        in_progress = ContentItem(
-            id="the_wire",
-            title="The Wire",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            rating=5,
-        )
-        candidate = ContentItem(
-            id="breaking_bad",
-            title="Breaking Bad",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        engine._enhance_with_llm(
-            recommendations=[_recommendation_of(candidate)],
-            content_type=ContentType.TV_SHOW,
-            all_consumed_items=[completed, in_progress],
-            unconsumed_items=[],
-            count=1,
-            series_tracking={},
-        )
-
-        call_kwargs = engine.llm_generator.generate_blurbs_per_item.call_args.kwargs
-        consumed_passed = call_kwargs["consumed_items"]
-        passed_ids = {item.id for item in consumed_passed}
-        assert passed_ids == {"sopranos"}, (
-            "LLM blurb call must receive only completed items as taste "
-            "context — in-progress items must be filtered out"
-        )
-
-    def test_llm_only_fallback_excludes_currently_consuming(self) -> None:
-        """LLM-only fallback recs must not see CURRENTLY_CONSUMING items."""
-        engine = _engine_for_helpers()
-        engine.llm_generator = Mock(spec=RecommendationGenerator)
-        engine.llm_generator.generate_recommendations.return_value = []
-
-        completed = ContentItem(
-            id="sopranos",
-            title="The Sopranos",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        in_progress = ContentItem(
-            id="the_wire",
-            title="The Wire",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            rating=5,
-        )
-
-        engine._enhance_with_llm(
-            recommendations=[],
-            content_type=ContentType.TV_SHOW,
-            all_consumed_items=[completed, in_progress],
-            unconsumed_items=[],
-            count=5,
-            series_tracking={},
-        )
-
-        call_kwargs = engine.llm_generator.generate_recommendations.call_args.kwargs
-        consumed_passed = call_kwargs["consumed_items"]
-        passed_ids = {item.id for item in consumed_passed}
-        assert passed_ids == {"sopranos"}, (
-            "LLM-only fallback must receive only completed items as taste "
-            "context — in-progress items must be filtered out"
         )
 
 
@@ -4361,80 +3856,6 @@ class TestIgnoredAndUnratedSignalRegression:
         )
 
         assert recs == []
-
-
-class TestSimilaritySeedIgnoredRegression:
-    """Bug reported: ignored completed items seeded AI similarity search.
-
-    Bug reported: in AI mode the similarity seeds (reference items whose
-    embeddings form the query vector) were drawn from the unfiltered consumed
-    set, so an ignored completed item could steer the vector search toward
-    content the user explicitly rejected.
-    Root cause: ``_compute_similarity_scores`` seeded from the consumed set
-    without excluding ignored items, and the hit lookup defaulted to
-    ``include_ignored=True``.
-    Fix: seeds are drawn from ``get_signal_items`` (completed, rated, not
-    ignored) and ``find_similar`` is called with ``include_ignored=False``.
-    This exercises the AI path (embedding_generator set) that the non-AI
-    ``real_engine`` regressions cannot reach.
-    """
-
-    def test_ignored_completed_item_not_used_as_similarity_seed_regression(
-        self, engine, mock_storage, mock_embedding_gen
-    ):
-        """An ignored completed item never has its embedding generated as a seed."""
-        liked = ContentItem(
-            id="liked",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-        ignored = ContentItem(
-            id="ign",
-            title="Ignored Favorite",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            ignored=True,
-            metadata={"genre": "Science Fiction"},
-        )
-        candidate = ContentItem(
-            id="cand",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [liked, ignored]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
-        mock_storage.search_similar = Mock(
-            return_value=[{"content_id": "cand", "score": 0.9}]
-        )
-        mock_storage.get_items_by_embedding_keys = Mock(
-            return_value={"cand": candidate}
-        )
-
-        engine.generate_recommendations(content_type=ContentType.BOOK, count=1)
-
-        # find_similar embeds each reference (seed) item; the ignored item must
-        # never be embedded, while the rated signal item is used as a seed.
-        seeded_titles = {
-            call.args[0].title
-            for call in mock_embedding_gen.generate_content_embedding.call_args_list
-            if call.args
-        }
-        assert "Dune" in seeded_titles
-        assert "Ignored Favorite" not in seeded_titles
-
-        # The similarity hits themselves are resolved without ignored items.
-        assert any(
-            call.kwargs.get("include_ignored") is False
-            for call in mock_storage.get_items_by_embedding_keys.call_args_list
-        )
 
 
 class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
@@ -5434,239 +4855,6 @@ class TestSeasonCandidateIdentityRegression:
         assert recs[0].score_breakdown["series_order"] == 0.8
 
 
-class TestSimilarityForItemsWithoutExternalId:
-    """Bug reported: CSV-imported candidates were ranked as if nothing matched them.
-
-    Bug reported: with AI enabled, the half of a library imported without
-    external ids was systematically demoted — every one of those candidates
-    scored 0.0 for semantic similarity.
-    Root cause: the engine keyed its pre-computed similarity scores on
-    ``ContentItem.id``, so all id-less candidates shared one ``None`` entry,
-    and the lookup resolving vector hits back to items dropped them anyway.
-    Fix: similarity is keyed on the library row the embedding belongs to,
-    which id-less items have and season-expanded candidates share.
-    """
-
-    @staticmethod
-    def _ai_engine(tmp_path, mock_embedding_gen):
-        """Build an AI-mode engine over real storage with a stubbed vector DB."""
-        return _ai_engine_over_real_storage(
-            tmp_path, mock_embedding_gen, "similarity_engine.db"
-        )
-
-    def test_csv_imported_candidate_is_not_zero_scored_regression(
-        self, tmp_path, mock_embedding_gen
-    ):
-        """An id-less candidate scores on semantic similarity like any other."""
-        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
-        _save_book(
-            storage,
-            item_id="seed",
-            title="Dune",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        _save_book(
-            storage, item_id="cand", title="Hyperion", status=ConsumptionStatus.UNREAD
-        )
-        without_id = _save_book(
-            storage, item_id=None, title="CSV Import", status=ConsumptionStatus.UNREAD
-        )
-        storage.vector_db.search_similar.return_value = [
-            {"content_id": "cand", "score": 0.9},
-            {"content_id": f"db_{without_id}", "score": 0.8},
-        ]
-
-        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        by_title = {rec.item.title: rec for rec in recs}
-
-        assert by_title["Hyperion"].score_breakdown["semantic_similarity"] == 0.9
-        assert by_title["CSV Import"].score_breakdown["semantic_similarity"] == 0.8
-
-    def test_two_id_less_candidates_keep_separate_scores_regression(
-        self, tmp_path, mock_embedding_gen
-    ):
-        """Two id-less candidates do not share one similarity entry.
-
-        A library imported entirely from CSV has no external ids at all, so
-        the pair that proves the score map is not collapsing is two id-less
-        candidates given different scores in the same run.
-        """
-        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
-        _save_book(
-            storage,
-            item_id="seed",
-            title="Dune",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        first = _save_book(
-            storage, item_id=None, title="First Import", status=ConsumptionStatus.UNREAD
-        )
-        second = _save_book(
-            storage,
-            item_id=None,
-            title="Second Import",
-            status=ConsumptionStatus.UNREAD,
-        )
-        storage.vector_db.search_similar.return_value = [
-            {"content_id": f"db_{first}", "score": 0.9},
-            {"content_id": f"db_{second}", "score": 0.3},
-        ]
-
-        recs = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-        by_title = {rec.item.title: rec for rec in recs}
-
-        assert by_title["First Import"].score_breakdown["semantic_similarity"] == 0.9
-        assert by_title["Second Import"].score_breakdown["semantic_similarity"] == 0.3
-
-    def test_season_candidate_inherits_show_similarity_regression(
-        self, tmp_path, mock_embedding_gen
-    ):
-        """A season candidate scores on the similarity of the show's row."""
-        engine, storage = self._ai_engine(tmp_path, mock_embedding_gen)
-        storage.save_content_item(
-            ContentItem(
-                id="seed",
-                title="Watched Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-        )
-        show_db_id = storage.save_content_item(
-            ContentItem(
-                id=None,
-                title="Uncharted Depths",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"total_seasons": 2},
-            )
-        )
-        storage.vector_db.search_similar.return_value = [
-            {"content_id": f"db_{show_db_id}", "score": 0.7}
-        ]
-
-        recs = engine.generate_recommendations(
-            content_type=ContentType.TV_SHOW, count=5
-        )
-
-        assert recs[0].item.title == "Uncharted Depths (Season 1)"
-        assert recs[0].score_breakdown["semantic_similarity"] == 0.7
-
-
-class TestConsumedExclusionKeysRegression:
-    """Bug reported: finished CSV imports ate the similarity search's slots.
-
-    Bug reported: on a library imported without external ids, unread books
-    stopped scoring on semantic similarity as the read pile grew.
-    Root cause: the engine excluded the consumed items from the search by
-    ``ContentItem.id``, which is ``None`` for every one of them, so none were
-    excluded and finished items filled the capped result set.
-    Fix: the exclusions are the keys the embeddings were stored under, so an
-    id-less consumed item is excluded by its library row.
-    """
-
-    def test_id_less_consumed_item_is_excluded_by_its_row_regression(
-        self, tmp_path, mock_embedding_gen
-    ):
-        """The search is told to exclude ``db_<row>`` for an id-less item."""
-        engine, storage = _ai_engine_over_real_storage(
-            tmp_path, mock_embedding_gen, "exclusions.db"
-        )
-        consumed_db_id = _save_book(
-            storage,
-            item_id=None,
-            title="Already Read",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        _save_book(
-            storage, item_id="cand", title="Hyperion", status=ConsumptionStatus.UNREAD
-        )
-        engine.similarity_matcher.find_similar = Mock(return_value=[])
-
-        engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
-
-        call_kwargs = engine.similarity_matcher.find_similar.call_args.kwargs
-        assert call_kwargs["exclude_ids"] == [f"db_{consumed_db_id}"]
-
-
-class TestIdlessBlurbIdentityRegression:
-    """Bug reported: AI reasoning never appeared on a CSV-imported library.
-
-    Bug reported: with AI reasoning enabled every card showed the rule-based
-    reasoning and never an LLM blurb, silently.
-    Root cause: the blurb map was written keyed ``item.id or ""`` and read
-    keyed ``item.id``, so an id-less item was stored under ``""`` and looked
-    up under ``None`` — and two id-less items overwrote each other on the way
-    in.
-    Fix: the engine passes a per-candidate key with each blurb request and
-    reads the result back under that same key.
-    """
-
-    @staticmethod
-    def _recommendation(db_id, title):
-        return _recommendation_of(
-            ContentItem(
-                id=None,
-                db_id=db_id,
-                title=title,
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-
-    def test_each_id_less_recommendation_gets_its_own_blurb_regression(self):
-        """Two id-less recommendations each receive their own blurb."""
-        client = Mock(spec=OllamaClient)
-        client.generate_text.side_effect = lambda **kwargs: (
-            "Hyperion blurb"
-            if "Hyperion" in kwargs["prompt"]
-            else "Silent Patient blurb"
-        )
-        engine = _engine_for_helpers()
-        engine.llm_generator = RecommendationGenerator(client)
-        enhanced = engine._enhance_with_llm(
-            recommendations=[
-                self._recommendation(11, "Hyperion"),
-                self._recommendation(12, "The Silent Patient"),
-            ],
-            content_type=ContentType.BOOK,
-            all_consumed_items=[],
-            unconsumed_items=[],
-            count=2,
-            series_tracking={},
-        )
-
-        assert [rec.llm_reasoning for rec in enhanced] == [
-            "Hyperion blurb",
-            "Silent Patient blurb",
-        ]
-
-    def test_a_lone_id_less_recommendation_gets_a_blurb_regression(self):
-        """The single-request fast path keys its one result the same way.
-
-        The threaded path and the fast path write the result map separately,
-        so a library whose only recommendation has no external id has to be
-        covered on its own.
-        """
-        client = Mock(spec=OllamaClient)
-        client.generate_text.return_value = "Hyperion blurb"
-        engine = _engine_for_helpers()
-        engine.llm_generator = RecommendationGenerator(client)
-        enhanced = engine._enhance_with_llm(
-            recommendations=[self._recommendation(11, "Hyperion")],
-            content_type=ContentType.BOOK,
-            all_consumed_items=[],
-            unconsumed_items=[],
-            count=1,
-            series_tracking={},
-        )
-
-        assert enhanced[0].llm_reasoning == "Hyperion blurb"
-
-
 class TestSeasonSiblingsStayDistinctInEveryMap:
     """Season candidates of one show must not overwrite each other.
 
@@ -5735,29 +4923,6 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
 
         assert adaptations == {candidate_key(first): [adapted_film]}
 
-    def test_each_season_gets_its_own_blurb(self):
-        """Two season siblings do not overwrite each other's blurb."""
-        client = Mock(spec=OllamaClient)
-        client.generate_text.side_effect = lambda **kwargs: (
-            "Season 1 blurb" if "Season 1" in kwargs["prompt"] else "Season 2 blurb"
-        )
-        first, second = self._seasons()
-        engine = _engine_for_helpers()
-        engine.llm_generator = RecommendationGenerator(client)
-        enhanced = engine._enhance_with_llm(
-            recommendations=[_recommendation_of(first), _recommendation_of(second)],
-            content_type=ContentType.TV_SHOW,
-            all_consumed_items=[],
-            unconsumed_items=[],
-            count=2,
-            series_tracking={},
-        )
-
-        assert [rec.llm_reasoning for rec in enhanced] == [
-            "Season 1 blurb",
-            "Season 2 blurb",
-        ]
-
     def test_series_filtering_keeps_a_season_from_each_id_less_show(self):
         """Two id-less shows' first seasons are not deduplicated into one.
 
@@ -5795,168 +4960,6 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             "Uncharted Depths (Season 1)",
             "Northern Lights (Season 1)",
         ]
-
-
-class TestLlmOnlyRecommendations:
-    """The branch that lets the LLM pick when the pipeline produced nothing.
-
-    ``_enhance_with_llm`` takes it only when handed an empty recommendation
-    list, so these call it directly: the pipeline scores every candidate it is
-    given, so a request that has candidates always arrives with
-    recommendations to blurb instead.
-
-    What the branch does is match each ``{title, author}`` the LLM returned
-    back to a candidate by exact string equality, drop the matches series
-    ordering rejects, and build a recommendation dict for the rest.
-    """
-
-    REASONING = "A quiet loop of discovery"
-
-    @staticmethod
-    def _book(title, *, author=None, item_id="cand"):
-        """One unconsumed book to match an LLM pick against."""
-        return make_item(
-            item_id=item_id,
-            title=title,
-            author=author,
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-    @staticmethod
-    def _llm_only(llm_recs, unconsumed_items, series_tracking=None, *, error=None):
-        """Run the LLM-only branch and return the recommendations it built.
-
-        Args:
-            llm_recs: What the LLM generator returns.
-            unconsumed_items: The candidates the picks are matched against.
-            series_tracking: Series name to consumed item numbers.
-            error: Raised by the LLM generator instead of returning, when set.
-        """
-        engine = _engine_for_helpers()
-        engine.llm_generator = Mock(spec=RecommendationGenerator)
-        if error is not None:
-            engine.llm_generator.generate_recommendations.side_effect = error
-        else:
-            engine.llm_generator.generate_recommendations.return_value = llm_recs
-
-        return engine._enhance_with_llm(
-            recommendations=[],
-            content_type=ContentType.BOOK,
-            all_consumed_items=[],
-            unconsumed_items=unconsumed_items,
-            count=5,
-            series_tracking=series_tracking or {},
-        )
-
-    def test_a_matched_pick_becomes_one_recommendation_record(self):
-        """The whole record this construction site emits, field for field."""
-        candidate = self._book("Outer Wilds")
-
-        recommendations = self._llm_only(
-            [{"title": "Outer Wilds", "author": None, "reasoning": self.REASONING}],
-            [candidate],
-        )
-
-        assert recommendations == [
-            Recommendation(
-                item=candidate,
-                score=0.8,
-                reasoning=self.REASONING,
-                llm_reasoning=self.REASONING,
-            )
-        ]
-
-    def test_a_pick_matching_no_candidate_recommends_nothing(self):
-        """An invented title yields an empty list rather than an error."""
-        recommendations = self._llm_only(
-            [{"title": "Subnautica", "author": None, "reasoning": self.REASONING}],
-            [self._book("Outer Wilds")],
-        )
-
-        assert recommendations == []
-
-    def test_a_supplied_author_must_equal_the_candidates_own(self):
-        """A title match with a mismatched author is rejected."""
-        recommendations = self._llm_only(
-            [
-                {
-                    "title": "Outer Wilds",
-                    "author": "Annapurna",
-                    "reasoning": self.REASONING,
-                }
-            ],
-            [self._book("Outer Wilds", author="Mobius Digital")],
-        )
-
-        assert recommendations == []
-
-    def test_a_matching_supplied_author_is_accepted(self):
-        """The same pick with the candidate's own author matches."""
-        candidate = self._book("Outer Wilds", author="Mobius Digital")
-
-        recommendations = self._llm_only(
-            [
-                {
-                    "title": "Outer Wilds",
-                    "author": "Mobius Digital",
-                    "reasoning": self.REASONING,
-                }
-            ],
-            [candidate],
-        )
-
-        assert [rec.item for rec in recommendations] == [candidate]
-
-    def test_an_omitted_author_matches_on_title_alone(self):
-        """A pick with no author still matches a candidate that has one."""
-        candidate = self._book("Outer Wilds", author="Mobius Digital")
-
-        recommendations = self._llm_only(
-            [{"title": "Outer Wilds", "reasoning": self.REASONING}],
-            [candidate],
-        )
-
-        assert [rec.item for rec in recommendations] == [candidate]
-
-    def test_a_title_differing_only_in_case_does_not_match(self):
-        """Matching is exact string equality, so case is part of the contract."""
-        recommendations = self._llm_only(
-            [{"title": "outer wilds", "author": None, "reasoning": self.REASONING}],
-            [self._book("Outer Wilds")],
-        )
-
-        assert recommendations == []
-
-    def test_a_pick_series_ordering_rejects_is_excluded(self):
-        """Book #2 is dropped while #1, picked in the same batch, survives."""
-        first = self._book("Empire Ascendant (Worldbreaker Saga, #1)", item_id="one")
-        second = self._book("Empire Ascendant (Worldbreaker Saga, #2)", item_id="two")
-
-        recommendations = self._llm_only(
-            [
-                {"title": second.title, "author": None, "reasoning": self.REASONING},
-                {"title": first.title, "author": None, "reasoning": self.REASONING},
-            ],
-            [first, second],
-        )
-
-        assert [rec.item for rec in recommendations] == [first]
-
-    def test_a_failing_llm_call_is_swallowed_and_logged(self, caplog):
-        """The user gets an empty list and the reason reaches the log."""
-        with caplog.at_level(logging.WARNING, logger="src.recommendations.engine"):
-            recommendations = self._llm_only(
-                [], [self._book("Outer Wilds")], error=RuntimeError("LLM down")
-            )
-
-        assert recommendations == []
-        assert [
-            record.getMessage()
-            for record in caplog.records
-            if record.name == "src.recommendations.engine"
-            and record.levelno == logging.WARNING
-        ] == ["LLM recommendation generation failed: LLM down"]
 
 
 class TestContentTypeExclusions:

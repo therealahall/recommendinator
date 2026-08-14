@@ -5,7 +5,6 @@ from __future__ import annotations
 import click
 
 from src.cli._shared import abort_after_failure, is_blank_review
-from src.config.service import get_feature_flags
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 #: What ``POST /api/complete`` answers with; the title and review that failed
@@ -47,11 +46,6 @@ def complete(
     content_type = ContentType.from_string(content_type_str)
 
     storage = ctx.obj["storage"]
-    embedding_gen = ctx.obj["embedding_gen"]
-    config = ctx.obj["config"]
-
-    # Check if embeddings are enabled
-    use_embeddings = get_feature_flags(config)["use_embeddings"]
 
     # Validate rating
     if rating is not None and (rating < 1 or rating > 5):
@@ -73,11 +67,7 @@ def complete(
     )
 
     try:
-        # Only generate embedding if AI features are enabled
-        embedding = None
-        if use_embeddings:
-            embedding = embedding_gen.generate_content_embedding(item)
-        db_id = storage.complete_content_item(item, embedding=embedding)
+        db_id = storage.complete_content_item(item)
     except Exception as error:
         abort_after_failure(ctx, COMPLETE_FAILED, error)
 

@@ -271,15 +271,13 @@ class TestCsvImportPluginFetchVideoGames:
         assert item.metadata["genres"] == ["RPG"]
         assert item.metadata["playtime_hours"] == "120"
 
-    def test_imported_genre_reaches_the_prompt_helpers(
+    def test_imported_genre_lands_as_a_list(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
         """The genre cell lands in the shape the rest of the app reads.
 
-        ``extract_raw_genres`` builds the embedding text during sync, before
-        the item is ever saved, and only recognises a list under ``genres``.
-        A bare string there would drop the genre from every imported item's
-        embedding without failing anything.
+        Every downstream reader recognises only a list under ``genres``, so a
+        bare string there drops the genre from scoring without failing.
         """
         csv_file = tmp_path / "games.csv"
         csv_file.write_text(

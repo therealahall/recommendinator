@@ -16,12 +16,9 @@ describe('NumberStepper', () => {
   })
 
   describe('when max is omitted', () => {
-    // Regression: `max` carried a withDefaults value of 100, and SettingControl
-    // passes `validation?.max ?? undefined` — so every settings leaf declaring a
-    // min with no max silently clamped to 100. conversation.llm.max_tokens
-    // (default 2000, min 1, no max) is the clearest case: its default already sat
-    // above the cap, so any edit snapped it to 100 with no error, no announcement,
-    // and a spinbutton reporting a maximum the registry never declared.
+    // Regression: `max` defaulted to 100, so every min-only leaf
+    // (enrichment.batch_size, sync.max_workers) clamped there — a larger value
+    // snapped back silently, announcing a maximum the registry never declared.
     function mountUnbounded(props = {}) {
       return mount(NumberStepper, {
         props: { modelValue: 0, min: 0, step: 1, ...props },
@@ -121,8 +118,8 @@ describe('NumberStepper', () => {
 
   describe('when min is omitted', () => {
     // The mirror of the max case: `withDefaults` dropped BOTH bounds, so a
-    // reintroduced `min: 1` default would break conversation.llm.context_window_size
-    // (min 0, default 0) with the suite green.
+    // reintroduced `min: 1` default would break a leaf declaring min 0, such as
+    // recommendations.scorer_weights.genre_match, with the suite green.
     function mountNoBounds(props = {}) {
       return mount(NumberStepper, { props: { modelValue: 0, step: 1, ...props } })
     }

@@ -57,15 +57,13 @@ export function formatScorerName(key: string): string {
 
 /** Acronyms that stay fully uppercase in humanized section headings. */
 const SECTION_ACRONYMS: Record<string, string> = {
-  llm: 'LLM',
-  ai: 'AI',
   api: 'API',
   url: 'URL',
   cors: 'CORS',
   db: 'DB',
 }
 
-/** Humanize a settings section key (e.g. "web" -> "Web", "llm" -> "LLM"). */
+/** Humanize a settings section key (e.g. "web" -> "Web", "api" -> "API"). */
 export function humanizeSection(section: string): string {
   return section
     .replace(/[_-]+/g, ' ')

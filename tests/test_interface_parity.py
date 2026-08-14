@@ -594,7 +594,6 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
                 rating=5,
             )
         ],
-        llm_reasoning="Big ideas, bigger prose.",
     )
 
     CLI_JSON = """[
@@ -604,7 +603,6 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
     "author": "Dan Simmons",
     "score": 0.875,
     "reasoning": "Recommended because you liked the book Dune",
-    "llm_reasoning": "Big ideas, bigger prose.",
     "score_breakdown": {
       "genre_match": 0.9,
       "creator_match": 0.5

@@ -1,23 +1,16 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { RecommendationResponse } from '@/types/api'
 import RecScoreDetails from '@/components/molecules/RecScoreDetails.vue'
-import { useMarkdown } from '@/composables/useMarkdown'
 
-const props = defineProps<{
+defineProps<{
   rec: RecommendationResponse
   rank: number
-  streaming: boolean
 }>()
 
 const emit = defineEmits<{
   ignore: [dbId: number]
   complete: [dbId: number]
 }>()
-
-const { renderMarkdown } = useMarkdown()
-
-const hasLlmReasoning = computed(() => !!props.rec.llm_reasoning?.trim())
 </script>
 
 <template>
@@ -47,23 +40,8 @@ const hasLlmReasoning = computed(() => !!props.rec.llm_reasoning?.trim())
       </div>
     </div>
 
-    <!-- LLM reasoning (rendered as markdown) -->
-    <div
-      v-if="hasLlmReasoning"
-      class="rec-llm-reasoning"
-      v-html="renderMarkdown(rec.llm_reasoning!)"
-    />
-    <!-- Loading dots while streaming -->
-    <div v-else-if="streaming && !rec.llm_reasoning" class="loading-dots">
-      <span /><span /><span />
-    </div>
+    <div v-if="rec.reasoning" class="rec-reasoning">{{ rec.reasoning }}</div>
 
-    <!-- Pipeline reasoning (when no LLM reasoning) -->
-    <div
-      v-if="!hasLlmReasoning && !streaming && rec.reasoning"
-      class="rec-reasoning"
-    >{{ rec.reasoning }}</div>
-
-    <RecScoreDetails :rec="rec" :default-open="!hasLlmReasoning && !streaming" />
+    <RecScoreDetails :rec="rec" default-open />
   </div>
 </template>
