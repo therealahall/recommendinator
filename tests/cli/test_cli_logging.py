@@ -29,8 +29,8 @@ from src.utils.export import export_items_csv
 from src.utils.logging import configure_logging
 from tests.cli.conftest import _invoke_with_mocks
 
-#: One boot-time refusal from ``migrate_source_attribution``, provoked below.
-_REFUSAL = "2 sources share it"
+#: The boot warning ``_config_that_warns_at_boot`` provokes, once handlers exist.
+_BOOT_WARNING = "Ignoring unusable logging.level"
 
 _SRC_ROOT = Path(src_package.__file__).parent
 
@@ -71,17 +71,18 @@ def _stdout_handler_calls(tree: ast.AST) -> list[str]:
     ]
 
 
-def _shared_plugin_config(log_file: str | None) -> dict[str, Any]:
-    """Two sources on one plugin — the shape the attribution pass refuses."""
-    config: dict[str, Any] = {
-        "inputs": {
-            "steam_home": {"plugin": "steam", "enabled": True},
-            "steam_work": {"plugin": "steam", "enabled": True},
-        }
-    }
-    if log_file is not None:
-        config["logging"] = {"file": log_file}
-    return config
+def _log_to(log_file: str) -> dict[str, Any]:
+    """A config saying only where the log goes."""
+    return {"logging": {"file": log_file}}
+
+
+def _config_that_warns_at_boot(log_file: str) -> dict[str, Any]:
+    """A config whose unusable ``level`` makes boot log one WARNING record.
+
+    The tests below assert where a record lands, so each needs the boot to
+    produce one at all.
+    """
+    return {"logging": {"file": log_file, "level": "verbose"}}
 
 
 def _csv_source_config(csv_path: Path) -> dict[str, Any]:
@@ -99,16 +100,6 @@ def _csv_source_config(csv_path: Path) -> dict[str, Any]:
     }
 
 
-def _strand_an_item(storage: StorageManager) -> None:
-    """Leave a row labelled with the plugin name, so the pass has work."""
-    with storage.connection() as conn:
-        conn.execute(
-            "INSERT INTO content_items (user_id, title, content_type, status, source) "
-            "VALUES (1, 'Some Title', 'book', 'completed', 'steam')"
-        )
-        conn.commit()
-
-
 def _rows(document: str) -> list[list[str]]:
     """Parse a CSV document into its rows."""
     return list(csv.reader(io.StringIO(document)))
@@ -122,7 +113,7 @@ def _invoke_with_real_logging(
     input_text: str | None = None,
     engine: Any = None,
 ) -> Any:
-    """Run *args* with the source migrations and log wiring both unstubbed."""
+    """Run *args* with the log wiring unstubbed."""
     with (
         patch("src.utils.logging.configure_logging", configure_logging),
         patch("src.cli.main.load_config", return_value=config),
@@ -149,22 +140,20 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
     Fix: the stream is required, and the CLI passes stderr.
     """
 
-    def test_a_json_command_keeps_stdout_clean_while_a_migration_warns(
+    def test_a_json_command_keeps_stdout_clean_while_the_boot_warns(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         restore_root_logging: None,
     ) -> None:
-        """The refusal is recorded once, so it would prefix a log line onto the
-        JSON document on exactly the first boot after an upgrade."""
+        """A boot warning would prefix a log line onto the JSON document."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        _strand_an_item(storage)
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _config_that_warns_at_boot("logs/cli.log"),
             ["status", "--format", "json"],
         )
 
@@ -172,8 +161,10 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         assert json.loads(result.stdout)["status"] == "ready"
         # Anchors the assertion above: without a record on the wire it holds
         # over an invocation that logged nothing at all.
-        assert _REFUSAL in result.stderr
-        assert _REFUSAL in (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+        assert _BOOT_WARNING in result.stderr
+        assert _BOOT_WARNING in (tmp_path / "logs" / "cli.log").read_text(
+            encoding="utf-8"
+        )
 
     def test_the_csv_export_on_stdout_is_not_prefixed_by_a_log_line(
         self,
@@ -187,13 +178,12 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         column name shifts and the file no longer parses as the CSV it names.
         """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        _strand_an_item(storage)
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _config_that_warns_at_boot("logs/cli.log"),
             ["library", "export", "--type", "book", "--format", "csv"],
         )
 
@@ -210,7 +200,7 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         # with the writer's CRLF row endings normalised.
         assert _rows(result.stdout) == _rows(expected)
         # Anchors the two above: they hold over an invocation that logged nothing.
-        assert _REFUSAL in result.stderr
+        assert _BOOT_WARNING in result.stderr
 
     def test_a_mutation_rendering_json_keeps_stdout_clean(
         self,
@@ -221,16 +211,15 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         """``emit_view`` is the one renderer every settings and source write uses.
 
         ``status`` only proves the read surface; a write emits its document after
-        the boot migrations have had their say on the same invocation.
+        the boot has had its say on the same invocation.
         """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        _strand_an_item(storage)
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _config_that_warns_at_boot("logs/cli.log"),
             [
                 "settings",
                 "set",
@@ -243,7 +232,7 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
 
         assert result.exit_code == 0, result.stderr
         assert json.loads(result.stdout)["sections"]
-        assert _REFUSAL in result.stderr
+        assert _BOOT_WARNING in result.stderr
 
 
 def test_the_log_level_comes_from_the_settings_table(
@@ -255,7 +244,7 @@ def test_the_log_level_comes_from_the_settings_table(
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(
-        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+        CliRunner(), storage, _config_that_warns_at_boot("logs/cli.log"), ["status"]
     )
 
     assert result.exit_code == 0, result.output
@@ -275,15 +264,19 @@ def test_the_log_file_comes_from_the_settings_table(
     """
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
     storage.set_setting("logging.file", "logs/from-db.log")
-    _strand_an_item(storage)
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(
-        CliRunner(), storage, _shared_plugin_config("logs/from-yaml.log"), ["status"]
+        CliRunner(),
+        storage,
+        _config_that_warns_at_boot("logs/from-yaml.log"),
+        ["status"],
     )
 
     assert result.exit_code == 0, result.output
-    assert _REFUSAL in (tmp_path / "logs" / "from-db.log").read_text(encoding="utf-8")
+    assert _BOOT_WARNING in (tmp_path / "logs" / "from-db.log").read_text(
+        encoding="utf-8"
+    )
     assert not (tmp_path / "logs" / "from-yaml.log").exists()
 
 
@@ -301,7 +294,7 @@ def test_a_stored_level_the_registry_would_reject_degrades_at_boot(
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(
-        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+        CliRunner(), storage, _log_to("logs/cli.log"), ["status"]
     )
 
     assert result.exit_code == 0, result.output
@@ -318,16 +311,15 @@ def test_a_stored_log_path_escaping_logs_is_contained_at_cli_boot(
     """
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
     storage.set_setting("logging.file", "logs/../../evil.log")
-    _strand_an_item(storage)
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(
-        CliRunner(), storage, _shared_plugin_config("logs/cli.log"), ["status"]
+        CliRunner(), storage, _config_that_warns_at_boot("logs/cli.log"), ["status"]
     )
 
     assert result.exit_code == 0, result.output
     assert not (tmp_path.parent / "evil.log").exists()
-    assert _REFUSAL in (
+    assert _BOOT_WARNING in (
         tmp_path / "logs" / Path(default_of("logging.file")).name
     ).read_text(encoding="utf-8")
 
@@ -383,7 +375,7 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _log_to("logs/cli.log"),
             ["recommend", "--type", "book"],
             engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
@@ -423,7 +415,7 @@ class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _log_to("logs/cli.log"),
             ["status", "--format", "json"],
         )
 
@@ -455,7 +447,7 @@ class TestTheConsoleWithholdsTracebacksRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _log_to("logs/cli.log"),
             ["recommend", "--type", "book"],
             engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
@@ -483,7 +475,7 @@ class TestTheConsoleWithholdsTracebacksRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _log_to("logs/cli.log"),
             ["recommend", "--type", "book"],
             engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
@@ -507,21 +499,22 @@ class TestTheConsoleWithholdsTracebacksRegression:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        _strand_an_item(storage)
 
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _shared_plugin_config("logs/cli.log"),
+            _config_that_warns_at_boot("logs/cli.log"),
             ["status", "--format", "json"],
         )
 
         assert result.exit_code == 0, result.stderr
         # The data channel survives the degraded run's console records too.
         assert json.loads(result.stdout)["status"] == "ready"
-        reported = [line for line in result.stderr.splitlines() if _REFUSAL in line]
+        reported = [
+            line for line in result.stderr.splitlines() if _BOOT_WARNING in line
+        ]
         assert len(reported) == 1
-        assert reported[0].startswith("WARNING | src.storage.source_migration | ")
+        assert reported[0].startswith("WARNING | src.utils.logging | ")
 
 
 class TestNothingUnderSrcHardwiresAHandlerOntoStdout:

@@ -29,11 +29,6 @@ from src.config.service import (
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
-from src.storage.source_migration import (
-    migrate_source_attribution,
-    migrate_source_config_plugins,
-    migrate_source_labels,
-)
 from src.utils import logging as log_config
 from src.utils.text import exception_for_log, strip_lone_surrogates
 
@@ -136,15 +131,6 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
             f"Error initializing components: {exception_for_log(error)}", err=True
         )
         sys.exit(1)
-
-    # Relabel stored goodreads source values and plugin names after the plugin
-    # rename. Runs for every CLI command so a CLI-only user is migrated even if
-    # they never run ``update`` (the web app runs both on startup/reload).
-    migrate_source_labels(ctx.obj["storage"])
-    migrate_source_config_plugins(ctx.obj["storage"])
-    # After the plugin relabel, so a source config that still said
-    # ``goodreads`` is matched under the name the registry now serves.
-    migrate_source_attribution(ctx.obj["config"], ctx.obj["storage"])
 
 
 # Register commands

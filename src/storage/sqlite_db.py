@@ -31,7 +31,7 @@ door:
   this project's own exports.
 - The explicit-user-action doors write exactly the fields the caller supplied
   and may overwrite them freely: :meth:`SQLiteDB.update_item_from_ui` for an
-  edit (web UI, CLI, chat), :meth:`SQLiteDB.complete_content_item` for a
+  edit (web UI, CLI), :meth:`SQLiteDB.complete_content_item` for a
   completion, which creates the item first when the library does not have it
   yet, and :meth:`SQLiteDB.set_item_ignored`, which writes ``ignored`` alone,
   in either direction. What "not supplied" looks like is not uniform either:
@@ -133,8 +133,8 @@ MAX_COMPLETION_DATE_SKEW = timedelta(days=1)
 class FutureCompletionDateError(ValueError):
     """A completion dated past :data:`MAX_COMPLETION_DATE_SKEW`.
 
-    Carries its own wording because chat, the one surface that can name a
-    date, quotes it back to the user.
+    Distinct from a bare ``ValueError`` so a caller naming a date can tell
+    this refusal from a malformed one and say which it hit.
     """
 
     def __init__(self) -> None:
@@ -148,8 +148,8 @@ def unset_if_none(value: _T | None) -> _T | Unset:
     """Translate a caller's "not supplied" ``None`` into :data:`UNSET`.
 
     For surfaces whose absence *is* ``None`` and which therefore cannot ask
-    for a clear this way — a Click option nobody passed, a chat parameter the
-    model left out. A surface that can tell absent from null (the web, which
+    for a clear this way — a Click option nobody passed. A surface that can
+    tell absent from null (the web, which
     reads ``model_fields_set``) passes its ``None`` through untranslated, so
     an explicit null still clears the field.
 
@@ -354,8 +354,8 @@ class SQLiteDB:
         """Record an explicit completion, adding the item if it is new.
 
         The entry point behind every completion — the ``complete`` CLI
-        command, ``POST /api/complete`` and chat's ``mark_completed``: it finds
-        or creates the row and applies the user's own values in a single
+        command and ``POST /api/complete``: it finds or creates the row and
+        applies the user's own values in a single
         transaction, so no interruption can leave an item completed carrying
         the rating it had before.
 
@@ -426,7 +426,7 @@ class SQLiteDB:
                 the user wrote and stops a later import from filling the
                 field. The check is repeated here because it protects a
                 different write from the callers' own: the web and CLI
-                surfaces refuse a blank outright and chat drops one, and
+                surfaces refuse a blank outright, and
                 :meth:`_upsert_content_item` — which runs first, so this guard
                 never sees what it writes — separately declines to fill from
                 one.

@@ -47,12 +47,10 @@ def booted_client(
     config: dict[str, Any],
     migrate_credentials: bool = False,
 ) -> Iterator[TestClient]:
-    """A booted app over *storage*, with the startup source migrations stubbed."""
-    with (
-        patch("src.web.app.migrate_source_labels"),
-        patch("src.web.app.migrate_source_config_plugins"),
-        booted_web_app(storage, config, migrate_credentials=migrate_credentials) as app,
-    ):
+    """A booted app over *storage*."""
+    with booted_web_app(
+        storage, config, migrate_credentials=migrate_credentials
+    ) as app:
         yield authenticated_client(app)
 
 
