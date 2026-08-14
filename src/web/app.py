@@ -30,11 +30,6 @@ from src.settings.metadata import default_of
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
-from src.storage.source_migration import (
-    migrate_source_attribution,
-    migrate_source_config_plugins,
-    migrate_source_labels,
-)
 from src.utils import logging as log_config
 from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
@@ -184,13 +179,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         # Migrate sensitive config credentials to encrypted DB storage
         migrate_config_credentials(config, storage)
-        # Relabel stored goodreads source values and plugin names after the
-        # plugin rename
-        migrate_source_labels(storage)
-        migrate_source_config_plugins(storage)
-        # After the plugin relabel, so a source config that still said
-        # ``goodreads`` is matched under the name the registry now serves.
-        migrate_source_attribution(config, storage)
 
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
@@ -291,7 +279,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     # Middleware, not the dependency's own ``Response``: FastAPI merges those
     # headers only where it serialises a return value, so every route handing
-    # back a ``Response`` — the export, chat, the 204s — missed the re-issue.
+    # back a ``Response`` — the export, the 204s — missed the re-issue.
     class RollingSessionCookieMiddleware(BaseHTTPMiddleware):
         async def dispatch(
             self, request: Request, call_next: RequestResponseEndpoint

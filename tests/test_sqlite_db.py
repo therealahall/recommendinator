@@ -3393,8 +3393,7 @@ class TestBlankReviewNeverFillsTheColumn:
     method's own guard was reached.
     Root cause: the guard lived on ``_write_completion`` and on each surface's
     request validation, never on the leg that does the filling — so a source
-    plugin yielding a whitespace CSV cell poisoned the column just as a chat
-    completion did.
+    plugin yielding a whitespace CSV cell poisoned the column.
     Fix: the upsert treats a blank incoming review as no review at all, on
     both the fill and the insert leg, so nothing a door writes can block the
     column.
@@ -4238,9 +4237,8 @@ class TestEditDoorNeverStoresABlankReview:
 
     Bug: ``update_item_from_ui`` wrote whatever string it was handed, so a
     blank ``review`` landed in the column as ``""``. No user hit it — every
-    caller today either refuses a blank (``PATCH /api/items/{id}`` and
-    ``library edit``) or drops it before the call (chat's
-    ``_supplied_review``), and the edit dialog sends null once the box is
+    caller today refuses a blank (``PATCH /api/items/{id}`` and
+    ``library edit``), and the edit dialog sends null once the box is
     empty. The defect is that the door depends on that and says nothing about
     it: the next caller — a bulk-edit endpoint, a new subcommand, a private
     plugin — inherits the poison with no test failing, and a stored blank
@@ -4931,8 +4929,8 @@ class TestCompleteContentItem:
 class TestCompletionDoorExplicitDate:
     """Regression tests for a completion date the user named being discarded.
 
-    Bug reported: telling the assistant "I finished Dune last Tuesday" left an
-    item that an import had dated later still carrying the import's date. The
+    Bug reported: completing Dune with an explicit "last Tuesday" left an item
+    that an import had dated later still carrying the import's date. The
     correction was accepted, reported back as done, and never written — the
     silent loss of user-owned state this door exists to prevent, running
     backwards.
@@ -4944,7 +4942,7 @@ class TestCompletionDoorExplicitDate:
     ``_write_completion`` as an argument of its own, which writes it as given.
     Only a caller supplying no date takes the fill-when-empty path.
 
-    Chat is the only surface that names a date; ``complete`` and
+    No interface names a date today; ``complete`` and
     ``POST /api/complete`` accept none. The no-date path they share is pinned
     by ``TestCompleteContentItem`` above — fill-when-empty by
     ``test_missing_completion_date_is_filled``, preserve-when-present by
@@ -5012,9 +5010,9 @@ class TestCompletionDoorExplicitDate:
 
 
 class TestCompletionDoorFutureDate:
-    """Reported: chat names a completion date and nothing bounded the value,
-    so ``date.fromisoformat`` let 9999-12-31 through. Fixed at the door, which
-    ``complete`` and ``POST /api/complete`` share, rather than at one surface.
+    """Reported: a caller names a completion date and nothing bounded the
+    value, so ``date.fromisoformat`` let 9999-12-31 through. Fixed at the door,
+    which ``complete`` and ``POST /api/complete`` share, not at one surface.
     """
 
     def _complete_on(self, temp_db: SQLiteDB, supplied: date) -> None:

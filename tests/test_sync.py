@@ -709,17 +709,6 @@ class TestCredentialRotationCallback:
 _ROTATED_TOKEN = "rotated-mid-sync"
 
 
-def _backdate_credential(storage: StorageManager, source_id: str, key: str) -> None:
-    """Age a row past the clock's grain, so "newest" here is not a tie."""
-    with storage.connection() as conn:
-        conn.execute(
-            "UPDATE credentials SET updated_at = '2000-01-01 00:00:00' "
-            "WHERE user_id = 1 AND source_id = ? AND credential_key = ?",
-            (source_id, key),
-        )
-        conn.commit()
-
-
 class RotatingAttributingPlugin(SourcePlugin):
     """Rotates a token and attributes an item off the same method.
 
@@ -878,257 +867,32 @@ class TestAPluginCannotRedirectARotatedTokenRegression:
         assert storage.get_credential(1, "other_source", "refresh_token") is None
 
 
-class TestASyncSaysWhichSourceToReconnectRegression:
-    """Reported: a token rotated under the old owner stranded silently.
+class TestASyncLeavesAStrandedTokenWhereItIs:
+    """A wrongly-attributed refresh token fails where a reconnect works.
 
-    Cause: the owner used to be ``plugin.name``. Fix: the sync names the
-    source to reconnect, and moves nothing.
+    Sources sharing a plugin cannot be told apart, so nothing may claim a row
+    filed under the plugin's own name by a release before per-source ids.
     """
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
-    @staticmethod
-    def _sync(config: dict[str, Any], storage: StorageManager) -> None:
-        execute_sync(
-            plugin=RotatingAttributingPlugin(),
-            plugin_config=config,
-            storage_manager=storage,
-        )
+    def test_the_sync_neither_reads_nor_moves_it(self, storage: StorageManager) -> None:
+        storage.save_credential(1, "rotating", "refresh_token", "stranded-by-upgrade")
 
-    @staticmethod
-    def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-        """Every warning line: a silence asserted over all of them cannot slip."""
-        return [
-            record.getMessage()
-            for record in caplog.records
-            if record.levelno >= logging.WARNING
-        ]
-
-    def test_the_operator_is_told_which_source_to_reconnect(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        storage.save_credential(
-            1, "rotating", "refresh_token", "stranded-by-an-upgrade"
-        )
-
-        with caplog.at_level(logging.WARNING):
-            self._sync({"_source_id": "my_source"}, storage)
-
-        warnings = self._warnings(caplog)
-        assert len(warnings) == 1
-        assert "my_source" in warnings[0]
-        assert "refresh_token" in warnings[0]
-        assert "rotating" in warnings[0]
-        assert "Reconnect" in warnings[0]
-
-    def test_the_stranded_token_is_never_quoted_or_moved(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A wrongly-attributed refresh token fails where a reconnect works."""
-        storage.save_credential(
-            1, "rotating", "refresh_token", "stranded-by-an-upgrade"
-        )
-
-        with caplog.at_level(logging.WARNING):
-            self._sync({"_source_id": "my_source"}, storage)
-
-        assert storage.get_credential(1, "rotating", "refresh_token") == (
-            "stranded-by-an-upgrade"
-        )
-        # Anchored: the advice was given, so the value's absence from it counts.
-        assert caplog.messages
-        assert all("stranded-by-an-upgrade" not in msg for msg in caplog.messages)
-
-    def test_a_source_holding_the_older_copy_is_told_anyway(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Holding a copy is not holding a live one, so it earns no silence.
-
-        Backdated the other way round from its sibling below, so the pair
-        brackets both orderings rather than leaving one to a same-second tie.
-        """
-        storage.save_credential(1, "my_source", "refresh_token", "may-be-spent")
-        _backdate_credential(storage, "my_source", "refresh_token")
-        storage.save_credential(
-            1, "rotating", "refresh_token", "stranded-by-an-upgrade"
-        )
-
-        with caplog.at_level(logging.WARNING):
-            self._sync({"_source_id": "my_source"}, storage)
-
-        assert storage.get_credential(1, "rotating", "refresh_token") == (
-            "stranded-by-an-upgrade"
-        )
-        assert len(self._warnings(caplog)) == 1
-
-    def test_a_source_named_after_its_plugin_owns_the_row_outright(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Nothing is stranded when the two names coincide."""
-        storage.save_credential(1, "rotating", "refresh_token", "still-mine")
-
-        with caplog.at_level(logging.WARNING):
-            self._sync({"_source_id": "rotating"}, storage)
-
-        assert storage.get_credential(1, "rotating", "refresh_token") is not None
-        assert self._warnings(caplog) == []
-
-
-class TestASyncSeesTheYamlHalfOfTheSourceListRegression:
-    """Reported: every sync warned that a live YAML token was stranded.
-
-    Cause: the executor had no config, so a YAML namesake was invisible to
-    the check. Fix: both sync callers pass the config they already hold.
-    """
-
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.save_credential(1, "rotating", "refresh_token", "a-yaml-sources-own")
-        return storage
-
-    @staticmethod
-    def _sync(storage: StorageManager, config: dict[str, Any] | None) -> None:
-        execute_sync(
-            plugin=RotatingAttributingPlugin(),
-            plugin_config={"_source_id": "my_source"},
-            storage_manager=storage,
-            config=config,
-        )
-
-    def test_a_yaml_namesake_is_not_reported_stranded(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        config = {
-            "inputs": {
-                "rotating": {"plugin": "rotating", "enabled": True},
-                "my_source": {"plugin": "rotating", "enabled": True},
-            }
-        }
-
-        with caplog.at_level(logging.WARNING):
-            self._sync(storage, config)
-
-        assert caplog.records == []
-
-    def test_without_the_config_the_same_sync_speaks(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The anchor: the silence above is the config, not a quiet path."""
-        with caplog.at_level(logging.WARNING):
-            self._sync(storage, None)
-
-        assert len(caplog.records) == 1
-
-
-class TestTheMultiSourceExecutorHandsTheConfigDown:
-    """The other door onto the same check, and never a reported failure.
-
-    Both interfaces sync a whole source list through here.
-    """
-
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.save_credential(1, "rotating", "refresh_token", "a-yaml-sources-own")
-        return storage
-
-    def test_a_yaml_namesake_is_not_reported_stranded(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        config = {
-            "inputs": {
-                "rotating": {"plugin": "rotating", "enabled": True},
-                "my_source": {"plugin": "rotating", "enabled": True},
-            }
-        }
-
-        with caplog.at_level(logging.WARNING):
-            execute_multi_source_sync(
-                sources=[(RotatingAttributingPlugin(), {"_source_id": "my_source"})],
-                storage_manager=storage,
-                config=config,
-            )
-
-        assert caplog.records == []
-        # Anchored: the sync ran, so the check it would have failed ran too.
-        assert [item.source for item in storage.get_content_items(user_id=1)] == [
-            "my_source"
-        ]
-
-
-class TestTheUpgradeScenarioItselfIsNotSilentRegression:
-    """Reported: the case the warning exists for is the one it skips.
-
-    Cause: it was suppressed whenever the source held the key, which an upgrade
-    guarantees. Fix: a held copy earns no silence, however recent — rotation
-    leaves it spent.
-    """
-
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    @staticmethod
-    def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-        return [
-            record.getMessage()
-            for record in caplog.records
-            if record.levelno >= logging.WARNING
-        ]
-
-    @pytest.fixture()
-    def upgraded(self, storage: StorageManager) -> StorageManager:
-        """The source's own copy is the newest row, and still the spent one.
-
-        A rule reading timestamps would call it live and say nothing.
-        """
-        storage.save_credential(1, "rotating", "refresh_token", "the-live-one")
-        _backdate_credential(storage, "rotating", "refresh_token")
-        storage.save_credential(1, "my_source", "refresh_token", "spent-but-newer")
-        return storage
-
-    @staticmethod
-    def _sync(storage: StorageManager) -> None:
         execute_sync(
             plugin=RotatingAttributingPlugin(),
             plugin_config={"_source_id": "my_source"},
             storage_manager=storage,
         )
 
-    def test_a_source_holding_the_consumed_copy_is_still_told_to_reconnect(
-        self, upgraded: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Single-use tokens make the source's own copy the dead one."""
-        with caplog.at_level(logging.WARNING):
-            self._sync(upgraded)
-
-        warnings = self._warnings(caplog)
-        assert len(warnings) == 1
-        assert "my_source" in warnings[0]
-        assert "refresh_token" in warnings[0]
-        assert "spent-but-newer" not in warnings[0]
-        assert "the-live-one" not in warnings[0]
-
-    def test_the_stranded_copy_is_not_moved_by_the_telling(
-        self, upgraded: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
-            self._sync(upgraded)
-
-        assert upgraded.get_credential(1, "rotating", "refresh_token") == "the-live-one"
-        # The source's own copy is rotated by this sync, as any sync rotates
-        # it: the advice above changes where nothing, not whether anything.
-        assert (
-            upgraded.get_credential(1, "my_source", "refresh_token") == _ROTATED_TOKEN
+        assert storage.get_credential(1, "rotating", "refresh_token") == (
+            "stranded-by-upgrade"
         )
-        # Anchored: the sync ran through, so the row above survived a pass that
-        # had every chance at it.
-        assert [item.source for item in upgraded.get_content_items(user_id=1)] == [
-            "my_source"
-        ]
+        # Anchored: the sync ran to the rotation, so it had every chance at the
+        # row above.
+        assert storage.get_credential(1, "my_source", "refresh_token") == _ROTATED_TOKEN
 
 
 class TestAutoEnrichmentHook:

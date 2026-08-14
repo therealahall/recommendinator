@@ -11,7 +11,6 @@ import pytest
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
-from src.utils.text import extract_raw_genres
 
 
 @pytest.fixture()
@@ -255,7 +254,7 @@ class TestJsonImportPluginFetch:
             plugin.fetch({"path": str(json_file), "content_type": "video_game"})
         )
 
-        assert extract_raw_genres(items[0]) == ["RPG"]
+        assert items[0].metadata["genres"] == ["RPG"]
 
     def test_fetch_multiple_items(
         self, plugin: JsonImportPlugin, tmp_path: Path

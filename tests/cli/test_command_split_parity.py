@@ -228,8 +228,7 @@ _CONTENT_TYPE_COMMANDS = {
     ("recommend",),
 }
 
-#: Every ``--format`` option is case-insensitive; the two that were not were
-#: declared by the chat and memory groups, which are gone.
+#: Every ``--format`` option is case-insensitive, so nothing is exempt.
 _CASE_SENSITIVE_FORMATS: set[tuple[str, ...]] = set()
 
 

@@ -74,7 +74,7 @@ def test_create_user(temp_db: sqlite3.Connection) -> None:
         temp_db,
         username="testuser",
         display_name="Test User",
-        settings={"ai_enabled": True},
+        settings={"compact_cards": True},
     )
 
     assert user_id > 1  # Default user is 1
@@ -83,7 +83,7 @@ def test_create_user(temp_db: sqlite3.Connection) -> None:
     assert user is not None
     assert user["username"] == "testuser"
     assert user["display_name"] == "Test User"
-    assert user["settings"] == {"ai_enabled": True}
+    assert user["settings"] == {"compact_cards": True}
 
 
 def test_get_user_by_username(temp_db: sqlite3.Connection) -> None:
@@ -111,18 +111,18 @@ def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
     create_schema(temp_db)
 
     # Update default user settings
-    update_user_settings(temp_db, 1, {"ai_enabled": True, "theme": "dark"})
+    update_user_settings(temp_db, 1, {"compact_cards": True, "theme": "dark"})
 
     user = get_user_by_id(temp_db, 1)
     assert user is not None
-    assert user["settings"]["ai_enabled"] is True
+    assert user["settings"]["compact_cards"] is True
     assert user["settings"]["theme"] == "dark"
 
     # Update again - should merge
     update_user_settings(temp_db, 1, {"language": "en"})
 
     user = get_user_by_id(temp_db, 1)
-    assert user["settings"]["ai_enabled"] is True  # Preserved
+    assert user["settings"]["compact_cards"] is True  # Preserved
     assert user["settings"]["theme"] == "dark"  # Preserved
     assert user["settings"]["language"] == "en"  # Added
 

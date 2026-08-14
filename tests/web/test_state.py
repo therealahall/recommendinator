@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -25,7 +25,6 @@ from src.web.state import (
     locked_running_config,
     reload_config,
 )
-from tests.factories import back_mock_settings_store
 
 _AWATCH_PATCH_TARGET = "watchfiles.awatch"
 
@@ -80,35 +79,6 @@ class TestReloadConfig:
         assert result is True
         assert app_state.config["recommendations"]["default_count"] == 7
         assert "old" not in app_state.config
-
-    def test_reload_config_runs_every_source_migration(self, tmp_path: Path) -> None:
-        """reload_config runs all three source migrations with stored storage.
-
-        A hot-reload is how a renamed source arrives, so it must mirror every
-        migration web startup runs.
-        """
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("recommendations:\n  default_count: 7\n")
-
-        app_state.config_path = str(config_file)
-        storage = Mock(spec=StorageManager)
-        # The real settings hook now runs on hot-reload; back the mock's
-        # settings store so it is an isolated no-op here.
-        back_mock_settings_store(storage)
-        app_state.storage = storage
-
-        with (
-            patch("src.web.state.migrate_config_credentials"),
-            patch("src.web.state.migrate_source_labels") as mock_labels,
-            patch("src.web.state.migrate_source_config_plugins") as mock_plugins,
-            patch("src.web.state.migrate_source_attribution") as mock_attribution,
-        ):
-            result = reload_config()
-
-        assert result is True
-        mock_labels.assert_called_once_with(storage)
-        mock_plugins.assert_called_once_with(storage)
-        mock_attribution.assert_called_once_with(app_state.config, storage)
 
     def test_reload_config_no_config_path(self) -> None:
         """reload_config returns False when no config_path is stored."""
@@ -253,30 +223,31 @@ class TestReloadConfig:
         assert "Failed to reload config" in caplog.text
 
 
-class TestBootRunsEverySourceMigration:
-    """Boot is the other half of the pair ``TestReloadConfig`` covers.
+def test_a_source_named_goodreads_keeps_its_items_across_a_web_boot(
+    tmp_path: Path,
+) -> None:
+    """Regression: web startup relabelled a ``goodreads`` source's items.
 
-    Attribution's completion record hides a deleted call from any later
-    observation of its side effect, so the wiring is spied on directly.
+    Cause: it ran the same pass the CLI did, rewriting ``content_items.source``
+    to ``goodreads_csv``. Fix: no pass runs at boot.
     """
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_config_yaml(tmp_path))
+    storage = StorageManager(sqlite_path=tmp_path / "recommendations.db")
+    with storage.connection() as conn:
+        conn.execute(
+            "INSERT INTO content_items (user_id, title, content_type, status, source) "
+            "VALUES (1, 'Some Title', 'book', 'completed', 'goodreads')"
+        )
+        conn.commit()
 
-    def test_create_app_runs_all_three(self, tmp_path: Path) -> None:
-        """Each fires exactly once, against the storage boot just built."""
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text(_config_yaml(tmp_path))
+    create_app(config_path)
 
-        with (
-            patch("src.web.app.migrate_source_labels") as mock_labels,
-            patch("src.web.app.migrate_source_config_plugins") as mock_plugins,
-            patch("src.web.app.migrate_source_attribution") as mock_attribution,
-        ):
-            create_app(config_path)
-
-        storage = get_storage()
-        assert storage is not None
-        mock_labels.assert_called_once_with(storage)
-        mock_plugins.assert_called_once_with(storage)
-        mock_attribution.assert_called_once_with(get_config(), storage)
+    booted = get_storage()
+    assert booted is not None
+    assert [item.source for item in booted.get_content_items(user_id=1)] == [
+        "goodreads"
+    ]
 
 
 # ---------------------------------------------------------------------------

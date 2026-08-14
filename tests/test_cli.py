@@ -44,9 +44,6 @@ def mock_components(mock_config):
         patch("src.cli.main.create_storage_manager") as mock_storage,
         patch("src.cli.main.create_recommendation_engine") as mock_engine,
         patch("src.cli.main.migrate_config_credentials"),
-        patch("src.cli.main.migrate_source_labels") as mock_migrate_labels,
-        patch("src.cli.main.migrate_source_config_plugins") as mock_migrate_plugins,
-        patch("src.cli.main.migrate_source_attribution") as mock_migrate_attribution,
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
@@ -64,9 +61,6 @@ def mock_components(mock_config):
         yield {
             "storage": mock_storage_manager,
             "engine": mock_engine_instance,
-            "migrate_source_labels": mock_migrate_labels,
-            "migrate_source_config_plugins": mock_migrate_plugins,
-            "migrate_source_attribution": mock_migrate_attribution,
         }
 
 
@@ -80,25 +74,6 @@ def test_cli_help():
     assert "recommend" in result.output
     assert "update" in result.output
     assert "complete" in result.output
-
-
-def test_migrations_run_on_cli_startup(mock_components, mock_config):
-    """All three source migrations run in the top-level cli() callback.
-
-    A CLI-only user who never runs ``update`` must still be migrated, so each
-    is invoked once per command with the real storage — proving the wiring,
-    not the units.
-    """
-    runner = CliRunner()
-    result = runner.invoke(cli, ["status"])
-
-    assert result.exit_code == 0
-    storage = mock_components["storage"]
-    mock_components["migrate_source_labels"].assert_called_once_with(storage)
-    mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
-    mock_components["migrate_source_attribution"].assert_called_once_with(
-        mock_config, storage
-    )
 
 
 def test_recommend_command_help(mock_components):
@@ -429,8 +404,7 @@ class TestCompleteCommandUserOwnedFields:
     library where Dune is already rated 5 prints "Marked 'Dune' as completed"
     and exits 0, but `library show` still reports rating 5. The same holds for
     `--review`. The user believes they corrected their taste signal;
-    preference analysis keeps scoring on the stale value. This is the same
-    silent-discard class as the chat re-rating defect, on the CLI path.
+    preference analysis keeps scoring on the stale value.
     Root cause: the command persisted through
     ``StorageManager.save_content_item`` — the ingestion/sync door, whose
     fill-only rule never overwrites a user-owned field that already has a
@@ -946,46 +920,6 @@ class TestUpdateWorkersFlag:
 
         assert result.exit_code == 0, result.output
         assert captured["max_workers"] == 32
-
-    def test_the_config_reaches_the_executor(self) -> None:
-        """Without it every sync warns that a live YAML token is stranded.
-
-        The stranded-credential check reads ``inputs`` for the sources the
-        database does not hold, so ``update`` has to hand down the config it
-        already loaded.
-        """
-        config = self._config_with_sources()
-
-        captured: dict = {}
-
-        def fake_execute(**kwargs: object) -> list:
-            captured.update(kwargs)
-            sources_arg = kwargs.get("sources") or []
-            return [
-                SyncResult(source_name=plugin.display_name)
-                for plugin, _config in sources_arg  # type: ignore[misc]
-            ]
-
-        with (
-            patch("src.cli.main.load_config", return_value=config),
-            patch(
-                "src.cli.commands._update.execute_multi_source_sync",
-                side_effect=fake_execute,
-            ),
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=[],
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["update"])
-
-        assert result.exit_code == 0, result.output
-        assert captured["config"] is config
 
 
 # ---------------------------------------------------------------------------

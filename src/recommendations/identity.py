@@ -1,7 +1,7 @@
 """Identity keys the recommendation engine maps candidates by.
 
-``ContentItem.id`` is the source's external id and is nullable: CSV imports,
-chat additions and manual completions all carry ``None``.  Keying a lookup on
+``ContentItem.id`` is the source's external id and is nullable: CSV imports
+and manual completions both carry ``None``.  Keying a lookup on
 it collapses every one of those items onto a single entry, which is why
 nothing in ``src/recommendations`` keys on it.  These helpers key on the
 database row instead, which every stored item has.

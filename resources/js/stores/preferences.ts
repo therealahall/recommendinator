@@ -34,7 +34,7 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
 export const SCORER_TOOLTIPS: Record<string, string> = {
   genre_match: 'Scores recommendations by how well their genres match your preferences. Higher weight means genre alignment matters more. Default: 2.0',
   creator_match: "Boosts items by creators (authors, directors, developers) you've enjoyed before. Default: 1.5",
-  tag_overlap: "Scores items by how many tags and genres they share with things you've consumed. Also uses semantic genre clusters for fuzzy matching. Default: 1.0",
+  tag_overlap: "Scores items by how many tags and genres they share with things you've consumed. Related genres count too, grouped into clusters like 'fantasy' and 'sword and sorcery'. Default: 1.0",
   series_order: "Prioritizes the next item in a series you've started (e.g. Fallout 1, then Fallout 2). Scores higher when you rated earlier entries well. Default: 1.5",
   rating_pattern: "Uses your rating history per genre to predict how much you'd enjoy a recommendation. Genres you rate highly get boosted. Default: 1.0",
   content_length: 'Soft-penalizes items that don\'t match your preferred content length (short/medium/long) per content type. Default: 1.0',

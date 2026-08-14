@@ -38,10 +38,10 @@ _CORRECT_COMMAND = "uv sync --locked"
 
 
 def _shipped_files(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:
-    """Return the tracked files, which are the ones a clone receives.
+    """Return the tracked files still on disk, the ones a clone will receive.
 
-    Tracked only: an untracked scratch file is one developer's, and scanning
-    it would fail the suite on their machine alone.
+    An untracked scratch file is one developer's, and a deleted one stays in
+    the index until the deletion is staged — which is after the suite runs.
     """
     listing = subprocess.run(
         ["git", "ls-files", "--cached", "-z"],
@@ -53,7 +53,7 @@ def _shipped_files(root: Path = _REPO_ROOT) -> list[tuple[str, Path]]:
     return [
         (name, root / name)
         for name in listing.split("\0")
-        if name and name not in _EXEMPTIONS
+        if name and name not in _EXEMPTIONS and (root / name).exists()
     ]
 
 
@@ -135,3 +135,23 @@ class TestInstallInstructions:
         )
 
         assert [name for name, _ in _shipped_files(tmp_path)] == ["tracked.md"]
+
+    def test_a_deletion_not_yet_staged_is_left_out_of_the_scan(
+        self, tmp_path: Path
+    ) -> None:
+        """Deleting a tracked file used to fail the whole guard with an OSError.
+
+        `git ls-files` reads the index, which still carries the file until the
+        deletion is staged — so every deletion broke the suite until commit.
+        """
+        subprocess.run(
+            ["git", "init", "-q"], cwd=tmp_path, capture_output=True, check=True
+        )
+        (tmp_path / "kept.md").write_text("nothing to see\n", encoding="utf-8")
+        (tmp_path / "removed.md").write_text("nothing to see\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True
+        )
+        (tmp_path / "removed.md").unlink()
+
+        assert [name for name, _ in _shipped_files(tmp_path)] == ["kept.md"]

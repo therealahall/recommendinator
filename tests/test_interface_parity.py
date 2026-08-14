@@ -87,8 +87,8 @@ _TS_SCORER_KEYS = re.compile(
 
 # The two spellings of an empty review. Every review-writing surface is
 # checked against this one list, because refusing different sets is itself the
-# drift. Chat imports it from here, and the storage door imports it as the base
-# of a superset that adds the spelling only a direct caller can reach it with.
+# drift. The storage door imports it as the base of a superset that adds the
+# spelling only a direct caller can reach it with.
 BLANK_REVIEWS = ["", "   "]
 
 # The two request models carrying a review, each with the other fields it needs
@@ -298,8 +298,8 @@ class TestReviewLengthBoundIsTheSameOnBothApiSurfaces:
 
     ``PATCH /api/items/{id}`` and ``POST /api/complete`` bound the same free
     text on its way to the same column, and ``library edit`` bounds it against
-    the same number in Python. (CLI ``complete`` and chat bound no length at
-    all — they check only that a review is not blank.) Spelled as separate
+    the same number in Python. (CLI ``complete`` bounds no length at all — it
+    checks only that a review is not blank.) Spelled as separate
     literals, one can move without the others: a review is then accepted on
     one surface and answered with a 422 on another, and text one interface
     stored is text the other refuses to edit. No suite on a single surface can

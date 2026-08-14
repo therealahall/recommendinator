@@ -3,7 +3,6 @@
 import ast
 import asyncio
 import csv
-import gc
 import inspect
 import io
 import json
@@ -20,7 +19,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
-import anyio.from_thread
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.datastructures import DefaultPlaceholder
@@ -92,13 +90,6 @@ from src.web.state import (
     locked_running_config,
     reload_config,
 )
-from src.web.stream_limit import (
-    MAX_CONCURRENT_STREAMS,
-    TOO_MANY_STREAMS_DETAIL,
-    _HeldSlot,
-    _slots,
-    bounded_sse,
-)
 from src.web.sync_manager import (
     SyncManager,
     _sync_manager_lock,
@@ -110,7 +101,6 @@ from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
     booted_web_app,
-    issue_session,
 )
 
 
@@ -150,23 +140,15 @@ def mock_components(mock_config):
     mock_engine_instance = Mock(spec=RecommendationEngine)
     mock_engine_instance.storage = mock_storage_manager
 
-    with (
-        patch("src.web.app.migrate_source_labels") as mock_migrate_labels,
-        patch("src.web.app.migrate_source_config_plugins") as mock_migrate_plugins,
-        patch("src.web.app.migrate_source_attribution") as mock_migrate_attribution,
-        booted_web_app(
-            mock_storage_manager,
-            mock_config,
-            engine=mock_engine_instance,
-        ) as app,
-    ):
+    with booted_web_app(
+        mock_storage_manager,
+        mock_config,
+        engine=mock_engine_instance,
+    ) as app:
         yield {
             "app": app,
             "storage": mock_storage_manager,
             "engine": mock_engine_instance,
-            "migrate_source_labels": mock_migrate_labels,
-            "migrate_source_config_plugins": mock_migrate_plugins,
-            "migrate_source_attribution": mock_migrate_attribution,
         }
 
     # Clean up sync manager after test
@@ -183,21 +165,6 @@ def client(mock_components):
 def anonymous_client(mock_components):
     """Create a test client carrying no API token."""
     return TestClient(mock_components["app"])
-
-
-def test_create_app_runs_every_source_migration(mock_components, mock_config):
-    """create_app runs all three source migrations with the real storage.
-
-    Proves they are wired into web startup, not merely unit-tested: a rename
-    must relabel items and configs on boot, and items stored under a plugin
-    name must find their source.
-    """
-    storage = mock_components["storage"]
-    mock_components["migrate_source_labels"].assert_called_once_with(storage)
-    mock_components["migrate_source_config_plugins"].assert_called_once_with(storage)
-    mock_components["migrate_source_attribution"].assert_called_once_with(
-        mock_config, storage
-    )
 
 
 def _cors_kwargs(app) -> dict:
@@ -992,8 +959,7 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
     Bug reported: completing an already-rated item through the API returns
     200 with "Marked 'Dune' as completed" while the stored rating is left at
     its old value, so the user's correction is silently discarded and
-    preference analysis keeps scoring on the stale rating. Same silent-discard
-    class as the chat re-rating defect, on the completion endpoint.
+    preference analysis keeps scoring on the stale rating.
     Root cause: the endpoint persisted through ``save_content_item`` — the
     ingestion/sync door, whose fill-only rule never overwrites a user-owned
     field that already has a value — rather than an explicit-user-action door.
@@ -3317,19 +3283,6 @@ def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
     assert "exceeds the maximum allowed" in response.json()["detail"]
 
 
-def test_stream_recommendations_count_exceeds_max_returns_400(client, mock_components):
-    """GET /api/recommendations/stream returns 400 when count exceeds config max_count.
-
-    The streaming endpoint applies the same max_count enforcement as the
-    non-streaming endpoint.
-    """
-    app_state.config["recommendations"] = {"max_count": 5}
-
-    response = client.get("/api/recommendations/stream?type=book&count=10")
-    assert response.status_code == 400
-    assert "exceeds the maximum allowed" in response.json()["detail"]
-
-
 def test_recommendations_count_at_max_is_allowed(client, mock_components):
     """GET /api/recommendations allows count == max_count (boundary)."""
     app_state.config["recommendations"] = {"max_count": 5}
@@ -3692,33 +3645,6 @@ class TestUpdateEndpointParallelSync:
         assert response.status_code == 200, response.text
         assert captured_kwargs.get("max_workers") == 8
 
-    def test_the_config_reaches_the_executor(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Without it every sync warns that a live YAML token is stranded.
-
-        The stranded-credential check reads ``inputs`` for the sources the
-        database does not hold, so the executor has to be handed the config
-        this endpoint already resolved from.
-        """
-        captured_kwargs: dict = {}
-        completion = threading.Event()
-        with (
-            patch(
-                "src.web.api.execute_multi_source_sync",
-                side_effect=self._make_capture(captured_kwargs, completion),
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            response = client.post("/api/update", json={"source": "all"})
-            assert completion.wait(timeout=5.0), "background sync did not run"
-
-        assert response.status_code == 200
-        assert captured_kwargs.get("config") is app_state.config
-
     def test_request_body_max_workers_above_ceiling_rejected(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3854,326 +3780,6 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
         assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
-
-
-# ---------------------------------------------------------------------------
-# SSE Streaming Endpoint Tests (8B)
-# ---------------------------------------------------------------------------
-
-
-def _parse_sse_events(response_text: str) -> list[dict]:
-    """Parse SSE text into a list of JSON event dicts."""
-    events = []
-    for line in response_text.strip().splitlines():
-        if line.startswith("data: "):
-            payload = line[len("data: ") :]
-            events.append(json.loads(payload))
-    return events
-
-
-class TestSSEStreamingEndpoint:
-    """Tests for GET /api/recommendations/stream SSE endpoint."""
-
-    def _make_recommendation(
-        self,
-        item_id: str = "1",
-        title: str = "Test Book",
-        author: str = "Author A",
-    ) -> Recommendation:
-        """Create a mock recommendation matching engine output."""
-        item = ContentItem(
-            id=item_id,
-            db_id=int(item_id),
-            title=title,
-            author=author,
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        return _rec_record(item)
-
-    def test_phase1_recommendations_event(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream emits a 'recommendations' event with items."""
-        rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_completed_items.return_value = []
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            assert response.status_code == 200
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        rec_events = [e for e in events if e["type"] == "recommendations"]
-        assert len(rec_events) == 1
-        items = rec_events[0]["items"]
-        assert len(items) == 1
-        assert items[0]["title"] == "Test Book"
-        assert items[0]["score"] == 0.85
-        assert items[0]["score_breakdown"] == {"genre_match": 0.9}
-
-    def test_phase1_tv_season_includes_db_id(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE phase 1 serializes a TV season rec with its parent show db_id.
-
-        The streaming path shares ``Recommendation.to_payload`` with the sync
-        endpoint, so a season-expanded candidate (id ``tvdb:42:s1``, db_id 42)
-        must stream with a non-null db_id and keep the card actionable.
-        """
-        season_item = ContentItem(
-            id="tvdb:42:s1",
-            db_id=42,
-            title="The Expanse (Season 1)",
-            author=None,
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            parent_id="tvdb:42",
-        )
-        rec = _rec_record(season_item)
-        mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_completed_items.return_value = []
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=tv_show&count=1"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        rec_events = [e for e in events if e["type"] == "recommendations"]
-        assert len(rec_events) == 1
-        items = rec_events[0]["items"]
-        assert items[0]["db_id"] == 42
-
-    def test_done_event_is_final(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream ends with a 'done' event."""
-        rec = self._make_recommendation()
-        mock_components["engine"].generate_recommendations.return_value = [rec]
-        mock_components["storage"].get_user_preference_config.return_value = None
-        mock_components["storage"].get_completed_items.return_value = []
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        done_events = [e for e in events if e["type"] == "done"]
-        assert len(done_events) == 1
-        # done should be the last event
-        assert events[-1]["type"] == "done"
-
-    def test_error_event_on_engine_failure(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream emits an 'error' event when the engine raises."""
-        mock_components["engine"].generate_recommendations.side_effect = RuntimeError(
-            "Engine failure"
-        )
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        error_events = [e for e in events if e["type"] == "error"]
-        assert len(error_events) == 1
-        assert "Failed to generate recommendations" in error_events[0]["message"]
-
-    def test_invalid_content_type_returns_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream endpoint returns 400 for invalid content type."""
-        response = client.get("/api/recommendations/stream?type=invalid&count=1")
-        assert response.status_code == 400
-        assert "Invalid content type" in response.json()["detail"]
-
-    def test_empty_recommendations_sends_done(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """SSE stream sends empty items + done when no recommendations found."""
-        mock_components["engine"].generate_recommendations.return_value = []
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=5"
-        ) as response:
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        assert len(events) == 2
-        assert events[0]["type"] == "recommendations"
-        assert events[0]["items"] == []
-        assert events[1]["type"] == "done"
-
-
-def _free_stream_slots() -> int:
-    """How much of the process-wide stream budget is available right now."""
-    taken = 0
-    while _slots.acquire(blocking=False):
-        taken += 1
-    for _ in range(taken):
-        _slots.release()
-    return taken
-
-
-@pytest.fixture()
-def whole_stream_budget() -> Iterator[None]:
-    """Attribute a leaked slot to the test that leaked it.
-
-    ``_slots`` is process-global and nothing else resets it, so a leak
-    anywhere surfaces as an unexplained 503 in the cap tests below.
-    """
-    assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
-    yield
-    assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
-
-
-@pytest.mark.usefixtures("whole_stream_budget")
-class TestStreamConcurrencyCap:
-    """Each in-flight stream holds one of anyio's 40 threadpool tokens per
-    generator step, so uncapped, streams left open stop every endpoint
-    answering. The two SSE routes share one bounded budget and answer 503
-    past it.
-    """
-
-    STREAM_URL = "/api/recommendations/stream?type=book&count=1"
-
-    def test_the_cap_answers_503_while_the_rest_of_the_api_still_answers(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """One saturated budget, and ``GET /api/status`` unaffected by it."""
-        holding = threading.Semaphore(0)
-        release = threading.Event()
-
-        def blocked_scoring_pass(**_kwargs):
-            holding.release()
-            release.wait(timeout=_STALL_TIMEOUT_SECONDS)
-            return []
-
-        mock_components["engine"].generate_recommendations.side_effect = (
-            blocked_scoring_pass
-        )
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_STREAMS) as pool:
-            in_flight = [
-                pool.submit(client.get, self.STREAM_URL)
-                for _ in range(MAX_CONCURRENT_STREAMS)
-            ]
-            try:
-                for _ in range(MAX_CONCURRENT_STREAMS):
-                    assert holding.acquire(timeout=_STALL_TIMEOUT_SECONDS)
-
-                refused = client.get(self.STREAM_URL)
-                unrelated = client.get("/api/status")
-            finally:
-                release.set()
-
-            assert refused.status_code == 503
-            assert refused.json()["detail"] == TOO_MANY_STREAMS_DETAIL
-            assert unrelated.status_code == 200
-            assert [stream.result().status_code for stream in in_flight] == [
-                200
-            ] * MAX_CONCURRENT_STREAMS
-
-        assert client.get(self.STREAM_URL).status_code == 200
-
-
-@pytest.mark.usefixtures("whole_stream_budget")
-class TestStreamBudgetIsGivenBack:
-    """The budget is process-wide and never refilled, so a slot leaked once
-    per request turns the cap itself into the outage it prevents. Each case
-    runs one request past the cap: a leak refuses the last one.
-    """
-
-    STREAM_URL = "/api/recommendations/stream?type=book&count=1"
-
-    def test_giving_one_slot_back_twice_does_not_widen_the_budget(self) -> None:
-        """Two paths release a slot and either may be the only one.
-
-        The second lands in a ``weakref.finalize`` callback, where the
-        over-release is unraisable and the widened budget trips no cap
-        assertion — so it is taken at the guard.
-        """
-        assert _slots.acquire(blocking=False)
-        slot = _HeldSlot()
-
-        slot.give_back()
-        slot.give_back()
-
-        assert _free_stream_slots() == MAX_CONCURRENT_STREAMS
-
-    def test_a_stream_that_ends_in_an_error_event_returns_its_slot(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """The failure path is the common one while the library is unreadable."""
-        mock_components["engine"].generate_recommendations.side_effect = RuntimeError(
-            "engine down"
-        )
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        for _ in range(MAX_CONCURRENT_STREAMS + 1):
-            response = client.get(self.STREAM_URL)
-            assert response.status_code == 200
-            assert _parse_sse_events(response.text)[-1]["type"] == "error"
-
-    def test_a_stream_abandoned_before_its_first_chunk_returns_its_slot(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Closing an unstarted generator runs no frame code, so its ``finally``
-        never fires. Taken at the helper: no TestClient request can open the
-        window between the handler returning and Starlette's first pull.
-        """
-        for _ in range(MAX_CONCURRENT_STREAMS + 1):
-            abandoned = bounded_sse(iter(["data: never read\n\n"]))
-            abandoned.close()
-            del abandoned
-            gc.collect()
-
-        mock_components["engine"].generate_recommendations.return_value = []
-        mock_components["storage"].get_user_preference_config.return_value = None
-        assert client.get(self.STREAM_URL).status_code == 200
-
-    def test_closing_an_unstarted_generator_runs_no_finally(self) -> None:
-        """The premise of the case above: without it, nothing is being fixed."""
-        ran: list[str] = []
-
-        def body() -> Iterator[str]:
-            try:
-                yield "chunk"
-            finally:
-                ran.append("finally")
-
-        unstarted = body()
-        unstarted.close()
-
-        assert ran == []
-
-    def test_a_request_refused_before_the_stream_starts_takes_no_slot(
-        self, client: TestClient, anonymous_client: TestClient, mock_components: dict
-    ) -> None:
-        """Otherwise an unauthenticated caller empties the budget for free."""
-        for _ in range(MAX_CONCURRENT_STREAMS + 1):
-            assert anonymous_client.get(self.STREAM_URL).status_code == 401
-            assert (
-                client.get(
-                    "/api/recommendations/stream?type=invalid&count=1"
-                ).status_code
-                == 400
-            )
-
-        mock_components["engine"].generate_recommendations.return_value = []
-        mock_components["storage"].get_user_preference_config.return_value = None
-        assert client.get(self.STREAM_URL).status_code == 200
 
 
 class TestConfigReload:
@@ -5333,12 +4939,6 @@ _GUARDED_ENDPOINTS = [
         ("engine",),
         url="/api/recommendations?type=book",
     ),
-    _Endpoint(
-        "GET",
-        "/api/recommendations/stream",
-        ("engine",),
-        url="/api/recommendations/stream?type=book",
-    ),
     _Endpoint("GET", "/api/users", ("storage",)),
     _Endpoint(
         "PATCH",
@@ -5654,16 +5254,7 @@ class TestDependencyGuards:
         # path is the developer's real config.yaml.
         app_state.config_path = str(Path("config/example.yaml").resolve())
 
-        # The source migrations that reload runs want a database, and the
-        # storage authentication needs here is a mock.
-        with (
-            patch("src.web.state.migrate_source_labels"),
-            patch("src.web.state.migrate_source_config_plugins"),
-            patch("src.web.state.migrate_source_attribution"),
-        ):
-            response = client.request(
-                endpoint.method, endpoint.target, json=endpoint.body
-            )
+        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
 
         assert response.status_code < 500
 
@@ -5949,9 +5540,10 @@ def _user_id_carrying_routes(app: FastAPI) -> set[tuple[str, str]]:
 
 
 class TestEveryUserIdParamIsBounded:
-    """``UserIdPath``'s comment claims every sibling carries ``ge=1``, and the
-    chat router's did not. A non-positive id matches no row, so it reads as an
-    empty library rather than a bad request.
+    """``UserIdPath``'s comment claims every sibling carries ``ge=1``, and a
+    router that grew one without it would not be caught anywhere else. A
+    non-positive id matches no row, so it reads as an empty library rather
+    than a bad request.
     """
 
     def test_no_route_accepts_a_non_positive_user_id(self, mock_components) -> None:
@@ -6350,28 +5942,6 @@ class TestUnguardedReadsAreOptional:
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_stream_serves_without_the_config(self, client, mock_components) -> None:
-        """The streaming sibling falls back the same way, so it is pinned too.
-
-        Sampling one of the pair would leave the other free to grow a guard,
-        or lose its fallback, with this class still green.
-        """
-        mock_components["engine"].generate_recommendations.return_value = []
-        app_state.config = None
-
-        response = client.get("/api/recommendations/stream?type=book")
-
-        assert response.status_code == 200
-        events = [
-            json.loads(line.removeprefix("data: "))
-            for line in response.text.splitlines()
-            if line.startswith("data: ")
-        ]
-        assert events == [
-            {"type": "recommendations", "items": []},
-            {"type": "done"},
-        ]
-
     def test_complete_serves_without_config(self, client, mock_components) -> None:
         """``get_feature_flags(None)`` falls back to the registered defaults."""
         mock_components["storage"].complete_content_item.return_value = 7
@@ -6610,11 +6180,9 @@ class TestSlowRequestsDoNotStallTheServerRegression:
     """A request in flight must not hold the loop against every other one.
 
     Bug reported: while a recommendation generation was running, the Data
-    page's two-second sync poll and the chat SSE stream both froze, so sync
-    progress appeared stuck.
+    page's two-second sync poll froze, so sync progress appeared stuck.
     Root cause: ``get_recommendations`` was ``async def`` with no ``await`` in
-    its body, so FastAPI ran the whole scoring pass — plus, by default, a
-    fan-out of synchronous Ollama calls — directly on the event loop.
+    its body, so FastAPI ran the whole scoring pass directly on the event loop.
     Fix: the handler is plain ``def``, which Starlette runs in a threadpool
     worker, leaving the loop free to serve everything else.
     """
@@ -6738,116 +6306,6 @@ class TestTheConfigWatcherDoesNotStallTheServerRegression:
             assert reload_finished.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
         assert status.status_code == 200
-
-
-def _asgi_request(
-    app,
-    method: str,
-    target: str,
-    on_body: Callable[[bytes], None],
-    request_body: bytes = b"",
-) -> int:
-    """Drive *app* over raw ASGI, calling *on_body* per response body chunk.
-
-    ``TestClient`` accumulates the whole response into a ``BytesIO`` before it
-    hands anything back, so even ``client.stream`` cannot see whether an
-    endpoint trickled or buffered. The ASGI boundary is the last place that is
-    observable, which is why this drives the app rather than the client.
-    """
-    path, _, query = target.partition("?")
-    session = issue_session(app_state.storage)
-    headers = [
-        (b"host", b"testserver"),
-        (b"cookie", f"{SESSION_COOKIE}={session}".encode()),
-    ]
-    if request_body:
-        headers += [
-            (b"content-type", b"application/json"),
-            (b"content-length", str(len(request_body)).encode()),
-        ]
-    scope = {
-        "type": "http",
-        "http_version": "1.1",
-        "method": method,
-        "path": path,
-        "raw_path": path.encode(),
-        "root_path": "",
-        "scheme": "http",
-        "query_string": query.encode(),
-        "headers": headers,
-        "client": ("testclient", 50000),
-        "server": ("testserver", 80),
-    }
-
-    async def drive() -> int:
-        status = 0
-        # The middleware chain asks again once it has the body, and answering
-        # "disconnected" straight away makes it abandon the response.
-        finished = anyio.Event()
-        delivered = False
-
-        async def receive():
-            nonlocal delivered
-            if delivered:
-                await finished.wait()
-                return {"type": "http.disconnect"}
-            delivered = True
-            return {"type": "http.request", "body": request_body, "more_body": False}
-
-        async def send(message):
-            nonlocal status
-            if message["type"] == "http.response.start":
-                status = message["status"]
-            elif message["type"] == "http.response.body":
-                if message.get("body"):
-                    on_body(message["body"])
-                if not message.get("more_body", False):
-                    finished.set()
-
-        await app(scope, receive, send)
-        return status
-
-    with anyio.from_thread.start_blocking_portal() as portal:
-        return portal.call(drive)
-
-
-class TestStreamingStaysIncremental:
-    """Materialise the SSE generator at either end and every event arrives in
-    one body message, which is the stall this conversion was about.
-    """
-
-    def test_each_event_leaves_the_app_as_its_own_body_message(
-        self, mock_components
-    ) -> None:
-        """One ASGI body message per ``yield``, not one for the lot."""
-        chunks: list[bytes] = []
-
-        engine = mock_components["engine"]
-        engine.generate_recommendations.return_value = [
-            Recommendation(
-                item=ContentItem(
-                    id="1",
-                    title="Dune",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-                score=0.9,
-                reasoning="because",
-            )
-        ]
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        status = _asgi_request(
-            mock_components["app"],
-            "GET",
-            "/api/recommendations/stream?type=book&count=1",
-            chunks.append,
-        )
-
-        assert status == 200
-        assert [
-            json.loads(chunk.removeprefix(b"data: "))["type"] for chunk in chunks
-        ] == ["recommendations", "done"]
 
 
 @pytest.fixture()
@@ -7583,7 +7041,7 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
     """
 
     @pytest.mark.parametrize("breaker", LINE_BREAKS)
-    def test_a_stream_failure_stays_on_one_line(
+    def test_a_recommendation_failure_stays_on_one_line(
         self, breaker: str, caplog: pytest.LogCaptureFixture
     ) -> None:
         engine = MagicMock(spec=RecommendationEngine)
@@ -7599,7 +7057,7 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
         ):
             app_state.engine = engine
             authenticated_client(app).get(
-                "/api/recommendations/stream?type=video_game&count=5"
+                "/api/recommendations?type=video_game&count=5"
             )
 
         messages = _api_log_messages(caplog)
@@ -7649,7 +7107,7 @@ class TestATerminalControlCannotRewriteAnApiLogLine:
         ):
             app_state.engine = engine
             authenticated_client(app).get(
-                "/api/recommendations/stream?type=video_game&count=5"
+                "/api/recommendations?type=video_game&count=5"
             )
 
         messages = _api_log_messages(caplog)
@@ -7663,7 +7121,7 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
 
     Bug: ``sanitize_for_log(str(exc))`` in a catch-all ``except Exception``
     logs a trailing colon and nothing else for a bare ``TimeoutError()``.
-    Fix: every one of the three goes through ``exception_for_log``.
+    Fix: both go through ``exception_for_log``.
     """
 
     def test_the_recommendations_sink_names_it(
@@ -7681,27 +7139,6 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
         # The whole rendering, so the sink is named too: a class name found
         # anywhere in the joined records could have come from another one.
         assert "Error generating recommendations: TimeoutError: " in _api_log_messages(
-            caplog
-        )
-
-    def test_the_stream_sink_names_it(
-        self,
-        client: TestClient,
-        mock_components: dict,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        mock_components["engine"].generate_recommendations.side_effect = TimeoutError()
-        mock_components["storage"].get_user_preference_config.return_value = None
-
-        with (
-            caplog.at_level(logging.ERROR, logger="src.web.api"),
-            client.stream(
-                "GET", "/api/recommendations/stream?type=book&count=1"
-            ) as response,
-        ):
-            response.read()
-
-        assert "Streaming recommendation error: TimeoutError: " in _api_log_messages(
             caplog
         )
 
@@ -7946,37 +7383,6 @@ def _resolved_response_class(route: APIRoute) -> type:
     return declared.value if isinstance(declared, DefaultPlaceholder) else declared
 
 
-def _dumps_calls(tree: ast.AST) -> list[ast.Call]:
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "dumps"
-    ]
-
-
-def _chunk_dumps_calls(tree: ast.AST) -> list[ast.Call]:
-    """The ``dumps`` calls building an SSE chunk, which Starlette then encodes
-    strictly. A ``dumps`` elsewhere in the module answers at a different
-    boundary, so counting it would report coverage the streams do not have.
-    """
-    builders = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "generate_sse"
-    ]
-    return [call for builder in builders for call in _dumps_calls(builder)]
-
-
-def _dumps_naming_ensure_ascii(calls: list[ast.Call]) -> set[str]:
-    return {
-        f"line {call.lineno}"
-        for call in calls
-        if any(keyword.arg == "ensure_ascii" for keyword in call.keywords)
-    }
-
-
 def _item_holding(surrogate: str) -> ContentItem:
     """One item carrying *surrogate* in a column and in the metadata blob.
 
@@ -8068,32 +7474,6 @@ class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
 
         assert response.status_code == 200, response.text
         assert f"Dune\\u{ord(surrogate):04x}" in response.text
-
-    def test_the_recommendation_stream_answers(
-        self, surrogate, mock_components
-    ) -> None:
-        """SSE encodes its own chunks, so the response class never sees them.
-
-        ``json.dumps`` defaults to ``ensure_ascii=True`` there, writing the
-        escape before the encode — why this path never had the defect.
-        """
-        mock_components["engine"].generate_recommendations.return_value = [
-            _rec_record(_item_holding(surrogate))
-        ]
-        mock_components["storage"].get_user_preference_config.return_value = None
-        client = authenticated_client(
-            mock_components["app"], raise_server_exceptions=False
-        )
-
-        with client.stream(
-            "GET", "/api/recommendations/stream?type=book&count=1"
-        ) as response:
-            assert response.status_code == 200
-            body = response.read().decode()
-
-        events = _parse_sse_events(body)
-        streamed = [e for e in events if e["type"] == "recommendations"][0]["items"]
-        assert streamed[0]["title"] == f"Dune{surrogate}"
 
 
 class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
@@ -8233,17 +7613,6 @@ class TestTheEncodeIsOneBoundary:
             "/api/items/{db_id}/ignore",
             "/api/users/{user_id}/preferences",
         } <= paths
-
-    def test_no_stream_chunk_turns_ensure_ascii_off(self) -> None:
-        """The SSE endpoint encodes its own chunks, and the default escape is
-        the whole reason it never had the defect. ``export.py`` may say it:
-        that body goes back through the raw response class.
-        """
-        assert _dumps_naming_ensure_ascii(_chunk_dumps_calls(_API_TREE)) == set()
-
-    def test_that_sweep_reaches_the_chunks_it_exists_for(self) -> None:
-        """The builder moving elsewhere would empty the sweep silently."""
-        assert _chunk_dumps_calls(_API_TREE)
 
 
 class TestOnlyTheAppResponseClassMakesTheBodyEncodable:

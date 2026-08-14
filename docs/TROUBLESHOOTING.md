@@ -79,22 +79,6 @@ python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.c
 Get a key at <https://steamcommunity.com/dev/apikey> and set your numeric Steam
 ID. **Make the profile public**, or the API returns nothing.
 
-### Source attribution at startup
-
-Six plugins once stored items under the plugin name rather than the source id.
-Every startup moves those rows onto the source that owns them, logs one line per
-plugin, and never deletes or merges. Ambiguity is refused rather than guessed.
-
-| The line says | What to do |
-|---|---|
-| `Re-attributed …` | Nothing, it worked |
-| `a source is named after it but runs 'steam'` | Rename that source; the next startup moves the rows |
-| `2 sources share it` | Remove one; the next startup moves the rows |
-| `the source named after it runs it` | Nothing — its own rows are spelled the same way, and nothing is wrong |
-
-Each is said once per reason, so an edit trading one obstacle for another says
-the new line.
-
 ### Duplicate items
 
 Items deduplicate by normalized title, so this is rare. When it happens the

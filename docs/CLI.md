@@ -208,7 +208,7 @@ a secret's value, only whether one is set.
 
 ```bash
 python3.11 -m src.cli settings set recommendations.default_count 8
-python3.11 -m src.cli settings set features.ai_enabled true
+python3.11 -m src.cli settings set enrichment.enabled true
 python3.11 -m src.cli settings reset recommendations.default_count
 ```
 
@@ -219,7 +219,7 @@ override.
 `set`, `apply` and `reset` accept `--format json`, emitting the full refreshed
 view rather than a one-line confirmation.
 
-Restart-required settings (`features.*`, `web.*`, `logging.*`) persist and apply
+Restart-required settings (`web.*`, `logging.*`) persist and apply
 on the next boot. The CLI says so when a change needs one.
 
 ### `settings apply`

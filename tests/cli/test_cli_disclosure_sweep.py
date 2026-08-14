@@ -450,7 +450,7 @@ class TestTheCliDisclosureSweepFailsOnANewRawSink:
         """The unbound spelling is the one the other predicates cannot see."""
         tree = ast.parse(
             f"try:\n    go()\nexcept {clause}:\n"
-            "    logger.error('Chat send failed', exc_info=True)\n"
+            "    logger.error('Trakt sync failed', exc_info=True)\n"
             "    click.echo('Error: Failed. Check logs for details.', err=True)"
         )
 
@@ -462,9 +462,9 @@ class TestTheCliDisclosureSweepFailsOnANewRawSink:
         "body",
         [
             f"{_ABORTING_FUNNEL}(ctx, MESSAGE, error)",
-            "logger.error('Chat send failed', exc_info=True)",
+            "logger.error('Trakt sync failed', exc_info=True)",
             "click.echo('Error: Failed.', err=True)",
-            "logger.error('Chat send failed')\n    click.echo('Error: Failed.')",
+            "logger.error('Trakt sync failed')\n    click.echo('Error: Failed.')",
         ],
         ids=["funnelled", "logged-only", "printed-only", "logged-without-detail"],
     )

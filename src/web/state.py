@@ -17,11 +17,6 @@ from src.config.service import load_config
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.settings_migration import migrate_config_settings
-from src.storage.source_migration import (
-    migrate_source_attribution,
-    migrate_source_config_plugins,
-    migrate_source_labels,
-)
 
 if TYPE_CHECKING:
     from src.recommendations.engine import RecommendationEngine
@@ -73,8 +68,8 @@ class ConfigWatcher:
                 # which a settings save holds across a whole registry sweep,
                 # and then does a file read, five migrations and a run of
                 # Fernet decrypts. Called straight from this task, a config
-                # file touched mid-save parks the server: no request accepted,
-                # no SSE chunk sent, for as long as the save runs.
+                # file touched mid-save parks the server: no request accepted
+                # for as long as the save runs.
                 success = await asyncio.to_thread(reload_config)
                 if success:
                     logger.info("Config hot-reloaded successfully")
@@ -174,14 +169,6 @@ def reload_config() -> bool:
             if app_state.storage is not None:
                 migrate_config_settings(config, app_state.storage)
                 migrate_config_credentials(config, app_state.storage)
-                # Relabel stored goodreads source values and plugin names after
-                # the plugin rename
-                migrate_source_labels(app_state.storage)
-                migrate_source_config_plugins(app_state.storage)
-                # A reload is how a renamed or removed source arrives, and the
-                # pass keeps rerunning until one of those lands, so it belongs
-                # here as much as at boot.
-                migrate_source_attribution(config, app_state.storage)
                 migrate_config_secrets(config, app_state.storage)
             app_state.config = config
         logger.info("Reloaded config from %s", config_path)

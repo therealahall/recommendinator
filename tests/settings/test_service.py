@@ -603,7 +603,7 @@ class TestResetSetting:
 
 class TestOriginGrammar:
     @pytest.mark.parametrize(
-        "value", ["http://[foo]", "http://[1.2.3.4]", "http://ollama]"]
+        "value", ["http://[foo]", "http://[1.2.3.4]", "http://tmdb]"]
     )
     def test_a_netloc_urlsplit_cannot_parse_is_refused_not_raised(
         self, value: str
