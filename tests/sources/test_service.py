@@ -1486,6 +1486,28 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
             "stranded-by-an-upgrade"
         )
 
+    def test_a_disabled_sibling_keeps_the_row(self, storage: StorageManager) -> None:
+        """A disabled source is reconnected by enabling it, not by re-adding it."""
+        storage.upsert_source_config(1, "home_games", "fake_games", {}, enabled=False)
+
+        delete_source("work_games", storage, {"inputs": {}})
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
+    def test_a_disabled_yaml_sibling_keeps_the_row(
+        self, storage: StorageManager
+    ) -> None:
+        """The YAML half answers who is left the same way the database half does."""
+        config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": False}}}
+
+        delete_source("work_games", storage, config)
+
+        assert storage.get_credential(1, "fake_games", "api_key") == (
+            "stranded-by-an-upgrade"
+        )
+
     def test_a_yaml_sibling_keeps_the_row(self, storage: StorageManager) -> None:
         """The database is half the source list, so a sweep reading it alone lies."""
         config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}

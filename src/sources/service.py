@@ -18,7 +18,6 @@ from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
-from src.storage.credential_orphans import delete_orphaned_credentials
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -208,6 +207,28 @@ def resolve_inputs(
         )
 
     return resolved
+
+
+def configured_source_plugins(
+    config: dict[str, Any],
+    storage: StorageManager,
+    user_id: int,
+) -> dict[str, str]:
+    """Map every configured source id to its plugin, disabled ones included.
+
+    A disabled source still owns items and still makes its plugin ambiguous,
+    so leaving it out would let a sibling claim its rows.
+    """
+    sources: dict[str, str] = {}
+    inputs = config.get("inputs")
+    if isinstance(inputs, dict):
+        for source_id, entry in inputs.items():
+            if isinstance(entry, dict) and entry.get("plugin"):
+                sources[str(source_id)] = str(entry["plugin"])
+    # A DB row wins over YAML for the same id, as ``resolve_inputs`` has it.
+    for row in storage.list_source_configs(user_id):
+        sources[row["source_id"]] = row["plugin"]
+    return sources
 
 
 def _plugin_config_without_credentials(
@@ -1129,7 +1150,21 @@ def delete_source(
     storage.delete_credentials_for_source(user_id, source_id)
     storage.delete_source_config(user_id, source_id)
 
-    # Swept after the row is gone, so "who is left" reads as it now is.
-    # *config* is required rather than defaulted: half a source list would
-    # read a YAML-only source as gone and revoke the live token it holds.
-    delete_orphaned_credentials(storage, db_row["plugin"], config, user_id)
+    # Read after the row is gone, so "who is left" reads as it now is. *config*
+    # is required rather than defaulted: half a source list would read a
+    # YAML-only source as gone and revoke the live token it holds.
+    plugin_name = db_row["plugin"]
+    sources = configured_source_plugins(config, storage, user_id)
+    # A namesake source reads the credential under its own id, and a sibling
+    # still on the plugin may have rotated the token — nothing records which.
+    if plugin_name in sources or plugin_name in sources.values():
+        return
+
+    deleted = storage.delete_credentials_for_source(user_id, plugin_name)
+    if deleted:
+        logger.info(
+            "Deleted %d credential(s) stranded under plugin name '%s': no "
+            "configured source uses that plugin any more.",
+            deleted,
+            sanitize_for_log(plugin_name),
+        )

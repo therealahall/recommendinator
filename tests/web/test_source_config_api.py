@@ -70,11 +70,7 @@ def client(
     engine = Mock(spec=RecommendationEngine)
     engine.storage = storage
 
-    with (
-        patch("src.web.app.migrate_source_labels"),
-        patch("src.web.app.migrate_source_config_plugins"),
-        booted_web_app(storage, base_config, engine=engine) as app,
-    ):
+    with booted_web_app(storage, base_config, engine=engine) as app:
         yield authenticated_client(app)
 
 
@@ -305,11 +301,7 @@ class TestMigrateNamesASecretTheBootPassEncryptedRegression:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        with (
-            patch("src.web.app.migrate_source_labels"),
-            patch("src.web.app.migrate_source_config_plugins"),
-            booted_web_app(storage, base_config, migrate_credentials=True) as app,
-        ):
+        with booted_web_app(storage, base_config, migrate_credentials=True) as app:
             client = authenticated_client(app)
             # Anchored: startup, not this request, is what encrypted it.
             assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
@@ -717,11 +709,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
             "storage": {"database_path": "data/test.db"},
             "inputs": {},
         }
-        with (
-            patch("src.web.app.migrate_source_labels"),
-            patch("src.web.app.migrate_source_config_plugins"),
-            booted_web_app(storage, config) as app,
-        ):
+        with booted_web_app(storage, config) as app:
             yield authenticated_client(app)
 
     def test_a_created_path_outside_the_allowed_roots_is_refused_with_the_reason(
@@ -1004,11 +992,7 @@ class TestSyncLogsTheReasonItRefused:
             "storage": {"database_path": "data/test.db"},
             "inputs": {},
         }
-        with (
-            patch("src.web.app.migrate_source_labels"),
-            patch("src.web.app.migrate_source_config_plugins"),
-            booted_web_app(storage, config) as app,
-        ):
+        with booted_web_app(storage, config) as app:
             yield authenticated_client(app)
 
     def test_a_missing_path_is_named_in_the_log_and_not_on_the_wire(
@@ -1356,11 +1340,7 @@ class TestSourceCredentialMoveRegression:
             "storage": {"database_path": "data/test.db"},
             "inputs": {},
         }
-        with (
-            patch("src.web.app.migrate_source_labels"),
-            patch("src.web.app.migrate_source_config_plugins"),
-            booted_web_app(storage, config, engine=engine) as app,
-        ):
+        with booted_web_app(storage, config, engine=engine) as app:
             yield authenticated_client(app)
 
     @staticmethod

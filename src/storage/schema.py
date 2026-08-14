@@ -235,8 +235,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             review TEXT,
             date_completed DATE,
             -- Source id, never a plugin name: two sources on one plugin must
-            -- stay tellable apart. migrate_source_attribution repairs rows
-            -- written before the plugins kept the id.
+            -- stay tellable apart.
             source TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -456,19 +455,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             key TEXT PRIMARY KEY,
             value_json TEXT NOT NULL,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-
-    # Records the one-time migrations that run at app start rather than at
-    # database open, so they cannot ride PRAGMA user_version. Kept out of
-    # ``settings``, whose rows are the user's own and which a fresh install
-    # leaves empty.
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS completed_migrations (
-            name TEXT PRIMARY KEY,
-            completed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
