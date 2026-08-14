@@ -97,6 +97,31 @@
   padding: 0;
 }
 
+/* Kept from Tailwind's Preflight, which the app was built against: `.card h3`
+   is sized by no rule, `.scorer-tooltip-text` declares no font family, and an
+   inline icon would sit on a text baseline and grow the sidebar toggle. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea {
+  font: inherit;
+}
+
+svg {
+  display: block;
+}
+
 /* The one focus indicator (WCAG 2.4.7), offset so it lands on the surface
    behind the control rather than on its edge: a border swap to --accent is
    1.14:1 against a resting --text-muted edge, so no component replaces this. */

@@ -16,8 +16,45 @@ const AARON: UserResponse = {
   password_updated_at: '2026-01-15T09:30:00+00:00',
 }
 
+const SUBMIT_SURFACES: [string, () => VueWrapper][] = [
+  ['SetupForm', () => mount(SetupForm)],
+  ['LoginForm', () => mount(LoginForm)],
+  ['AccountSection, for both its forms', () => mount(AccountSection, { props: { user: AARON } })],
+]
+
+/** The same surfaces with the request they just sent still out. */
+const IN_FLIGHT_SURFACES: [string, () => VueWrapper][] = [
+  ['SetupForm', () => mount(SetupForm, { props: { pending: true } })],
+  ['LoginForm', () => mount(LoginForm, { props: { pending: true } })],
+  [
+    'AccountSection, for both its forms',
+    () =>
+      mount(AccountSection, {
+        props: { user: AARON, profilePending: true, passwordPending: true },
+      }),
+  ],
+]
+
 function fields(wrapper: VueWrapper): HTMLInputElement[] {
   return Array.from(wrapper.element.querySelectorAll('input'))
+}
+
+function submitButtons(wrapper: VueWrapper): HTMLButtonElement[] {
+  const buttons: HTMLButtonElement[] = Array.from(wrapper.element.querySelectorAll('button'))
+  const submits = buttons.filter((button) => button.type === 'submit')
+  // Guarded here so a surface that stops carrying one fails rather than
+  // passing every assertion below on an empty list.
+  expect(submits.length, 'no submit button on this surface').toBeGreaterThan(0)
+  return submits
+}
+
+/** Fills every field, which is what takes each form off its at-rest lock. A
+ *  value differing from AARON's is what makes the profile form submittable. */
+async function fillEveryField(wrapper: VueWrapper): Promise<void> {
+  const typed = wrapper.findAll('input')
+  expect(typed.length).toBeGreaterThan(0)
+
+  for (const field of typed) await field.setValue('a-typed-value')
 }
 
 function identifiedElements(wrapper: VueWrapper): Element[] {
@@ -87,6 +124,52 @@ describe('account surface accessibility, with every message on screen', () => {
     expectEveryDescriptionResolves(wrapper)
     expectIdsUnique(wrapper)
   })
+
+  it.each(SUBMIT_SURFACES)(
+    '%s locks its submit without dropping it out of the tab order',
+    (_name, render) => {
+      // Regression: each of these switched to native `disabled` a tick after the
+      // request came back, unfocusing the button under the finger that pressed
+      // it and sending the user back to <body> (WCAG 2.4.3).
+      for (const submit of submitButtons(render())) {
+        const where = submit.textContent?.trim()
+        expect(submit.getAttribute('aria-disabled'), `${where} is not locked`).toBe('true')
+        expect(submit.disabled, `${where} is natively disabled`).toBe(false)
+      }
+    },
+  )
+
+  it.each(SUBMIT_SURFACES)(
+    '%s unlocks its submit once every field is filled',
+    async (_name, render) => {
+      // Without this the assertion above is satisfied by a button hardcoded
+      // aria-disabled, which locks the form out of use and reports as a pass.
+      const wrapper = render()
+      await fillEveryField(wrapper)
+
+      for (const submit of submitButtons(wrapper)) {
+        const where = submit.textContent?.trim()
+        expect(submit.getAttribute('aria-disabled'), `${where} never unlocks`).toBeNull()
+      }
+    },
+  )
+
+  it.each(IN_FLIGHT_SURFACES)(
+    '%s holds the lock in aria while its request is out',
+    async (_name, render) => {
+      // The lock above is the incomplete-form one. `:disabled="pending"`
+      // satisfies it while unfocusing the button under the finger that just
+      // pressed Enter, dropping the user on <body> (WCAG 2.4.3).
+      const wrapper = render()
+      await fillEveryField(wrapper)
+
+      for (const submit of submitButtons(wrapper)) {
+        const where = submit.textContent?.trim()
+        expect(submit.getAttribute('aria-disabled'), `${where} is unlocked in flight`).toBe('true')
+        expect(submit.disabled, `${where} is natively disabled in flight`).toBe(false)
+      }
+    },
+  )
 
   it('names both live regions apart, so neither form steals the other report', () => {
     const wrapper = mount(AccountSection, { props: { user: AARON } })
