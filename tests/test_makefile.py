@@ -175,7 +175,6 @@ class TestTheGateRunsWhateverTheTreeLooksLike:
         printed = _dry_run("check", working_directory=tmp_path)
 
         for command in (
-            "scripts/check_review_agents.py",
             "black --check",
             "ruff check",
             "mypy",

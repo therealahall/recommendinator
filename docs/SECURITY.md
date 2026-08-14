@@ -252,8 +252,7 @@ truncated or encoded form of the secret survives it.
 
 ## Automated security review
 
-The shared security-review agent, committed at
-`.claude/agents/security-review.md`, audits changes before they are committed.
+Changes are audited for the following before they are committed.
 
 ### What it checks
 
@@ -284,32 +283,19 @@ The shared security-review agent, committed at
 ### How the review gate is started
 
 Nothing starts it for you. Running the agents is a step in the pre-commit
-workflow, and `make check` verifies that every mandated agent is committed and
-loadable, because an agent that never loaded reviews nothing and says nothing.
-See [Review Agent Preflight](../CLAUDE.md#review-agent-preflight).
+workflow, and an agent that never loaded reviews nothing — a run that cannot
+launch one is a hard stop, not a skip.
 
-**"Loadable" is not "unaltered", and nothing here checks the difference.** A
-`.claude/agents/security-review.md` edited to approve everything passes the
-check exactly like the real one. Reviewing the `.claude/agents/` diff by hand is
-the only control on that, so treat a change to those files like a change to CI
-configuration: they direct the agents reviewing this repository, they run with
-the reviewer's tool permissions, and an edit changes what the review does,
-including the review of the branch making the edit. The
-`<!-- shared-review-guidance:start -->` / `:end -->` markers every agent carries
-delimit the region the out-of-repo vendoring keeps in step across repositories,
-including the read-only rule the next section rests on. Nothing here reads them.
+**The one committed agent is a prompt with the reviewer's permissions.** Treat a
+change to `.claude/agents/parity-review.md` like a change to CI configuration:
+an edit changes what the review does, including the review of the branch making
+the edit. Reviewing that diff by hand is the only control.
 
 `SessionStart` hooks are deliberately kept out of the tracked
 `.claude/settings.json`, because tracked settings ship to every clone and hooks
-run without a prompt. The
-[documented opt-in](../CLAUDE.md#review-agent-preflight) puts it in the
-gitignored `.claude/settings.local.json` instead, **which makes the execution
-risk yours rather than absent.** `$CLAUDE_PROJECT_DIR` is the checkout, so the
-hook runs the working tree's copy of the script, including on a branch someone
-else wrote. Do not enable it in a checkout used to review other people's
-branches. That path is not unique to the hook: the agents' prompts tell them to
-run the project's quality-check command, so reviewing a contributed branch runs
-that branch's test code as you either way. The hook is the door you can decline.
+run without a prompt. The risk is not unique to hooks: the agents' prompts tell
+them to run the project's quality-check command, so reviewing a contributed
+branch runs that branch's test code as you either way.
 
 **`permissions.allow` is ambient authority of the same shape, governed the same
 way.** An entry is pre-approved for everyone who checks out the branch carrying
@@ -358,26 +344,19 @@ unguarded here.** What asks an agent not to use it that way is the agents' own
 prose, and the two primitives are covered by different sentences: the read-only
 rule answers the write, while the read is answered only by a clause in the
 search section telling an agent not to route around the file tool with
-`--no-index`. Both are maintained upstream, in the repository the five shared
-agents are vendored from. Nothing in this checkout asserts a committed agent
-still carries either, so a copy arriving without them reads as ordinary drift
-and the whole suite stays green.
+`--no-index`. Both rules live in the review agents' own prompts, not in
+anything this repository enforces.
 
-`enabledPlugins` is code by definition and is pinned for the same reason.
-`tests/test_review_agents.py` pins both keys exactly, so widening either costs a
-test update and cannot happen silently. That is not a defence, since a branch
-can edit the pin in the same commit. It is the same bet as reviewing the
-`.claude/agents/` diff by hand.
+`enabledPlugins` is code by definition and warrants the same care: widening
+either settings key should be a deliberate act, visible in the diff, not one
+quiet line in a settings file.
 
 ### For contributors
 
-security-review is one of the five shared agents committed under
-`.claude/agents/`, and reads this file and CLAUDE.md for the rules above. It
-runs in parallel with **code-review**, **document-review**,
-**accessibility-review** and this repository's own **parity-review**.
-**commit-hygiene** runs afterwards, once those five have approved, to plan the
-commit split. All six must approve before anything is committed. Each finding
-carries severity, CWE classification, evidence, impact and remediation.
+Security review is part of the pre-commit workflow in
+[CONTRIBUTING.md](../CONTRIBUTING.md) and reads this file and CLAUDE.md for the
+rules above. Each finding carries severity, CWE classification, evidence,
+impact and remediation.
 
 ## Reporting security issues
 

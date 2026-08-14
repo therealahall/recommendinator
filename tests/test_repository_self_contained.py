@@ -7,7 +7,7 @@ unverifiable noise to every reader who is not the person who wrote it, and
 neither they nor CI can tell whether it is still true.
 
 Scope is every root-level file except an explicit exemption set, plus `.claude/`,
-`.github/`, `docker/`, `docs/`, `resources/vite/`, `scripts/` and `tests/`. Root
+`.github/`, `docker/`, `docs/`, `resources/vite/` and `tests/`. Root
 files are in by default rather than by allowlist, because an allowlist silently
 omits whatever gets added next. `src/` and the rest of `resources/` are
 deliberately out: application and interface code legitimately addresses the
@@ -38,7 +38,6 @@ _SCANNED_DIRECTORIES = (
     "docker/",
     "docs/",
     "resources/vite/",
-    "scripts/",
     "tests/",
 )
 
@@ -53,9 +52,9 @@ _ROOT_EXEMPTIONS = frozenset({"CHANGELOG.md", "pnpm-lock.yaml", "uv.lock"})
 _ALLOW_MARKER = "self-contained: allow"
 _COMMENT_INTRODUCERS = ("#", "//", "<!--")
 
-# The offending line reaches a terminal and a CI log, so it is escaped and capped
-# for the same reason `scripts/check_review_agents.py` does it: a crafted file
-# could otherwise emit control characters that rewrite the report being trusted.
+# The offending line reaches a terminal and a CI log, so it is escaped and
+# capped: a crafted file could otherwise emit control characters that rewrite
+# the report being trusted.
 _LINE_DISPLAY_LIMIT = 200
 
 # Every pattern is spliced from fragments, because this file is itself in scope
@@ -522,13 +521,11 @@ class TestScope:
             "vitest.config.ts",
             "docker-compose.yml",
             "docker/entrypoint.sh",
-            ".claude/agents/code-review.md",
             ".claude/agents/parity-review.md",
             ".github/workflows/ci.yml",
             "docs/SECURITY.md",
             "resources/vite/devServer.ts",
-            "scripts/check_review_agents.py",
-            "tests/test_review_agents.py",
+            "tests/test_repository_self_contained.py",
         ):
             assert expected in scanned, f"{expected} is not being scanned"
 
@@ -540,7 +537,6 @@ class TestScope:
             "docker/",
             "docs/",
             "resources/vite/",
-            "scripts/",
             "tests/",
         }
 
