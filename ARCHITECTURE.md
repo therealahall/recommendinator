@@ -563,7 +563,8 @@ and `test_<name>.py` with mocked APIs. `PluginRegistry` discovers it. See
 
 **An enrichment provider**: the same layout under
 `src/enrichment/providers/<name>/`, with rate limiting configured in the provider
-class. `EnrichmentRegistry` discovers it.
+class. Nothing discovers it: add the class to the tuple in
+`EnrichmentRegistry.discover_providers`.
 
 **A content type**: extend the `ContentType` enum, declare its fields in
 `src/models/detail_fields.py`, add its detail table to the schema, register

@@ -22,6 +22,14 @@ const GENERATED_BUT_EMPTY = {
   generated_at: '2026-08-13T12:00:00',
 }
 
+// One rated book whose review mentions a theme: MIN_ITEMS_PER_GENRE is 2, so
+// the genre affinity it would have joined never clears the floor.
+const THEMES_ONLY = {
+  ...NEVER_GENERATED,
+  theme_preferences: ['immersive'],
+  generated_at: '2026-08-13T12:00:00',
+}
+
 const mockGet = vi.fn()
 const mockPost = vi.fn()
 
@@ -74,18 +82,70 @@ describe('ProfilePanel', () => {
     expect(wrapper.text()).toContain('No profile generated')
   })
 
-  it('re-enables Regenerate after the request fails', async () => {
-    mockGet.mockResolvedValue(NEVER_GENERATED)
-    mockPost.mockRejectedValue(new Error('boom'))
+  it('renders a profile carrying nothing but themes', async () => {
+    // Reported: the empty bordered block again. The store counted
+    // theme_preferences as content while the panel rendered no section for it.
+    mockGet.mockResolvedValue(THEMES_ONLY)
 
     const wrapper = mount(ProfilePanel)
     await flushPromises()
 
-    const button = () => wrapper.findAll('button').find((b) => b.text().startsWith('Regenerate') || b.text() === 'Generating...')!
-    await button().trigger('click')
+    expect(wrapper.text()).toContain('immersive')
+    expect(wrapper.text()).not.toContain('No profile generated')
+  })
+
+  it('holds the Regenerate lock in aria while its request is out', async () => {
+    // Native `disabled` unfocuses the button under the finger that pressed
+    // Enter and drops the user on <body> (WCAG 2.4.3).
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockReturnValue(new Promise(() => {}))
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+
+    expect(wrapper.find('button').attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('button').element.disabled).toBe(false)
+    expect(wrapper.get('[role="status"]').text()).toBe('Generating…')
+  })
+
+  it('ignores a second press while the first request is out', async () => {
+    // What the native lock used to buy, now that the button stays pressable.
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockReturnValue(new Promise(() => {}))
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await wrapper.find('button').trigger('click')
+
+    expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces a failed regenerate and unlocks the button', async () => {
+    // The store swallowed the rejection, so a 500 read exactly like a success
+    // on an empty library: the panel still said no profile was generated.
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockRejectedValue(new Error('Profile generation failed'))
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
     await flushPromises()
 
-    expect(button().attributes('disabled')).toBeUndefined()
-    expect(button().text()).toBe('Regenerate')
+    expect(wrapper.get('[role="status"]').text()).toBe('Profile generation failed')
+    expect(wrapper.find('button').attributes('aria-disabled')).toBeUndefined()
+  })
+
+  it('mounts the live region before it has anything to announce', async () => {
+    // A region inserted already populated is read as page content and skipped.
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+
+    const region = wrapper.get('[role="status"]')
+    expect(region.attributes('aria-live')).toBe('polite')
+    expect(region.text()).toBe('')
   })
 })

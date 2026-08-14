@@ -1639,8 +1639,13 @@ input[type="checkbox"] {
 .profile-section { margin-bottom: var(--space-3); }
 .profile-section h4 { font-size: var(--text-xs); font-weight: 600; margin: 0 0 var(--space-2) 0; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .profile-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.profile-tag { padding: 2px 8px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent-light); border-radius: var(--radius-sm); font-size: var(--text-xs); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
-.profile-tag.anti { background: color-mix(in srgb, var(--color-error) 10%, transparent); color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 30%, transparent); }
+.profile-tag { padding: 2px 8px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--text-primary); border-radius: var(--radius-sm); font-size: var(--text-xs); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+/* No fill on the anti tag: --color-error-text clears 4.5:1 on --bg-card with
+   nothing to spare (4.82:1 on Nord), and a 10% error wash under it took that
+   to 4.45:1. The border carries the distinction instead. */
+.profile-tag.anti { background: transparent; color: var(--color-error-text); border-color: color-mix(in srgb, var(--color-error) 30%, transparent); }
+.profile-status { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
+.profile-status.failed { color: var(--color-error-text); }
 /* Data / Sync */
 .sync-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-4); }
 .sync-card { background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: var(--space-5); text-align: center; }
