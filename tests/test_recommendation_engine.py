@@ -83,12 +83,6 @@ def engine(mock_storage):
 
 
 @pytest.fixture
-def non_ai_engine(mock_storage):
-    """The same engine under the name the non-AI cases below ask for."""
-    return RecommendationEngine(storage_manager=mock_storage, min_rating=4)
-
-
-@pytest.fixture
 def real_storage(tmp_path):
     """Create a real StorageManager backed by a temporary SQLite database."""
     return StorageManager(tmp_path / "engine_signal.db")
@@ -180,7 +174,7 @@ class TestSingleWeightingStageRegression:
         )
 
     def test_one_enabled_scorer_is_the_whole_score_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """With only genre_match enabled, the score IS the genre_match row.
 
@@ -207,7 +201,7 @@ class TestSingleWeightingStageRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.MOVIE,
             count=5,
             user_preference_config=self._only("genre_match"),
@@ -217,7 +211,7 @@ class TestSingleWeightingStageRegression:
         assert recs[0].score == pytest.approx(recs[0].score_breakdown["genre_match"])
 
     def test_a_preferred_director_scores_on_a_movie_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """A director the user rated well lifts a film, as an author does a book.
 
@@ -256,16 +250,16 @@ class TestSingleWeightingStageRegression:
             return_value=[same_director, other_director]
         )
 
-        scores = self._scores(non_ai_engine, self._only("creator_match"))
+        scores = self._scores(engine, self._only("creator_match"))
 
         assert scores["Dune"] > scores["Solaris"]
 
 
-class TestNonAIEngine:
+class TestScoringPipeline:
     """Tests for the recommendation engine's scoring pipeline."""
 
-    def test_non_ai_engine_produces_recommendations(self, non_ai_engine, mock_storage):
-        """The pipeline alone produces ranked recommendations."""
+    def test_engine_produces_recommendations(self, engine, mock_storage):
+        """The pipeline produces ranked recommendations."""
         consumed_book = ContentItem(
             id="1",
             title="Dune",
@@ -292,16 +286,14 @@ class TestNonAIEngine:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_book])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
         assert len(recommendations) >= 1
         assert recommendations[0].item.title == "Hyperion"
 
-    def test_genre_preferences_boost_matching_candidates(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_genre_preferences_boost_matching_candidates(self, engine, mock_storage):
         """Items with preferred genres should rank higher."""
         consumed = ContentItem(
             id="1",
@@ -335,7 +327,7 @@ class TestNonAIEngine:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[poor_match, good_match])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=2
         )
 
@@ -344,7 +336,7 @@ class TestNonAIEngine:
         # Sci-fi match should be ranked first
         assert titles[0] == "Hyperion"
 
-    def test_creator_matching_across_types(self, non_ai_engine, mock_storage):
+    def test_creator_matching_across_types(self, engine, mock_storage):
         """Creator matching should work across content types."""
         consumed_book = ContentItem(
             id="1",
@@ -383,7 +375,7 @@ class TestNonAIEngine:
             return_value=[unconsumed_other, unconsumed_by_same_author]
         )
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=2
         )
 
@@ -391,18 +383,18 @@ class TestNonAIEngine:
         # Stephen King book should be ranked higher
         assert recommendations[0].item.title == "It"
 
-    def test_cold_start_returns_empty(self, non_ai_engine, mock_storage):
-        """Non-AI engine should handle cold start gracefully."""
+    def test_cold_start_returns_empty(self, engine, mock_storage):
+        """The engine handles cold start gracefully."""
         mock_storage.get_completed_items = Mock(return_value=[])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
         assert recommendations == []
 
-    def test_no_unconsumed_items_returns_empty(self, non_ai_engine, mock_storage):
-        """Non-AI engine returns empty when nothing to recommend."""
+    def test_no_unconsumed_items_returns_empty(self, engine, mock_storage):
+        """The engine returns empty when nothing is left to recommend."""
         consumed = ContentItem(
             id="1",
             title="Dune",
@@ -418,13 +410,13 @@ class TestNonAIEngine:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
         assert recommendations == []
 
-    def test_end_to_end_scoring_and_sorting(self, non_ai_engine, mock_storage):
+    def test_end_to_end_scoring_and_sorting(self, engine, mock_storage):
         """End-to-end: consumed items with genres -> unconsumed -> scored + sorted."""
         consumed_items = [
             ContentItem(
@@ -478,7 +470,7 @@ class TestNonAIEngine:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=3
         )
 
@@ -499,9 +491,7 @@ class TestNonAIEngine:
 class TestUserPreferenceOverride:
     """Tests for per-user preference config overrides."""
 
-    def test_generate_recommendations_without_user_config(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_generate_recommendations_without_user_config(self, engine, mock_storage):
         """Engine works normally when no user_preference_config is passed."""
         consumed = ContentItem(
             id="1",
@@ -526,16 +516,14 @@ class TestUserPreferenceOverride:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=None,
         )
         assert len(recommendations) >= 1
 
-    def test_generate_recommendations_with_user_config(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_generate_recommendations_with_user_config(self, engine, mock_storage):
         """Engine uses overridden scorer weights when user config is provided."""
         consumed = ContentItem(
             id="1",
@@ -563,7 +551,7 @@ class TestUserPreferenceOverride:
         user_config = UserPreferenceConfig(
             scorer_weights={"genre_match": 10.0, "creator_match": 0.0}
         )
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=user_config,
@@ -579,7 +567,7 @@ class TestUserPreferenceOverride:
 class TestCustomRulesIntegration:
     """Tests for custom rules integration in the recommendation engine."""
 
-    def test_custom_rules_boost_matching_genre(self, non_ai_engine, mock_storage):
+    def test_custom_rules_boost_matching_genre(self, engine, mock_storage):
         """Custom rule \"prefer sci-fi\" should boost sci-fi items."""
         consumed = ContentItem(
             id="1",
@@ -612,7 +600,7 @@ class TestCustomRulesIntegration:
         )
 
         user_config = UserPreferenceConfig(custom_rules=["prefer sci-fi"])
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
             user_preference_config=user_config,
@@ -622,7 +610,7 @@ class TestCustomRulesIntegration:
         titles = [rec.item.title for rec in recommendations]
         assert "Space Adventure" in titles
 
-    def test_custom_rules_penalize_genre(self, non_ai_engine, mock_storage):
+    def test_custom_rules_penalize_genre(self, engine, mock_storage):
         """Custom rule \"avoid horror\" should penalize horror items."""
         consumed = ContentItem(
             id="1",
@@ -655,7 +643,7 @@ class TestCustomRulesIntegration:
         )
 
         user_config = UserPreferenceConfig(custom_rules=["avoid horror"])
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
             user_preference_config=user_config,
@@ -664,7 +652,7 @@ class TestCustomRulesIntegration:
         assert len(recommendations) == 2
         assert recommendations[0].item.title == "Funny Book"
 
-    def test_multiple_custom_rules(self, non_ai_engine, mock_storage):
+    def test_multiple_custom_rules(self, engine, mock_storage):
         """Multiple custom rules are all applied."""
         consumed = ContentItem(
             id="1",
@@ -706,7 +694,7 @@ class TestCustomRulesIntegration:
         user_config = UserPreferenceConfig(
             custom_rules=["avoid horror", "prefer sci-fi"]
         )
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=3,
             user_preference_config=user_config,
@@ -716,7 +704,7 @@ class TestCustomRulesIntegration:
         assert titles[0] == "Sci-Fi Book"
         assert titles[-1] == "Horror Book"
 
-    def test_custom_rules_empty_does_not_add_scorer(self, non_ai_engine, mock_storage):
+    def test_custom_rules_empty_does_not_add_scorer(self, engine, mock_storage):
         """Empty custom_rules list should not affect scoring."""
         consumed = ContentItem(
             id="1",
@@ -740,7 +728,7 @@ class TestCustomRulesIntegration:
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
 
         user_config = UserPreferenceConfig(custom_rules=[])
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=user_config,
@@ -755,7 +743,7 @@ class TestSeriesOrderingRegression:
     """
 
     def test_series_book_2_not_recommended_when_book_1_unread_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """Regression test: Book #2 should not be recommended when book #1 exists but is unread.
 
@@ -807,7 +795,7 @@ class TestSeriesOrderingRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
         )
@@ -824,9 +812,7 @@ class TestSeriesOrderingRegression:
             "Black Unicorn" in title for title in recommended_titles
         ), "Book #2 should NOT be recommended when book #1 is unread"
 
-    def test_series_filtering_with_all_items_available(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_series_filtering_with_all_items_available(self, engine, mock_storage):
         """Verify series filtering works correctly when all series items are available.
 
         This tests the fix ensuring the engine passes all unconsumed items to
@@ -867,7 +853,7 @@ class TestSeriesOrderingRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
         )
@@ -1006,7 +992,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
 
     def test_tv_show_recommendation_has_non_null_db_id_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+        self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
         """An expanded TV-show recommendation keeps the parent show's db_id."""
         mock_storage.get_completed_items = Mock(
@@ -1014,7 +1000,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
         )
@@ -1025,7 +1011,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert recommendations[0].item.db_id == 42
 
     def test_next_unwatched_season_carries_parent_db_id_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed
+        self, engine, mock_storage, breaking_bad_consumed
     ) -> None:
         """A partially-watched show surfaces its next season with the show db_id.
 
@@ -1052,7 +1038,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_show])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
         )
@@ -1064,7 +1050,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert rec_item.db_id == 42
 
     def test_series_rules_surface_one_season_per_show_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed
+        self, engine, mock_storage, breaking_bad_consumed
     ) -> None:
         """With series rules on, a multi-season show yields exactly one card.
 
@@ -1088,7 +1074,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_show])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
         )
@@ -1099,7 +1085,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert db_ids == [42]
 
     def test_series_in_order_false_collapses_seasons_to_one_card_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+        self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
         """With series order off, a multi-season show yields exactly one card.
 
@@ -1116,7 +1102,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
             user_preference_config=UserPreferenceConfig(series_in_order=False),
@@ -1136,7 +1122,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert rec_item.id in {"tvdb:280619:s1", "tvdb:280619:s2", "tvdb:280619:s3"}
 
     def test_series_in_order_false_keeps_distinct_shows_and_backfills_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+        self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
         """Collapsing duplicate db_ids never drops distinct shows.
 
@@ -1160,7 +1146,7 @@ class TestTvRecommendationCarriesDbIdRegression:
             return_value=[expanse_show, foundation]
         )
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
             user_preference_config=UserPreferenceConfig(series_in_order=False),
@@ -1172,7 +1158,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert db_ids == [42, 99]
 
     def test_none_db_id_show_seasons_not_collapsed_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed
+        self, engine, mock_storage, breaking_bad_consumed
     ) -> None:
         """A db_id=None show's seasons are NOT collapsed (None is not an identity).
 
@@ -1197,7 +1183,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[show_without_db_id])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
             user_preference_config=UserPreferenceConfig(series_in_order=False),
@@ -1209,7 +1195,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert all(rec.item.db_id is None for rec in recommendations)
 
     def test_collapse_is_noop_for_books_with_distinct_db_ids_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """Non-TV recs with distinct db_ids pass through the collapse unchanged.
 
@@ -1252,7 +1238,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[book_a, book_b])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
             user_preference_config=UserPreferenceConfig(series_in_order=False),
@@ -1262,7 +1248,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert db_ids == [10, 11]
 
     def test_collapse_is_noop_with_series_in_order_regression(
-        self, non_ai_engine, mock_storage, breaking_bad_consumed, expanse_show
+        self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
         """With series order on, a multi-season show already yields one card.
 
@@ -1276,7 +1262,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW,
             count=5,
             user_preference_config=UserPreferenceConfig(series_in_order=True),
@@ -1285,9 +1271,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert len(recommendations) == 1
         assert recommendations[0].item.db_id == 42
 
-    def test_fallback_collapses_entries_sharing_db_id_regression(
-        self, non_ai_engine
-    ) -> None:
+    def test_fallback_collapses_entries_sharing_db_id_regression(self, engine) -> None:
         """The fallback path emits at most one card per parent show db_id.
 
         For TV the fallback builds recs directly from the expanded season items,
@@ -1319,7 +1303,7 @@ class TestTvRecommendationCarriesDbIdRegression:
             metadata={"genres": ["Drama", "Sci-Fi"]},
         )
 
-        recommendations = non_ai_engine._build_fallback_recommendations(
+        recommendations = engine._build_fallback_recommendations(
             [season_one, season_two, other_show],
             series_tracking={},
             count=5,
@@ -1331,9 +1315,7 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert db_ids == [42, 99]
         assert recommendations[0].item.id == "tvdb:280619:s1"
 
-    def test_a_fallback_pick_becomes_one_recommendation_record(
-        self, non_ai_engine
-    ) -> None:
+    def test_a_fallback_pick_becomes_one_recommendation_record(self, engine) -> None:
         """The whole record this construction site emits, field for field.
 
         The fallback ran no pipeline and cited no references, and it says so
@@ -1348,7 +1330,7 @@ class TestTvRecommendationCarriesDbIdRegression:
             status=ConsumptionStatus.UNREAD,
         )
 
-        recommendations = non_ai_engine._build_fallback_recommendations(
+        recommendations = engine._build_fallback_recommendations(
             [candidate], series_tracking={}, count=5
         )
 
@@ -2144,7 +2126,7 @@ class TestVarietyAfterCompletion:
     """
 
     def test_variety_penalty_demotes_recently_finished_genre(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """A 4.0 variety_penalty lowers a just-finished genre's candidate score."""
         consumed = ContentItem(
@@ -2169,12 +2151,12 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
 
-        recs_off = non_ai_engine.generate_recommendations(
+        recs_off = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
         )
-        recs_on = non_ai_engine.generate_recommendations(
+        recs_on = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
@@ -2188,9 +2170,7 @@ class TestVarietyAfterCompletion:
         assert recs_on[0].variety_penalty == pytest.approx(top_fraction)
         assert recs_off[0].variety_penalty == 0.0
 
-    def test_variety_penalty_steps_by_recency(
-        self, non_ai_engine, mock_storage
-    ) -> None:
+    def test_variety_penalty_steps_by_recency(self, engine, mock_storage) -> None:
         """The most recently finished genre is penalised more than an older one.
 
         With variety_penalty 4.0 (a 0.8 top fraction), finishing fantasy then
@@ -2241,7 +2221,7 @@ class TestVarietyAfterCompletion:
             return_value=[fantasy_candidate, scifi_candidate]
         )
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
             user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
@@ -2268,7 +2248,7 @@ class TestVarietyAfterCompletion:
         )
 
     def test_intermediate_variety_penalty_scales_top_rung(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """A mid-range preference (2.0) becomes the ladder's top penalty.
 
@@ -2298,12 +2278,12 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
 
-        recs_off = non_ai_engine.generate_recommendations(
+        recs_off = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
         )
-        recs_mid = non_ai_engine.generate_recommendations(
+        recs_mid = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=2.0),
@@ -2316,9 +2296,7 @@ class TestVarietyAfterCompletion:
         assert score_mid == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
         assert recs_mid[0].variety_penalty == pytest.approx(top_fraction)
 
-    def test_variety_penalty_is_per_content_type(
-        self, non_ai_engine, mock_storage
-    ) -> None:
+    def test_variety_penalty_is_per_content_type(self, engine, mock_storage) -> None:
         """Finishing a fantasy book must not penalise a fantasy game.
 
         The penalty ladder is scoped to completed items of the content type
@@ -2351,7 +2329,7 @@ class TestVarietyAfterCompletion:
         mock_storage.get_completed_items = Mock(side_effect=completed_items)
         mock_storage.get_unconsumed_items = Mock(return_value=[fantasy_game])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.VIDEO_GAME,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
@@ -2361,7 +2339,7 @@ class TestVarietyAfterCompletion:
         assert recs[0].item.id == "fantasy_game"
         assert recs[0].variety_penalty == 0.0
 
-    def test_no_variety_no_penalty(self, non_ai_engine, mock_storage) -> None:
+    def test_no_variety_no_penalty(self, engine, mock_storage) -> None:
         """With variety_penalty at 0.0, no penalty is recorded."""
         consumed = ContentItem(
             id="consumed_1",
@@ -2385,7 +2363,7 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
@@ -2393,7 +2371,7 @@ class TestVarietyAfterCompletion:
         assert recs[0].variety_penalty == 0.0
 
     def test_tiny_positive_variety_activates_penalty(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """Any variety_penalty above 0.0 builds a ladder and penalises matches.
 
@@ -2423,7 +2401,7 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.25),
@@ -2431,9 +2409,7 @@ class TestVarietyAfterCompletion:
         # 0.25 / 5.0 == 0.05 top fraction.
         assert recs[0].variety_penalty == pytest.approx(0.05)
 
-    def test_four_matches_legacy_constant_behaviour(
-        self, non_ai_engine, mock_storage
-    ) -> None:
+    def test_four_matches_legacy_constant_behaviour(self, engine, mock_storage) -> None:
         """LEGACY_VARIETY_ON reproduces the old constant-driven penalty exactly.
 
         Before the 0.0-5.0 slider, the ladder's top rung was a fixed 0.8 fraction
@@ -2464,12 +2440,12 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
 
-        recs_off = non_ai_engine.generate_recommendations(
+        recs_off = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
         )
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(
@@ -2489,7 +2465,7 @@ class TestVarietyAfterCompletion:
         assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
 
     def test_full_throttle_variety_zeroes_finished_genre(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """variety_penalty=5.0 applies a 1.0 fraction, zeroing a finished genre.
 
@@ -2518,7 +2494,7 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(
@@ -2529,7 +2505,7 @@ class TestVarietyAfterCompletion:
         assert _variety_score_for(recs, "same_genre") == pytest.approx(0.0)
 
     def test_strength_above_the_slider_zeroes_rather_than_negates(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """A strength past the maximum still bottoms out at a zero score.
 
@@ -2562,7 +2538,7 @@ class TestVarietyAfterCompletion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=1,
             user_preference_config=UserPreferenceConfig(
@@ -2629,7 +2605,7 @@ class TestVarietyAfterCompletionRegression:
     """Regression tests for the variety_penalty feature (issue #74)."""
 
     def test_next_in_series_demoted_when_variety_enabled_regression(
-        self, non_ai_engine, variety_crossover_library
+        self, engine, variety_crossover_library
     ) -> None:
         """The next book in a just-finished series must not be #1 with variety on.
 
@@ -2650,7 +2626,7 @@ class TestVarietyAfterCompletionRegression:
         :class:`TestVarietyCrossoverCharacterisation`, over this same fixture.
         """
         # Without variety: the next-in-series fantasy book tops the list (bug).
-        recs_off = non_ai_engine.generate_recommendations(
+        recs_off = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
             user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
@@ -2658,7 +2634,7 @@ class TestVarietyAfterCompletionRegression:
         assert recs_off[0].item.id == "dragonlance_2"
 
         # With variety: the fantasy continuation is demoted below the mystery.
-        recs_on = non_ai_engine.generate_recommendations(
+        recs_on = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
             user_preference_config=UserPreferenceConfig(
@@ -2678,7 +2654,7 @@ class TestVarietyAfterCompletionRegression:
         assert penalty == pytest.approx(0.48)
 
     def test_decimal_novella_below_next_book_with_variety_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """The unread next book outranks half-numbered novellas end-to-end.
 
@@ -2734,7 +2710,7 @@ class TestVarietyAfterCompletionRegression:
             return_value=[novella_27, novella_25, book_two]
         )
 
-        recs = non_ai_engine.generate_recommendations(
+        recs = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=10,
             user_preference_config=UserPreferenceConfig(
@@ -2891,10 +2867,10 @@ class TestVarietyCrossoverCharacterisation:
         ids=[f"variety-{step.setting}" for step in VARIETY_CROSSOVER_STEPS],
     )
     def test_scores_and_order_at_each_whole_setting(
-        self, non_ai_engine, variety_crossover_library, step
+        self, engine, variety_crossover_library, step
     ) -> None:
         """Both emitted scores, the gap, and the leader at one slider step."""
-        recommendations = self._recommend(non_ai_engine, step.setting)
+        recommendations = self._recommend(engine, step.setting)
 
         continuation = next(
             rec for rec in recommendations if rec.item.id == VARIETY_CONTINUATION_ID
@@ -2956,7 +2932,7 @@ class TestVarietyCrossoverCharacterisation:
         assert flips == [VARIETY_CROSSOVER_SETTING]
 
     def test_flip_lands_before_the_top_of_the_slider(
-        self, non_ai_engine, variety_crossover_library
+        self, engine, variety_crossover_library
     ) -> None:
         """On tenth steps the order turns over below 5.0, and stays turned over.
 
@@ -2970,8 +2946,7 @@ class TestVarietyCrossoverCharacterisation:
         flipped = [
             setting
             for setting in settings
-            if self._recommend(non_ai_engine, setting)[0].item.id
-            == VARIETY_COMPETITOR_ID
+            if self._recommend(engine, setting)[0].item.id == VARIETY_COMPETITOR_ID
         ]
 
         assert flipped
@@ -3013,7 +2988,7 @@ class TestEngineSeriesSubstitutionRegression:
     """
 
     def test_later_entry_substituted_with_earliest_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """FF XII should be substituted with earliest unplayed FF entry.
 
@@ -3064,7 +3039,7 @@ class TestEngineSeriesSubstitutionRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[ff12, ff10, other_game])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.VIDEO_GAME,
             count=5,
         )
@@ -3079,9 +3054,7 @@ class TestEngineSeriesSubstitutionRegression:
             "ff12" not in recommended_ids
         ), f"FF XII should be filtered out; got {recommended_ids}"
 
-    def test_series_in_order_false_skips_filtering(
-        self, non_ai_engine, mock_storage
-    ) -> None:
+    def test_series_in_order_false_skips_filtering(self, engine, mock_storage) -> None:
         """series_in_order=False should skip all series filtering/substitution."""
         consumed = ContentItem(
             id="consumed",
@@ -3110,7 +3083,7 @@ class TestEngineSeriesSubstitutionRegression:
         mock_storage.get_unconsumed_items = Mock(return_value=[ff12])
 
         user_config = UserPreferenceConfig(series_in_order=False)
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.VIDEO_GAME,
             count=5,
             user_preference_config=user_config,
@@ -3121,7 +3094,7 @@ class TestEngineSeriesSubstitutionRegression:
         assert "ff12" in recommended_ids
 
     def test_duplicate_substitutions_prevented_regression(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ) -> None:
         """Two FF entries in top candidates produce only one substitution.
 
@@ -3177,7 +3150,7 @@ class TestEngineSeriesSubstitutionRegression:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[ff15, ff12, ff10])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.VIDEO_GAME,
             count=5,
         )
@@ -3193,7 +3166,7 @@ class TestPipelineOutputKeys:
     """Tests for the pipeline's output carrying every field consumers read."""
 
     def test_output_includes_contributing_items_and_adaptations(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """The scored path fills contributing_items and adaptations."""
         consumed = ContentItem(
@@ -3217,7 +3190,7 @@ class TestPipelineOutputKeys:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
         )
@@ -3237,7 +3210,7 @@ class TestContinuationScorerExclusion:
     """ContinuationScorer is excluded when no candidates are actively consumed."""
 
     def test_no_active_items_excludes_continuation_from_breakdown(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """When no candidates have CURRENTLY_CONSUMING status, 'continuation'
         must not appear in score_breakdown (it would be all zeros)."""
@@ -3262,16 +3235,14 @@ class TestContinuationScorerExclusion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=1
         )
 
         assert len(recommendations) == 1
         assert "continuation" not in recommendations[0].score_breakdown
 
-    def test_active_item_retains_continuation_in_breakdown(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_active_item_retains_continuation_in_breakdown(self, engine, mock_storage):
         """When a candidate has CURRENTLY_CONSUMING status, 'continuation'
         must appear in score_breakdown and the active item must score 1.0."""
         consumed = ContentItem(
@@ -3302,7 +3273,7 @@ class TestContinuationScorerExclusion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[active_book, idle_book])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
         )
 
@@ -3312,9 +3283,7 @@ class TestContinuationScorerExclusion:
         assert breakdowns["Hyperion"]["continuation"] == 1.0
         assert breakdowns["Foundation"]["continuation"] == 0.0
 
-    def test_tv_show_without_active_excludes_continuation(
-        self, non_ai_engine, mock_storage
-    ):
+    def test_tv_show_without_active_excludes_continuation(self, engine, mock_storage):
         """TV shows also exclude ContinuationScorer when nothing is active."""
         consumed = ContentItem(
             id="c1",
@@ -3341,7 +3310,7 @@ class TestContinuationScorerExclusion:
         )
         mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
 
-        recommendations = non_ai_engine.generate_recommendations(
+        recommendations = engine.generate_recommendations(
             content_type=ContentType.TV_SHOW, count=1
         )
 
@@ -5001,31 +4970,31 @@ class TestContentTypeExclusions:
             metadata={"genre": "Science Fiction"},
         )
 
-    def _recommend(self, non_ai_engine, mock_storage, candidates, rules):
+    def _recommend(self, engine, mock_storage, candidates, rules):
         """Recommend books over *candidates* with *rules* in force."""
         mock_storage.get_completed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [self._consumed()]
         )
         mock_storage.get_unconsumed_items = Mock(return_value=candidates)
 
-        return non_ai_engine.generate_recommendations(
+        return engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=5,
             user_preference_config=UserPreferenceConfig(custom_rules=rules),
         )
 
     def test_an_excluded_type_is_dropped_and_the_rest_survive(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """A rule reading "avoid movies" removes the film and keeps the book."""
         recommendations = self._recommend(
-            non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
+            engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
         )
 
         assert [rec.item.id for rec in recommendations] == ["b1"]
 
     def test_a_candidate_carrying_a_raw_string_type_is_dropped_too(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """The comparison runs through ``get_enum_value``, not the raw attribute.
 
@@ -5037,18 +5006,18 @@ class TestContentTypeExclusions:
         assert type(movie.content_type) is str
 
         recommendations = self._recommend(
-            non_ai_engine, mock_storage, [self._book(), movie], ["avoid movies"]
+            engine, mock_storage, [self._book(), movie], ["avoid movies"]
         )
 
         assert [rec.item.id for rec in recommendations] == ["b1"]
 
     def test_excluding_every_candidate_recommends_nothing_and_warns(
-        self, non_ai_engine, mock_storage, caplog
+        self, engine, mock_storage, caplog
     ):
         """A rule against the requested type leaves the user an empty list."""
         with caplog.at_level(logging.WARNING, logger="src.recommendations.engine"):
             recommendations = self._recommend(
-                non_ai_engine, mock_storage, [self._book()], ["avoid books"]
+                engine, mock_storage, [self._book()], ["avoid books"]
             )
 
         assert recommendations == []
@@ -5064,17 +5033,17 @@ class TestContentTypeExclusions:
         ]
 
     def test_a_rule_with_no_exclusion_leaves_every_candidate(
-        self, non_ai_engine, mock_storage
+        self, engine, mock_storage
     ):
         """A genre rule interprets to no exclusions, so nothing is filtered."""
         recommendations = self._recommend(
-            non_ai_engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
+            engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
         )
 
         assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
 
     def test_empty_custom_rules_never_build_an_interpreter(
-        self, non_ai_engine, mock_storage, monkeypatch
+        self, engine, mock_storage, monkeypatch
     ):
         """The guard ahead of the interpreter keeps a rule-less request off it.
 
@@ -5087,9 +5056,7 @@ class TestContentTypeExclusions:
             Mock(wraps=engine_module.PatternBasedInterpreter),
         )
 
-        recommendations = self._recommend(
-            non_ai_engine, mock_storage, [self._book()], []
-        )
+        recommendations = self._recommend(engine, mock_storage, [self._book()], [])
 
         assert [rec.item.id for rec in recommendations] == ["b1"]
         engine_module.PatternBasedInterpreter.assert_not_called()

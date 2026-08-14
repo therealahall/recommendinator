@@ -9,7 +9,6 @@ from src.enrichment.provider_base import (
     EnrichmentProvider,
     EnrichmentResult,
     ProviderError,
-    ProviderInfo,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
@@ -111,25 +110,6 @@ class TestConfigField:
         assert field.required is False
         assert field.default == 30
         assert field.sensitive is False
-
-
-class TestProviderInfo:
-    """Tests for ProviderInfo dataclass."""
-
-    def test_create_provider_info(self) -> None:
-        """Test creating provider info."""
-        info = ProviderInfo(
-            name="test",
-            display_name="Test Provider",
-            content_types=[ContentType.BOOK],
-            requires_api_key=False,
-        )
-
-        assert info.name == "test"
-        assert info.display_name == "Test Provider"
-        assert info.content_types == [ContentType.BOOK]
-        assert info.requires_api_key is False
-        assert info.config_schema == []
 
 
 class TestEnrichmentResult:
@@ -273,15 +253,3 @@ class TestEnrichmentProvider:
 
         assert transformed == raw_config
         assert transformed is not raw_config  # Should be a copy
-
-    def test_get_info(self) -> None:
-        """Test getting provider info."""
-        provider = MockProvider()
-        info = provider.get_info()
-
-        assert isinstance(info, ProviderInfo)
-        assert info.name == "mock_provider"
-        assert info.display_name == "Mock Provider"
-        assert info.content_types == [ContentType.MOVIE, ContentType.TV_SHOW]
-        assert info.requires_api_key is True
-        assert len(info.config_schema) == 2

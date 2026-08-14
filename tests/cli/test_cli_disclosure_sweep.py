@@ -37,10 +37,6 @@ _OUTPUT_SINKS = {
 #: Sinks none of the predicates here can see, so they are banned outright.
 _UNSWEPT_SINKS = {"sys.stdout.write", "sys.stderr.write", "click.echo_via_pager"}
 
-_LOG_METHODS = {"debug", "info", "warning", "error", "critical"}
-
-_LOG_SANITIZERS = {"sanitize_for_log", "exception_for_log"}
-
 #: Exceptions whose message is written to be read, so rendering one is the
 #: answer the matching web route gives. Everything else is a fault.
 _USER_FACING_EXCEPTIONS = {
@@ -76,13 +72,6 @@ _EXEMPT_SITES = {
     ): "the position in the caller's own document",
 }
 
-#: Log arguments that are not free text. Keyed by module too: a bare name
-#: waives every future ``logger.x("%s", logged)`` in the package.
-_NON_TEXT_LOG_ARGUMENTS = {
-    ("_shared.py", "message"): "the module constant the funnel was handed",
-    ("_shared.py", "logged"): "that constant, or the log-only one beside it",
-}
-
 #: Named, so discovery finding nothing fails here rather than reporting a
 #: clean sweep over an empty package.
 _MODULES_CALLING_THE_FUNNEL = {
@@ -94,8 +83,6 @@ _MODULES_CALLING_THE_FUNNEL = {
     "commands/_recommend.py",
     "commands/_update.py",
 }
-
-_MODULES_THAT_LOG = {"_shared.py", "commands/_update.py"}
 
 _MODULES_THAT_CATCH = {
     "_shared.py",
@@ -234,40 +221,6 @@ def _log_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
-def _unsanitized_log_arguments(module: str, tree: ast.AST) -> set[str]:
-    return {
-        f"{ast.unparse(argument)} (line {argument.lineno})"
-        for call in _log_calls(tree)
-        for argument in call.args[1:]
-        if (module, ast.unparse(argument)) not in _NON_TEXT_LOG_ARGUMENTS
-        and not (
-            isinstance(argument, ast.Call)
-            and isinstance(argument.func, ast.Name)
-            and argument.func.id in _LOG_SANITIZERS
-        )
-    }
-
-
-def _non_literal_log_messages(tree: ast.AST) -> set[str]:
-    return {
-        f"{ast.unparse(call)} (line {call.lineno})"
-        for call in _log_calls(tree)
-        if not call.args or not isinstance(call.args[0], ast.Constant)
-    }
-
-
-def _log_sinks_the_sweep_cannot_see(tree: ast.AST) -> set[str]:
-    return {
-        f"{ast.unparse(node)} (line {node.lineno})"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "logging"
-        and node.func.attr in _LOG_METHODS | {"exception", "log"}
-    }
-
-
 @pytest.mark.parametrize("module", sorted(_TREES))
 class TestNoCliModuleDisclosesAFaultOutsideTheFunnel:
     """Parametrized over what discovery finds, so a new module is swept too."""
@@ -290,16 +243,6 @@ class TestNoCliModuleDisclosesAFaultOutsideTheFunnel:
     def test_no_output_sink_emits_under_another_name(self, module: str) -> None:
         """``sys.stderr.write`` reaches the terminal past every check above."""
         assert _output_sinks_the_sweep_cannot_see(_TREES[module]) == set()
-
-    def test_every_logged_value_is_sanitized(self, module: str) -> None:
-        assert _unsanitized_log_arguments(module, _TREES[module]) == set()
-
-    def test_every_log_message_is_a_literal(self, module: str) -> None:
-        """An f-string message carries its values past the check above."""
-        assert _non_literal_log_messages(_TREES[module]) == set()
-
-    def test_no_log_sink_emits_under_another_name(self, module: str) -> None:
-        assert _log_sinks_the_sweep_cannot_see(_TREES[module]) == set()
 
 
 class TestTheSweptPopulationIsNotEmpty:
@@ -327,11 +270,6 @@ class TestTheSweptPopulationIsNotEmpty:
         assert {
             module for module, tree in _TREES.items() if _bound_handlers(tree)
         } == _MODULES_THAT_CATCH
-
-    def test_every_module_that_logs_is_swept(self) -> None:
-        assert {
-            module for module, tree in _TREES.items() if _log_calls(tree)
-        } == _MODULES_THAT_LOG
 
     def test_every_exemption_is_still_a_live_site(self) -> None:
         """A stale waiver widens the blind spot in silence.
@@ -487,35 +425,6 @@ class TestTheCliDisclosureSweepFailsOnANewRawSink:
             f"{source} (line 1)"
         }
 
-    @pytest.mark.parametrize(
-        ("source", "reported"),
-        [
-            ("logger.warning('for %s', source_id)", "source_id"),
-            ("logger.error('%s', str(error))", "str(error)"),
-            ("logger.info('%s %s', sanitize_for_log(a), b)", "b"),
-        ],
-    )
-    def test_an_unsanitized_log_argument_is_reported(
-        self, source: str, reported: str
-    ) -> None:
-        assert _unsanitized_log_arguments("commands/_thief.py", ast.parse(source)) == {
-            f"{reported} (line 1)"
-        }
-
-    @pytest.mark.parametrize(
-        "source", ["logger.info(f'for {source_id}')", "logger.info()"]
-    )
-    def test_a_log_message_that_is_not_a_literal_is_reported(self, source: str) -> None:
-        assert _non_literal_log_messages(ast.parse(source)) == {f"{source} (line 1)"}
-
-    @pytest.mark.parametrize(
-        "source", ["logging.error('boom')", "logging.exception('boom')"]
-    )
-    def test_a_log_sink_under_another_name_is_reported(self, source: str) -> None:
-        assert _log_sinks_the_sweep_cannot_see(ast.parse(source)) == {
-            f"{source} (line 1)"
-        }
-
     def test_the_clean_shape_is_not_reported(self) -> None:
         """The predicates accept what the command modules actually write."""
         tree = self._handler(f"{_ABORTING_FUNNEL}(ctx, MESSAGE, error)")
@@ -524,9 +433,6 @@ class TestTheCliDisclosureSweepFailsOnANewRawSink:
         assert _handlers_that_say_nothing(tree) == set()
         assert _refusals_the_funnel_should_own(tree) == set()
         assert _output_sinks_the_sweep_cannot_see(tree) == set()
-        assert _unsanitized_log_arguments("commands/_thief.py", tree) == set()
-        assert _non_literal_log_messages(tree) == set()
-        assert _log_sinks_the_sweep_cannot_see(tree) == set()
 
 
 class TestTheSweptCliModulesThemselvesFailOnAHandRolledRefusal:

@@ -8,7 +8,6 @@ from src.enrichment.provider_base import EnrichmentProvider
 from src.enrichment.providers.openlibrary.openlibrary import OpenLibraryProvider
 from src.enrichment.providers.rawg.rawg import RAWGProvider
 from src.enrichment.providers.tmdb.tmdb import TMDBProvider
-from src.models.content import ContentType
 
 logger = logging.getLogger(__name__)
 
@@ -110,20 +109,6 @@ class EnrichmentRegistry:
             provider.display_name,
         )
 
-    def unregister(self, name: str) -> bool:
-        """Unregister a provider by name.
-
-        Args:
-            name: Provider name to unregister
-
-        Returns:
-            True if provider was found and removed, False otherwise
-        """
-        if name in self._providers:
-            del self._providers[name]
-            return True
-        return False
-
     def get_provider(self, name: str) -> EnrichmentProvider | None:
         """Get a provider by name.
 
@@ -173,36 +158,6 @@ class EnrichmentRegistry:
                 enabled_providers.append(provider)
 
         return enabled_providers
-
-    def get_providers_by_content_type(
-        self, content_type: ContentType
-    ) -> list[EnrichmentProvider]:
-        """Get providers that can enrich a specific content type.
-
-        Args:
-            content_type: ContentType to filter by
-
-        Returns:
-            List of providers that support this content type
-        """
-        self.discover_providers()
-
-        return [
-            provider
-            for provider in self._providers.values()
-            if content_type in provider.content_types
-        ]
-
-    def list_provider_names(self) -> list[str]:
-        """Get list of all registered provider names.
-
-        Triggers discovery if not already done.
-
-        Returns:
-            Sorted list of provider names
-        """
-        self.discover_providers()
-        return sorted(self._providers.keys())
 
 
 def get_enrichment_registry() -> EnrichmentRegistry:

@@ -154,27 +154,6 @@ class TestEnrichmentRegistry:
         ):
             registry.register(provider2)
 
-    def test_unregister_provider(self) -> None:
-        """Test unregistering a provider."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        provider = MockMovieProvider()
-
-        registry.register(provider)
-        result = registry.unregister("mock_movie")
-
-        assert result is True
-        assert registry.get_provider("mock_movie") is None
-
-    def test_unregister_nonexistent(self) -> None:
-        """Test unregistering a provider that doesn't exist."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-
-        result = registry.unregister("nonexistent")
-
-        assert result is False
-
     def test_get_provider_not_found(self) -> None:
         """Test getting a provider that doesn't exist."""
         registry = EnrichmentRegistry.get_instance()
@@ -199,18 +178,6 @@ class TestEnrichmentRegistry:
         assert "mock_movie" in all_providers
         assert "mock_book" in all_providers
         assert all_providers["mock_movie"] is movie_provider
-
-    def test_list_provider_names(self) -> None:
-        """Test listing provider names."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-
-        registry.register(MockMovieProvider())
-        registry.register(MockBookProvider())
-
-        names = registry.list_provider_names()
-
-        assert sorted(names) == ["mock_book", "mock_movie"]
 
     def test_get_enabled_providers_none_enabled(self) -> None:
         """Test getting enabled providers when none are enabled."""
@@ -276,25 +243,6 @@ class TestEnrichmentRegistry:
         # Missing providers section
         enabled = registry.get_enabled_providers({"enrichment": {}})
         assert enabled == []
-
-    def test_get_providers_by_content_type(self) -> None:
-        """Test getting providers by content type."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        registry.register(MockMovieProvider())
-        registry.register(MockBookProvider())
-
-        movie_providers = registry.get_providers_by_content_type(ContentType.MOVIE)
-        book_providers = registry.get_providers_by_content_type(ContentType.BOOK)
-        game_providers = registry.get_providers_by_content_type(ContentType.VIDEO_GAME)
-
-        assert len(movie_providers) == 1
-        assert movie_providers[0].name == "mock_movie"
-
-        assert len(book_providers) == 1
-        assert book_providers[0].name == "mock_book"
-
-        assert len(game_providers) == 0
 
     def test_discover_providers_idempotent(self) -> None:
         """Test that discovery is idempotent (only runs once)."""

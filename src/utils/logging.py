@@ -206,8 +206,9 @@ def configure_logging(
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # UTF-8 by name, not by locale: a non-UTF-8 one silently drops every
-    # accented title. ``backslashreplace`` covers a sink that skipped
-    # ``sanitize_for_log`` — strict deletes the entry, not the character.
+    # accented title. ``backslashreplace`` for the reason
+    # ``_EscapingStreamHandler`` has it: strict loses the whole record to a
+    # single unencodable character.
     file_handler = logging.FileHandler(
         log_path, encoding="utf-8", errors="backslashreplace"
     )
