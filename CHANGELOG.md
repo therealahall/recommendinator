@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.34.0 (2026-08-14)
+
+### Bug Fixes
+
+- **cli**: Match the web's error disclosure, and clean json stdout
+  ([`6334a09`](https://github.com/therealahall/recommendinator/commit/6334a09d5d9ab38ea59f3a6b79f5e407dbd78414))
+
+### Chores
+
+- **agents**: Stop vendoring the shared review agents
+  ([`b633bb2`](https://github.com/therealahall/recommendinator/commit/b633bb2bd0f7a91e5c0563486fcec07ab8779c6d))
+
+### Refactoring
+
+- **agents**: Fold test-review into code-review, and brief for judgement
+  ([`d164e11`](https://github.com/therealahall/recommendinator/commit/d164e1125e1f422dbf5847ab6c7bf48991827f7c))
+
+### Breaking Changes
+
+- **cli**: --verbose moved to the root group.
+
+
 ## v0.33.0 (2026-08-14)
 
 ### Bug Fixes
