@@ -1,6 +1,80 @@
 # CHANGELOG
 
 
+## v0.33.0 (2026-08-14)
+
+### Bug Fixes
+
+- **a11y**: Stop six components cancelling the one focus ring
+  ([`cd7a81b`](https://github.com/therealahall/recommendinator/commit/cd7a81b9e4c483e091f065b57ca582d514d99571))
+
+- **a11y**: Stop the forms blurring the button the user just pressed
+  ([`21be09f`](https://github.com/therealahall/recommendinator/commit/21be09f6854ad217c57aa3f0c13b32f5557c1e6d))
+
+- **frontend**: Say why a blank name will not save
+  ([`d899f26`](https://github.com/therealahall/recommendinator/commit/d899f26652f988bd97861c055a83f1d9e0d8bb35))
+
+- **frontend**: Stop the dev server watching the agent worktrees
+  ([`e745142`](https://github.com/therealahall/recommendinator/commit/e7451421aedc4ab9d4cdd2bb6ab436fddaaf281d))
+
+- **frontend**: Take the password floor from the server that enforces it
+  ([`25bddb9`](https://github.com/therealahall/recommendinator/commit/25bddb9106b7d1d4d5cb37a20300ac4a802c9908))
+
+- **storage**: Enforce the password and name rules where both interfaces reach
+  ([`7826e3b`](https://github.com/therealahall/recommendinator/commit/7826e3b81b308a61427e726e9256008f22728dcd))
+
+- **web**: Drop the instance-wide login ceiling
+  ([`a187384`](https://github.com/therealahall/recommendinator/commit/a18738472b1b315df823bb84806bb557824325e8))
+
+- **web**: Make the session roll, bound the throttle, refuse cross-origin writes
+  ([`bf90d25`](https://github.com/therealahall/recommendinator/commit/bf90d2503dcf9caa807d9eaebc2d6662ffb1c05b))
+
+- **web**: Stop the throttle locking out the operator it protects
+  ([`03f7049`](https://github.com/therealahall/recommendinator/commit/03f7049e033f53e4c6d0ce2845f92be063b23551))
+
+### Documentation
+
+- Describe signing in, not pasting a token
+  ([`6815598`](https://github.com/therealahall/recommendinator/commit/6815598d55e01342c11c8926e055c63f0c582628))
+
+- Explain the 403 a cross-origin write gets
+  ([`ac224af`](https://github.com/therealahall/recommendinator/commit/ac224af9bc29fe3c1da317122ed131f1789c68db))
+
+- Make deletion the first option a review finding considers
+  ([`646461b`](https://github.com/therealahall/recommendinator/commit/646461bf26873d2385eb13629e139b61e30c7d2a))
+
+- State the password minimum in the README first-run passage too
+  ([`1d9cf90`](https://github.com/therealahall/recommendinator/commit/1d9cf907b375d624ec6ad947f1f47ede36fb5043))
+
+- State the password rule and what an allowed origin actually reaches
+  ([`ef35433`](https://github.com/therealahall/recommendinator/commit/ef35433e0efbeea7e42d8df5a636c3c097017ab4))
+
+### Features
+
+- **cli**: Add an account group for the break-glass password reset
+  ([`69747f0`](https://github.com/therealahall/recommendinator/commit/69747f057f09ac1f0214cbf638e2cd20e702e1c1))
+
+- **frontend**: Build the setup, login and account forms
+  ([`70a2052`](https://github.com/therealahall/recommendinator/commit/70a2052c07300b41f7dfe52f62fbc07aa249fe7b))
+
+- **frontend**: Sign in with a form instead of holding a token
+  ([`8ae8e70`](https://github.com/therealahall/recommendinator/commit/8ae8e702ca8a154cb645c0536a9101fec2dc3d6b))
+
+- **storage**: Give the single account a password and the browser a session
+  ([`bf7508c`](https://github.com/therealahall/recommendinator/commit/bf7508ca5f388c0d11f148b4572bd67dc9727868))
+
+- **web**: Replace the bearer token with a session cookie and a login
+  ([`c769063`](https://github.com/therealahall/recommendinator/commit/c76906353a621368c2265cd36f98bf45aa5e7862))
+
+### Testing
+
+- **storage**: Let the password-stamp guard fail on the stamp
+  ([`0ae93f1`](https://github.com/therealahall/recommendinator/commit/0ae93f1ff18dbc96068870acf07adbc9c4307bc8))
+
+- **web**: Drive the auth stream end to end, upgrade path included
+  ([`c0722c8`](https://github.com/therealahall/recommendinator/commit/c0722c87cd492432b46cd150a37dd82970d88b35))
+
+
 ## v0.32.0 (2026-08-13)
 
 ### Bug Fixes
