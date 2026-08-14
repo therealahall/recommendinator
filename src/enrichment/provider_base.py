@@ -80,7 +80,8 @@ class EnrichmentProvider(ABC):
     """Abstract base class for metadata enrichment providers.
 
     All enrichment providers must implement this interface. Providers are
-    discovered and registered automatically from src/enrichment/providers/.
+    discovered and registered automatically from src/enrichment/providers/ and
+    private/plugins/.
 
     Example implementation:
 

@@ -135,13 +135,22 @@ class PluginRegistry:
             logger.warning("Failed to import sources package: %s", error)
 
     def _discover_private_plugins(self) -> None:
-        """Discover private plugins from private/plugins/."""
+        """Discover private plugins from private/plugins/.
+
+        The enrichment registry scans this directory too, so a failure names the
+        module and this scan rather than a source plugin: it may have held a
+        provider.
+        """
         # Find project root (parent of src/)
         project_root = Path(__file__).parent.parent.parent
         private_path = project_root / "private" / "plugins"
 
         if not private_path.exists():
-            logger.debug("No private plugins directory found at %s", private_path)
+            logger.debug(
+                "No private plugins directory at %s, skipping the scan for "
+                "source plugins",
+                private_path,
+            )
             return
 
         # Ensure private directory has __init__.py files
@@ -149,12 +158,15 @@ class PluginRegistry:
         plugins_init = private_path / "__init__.py"
 
         if not private_init.exists():
-            logger.debug("private/__init__.py not found, skipping private plugins")
+            logger.debug(
+                "private/__init__.py not found, skipping the scan for source plugins"
+            )
             return
 
         if not plugins_init.exists():
             logger.debug(
-                "private/plugins/__init__.py not found, skipping private plugins"
+                "private/plugins/__init__.py not found, skipping the scan for "
+                "source plugins"
             )
             return
 
@@ -173,7 +185,10 @@ class PluginRegistry:
                 self._register_plugins_from_module(module, f"private:{module_name}")
             except Exception as error:
                 logger.warning(
-                    "Failed to load private plugin %s: %s", module_name, error
+                    "Failed to import private module %s while scanning for "
+                    "source plugins: %s",
+                    module_name,
+                    error,
                 )
 
     def _register_plugins_from_module(self, module: Any, source: str) -> None:
