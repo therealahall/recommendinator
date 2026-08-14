@@ -6,24 +6,13 @@ variables.
 ## How theming works
 
 - **`:root` variables** in `resources/css/base.css` are the source of truth.
-- **Tailwind `@theme`** mappings in `resources/css/tailwind.css` bridge those
-  vars into utility classes such as `bg-bg-primary` and `text-text-primary`.
 - **A theme's `colors.css`** overrides the `:root` variables through a
   dynamically loaded `<link>`.
 - Themes are **not part of the Vite build**. They are served from
   `/static/themes/` and loaded at runtime.
 
-So an override works identically under Tailwind utilities and raw CSS. Both read
-the same custom properties, and no Tailwind rebuild is needed. `tailwind.css` is
-a bridge layer, and a theme author never touches it:
-
-```css
-@theme {
-  --color-bg-primary: var(--bg-primary);
-  --color-text-primary: var(--text-primary);
-  --color-accent: var(--accent);
-}
-```
+So an override needs no rebuild: every rule in the app reads the custom
+properties, and the `<link>` redeclares them.
 
 ## Layout
 
