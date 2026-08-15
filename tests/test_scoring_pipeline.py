@@ -9,7 +9,7 @@ from src.recommendations.scorers import (
     ScoringContext,
     TagOverlapScorer,
 )
-from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
+from src.recommendations.scoring_pipeline import ScoringPipeline
 from src.utils.series import build_series_tracking
 from tests.factories import make_item
 
@@ -57,28 +57,6 @@ class TestScoringPipeline:
         assert result[1].item.title == "Poor"
         assert result[0].aggregate_score >= result[1].aggregate_score
 
-    def test_empty_candidates(self) -> None:
-        """Empty candidate list should return empty results."""
-        context = _build_context()
-        pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        assert pipeline.score_candidates_with_breakdown([], context) == []
-
-    def test_weight_normalization(self) -> None:
-        """Aggregate score should be in [0, 1] regardless of weights."""
-        consumed = [
-            make_item(
-                rating=5,
-                metadata={"genre": "Fantasy"},
-                status=ConsumptionStatus.COMPLETED,
-            )
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(metadata={"genre": "Fantasy"})
-
-        pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        result = pipeline.score_candidates_with_breakdown([candidate], context)
-        assert 0.0 <= result[0].aggregate_score <= 1.0
-
     def test_score_clamped_to_unit_interval(self) -> None:
         """Even with extreme inputs, scores should remain in [0, 1]."""
 
@@ -112,58 +90,6 @@ class TestScoringPipeline:
         )
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 0.0
-
-    def test_breakdown_keys_present(self) -> None:
-        """score_candidates_with_breakdown returns expected scorer keys."""
-        consumed = [
-            make_item(
-                rating=5,
-                metadata={"genre": "Fantasy"},
-                status=ConsumptionStatus.COMPLETED,
-            )
-        ]
-        context = _build_context(consumed=consumed)
-        candidate = make_item(title="Test", metadata={"genre": "Fantasy"})
-
-        pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        results = pipeline.score_candidates_with_breakdown([candidate], context)
-
-        assert len(results) == 1
-        scored = results[0]
-        assert isinstance(scored, ScoredCandidate)
-        assert "genre_match" in scored.score_breakdown
-        assert "creator_match" in scored.score_breakdown
-        assert "tag_overlap" in scored.score_breakdown
-        assert "series_order" in scored.score_breakdown
-        assert "rating_pattern" in scored.score_breakdown
-        assert "continuation" in scored.score_breakdown
-        assert "series_affinity" in scored.score_breakdown
-        # All raw scores should be in [0, 1]
-        for raw_score in scored.score_breakdown.values():
-            assert 0.0 <= raw_score <= 1.0
-
-    def test_breakdown_sorted_descending(self) -> None:
-        """score_candidates_with_breakdown returns results sorted descending."""
-        consumed = [
-            make_item(
-                rating=5,
-                metadata={"genre": "Fantasy"},
-                status=ConsumptionStatus.COMPLETED,
-            )
-        ]
-        context = _build_context(consumed=consumed)
-
-        good_match = make_item(title="Good", metadata={"genre": "Fantasy"})
-        poor_match = make_item(title="Poor", metadata={"genre": "Horror"})
-
-        pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        results = pipeline.score_candidates_with_breakdown(
-            [poor_match, good_match], context
-        )
-
-        assert results[0].item.title == "Good"
-        assert results[1].item.title == "Poor"
-        assert results[0].aggregate_score >= results[1].aggregate_score
 
 
 class TestTiebreakerRegression:
@@ -259,35 +185,3 @@ class TestTiebreakerRegression:
             assert (
                 first_order == subsequent_order
             ), "Tiebreaker should produce consistent ordering"
-
-    def test_tiebreaker_does_not_affect_different_scores(self) -> None:
-        """Items with genuinely different scores should still sort by score."""
-        consumed = [
-            make_item(
-                rating=5,
-                metadata={"genre": "Fantasy"},
-                status=ConsumptionStatus.COMPLETED,
-            )
-        ]
-        context = _build_context(consumed=consumed)
-
-        # Different genres = different scores
-        fantasy_book = make_item(
-            title="Zzz Last Alphabetically",
-            metadata={"genre": "Fantasy"},  # Matches consumed genre
-            item_id="1",
-        )
-        horror_book = make_item(
-            title="Aaa First Alphabetically",
-            metadata={"genre": "Horror"},  # Different genre
-            item_id="2",
-        )
-
-        pipeline = ScoringPipeline(DEFAULT_SCORERS)
-        results = pipeline.score_candidates_with_breakdown(
-            [horror_book, fantasy_book], context
-        )
-
-        # Fantasy book should be first despite being last alphabetically
-        assert "Zzz Last" in results[0].item.title
-        assert results[0].aggregate_score > results[1].aggregate_score

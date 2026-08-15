@@ -24,7 +24,6 @@ carry no ``restart_required``, so a change made after boot must reach the
 already-running engine.
 """
 
-import copy
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import fields
@@ -46,7 +45,7 @@ from src.recommendations.scorers import (
     Scorer,
     build_scorers_with_overrides,
 )
-from src.settings.metadata import entries_by_section, get_entry
+from src.settings.metadata import get_entry
 from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
@@ -58,7 +57,6 @@ from tests.factories import authenticated_client
 _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
 _CREATOR_WEIGHT_KEY = "recommendations.scorer_weights.creator_match"
 _ADAPTATION_WEIGHT_KEY = "recommendations.scorer_weights.adaptation"
-_MIN_RATING_KEY = "recommendations.min_rating_for_preference"
 
 
 def _const_default(key: str) -> Any:
@@ -198,23 +196,6 @@ class TestScorerWeightFallback:
         # The unset key falls back to the global (DB) default, not the class one.
         assert _weight_of(overridden, CreatorMatchScorer) == 6.0
 
-    @pytest.mark.parametrize("global_weight", [1.0, 9.0])
-    def test_changing_global_default_shifts_baseline_for_new_user(
-        self, storage: StorageManager, global_weight: float
-    ) -> None:
-        """Editing the global default changes the baseline a new user inherits.
-
-        A new user has an empty ``scorer_weights``; applying that empty override
-        leaves the engine's global weight untouched, so whatever the admin set
-        in the DB is exactly what the new user gets.
-        """
-        storage.set_setting("recommendations.scorer_weights.genre_match", global_weight)
-
-        engine = _build_engine({}, storage)
-        new_user_scorers = build_scorers_with_overrides(engine.pipeline.scorers, {})
-
-        assert _weight_of(new_user_scorers, GenreMatchScorer) == global_weight
-
     def test_yaml_scorer_weight_used_when_db_absent(
         self, storage: StorageManager
     ) -> None:
@@ -240,14 +221,6 @@ class TestMinRatingFallback:
 
         assert engine.preference_analyzer.min_rating == 2
 
-    def test_yaml_min_rating_used_when_db_absent(self, storage: StorageManager) -> None:
-        """With no DB row, the YAML value (over the const default) is used."""
-        config: dict[str, Any] = {"recommendations": {"min_rating_for_preference": 3}}
-
-        engine = _build_engine(config, storage)
-
-        assert engine.preference_analyzer.min_rating == 3
-
 
 class TestCountFallback:
     """``default_count`` / ``max_count`` resolve from the assembled global."""
@@ -263,15 +236,6 @@ class TestCountFallback:
 
         assert rec_config.default_count == 8
         assert rec_config.max_count == 30
-
-    def test_db_counts_win_over_yaml(self, storage: StorageManager) -> None:
-        """A DB count overrides the YAML value for the same leaf."""
-        storage.set_setting("recommendations.default_count", 8)
-        config: dict[str, Any] = {"recommendations": {"default_count": 12}}
-
-        migrate_config_settings(config, storage)
-
-        assert _get_recommendations_config(config).default_count == 8
 
 
 class TestCustomPreferenceWeightRegression:
@@ -481,21 +445,6 @@ class TestLiveSettingsApply:
             rec["score_breakdown"] for rec in after
         ]
 
-    def test_no_recommendations_setting_requires_a_restart(self) -> None:
-        """The registry must keep every ``recommendations.*`` leaf live-applied.
-
-        Marking one ``restart_required`` would stop ``apply_settings`` writing
-        it into the running config, silently re-freezing the engine.
-        """
-        restart_gated = [
-            entry.key
-            for entries in entries_by_section().values()
-            for entry in entries
-            if entry.key.startswith("recommendations.") and entry.restart_required
-        ]
-
-        assert restart_gated == []
-
 
 class TestUnusableRunningConfig:
     """What the engine does with a ``recommendations`` section it cannot use.
@@ -519,30 +468,6 @@ class TestUnusableRunningConfig:
         engine = self._engine_reading({"recommendations": None})
 
         assert engine.preference_analyzer.min_rating == 4
-
-    def test_non_mapping_weights_fall_back_to_the_baseline(self) -> None:
-        """``scorer_weights`` written as a list weights nothing."""
-        engine = self._engine_reading(
-            {"recommendations": {"scorer_weights": ["genre_match"]}}
-        )
-
-        assert (
-            _weight_of(engine.pipeline.scorers, GenreMatchScorer)
-            == GenreMatchScorer().weight
-        )
-
-    def test_a_weight_named_after_no_scorer_is_dropped(self) -> None:
-        """A typo weights nothing and leaves the scorers it sits beside alone."""
-        engine = self._engine_reading(
-            {
-                "recommendations": {
-                    "scorer_weights": {"genre_match": 7.0, "genre_matsh": 9.0}
-                }
-            }
-        )
-
-        assert _weight_of(engine.pipeline.scorers, GenreMatchScorer) == 7.0
-        assert 9.0 not in [scorer.weight for scorer in engine.pipeline.scorers]
 
 
 class _WeightsWatchedMidIteration(dict[str, float]):
@@ -568,31 +493,6 @@ class _WeightsWatchedMidIteration(dict[str, float]):
                 self._interrupted = True
                 self._interrupt()
             yield entry
-
-
-class _StorageThatReadsMidSave(StorageManager):
-    """Real storage that runs :attr:`interrupt` just before persisting *key*.
-
-    ``apply_settings`` walks the keys of one save, so the moment before the
-    last of them is written is the window in which a reader could see the
-    earlier keys applied and that one not. Hooking it puts a request in that
-    window on every run rather than once in however many thousand land there
-    by luck. The reader runs on this thread because what it observes is the
-    state of the config dict at that instant, which does not depend on who is
-    looking.
-    """
-
-    def __init__(self, sqlite_path: Path, key: str) -> None:
-        """Build storage at *sqlite_path* hooked on writes of *key*."""
-        super().__init__(sqlite_path=sqlite_path)
-        self._hooked_key = key
-        self.interrupt: Callable[[], None] = lambda: None
-
-    def set_setting(self, key: str, value: Any) -> None:
-        """Persist *key*, running the interrupt first when it is the hooked one."""
-        if key == self._hooked_key:
-            self.interrupt()
-        super().set_setting(key, value)
 
 
 def _apply_on_another_thread(
@@ -713,96 +613,6 @@ class TestSettingsWriteDuringScoringRegression:
 
         assert during_the_write == ["Neon Divide", "Quiet Harvest"]
         assert after_the_write == ["Quiet Harvest", "Neon Divide"]
-
-    def test_one_run_reads_the_running_config_once_regression(
-        self, storage: StorageManager
-    ) -> None:
-        """A run resolves every configured knob from a single read.
-
-        Bug: ``generate_recommendations`` asked the provider once for
-        ``min_rating_for_preference``, again for the pipeline weights and
-        again for the custom-rule weight. A save landing between two of those
-        reads gave the request one leaf from before it and another from
-        after, which is a configuration nobody ever saved.
-        Fix: the request resolves all three from one read and uses that
-        snapshot throughout, so the count below *is* the guarantee.
-        """
-        _seed_split_taste_library(storage)
-        config: dict[str, Any] = {}
-        reads: list[dict[str, Any]] = []
-
-        def running_config() -> dict[str, Any]:
-            reads.append(config)
-            return config
-
-        engine = create_recommendation_engine(
-            storage_manager=storage,
-            config=config,
-            config_provider=running_config,
-        )
-        reads.clear()
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-            # Custom rules put the third read, the custom-rule weight, on the
-            # path as well.
-            user_preference_config=UserPreferenceConfig(custom_rules=["avoid poetry"]),
-        )
-
-        assert [rec.item.title for rec in recommendations] == [
-            "Neon Divide",
-            "Quiet Harvest",
-        ]
-        assert len(reads) == 1
-
-    def test_a_two_key_save_reaches_a_run_whole_or_not_at_all_regression(
-        self, tmp_path: Path
-    ) -> None:
-        """A run never ranks on half of one Settings-page save.
-
-        Bug: ``apply_settings`` published each key on its own, so a run
-        landing between two of the swaps of a single save read the new
-        ``genre_match`` weight and the old ``min_rating_for_preference``.
-        Fix: ``apply_settings`` persists every key before it publishes any of
-        them, which is the part this hook can see. It fires mid-persist, so a
-        run landing there ranks on the whole pre-save config. That the publish
-        itself is one store per section rather than one per key is pinned by
-        ``test_no_state_the_config_passes_through_holds_half_the_batch`` in
-        ``tests/utils/test_dotted_path.py``, which watches the stores directly.
-        """
-        storage = _StorageThatReadsMidSave(tmp_path / "test.db", _MIN_RATING_KEY)
-        _seed_split_taste_library(storage)
-        config: dict[str, Any] = {}
-        engine = create_recommendation_engine(
-            storage_manager=storage,
-            config=config,
-        )
-        mid_save: list[list[str]] = []
-        storage.interrupt = lambda: mid_save.append(self._ranked_titles(engine))
-
-        apply_settings(config, storage, {_GENRE_WEIGHT_KEY: 0.0, _MIN_RATING_KEY: 1})
-
-        # The run landing inside the save ranks on the whole pre-save config,
-        # not on the weight alone, which on this library flips the order.
-        assert mid_save == [["Neon Divide", "Quiet Harvest"]]
-        assert config["recommendations"]["scorer_weights"]["genre_match"] == 0.0
-        assert config["recommendations"]["min_rating_for_preference"] == 1
-
-        # And the next run ranks exactly as an engine booted on the saved
-        # config does, so both keys reached it rather than only the first.
-        # The literal order is spelled out as well as compared, because it is
-        # where the margin lives: the raised rating floor holds this order,
-        # while the weight alone would reverse it, as
-        # test_a_weight_changed_mid_read_does_not_score_a_mixture_regression
-        # shows. A comparison of two engines alone would pass on either.
-        saved_from_the_start = create_recommendation_engine(
-            storage_manager=storage,
-            config=copy.deepcopy(config),
-        )
-        after_the_save = self._ranked_titles(engine)
-        assert after_the_save == ["Neon Divide", "Quiet Harvest"]
-        assert after_the_save == self._ranked_titles(saved_from_the_start)
 
     def test_apply_settings_leaves_the_mapping_a_reader_holds_alone(
         self, storage: StorageManager

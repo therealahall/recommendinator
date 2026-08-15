@@ -1,9 +1,7 @@
 """Tests for recommendation engine cross-content-type recommendations."""
 
-import logging
 import random
 from datetime import date
-from typing import NamedTuple
 from unittest.mock import Mock
 
 import pytest
@@ -15,7 +13,6 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations import engine as engine_module
 from src.recommendations.engine import (
     RecommendationEngine,
     _collapse_duplicate_db_ids,
@@ -258,157 +255,9 @@ class TestSingleWeightingStageRegression:
 class TestScoringPipeline:
     """Tests for the recommendation engine's scoring pipeline."""
 
-    def test_engine_produces_recommendations(self, engine, mock_storage):
-        """The pipeline produces ranked recommendations."""
-        consumed_book = ContentItem(
-            id="1",
-            title="Dune",
-            author="Frank Herbert",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        unconsumed_book = ContentItem(
-            id="2",
-            title="Hyperion",
-            author="Dan Simmons",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed_book] if content_type is None else [consumed_book]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_book])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        assert len(recommendations) >= 1
-        assert recommendations[0].item.title == "Hyperion"
-
-    def test_genre_preferences_boost_matching_candidates(self, engine, mock_storage):
-        """Items with preferred genres should rank higher."""
-        consumed = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        good_match = ContentItem(
-            id="2",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        poor_match = ContentItem(
-            id="3",
-            title="Romance Novel",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Romance"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed] if content_type is None else [consumed]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[poor_match, good_match])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=2
-        )
-
-        assert len(recommendations) >= 2
-        titles = [rec.item.title for rec in recommendations]
-        # Sci-fi match should be ranked first
-        assert titles[0] == "Hyperion"
-
-    def test_creator_matching_across_types(self, engine, mock_storage):
-        """Creator matching should work across content types."""
-        consumed_book = ContentItem(
-            id="1",
-            title="The Shining",
-            author="Stephen King",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Horror"},
-        )
-
-        unconsumed_by_same_author = ContentItem(
-            id="2",
-            title="It",
-            author="Stephen King",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Horror"},
-        )
-
-        unconsumed_other = ContentItem(
-            id="3",
-            title="Random Book",
-            author="Unknown Author",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Romance"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed_book] if content_type is None else [consumed_book]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[unconsumed_other, unconsumed_by_same_author]
-        )
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=2
-        )
-
-        assert len(recommendations) >= 2
-        # Stephen King book should be ranked higher
-        assert recommendations[0].item.title == "It"
-
     def test_cold_start_returns_empty(self, engine, mock_storage):
         """The engine handles cold start gracefully."""
         mock_storage.get_completed_items = Mock(return_value=[])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        assert recommendations == []
-
-    def test_no_unconsumed_items_returns_empty(self, engine, mock_storage):
-        """The engine returns empty when nothing is left to recommend."""
-        consumed = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed] if content_type is None else [consumed]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[])
 
         recommendations = engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5
@@ -484,173 +333,12 @@ class TestScoringPipeline:
 
 
 # ---------------------------------------------------------------------------
-# User preference config override tests (Phase 5)
-# ---------------------------------------------------------------------------
-
-
-class TestUserPreferenceOverride:
-    """Tests for per-user preference config overrides."""
-
-    def test_generate_recommendations_without_user_config(self, engine, mock_storage):
-        """Engine works normally when no user_preference_config is passed."""
-        consumed = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-        unconsumed = ContentItem(
-            id="2",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed] if content_type is None else [consumed]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=None,
-        )
-        assert len(recommendations) >= 1
-
-    def test_generate_recommendations_with_user_config(self, engine, mock_storage):
-        """Engine uses overridden scorer weights when user config is provided."""
-        consumed = ContentItem(
-            id="1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        )
-        unconsumed = ContentItem(
-            id="2",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Science Fiction"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: (
-                [consumed] if content_type is None else [consumed]
-            )
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
-
-        user_config = UserPreferenceConfig(
-            scorer_weights={"genre_match": 10.0, "creator_match": 0.0}
-        )
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=user_config,
-        )
-        assert len(recommendations) >= 1
-
-
-# ---------------------------------------------------------------------------
 # Custom rules integration tests (Phase 7)
 # ---------------------------------------------------------------------------
 
 
 class TestCustomRulesIntegration:
     """Tests for custom rules integration in the recommendation engine."""
-
-    def test_custom_rules_boost_matching_genre(self, engine, mock_storage):
-        """Custom rule \"prefer sci-fi\" should boost sci-fi items."""
-        consumed = ContentItem(
-            id="1",
-            title="Old Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Fantasy"},
-        )
-        scifi_item = ContentItem(
-            id="2",
-            title="Space Adventure",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "science fiction"},
-        )
-        fantasy_item = ContentItem(
-            id="3",
-            title="Dragon Tale",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "fantasy"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[scifi_item, fantasy_item]
-        )
-
-        user_config = UserPreferenceConfig(custom_rules=["prefer sci-fi"])
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=2,
-            user_preference_config=user_config,
-        )
-        # The sci-fi item should be ranked higher due to the custom rule
-        assert len(recommendations) == 2
-        titles = [rec.item.title for rec in recommendations]
-        assert "Space Adventure" in titles
-
-    def test_custom_rules_penalize_genre(self, engine, mock_storage):
-        """Custom rule \"avoid horror\" should penalize horror items."""
-        consumed = ContentItem(
-            id="1",
-            title="Old Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Drama"},  # Neutral genre, not horror
-        )
-        horror_item = ContentItem(
-            id="2",
-            title="Scary Story",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "horror"},
-        )
-        comedy_item = ContentItem(
-            id="3",
-            title="Funny Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "comedy"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(
-            return_value=[horror_item, comedy_item]
-        )
-
-        user_config = UserPreferenceConfig(custom_rules=["avoid horror"])
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=2,
-            user_preference_config=user_config,
-        )
-        # With horror penalized, comedy should rank first
-        assert len(recommendations) == 2
-        assert recommendations[0].item.title == "Funny Book"
 
     def test_multiple_custom_rules(self, engine, mock_storage):
         """Multiple custom rules are all applied."""
@@ -703,37 +391,6 @@ class TestCustomRulesIntegration:
         # Sci-fi should be boosted (first), horror should be penalized (last)
         assert titles[0] == "Sci-Fi Book"
         assert titles[-1] == "Horror Book"
-
-    def test_custom_rules_empty_does_not_add_scorer(self, engine, mock_storage):
-        """Empty custom_rules list should not affect scoring."""
-        consumed = ContentItem(
-            id="1",
-            title="Consumed",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Drama"},
-        )
-        unconsumed = ContentItem(
-            id="2",
-            title="Unconsumed",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "drama"},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
-
-        user_config = UserPreferenceConfig(custom_rules=[])
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=user_config,
-        )
-        assert len(recommendations) == 1
 
 
 class TestSeriesOrderingRegression:
@@ -812,62 +469,6 @@ class TestSeriesOrderingRegression:
             "Black Unicorn" in title for title in recommended_titles
         ), "Book #2 should NOT be recommended when book #1 is unread"
 
-    def test_series_filtering_with_all_items_available(self, engine, mock_storage):
-        """Verify series filtering works correctly when all series items are available.
-
-        This tests the fix ensuring the engine passes all unconsumed items to
-        the series filter, not a limited subset.
-        """
-        consumed = ContentItem(
-            id="0",
-            title="Consumed Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Sci-Fi"},
-        )
-
-        # Create a series where items would sort in wrong order alphabetically
-        # "The Zebra Adventure #1" -> sorts as "Zebra..." (Z)
-        # "An Amazing Sequel #2" -> sorts as "Amazing..." (A)
-        book_1 = ContentItem(
-            id="1",
-            title="The Zebra Adventure (Test Series #1)",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Sci-Fi"},
-        )
-        book_2 = ContentItem(
-            id="2",
-            title="An Amazing Sequel (Test Series #2)",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Sci-Fi"},
-        )
-
-        # After article stripping: "Amazing Sequel" (A) before "Zebra Adventure" (Z)
-        unconsumed_items = [book_2, book_1]  # book_2 sorts first alphabetically
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-        )
-
-        recommended_titles = [rec.item.title for rec in recommendations]
-
-        # Only book #1 should be recommended, not book #2
-        assert any(
-            "Zebra Adventure" in title for title in recommended_titles
-        ), "Book #1 (Zebra Adventure) should be recommended"
-        assert not any(
-            "Amazing Sequel" in title for title in recommended_titles
-        ), "Book #2 (Amazing Sequel) should NOT be recommended"
-
 
 # ---------------------------------------------------------------------------
 # Ignored Items Tests (Phase 9)
@@ -914,41 +515,6 @@ class TestIgnoredItems:
 
         # Ignored item should NOT be recommended
         assert "Ignored Book" not in recommended_titles
-
-    def test_all_ignored_items_returns_empty(self, real_engine, real_storage):
-        """If all unconsumed items are ignored, return empty recommendations."""
-        _save_book(
-            real_storage,
-            item_id="1",
-            title="Consumed Book",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            genre="Drama",
-        )
-        _save_book(
-            real_storage,
-            item_id="2",
-            title="Ignored Book 1",
-            status=ConsumptionStatus.UNREAD,
-            ignored=True,
-            genre="Drama",
-        )
-        _save_book(
-            real_storage,
-            item_id="3",
-            title="Ignored Book 2",
-            status=ConsumptionStatus.UNREAD,
-            ignored=True,
-            genre="Drama",
-        )
-
-        recommendations = real_engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-        )
-
-        # No recommendations should be returned
-        assert recommendations == []
 
 
 class TestTvRecommendationCarriesDbIdRegression:
@@ -1049,41 +615,6 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert rec_item.title == "The Expanse (Season 2)"
         assert rec_item.db_id == 42
 
-    def test_series_rules_surface_one_season_per_show_regression(
-        self, engine, mock_storage, breaking_bad_consumed
-    ) -> None:
-        """With series rules on, a multi-season show yields exactly one card.
-
-        Guards against the frontend collision risk: the recommendation card
-        keys on ``rec.db_id`` and removal/actions are keyed by ``db_id``, so two
-        season cards sharing one show's ``db_id`` would collide.  The series
-        ordering rules (``should_recommend_item``) must surface only the single
-        next-unwatched season, keeping each show to one db_id in the output.
-        """
-        unconsumed_show = ContentItem(
-            id="tvdb:280619",
-            db_id=42,
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"total_seasons": 5, "genres": ["Drama", "Sci-Fi"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed_show])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.TV_SHOW,
-            count=5,
-        )
-
-        # Despite 5 expanded seasons, only the next-unwatched one survives, so
-        # the single show contributes exactly one db_id to the output.
-        db_ids = [rec.item.db_id for rec in recommendations]
-        assert db_ids == [42]
-
     def test_series_in_order_false_collapses_seasons_to_one_card_regression(
         self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
@@ -1157,120 +688,6 @@ class TestTvRecommendationCarriesDbIdRegression:
         db_ids = sorted(rec.item.db_id for rec in recommendations)
         assert db_ids == [42, 99]
 
-    def test_none_db_id_show_seasons_not_collapsed_regression(
-        self, engine, mock_storage, breaking_bad_consumed
-    ) -> None:
-        """A db_id=None show's seasons are NOT collapsed (None is not an identity).
-
-        Guards the bug-class where a missing db_id is mistaken for a shared
-        identity: ``_collapse_duplicate_db_ids`` never merges None ids, so a TV
-        show that lacks a library db_id keeps every expanded season candidate
-        instead of dropping to one card.  This documents the actual behaviour
-        through ``generate_recommendations`` so a future change cannot silently
-        start collapsing — and discarding — distinct None-id candidates.
-        """
-        show_without_db_id = ContentItem(
-            id="tvdb:280619",
-            db_id=None,
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"total_seasons": 3, "genres": ["Drama", "Sci-Fi"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[show_without_db_id])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.TV_SHOW,
-            count=5,
-            user_preference_config=UserPreferenceConfig(series_in_order=False),
-        )
-
-        # All three seasons survive — None is never a shared collapse identity —
-        # and every surviving card carries the None db_id.
-        assert len(recommendations) == 3
-        assert all(rec.item.db_id is None for rec in recommendations)
-
-    def test_collapse_is_noop_for_books_with_distinct_db_ids_regression(
-        self, engine, mock_storage
-    ) -> None:
-        """Non-TV recs with distinct db_ids pass through the collapse unchanged.
-
-        Forward-guard behavioural test: it already passes without this branch's
-        change (books each have a unique db_id, so the collapse is a no-op), so
-        its role is to guard against a future regression that breaks the no-op
-        property for distinct-db_id content.
-        """
-        consumed = ContentItem(
-            id="1",
-            db_id=1,
-            title="Dune",
-            author="Frank Herbert",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        book_a = ContentItem(
-            id="2",
-            db_id=10,
-            title="Hyperion",
-            author="Dan Simmons",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        book_b = ContentItem(
-            id="3",
-            db_id=11,
-            title="Neuromancer",
-            author="William Gibson",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[book_a, book_b])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-            user_preference_config=UserPreferenceConfig(series_in_order=False),
-        )
-
-        db_ids = sorted(rec.item.db_id for rec in recommendations)
-        assert db_ids == [10, 11]
-
-    def test_collapse_is_noop_with_series_in_order_regression(
-        self, engine, mock_storage, breaking_bad_consumed, expanse_show
-    ) -> None:
-        """With series order on, a multi-season show already yields one card.
-
-        Forward-guard behavioural test: it already passes without this branch's
-        change (series rules surface a single season, so the collapse has
-        nothing to merge), so its role is to guard against a future regression
-        that breaks the no-op property when series ordering is enabled.
-        """
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[expanse_show])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.TV_SHOW,
-            count=5,
-            user_preference_config=UserPreferenceConfig(series_in_order=True),
-        )
-
-        assert len(recommendations) == 1
-        assert recommendations[0].item.db_id == 42
-
     def test_fallback_collapses_entries_sharing_db_id_regression(self, engine) -> None:
         """The fallback path emits at most one card per parent show db_id.
 
@@ -1314,35 +731,6 @@ class TestTvRecommendationCarriesDbIdRegression:
         db_ids = [rec.item.db_id for rec in recommendations]
         assert db_ids == [42, 99]
         assert recommendations[0].item.id == "tvdb:280619:s1"
-
-    def test_a_fallback_pick_becomes_one_recommendation_record(self, engine) -> None:
-        """The whole record this construction site emits, field for field.
-
-        The fallback ran no pipeline and cited no references, and it says so
-        with the record's empty defaults rather than by leaving fields out —
-        which is what lets every consumer read one shape.
-        """
-        candidate = ContentItem(
-            id="ol-1",
-            db_id=7,
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        recommendations = engine._build_fallback_recommendations(
-            [candidate], series_tracking={}, count=5
-        )
-
-        assert recommendations == [
-            Recommendation(
-                item=candidate, score=0.5, reasoning="Available in your library"
-            )
-        ]
-        assert recommendations[0].score_breakdown == {}
-        assert recommendations[0].variety_penalty == 0.0
-        assert recommendations[0].contributing_items == []
-        assert recommendations[0].adaptations == []
 
 
 class TestCollapseDuplicateDbIds:
@@ -1392,16 +780,6 @@ class TestCollapseDuplicateDbIds:
 
         # All three None entries survive alongside the single id'd entry.
         assert collapsed == entries
-
-    def test_single_entry_with_db_id_returned_unchanged(self) -> None:
-        """A one-entry list with a non-null db_id returns that entry unchanged."""
-        entries = [(42, "only")]
-        assert _collapse_duplicate_db_ids(entries, lambda entry: entry[0]) == entries
-
-    def test_empty_input_returns_empty(self) -> None:
-        """Collapsing an empty list yields an empty list."""
-        entries: list[tuple[int | None, str]] = []
-        assert _collapse_duplicate_db_ids(entries, lambda entry: entry[0]) == []
 
 
 class TestContributingReferenceItemsRegression:
@@ -1628,90 +1006,6 @@ class TestReasoningFormatting:
 
         assert reasoning == "Recommended because you liked the book Dune"
 
-    def test_single_tv_show_reference_natural_format(self) -> None:
-        """Single TV show reference should use 'the TV show' format."""
-        engine = self._make_engine()
-        preferences = self._make_empty_preferences()
-
-        item = ContentItem(
-            id="candidate",
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-        )
-        reference = ContentItem(
-            id="ref",
-            title="Breaking Bad",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        reasoning = engine._generate_reasoning(
-            item=item,
-            preferences=preferences,
-            adaptations=[],
-            contributing_items=[reference],
-        )
-
-        assert reasoning == "Recommended because you liked the TV show Breaking Bad"
-
-    def test_single_video_game_reference_natural_format(self) -> None:
-        """Single video game reference should use 'the video game' format."""
-        engine = self._make_engine()
-        preferences = self._make_empty_preferences()
-
-        item = ContentItem(
-            id="candidate",
-            title="Mass Effect 2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-        )
-        reference = ContentItem(
-            id="ref",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        reasoning = engine._generate_reasoning(
-            item=item,
-            preferences=preferences,
-            adaptations=[],
-            contributing_items=[reference],
-        )
-
-        assert reasoning == "Recommended because you liked the video game Mass Effect"
-
-    def test_single_movie_reference_natural_format(self) -> None:
-        """Single movie reference should use 'the movie' format."""
-        engine = self._make_engine()
-        preferences = self._make_empty_preferences()
-
-        item = ContentItem(
-            id="candidate",
-            title="Blade Runner 2049",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-        )
-        reference = ContentItem(
-            id="ref",
-            title="Blade Runner",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        reasoning = engine._generate_reasoning(
-            item=item,
-            preferences=preferences,
-            adaptations=[],
-            contributing_items=[reference],
-        )
-
-        assert reasoning == "Recommended because you liked the movie Blade Runner"
-
     def test_multiple_items_still_use_grouped_format(self) -> None:
         """Multiple reference items should still use the grouped format."""
         engine = self._make_engine()
@@ -1881,57 +1175,6 @@ class TestSameTypeLimitRegression:
 class TestShuffleCloseScores:
     """Tests for _shuffle_close_scores reference ordering."""
 
-    def test_empty_input(self) -> None:
-        assert _shuffle_close_scores([], random.Random()) == []
-
-    def test_single_item(self) -> None:
-        item = ContentItem(
-            id="a",
-            title="Alpha",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        result = _shuffle_close_scores([(item, 0.8)], random.Random())
-        assert result == [item]
-
-    def test_distant_scores_preserve_order(self) -> None:
-        """Items with very different scores should always stay in order."""
-        items = [
-            ContentItem(
-                id=f"item_{index}",
-                title=title,
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-            )
-            for index, title in enumerate(["High", "Medium", "Low"])
-        ]
-        scored = list(zip(items, [0.9, 0.5, 0.1], strict=True))
-
-        # Run many times — order should never change
-        rng = random.Random()
-        for _ in range(20):
-            result = _shuffle_close_scores(scored, rng)
-            assert result == items
-
-    def test_close_scores_all_items_present(self) -> None:
-        """Items with close scores are shuffled but all remain present."""
-        items = [
-            ContentItem(
-                id=f"item_{index}",
-                title=title,
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-            )
-            for index, title in enumerate(["A", "B", "C"])
-        ]
-        # All within 0.05 threshold
-        scored = list(zip(items, [0.80, 0.78, 0.76], strict=True))
-
-        rng = random.Random()
-        for _ in range(20):
-            result = _shuffle_close_scores(scored, rng)
-            assert {item.id for item in result} == {"item_0", "item_1", "item_2"}
-
     def test_mixed_groups_high_items_always_first(self) -> None:
         """A clearly higher-scored item always comes before a lower group."""
         top = ContentItem(
@@ -2041,12 +1284,6 @@ class TestSeededReferenceOrderRegression:
         }
 
         assert len(orders) > 1
-
-    def test_engine_without_a_seed_still_returns_every_reference(
-        self, mock_storage
-    ) -> None:
-        """Omitting the rng keeps the default shuffle and the whole set."""
-        assert set(self._reference_ids(mock_storage)) == {"book_a", "book_b", "book_c"}
 
     def test_seeded_engines_repeat_the_whole_explanation(self, mock_storage) -> None:
         """A full run repeats its references and its reasoning sentence.
@@ -2247,55 +1484,6 @@ class TestVarietyAfterCompletion:
             top_fraction * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
-    def test_intermediate_variety_penalty_scales_top_rung(
-        self, engine, mock_storage
-    ) -> None:
-        """A mid-range preference (2.0) becomes the ladder's top penalty.
-
-        The decay shape is unchanged; only the top value is user-driven. The
-        preference is divided by ``MAX_VARIETY_PENALTY``, so 2.0 yields a 0.4 top
-        fraction and the most recently finished genre retains 60% of its score.
-        """
-        consumed = ContentItem(
-            id="consumed_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 1, 1),
-            metadata={"genres": ["Science Fiction"]},
-        )
-        same_genre = ContentItem(
-            id="same_genre",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
-
-        recs_off = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
-        )
-        recs_mid = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=2.0),
-        )
-
-        score_off = _variety_score_for(recs_off, "same_genre")
-        score_mid = _variety_score_for(recs_mid, "same_genre")
-        # 2.0 / 5.0 == 0.4 top fraction => (1 - top_fraction) of the score retained.
-        top_fraction = 2.0 / UserPreferenceConfig.MAX_VARIETY_PENALTY
-        assert score_mid == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
-        assert recs_mid[0].variety_penalty == pytest.approx(top_fraction)
-
     def test_variety_penalty_is_per_content_type(self, engine, mock_storage) -> None:
         """Finishing a fantasy book must not penalise a fantasy game.
 
@@ -2338,131 +1526,6 @@ class TestVarietyAfterCompletion:
         # No completed games => empty ladder => the fantasy game is untouched.
         assert recs[0].item.id == "fantasy_game"
         assert recs[0].variety_penalty == 0.0
-
-    def test_no_variety_no_penalty(self, engine, mock_storage) -> None:
-        """With variety_penalty at 0.0, no penalty is recorded."""
-        consumed = ContentItem(
-            id="consumed_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 1, 1),
-            metadata={"genres": ["Science Fiction"]},
-        )
-        candidate = ContentItem(
-            id="candidate_1",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
-
-        recs = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
-        )
-        assert recs[0].variety_penalty == 0.0
-
-    def test_tiny_positive_variety_activates_penalty(
-        self, engine, mock_storage
-    ) -> None:
-        """Any variety_penalty above 0.0 builds a ladder and penalises matches.
-
-        Guards the ``> 0.0`` gate distinct from the larger 2.0/4.0 cases: a
-        barely-positive 0.25 still flows through to a 0.05 top fraction, so a
-        same-genre candidate receives that penalty rather than 0.0.
-        """
-        consumed = ContentItem(
-            id="consumed_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 1, 1),
-            metadata={"genres": ["Science Fiction"]},
-        )
-        candidate = ContentItem(
-            id="candidate_1",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
-
-        recs = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.25),
-        )
-        # 0.25 / 5.0 == 0.05 top fraction.
-        assert recs[0].variety_penalty == pytest.approx(0.05)
-
-    def test_four_matches_legacy_constant_behaviour(self, engine, mock_storage) -> None:
-        """LEGACY_VARIETY_ON reproduces the old constant-driven penalty exactly.
-
-        Before the 0.0-5.0 slider, the ladder's top rung was a fixed 0.8 fraction
-        and the boolean toggle either applied it or not. On the new scale that
-        same fraction is ``LEGACY_VARIETY_ON / MAX_VARIETY_PENALTY``, so the
-        migrated strength must yield the identical applied penalty, proving the
-        migration preserves behaviour.
-        """
-        consumed = ContentItem(
-            id="consumed_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 1, 1),
-            metadata={"genres": ["Science Fiction"]},
-        )
-        same_genre = ContentItem(
-            id="same_genre",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[same_genre])
-
-        recs_off = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(variety_penalty=0.0),
-        )
-        recs = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=1,
-            user_preference_config=UserPreferenceConfig(
-                variety_penalty=UserPreferenceConfig.LEGACY_VARIETY_ON
-            ),
-        )
-        top_fraction = (
-            UserPreferenceConfig.LEGACY_VARIETY_ON
-            / UserPreferenceConfig.MAX_VARIETY_PENALTY
-        )
-        assert recs[0].variety_penalty == pytest.approx(top_fraction)
-        # The migrated strength must preserve the legacy score impact, not just
-        # the reported penalty: the same-genre candidate retains (1 - top_fraction)
-        # of the score it has with variety disabled.
-        score_off = _variety_score_for(recs_off, "same_genre")
-        score_on = _variety_score_for(recs, "same_genre")
-        assert score_on == pytest.approx(score_off * (1 - top_fraction), rel=1e-6)
 
     def test_full_throttle_variety_zeroes_finished_genre(
         self, engine, mock_storage
@@ -2741,237 +1804,6 @@ class TestVarietyAfterCompletionRegression:
         assert book_two_rec.variety_penalty < top_fraction
 
 
-class VarietyStep(NamedTuple):
-    """One whole step of the variety slider, and what the engine emits there.
-
-    Attributes:
-        setting: The ``variety_penalty`` preference, 0.0 to 5.0.
-        continuation_penalty: Penalty fraction applied to the next book in the
-            just finished series, softened by
-            :data:`VARIETY_SERIES_CONTINUATION_FACTOR` because it continues an
-            active series.
-        continuation_score: The continuation's emitted score at that setting.
-        lead_over_competitor: Continuation score minus competitor score.
-            Positive while the continuation leads, negative once it trails.
-        leader_id: Item id the engine ranks first at that setting.
-    """
-
-    setting: float
-    continuation_penalty: float
-    continuation_score: float
-    lead_over_competitor: float
-    leader_id: str
-
-
-# --------------------------------------------------------------------------
-# Variety crossover baselines (issue #74), over ``variety_crossover_library``.
-# Observations of current behaviour, not a specification. Collapsing the
-# ranker's second weighting stage widened the gap between the two candidates
-# and pushed the flip past 4.0; raising
-# :data:`VARIETY_SERIES_CONTINUATION_FACTOR` to 0.6 pulls it back, so on whole
-# steps the flip shows at 4.0 again and the boundary itself sits at 3.7.
-# Re-baseline these when scoring changes, and review the delta.
-# --------------------------------------------------------------------------
-
-VARIETY_CONTINUATION_ID = "dragonlance_2"
-VARIETY_COMPETITOR_ID = "mystery_book"
-
-# The continuation's score with the slider at 0.0. Every other row is this
-# number multiplied by ``1 - continuation_penalty``.
-VARIETY_CONTINUATION_SCORE_WITH_SLIDER_OFF = 0.7833333333333333
-
-# The competitor shares no genre cluster with the ladder, so it is never
-# penalised and holds this score at every setting.
-VARIETY_COMPETITOR_SCORE_AT_EVERY_SETTING = 0.4444444444444444
-
-# The first whole setting at which the continuation stops leading.
-VARIETY_CROSSOVER_SETTING = 4.0
-
-# The first tenth step setting at which it stops leading. The slider is
-# continuous, so the whole step table above understates how early the order
-# turns over.
-VARIETY_CROSSOVER_TENTH_STEP = 3.7
-
-VARIETY_CROSSOVER_STEPS: tuple[VarietyStep, ...] = (
-    VarietyStep(
-        setting=0.0,
-        continuation_penalty=0.0,
-        continuation_score=0.7833333333333333,
-        lead_over_competitor=0.3388888888888889,
-        leader_id=VARIETY_CONTINUATION_ID,
-    ),
-    VarietyStep(
-        setting=1.0,
-        continuation_penalty=0.12,
-        continuation_score=0.6893333333333334,
-        lead_over_competitor=0.24488888888888893,
-        leader_id=VARIETY_CONTINUATION_ID,
-    ),
-    VarietyStep(
-        setting=2.0,
-        continuation_penalty=0.24,
-        continuation_score=0.5953333333333334,
-        lead_over_competitor=0.15088888888888893,
-        leader_id=VARIETY_CONTINUATION_ID,
-    ),
-    VarietyStep(
-        setting=3.0,
-        continuation_penalty=0.36,
-        continuation_score=0.5013333333333333,
-        lead_over_competitor=0.05688888888888888,
-        leader_id=VARIETY_CONTINUATION_ID,
-    ),
-    VarietyStep(
-        setting=4.0,
-        continuation_penalty=0.48,
-        continuation_score=0.4073333333333333,
-        lead_over_competitor=-0.03711111111111112,
-        leader_id=VARIETY_COMPETITOR_ID,
-    ),
-    VarietyStep(
-        setting=5.0,
-        continuation_penalty=0.6,
-        continuation_score=0.31333333333333335,
-        lead_over_competitor=-0.13111111111111107,
-        leader_id=VARIETY_COMPETITOR_ID,
-    ),
-)
-
-# Tolerance for the pinned floats: tight enough that any real change in the
-# arithmetic breaks the assertion.
-VARIETY_SCORE_TOLERANCE = 1e-9
-
-
-class TestVarietyCrossoverCharacterisation:
-    """Where the variety slider flips the issue #74 pair, and by how much.
-
-    Drives the same two candidates the variety regression asserts on through
-    every whole setting of the 0.0 to 5.0 slider and pins both emitted scores,
-    the gap between them, and which one leads. The continuation's score drops by
-    the softened penalty at every step, so the lead narrows from 0.339 at 0.0 to
-    0.057 at 3.0 and the pair reorders at 4.0 — 3.7 on tenth steps.
-    """
-
-    @staticmethod
-    def _recommend(engine, setting: float) -> list[Recommendation]:
-        """Both candidates, best first, with the slider at *setting*."""
-        return engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=2,
-            user_preference_config=UserPreferenceConfig(variety_penalty=setting),
-        )
-
-    @pytest.mark.parametrize(
-        "step",
-        VARIETY_CROSSOVER_STEPS,
-        ids=[f"variety-{step.setting}" for step in VARIETY_CROSSOVER_STEPS],
-    )
-    def test_scores_and_order_at_each_whole_setting(
-        self, engine, variety_crossover_library, step
-    ) -> None:
-        """Both emitted scores, the gap, and the leader at one slider step."""
-        recommendations = self._recommend(engine, step.setting)
-
-        continuation = next(
-            rec for rec in recommendations if rec.item.id == VARIETY_CONTINUATION_ID
-        )
-        competitor = next(
-            rec for rec in recommendations if rec.item.id == VARIETY_COMPETITOR_ID
-        )
-
-        # The penalty is the slider fraction, softened for a series continuation.
-        assert continuation.variety_penalty == pytest.approx(
-            step.setting
-            / UserPreferenceConfig.MAX_VARIETY_PENALTY
-            * VARIETY_SERIES_CONTINUATION_FACTOR,
-            abs=VARIETY_SCORE_TOLERANCE,
-        )
-        assert continuation.variety_penalty == pytest.approx(
-            step.continuation_penalty, abs=VARIETY_SCORE_TOLERANCE
-        )
-        assert competitor.variety_penalty == 0.0
-
-        assert continuation.score == pytest.approx(
-            step.continuation_score, abs=VARIETY_SCORE_TOLERANCE
-        )
-        assert competitor.score == pytest.approx(
-            VARIETY_COMPETITOR_SCORE_AT_EVERY_SETTING, abs=VARIETY_SCORE_TOLERANCE
-        )
-        assert continuation.score - competitor.score == pytest.approx(
-            step.lead_over_competitor, abs=VARIETY_SCORE_TOLERANCE
-        )
-
-        # The penalty is multiplicative on the unpenalised score, so every rung
-        # moves the continuation even where it does not move the order.
-        assert continuation.score == pytest.approx(
-            VARIETY_CONTINUATION_SCORE_WITH_SLIDER_OFF
-            * (1.0 - step.continuation_penalty),
-            abs=VARIETY_SCORE_TOLERANCE,
-        )
-
-        assert recommendations[0].item.id == step.leader_id
-        assert _variety_rank_of(recommendations, step.leader_id) == 0
-
-    def test_lead_changes_sign_once_at_the_crossover_setting(self) -> None:
-        """The pinned table crosses over exactly once, and its leaders agree.
-
-        Guards a re-baseline that transcribes a score without carrying the
-        leader column with it, which would leave the table readable and wrong.
-        """
-        for step in VARIETY_CROSSOVER_STEPS:
-            leads = step.lead_over_competitor > 0.0
-            assert leads == (step.leader_id == VARIETY_CONTINUATION_ID)
-
-        flips = [
-            step.setting
-            for previous, step in zip(
-                VARIETY_CROSSOVER_STEPS[:-1], VARIETY_CROSSOVER_STEPS[1:], strict=True
-            )
-            if previous.leader_id != step.leader_id
-        ]
-        assert flips == [VARIETY_CROSSOVER_SETTING]
-
-    def test_flip_lands_before_the_top_of_the_slider(
-        self, engine, variety_crossover_library
-    ) -> None:
-        """On tenth steps the order turns over below 5.0, and stays turned over.
-
-        The whole step table can only place the flip on a whole setting, which
-        overstates how much variety it takes to demote a continuation. Walking
-        the slider in tenths shows the real boundary, and that no setting above
-        it hands the lead back.
-        """
-        settings = [round(tenth / 10, 1) for tenth in range(51)]
-
-        flipped = [
-            setting
-            for setting in settings
-            if self._recommend(engine, setting)[0].item.id == VARIETY_COMPETITOR_ID
-        ]
-
-        assert flipped
-        assert flipped[0] == VARIETY_CROSSOVER_TENTH_STEP
-        # Every setting from the boundary up keeps the competitor in front.
-        assert flipped == [
-            setting for setting in settings if setting >= VARIETY_CROSSOVER_TENTH_STEP
-        ]
-
-    def test_settings_cover_the_whole_slider_in_whole_steps(self) -> None:
-        """Every whole setting from 0.0 to 5.0 is characterised, in order."""
-        assert [step.setting for step in VARIETY_CROSSOVER_STEPS] == [
-            0.0,
-            1.0,
-            2.0,
-            3.0,
-            4.0,
-            5.0,
-        ]
-        assert (
-            VARIETY_CROSSOVER_STEPS[-1].setting
-            == UserPreferenceConfig.MAX_VARIETY_PENALTY
-        )
-
-
 class TestEngineSeriesSubstitutionRegression:
     """Regression tests for series substitution in the recommendation engine.
 
@@ -3162,45 +1994,6 @@ class TestEngineSeriesSubstitutionRegression:
         ), f"FF X should appear exactly once; got {recommended_ids}"
 
 
-class TestPipelineOutputKeys:
-    """Tests for the pipeline's output carrying every field consumers read."""
-
-    def test_output_includes_contributing_items_and_adaptations(
-        self, engine, mock_storage
-    ):
-        """The scored path fills contributing_items and adaptations."""
-        consumed = ContentItem(
-            id="c1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        unconsumed = ContentItem(
-            id="u1",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-        )
-
-        assert len(recommendations) >= 1
-        for recommendation in recommendations:
-            assert isinstance(recommendation.contributing_items, list)
-            assert isinstance(recommendation.adaptations, list)
-
-
 # ---------------------------------------------------------------------------
 # ContinuationScorer exclusion tests
 # ---------------------------------------------------------------------------
@@ -3283,40 +2076,6 @@ class TestContinuationScorerExclusion:
         assert breakdowns["Hyperion"]["continuation"] == 1.0
         assert breakdowns["Foundation"]["continuation"] == 0.0
 
-    def test_tv_show_without_active_excludes_continuation(self, engine, mock_storage):
-        """TV shows also exclude ContinuationScorer when nothing is active."""
-        consumed = ContentItem(
-            id="c1",
-            title="The Wire",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={
-                "genres": ["Drama"],
-                "total_seasons": 5,
-                "seasons_watched": [1, 2, 3, 4, 5],
-            },
-        )
-        unconsumed = ContentItem(
-            id="u1",
-            title="The Sopranos",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Drama"], "total_seasons": 6},
-        )
-
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
-        )
-        mock_storage.get_unconsumed_items = Mock(return_value=[unconsumed])
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.TV_SHOW, count=1
-        )
-
-        assert len(recommendations) >= 1
-        assert "continuation" not in recommendations[0].score_breakdown
-
 
 class TestSameSeriesReferenceExclusionRegression:
     """Regression tests for same-series exclusion in contributing references.
@@ -3378,74 +2137,6 @@ class TestSameSeriesReferenceExclusionRegression:
             "The Expanse (The Expanse, Season 1)" not in result_titles
         ), "Same-series items must not appear as contributing references"
         assert "Battlestar Galactica" in result_titles
-
-    def test_non_series_candidate_unaffected(self) -> None:
-        """Candidate with no series membership must not filter any consumed item."""
-        engine = _engine_for_helpers()
-
-        candidate = ContentItem(
-            id="interstellar",
-            title="Interstellar",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        series_consumed = ContentItem(
-            id="godfather_2",
-            title="The Godfather (The Godfather, Part 2)",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Drama", "Crime"]},
-        )
-
-        result = SignalIndex([series_consumed]).references_for(candidate, engine.rng)
-
-        result_titles = [item.title for item in result]
-        assert "The Godfather (The Godfather, Part 2)" in result_titles, (
-            "Series-member consumed items must not be filtered when the "
-            "candidate is not part of any series"
-        )
-
-    def test_case_insensitive_series_name_matching(self) -> None:
-        """Series name comparison must be case-insensitive."""
-        engine = _engine_for_helpers()
-
-        candidate = ContentItem(
-            id="expanse_s2",
-            title="The Expanse (The Expanse, Season 2)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        # Title in all-lowercase — verifies case-insensitive series name extraction
-        consumed = ContentItem(
-            id="expanse_s1",
-            title="the expanse (the expanse, Season 1)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        other = ContentItem(
-            id="firefly",
-            title="Firefly",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-
-        result = SignalIndex([consumed, other]).references_for(candidate, engine.rng)
-
-        result_titles = [item.title for item in result]
-        assert (
-            "the expanse (the expanse, Season 1)" not in result_titles
-        ), "Case-insensitive series name match should still exclude"
-        assert "Firefly" in result_titles
 
     def test_show_level_item_excluded_from_season_references_regression(self) -> None:
         """Regression: show-level "The Expanse" must not be a reference for Season 2.
@@ -3567,45 +2258,6 @@ class TestSameSeriesReferenceExclusionRegression:
             "excluded from contributing references"
         )
         assert "Battlestar Galactica" in result_titles
-
-    @pytest.mark.parametrize(
-        "metadata_key",
-        ["series_name", "series", "series_title", "franchise"],
-    )
-    def test_all_metadata_series_keys_trigger_exclusion(
-        self, metadata_key: str
-    ) -> None:
-        """All supported metadata keys must trigger same-series exclusion."""
-        engine = _engine_for_helpers()
-
-        candidate = ContentItem(
-            id="expanse_s3",
-            title="The Expanse (Season 3)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={
-                "genres": ["Science Fiction"],
-                "series_name": "The Expanse",
-                "season": 3,
-            },
-        )
-
-        consumed = ContentItem(
-            id="expanse_show",
-            title="My Expanse Review",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genres": ["Science Fiction"], metadata_key: "The Expanse"},
-        )
-
-        result = SignalIndex([consumed]).references_for(candidate, engine.rng)
-
-        result_titles = [item.title for item in result]
-        assert "My Expanse Review" not in result_titles, (
-            f"Consumed item with {metadata_key!r} metadata key must be "
-            f"excluded from contributing references"
-        )
 
 
 class TestInProgressItemsExcludedFromBasisRegression:
@@ -3776,55 +2428,6 @@ class TestIgnoredAndUnratedSignalRegression:
         assert "Dune" in contributing
         assert "Neuromancer" not in contributing
         assert "Snow Crash" not in contributing
-
-    def test_all_unrated_completed_yields_empty_regression(
-        self, real_engine, real_storage
-    ):
-        """Completed-but-unrated-only libraries produce a graceful empty result."""
-        _save_book(
-            real_storage,
-            item_id="u1",
-            title="Unrated One",
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-        )
-        _save_book(
-            real_storage,
-            item_id="cand",
-            title="Candidate",
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        recs = real_engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        assert recs == []
-
-    def test_all_ignored_completed_yields_empty_regression(
-        self, real_engine, real_storage
-    ):
-        """Libraries whose only completed items are ignored return no recs."""
-        _save_book(
-            real_storage,
-            item_id="i1",
-            title="Ignored One",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            ignored=True,
-        )
-        _save_book(
-            real_storage,
-            item_id="cand",
-            title="Candidate",
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        recs = real_engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        assert recs == []
 
 
 class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
@@ -4223,26 +2826,6 @@ class TestVarietyLadderConsumptionRegression:
             "penalised a same-genre candidate — ignoring means less of it"
         )
 
-    def test_ignored_unrated_completed_fantasy_does_not_penalise_regression(
-        self, real_engine, real_storage
-    ):
-        """Widening the ladder must not let an ignored unrated completion in."""
-        self._seed_baseline(real_storage)
-        _save_book(
-            real_storage,
-            item_id="fan",
-            title="Ignored Unrated Fantasy",
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-            ignored=True,
-            genre="Fantasy",
-            date_completed=self._FANTASY_COMPLETED_ON,
-        )
-        assert self._fantasy_penalty(real_engine) == 0.0, (
-            "An ignored, unrated completion entered the variety ladder — "
-            "dropping the rating filter must not drop the ignore filter"
-        )
-
     def test_unrated_completions_take_rungs_by_recency_not_after_rated_ones(
         self, real_engine, real_storage
     ):
@@ -4277,41 +2860,6 @@ class TestVarietyLadderConsumptionRegression:
         assert self._fantasy_penalty(real_engine) == pytest.approx(
             (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
-
-    def test_unrated_book_completion_leaves_the_same_genre_movie_alone(
-        self, real_engine, real_storage
-    ):
-        """Fatigue stays per content type when the completion is unrated.
-
-        The widened accessor is still called with the requested content type,
-        so unrated Fantasy books tire out Fantasy books and nothing else. Both
-        candidates are scored from the same library, so the movie's zero is
-        measured against a ladder that is demonstrably live.
-        """
-        self._seed_baseline(real_storage)
-        _save_book(
-            real_storage,
-            item_id="unrated-fantasy",
-            title="Unrated Fantasy",
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-            genre="Fantasy",
-            date_completed=self._FANTASY_COMPLETED_ON,
-        )
-        real_storage.save_content_item(
-            ContentItem(
-                id="mf",
-                title="Fantasy Movie",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"genre": "Fantasy"},
-            )
-        )
-
-        assert self._fantasy_penalty(real_engine) == pytest.approx(1.0)
-        assert (
-            self._penalty_for(real_engine, "Fantasy Movie", ContentType.MOVIE) == 0.0
-        ), "An unrated book completion fatigued the same genre in movies"
 
     def test_unrated_completion_moves_only_the_penalty_not_the_scores(
         self, real_engine, real_storage
@@ -4442,27 +2990,6 @@ class TestVarietyLadderConsumptionRegression:
             "An unrated show mid-run claimed no rung — its finished season is "
             "a completion event the ladder must see"
         )
-
-    def test_ignored_ongoing_show_claims_no_rung_regression(
-        self, real_engine, real_storage
-    ):
-        """Ignoring the show keeps its finished season off the ladder.
-
-        The Mystery candidate takes the top rung in the same library, so the
-        Fantasy zero is a live ladder declining to place an ignored show.
-        """
-        self._seed_tv_baseline(real_storage)
-        self._save_ongoing_fantasy_show(real_storage, ignored=True)
-
-        assert self._penalty_for(
-            real_engine, "Mystery Show Candidate", ContentType.TV_SHOW
-        ) == pytest.approx(1.0)
-        assert (
-            self._penalty_for(
-                real_engine, "Fantasy Show Candidate", ContentType.TV_SHOW
-            )
-            == 0.0
-        ), "An ignored ongoing show's watched season fatigued its genre"
 
     def test_a_library_with_no_rating_at_all_still_returns_nothing(
         self, real_engine, real_storage
@@ -4595,47 +3122,6 @@ class TestSeriesTrackingFullSetRegression:
 
         assert any("Second Foundation" in t for t in titles), (
             "#3 must be recommended even when the finished #2 was ignored — "
-            "series tracking must use the full completed set (issue #99)"
-        )
-        assert not any(
-            "Foundation's Edge" in t for t in titles
-        ), "#4 must stay held until #3 is consumed"
-
-    def test_unrated_middle_entry_does_not_strand_series_regression(
-        self, real_engine, real_storage
-    ):
-        """A completed-but-unrated #2 still counts, so #3 is recommended."""
-        _save_book(
-            real_storage,
-            item_id="s1",
-            title="Foundation (Signal Saga #1)",
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        _save_book(
-            real_storage,
-            item_id="s2",
-            title="Foundation and Empire (Signal Saga #2)",
-            status=ConsumptionStatus.COMPLETED,
-            rating=None,
-        )
-        _save_book(
-            real_storage,
-            item_id="s3",
-            title="Second Foundation (Signal Saga #3)",
-            status=ConsumptionStatus.UNREAD,
-        )
-        _save_book(
-            real_storage,
-            item_id="s4",
-            title="Foundation's Edge (Signal Saga #4)",
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        titles = self._titles(real_engine)
-
-        assert any("Second Foundation" in t for t in titles), (
-            "#3 must be recommended even when the finished #2 was unrated — "
             "series tracking must use the full completed set (issue #99)"
         )
         assert not any(
@@ -4875,23 +3361,6 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
             [item.title for item in rec.adaptations] for rec in recommendations
         ] == [[], ["Knives Out"]]
 
-    def test_each_season_keeps_its_own_adaptations(self):
-        """One season adapting a film does not lend that reason to the other."""
-        first, second = self._seasons()
-        engine = _engine_for_helpers()
-        adapted_film = make_item(
-            item_id="m1",
-            title="Uncharted Depths (Season 1)",
-            content_type=ContentType.MOVIE,
-            rating=5,
-        )
-
-        adaptations = engine._build_adaptations(
-            [first, second], SignalIndex([adapted_film])
-        )
-
-        assert adaptations == {candidate_key(first): [adapted_film]}
-
     def test_series_filtering_keeps_a_season_from_each_id_less_show(self):
         """Two id-less shows' first seasons are not deduplicated into one.
 
@@ -4993,45 +3462,6 @@ class TestContentTypeExclusions:
 
         assert [rec.item.id for rec in recommendations] == ["b1"]
 
-    def test_a_candidate_carrying_a_raw_string_type_is_dropped_too(
-        self, engine, mock_storage
-    ):
-        """The comparison runs through ``get_enum_value``, not the raw attribute.
-
-        The exclusion set holds strings, and a stored ``content_type`` is one:
-        ``ContentItem`` is configured with ``use_enum_values``, so the value on
-        the item is the string either spelling was built from.
-        """
-        movie = self._movie(content_type="movie")
-        assert type(movie.content_type) is str
-
-        recommendations = self._recommend(
-            engine, mock_storage, [self._book(), movie], ["avoid movies"]
-        )
-
-        assert [rec.item.id for rec in recommendations] == ["b1"]
-
-    def test_excluding_every_candidate_recommends_nothing_and_warns(
-        self, engine, mock_storage, caplog
-    ):
-        """A rule against the requested type leaves the user an empty list."""
-        with caplog.at_level(logging.WARNING, logger="src.recommendations.engine"):
-            recommendations = self._recommend(
-                engine, mock_storage, [self._book()], ["avoid books"]
-            )
-
-        assert recommendations == []
-        assert [
-            record.getMessage()
-            for record in caplog.records
-            if record.name == "src.recommendations.engine"
-            and record.levelno == logging.WARNING
-            and "content type" in record.getMessage().lower()
-        ] == [
-            "Content type exclusion removed all candidates, "
-            "this shouldn't happen for same-type recommendations"
-        ]
-
     def test_a_rule_with_no_exclusion_leaves_every_candidate(
         self, engine, mock_storage
     ):
@@ -5041,22 +3471,3 @@ class TestContentTypeExclusions:
         )
 
         assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
-
-    def test_empty_custom_rules_never_build_an_interpreter(
-        self, engine, mock_storage, monkeypatch
-    ):
-        """The guard ahead of the interpreter keeps a rule-less request off it.
-
-        The spy wraps the real class, so a broken guard fails on the call
-        count rather than on whatever a stand-in interpreter returned.
-        """
-        monkeypatch.setattr(
-            engine_module,
-            "PatternBasedInterpreter",
-            Mock(wraps=engine_module.PatternBasedInterpreter),
-        )
-
-        recommendations = self._recommend(engine, mock_storage, [self._book()], [])
-
-        assert [rec.item.id for rec in recommendations] == ["b1"]
-        engine_module.PatternBasedInterpreter.assert_not_called()

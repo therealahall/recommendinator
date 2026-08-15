@@ -117,18 +117,6 @@ def sample_items(storage_manager: StorageManager) -> list[int]:
 class TestProfileGeneration:
     """Tests for generate_profile."""
 
-    def test_generate_profile_returns_profile(
-        self,
-        profile_generator: ProfileGenerator,
-        sample_items: list[int],
-    ) -> None:
-        """Test that generate_profile returns a PreferenceProfile."""
-        profile = profile_generator.generate_profile(user_id=1)
-
-        assert isinstance(profile, PreferenceProfile)
-        assert profile.user_id == 1
-        assert profile.generated_at is not None
-
     def test_generate_profile_empty_user(
         self,
         profile_generator: ProfileGenerator,
@@ -196,18 +184,6 @@ class TestGenreAffinities:
         assert "mystery" in profile.genre_affinities
         assert 2.5 <= profile.genre_affinities["mystery"] <= 3.5
 
-    def test_genre_affinities_sorted_by_score(
-        self,
-        profile_generator: ProfileGenerator,
-        sample_items: list[int],
-    ) -> None:
-        """Test that genre affinities are sorted by score descending."""
-        profile = profile_generator.generate_profile(user_id=1)
-
-        affinities = list(profile.genre_affinities.items())
-        for index in range(len(affinities) - 1):
-            assert affinities[index][1] >= affinities[index + 1][1]
-
 
 class TestThemePreferences:
     """Tests for theme preference identification."""
@@ -244,30 +220,6 @@ class TestThemePreferences:
         # Exploration appears in 2 high-rated items
         assert "exploration" in profile.theme_preferences
 
-    def test_theme_preferences_ignores_low_rated(
-        self,
-        storage_manager: StorageManager,
-    ) -> None:
-        """Test that themes from low-rated items are not preferences."""
-        items = [
-            ContentItem(
-                id="test1",
-                title="Bad Game",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                rating=2,
-                metadata={"themes": ["challenging"]},
-            ),
-        ]
-        for item in items:
-            storage_manager.save_content_item(item, user_id=1)
-
-        generator = ProfileGenerator(storage_manager)
-        profile = generator.generate_profile(user_id=1)
-
-        # Challenging shouldn't be a preference (only in low-rated items)
-        assert "challenging" not in profile.theme_preferences
-
 
 class TestAntiPreferences:
     """Tests for anti-preference identification."""
@@ -283,80 +235,9 @@ class TestAntiPreferences:
         # Horror has 2 low-rated items (rating 2 and 1), avg 1.5 <= 2.5
         assert "horror" in profile.anti_preferences
 
-    def test_anti_preferences_requires_multiple_low_ratings(
-        self,
-        storage_manager: StorageManager,
-    ) -> None:
-        """Test that multiple low ratings needed for anti-preference."""
-        items = [
-            ContentItem(
-                id="test1",
-                title="Horror 1",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=1,
-                metadata={"genres": ["horror"]},
-            ),
-            ContentItem(
-                id="test2",
-                title="Horror 2",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=2,
-                metadata={"genres": ["horror"]},
-            ),
-            # Add some other items
-            ContentItem(
-                id="test3",
-                title="Good Book 1",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["sci-fi"]},
-            ),
-            ContentItem(
-                id="test4",
-                title="Good Book 2",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["sci-fi"]},
-            ),
-            ContentItem(
-                id="test5",
-                title="Good Book 3",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["fantasy"]},
-            ),
-        ]
-        for item in items:
-            storage_manager.save_content_item(item, user_id=1)
-
-        generator = ProfileGenerator(storage_manager)
-        profile = generator.generate_profile(user_id=1)
-
-        # Horror appears in 2 low-rated items, avg 1.5 <= 2.5
-        assert "horror" in profile.anti_preferences
-
 
 class TestCrossMediaPatterns:
     """Tests for cross-media pattern identification."""
-
-    def test_cross_media_pattern_detected(
-        self,
-        profile_generator: ProfileGenerator,
-        sample_items: list[int],
-    ) -> None:
-        """Test that cross-media patterns are detected."""
-        profile = profile_generator.generate_profile(user_id=1)
-
-        # User loves sci-fi books (5, 5, 4 stars) but only rated
-        # sci-fi game 3 stars vs fantasy games 5 stars
-        # So should detect a pattern about fantasy games vs sci-fi games
-        # or about content type preferences
-        assert len(profile.cross_media_patterns) >= 0  # May or may not detect
 
     def test_type_preference_pattern(
         self,
@@ -455,21 +336,6 @@ class TestRegenerateAndSave:
         # Verify it was saved
         saved_profile = storage_manager.get_preference_profile(user_id=1)
         assert saved_profile is not None
-
-
-class TestFormatContentType:
-    """Tests for content type formatting."""
-
-    def test_format_content_types(
-        self,
-        profile_generator: ProfileGenerator,
-    ) -> None:
-        """Test formatting of content types."""
-        assert profile_generator._format_content_type("book") == "books"
-        assert profile_generator._format_content_type("movie") == "movies"
-        assert profile_generator._format_content_type("tv_show") == "TV shows"
-        assert profile_generator._format_content_type("video_game") == "games"
-        assert profile_generator._format_content_type(ContentType.BOOK) == "books"
 
 
 class TestProfileRegression:

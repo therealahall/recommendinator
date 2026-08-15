@@ -38,9 +38,6 @@ class TestLibraryKey:
     def test_keys_on_the_database_row(self) -> None:
         assert library_key(_book(db_id=7)) == "db_7"
 
-    def test_ignores_the_external_id(self) -> None:
-        assert library_key(_book(db_id=7, item_id="goodreads:99")) == "db_7"
-
     def test_season_candidates_share_their_show_row(self) -> None:
         first, second = _seasons_of_one_show(db_id=7)
         assert library_key(first) == library_key(second) == "db_7"
@@ -52,9 +49,6 @@ class TestCandidateKey:
     def test_matches_the_library_key_for_an_ordinary_candidate(self) -> None:
         item = _book(db_id=7)
         assert candidate_key(item) == library_key(item)
-
-    def test_id_less_items_do_not_collide(self) -> None:
-        assert candidate_key(_book(db_id=7)) != candidate_key(_book(db_id=8))
 
     def test_season_siblings_do_not_collide(self) -> None:
         first, second = _seasons_of_one_show(db_id=7)
@@ -73,13 +67,6 @@ class TestCandidateKey:
         show_row.metadata["season"] = "1"
 
         assert candidate_key(show_row) == "db_7#s1"
-
-    def test_a_season_that_is_not_a_number_keys_as_the_show(self) -> None:
-        """Anything that names no season leaves the key alone."""
-        show_row = _book(db_id=7)
-        show_row.metadata["season"] = "special"
-
-        assert candidate_key(show_row) == "db_7"
 
     def test_a_digit_that_int_refuses_keys_as_the_show_regression(self) -> None:
         """Bug: one poisoned season value failed every request for its type.

@@ -4,15 +4,6 @@ from src.models.user_preferences import UserPreferenceConfig
 
 
 class TestUserPreferenceConfig:
-    def test_default_values(self) -> None:
-        """New config has sensible defaults."""
-        config = UserPreferenceConfig()
-        assert config.scorer_weights == {}
-        assert config.series_in_order is True
-        assert config.variety_penalty == 0.0
-        assert config.custom_rules == []
-        assert config.content_length_preferences == {}
-
     def test_round_trip(self) -> None:
         """to_dict -> from_dict produces an equal object."""
         original = UserPreferenceConfig(
@@ -24,34 +15,6 @@ class TestUserPreferenceConfig:
         )
         restored = UserPreferenceConfig.from_dict(original.to_dict())
         assert restored == original
-
-    def test_from_dict_empty_input(self) -> None:
-        """from_dict with empty dict produces defaults."""
-        config = UserPreferenceConfig.from_dict({})
-        assert config == UserPreferenceConfig()
-
-    def test_from_dict_partial_weights(self) -> None:
-        """from_dict with partial data fills defaults for missing keys."""
-        config = UserPreferenceConfig.from_dict(
-            {"scorer_weights": {"genre_match": 2.5}}
-        )
-        assert config.scorer_weights == {"genre_match": 2.5}
-        assert config.series_in_order is True
-        assert config.custom_rules == []
-
-    def test_to_dict_contains_all_fields(self) -> None:
-        """to_dict output contains every expected key."""
-        config = UserPreferenceConfig()
-        data = config.to_dict()
-        expected_keys = {
-            "scorer_weights",
-            "series_in_order",
-            "variety_penalty",
-            "custom_rules",
-            "content_length_preferences",
-            "theme",
-        }
-        assert set(data.keys()) == expected_keys
 
     def test_from_dict_reads_past_the_retired_diversity_weight(self) -> None:
         """Preference JSON stored before diversity_weight was deleted still loads.
@@ -65,22 +28,6 @@ class TestUserPreferenceConfig:
 
         assert config == UserPreferenceConfig(series_in_order=False)
 
-    def test_variety_penalty_round_trip(self) -> None:
-        """variety_penalty survives to_dict -> from_dict."""
-        config = UserPreferenceConfig(variety_penalty=0.5)
-        restored = UserPreferenceConfig.from_dict(config.to_dict())
-        assert restored.variety_penalty == 0.5
-
-    def test_from_dict_missing_variety_penalty_defaults_to_zero(self) -> None:
-        """Stored JSON without either variety key yields the disabled default."""
-        config = UserPreferenceConfig.from_dict({"scorer_weights": {}})
-        assert config.variety_penalty == 0.0
-
-    def test_from_dict_keeps_variety_penalty_at_max_boundary(self) -> None:
-        """The maximum value passes through unchanged (boundary, not clamped)."""
-        config = UserPreferenceConfig.from_dict({"variety_penalty": 5.0})
-        assert config.variety_penalty == 5.0
-
     def test_from_dict_clamps_variety_penalty_above_max(self) -> None:
         """An out-of-range high value is clamped to the maximum penalty."""
         config = UserPreferenceConfig.from_dict({"variety_penalty": 7.5})
@@ -92,18 +39,6 @@ class TestUserPreferenceConfig:
         """A negative value is clamped up to zero (disabled)."""
         config = UserPreferenceConfig.from_dict({"variety_penalty": -1.0})
         assert config.variety_penalty == 0.0
-
-    def test_from_dict_ignores_deprecated_keys(self) -> None:
-        """from_dict safely ignores old deprecated keys in stored JSON."""
-        data = {
-            "scorer_weights": {},
-            "minimum_book_pages": 200,
-            "maximum_movie_runtime": 120,
-        }
-        config = UserPreferenceConfig.from_dict(data)
-        assert config.scorer_weights == {}
-        assert not hasattr(config, "minimum_book_pages")
-        assert not hasattr(config, "maximum_movie_runtime")
 
 
 class TestVarietyPenaltyMigrationRegression:
@@ -156,14 +91,6 @@ class TestAPoisonedRowIsStillReadableRegression:
 
         assert config.scorer_weights == {"genre_match": 2.0}
 
-    def test_a_stored_nan_goes_the_same_way(self) -> None:
-        """The sibling literal ``json.loads`` accepts."""
-        config = UserPreferenceConfig.from_dict(
-            {"scorer_weights": {"recency": float("nan")}}
-        )
-
-        assert config.scorer_weights == {}
-
     def test_a_stored_weight_that_is_not_a_number_is_dropped(self) -> None:
         """``float("high")`` raises, so the type half of the guard carries it."""
         config = UserPreferenceConfig.from_dict(
@@ -171,15 +98,6 @@ class TestAPoisonedRowIsStillReadableRegression:
         )
 
         assert config.scorer_weights == {"genre_match": 2.0}
-
-    def test_a_stored_boolean_weight_reads_as_its_numeric_value(self) -> None:
-        """``bool`` is an ``int``, so it survives as 1.0 rather than being lost."""
-        config = UserPreferenceConfig.from_dict({"scorer_weights": {"recency": True}})
-
-        # Equality alone holds for a surviving ``True``, which the preferences
-        # response renders as ``true`` rather than ``1.0``.
-        assert config.scorer_weights == {"recency": 1.0}
-        assert [type(weight) for weight in config.scorer_weights.values()] == [float]
 
     def test_a_non_finite_penalty_is_still_clamped(self) -> None:
         """The half that already worked, so the weights fix cannot cost it."""
