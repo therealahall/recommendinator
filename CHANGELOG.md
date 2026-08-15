@@ -1,6 +1,81 @@
 # CHANGELOG
 
 
+## v0.35.1 (2026-08-15)
+
+### Bug Fixes
+
+- **data**: Stop disabled sources reading as syncing during Sync All
+  ([`e87fce9`](https://github.com/therealahall/recommendinator/commit/e87fce9c75589b820be98c33b503ae06235204c1))
+
+- **library**: Keep a show's status and its season list telling the same story
+  ([`743f601`](https://github.com/therealahall/recommendinator/commit/743f601f8e95c8ced128fdd8d09a3e347a00a1c1))
+
+- **library**: Let the web edit seasons without stating a status
+  ([`2b0dbc3`](https://github.com/therealahall/recommendinator/commit/2b0dbc37275bfaa273a2d23139bfbb85c506e4d0))
+
+- **sources**: Say when a plugin failed to load instead of hiding the source
+  ([`501a190`](https://github.com/therealahall/recommendinator/commit/501a1906dae0cb36d1c4988428d9f02e8cd271cd))
+
+- **storage**: Let a ROM with an undecodable filename through
+  ([`96f9778`](https://github.com/therealahall/recommendinator/commit/96f97782fa16a81d2c98a753f03eb036c9aa16e8))
+
+- **storage**: Stop an unknown season count un-completing a show
+  ([`36c00a0`](https://github.com/therealahall/recommendinator/commit/36c00a0cfac36a5b1bd0b3de62b3f18d5cf82401))
+
+- **sync**: Keep an undecodable title from aborting the run it reports
+  ([`b95f876`](https://github.com/therealahall/recommendinator/commit/b95f876205bdddf4a9b47fa3b8f8e4bd812bd328))
+
+- **sync**: Report a failed enrichment queue once per source
+  ([`9224aa2`](https://github.com/therealahall/recommendinator/commit/9224aa26df89ac286f97c1e681993bcd015d3791))
+
+- **sync**: Report what a sync changed, not just what it touched
+  ([`71540a8`](https://github.com/therealahall/recommendinator/commit/71540a831be08ea23dfd998f7c185f4ed5ed3e6f))
+
+- **sync**: Stop a reported title rewriting the terminal
+  ([`922e2a2`](https://github.com/therealahall/recommendinator/commit/922e2a228bb6125c7459df4c4027313f99ec51b2))
+
+- **web**: Keep sync results out of the accordion trigger name
+  ([`64e5166`](https://github.com/therealahall/recommendinator/commit/64e51664d5f7197a0c7ca3898b63ff6d96dfa237))
+
+- **web**: Leave focus where the user moved it during a retry
+  ([`b061f1e`](https://github.com/therealahall/recommendinator/commit/b061f1e664e7cfd9dec2902c5e8f4b2e1570cad4))
+
+- **web**: Make the library and recommendation cards fit a phone
+  ([`7bab77c`](https://github.com/therealahall/recommendinator/commit/7bab77c960ba971784f97c3f8be477b05fabaaa4))
+
+- **web**: Name the source in the completed banner
+  ([`9f987a2`](https://github.com/therealahall/recommendinator/commit/9f987a2314157c637c3049cc822f1e91105c3680))
+
+- **web**: Report the counts of the run the banner names
+  ([`62ca97c`](https://github.com/therealahall/recommendinator/commit/62ca97c680abb37f72850d99b93113d58cee2785))
+
+- **web**: Say whether Retry worked
+  ([`5674a53`](https://github.com/therealahall/recommendinator/commit/5674a5390264b60d4fbc0c815f96447341fac17f))
+
+- **web**: Stop a failed preferences load from wiping the saved ones
+  ([`c3f75be`](https://github.com/therealahall/recommendinator/commit/c3f75bed4ecaecc41ab9824dad23fa45ac93ccab))
+
+### Documentation
+
+- Correct what an edit and an import do to watched seasons
+  ([`f64c931`](https://github.com/therealahall/recommendinator/commit/f64c931319ee419d3f5a39d9b585935a6699add4))
+
+- Trim the edit-door paragraph back under budget
+  ([`f40244c`](https://github.com/therealahall/recommendinator/commit/f40244c57cc997503205734c59612c0b478c4182))
+
+- **cli**: Say when a status fills in the season list
+  ([`ae45818`](https://github.com/therealahall/recommendinator/commit/ae45818c2980468e238f9f46eecd6ae80ca9c7b5))
+
+- **security**: Record what a plugin import failure tells the client
+  ([`a3bec51`](https://github.com/therealahall/recommendinator/commit/a3bec51f5e2db7864f184697fb8a26d1937d3053))
+
+### Testing
+
+- Cut the tests that were not earning their place
+  ([`575cd30`](https://github.com/therealahall/recommendinator/commit/575cd30d142a4a8414539c10952c27d11de8c6e2))
+
+
 ## v0.35.0 (2026-08-15)
 
 ### Bug Fixes
