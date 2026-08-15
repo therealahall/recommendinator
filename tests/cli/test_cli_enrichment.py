@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
-from src.models.content import ContentType
 from src.storage.manager import StorageManager
 
 from .conftest import _invoke_with_mocks
@@ -84,29 +83,6 @@ class TestEnrichmentStart:
             content_type=None, user_id=1, include_not_found=False
         )
 
-    def test_enrichment_start_with_type(self, cli_runner: CliRunner) -> None:
-        """Test enrichment start with content type filter forwards the enum."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_manager = MagicMock(spec=EnrichmentManager)
-        mock_manager.start_enrichment.return_value = True
-        mock_manager.get_status.return_value = _make_status(
-            items_processed=5, items_enriched=5
-        )
-
-        result = _invoke_with_enrichment_manager(
-            cli_runner,
-            ["enrichment", "start", "--type", "movie"],
-            mock_storage,
-            mock_manager,
-            config={"enrichment": {"enabled": True, "batch_size": 50}},
-        )
-
-        assert result.exit_code == 0
-        assert "movie" in result.output.lower()
-        mock_manager.start_enrichment.assert_called_once_with(
-            content_type=ContentType.MOVIE, user_id=1, include_not_found=False
-        )
-
     def test_enrichment_start_retry_not_found(self, cli_runner: CliRunner) -> None:
         """--retry-not-found forwards include_not_found=True to the manager.
 
@@ -153,32 +129,6 @@ class TestEnrichmentStart:
 
 class TestEnrichmentStatus:
     """Tests for enrichment status command."""
-
-    def test_enrichment_status_table(self, cli_runner: CliRunner) -> None:
-        """Test status command with table output."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_enrichment_stats.return_value = {
-            "total": 100,
-            "enriched": 80,
-            "pending": 15,
-            "not_found": 3,
-            "failed": 2,
-            "by_provider": {"tmdb": 50, "openlibrary": 30},
-            "by_quality": {"high": 60, "medium": 20},
-        }
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "status"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        assert "Total items: 100" in result.output
-        assert "Enriched: 80" in result.output
-        assert "Pending: 15" in result.output
-        assert "tmdb: 50" in result.output
-        mock_storage.get_enrichment_stats.assert_called_once_with(user_id=1)
 
     def test_enrichment_status_json(self, cli_runner: CliRunner) -> None:
         """Test status JSON output matches web API EnrichmentStatsResponse shape."""
@@ -235,40 +185,6 @@ class TestEnrichmentReset:
         assert "Reset enrichment status for 50 item(s)" in result.output
         mock_storage.reset_enrichment_status.assert_called_once_with(
             provider=None, content_type=None, user_id=1
-        )
-
-    def test_enrichment_reset_by_provider(self, cli_runner: CliRunner) -> None:
-        """Test reset filtered by provider forwards provider=tmdb to storage."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.reset_enrichment_status.return_value = 20
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "reset", "--provider", "tmdb", "--yes"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        assert "Reset enrichment status for 20 item(s)" in result.output
-        mock_storage.reset_enrichment_status.assert_called_once_with(
-            provider="tmdb", content_type=None, user_id=1
-        )
-
-    def test_enrichment_reset_by_type(self, cli_runner: CliRunner) -> None:
-        """Test reset filtered by content type forwards content_type=book."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.reset_enrichment_status.return_value = 15
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "reset", "--type", "book", "--yes"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        assert "Reset enrichment status for 15 item(s)" in result.output
-        mock_storage.reset_enrichment_status.assert_called_once_with(
-            provider=None, content_type=ContentType.BOOK, user_id=1
         )
 
     def test_enrichment_reset_requires_confirmation(

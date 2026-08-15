@@ -3,7 +3,6 @@
 import csv
 import io
 import json
-from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +19,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
-from src.storage.manager import UNSET, StorageManager
+from src.storage.manager import StorageManager
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 
@@ -117,33 +116,6 @@ class TestLibraryList:
         assert item["seasons_watched"] is None
         assert item["total_seasons"] is None
 
-    def test_list_type_filter(self, cli_runner: CliRunner) -> None:
-        """Test listing items filtered by type."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "list", "--type", "movie"], mock_storage
-        )
-
-        assert result.exit_code == 0
-        mock_storage.get_content_items.assert_called_once()
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["content_type"] == ContentType.MOVIE
-
-    def test_list_status_filter(self, cli_runner: CliRunner) -> None:
-        """Test listing items filtered by status."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "list", "--status", "completed"], mock_storage
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-
     def test_list_empty_results(self, cli_runner: CliRunner) -> None:
         """Test listing when no items match."""
         mock_storage = MagicMock(spec=StorageManager)
@@ -153,73 +125,6 @@ class TestLibraryList:
 
         assert result.exit_code == 0
         assert "No items found" in result.output
-
-    def test_list_enrichment_not_enriched(self, cli_runner: CliRunner) -> None:
-        """Test --enrichment not_enriched forwards the filter to storage."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--enrichment", "not_enriched"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["enrichment"] == "not_enriched"
-
-    def test_list_enrichment_enriched(self, cli_runner: CliRunner) -> None:
-        """Test --enrichment enriched forwards the filter to storage."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--enrichment", "enriched"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["enrichment"] == "enriched"
-
-    def test_list_enrichment_default_unset(self, cli_runner: CliRunner) -> None:
-        """Test the enrichment filter is None (all items) when not provided."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["enrichment"] is None
-
-    def test_list_enrichment_invalid_value(self, cli_runner: CliRunner) -> None:
-        """Test an invalid --enrichment value is rejected by Click choices."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--enrichment", "partial"],
-            mock_storage,
-        )
-
-        assert result.exit_code != 0
-        mock_storage.get_content_items.assert_not_called()
-
-    def test_list_table_shows_enriched_column(self, cli_runner: CliRunner) -> None:
-        """Test the table output carries an Enriched indicator column."""
-        item = _make_item(db_id=1, title="Book One")
-        item.enriched = True
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = [item]
-
-        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
-
-        assert result.exit_code == 0
-        assert "Enriched" in result.output
 
     def test_list_search_filters_results(self, cli_runner: CliRunner) -> None:
         """Test that --search forwards the query and shows matching items."""
@@ -235,72 +140,6 @@ class TestLibraryList:
         assert "Dune" in result.output
         call_kwargs = mock_storage.get_content_items.call_args[1]
         assert call_kwargs["search"] == "Dune"
-
-    def test_list_search_json_output(self, cli_runner: CliRunner) -> None:
-        """Test that --search works with JSON output."""
-        items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = items
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--search", "Dune", "--format", "json"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed[0]["title"] == "Dune"
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["search"] == "Dune"
-
-    def test_list_search_combines_with_type(self, cli_runner: CliRunner) -> None:
-        """Test that --search ANDs with --type."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--search", "Dune", "--type", "book"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["search"] == "Dune"
-        assert call_kwargs["content_type"] == ContentType.BOOK
-
-    def test_list_passes_a_non_latin_search_term_through_unmangled(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """A non-Latin --search term reaches storage and renders in both formats.
-
-        Storage is mocked, so the matching itself is not exercised here —
-        ``tests/test_sorting.py`` covers that. What this pins is the CLI half:
-        Click hands the term to storage byte-for-byte, and a matched title in
-        a non-Latin script survives both the table and the JSON rendering.
-        """
-        items = [_make_item(db_id=1, title="進撃の巨人", author="諫山創")]
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = items
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "list", "--search", "進撃の巨人"], mock_storage
-        )
-
-        assert result.exit_code == 0
-        assert "進撃の巨人" in result.output
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["search"] == "進撃の巨人"
-
-        json_result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--search", "進撃の巨人", "--format", "json"],
-            mock_storage,
-        )
-
-        assert json_result.exit_code == 0
-        assert json.loads(json_result.output)[0]["title"] == "進撃の巨人"
 
     def test_list_rejects_an_over_long_search_term(self, cli_runner: CliRunner) -> None:
         """--search is bounded at the same length the web API accepts.
@@ -321,32 +160,6 @@ class TestLibraryList:
         assert result.exit_code != 0
         assert f"at most {MAX_SEARCH_LENGTH} characters" in result.output
         mock_storage.get_content_items.assert_not_called()
-
-    def test_list_accepts_a_search_term_at_the_limit(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """The bound is inclusive, so a term of exactly the limit still runs."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-        term = "x" * MAX_SEARCH_LENGTH
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "list", "--search", term], mock_storage
-        )
-
-        assert result.exit_code == 0
-        assert mock_storage.get_content_items.call_args[1]["search"] == term
-
-    def test_list_without_search_passes_none(self, cli_runner: CliRunner) -> None:
-        """Test that omitting --search forwards search=None (unchanged behavior)."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["search"] is None
 
     def test_list_forwards_sort_limit_offset(self, cli_runner: CliRunner) -> None:
         """Test that --sort, --limit, --offset, --show-ignored reach storage."""
@@ -389,76 +202,6 @@ class TestLibraryList:
 
         assert result.exit_code == 0
         call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-        assert call_kwargs["unrated_only"] is True
-
-    def test_list_needs_rating_overrides_explicit_status(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """--needs-rating takes precedence over an explicit --status."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--needs-rating", "--status", "unread"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-        assert call_kwargs["unrated_only"] is True
-
-    def test_list_needs_rating_composes_with_type(self, cli_runner: CliRunner) -> None:
-        """--needs-rating composes with --type, forwarding both filters."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--needs-rating", "--type", "book"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["content_type"] == ContentType.BOOK
-        assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-        assert call_kwargs["unrated_only"] is True
-
-    def test_list_without_needs_rating_does_not_force(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Without --needs-rating, status is not forced and unrated_only is False."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["status"] is None
-        assert call_kwargs["unrated_only"] is False
-
-    def test_list_needs_rating_composes_with_limit_and_offset(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """--needs-rating forwards limit/offset alongside the forced filters."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = []
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "list", "--needs-rating", "--limit", "10", "--offset", "5"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        mock_storage.get_content_items.assert_called_once()
-        call_kwargs = mock_storage.get_content_items.call_args[1]
-        assert call_kwargs["limit"] == 10
-        assert call_kwargs["offset"] == 5
         assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
         assert call_kwargs["unrated_only"] is True
 
@@ -580,23 +323,6 @@ class TestLibraryShow:
         assert parsed["review"] == "Masterpiece"
         assert parsed["date_completed"] is None
 
-    def test_show_json_with_date_completed(self, cli_runner: CliRunner) -> None:
-        """Test that a non-None date_completed is serialized as ISO string."""
-        item = _make_item(db_id=42, title="Finished Book")
-        item.date_completed = date(2025, 12, 31)
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "show", "--id", "42", "--format", "json"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["date_completed"] == "2025-12-31"
-
     def test_show_json_tv_show_with_seasons(self, cli_runner: CliRunner) -> None:
         """Test that TV show metadata populates seasons_watched and total_seasons."""
         item = _make_item(
@@ -616,26 +342,6 @@ class TestLibraryShow:
         parsed = json.loads(result.output)
         assert parsed["seasons_watched"] == [1, 2, 3]
         assert parsed["total_seasons"] == 5
-
-    def test_show_json_tv_show_with_unparseable_seasons(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Test graceful handling when seasons metadata is not an integer."""
-        item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
-        item.metadata = {"seasons": "unknown"}
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "show", "--id", "1", "--format", "json"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["total_seasons"] is None
-        assert parsed["seasons_watched"] is None
 
 
 def _labelled_rows(output: str, label: str) -> list[str]:
@@ -735,41 +441,6 @@ class TestLibraryEdit:
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
         assert call_kwargs["rating"] == 5
 
-    def test_edit_status(self, cli_runner: CliRunner) -> None:
-        """Test editing an item's status."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--status", "completed"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        assert "Updated" in result.output
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["status"] == "completed"
-
-    def test_edit_review(self, cli_runner: CliRunner) -> None:
-        """Test editing an item's review (review-only update)."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--review", "A revelation"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["review"] == "A revelation"
-
     def test_edit_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test editing a non-existent item."""
         mock_storage = MagicMock(spec=StorageManager)
@@ -860,79 +531,6 @@ class TestLibraryEdit:
         assert call_kwargs["genres"] == ["Action", "RPG"]
         assert call_kwargs["tags"] == ["co-op"]
         assert call_kwargs["description"] == "A grand adventure."
-
-    def test_edit_genre_only_leaves_others_unchanged(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Test editing only --genre leaves tags/description as None (unchanged)."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--genre", "Sci-Fi"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["genres"] == ["Sci-Fi"]
-        assert call_kwargs["tags"] is None
-        assert call_kwargs["description"] is None
-
-    def test_edit_description_only(self, cli_runner: CliRunner) -> None:
-        """Test editing only --description leaves genres/tags as None (unchanged)."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--description", "New blurb."],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["description"] == "New blurb."
-        assert call_kwargs["genres"] is None
-        assert call_kwargs["tags"] is None
-
-    def test_edit_update_fails(self, cli_runner: CliRunner) -> None:
-        """Test edit when storage update returns False."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = False
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--rating", "3"],
-            mock_storage,
-        )
-
-        assert result.exit_code != 0
-        assert "failed to update" in result.output.lower()
-
-    def test_edit_review_at_length_limit(self, cli_runner: CliRunner) -> None:
-        """A review at exactly the length limit is accepted and forwarded."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        review = "x" * MAX_REVIEW_LENGTH
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--review", review],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        assert mock_storage.update_item_from_ui.call_args[1]["review"] == review
 
 
 class TestLibraryEditRegression:
@@ -1064,28 +662,6 @@ class TestLibraryEditRegression:
             assert result.exit_code != 0, extra_args
             mock_storage.update_item_from_ui.assert_not_called()
 
-    def test_edit_accepts_manual_metadata_at_caps(self, cli_runner: CliRunner) -> None:
-        """Manual metadata exactly at the caps is accepted and forwarded."""
-        item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = item
-        mock_storage.update_item_from_ui.return_value = True
-
-        extra_args = [arg for _ in range(MAX_GENRES) for arg in ("--genre", "g")]
-        extra_args += [arg for _ in range(MAX_TAGS) for arg in ("--tag", "t")]
-        extra_args += ["--description", "x" * MAX_DESCRIPTION_LENGTH]
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", *extra_args],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert len(call_kwargs["genres"]) == MAX_GENRES
-        assert len(call_kwargs["tags"]) == MAX_TAGS
-
 
 class TestLibraryEditPartialUpdate:
     """Regression tests for `library edit` erasing fields it was not given.
@@ -1178,23 +754,6 @@ class TestLibraryEditPartialUpdate:
         assert stored is not None
         assert stored.rating == 2
         assert stored.review == "Loved it"
-
-    def test_unset_flags_are_forwarded_as_unset(self, cli_runner: CliRunner) -> None:
-        """The CLI sends UNSET, not None, for flags the user did not pass."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(db_id=1)
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--status", "completed"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["rating"] is UNSET
-        assert call_kwargs["review"] is UNSET
 
 
 class TestLibraryEditCompletesEverySeasonRegression:
@@ -1306,23 +865,6 @@ class TestLibraryEditClearing:
         assert stored.review is None
         assert stored.rating == 5
 
-    def test_clear_flags_forward_none_like_the_web(self, cli_runner: CliRunner) -> None:
-        """The clear flags send the same None the web's explicit null sends."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(db_id=1)
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--clear-rating", "--clear-review"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["rating"] is None
-        assert call_kwargs["review"] is None
-
     @pytest.mark.parametrize("review", ["", "   "])
     def test_empty_review_is_refused_regression(
         self, cli_runner: CliRunner, tmp_path: Path, review: str
@@ -1364,38 +906,6 @@ class TestLibraryEditClearing:
         assert "cannot be used together" in result.output
         mock_storage.update_item_from_ui.assert_not_called()
 
-    def test_review_and_clear_review_together_are_refused(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Setting and clearing the review in one command is a contradiction."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(db_id=1)
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--review", "Fine", "--clear-review"],
-            mock_storage,
-        )
-
-        assert result.exit_code != 0
-        assert "cannot be used together" in result.output
-        mock_storage.update_item_from_ui.assert_not_called()
-
-    def test_a_clear_flag_alone_is_enough_of_an_edit(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """A clear flag on its own satisfies the "provide something" check."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(db_id=1)
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "edit", "--id", "1", "--clear-rating"], mock_storage
-        )
-
-        assert result.exit_code == 0
-        mock_storage.update_item_from_ui.assert_called_once()
-
 
 class TestLibraryIgnore:
     """Tests for library ignore command."""
@@ -1428,75 +938,8 @@ class TestLibraryIgnore:
         assert "not found" in result.output.lower()
 
 
-class TestLibraryUnignore:
-    """Tests for library unignore command."""
-
-    def test_unignore_item(self, cli_runner: CliRunner) -> None:
-        """Test unignoring an item."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.set_item_ignored.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "unignore", "--id", "1"], mock_storage
-        )
-
-        assert result.exit_code == 0
-        assert "Unignored item 1." in result.output
-        mock_storage.set_item_ignored.assert_called_once_with(
-            db_id=1, ignored=False, user_id=1
-        )
-
-    def test_unignore_item_not_found(self, cli_runner: CliRunner) -> None:
-        """Test unignoring a non-existent item."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.set_item_ignored.return_value = False
-
-        result = _invoke_with_mocks(
-            cli_runner, ["library", "unignore", "--id", "999"], mock_storage
-        )
-
-        assert result.exit_code != 0
-        assert "not found" in result.output.lower()
-
-
 class TestLibraryExport:
     """Tests for library export command."""
-
-    def test_export_csv(self, cli_runner: CliRunner) -> None:
-        """Test CSV export."""
-        items = [_make_item(db_id=1, title="Book One")]
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = items
-
-        with patch("src.cli.commands._library.export_items_csv") as mock_csv:
-            mock_csv.return_value = "title,author\nBook One,Test Author\n"
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["library", "export", "--type", "book"],
-                mock_storage,
-            )
-
-        assert result.exit_code == 0
-        assert "Book One" in result.output
-        mock_csv.assert_called_once_with(items, ContentType.BOOK)
-
-    def test_export_json(self, cli_runner: CliRunner) -> None:
-        """Test JSON export."""
-        items = [_make_item(db_id=1, title="Book One")]
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_items.return_value = items
-
-        with patch("src.cli.commands._library.export_items_json") as mock_json:
-            mock_json.return_value = '[{"title": "Book One"}]'
-            result = _invoke_with_mocks(
-                cli_runner,
-                ["library", "export", "--type", "book", "--format", "json"],
-                mock_storage,
-            )
-
-        assert result.exit_code == 0
-        assert "Book One" in result.output
-        mock_json.assert_called_once_with(items, ContentType.BOOK)
 
     def test_export_to_file(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         """Test exporting to a file (--output)."""

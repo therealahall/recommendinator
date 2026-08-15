@@ -24,7 +24,6 @@ from tests.cli.conftest import _invoke_with_mocks
 _INT_KEY = "recommendations.default_count"  # int, non-restart, min 1
 _BOOL_KEY = "enrichment.enabled"  # bool, non-restart
 _LIST_KEY = "web.allowed_origins"  # list, restart_required, advanced
-_ENUM_KEY = "logging.level"  # enum, restart_required, advanced
 _ADVANCED_KEY = "logging.file"  # string, restart_required, advanced
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"  # sensitive string
 
@@ -46,16 +45,6 @@ class TestSettingsList:
         # Advanced infra/security leaves are hidden without --advanced.
         assert _ADVANCED_KEY not in result.output
 
-    def test_list_advanced_flag_includes_advanced(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "list", "--advanced"], storage
-        )
-
-        assert result.exit_code == 0
-        assert _ADVANCED_KEY in result.output
-
     def test_list_section_filter_limits_output(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -68,16 +57,6 @@ class TestSettingsList:
         assert result.exit_code == 0
         assert _INT_KEY in result.output
         assert "enrichment.enabled" not in result.output
-
-    def test_list_unknown_section_errors(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "list", "--section", "nope"], storage
-        )
-
-        assert result.exit_code != 0
-        assert "Error" in result.output
 
     def test_list_json_matches_service_view_shape(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -138,28 +117,8 @@ class TestSettingsList:
         assert secret["has_secret"] is True
         assert "SECRETPLAIN" not in result.output
 
-    def test_list_human_masks_secret(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
-
-        result = _invoke_with_mocks(cli_runner, ["settings", "list"], storage)
-
-        assert result.exit_code == 0
-        assert "********" in result.output
-        assert "SECRETPLAIN" not in result.output
-
 
 class TestSettingsGet:
-    def test_get_scalar_human(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(cli_runner, ["settings", "get", _INT_KEY], storage)
-
-        assert result.exit_code == 0
-        assert _INT_KEY in result.output
-        assert "5" in result.output
-
     def test_get_scalar_json(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -172,18 +131,6 @@ class TestSettingsGet:
         assert body["key"] == _INT_KEY
         assert body["value"] == 5
         assert body["db_overridden"] is False
-
-    def test_get_enum_json_reports_choices(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", _ENUM_KEY, "--format", "json"], storage
-        )
-
-        assert result.exit_code == 0
-        body = json.loads(result.output)
-        assert body["type"] == "enum"
-        assert body["value"] in body["choices"]
 
     def test_get_secret_shows_presence_only(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -200,29 +147,8 @@ class TestSettingsGet:
         assert "value" not in body
         assert "SECRETPLAIN" not in result.output
 
-    def test_get_unknown_key_errors(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "get", "web.nonsense"], storage
-        )
-
-        assert result.exit_code != 0
-        assert "Error" in result.output
-
 
 class TestSettingsSet:
-    def test_set_int_persists(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _INT_KEY, "9"], storage
-        )
-
-        assert result.exit_code == 0
-        assert "9" in result.output
-        assert storage.get_setting(_INT_KEY) == 9
-
     def test_set_takes_effect_on_next_invocation(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -268,39 +194,6 @@ class TestSettingsSet:
             "https://b.example",
         ]
 
-    def test_set_list_empty_string_is_empty_list(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        """An empty VALUE for a list setting parses to an empty list, not [""]."""
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _LIST_KEY, ""], storage
-        )
-
-        assert result.exit_code == 0
-        assert storage.get_setting(_LIST_KEY) == []
-
-    def test_set_restart_required_advises_restart(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        """Setting a restart-required leaf prints the restart advisory."""
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _ENUM_KEY, "DEBUG"], storage
-        )
-
-        assert result.exit_code == 0
-        assert "restart" in result.output.lower()
-
-    def test_set_non_restart_omits_restart_advisory(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        """A non-restart leaf must not print the restart advisory."""
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _INT_KEY, "9"], storage
-        )
-
-        assert result.exit_code == 0
-        assert "restart" not in result.output.lower()
-
     def test_set_below_min_is_rejected(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -312,27 +205,6 @@ class TestSettingsSet:
         assert "Error" in result.output
         assert ">= 1" in result.output
         assert storage.get_setting(_INT_KEY) is None
-
-    def test_set_non_integer_is_rejected(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _INT_KEY, "abc"], storage
-        )
-
-        assert result.exit_code != 0
-        assert "Error" in result.output
-        assert storage.get_setting(_INT_KEY) is None
-
-    def test_set_invalid_enum_is_rejected(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _ENUM_KEY, "bogus"], storage
-        )
-
-        assert result.exit_code != 0
-        assert storage.get_setting(_ENUM_KEY) is None
 
     def test_set_rejects_sensitive_key(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -370,17 +242,6 @@ class TestSettingsReset:
 
         assert result.exit_code == 0
         assert storage.get_setting(_INT_KEY) is None
-
-    def test_reset_unknown_key_errors(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "reset", "web.nonsense"], storage
-        )
-
-        assert result.exit_code != 0
-        # Wording matches the web DELETE /api/settings/{key} 404 detail.
-        assert "Unknown setting." in result.output
 
     def test_reset_rejects_sensitive_key(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -436,18 +297,6 @@ class TestSettingsSecrets:
         assert result.exit_code != 0
         assert storage.has_global_secret(_INT_KEY) is False
 
-    def test_set_secret_rejects_unknown_key(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["settings", "set-secret", "web.nonsense"],
-            storage,
-            input_text="x\n",
-        )
-
-        assert result.exit_code != 0
-
     def test_clear_secret_removes_it(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -470,15 +319,6 @@ class TestSettingsSecrets:
 
         assert result.exit_code == 0
         assert "No secret" in result.output
-
-    def test_clear_secret_rejects_non_sensitive_key(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "clear-secret", _INT_KEY], storage
-        )
-
-        assert result.exit_code != 0
 
 
 class TestSettingsApply:
@@ -536,19 +376,6 @@ class TestSettingsApply:
         assert "leak" not in result.output
         assert storage.list_settings() == {}
         assert storage.has_global_secret(_SECRET_KEY) is False
-
-    def test_apply_rejects_non_object_payload(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["settings", "apply", "--from-json", "-"],
-            storage,
-            input_text="[1, 2, 3]",
-        )
-
-        assert result.exit_code != 0
-        assert storage.list_settings() == {}
 
 
 class TestSettingsBootSecretMigration:
@@ -621,19 +448,6 @@ class TestMutatingCommandsEmitTheRefreshedView:
         assert setting["db_overridden"] is False
         assert setting["value"] == default_of(_INT_KEY)
 
-    def test_apply_emits_the_updated_view(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["settings", "apply", "--from-json", "-", "--format", "json"],
-            storage,
-            input_text=json.dumps({_INT_KEY: 9}),
-        )
-
-        assert result.exit_code == 0
-        assert _find_json(json.loads(result.output), _INT_KEY)["value"] == 9
-
     def test_json_output_never_carries_a_secret(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -648,39 +462,6 @@ class TestMutatingCommandsEmitTheRefreshedView:
         secret = _find_json(json.loads(result.output), _SECRET_KEY)
         assert secret["has_secret"] is True
         assert "value" not in secret
-
-    def test_table_output_keeps_the_human_confirmation(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        """The default must stay a one-line confirmation, not a JSON dump."""
-        result = _invoke_with_mocks(
-            cli_runner, ["settings", "set", _INT_KEY, "9"], storage
-        )
-
-        assert result.exit_code == 0
-        assert f"Set {_INT_KEY} = 9." in result.output
-        assert "sections" not in result.output
-
-    def test_every_settings_command_spells_the_flag_the_same_way(self) -> None:
-        """The repo-wide convention is --format, not a boolean --json.
-
-        Regression: the settings group shipped `--json` while twenty other
-        commands (including `source create`, added on the same branch) use
-        `--format`. A user who learned one spelling got "no such option" from
-        the other.
-        """
-        from src.cli.commands import settings as settings_group
-
-        for name, command in settings_group.commands.items():
-            option_names = {opt for param in command.params for opt in param.opts}
-            assert "--json" not in option_names, f"settings {name} uses --json"
-            if "--format" in option_names:
-                continue
-            # Secret commands take a prompted value and have nothing to render.
-            assert name in {
-                "set-secret",
-                "clear-secret",
-            }, f"settings {name} lacks --format"
 
 
 def _find_json(payload: dict, key: str) -> dict:

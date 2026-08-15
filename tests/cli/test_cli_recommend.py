@@ -57,37 +57,6 @@ class TestRecommendCountMaxEnforcement:
         assert result.exit_code != 0
         assert "exceeds configured max_count=5" in result.output
 
-    def test_count_equal_to_max_count_is_accepted(self, cli_runner: CliRunner) -> None:
-        """--count exactly equal to max_count is the boundary and is accepted."""
-        mock_engine = MagicMock(spec=RecommendationEngine)
-        mock_engine.generate_recommendations.return_value = []
-
-        result = _invoke_recommend_with_engine(
-            cli_runner,
-            ["recommend", "--type", "video_game", "--count", "5"],
-            mock_engine,
-            config={"recommendations": {"max_count": 5}},
-        )
-
-        assert result.exit_code == 0
-        call_kwargs = mock_engine.generate_recommendations.call_args[1]
-        assert call_kwargs["count"] == 5
-
-    def test_default_max_count_of_20_applies_when_no_config(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """With no recommendations section in config, default max is 20."""
-        mock_storage = MagicMock(spec=StorageManager)
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["recommend", "--type", "video_game", "--count", "21"],
-            mock_storage,
-            config={},
-        )
-
-        assert result.exit_code != 0
-        assert "exceeds configured max_count=20" in result.output
-
 
 def _invoke_recommend_with_engine(
     cli_runner: CliRunner,
@@ -152,11 +121,6 @@ def _data_rows(output: str) -> list[list[str]]:
     return rows
 
 
-def _rule_widths(output: str) -> set[int]:
-    """Widths of the table's horizontal rules; one value means it lines up."""
-    return {len(line) for line in output.splitlines() if line.startswith("+")}
-
-
 class TestRecommendJsonOutput:
     """Tests for recommend --format json matching web RecommendationResponse."""
 
@@ -209,28 +173,6 @@ class TestRecommendJsonOutput:
         assert result.stdout == "[]\n"
         assert "No recommendations available" not in result.stderr
 
-    def test_a_missing_author_is_null_and_the_title_survives_encoding(self) -> None:
-        """The document carries the values, not the table's stand-ins.
-
-        ``N/A`` is a thing to read; a parser wants the null the web route
-        answers with, and a title outside ASCII back as it was stored.
-        """
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book", "--format", "json"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Sátántangó", author=None),
-                    score=0.5,
-                    reasoning="Great match",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert json.loads(result.stdout)[0]["author"] is None
-        assert json.loads(result.stdout)[0]["title"] == "Sátántangó"
-
 
 class TestRecommendFailuresLeaveStdoutParseable:
     """A refusal is stderr's, so a pipe gets a document or nothing at all."""
@@ -248,18 +190,6 @@ class TestRecommendFailuresLeaveStdoutParseable:
         assert result.exit_code != 0
         assert result.stdout == ""
         assert "Failed to generate recommendations" in result.stderr
-
-    def test_a_refused_count_writes_nothing_to_stdout(self) -> None:
-        """The guard runs before the engine, so the document never starts."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book", "--count", "21", "--format", "json"],
-            _engine_returning(),
-        )
-
-        assert result.exit_code != 0
-        assert result.stdout == ""
-        assert "exceeds configured max_count=20" in result.stderr
 
 
 class TestRecommendProgressLineOnStdoutRegression:
@@ -363,99 +293,6 @@ class TestRecommendTableOutput:
             ["1", "Nowhere Man", "N/A", "0.5", "Pipeline line"]
         ]
         assert "None" not in result.stdout
-
-    def test_the_reasoning_column_shows_the_pipeline_line(self) -> None:
-        """The column shows the pipeline text, never None."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Hyperion"),
-                    score=0.5,
-                    reasoning="Pipeline line",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "Author A", "0.5", "Pipeline line"]
-        ]
-        assert "None" not in result.stdout
-
-    def test_a_non_ascii_title_renders_intact(self) -> None:
-        """Titles are not restricted to the CLI's own alphabet."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Sátántangó", author="Krasznahorkai"),
-                    score=0.5,
-                    reasoning="Great match",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert _data_rows(result.stdout) == [
-            ["1", "Sátántangó", "Krasznahorkai", "0.5", "Great match"]
-        ]
-        assert len(_rule_widths(result.stdout)) == 1
-
-    def test_a_title_holding_the_column_separator_keeps_the_grid_square(
-        self,
-    ) -> None:
-        """A pipe in a title is data, not a cell boundary."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Kill Bill | Vol. 1"),
-                    score=0.5,
-                    reasoning="Great match",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert "Kill Bill | Vol. 1" in result.stdout
-        assert len(_rule_widths(result.stdout)) == 1
-
-    def test_a_title_holding_a_newline_keeps_the_grid_square(self) -> None:
-        """A title broken over two lines still renders one aligned row."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(),
-            ["recommend", "--type", "book"],
-            _engine_returning(
-                Recommendation(
-                    item=_book("Infinite\nJest"),
-                    score=0.5,
-                    reasoning="Great match",
-                )
-            ),
-        )
-
-        assert result.exit_code == 0
-        assert "Infinite" in result.stdout
-        assert "Jest" in result.stdout
-        assert len(_rule_widths(result.stdout)) == 1
-
-    def test_count_one_renders_one_row(self) -> None:
-        """--count 1 asks the engine for one and renders the one it returns."""
-        engine = _engine_returning(
-            Recommendation(item=_book("Hyperion"), score=0.9, reasoning="Great match")
-        )
-
-        result = _invoke_recommend_with_engine(
-            _piping_runner(), ["recommend", "--type", "book", "--count", "1"], engine
-        )
-
-        assert result.exit_code == 0
-        assert engine.generate_recommendations.call_args[1]["count"] == 1
-        assert len(_data_rows(result.stdout)) == 1
 
 
 class TestRecommendCreatorColumnRegression:

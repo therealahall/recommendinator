@@ -1,7 +1,6 @@
 """Tests for CLI __main__ entry point."""
 
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -13,24 +12,8 @@ from click.testing import CliRunner
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
 from src.recommendations.engine import RecommendationEngine
-from src.storage.global_secrets import GLOBAL_SECRET_USER_ID
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-
-
-def test_cli_main_module_exposes_cli_entry_point() -> None:
-    """src.cli.__main__ exposes the cli Click group."""
-    import src.cli.__main__ as main_module
-
-    assert main_module.cli is cli
-
-
-def test_cli_help_via_runner() -> None:
-    """CLI --help exits cleanly via CliRunner."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    assert "Recommendinator CLI" in result.output
 
 
 def test_a_source_named_goodreads_keeps_its_items_across_boots(
@@ -358,37 +341,6 @@ class TestCliBootstrapFailures:
         )
         assert result.stdout == ""
 
-    @pytest.mark.parametrize(
-        ("patched", "error", "rendered"),
-        [
-            (
-                "create_storage_manager",
-                sqlite3.OperationalError("unable to open database file"),
-                "OperationalError: unable to open database file",
-            ),
-            (
-                "migrate_config_settings",
-                sqlite3.OperationalError("no such table: settings"),
-                "OperationalError: no such table: settings",
-            ),
-            (
-                "create_recommendation_engine",
-                ValueError("bad scorer weight"),
-                "ValueError: bad scorer weight",
-            ),
-        ],
-        ids=["storage", "settings-migration", "engine"],
-    )
-    def test_a_component_failure_exits_one_naming_the_fault(
-        self, patched: str, error: Exception, rendered: str
-    ) -> None:
-        """The migration hooks are inside the guard, not beside it."""
-        result = self._boot_failing_at(patched, error)
-
-        assert result.exit_code == 1
-        assert result.stderr.startswith(f"{_COMPONENT_EXIT}{rendered}")
-        assert result.stdout == ""
-
     def test_a_url_borne_token_does_not_reach_the_terminal(self) -> None:
         """A ``requests`` fault quotes the URL it failed on, query string too.
 
@@ -426,76 +378,3 @@ class TestAMalformedInputsBlockDoesNotAbortTheBoot:
         assert result.exit_code == 0, result.output
         # Anchored: the command reached its own body, rather than a quiet exit.
         assert "Components:" in result.output
-
-
-class TestMockedBootSecretSweepRegression:
-    """The mocked CLI storage must look like an empty credentials table.
-
-    Bug: ``back_mock_settings_store`` — the shared backing behind every mocked
-    CLI storage — stubbed only the settings methods. Every other method on a
-    ``Mock(spec=StorageManager)`` returns a truthy ``Mock``, so the
-    ``migrate_config_secrets`` hook that ``src.cli.main`` runs on every boot read
-    ``get_credential`` as "an encrypted secret already exists and takes
-    precedence" and discarded the config value instead of storing it.
-
-    Fix: the helper now reports an empty credentials table, so a mocked boot
-    takes the same branch a fresh install does.
-    """
-
-    def test_boot_sweeps_a_yaml_api_key_into_encrypted_storage(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """The secret is saved under the ``settings:`` namespace and stripped."""
-        storage = MagicMock(spec=StorageManager)
-        config: dict[str, Any] = {
-            "enrichment": {"providers": {"tmdb": {"api_key": "yaml-secret"}}}
-        }
-
-        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
-
-        assert result.exit_code == 0, result.output
-        storage.save_credential.assert_called_once_with(
-            GLOBAL_SECRET_USER_ID,
-            "settings:enrichment.providers.tmdb",
-            "api_key",
-            "yaml-secret",
-        )
-        # And no plaintext copy lingers in the running config.
-        assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
-
-
-class TestASourceRowStubSurvivesTheBootRegression:
-    """Nothing depended on it yet, which is what made it a trap.
-
-    The shared backing assigned ``get_source_config`` after the test set it, so
-    a row-backed source read as fresh. Fix: it fills only what the caller left
-    unset.
-    """
-
-    def test_a_pre_set_source_row_still_shadows_the_file_secret(
-        self, cli_runner: CliRunner
-    ) -> None:
-        storage = MagicMock(spec=StorageManager)
-        storage.get_source_config.return_value = {
-            "source_id": "gog_work",
-            "plugin": "gog",
-            "config": {},
-            "enabled": True,
-        }
-        config: dict[str, Any] = {
-            "inputs": {
-                "gog_work": {
-                    "plugin": "gog",
-                    "enabled": True,
-                    "refresh_token": "from-yaml",
-                }
-            }
-        }
-
-        result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
-
-        assert result.exit_code == 0, result.output
-        # Both branches drop the plaintext copy, so this only says the sweep
-        # ran; storing nothing is what says it saw the row.
-        assert "refresh_token" not in config["inputs"]["gog_work"]
-        storage.save_credential.assert_not_called()

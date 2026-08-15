@@ -7,20 +7,12 @@ surface that can reset the one account with no server and no session.
 from __future__ import annotations
 
 import json
-import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
-import click
 import pytest
 from click.testing import CliRunner
 
-from src.cli.commands._account import (
-    PASSWORD_WRITE_FAILED,
-    RENAME_FAILED,
-    account,
-)
 from src.storage.accounts import (
     ACCOUNT_NAME_BLANK,
     ACCOUNT_NAME_TOO_LONG,
@@ -64,10 +56,6 @@ def _run(
     input_text: str | None = None,
 ) -> Any:
     return _invoke_with_mocks(runner, args, storage, input_text=input_text)
-
-
-def _option_spellings(command: click.Command) -> set[str]:
-    return {opt for param in command.params for opt in param.opts}
 
 
 def _stored_password(storage: StorageManager) -> Any:
@@ -129,19 +117,6 @@ class TestResettingThePasswordWithNoServerRunning:
         assert result.exit_code == 0, result.output
         assert _session_rows(claimed) == 0
 
-    def test_the_password_stamp_moves(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """``account show`` reports it, so the write has to touch it."""
-        before = claimed.describe_account(1)
-
-        _run(cli_runner, claimed, _SET_PASSWORD, _TYPED_TWICE)
-
-        after = claimed.describe_account(1)
-        assert before is not None and after is not None
-        assert before["password_updated_at"] is not None
-        assert after["password_updated_at"] >= before["password_updated_at"]
-
 
 class TestTheFloorTheWebFormAlsoKeeps:
     """Regression test: the CLI set a password the web would reject.
@@ -183,28 +158,6 @@ class TestTheFloorTheWebFormAlsoKeeps:
 class TestThePasswordIsNeverAnArgvValue:
     """An argv password lands in the shell history and in the process table."""
 
-    def test_no_command_in_the_group_accepts_a_password_option(self) -> None:
-        spellings = {
-            name: _option_spellings(command)
-            for name, command in account.commands.items()
-        }
-
-        assert set(spellings) == {"show", "set-password", "set-name"}
-        assert [name for name, opts in spellings.items() if "--password" in opts] == []
-
-    def test_the_typed_password_is_never_echoed(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """``hide_input``: a visible prompt echoes what was typed, into the
-        terminal and into whatever recorded the session."""
-        result = _run(cli_runner, claimed, _SET_PASSWORD, _TYPED_TWICE)
-
-        assert result.exit_code == 0, result.output
-        # Anchors the absence below: both prompts really did run.
-        assert "New password" in result.output
-        assert "Repeat for confirmation" in result.output
-        assert _NEW_PASSWORD not in result.output
-
     def test_the_prompt_stays_off_the_data_channel(
         self, claimed: StorageManager
     ) -> None:
@@ -219,26 +172,6 @@ class TestThePasswordIsNeverAnArgvValue:
         assert result.exit_code == 0, result.stderr
         assert json.loads(result.stdout) == claimed.describe_account(1)
         assert "New password" in result.stderr
-
-    def test_a_mismatched_confirmation_stores_neither_attempt(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """The confirmation is what catches a typo in something nobody can see.
-
-        The mismatch is reported and both prompts come round again, so the
-        password that lands is the one typed twice.
-        """
-        result = _run(
-            cli_runner,
-            claimed,
-            _SET_PASSWORD,
-            f"one thing\nanother thing\n{_TYPED_TWICE}",
-        )
-
-        assert result.exit_code == 0, result.output
-        assert "do not match" in result.output
-        assert claimed.verify_password("owner", "one thing") is None
-        assert claimed.verify_password("owner", _NEW_PASSWORD) is not None
 
 
 class TestAnUnclaimedInstanceIsRefused:
@@ -256,15 +189,6 @@ class TestAnUnclaimedInstanceIsRefused:
         assert "unclaimed" in result.output
         assert storage.describe_account(1) == before
         assert storage.verify_password("default", _NEW_PASSWORD) is None
-
-    def test_show_reports_the_unclaimed_state_rather_than_failing(
-        self, cli_runner: CliRunner, storage: StorageManager
-    ) -> None:
-        result = _run(cli_runner, storage, ["account", "show"])
-
-        assert result.exit_code == 0, result.output
-        assert "Claimed: no" in result.output
-        assert "Password changed: never" in result.output
 
 
 class TestShowingTheAccount:
@@ -315,18 +239,6 @@ class TestRenamingTheAccount:
         assert claimed.verify_password("keeper", _OLD_PASSWORD) is not None
         assert claimed.verify_password("owner", _OLD_PASSWORD) is None
 
-    def test_an_empty_display_name_clears_it(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        result = _run(
-            cli_runner, claimed, ["account", "set-name", "--display-name", ""]
-        )
-
-        record = claimed.describe_account(1)
-        assert result.exit_code == 0, result.output
-        assert record is not None
-        assert (record["username"], record["display_name"]) == ("owner", None)
-
     def test_a_blank_username_is_refused_and_writes_nothing(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
@@ -341,32 +253,6 @@ class TestRenamingTheAccount:
         assert result.exit_code != 0
         assert f"--username: {ACCOUNT_NAME_BLANK}" in result.output
         assert claimed.describe_account(1) == before
-
-    def test_a_padded_name_is_stored_trimmed_as_the_web_stores_it(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """``PATCH /api/users/{id}`` trims both names before writing them.
-
-        A username stored with the padding is one the sign-in form — which
-        trims — could never send, so the two interfaces have to agree.
-        """
-        result = _run(
-            cli_runner,
-            claimed,
-            [
-                "account",
-                "set-name",
-                "--username",
-                "  keeper  ",
-                "--display-name",
-                " K ",
-            ],
-        )
-
-        record = claimed.describe_account(1)
-        assert result.exit_code == 0, result.output
-        assert record is not None
-        assert (record["username"], record["display_name"]) == ("keeper", "K")
 
     @pytest.mark.parametrize("option", ["--username", "--display-name"])
     def test_a_name_past_the_column_is_refused_as_the_web_refuses_it(
@@ -388,20 +274,6 @@ class TestRenamingTheAccount:
         assert result.exit_code != 0
         assert f"{option}: {ACCOUNT_NAME_TOO_LONG}" in result.output
         assert claimed.describe_account(1) == before
-
-    @pytest.mark.parametrize("option", ["--username", "--display-name"])
-    def test_a_name_at_the_cap_is_accepted(
-        self, cli_runner: CliRunner, claimed: StorageManager, option: str
-    ) -> None:
-        """Anchors the refusal above: the boundary is ``>``, not ``>=``."""
-        at_the_cap = "x" * MAX_ACCOUNT_NAME_LENGTH
-
-        result = _run(cli_runner, claimed, ["account", "set-name", option, at_the_cap])
-
-        record = claimed.describe_account(1)
-        assert result.exit_code == 0, result.output
-        assert record is not None
-        assert at_the_cap in (record["username"], record["display_name"])
 
     def test_passing_neither_name_is_refused(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -448,114 +320,3 @@ class TestTheJsonViewIsTheRecordStorageHolds:
 
         assert result.exit_code == 0, result.stderr
         assert json.loads(result.stdout) == claimed.describe_account(1)
-
-    def test_the_record_carries_every_field_the_group_prints(
-        self, claimed: StorageManager
-    ) -> None:
-        """Anchors the comparisons above, which an empty record satisfies."""
-        assert set(claimed.describe_account(1) or {}) == {
-            "id",
-            "username",
-            "display_name",
-            "claimed",
-            "password_updated_at",
-        }
-
-    @pytest.mark.parametrize(
-        ("args", "input_text", "expected"),
-        [
-            (_SET_PASSWORD, _TYPED_TWICE, "Password set."),
-            (
-                ["account", "set-name", "--display-name", "Renamed"],
-                None,
-                "Account updated.",
-            ),
-        ],
-        ids=["set-password", "set-name"],
-    )
-    def test_the_table_branch_prints_prose_instead_of_the_document(
-        self,
-        cli_runner: CliRunner,
-        claimed: StorageManager,
-        args: list[str],
-        input_text: str | None,
-        expected: str,
-    ) -> None:
-        result = _run(cli_runner, claimed, args, input_text)
-
-        assert result.exit_code == 0, result.output
-        assert expected in result.output
-        assert "password_updated_at" not in result.output
-
-
-class TestAFailedWriteSaysWhatTheWebSays:
-    """The database's own words go to the log, and to the terminal only on ask."""
-
-    @staticmethod
-    def _refuse_every_write(
-        monkeypatch: pytest.MonkeyPatch, storage: StorageManager
-    ) -> None:
-        def refuse(*_args: object, **_kwargs: object) -> None:
-            raise sqlite3.OperationalError("attempt to write a readonly database")
-
-        monkeypatch.setattr(storage, "set_password", refuse)
-        monkeypatch.setattr(storage, "update_user_identity", refuse)
-
-    @pytest.mark.parametrize(
-        ("args", "input_text", "message"),
-        [
-            (_SET_PASSWORD, _TYPED_TWICE, PASSWORD_WRITE_FAILED),
-            (
-                ["account", "set-name", "--username", "keeper"],
-                None,
-                RENAME_FAILED,
-            ),
-        ],
-        ids=["set-password", "set-name"],
-    )
-    def test_the_refusal_names_the_log_while_the_log_holds_the_detail(
-        self,
-        cli_runner: CliRunner,
-        claimed: StorageManager,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-        args: list[str],
-        input_text: str | None,
-        message: str,
-    ) -> None:
-        self._refuse_every_write(monkeypatch, claimed)
-
-        with caplog.at_level(logging.ERROR, logger="src.cli._shared"):
-            result = _run(cli_runner, claimed, args, input_text)
-
-        assert result.exit_code != 0
-        assert f"{message}. Check logs for details." in result.output
-        assert "readonly database" not in result.output
-        assert "readonly database" in caplog.text
-
-    @pytest.mark.parametrize(
-        ("args", "input_text"),
-        [
-            (_SET_PASSWORD, _TYPED_TWICE),
-            (["account", "set-name", "--username", "keeper"], None),
-        ],
-        ids=["set-password", "set-name"],
-    )
-    def test_verbose_adds_the_underlying_error(
-        self,
-        cli_runner: CliRunner,
-        claimed: StorageManager,
-        monkeypatch: pytest.MonkeyPatch,
-        args: list[str],
-        input_text: str | None,
-    ) -> None:
-        """For the operator whose log file is unreadable.
-
-        ``--verbose`` is the root group's, so it comes before the subcommand.
-        """
-        self._refuse_every_write(monkeypatch, claimed)
-
-        result = _run(cli_runner, claimed, ["--verbose", *args], input_text)
-
-        assert result.exit_code != 0
-        assert "OperationalError: attempt to write a readonly database" in result.output

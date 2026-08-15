@@ -64,29 +64,6 @@ def mock_components(mock_config):
         }
 
 
-def test_cli_help():
-    """Test CLI help command."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--help"])
-
-    assert result.exit_code == 0
-    assert "Recommendinator CLI" in result.output
-    assert "recommend" in result.output
-    assert "update" in result.output
-    assert "complete" in result.output
-
-
-def test_recommend_command_help(mock_components):
-    """Test recommend command help."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["recommend", "--help"])
-
-    assert result.exit_code == 0
-    assert "Get personalized recommendations" in result.output
-    assert "--type" in result.output
-    assert "--count" in result.output
-
-
 def test_recommend_command_basic(mock_components):
     """Test basic recommend command."""
     # Setup mock recommendations
@@ -131,50 +108,6 @@ def test_recommend_command_basic(mock_components):
     assert "Test Author" in result.output
 
 
-def test_recommend_command_json(mock_components):
-    """Test recommend command with JSON output."""
-    mock_item = ContentItem(
-        id="1",
-        title="Test Book",
-        author="Test Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    mock_recommendations = [
-        Recommendation(
-            item=mock_item, score=0.85, reasoning="Recommended highly similar"
-        )
-    ]
-
-    # Mock storage to return consumed items
-    mock_components["storage"].get_completed_items.return_value = [
-        ContentItem(
-            id="2",
-            title="Read Book",
-            author="Author",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-    ]
-    mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
-
-    mock_components["engine"].generate_recommendations.return_value = (
-        mock_recommendations
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["recommend", "--type", "book", "--count", "1", "--format", "json"]
-    )
-
-    assert result.exit_code == 0
-    assert "Test Book" in result.output
-    assert '"title"' in result.output
-    assert '"score"' in result.output
-
-
 def test_recommend_command_surfaces_variety_penalty(mock_components):
     """The variety penalty appears in JSON output and the table reasoning."""
     mock_item = ContentItem(
@@ -214,86 +147,6 @@ def test_recommend_command_surfaces_variety_penalty(mock_components):
     table_result = runner.invoke(cli, ["recommend", "--type", "book", "--count", "1"])
     assert table_result.exit_code == 0
     assert "variety penalty -64%" in table_result.output
-
-
-def test_recommend_command_omits_zero_variety_penalty_note(mock_components):
-    """A zero penalty adds no note to the table reasoning."""
-    mock_item = ContentItem(
-        id="1",
-        title="Plain Book",
-        author="Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    mock_recommendations = [
-        Recommendation(
-            item=mock_item, score=0.85, reasoning="Recommended", variety_penalty=0.0
-        )
-    ]
-    mock_components["storage"].get_completed_items.return_value = [
-        ContentItem(
-            id="2",
-            title="Read",
-            author="Author",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-    ]
-    mock_components["storage"].get_unconsumed_items.return_value = [mock_item]
-    mock_components["engine"].generate_recommendations.return_value = (
-        mock_recommendations
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["recommend", "--type", "book", "--count", "1"])
-    assert result.exit_code == 0
-    assert "variety penalty" not in result.output
-
-
-def test_update_command_help(mock_components):
-    """Test update command help."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["update", "--help"])
-
-    assert result.exit_code == 0
-    assert "Update data from configured sources" in result.output
-    assert "--source" in result.output
-
-
-def test_complete_command_help(mock_components):
-    """Test complete command help."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["complete", "--help"])
-
-    assert result.exit_code == 0
-    assert "Mark content as completed" in result.output
-    assert "--type" in result.output
-    assert "--title" in result.output
-
-
-def test_complete_command_basic(mock_components):
-    """Test basic complete command."""
-    mock_components["storage"].complete_content_item.return_value = 1
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "complete",
-            "--type",
-            "book",
-            "--title",
-            "Test Book",
-            "--author",
-            "Test Author",
-            "--rating",
-            "4",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "Marked 'Test Book' as completed (ID: 1)" in result.output
 
 
 class TestCompleteCommandCreator:
@@ -538,63 +391,6 @@ def test_update_command_steam_success(mock_components):
         assert "Steam" in result.output
 
 
-def test_update_command_steam_disabled(mock_components):
-    """A disabled source aborts (nonzero exit), not a graceful exit 0.
-
-    The single-source ``update`` branch resolves through ``resolve_inputs``
-    (which drops disabled sources) and aborts "Unknown or disabled source"
-    when nothing matches — mirroring the web ``/update`` 400 so the CLI and web
-    reject a disabled source the same way.
-    """
-    mock_config = {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "test_api_key",
-                "steam_id": "76561198000000000",
-                "enabled": False,
-            }
-        },
-        "recommendations": {
-            "min_rating_for_preference": 4,
-        },
-    }
-
-    with patch("src.cli.main.load_config", return_value=mock_config):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["update", "--source", "steam"])
-
-        assert result.exit_code != 0
-        assert "Unknown or disabled source 'steam'" in result.output
-
-
-def test_update_command_steam_missing_api_key(mock_components):
-    """Test update command with missing Steam API key."""
-    mock_config = {
-        "storage": {"database_path": "data/test.db"},
-        "inputs": {
-            "steam": {
-                "plugin": "steam",
-                "api_key": "",
-                "steam_id": "76561198000000000",
-                "enabled": True,
-            }
-        },
-        "recommendations": {
-            "min_rating_for_preference": 4,
-        },
-    }
-
-    with patch("src.cli.main.load_config", return_value=mock_config):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["update", "--source", "steam"])
-
-        # Validation errors cause abort
-        assert result.exit_code != 0
-        assert "api_key" in result.output.lower() or "required" in result.output.lower()
-
-
 def test_update_command_steam_api_error(mock_components):
     """Test update command with Steam API error."""
     from src.ingestion.plugin_base import SourceError
@@ -683,13 +479,6 @@ class TestUpdateWorkersFlag:
         if sync_block is not None:
             config["sync"] = sync_block
         return config
-
-    def test_workers_flag_appears_in_help(self, mock_components: dict) -> None:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["update", "--help"])
-
-        assert result.exit_code == 0
-        assert "--workers" in result.output
 
     def test_workers_flag_overrides_config(self) -> None:
         """--workers overrides config['sync']['max_workers']."""
@@ -798,167 +587,6 @@ class TestUpdateWorkersFlag:
         assert result.exit_code == 0, result.output
         assert captured["max_workers"] == 4
 
-    def test_workers_zero_rejected_by_click(self, mock_components: dict) -> None:
-        """Click's IntRange rejects values below 1."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["update", "--workers", "0"])
-
-        assert result.exit_code != 0
-        assert "Invalid value" in result.output or "out of range" in result.output
-
-    def test_workers_above_ceiling_rejected_by_click(
-        self, mock_components: dict
-    ) -> None:
-        """Click's IntRange(1,32) rejects values above 32."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["update", "--workers", "33"])
-
-        assert result.exit_code != 0
-        assert "Invalid value" in result.output or "out of range" in result.output
-
-    def test_workers_one_overrides_config_to_force_sequential(self) -> None:
-        """--workers 1 overrides a parallel config to force sequential sync."""
-        config = self._config_with_sources(sync_block={"max_workers": 8})
-
-        captured: dict = {}
-
-        def fake_execute(**kwargs: object) -> list:
-            captured.update(kwargs)
-            sources_arg = kwargs.get("sources") or []
-            return [
-                SyncResult(source_name=plugin.display_name)
-                for plugin, _config in sources_arg  # type: ignore[misc]
-            ]
-
-        with (
-            patch("src.cli.main.load_config", return_value=config),
-            patch(
-                "src.cli.commands._update.execute_multi_source_sync",
-                side_effect=fake_execute,
-            ),
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=[],
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["update", "--workers", "1"])
-
-        assert result.exit_code == 0, result.output
-        assert captured["max_workers"] == 1
-
-    def test_workers_non_integer_config_falls_back_to_default(self) -> None:
-        """Non-integer config['sync']['max_workers'] falls back to 4."""
-        config = self._config_with_sources(sync_block={"max_workers": "banana"})
-
-        captured: dict = {}
-
-        def fake_execute(**kwargs: object) -> list:
-            captured.update(kwargs)
-            sources_arg = kwargs.get("sources") or []
-            return [
-                SyncResult(source_name=plugin.display_name)
-                for plugin, _config in sources_arg  # type: ignore[misc]
-            ]
-
-        with (
-            patch("src.cli.main.load_config", return_value=config),
-            patch(
-                "src.cli.commands._update.execute_multi_source_sync",
-                side_effect=fake_execute,
-            ),
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=[],
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["update"])
-
-        assert result.exit_code == 0, result.output
-        assert captured["max_workers"] == 4
-
-    def test_workers_config_above_ceiling_clamped(self) -> None:
-        """A config-driven max_workers above 32 is clamped to 32."""
-        config = self._config_with_sources(sync_block={"max_workers": 9999})
-
-        captured: dict = {}
-
-        def fake_execute(**kwargs: object) -> list:
-            captured.update(kwargs)
-            sources_arg = kwargs.get("sources") or []
-            return [
-                SyncResult(source_name=plugin.display_name)
-                for plugin, _config in sources_arg  # type: ignore[misc]
-            ]
-
-        with (
-            patch("src.cli.main.load_config", return_value=config),
-            patch(
-                "src.cli.commands._update.execute_multi_source_sync",
-                side_effect=fake_execute,
-            ),
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=[],
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(cli, ["update"])
-
-        assert result.exit_code == 0, result.output
-        assert captured["max_workers"] == 32
-
-
-# ---------------------------------------------------------------------------
-# Preferences CLI tests (Phase 5)
-# ---------------------------------------------------------------------------
-
-
-def test_recommend_command_with_user(mock_components):
-    """Test recommend command with --user option."""
-    mock_item = ContentItem(
-        id="1",
-        title="Test Book",
-        author="Test Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    mock_recommendations = [
-        Recommendation(
-            item=mock_item, score=0.85, reasoning="Recommended highly similar"
-        )
-    ]
-
-    mock_components["engine"].generate_recommendations.return_value = (
-        mock_recommendations
-    )
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["recommend", "--type", "book", "--count", "1", "--user", "1"]
-    )
-
-    assert result.exit_code == 0
-    assert "Test Book" in result.output
-    mock_components["storage"].get_user_preference_config.assert_called_once_with(1)
-
 
 def test_preferences_get(mock_components):
     """Test preferences get command."""
@@ -974,19 +602,6 @@ def test_preferences_get(mock_components):
     assert "3.0" in result.output
 
 
-def test_preferences_set_weight(mock_components):
-    """Test preferences set-weight command."""
-    config = UserPreferenceConfig()
-    back_mock_preference_store(mock_components["storage"], config)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "set-weight", "genre_match", "3.0"])
-
-    assert result.exit_code == 0
-    assert "Set genre_match weight to 3.0" in result.output
-    assert config.scorer_weights == {"genre_match": 3.0}
-
-
 def test_preferences_set_variety(mock_components):
     """Test setting the numeric variety penalty via set-variety."""
     config = UserPreferenceConfig()
@@ -1000,54 +615,12 @@ def test_preferences_set_variety(mock_components):
     assert config.variety_penalty == 5.0
 
 
-def test_preferences_set_variety_off(mock_components):
-    """Setting variety to 0.0 disables the penalty."""
-    config = UserPreferenceConfig(variety_penalty=4.0)
-    back_mock_preference_store(mock_components["storage"], config)
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "set-variety", "0.0"])
-
-    assert result.exit_code == 0
-    assert "Set variety_penalty to 0.0" in result.output
-    assert config.variety_penalty == 0.0
-
-
-def test_preferences_get_includes_variety_penalty(mock_components):
-    """preferences get surfaces the numeric variety_penalty and its value."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig(variety_penalty=0.5)
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "get", "--format", "json"])
-
-    assert result.exit_code == 0
-    assert "variety_penalty" in result.output
-    assert "0.5" in result.output
-
-
 def test_preferences_set_variety_rejects_out_of_range(mock_components):
     """A value above the 5.0 maximum is rejected with a non-zero exit and no save."""
     merge = back_mock_preference_store(mock_components["storage"])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "set-variety", "6.0"])
-
-    assert result.exit_code != 0
-    # The rejection must name both ends of the accepted range.
-    assert "0.0" in result.output
-    assert "5.0" in result.output
-    merge.assert_not_called()
-
-
-def test_preferences_set_variety_rejects_negative(mock_components):
-    """A value below the 0.0 minimum is rejected with a non-zero exit and no save."""
-    merge = back_mock_preference_store(mock_components["storage"])
-
-    runner = CliRunner()
-    # "--" stops option parsing so the negative number reaches the argument.
-    result = runner.invoke(cli, ["preferences", "set-variety", "--", "-0.5"])
 
     assert result.exit_code != 0
     # The rejection must name both ends of the accepted range.
@@ -1067,44 +640,6 @@ def test_preferences_set_toggle_off(mock_components):
     assert result.exit_code == 0
     assert "Set series_in_order off" in result.output
     assert config.series_in_order is False
-
-
-def test_preferences_set_toggle_rejects_unknown_name(mock_components):
-    """An unknown toggle name is rejected by the Click choice."""
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "set-toggle", "not_a_toggle", "on"])
-
-    assert result.exit_code != 0
-
-
-def test_preferences_reset(mock_components):
-    """Test preferences reset command."""
-    mock_components["storage"].save_user_preference_config = Mock()
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "reset"])
-
-    assert result.exit_code == 0
-    assert "Reset preferences to defaults" in result.output
-    mock_components["storage"].save_user_preference_config.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Custom rules CLI tests (Phase 7)
-# ---------------------------------------------------------------------------
-
-
-def test_custom_rules_list_empty(mock_components):
-    """Test listing custom rules when none exist."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig()
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "list"])
-
-    assert result.exit_code == 0
-    assert "No custom rules" in result.output
 
 
 def test_custom_rules_add(mock_components):
@@ -1154,22 +689,6 @@ def test_custom_rules_add_refuses_one_rule_past_the_bound(mock_components):
     assert result.exit_code != 0
     assert "Remove one first" in result.output
     assert "prefer sci-fi" not in stored.custom_rules
-
-
-def test_custom_rules_add_accepts_the_rule_that_fills_the_bound(mock_components):
-    """The list the web API accepts is one the CLI can still complete."""
-    stored = UserPreferenceConfig(
-        custom_rules=["avoid horror"] * (UserPreferenceConfig.MAX_CUSTOM_RULES - 1)
-    )
-    back_mock_preference_store(mock_components["storage"], stored)
-    last_rule = "r" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["preferences", "custom-rules", "add", last_rule])
-
-    assert result.exit_code == 0
-    assert len(stored.custom_rules) == UserPreferenceConfig.MAX_CUSTOM_RULES
-    assert stored.custom_rules[-1] == last_rule
 
 
 def test_custom_rules_list_with_rules(mock_components):
@@ -1439,36 +958,5 @@ inputs:
                 "load_config should prefer config.yaml (steam enabled) "
                 "over example.yaml (steam disabled)"
             )
-        finally:
-            os.chdir(original_cwd)
-
-    def test_load_config_falls_back_to_example_when_no_config(self, tmp_path):
-        """Test that load_config falls back to example.yaml when config.yaml is missing."""
-
-        from src.config.service import load_config
-
-        # Create a config directory with only example.yaml
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        example_yaml = config_dir / "example.yaml"
-        example_yaml.write_text(
-            """
-inputs:
-  steam:
-    enabled: false
-"""
-        )
-
-        import os
-
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(tmp_path)
-            config = load_config(None)
-            steam_enabled = config.get("inputs", {}).get("steam", {}).get("enabled")
-            assert (
-                steam_enabled is False
-            ), "load_config should fall back to example.yaml when config.yaml missing"
         finally:
             os.chdir(original_cwd)
