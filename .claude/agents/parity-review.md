@@ -29,7 +29,7 @@ Use Bash for git inspection (`git diff HEAD`, `git diff --cached`, `git diff mai
 
 Run `git diff HEAD --name-only` (or `git diff main...HEAD --name-only` for branch reviews).
 
-If every changed file is under `docs/`, `tests/`, `.claude/`, `.github/`, `config/`, `docker/`, `scripts/` or `src/web/static/themes/`, or is a repository-root file matching `*.md`, `Makefile`, `Dockerfile`, `docker-compose*.yml`, `conftest.py`, `pyproject.toml`, `uv.lock`, `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `env.d.ts`, `vite.config.ts` or `vitest.config.ts`, **APPROVE immediately** with:
+If every changed file is under `docs/`, `tests/`, `.claude/`, `.github/`, `config/`, `docker/`, `scripts/` or `src/web/static/themes/`, has a filename matching `test_*.py` or `*.test.ts` — this repository colocates tests with the code they cover, so a test-only diff reaches into `src/` and `resources/js/` — or is a repository-root file matching `*.md`, `Makefile`, `Dockerfile`, `docker-compose*.yml`, `conftest.py`, `pyproject.toml`, `uv.lock`, `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `env.d.ts`, `vite.config.ts` or `vitest.config.ts`, **APPROVE immediately** with:
 
 > "No interface changes detected. APPROVE."
 
@@ -42,6 +42,7 @@ Scope this to what changed and its counterpart. A full inventory of both interfa
 1. **Web API endpoints** — Grep for `@router.get`, `@router.post`, `@router.put`, `@router.patch`, `@router.delete` in `src/web/`. Record the route, method, query parameters, request body fields, and what it returns.
 2. **CLI commands** — Grep for `@click.command`, `@click.group`, `@group.command` in `src/cli/`. Record the command name, every `@click.option` and `@click.argument`, and what it outputs.
 3. **Pair them up.** Anything on one side with no counterpart on the other is a CRITICAL finding.
+4. **Frontend mirrors of a Python declaration** — when the diff touches `resources/js/`, check the TypeScript interfaces, exported constants and option lists under `resources/js/types/`, `resources/js/constants/` and `resources/js/stores/` against the Python each mirrors: an interface against the Pydantic response model it deserializes, a bound against the one the API and the CLI both validate, a key list against the registry a CLI command validates names against. The UI renders only the fields its interface declares and offers only the options its list names, so a divergence is a capability `--format json` carries and the web cannot reach — a parity finding.
 
 ### Step 2: Check Parameter Parity
 
