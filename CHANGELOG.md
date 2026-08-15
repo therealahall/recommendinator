@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v0.35.0 (2026-08-15)
+
+### Bug Fixes
+
+- Close the review gate findings
+  ([`4abc79b`](https://github.com/therealahall/recommendinator/commit/4abc79b924a9a036c4abff8647125d139907afc1))
+
+- **enrichment**: Discover providers instead of listing them
+  ([`ba7a9ea`](https://github.com/therealahall/recommendinator/commit/ba7a9ea03c7577fdd42ca38b31600ae424a7fc0f))
+
+- **logging**: Keep console records the stream codec cannot encode
+  ([`b55b5e8`](https://github.com/therealahall/recommendinator/commit/b55b5e801a36e6f7e3abc1807c8457b5309bc3b3))
+
+- **registry**: Name the module, not a plugin type, when a private import fails
+  ([`2e47b95`](https://github.com/therealahall/recommendinator/commit/2e47b95e28b02d9828e46bad8fcf4b8869887158))
+
+- **storage**: Stop relabelling a source legitimately named goodreads
+  ([`441d571`](https://github.com/therealahall/recommendinator/commit/441d571532b13d4be6b7dbf8946bb1b9f65351b2))
+
+### Features
+
+- Drop the AI features
+  ([`baef05c`](https://github.com/therealahall/recommendinator/commit/baef05c226a773aafd8a14a144d70d9e5e779a9a))
+
+### Refactoring
+
+- Clear the residue the deletions left behind
+  ([`40d26b3`](https://github.com/therealahall/recommendinator/commit/40d26b3dbd81f2df5d0834b293da6bf31cbfc996))
+
+- Drop the SQL guards and registry API nothing reaches
+  ([`546bcb0`](https://github.com/therealahall/recommendinator/commit/546bcb01241a9be027f02b3a8a8bf60fd515a11b))
+
+- Finish the AI removal at the seams
+  ([`08da290`](https://github.com/therealahall/recommendinator/commit/08da290abb8730df33289c74d55275c2988e9f7a))
+
+- **frontend**: Drop the meta-test frameworks and Tailwind
+  ([`f173d75`](https://github.com/therealahall/recommendinator/commit/f173d75e86f5cb51961ec0cb132ea1299a991ecf))
+
+### Testing
+
+- Stop pinning the exact contrast ratios
+  ([`61d9f06`](https://github.com/therealahall/recommendinator/commit/61d9f06570cabedebac0826966c86f98e530c333))
+
+### Breaking Changes
+
+- Chat, memories and embeddings are gone, along with the recommendinator-ollama image and the ai
+  install extra.
+
+
 ## v0.34.1 (2026-08-15)
 
 ### Bug Fixes
