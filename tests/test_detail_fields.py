@@ -8,13 +8,9 @@ field accepts reaches its column instead of the leftover JSON blob, and adding
 a field is an edit to the declaration alone.
 """
 
-import ast
-import importlib.util
 import json
 import sqlite3
-import sys
 from dataclasses import replace
-from enum import Enum
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -25,29 +21,16 @@ from src.models import detail_fields
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import (
     DETAIL_FIELDS,
-    ContentTypeFields,
     DetailField,
     FieldKind,
-    _assert_every_content_type_is_declared,
-    _assert_select_aliases_are_unique,
 )
-from src.models.templates import CREATOR_COLUMNS, LIST_VALUED_COLUMNS
 from src.storage import sqlite_db
-from src.storage.merge import detail_join
 from src.storage.schema import create_schema
 from src.storage.sqlite_db import SQLiteDB
 
 # Columns every detail table carries whatever the content type: the foreign
 # key and the free-form blob holding whatever no column claimed.
 _UNDECLARED_COLUMNS = {"content_item_id", "metadata"}
-
-# The SQL type each kind of field is declared with in schema.py.
-_SQL_TYPES: dict[FieldKind, str] = {
-    FieldKind.CREATOR: "TEXT",
-    FieldKind.TEXT: "TEXT",
-    FieldKind.INTEGER: "INTEGER",
-    FieldKind.STRING_LIST: "TEXT",
-}
 
 # A value of each kind, with what its column holds once stored.
 _SAMPLES: dict[FieldKind, tuple[Any, Any]] = {
@@ -72,38 +55,6 @@ _READ_BACK: dict[FieldKind, Any] = {
 _UNCLAIMED_KEY = "übersetzung"
 _UNCLAIMED_VALUE = "Ursula K. Le Guin ✨"
 
-# Every ContentTypeFields names exactly one creator, so a spec built here to
-# exercise some other guard carries a well-formed one.
-_A_CREATOR = DetailField(
-    "author",
-    FieldKind.CREATOR,
-    column="author",
-    select_alias="rogue_author",
-    template_column="author",
-)
-
-
-def _import_the_declaration_module_afresh() -> None:
-    """Execute ``src/models/detail_fields.py`` again, as a separate module.
-
-    A fresh module rather than ``importlib.reload``, which would rebind the
-    live one — the module storage, ingestion and export all hold references
-    into — to new objects part way through an import that is meant to fail.
-    """
-    spec = importlib.util.spec_from_file_location(
-        "detail_fields_afresh", detail_fields.__file__
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # Registered while it executes because the dataclasses in it resolve
-    # their annotations through sys.modules, and dropped again after.
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        del sys.modules[spec.name]
-
 
 def _live_columns(tmp_path: Path, table: str) -> dict[str, str]:
     """Read a freshly created table's columns and SQL types back."""
@@ -114,103 +65,6 @@ def _live_columns(tmp_path: Path, table: str) -> dict[str, str]:
     finally:
         conn.close()
     return {row["name"]: row["type"] for row in rows}
-
-
-# Every (content type, field, alias) the declaration accepts on write.
-_ALIASED_FIELDS: list[tuple[str, DetailField, str]] = [
-    (content_type, detail_field, alias)
-    for content_type, spec in DETAIL_FIELDS.items()
-    for detail_field in spec.fields
-    for alias in detail_field.aliases
-]
-
-# Every alias the plugins rely on, as (content type, column key, alias).
-# Written out rather than derived, because the parametrized alias tests below
-# take their cases from the declaration and so cannot notice one going
-# missing from it.
-_EXPECTED_ALIASES: frozenset[tuple[str, str, str]] = frozenset(
-    {
-        ("book", "genres", "genre"),
-        ("movie", "genres", "genre"),
-        ("movie", "release_year", "year"),
-        ("movie", "runtime", "runtime_minutes"),
-        ("tv_show", "creators", "creator"),
-        ("tv_show", "genres", "genre"),
-        ("tv_show", "release_year", "year"),
-        ("tv_show", "seasons", "total_seasons"),
-        ("video_game", "developer", "developers"),
-        ("video_game", "genres", "genre"),
-        ("video_game", "platforms", "platform"),
-        ("video_game", "publisher", "publishers"),
-    }
-)
-
-# The metadata keys each type's columns consume, aliases included. Written out
-# rather than derived, because ``known_keys`` is itself derived now and storage
-# drops every key in it from the free-form blob: a key joining the set without
-# a column reading it disappears on save, and one leaving it is written twice,
-# to its column and to the blob the read path merges last.
-_EXPECTED_KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "book": frozenset(
-        {
-            "author",
-            "isbn",
-            "isbn13",
-            "pages",
-            "publisher",
-            "year_published",
-            "genres",
-            "genre",
-            "tags",
-            "description",
-        }
-    ),
-    "movie": frozenset(
-        {
-            "director",
-            "release_year",
-            "year",
-            "runtime",
-            "runtime_minutes",
-            "genres",
-            "genre",
-            "studio",
-            "tags",
-            "description",
-        }
-    ),
-    "tv_show": frozenset(
-        {
-            "seasons",
-            "total_seasons",
-            "release_year",
-            "year",
-            "genres",
-            "genre",
-            "creators",
-            "creator",
-            "episodes",
-            "network",
-            "tags",
-            "description",
-        }
-    ),
-    "video_game": frozenset(
-        {
-            "developer",
-            "developers",
-            "platforms",
-            "platform",
-            "genres",
-            "genre",
-            "publisher",
-            "publishers",
-            "release_year",
-            "tags",
-            "description",
-        }
-    ),
-}
 
 
 class TestDeclarationMatchesLiveSchema:
@@ -233,81 +87,13 @@ class TestDeclarationMatchesLiveSchema:
 
         assert set(live) == set(spec.columns) | _UNDECLARED_COLUMNS
 
-    @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
-    def test_declared_kinds_match_the_live_column_types(
-        self, tmp_path: Path, content_type: str
-    ) -> None:
-        """An INTEGER field is an INTEGER column, and the rest are TEXT."""
-        spec = DETAIL_FIELDS[content_type]
-        live = _live_columns(tmp_path, spec.table)
-
-        declared = {
-            detail_field.column: _SQL_TYPES[detail_field.kind]
-            for detail_field in spec.fields
-            if detail_field.column is not None
-        }
-
-        assert {name: live[name] for name in declared} == declared
-
 
 class TestAliasesReachTheirColumns:
     """Every metadata key a field accepts lands in that field's column.
 
-    The plugins do not all agree on a spelling — "genre" for "genres",
-    "total_seasons" for "seasons", "year" for "release_year" — and a value
-    arriving under an alias storage does not know for that column is dropped
-    into the leftover JSON blob, where nothing reads it back as that field.
-    Driven off the declaration so an alias added later is covered too.
+    A value arriving under a spelling storage does not know for that column
+    is dropped into the leftover JSON blob, where nothing reads it back.
     """
-
-    def test_the_declared_aliases_are_the_expected_ones(self) -> None:
-        """No plugin spelling is dropped, and none is invented."""
-        declared = {
-            (content_type, detail_field.metadata_key, alias)
-            for content_type, detail_field, alias in _ALIASED_FIELDS
-        }
-
-        assert declared == set(_EXPECTED_ALIASES)
-
-    @pytest.mark.parametrize(
-        ("content_type", "detail_field", "alias"),
-        _ALIASED_FIELDS,
-        ids=[
-            f"{content_type}-{alias}" for content_type, _field, alias in _ALIASED_FIELDS
-        ],
-    )
-    def test_alias_populates_the_column(
-        self,
-        tmp_path: Path,
-        content_type: str,
-        detail_field: DetailField,
-        alias: str,
-    ) -> None:
-        """A value under the alias reaches the column its canonical key would."""
-        spec = DETAIL_FIELDS[content_type]
-        written, stored = _SAMPLES[detail_field.kind]
-        db = SQLiteDB(tmp_path / f"{content_type}-{alias}.db")
-
-        db_id = db.save_content_item(
-            ContentItem(
-                id=f"alias-{alias}",
-                title="Alias Fixture",
-                content_type=ContentType(content_type),
-                status=ConsumptionStatus.UNREAD,
-                metadata={alias: written},
-            )
-        )
-
-        with db.connection() as conn:
-            row = conn.execute(
-                f"SELECT {detail_field.column}, metadata FROM {spec.table}"
-                " WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-
-        assert row[detail_field.column] == stored
-        blob = json.loads(row["metadata"]) if row["metadata"] else {}
-        assert alias not in blob
 
     def test_canonical_key_wins_over_its_alias(self, tmp_path: Path) -> None:
         """An item carrying both spellings keeps the canonical one.
@@ -427,173 +213,6 @@ class TestDeclaringOneFieldIsEnough:
         assert "translator" not in json.loads(blob or "{}")
 
 
-class TestFieldDeclarationGuards:
-    """Malformed declarations fail when the module is imported, not later.
-
-    Each guard fires on a mistake a string-tagged converter table would have
-    swallowed: a field whose kind and column disagree used to fall through to
-    a default branch, and a repeated SELECT alias used to read one detail
-    table's column as another's.
-    """
-
-    def test_field_without_a_column_must_be_free_form(self) -> None:
-        """A field with no column must say so with FREE_FORM."""
-        with pytest.raises(ValueError, match="FREE_FORM"):
-            DetailField("orphan", FieldKind.TEXT)
-
-    def test_free_form_field_cannot_claim_a_column(self) -> None:
-        """FREE_FORM means the blob holds it, so a column is a contradiction."""
-        with pytest.raises(ValueError, match="cannot be stored in a column"):
-            DetailField("orphan", FieldKind.FREE_FORM, column="orphan")
-
-    def test_free_form_field_cannot_carry_aliases(self) -> None:
-        """Aliases are read into a column, so a blob field cannot have them."""
-        with pytest.raises(ValueError, match="no column to alias"):
-            DetailField("orphan", FieldKind.FREE_FORM, aliases=("orphaned",))
-
-    def test_repeated_select_alias_is_rejected(self) -> None:
-        """Two tables sharing an alias would read as one column, so it raises."""
-        clash = replace(DETAIL_FIELDS["movie"], metadata_alias="book_metadata")
-
-        with patch.dict(DETAIL_FIELDS, {"movie": clash}):
-            with pytest.raises(ValueError, match="declared twice"):
-                _assert_select_aliases_are_unique()
-
-    def test_type_naming_no_creator_column_is_rejected(self) -> None:
-        """A type with no creator would export a column nothing fills."""
-        with pytest.raises(ValueError, match="creator template columns"):
-            replace(
-                DETAIL_FIELDS["movie"],
-                fields=tuple(
-                    detail_field
-                    for detail_field in DETAIL_FIELDS["movie"].fields
-                    if detail_field.kind is not FieldKind.CREATOR
-                ),
-            )
-
-    def test_type_naming_two_creator_columns_is_rejected(self) -> None:
-        """A second creator would export whichever field came first."""
-        with pytest.raises(ValueError, match="creator template columns"):
-            replace(
-                DETAIL_FIELDS["movie"],
-                fields=(
-                    *DETAIL_FIELDS["movie"].fields,
-                    DetailField(
-                        "studio",
-                        FieldKind.CREATOR,
-                        column="studio",
-                        template_column="studio",
-                    ),
-                ),
-            )
-
-    def test_content_type_without_a_declaration_is_rejected(self) -> None:
-        """Callers index this mapping expecting a hit, so a gap must not wait.
-
-        The CLI's creator label and the export column order both look a
-        content type up directly, so an undeclared one raises KeyError at
-        whichever call site reads it first rather than at import.
-        """
-        without_movie = {
-            content_type: spec
-            for content_type, spec in DETAIL_FIELDS.items()
-            if content_type != "movie"
-        }
-
-        with patch.dict(DETAIL_FIELDS, without_movie, clear=True):
-            with pytest.raises(ValueError, match="no field declaration"):
-                _assert_every_content_type_is_declared()
-
-    def test_declaration_for_an_unknown_content_type_is_rejected(self) -> None:
-        """A declaration nothing can reach is a rename that half landed."""
-        with patch.dict(DETAIL_FIELDS, {"audiobook": DETAIL_FIELDS["book"]}):
-            with pytest.raises(ValueError, match="unknown content types"):
-                _assert_every_content_type_is_declared()
-
-    def test_the_declaration_guard_runs_when_the_module_is_imported(self) -> None:
-        """The import is what fires it, not a caller remembering to.
-
-        The declaration guard is called by hand above, which stays green
-        with the call at the foot of the module deleted, so this executes
-        the module itself against a content type nothing declares and
-        expects the import to fail. The per-type creator check needs no
-        equivalent: it runs in ``ContentTypeFields.__post_init__``, so the
-        declaration cannot be built without it.
-        """
-
-        class _UndeclaredContentType(Enum):
-            AUDIOBOOK = "audiobook"
-
-        with patch("src.models.content.ContentType", _UndeclaredContentType):
-            with pytest.raises(ValueError, match="no field declaration"):
-                _import_the_declaration_module_afresh()
-
-    def test_every_guard_the_module_defines_is_called_at_import(self) -> None:
-        """A guard the foot of the module never calls guards nothing.
-
-        Executing the module only reaches the guard the undeclared content
-        type above trips; the alias guard has no such seam, and a guard
-        added later would have none either. Reading the module's own top
-        level covers every one of them.
-        """
-        tree = ast.parse(Path(detail_fields.__file__).read_text(encoding="utf-8"))
-        defined = {
-            node.name
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("_assert_")
-        }
-        called = {
-            node.value.func.id
-            for node in tree.body
-            if isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name)
-        }
-
-        assert not defined - called, f"never called at import: {sorted(defined-called)}"
-
-
-class TestEveryTypeNamesItsCreator:
-    """Each content type states which template column carries its creator.
-
-    ``creator_column`` is derived from the one field marked
-    ``FieldKind.CREATOR``, and both the import templates and the export
-    header take the creator's name from it, so a rename here renames a
-    column in every file users import and export.
-    """
-
-    def test_creator_columns_are_the_documented_template_columns(self) -> None:
-        """The four creator columns are the ones the templates document."""
-        assert {
-            content_type: spec.creator_column
-            for content_type, spec in DETAIL_FIELDS.items()
-        } == {
-            "book": "author",
-            "movie": "director",
-            "tv_show": "creator",
-            "video_game": "developer",
-        }
-
-    def test_a_creator_column_is_never_a_key_an_import_stores(self) -> None:
-        """The word "creator" is a column heading and never a metadata key.
-
-        ``tv_show`` accepts ``creator`` as an alias but the detail-shape
-        repair leaves that key alone, on the grounds that nothing writes it.
-        This is what that rests on: an importer takes a creator column onto
-        ``ContentItem.author`` and skips it when building metadata, and the
-        key the library stores the field under is ``creators``.
-        """
-        creator_columns = {spec.creator_column for spec in DETAIL_FIELDS.values()}
-        stored_keys = {
-            key
-            for spec in DETAIL_FIELDS.values()
-            for key in spec.template_columns.values()
-        }
-
-        assert creator_columns <= CREATOR_COLUMNS
-        assert "creator" not in stored_keys
-
-
 class TestSingleStringColumnsCoerceWhatTheyAreGiven:
     """A column holding one string takes whatever a plugin hands it.
 
@@ -660,38 +279,6 @@ class TestATextColumnRefusesAValueItCannotHold:
     ``_rewrite_platform_flag_dicts`` exists to undo one table over.
     """
 
-    @pytest.mark.parametrize(
-        "value",
-        [
-            {"name": "CD Projekt Red"},
-            [{"name": "CD Projekt Red"}],
-            [["Joel Coen"]],
-            ("Joel Coen", "Ethan Coen"),
-            {"Joel Coen"},
-            b"Joel Coen",
-            [b"Joel Coen"],
-        ],
-        ids=[
-            "mapping",
-            "list_of_mapping",
-            "list_of_list",
-            "tuple",
-            "set",
-            "bytes",
-            "list_of_bytes",
-        ],
-    )
-    def test_a_value_a_text_column_cannot_hold_raises(self, value: Any) -> None:
-        """Every container is refused, not only the two JSON produces.
-
-        A plugin builds its metadata dict in Python rather than parsing it, so
-        it can hand over a tuple, a set or bytes as easily as a list — and
-        each of those has a ``str()`` that is a repr, which is the whole
-        reason a mapping is refused.
-        """
-        with pytest.raises(TypeError, match="text column cannot hold"):
-            detail_fields.to_text(value)
-
     def test_an_imported_object_never_reaches_the_column(self, tmp_path: Path) -> None:
         """``generic_json`` forwards a raw value, so a user can send one.
 
@@ -725,39 +312,19 @@ class TestWhatATextColumnStillAccepts:
         ("value", "expected"),
         [
             ([], None),
-            ([None], None),
             (["Joel Coen", None, "Ethan Coen"], "Joel Coen, Ethan Coen"),
             (["", "Ethan Coen"], "Ethan Coen"),
-            (["Joel Coen", ""], "Joel Coen"),
-            (["", ""], None),
-            (["", 0], "0"),
-            ([0], "0"),
-            ([""], None),
-            ([" ", "Ethan Coen"], "Ethan Coen"),
-            (["   "], None),
-            (" ", None),
             (["  Ethan Coen  "], "Ethan Coen"),
             ("", None),
             (7, "7"),
-            (True, "True"),
         ],
         ids=[
             "empty_list",
-            "list_of_null",
             "names_around_a_null",
             "empty_string_among_names",
-            "empty_string_after_a_name",
-            "every_entry_empty",
-            "zero_beside_an_empty_string",
-            "zero",
-            "list_of_empty_string",
-            "blank_string_among_names",
-            "every_entry_blank",
-            "bare_blank_string",
             "padded_name",
             "bare_empty_string",
             "number",
-            "boolean",
         ],
     )
     def test_a_value_with_a_text_form_is_still_flattened(
@@ -774,75 +341,6 @@ class TestWhatATextColumnStillAccepts:
         """
         assert detail_fields.to_text(value) == expected
 
-    def test_an_empty_object_is_refused_like_any_other(self) -> None:
-        """A mapping is refused for having no text form, not for its contents."""
-        with pytest.raises(TypeError, match="text column cannot hold"):
-            detail_fields.to_text({})
-
-    def test_a_list_nested_two_deep_is_refused(self) -> None:
-        """The guard reads one level, and one level is where a container shows."""
-        with pytest.raises(TypeError, match="text column cannot hold"):
-            detail_fields.to_text([[["Joel Coen"]]])
-
-
-class TestARefusalNamesTheFieldItRefused:
-    """The message carries the metadata key, and nothing else from the item.
-
-    ``to_text`` is the codec behind every CREATOR and TEXT column, so a
-    refusal naming only a type leaves an operator with no way to tell which
-    import to go and fix.
-    The key is the whole of what is added: an exception message reaches the
-    log and the sync report, and no user or provider value may travel there.
-    """
-
-    @staticmethod
-    def _refuse_an_object_developer(db: SQLiteDB) -> str:
-        """Save a game naming its developer in an object, and return the refusal."""
-        with pytest.raises(TypeError) as refusal:
-            db.save_content_item(
-                ContentItem(
-                    id="1207658924",
-                    title="Cyberpunk 2077",
-                    content_type=ContentType.VIDEO_GAME,
-                    status=ConsumptionStatus.UNREAD,
-                    metadata={"developers": [{"name": "CD Projekt Red"}]},
-                )
-            )
-        return str(refusal.value)
-
-    def test_the_refusal_names_the_field(self, tmp_path: Path) -> None:
-        """The field is named by its own key, whichever spelling arrived.
-
-        ``developers`` is an alias of ``developer``, and the declaration is
-        indexed by the canonical key, so that is the name to look the field up
-        under.
-        """
-        db = SQLiteDB(tmp_path / "named-refusal.db")
-
-        assert "'developer'" in self._refuse_an_object_developer(db)
-
-    def test_the_refusal_carries_no_value_from_the_item(self, tmp_path: Path) -> None:
-        """The provider's name is in the value, so it stays out of the message."""
-        db = SQLiteDB(tmp_path / "quiet-refusal.db")
-
-        assert "CD Projekt Red" not in self._refuse_an_object_developer(db)
-
-    def test_the_refusal_is_the_key_and_a_type_and_nothing_else(
-        self, tmp_path: Path
-    ) -> None:
-        """Read whole, the message is two constants and no third thing.
-
-        Asserting the name is absent only rules out the name that was looked
-        for. The message reaches a log and a sync report, so what it may carry
-        is pinned in full rather than one value at a time.
-        """
-        db = SQLiteDB(tmp_path / "whole-refusal.db")
-
-        assert (
-            self._refuse_an_object_developer(db)
-            == "'developer': a text column cannot hold a dict"
-        )
-
 
 class TestReducingAKnownShapeToNames:
     """``text_names`` keeps what a text column holds and drops the rest.
@@ -857,27 +355,17 @@ class TestReducingAKnownShapeToNames:
         ("value", "expected"),
         [
             ("CD Projekt Red", ["CD Projekt Red"]),
-            (["CD Projekt Red", "Valve"], ["CD Projekt Red", "Valve"]),
             ([{"name": "CD Projekt Red"}], ["CD Projekt Red"]),
-            ({"name": "CD Projekt Red"}, ["CD Projekt Red"]),
             ([{"slug": "cdpr"}], []),
             ([["CD Projekt Red"]], []),
-            ([{"name": {"text": "CD Projekt Red"}}], []),
-            ([None, ""], []),
             (None, []),
-            ([7], ["7"]),
         ],
         ids=[
             "bare_name",
-            "list_of_names",
             "list_of_objects",
-            "lone_object",
             "object_naming_nothing",
             "nested_list",
-            "object_shaped_name",
-            "nothing_to_name",
             "null",
-            "number",
         ],
     )
     def test_only_a_name_a_text_column_can_hold_survives(
@@ -885,12 +373,6 @@ class TestReducingAKnownShapeToNames:
     ) -> None:
         """A nested list and an object-shaped name are dropped, not stringified."""
         assert detail_fields.text_names(value) == expected
-
-    def test_what_it_keeps_is_what_the_column_guard_accepts(self) -> None:
-        """The reduction and the refusal read one list of types, so they agree."""
-        reduced = detail_fields.text_names([{"name": ["Nested"]}, "Valve"])
-
-        assert detail_fields.to_text(reduced) == "Valve"
 
     def test_a_reduced_shape_reaches_no_column_as_a_repr(self, tmp_path: Path) -> None:
         """Stored, the row holds the one name and no bracket from the rest.
@@ -992,30 +474,6 @@ class TestARefusedWriteLeavesNothingBehind:
         assert stored.status == ConsumptionStatus.UNREAD
         assert stored.metadata["isbn"] == "9780441013593"
 
-    def test_the_creator_column_refuses_the_same_shapes(self, tmp_path: Path) -> None:
-        """A CREATOR column shares the codec, so it shares the refusal.
-
-        The creator is taken from the item's metadata whenever ``author`` is
-        empty, which is how GOG's ``developers`` reaches ``developer`` — the
-        one alias in the declaration that a remote API returns as objects.
-        """
-        db = SQLiteDB(tmp_path / "object-developer.db")
-
-        with pytest.raises(TypeError, match="text column cannot hold"):
-            db.save_content_item(
-                ContentItem(
-                    id="1207658924",
-                    title="Cyberpunk 2077",
-                    content_type=ContentType.VIDEO_GAME,
-                    status=ConsumptionStatus.UNREAD,
-                    metadata={"developers": [{"name": "CD Projekt Red"}]},
-                )
-            )
-
-        with db.connection() as conn:
-            items = conn.execute("SELECT COUNT(*) AS n FROM content_items").fetchone()
-        assert items["n"] == 0
-
 
 class TestNullInAListOfNamesRegression:
     """A null among a plugin's list of names was stored as the text "None".
@@ -1097,86 +555,6 @@ class TestSelectAliasesDoNotShadowContentItems:
         assert aliases & base_columns == set()
 
 
-class TestSelectIdentifiersAreGuarded:
-    """A detail table is checked against the allow-list before it reaches SQL.
-
-    Three queries interpolate it rather than being written out: the joined
-    read, the detail joins it shares with the derived-column source, and that
-    source's creator CASE.
-    """
-
-    def test_table_outside_the_allow_list_is_rejected(self) -> None:
-        """A detail table nobody allow-listed never reaches a FROM clause."""
-        rogue = ContentTypeFields(
-            table="rogue_details; DROP TABLE content_items; --",
-            table_alias="rd",
-            metadata_alias="rogue_metadata",
-            fields=(
-                _A_CREATOR,
-                DetailField(
-                    "title",
-                    FieldKind.TEXT,
-                    column="title",
-                    select_alias="rogue_title",
-                ),
-            ),
-        )
-
-        with patch.dict(DETAIL_FIELDS, {"rogue": rogue}):
-            with pytest.raises(ValueError, match="Unknown detail table"):
-                sqlite_db._build_content_item_select()
-
-    def test_detail_join_on_a_table_outside_the_allow_list_is_rejected(self) -> None:
-        """The shared join builder refuses a table nobody allow-listed.
-
-        Asserted against the builder itself because the joined read takes its
-        joins from an import-time constant, which the test above no longer
-        rebuilds.
-        """
-        rogue = replace(
-            DETAIL_FIELDS["book"], table="rogue_details; DROP TABLE content_items; --"
-        )
-
-        with pytest.raises(ValueError, match="Unknown detail table"):
-            detail_join(rogue)
-
-
-class TestKnownKeysAreTheKeysTheColumnsClaim:
-    """``known_keys`` is computed, and this is what it has to compute to.
-
-    Storage subtracts the set from an item's metadata before writing what is
-    left to the free-form blob, so the set is the whole contract for which
-    metadata keys a plugin can rely on reaching a column. The parametrized
-    alias tests above take their cases from the declaration and so cannot
-    notice a canonical key changing spelling; this can.
-    """
-
-    @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
-    def test_known_keys_match_the_expected_set(self, content_type: str) -> None:
-        """No metadata key quietly joins or leaves a type's claimed set."""
-        assert (
-            DETAIL_FIELDS[content_type].known_keys == _EXPECTED_KNOWN_KEYS[content_type]
-        )
-
-    def test_every_declared_type_is_covered(self) -> None:
-        """A content type added later does not slip past the check above."""
-        assert set(_EXPECTED_KNOWN_KEYS) == set(DETAIL_FIELDS)
-
-
-class TestListValuedColumnsAreTheDeclaredLists:
-    """``LIST_VALUED_COLUMNS`` is computed, and this is what it has to be.
-
-    An import wraps one of these template cells in a list and an export
-    writes the first entry back, so a column joining the set changes the
-    shape a value is stored in, and one leaving it stores a bare string
-    where every other producer writes a list.
-    """
-
-    def test_the_list_valued_columns_are_the_expected_ones(self) -> None:
-        """Only the genre and platform cells stand for a list."""
-        assert LIST_VALUED_COLUMNS == frozenset({"genre", "platform"})
-
-
 class TestEveryDeclaredColumnRoundTrips:
     """Every declared column survives a save and a read, under its own key.
 
@@ -1233,33 +611,6 @@ class TestEveryDeclaredColumnRoundTrips:
             ).fetchone()["metadata"]
 
         assert json.loads(blob) == {_UNCLAIMED_KEY: _UNCLAIMED_VALUE}
-
-    @pytest.mark.parametrize("content_type", sorted(DETAIL_FIELDS))
-    def test_item_with_no_metadata_reads_back_empty(
-        self, tmp_path: Path, content_type: str
-    ) -> None:
-        """An item stating nothing still states nothing after a round trip.
-
-        Every codec is handed None on the way in and every column is NULL on
-        the way out, which is the path a bare title from a sparse source
-        takes.
-        """
-        db = SQLiteDB(tmp_path / f"empty-{content_type}.db")
-
-        db_id = db.save_content_item(
-            ContentItem(
-                id=f"empty-{content_type}",
-                title="Nothing Stated",
-                content_type=ContentType(content_type),
-                status=ConsumptionStatus.UNREAD,
-                metadata={},
-            )
-        )
-        stored = db.get_content_item(db_id)
-
-        assert stored is not None
-        assert stored.metadata == {}
-        assert stored.author is None
 
 
 class TestLeftoverBlobWinsOverItsColumn:

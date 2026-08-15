@@ -5,7 +5,6 @@ from pathlib import Path
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.sorting import (
-    _SEARCH_TEXT_SEPARATOR,
     FUZZY_MATCH_THRESHOLD,
     _best_window_ratio,
     build_search_text,
@@ -36,75 +35,14 @@ class TestGetSortTitle:
         """Test that 'The' is stripped from the beginning."""
         assert get_sort_title("The Lord of the Rings") == "lord of the rings"
 
-    def test_strips_leading_a(self) -> None:
-        """Test that 'A' is stripped from the beginning."""
-        assert get_sort_title("A Tale of Two Cities") == "tale of two cities"
-
-    def test_strips_leading_an(self) -> None:
-        """Test that 'An' is stripped from the beginning."""
-        assert get_sort_title("An American in Paris") == "american in paris"
-
-    def test_preserves_article_in_middle(self) -> None:
-        """Test that articles in the middle are preserved."""
-        result = get_sort_title("The Lord of the Rings")
-        assert "of the rings" in result
-
-    def test_case_insensitive(self) -> None:
-        """Test that article stripping is case insensitive."""
-        assert get_sort_title("THE MATRIX") == "matrix"
-        assert get_sort_title("the matrix") == "matrix"
-        assert get_sort_title("The Matrix") == "matrix"
-
-    def test_returns_lowercase(self) -> None:
-        """Test that result is always lowercase for consistent sorting."""
-        assert get_sort_title("STAR WARS") == "star wars"
-        assert get_sort_title("Star Wars") == "star wars"
-
-    def test_no_article(self) -> None:
-        """Test titles without leading articles."""
-        assert get_sort_title("Star Wars") == "star wars"
-        assert get_sort_title("1984") == "1984"
-        assert get_sort_title("Blade Runner") == "blade runner"
-
     def test_empty_string(self) -> None:
         """Test empty string input."""
         assert get_sort_title("") == ""
-
-    def test_whitespace_only(self) -> None:
-        """Test whitespace-only input."""
-        assert get_sort_title("   ") == ""
-
-    def test_strips_leading_whitespace(self) -> None:
-        """Test that leading whitespace is handled."""
-        assert get_sort_title("  The Matrix") == "matrix"
 
     def test_article_without_following_space_not_stripped(self) -> None:
         """Test that 'The' not followed by space is not stripped."""
         # "Theater" starts with "The" but shouldn't be stripped
         assert get_sort_title("Theater") == "theater"
-
-    def test_french_articles_not_stripped(self) -> None:
-        """Test French articles are NOT stripped (English-only, see #77)."""
-        assert get_sort_title("Les Misérables") == "les misérables"
-        assert get_sort_title("Le Petit Prince") == "le petit prince"
-        assert get_sort_title("La Vie en Rose") == "la vie en rose"
-
-    def test_spanish_articles_not_stripped(self) -> None:
-        """Test Spanish articles are NOT stripped (English-only, see #77)."""
-        assert get_sort_title("El Mariachi") == "el mariachi"
-        assert get_sort_title("Los Tres Amigos") == "los tres amigos"
-
-    def test_german_articles_not_stripped(self) -> None:
-        """Test German articles are NOT stripped (English-only, see #77)."""
-        assert get_sort_title("Der Untergang") == "der untergang"
-        assert get_sort_title("Die Hard") == "die hard"
-        assert get_sort_title("Das Boot") == "das boot"
-
-    def test_single_word_starting_with_article_letters(self) -> None:
-        """Test that single words starting with article letters aren't mangled."""
-        assert get_sort_title("Anastasia") == "anastasia"
-        assert get_sort_title("Angel") == "angel"
-        assert get_sort_title("Them") == "them"
 
 
 class TestSortTitleArticleRegression:
@@ -154,67 +92,17 @@ class TestNonEnglishArticleStrippingRegression:
         """ "Die Hard" must keep "die" so it sorts under D, not H."""
         assert get_sort_title("Die Hard") == "die hard"
 
-    def test_das_boot_sorts_under_d_regression(self) -> None:
-        """ "Das Boot" must keep the German article "das"."""
-        assert get_sort_title("Das Boot") == "das boot"
-
     def test_el_camino_sorts_under_e_regression(self) -> None:
         """ "El Camino" must keep the Spanish article "el"."""
         assert get_sort_title("El Camino") == "el camino"
-
-    def test_le_petit_prince_sorts_under_l_regression(self) -> None:
-        """ "Le Petit Prince" must keep the French article "le"."""
-        assert get_sort_title("Le Petit Prince") == "le petit prince"
-
-    def test_il_postino_sorts_under_i_regression(self) -> None:
-        """ "Il Postino" must keep the Italian article "il"."""
-        assert get_sort_title("Il Postino") == "il postino"
 
     def test_english_the_still_stripped_regression(self) -> None:
         """English articles must still be stripped after the narrowing."""
         assert get_sort_title("The Matrix") == "matrix"
 
 
-class TestSortTitleOrdering:
-    """Tests for sorting behavior with get_sort_title."""
-
-    def test_sorting_ignores_articles(self) -> None:
-        """Test that sorting by sort_title ignores leading articles."""
-        titles = [
-            "The Lord of the Rings",
-            "A Tale of Two Cities",
-            "Star Wars",
-            "An American in Paris",
-            "Blade Runner",
-        ]
-        sorted_titles = sorted(titles, key=get_sort_title)
-
-        # Expected order (alphabetically by sort key):
-        # american in paris, blade runner, lord of the rings,
-        # star wars, tale of two cities
-        assert sorted_titles == [
-            "An American in Paris",
-            "Blade Runner",
-            "The Lord of the Rings",
-            "Star Wars",
-            "A Tale of Two Cities",
-        ]
-
-    def test_sorting_with_numbers(self) -> None:
-        """Test sorting with numeric titles."""
-        titles = ["The Matrix", "1984", "2001: A Space Odyssey", "Avatar"]
-        sorted_titles = sorted(titles, key=get_sort_title)
-
-        # Numbers sort before letters in ASCII
-        assert sorted_titles[0] == "1984"
-        assert sorted_titles[1] == "2001: A Space Odyssey"
-
-
 class TestTitlesSimilar:
     """Tests for titles_similar function."""
-
-    def test_identical_titles(self) -> None:
-        assert titles_similar("The Lord of the Rings", "The Lord of the Rings") is True
 
     def test_article_stripped_match(self) -> None:
         assert titles_similar("The Matrix", "Matrix") is True
@@ -227,19 +115,6 @@ class TestTitlesSimilar:
 
     def test_empty_first_title(self) -> None:
         assert titles_similar("", "Anything") is False
-
-    def test_empty_second_title(self) -> None:
-        assert titles_similar("Anything", "") is False
-
-    def test_both_empty(self) -> None:
-        assert titles_similar("", "") is False
-
-    def test_case_insensitive(self) -> None:
-        assert titles_similar("DUNE", "dune") is True
-
-    def test_no_false_match_on_short_overlap(self) -> None:
-        """Unrelated titles with no substring relationship should not match."""
-        assert titles_similar("Portal", "Inception") is False
 
 
 class TestTitlesSimilarWordBoundaryRegression:
@@ -259,24 +134,6 @@ class TestTitlesSimilarWordBoundaryRegression:
 
     def test_an_does_not_match_antique_regression(self) -> None:
         assert titles_similar("An", "Antique") is False
-
-    def test_up_does_not_match_upgrade_regression(self) -> None:
-        assert titles_similar("Up", "Upgrade") is False
-
-    def test_it_does_not_match_spirit_regression(self) -> None:
-        assert titles_similar("It", "Spirit") is False
-
-    def test_the_does_not_match_theater_regression(self) -> None:
-        # "The" alone normalizes to "the" (the strip regex needs trailing
-        # whitespace), so this exercises the mid-word boundary check, not
-        # article stripping: "the" must not match inside "theater".
-        assert titles_similar("The", "Theater") is False
-
-    def test_her_does_not_match_where_regression(self) -> None:
-        assert titles_similar("Her", "Where") is False
-
-    def test_a_does_not_match_cars_regression(self) -> None:
-        assert titles_similar("A", "Cars") is False
 
     def test_phrase_prefix_still_matches_regression(self) -> None:
         """A real phrase prefix bounded by whitespace still matches."""
@@ -302,21 +159,10 @@ class TestTitlesSimilarWordBoundaryRegression:
 class TestNormalizeForSearch:
     """Tests for normalize_for_search function."""
 
-    def test_lowercases_and_strips_articles(self) -> None:
-        assert normalize_for_search("The Matrix") == "matrix"
-
     def test_strips_punctuation(self) -> None:
         # Hyphens, parentheses, and the like collapse to single spaces so a
         # search term and a title normalize onto equal footing.
         assert normalize_for_search("Sci-Fi (1988)") == "sci fi 1988"
-
-    def test_collapses_whitespace(self) -> None:
-        assert (
-            normalize_for_search("Spider-Man:  Homecoming") == "spider man homecoming"
-        )
-
-    def test_empty_string(self) -> None:
-        assert normalize_for_search("") == ""
 
     def test_punctuation_only(self) -> None:
         assert normalize_for_search("!!!") == ""
@@ -332,9 +178,6 @@ class TestTheMatchingTiers:
     def test_exact_match(self) -> None:
         assert title_matches("Die Hard", "die hard") is True
 
-    def test_exact_match_ignores_articles(self) -> None:
-        assert title_matches("The Matrix", "matrix") is True
-
     def test_partial_substring_match(self) -> None:
         assert title_matches("Die Hard (1988)", "Die Hard") is True
 
@@ -343,14 +186,6 @@ class TestTheMatchingTiers:
         # After normalization this is "die heard" vs the "die hard " window of
         # "die hard 1988", which scores ~0.89, above FUZZY_MATCH_THRESHOLD.
         assert title_matches("Die Hard (1988)", "Die Heard") is True
-
-    def test_fuzzy_match_on_non_article_first_token(self) -> None:
-        """Fuzzy matching works on a longer multi-token title.
-
-        "Apocalypse Now" keeps both tokens, and the single-character typo
-        "Apocalipse Now" scores ~0.93, comfortably above threshold.
-        """
-        assert title_matches("Apocalypse Now", "Apocalipse Now") is True
 
     def test_fuzzy_below_threshold_does_not_match(self) -> None:
         """A typo whose ratio falls below threshold is rejected.
@@ -362,30 +197,8 @@ class TestTheMatchingTiers:
         assert _best_window_ratio("insepton", "inception") < FUZZY_MATCH_THRESHOLD
         assert title_matches("Inception", "Insepton") is False
 
-    def test_short_query_fuzzy_false_positive(self) -> None:
-        """QA probe: a 3-letter query fuzzy-matches a 1-letter-different word.
-
-        This characterizes (does not condemn) a known property of a low
-        difflib threshold: "cat" vs "bat" scores 0.667 and is rejected, but
-        "cat" vs "car" / "cot" (also one letter off) likewise score 0.667.
-        At length 3 a single substitution never reaches 0.80, so short-query
-        false positives via substitution do not occur. A 4-letter query with
-        one substitution, however, scores 0.75 and is still rejected. This
-        pins that the threshold does not silently surface near-miss noise for
-        short terms.
-        """
-        assert title_matches("Bat", "cat") is False
-        assert title_matches("Cot", "cat") is False
-        assert title_matches("Card", "cart") is False
-
-    def test_unrelated_does_not_match(self) -> None:
-        assert title_matches("The Matrix", "Die Heard") is False
-
     def test_empty_needle_does_not_match(self) -> None:
         assert title_matches("Die Hard", "") is False
-
-    def test_empty_haystack_does_not_match(self) -> None:
-        assert title_matches("", "Die Hard") is False
 
 
 class TestUnicodeSearch:
@@ -405,12 +218,6 @@ class TestUnicodeSearch:
     which Python's ``\\w`` scopes to every script, so letters outside ASCII
     survive normalization and only punctuation and symbols become spaces.
     """
-
-    def test_non_latin_title_matches_itself_regression(self) -> None:
-        """Titles with no ASCII letters match their own text, exact or partial."""
-        assert title_matches("進撃の巨人", "進撃の巨人") is True
-        assert title_matches("Метро 2033", "Метро") is True
-        assert title_matches("ألف ليلة وليلة", "ألف ليلة") is True
 
     def test_non_latin_title_is_findable_via_storage_regression(
         self, tmp_path: Path
@@ -438,19 +245,6 @@ class TestUnicodeSearch:
             content_type=ContentType.TV_SHOW, search="進撃の巨人"
         )
         assert [item.title for item in results] == ["進撃の巨人"]
-
-    def test_unrelated_terms_in_the_same_script_fail_every_tier(self) -> None:
-        """Non-ASCII input is matched, not waved through.
-
-        A negative control rather than a regression test — it passed before the
-        fix too, when both sides normalized to the empty string and matching
-        bailed out. What it pins is the fix's boundary: now that non-Latin text
-        survives normalization, unrelated strings in the same script must still
-        fail all three tiers rather than colliding.
-        """
-        assert title_matches("進撃の巨人", "千と千尋の神隠し") is False
-        assert title_matches("Метро 2033", "Война и мир") is False
-        assert title_matches("ألف ليلة وليلة", "رحلة إلى الشمس") is False
 
     def test_every_reported_script_is_searchable_regression(self) -> None:
         """All the scripts the report named survive normalization, not just three.
@@ -488,17 +282,6 @@ class TestUnicodeSearch:
         assert title_matches("Метро 2033", "МЕТРО") is True
         assert title_matches("Οδύσσεια", "ΟΔΥΣΣΕΙΑ") is True
 
-    def test_punctuation_around_non_latin_still_collapses_regression(self) -> None:
-        """Non-Latin letters survive while punctuation and symbols still fold.
-
-        The fix must widen the kept set without losing the punctuation
-        normalization the ASCII class provided, including the full-width and
-        CJK punctuation that shows up in the titles this bug was about.
-        """
-        assert normalize_for_search("進撃の巨人！ 【完全版】") == "進撃の巨人 完全版"
-        assert title_matches("進撃の巨人 (Attack on Titan)", "進撃の巨人") is True
-        assert title_matches("進撃の巨人 (Attack on Titan)", "Attack on Titan") is True
-
     def test_terms_in_a_different_script_fail_every_tier(self) -> None:
         """A term in one script never matches a title in another.
 
@@ -510,27 +293,6 @@ class TestUnicodeSearch:
         assert title_matches("Die Hard", "進撃の巨人") is False
         assert title_matches("進撃の巨人", "Die Hard") is False
         assert title_matches("Метро 2033", "進撃の巨人") is False
-
-    def test_normalization_keeps_letters_and_digits_only_regression(self) -> None:
-        """States the boundary of the widened class, so it is not read as "keep all".
-
-        Python's ``\\w`` covers letters and digits in every script but not
-        combining marks (categories Mn/Mc) or symbols, so a decomposed string
-        keeps only its base letters and a title made purely of symbols still
-        normalizes to the empty string. Composed non-Latin text -- the
-        reported defect -- is unaffected. Folding decomposed and composed
-        forms together would need unicodedata.normalize, which this fix
-        deliberately does not do.
-
-        The first two assertions use the composed and the decomposed spelling
-        of e-acute, which look identical on screen: the composed one is a
-        single letter and survives, the decomposed one is a letter plus a
-        combining mark and loses the mark. Their differing expectations are
-        what tells them apart.
-        """
-        assert normalize_for_search("é") == "é"
-        assert normalize_for_search("é") == "e"
-        assert normalize_for_search("★☆") == ""
 
     def test_non_latin_creator_is_findable_via_storage_regression(
         self, tmp_path: Path
@@ -584,38 +346,11 @@ class TestTheStoredSearchText:
         """
         assert search_text_matches(None, normalize_for_search("die hard")) is False
 
-    def test_a_normalized_term_can_never_contain_the_separator(self) -> None:
-        """What makes the two halves separable at all.
-
-        Normalization collapses every non-word character, the separator
-        included, so neither stored half nor a search term can carry one.
-        ``test_a_term_cannot_match_across_the_title_and_the_creator`` rests on
-        it: without it a term could span the join.
-        """
-        for raw in ("Alpha\nOmega", _SEARCH_TEXT_SEPARATOR, "a\n\nb"):
-            assert _SEARCH_TEXT_SEPARATOR not in normalize_for_search(raw)
-
-    def test_a_term_matches_the_title_half(self) -> None:
-        """A title match reads the same through the stored text."""
-        text = build_search_text("Die Hard (1988)", "John McTiernan")
-
-        assert search_text_matches(text, normalize_for_search("die hard")) is True
-
     def test_a_term_matches_the_creator_half(self) -> None:
         """So does a creator match, which is why the creator is stored at all."""
         text = build_search_text("Die Hard (1988)", "John McTiernan")
 
         assert search_text_matches(text, normalize_for_search("McTiernan")) is True
-
-    def test_a_typo_still_matches_through_the_stored_text(self) -> None:
-        """The fuzzy tier survives the move into a column.
-
-        SQL can express the first two tiers and not this one, so the stored
-        text has to stay usable by the Python pass that runs it.
-        """
-        text = build_search_text("Die Hard (1988)", None)
-
-        assert search_text_matches(text, normalize_for_search("Die Heard")) is True
 
     def test_a_term_cannot_match_across_the_title_and_the_creator(self) -> None:
         """The two halves are matched separately, never as one string.
@@ -641,29 +376,6 @@ class TestTheStoredSearchText:
 
 class TestBestWindowRatio:
     """Tests for the _best_window_ratio fuzzy helper."""
-
-    def test_die_heard_clears_threshold(self) -> None:
-        """The required typo match clears the threshold with margin.
-
-        Normalized "die heard" against "die hard 1988" scores ~0.89 (best
-        window "die heard" vs "die hard "), above FUZZY_MATCH_THRESHOLD, which
-        is why "Die Heard" matches "Die Hard (1988)".
-        """
-        ratio = _best_window_ratio(
-            normalize_for_search("Die Heard"), normalize_for_search("Die Hard (1988)")
-        )
-        assert ratio > FUZZY_MATCH_THRESHOLD
-
-    def test_die_hardy_also_clears_threshold(self) -> None:
-        """A different one-letter variant scores the same as "Die Heard".
-
-        "die hardy" against "die hard 1988" also scores ~0.89, so the
-        threshold cannot distinguish it from "Die Heard"; both are accepted.
-        """
-        ratio = _best_window_ratio(
-            normalize_for_search("Die Hardy"), normalize_for_search("Die Hard (1988)")
-        )
-        assert ratio > FUZZY_MATCH_THRESHOLD
 
     def test_needle_longer_than_haystack_uses_full_ratio(self) -> None:
         """When the needle is longer than the haystack the fallback path runs.

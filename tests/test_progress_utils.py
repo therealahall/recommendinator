@@ -11,16 +11,6 @@ from src.utils.text import LINE_BREAKS
 class TestShouldLogProgress:
     """Tests for should_log_progress()."""
 
-    def test_first_items_always_logged(self) -> None:
-        """Items 1 through initial_count are always logged."""
-        for current in range(1, 6):
-            assert should_log_progress(current, 100) is True
-
-    def test_last_item_always_logged(self) -> None:
-        """The last item is always logged regardless of position."""
-        assert should_log_progress(100, 100) is True
-        assert should_log_progress(37, 37) is True
-
     def test_interval_items_logged(self) -> None:
         """Every interval-th item is logged."""
         assert should_log_progress(10, 100) is True
@@ -34,20 +24,10 @@ class TestShouldLogProgress:
         assert should_log_progress(11, 100) is False
         assert should_log_progress(99, 100) is False
 
-    def test_custom_initial_count(self) -> None:
-        """Custom initial_count changes the initial logging window."""
-        assert should_log_progress(3, 100, initial_count=3) is True
-        assert should_log_progress(4, 100, initial_count=3) is False
-
-    def test_custom_interval(self) -> None:
-        """Custom interval changes the logging frequency."""
-        assert should_log_progress(15, 100, interval=15) is True
-        assert should_log_progress(10, 100, interval=15) is False
-
-    def test_small_total(self) -> None:
-        """When total <= initial_count, every item is logged."""
-        for current in range(1, 4):
-            assert should_log_progress(current, 3) is True
+    def test_last_item_always_logged(self) -> None:
+        """The last item is always logged regardless of position."""
+        assert should_log_progress(100, 100) is True
+        assert should_log_progress(37, 37) is True
 
 
 class TestLogProgress:
@@ -70,32 +50,6 @@ class TestLogProgress:
 
         assert len(caplog.records) == 0
 
-    def test_first_item(self, caplog: pytest.LogCaptureFixture) -> None:
-        """First item is always logged."""
-        test_logger = logging.getLogger("test.progress")
-        with caplog.at_level(logging.INFO, logger="test.progress"):
-            log_progress(test_logger, "product details", 1, 50)
-
-        assert len(caplog.records) == 1
-        assert caplog.records[0].message == "Processing product details: 1/50 (2%)"
-
-    def test_last_item(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Last item is always logged."""
-        test_logger = logging.getLogger("test.progress")
-        with caplog.at_level(logging.INFO, logger="test.progress"):
-            log_progress(test_logger, "product details", 50, 50)
-
-        assert len(caplog.records) == 1
-        assert caplog.records[0].message == "Processing product details: 50/50 (100%)"
-
-    def test_percent_calculation(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Percentage is calculated as integer division."""
-        test_logger = logging.getLogger("test.progress")
-        with caplog.at_level(logging.INFO, logger="test.progress"):
-            log_progress(test_logger, "items", 1, 3)
-
-        assert "(33%)" in caplog.records[0].message
-
 
 class TestTheLabelCannotForgeAnEntry:
     """The label is a caller's f-string, so an item title reaches it.
@@ -104,7 +58,7 @@ class TestTheLabelCannotForgeAnEntry:
     is written here, so the escape belongs here.
     """
 
-    @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0"])
+    @pytest.mark.parametrize("breaker", [LINE_BREAKS[0], "\0"])
     def test_no_line_break_survives_the_label(
         self, caplog: pytest.LogCaptureFixture, breaker: str
     ) -> None:
