@@ -11,7 +11,6 @@ from src.models.content import ConsumptionStatus, ContentType
 
 
 def _api_response(payload: list[dict]) -> Mock:
-    """Build a mock 200 response carrying *payload* as JSON."""
     response = Mock(spec=requests.Response)
     response.status_code = 200
     response.headers = {}
@@ -21,7 +20,6 @@ def _api_response(payload: list[dict]) -> Mock:
 
 
 def _redirect_response(location: str) -> Mock:
-    """Build a mock 301 pointing at *location*."""
     response = Mock(spec=requests.Response)
     response.status_code = 301
     response.headers = {"Location": location}
@@ -116,7 +114,6 @@ class TestSonarrPluginProperties:
         assert field.field_type is bool
         assert field.required is False
         assert field.default is True
-        # Nothing about a TLS toggle names where the api key is sent.
         assert field.credential_bound is False
 
     def test_get_source_identifier(self, plugin: SonarrPlugin) -> None:
@@ -376,7 +373,6 @@ class TestSonarrPluginErrors:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        """An unverifiable certificate reads as a certificate problem."""
         mock_get.side_effect = requests.exceptions.SSLError(
             "certificate verify failed: unable to get local issuer certificate"
         )

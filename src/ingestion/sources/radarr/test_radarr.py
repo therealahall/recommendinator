@@ -11,7 +11,6 @@ from src.models.content import ConsumptionStatus, ContentType
 
 
 def _api_response(payload: list[dict]) -> Mock:
-    """Build a mock 200 response carrying *payload* as JSON."""
     response = Mock(spec=requests.Response)
     response.status_code = 200
     response.headers = {}
@@ -21,7 +20,6 @@ def _api_response(payload: list[dict]) -> Mock:
 
 
 def _redirect_response(location: str) -> Mock:
-    """Build a mock 301 pointing at *location*."""
     response = Mock(spec=requests.Response)
     response.status_code = 301
     response.headers = {"Location": location}
@@ -204,11 +202,6 @@ class TestRadarrUrlValidation:
     def test_a_port_that_does_not_parse_is_refused(
         self, plugin: RadarrPlugin, url: str
     ) -> None:
-        """Stored, this url reads as addressing nobody.
-
-        The next url edit then looks like a move to nowhere, and the api key
-        follows the source to whatever host it names.
-        """
         errors = plugin.validate_config({"url": url, "api_key": "abc123"})
 
         assert errors == [f"'url' is not a valid URL: {url}"]
@@ -221,7 +214,6 @@ class TestRadarrUrlValidation:
         get.assert_not_called()
 
     def test_the_url_field_is_credential_bound(self, plugin: RadarrPlugin) -> None:
-        """Repointing it is refused, so the api key cannot follow it."""
         url_field = next(
             field for field in plugin.get_config_schema() if field.name == "url"
         )
@@ -571,7 +563,6 @@ class TestRadarrTls:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """The collections fetch is the second site, easily missed."""
         self._serve(sample_movies, [])
 
         list(plugin.fetch({"url": "https://radarr.lan", "api_key": "key"}))

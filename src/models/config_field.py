@@ -18,9 +18,7 @@ class ConfigField:
     default: Any = None
     description: str = ""
     sensitive: bool = False  # For API keys, passwords - don't log/display
-    # This field names the host the source's credentials are sent to. Pointing
-    # it at a different one is refused while a secret is stored, because a
-    # rewritable url is otherwise how a stored credential reaches an attacker.
+    # This field names the host the source's credentials are sent to.
     credential_bound: bool = False
     # This field's value is opened from disk, so it must be resolved through
     # ``src.ingestion.paths``. Declared rather than guessed from the name: a

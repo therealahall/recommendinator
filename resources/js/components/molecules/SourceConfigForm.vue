@@ -48,11 +48,7 @@ function zeroFor(field: SourceFieldSchema): FormValue {
   return ''
 }
 
-function coerce(field: SourceFieldSchema, stored: unknown): FormValue {
-  // A field the source never stored arrives absent, and every plugin falls
-  // back to the schema default when it reads one — so showing the type's zero
-  // value here puts a value on screen the source has never used.
-  const raw = stored ?? field.default
+function asFormValue(field: SourceFieldSchema, raw: unknown): FormValue {
   if (raw === undefined || raw === null) return zeroFor(field)
   if (field.field_type === 'bool') return Boolean(raw)
   if (field.field_type === 'int') {
@@ -76,12 +72,19 @@ function sameValue(a: FormValue, b: FormValue): boolean {
   return a === b
 }
 
-/** Whether the form is only showing this field's default back to the operator. */
-function isUnstoredDefault(field: SourceFieldSchema): boolean {
+function defaultValue(field: SourceFieldSchema): FormValue {
+  return asFormValue(field, field.default)
+}
+
+function hasStoredValue(field: SourceFieldSchema): boolean {
   const stored = props.values[field.name]
+  return stored !== undefined && stored !== null
+}
+
+function isUnstoredDefault(field: SourceFieldSchema): boolean {
   return (
-    (stored === undefined || stored === null) &&
-    sameValue(formValues[field.name], coerce(field, undefined))
+    !hasStoredValue(field) &&
+    sameValue(formValues[field.name], defaultValue(field))
   )
 }
 
@@ -89,7 +92,9 @@ const formValues = reactive<Record<string, FormValue>>({})
 
 function syncFormFromProps(): void {
   for (const field of nonSensitiveFields.value) {
-    formValues[field.name] = coerce(field, props.values[field.name])
+    formValues[field.name] = hasStoredValue(field)
+      ? asFormValue(field, props.values[field.name])
+      : defaultValue(field)
   }
 }
 

@@ -597,11 +597,7 @@ class TestSyncManagerAddError:
         ]
 
     def test_one_job_keeps_each_source_apart(self) -> None:
-        """A run of every source reports into one job, keyed by the label.
-
-        The UI matches each message against its own rows, so an umbrella job
-        that lost the producing source would show every failure on every row.
-        """
+        """A run of every source reports into one job, keyed by the label."""
         manager = SyncManager()
         _planted(manager, "All Sources")
 

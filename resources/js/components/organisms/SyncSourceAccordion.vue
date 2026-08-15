@@ -367,8 +367,8 @@ const progressLabel = computed<string>(() => {
   return `${entry.items_processed} items`
 })
 
-// Filtered by name, never taken whole: an "All Sources" job carries every
-// source's failures, and the remedy for one source is wrong on the next row.
+// An "All Sources" job carries every source's failures, and the remedy for one
+// source is wrong on the next row.
 const sourceErrors = computed<string[]>(() => {
   if (props.syncing || !props.job) return []
   return props.job.errors
@@ -467,11 +467,6 @@ const errorsTitleId = computed<string>(() =>
       (WCAG 4.1.3).
     -->
     <template #notice>
-      <!--
-        Titled in text, not tinted alone: the 18% error wash sits at 1.16:1
-        against the card, and a remedy on its own ("Set verify_ssl to false")
-        reads as a suggestion rather than a failure (WCAG 1.4.1).
-      -->
       <div v-if="sourceErrors.length" class="source-accordion-errors">
         <p
           :id="errorsTitleId"

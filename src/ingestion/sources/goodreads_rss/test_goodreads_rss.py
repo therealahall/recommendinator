@@ -970,18 +970,13 @@ class TestGoodreadsRssSignInRedirectRegression:
     """
 
     def test_the_captured_page_is_the_parse_failure_that_was_reported(self) -> None:
-        """Test the fixture still reproduces the reported expat error.
-
-        A fixture edited into valid XML would make the test below vacuous.
-        """
+        """A fixture edited into valid XML would make the test below vacuous."""
         with pytest.raises(ET.ParseError, match="not well-formed"):
             ET.fromstring(_SIGN_IN_PAGE)
 
     def test_the_sign_in_page_is_named_not_reported_as_malformed_rss(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test the sign-in page raises an access error, not a parse error."""
-
         def _get(
             url: str,
             params: dict[str, Any] | None = None,

@@ -33,13 +33,12 @@ Parses and normalizes data from external sources.
   order. Rate limits are per source, so cross-source parallelism is safe.
 - The web `SyncManager` aggregates progress callbacks into a `sources` map, and
   files each error under the source that produced it, so the Data tab shows a
-  plugin's own wording on that source's row rather than a count.
+  plugin's own wording on that source's row.
 - Source config is writable over HTTP, so two field kinds are constrained rather
   than trusted. `paths.py` contains a file plugin's path inside
   `security.allowed_source_roots`, a config.yaml key the settings API cannot
   reach; `urls.py` checks a base URL's shape. A `credential_bound` `ConfigField`
-  (a plugin's `url`) names the host its secrets are sent to, so a write pointing
-  it at a different one is refused while a secret is stored.
+  (a plugin's `url`) names the host its secrets are sent to.
 
 ### 2. Storage (`src/storage/`)
 

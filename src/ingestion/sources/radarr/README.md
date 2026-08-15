@@ -27,12 +27,8 @@ python3.11 -m src.cli source set-secret radarr api_key
 | `api_key` | str | yes (sensitive) | Radarr API key. |
 | `verify_ssl` | bool | no | Verify the TLS certificate (default `true`; set `false` for a private CA). |
 
-**Pointing `url` at a different host is refused while the API key is stored**, so
-the key is never sent to a host it was not issued for. Host and port decide, so
-the same endpoint switching between `http` and `https` goes through either way —
-including a downgrade, which then sends the key in cleartext. To move Radarr:
-clear the key (`source clear-secret radarr api_key`, or **Data** tab), save the
-new URL, then set the key the new host expects.
+Moving Radarr to another host takes the steps in
+[SECURITY.md](../../../../docs/SECURITY.md#credential-encryption).
 
 ## Notes
 - Items are imported as `unread` (Radarr tracks downloads, not consumption).

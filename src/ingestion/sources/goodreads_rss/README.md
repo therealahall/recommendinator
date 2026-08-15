@@ -54,12 +54,6 @@ your user ID. You can paste either the bare number or the whole URL into
   (completed > currently consuming > unread).
 - Each shelf feed is paginated (`per_page=100`); the plugin walks every page
   until one comes back empty, so large shelves import in full.
-- Requests identify themselves as `Recommendinator/<version>`. Goodreads sits
-  behind Amazon's edge, which answers the default `python-requests` user agent
-  with `HTTP 403` on every shelf.
-- The feed comes from `/review/list_rss/<id>`, the only shelf feed Goodreads
-  still serves to a signed-out client. The `/review/list/<id>.rss` path
-  redirects to the sign-in page even for a public profile.
 
 ## Development
 - Implementation: [`goodreads_rss.py`](goodreads_rss.py)
