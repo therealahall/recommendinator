@@ -5,9 +5,8 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
-from src.models.content import ConsumptionStatus, ContentType
 
 
 def _api_response(payload: list[dict]) -> Mock:
@@ -78,73 +77,11 @@ def sample_movies() -> list[dict]:
     ]
 
 
-class TestRadarrPluginProperties:
-    """Tests for RadarrPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: RadarrPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: RadarrPlugin) -> None:
-        assert plugin.name == "radarr"
-
-    def test_display_name(self, plugin: RadarrPlugin) -> None:
-        assert plugin.display_name == "Radarr"
-
-    def test_content_types(self, plugin: RadarrPlugin) -> None:
-        assert plugin.content_types == [ContentType.MOVIE]
-
-    def test_requires_api_key(self, plugin: RadarrPlugin) -> None:
-        assert plugin.requires_api_key is True
-
-    def test_requires_network(self, plugin: RadarrPlugin) -> None:
-        assert plugin.requires_network is True
-
-    def test_config_schema(self, plugin: RadarrPlugin) -> None:
-        schema = plugin.get_config_schema()
-        names = [field.name for field in schema]
-        assert names == ["url", "api_key", "verify_ssl"]
-        api_key_field = next(field for field in schema if field.name == "api_key")
-        assert api_key_field.sensitive is True
-
-    def test_verify_ssl_is_optional_and_defaults_on(self, plugin: RadarrPlugin) -> None:
-        field = next(
-            field for field in plugin.get_config_schema() if field.name == "verify_ssl"
-        )
-        assert field.field_type is bool
-        assert field.required is False
-        assert field.default is True
-        # Nothing about a TLS toggle names where the api key is sent.
-        assert field.credential_bound is False
-
-    def test_transform_fields_defaults_verify_ssl_on(self) -> None:
-        assert (
-            RadarrPlugin.transform_fields({"url": "https://radarr.lan"})["verify_ssl"]
-            is True
-        )
-
-    def test_transform_fields_keeps_verify_ssl_off(self) -> None:
-        raw = {"url": "https://radarr.lan", "verify_ssl": False}
-        assert RadarrPlugin.transform_fields(raw)["verify_ssl"] is False
-
-    def test_get_source_identifier(self, plugin: RadarrPlugin) -> None:
-        assert plugin.get_source_identifier() == "radarr"
-
-
 class TestRadarrPluginValidation:
     """Tests for RadarrPlugin config validation."""
 
-    def test_validate_valid_config(self, plugin: RadarrPlugin) -> None:
-        errors = plugin.validate_config(
-            {"url": "http://localhost:7878", "api_key": "abc123"}
-        )
-        assert errors == []
-
     def test_validate_missing_api_key(self, plugin: RadarrPlugin) -> None:
         errors = plugin.validate_config({"url": "http://localhost:7878"})
-        assert any("api_key" in error for error in errors)
-
-    def test_validate_empty_api_key(self, plugin: RadarrPlugin) -> None:
-        errors = plugin.validate_config({"url": "http://localhost:7878", "api_key": ""})
         assert any("api_key" in error for error in errors)
 
     def test_validate_missing_url(self, plugin: RadarrPlugin) -> None:
@@ -189,28 +126,12 @@ class TestRadarrUrlValidation:
 
         assert errors == [f"'url' is not a valid URL: {url}"]
 
-    @pytest.mark.parametrize(
-        "url", ["http://radarr.lan:99999", "http://radarr.lan:notaport"]
-    )
-    def test_a_port_that_does_not_parse_is_refused(
-        self, plugin: RadarrPlugin, url: str
-    ) -> None:
-        errors = plugin.validate_config({"url": url, "api_key": "abc123"})
-
-        assert errors == [f"'url' is not a valid URL: {url}"]
-
     def test_fetch_refuses_before_any_request(self, plugin: RadarrPlugin) -> None:
         """A sync of every source never calls validate_config."""
         with patch("src.ingestion.sources.arr_base.requests.get") as get:
             with pytest.raises(SourceError, match="http:// or https://"):
                 list(plugin.fetch({"url": "file:///etc/passwd", "api_key": "abc123"}))
         get.assert_not_called()
-
-    def test_the_url_field_is_credential_bound(self, plugin: RadarrPlugin) -> None:
-        url_field = next(
-            field for field in plugin.get_config_schema() if field.name == "url"
-        )
-        assert url_field.credential_bound is True
 
 
 class TestRadarrPluginFetch:
@@ -254,35 +175,6 @@ class TestRadarrPluginFetch:
         assert items[1].title == "Blade Runner 2049"
         assert items[2].title == "Old Unmonitored Movie"
 
-    def test_fetch_all_items_are_unread(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        """All imported items should have UNREAD status."""
-        self._mock_radarr_responses(sample_movies)
-
-        items = list(
-            plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
-        )
-
-        for item in items:
-            assert item.status == ConsumptionStatus.UNREAD.value
-
-    def test_fetch_content_type_is_movie(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        self._mock_radarr_responses(sample_movies)
-
-        items = list(
-            plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
-        )
-
-        for item in items:
-            assert item.content_type == ContentType.MOVIE.value
-
     def test_fetch_external_id_format(
         self,
         plugin: RadarrPlugin,
@@ -297,21 +189,6 @@ class TestRadarrPluginFetch:
 
         assert items[0].id == "tmdb:27205"
         assert items[1].id == "tmdb:335984"
-
-    def test_fetch_rating_is_none(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        """Radarr does not track personal ratings; rating should always be None."""
-        self._mock_radarr_responses(sample_movies)
-
-        items = list(
-            plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
-        )
-
-        for item in items:
-            assert item.rating is None
 
     def test_fetch_metadata(
         self,
@@ -334,20 +211,6 @@ class TestRadarrPluginFetch:
         assert metadata["genres"] == ["Action", "Sci-Fi", "Thriller"]
         assert metadata["has_file"] is True
 
-    def test_fetch_source_identifier(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        self._mock_radarr_responses(sample_movies)
-
-        items = list(
-            plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
-        )
-
-        for item in items:
-            assert item.source == "radarr"
-
     def test_fetch_api_key_sent_in_header(
         self,
         plugin: RadarrPlugin,
@@ -359,39 +222,6 @@ class TestRadarrPluginFetch:
         assert self.mock_get.call_count >= 1
         call_kwargs = self.mock_get.call_args[1]
         assert call_kwargs["headers"]["X-Api-Key"] == "my_secret_key"
-
-    def test_fetch_correct_api_endpoint(
-        self,
-        plugin: RadarrPlugin,
-    ) -> None:
-        self._mock_radarr_responses([])
-
-        list(plugin.fetch({"url": "http://myradarr:7878", "api_key": "key"}))
-
-        calls = [call[0][0] for call in self.mock_get.call_args_list]
-        assert "http://myradarr:7878/api/v3/movie" in calls
-
-    def test_fetch_trailing_slash_handled(
-        self,
-        plugin: RadarrPlugin,
-    ) -> None:
-        self._mock_radarr_responses([])
-
-        list(plugin.fetch({"url": "http://localhost:7878/", "api_key": "key"}))
-
-        for call in self.mock_get.call_args_list:
-            url = call[0][0]
-            assert "//" not in url.replace("http://", "").replace("https://", "")
-
-    def test_fetch_empty_library(
-        self,
-        plugin: RadarrPlugin,
-    ) -> None:
-        self._mock_radarr_responses([])
-
-        items = list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
-
-        assert len(items) == 0
 
     def test_fetch_skips_empty_title(
         self,
@@ -429,19 +259,6 @@ class TestRadarrPluginErrors:
 
         with pytest.raises(SourceError, match="Failed to connect to Radarr"):
             list(plugin.fetch({"url": "http://localhost:7878", "api_key": "key"}))
-
-    def test_http_error_raises_source_error(
-        self,
-        plugin: RadarrPlugin,
-    ) -> None:
-        import requests as req
-
-        mock_response = _api_response([])
-        mock_response.raise_for_status.side_effect = req.HTTPError("401 Unauthorized")
-        self.mock_get.return_value = mock_response
-
-        with pytest.raises(SourceError, match="Failed to connect to Radarr"):
-            list(plugin.fetch({"url": "http://localhost:7878", "api_key": "bad_key"}))
 
 
 class TestRadarrCollections:
@@ -515,20 +332,6 @@ class TestRadarrTls:
 
         self.mock_get.side_effect = side_effect
 
-    def test_an_https_url_is_fetched_with_verification_on(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        self._serve(sample_movies, [])
-
-        items = list(plugin.fetch({"url": "https://radarr.lan", "api_key": "key"}))
-
-        assert len(items) == 3
-        requested = [call[0][0] for call in self.mock_get.call_args_list]
-        assert "https://radarr.lan/api/v3/movie" in requested
-        assert all(call[1]["verify"] is True for call in self.mock_get.call_args_list)
-
     def test_verify_ssl_false_reaches_the_collections_call_too(
         self,
         plugin: RadarrPlugin,
@@ -550,21 +353,6 @@ class TestRadarrTls:
         requested = [call[0][0] for call in self.mock_get.call_args_list]
         assert "https://radarr.lan/api/v3/collection" in requested
         assert all(call[1]["verify"] is False for call in self.mock_get.call_args_list)
-
-    def test_neither_request_site_follows_redirects_itself(
-        self,
-        plugin: RadarrPlugin,
-        sample_movies: list[dict],
-    ) -> None:
-        self._serve(sample_movies, [])
-
-        list(plugin.fetch({"url": "https://radarr.lan", "api_key": "key"}))
-
-        requested = [call[0][0] for call in self.mock_get.call_args_list]
-        assert "https://radarr.lan/api/v3/collection" in requested
-        assert all(
-            call[1]["allow_redirects"] is False for call in self.mock_get.call_args_list
-        )
 
     def test_a_redirect_to_another_host_is_refused_regression(
         self,

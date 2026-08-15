@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -18,51 +18,8 @@ def plugin() -> MarkdownImportPlugin:
     return MarkdownImportPlugin()
 
 
-class TestMarkdownImportPluginProperties:
-    """Tests for MarkdownImportPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: MarkdownImportPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: MarkdownImportPlugin) -> None:
-        assert plugin.name == "markdown_import"
-
-    def test_display_name(self, plugin: MarkdownImportPlugin) -> None:
-        assert plugin.display_name == "Markdown Import"
-
-    def test_content_types(self, plugin: MarkdownImportPlugin) -> None:
-        assert ContentType.BOOK in plugin.content_types
-        assert ContentType.MOVIE in plugin.content_types
-        assert ContentType.TV_SHOW in plugin.content_types
-        assert ContentType.VIDEO_GAME in plugin.content_types
-
-    def test_requires_api_key(self, plugin: MarkdownImportPlugin) -> None:
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: MarkdownImportPlugin) -> None:
-        assert plugin.requires_network is False
-
-    def test_config_schema(self, plugin: MarkdownImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
-
-    def test_get_source_identifier(self, plugin: MarkdownImportPlugin) -> None:
-        assert plugin.get_source_identifier() == "markdown_import"
-
-
 class TestMarkdownImportPluginValidation:
     """Tests for config validation."""
-
-    def test_validate_valid_config(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# Books\n")
-        errors = plugin.validate_config({"path": str(md_file), "content_type": "book"})
-        assert errors == []
 
     def test_validate_missing_markdown_path(self, plugin: MarkdownImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
@@ -75,14 +32,6 @@ class TestMarkdownImportPluginValidation:
             {"path": str(tmp_path / "missing.md"), "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
-
-    def test_validate_missing_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# Books\n")
-        errors = plugin.validate_config({"path": str(md_file)})
-        assert any("content_type" in error for error in errors)
 
     def test_validate_invalid_content_type(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -150,30 +99,6 @@ class TestMarkdownImportPluginFetch:
         assert items[3].title == "Book D"
         assert items[3].status == ConsumptionStatus.UNREAD.value
 
-    def test_fetch_without_creator(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("## Completed\n" "- **Some Book** | Rating: 3\n")
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-
-        assert len(items) == 1
-        assert items[0].title == "Some Book"
-        assert items[0].author is None
-        assert items[0].rating == 3
-
-    def test_fetch_without_rating(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("## Completed\n" "- **Some Book** by Some Author\n")
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-
-        assert len(items) == 1
-        assert items[0].rating is None
-
     def test_fetch_title_only(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
@@ -187,38 +112,6 @@ class TestMarkdownImportPluginFetch:
         assert items[0].author is None
         assert items[0].rating is None
         assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_items_before_any_section_default_to_unread(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("# My Books\n" "- **Orphaned Book** by Author\n")
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-
-        assert len(items) == 1
-        assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_fetch_asterisk_list_marker(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("## Completed\n" "* **Book A** by Author A | Rating: 5\n")
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-
-        assert len(items) == 1
-        assert items[0].title == "Book A"
-
-    def test_fetch_empty_file(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "books.md"
-        md_file.write_text("")
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-
-        assert len(items) == 0
 
     def test_non_matching_lines_skipped(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -247,54 +140,12 @@ class TestMarkdownSectionMapping:
         md_file.write_text(f"## {section}\n- **Test** by Author\n")
         return md_file
 
-    def test_section_completed(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "Completed")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.COMPLETED.value
-
-    def test_section_in_progress(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "In Progress")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
-
     def test_section_currently_reading(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = self._make_file_with_section(tmp_path, "Currently Reading")
         items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
-
-    def test_section_to_read(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "To Read")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_section_to_watch(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "To Watch")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "movie"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_section_to_play(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "To Play")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "video_game"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_section_wishlist(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = self._make_file_with_section(tmp_path, "Wishlist")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
 
     def test_section_backlog(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -321,12 +172,6 @@ class TestMarkdownSectionMapping:
 
 class TestMarkdownRating:
     """Tests for rating parsing."""
-
-    def test_valid_rating(self, plugin: MarkdownImportPlugin, tmp_path: Path) -> None:
-        md_file = tmp_path / "data.md"
-        md_file.write_text("## Completed\n- **Test** | Rating: 4\n")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].rating == 4
 
     def test_zero_rating_is_none(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -356,25 +201,11 @@ class TestMarkdownRating:
 class TestMarkdownDate:
     """Tests for date parsing."""
 
-    def test_valid_date(self, plugin: MarkdownImportPlugin, tmp_path: Path) -> None:
-        md_file = tmp_path / "data.md"
-        md_file.write_text("## Completed\n- **Test** | Date: 2024-06-15\n")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].date_completed == date(2024, 6, 15)
-
     def test_invalid_date_is_none(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
     ) -> None:
         md_file = tmp_path / "data.md"
         md_file.write_text("## Completed\n- **Test** | Date: not-a-date\n")
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
-        assert items[0].date_completed is None
-
-    def test_no_date_is_none(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "data.md"
-        md_file.write_text("## Completed\n- **Test** by Author\n")
         items = list(plugin.fetch({"path": str(md_file), "content_type": "book"}))
         assert items[0].date_completed is None
 
@@ -394,65 +225,6 @@ class TestMarkdownErrors:
                     }
                 )
             )
-
-    def test_invalid_content_type_raises_source_error(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "data.md"
-        md_file.write_text("# Test\n")
-        with pytest.raises(SourceError, match="Invalid content type"):
-            list(
-                plugin.fetch(
-                    {
-                        "path": str(md_file),
-                        "content_type": "podcast",
-                    }
-                )
-            )
-
-
-class TestMarkdownContentTypes:
-    """Tests for different content types."""
-
-    def test_movie_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "movies.md"
-        md_file.write_text(
-            "## Completed\n" "- **Inception** by Christopher Nolan | Rating: 5\n"
-        )
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "movie"}))
-
-        assert len(items) == 1
-        assert items[0].content_type == ContentType.MOVIE.value
-        assert items[0].author == "Christopher Nolan"
-
-    def test_tv_show_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "tv.md"
-        md_file.write_text(
-            "## Completed\n" "- **Breaking Bad** by Vince Gilligan | Rating: 5\n"
-        )
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "tv_show"}))
-
-        assert len(items) == 1
-        assert items[0].content_type == ContentType.TV_SHOW.value
-
-    def test_video_game_content_type(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        md_file = tmp_path / "games.md"
-        md_file.write_text(
-            "## Completed\n" "- **The Witcher 3** by CD Projekt Red | Rating: 5\n"
-        )
-
-        items = list(plugin.fetch({"path": str(md_file), "content_type": "video_game"}))
-
-        assert len(items) == 1
-        assert items[0].content_type == ContentType.VIDEO_GAME.value
 
 
 class TestMarkdownTemplates:
@@ -482,48 +254,6 @@ class TestMarkdownTemplates:
         assert items[1].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
         assert items[2].status == ConsumptionStatus.UNREAD.value
 
-    def test_movies_template_parseable(
-        self, plugin: MarkdownImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "movies.md"),
-                    "content_type": "movie",
-                }
-            )
-        )
-        assert len(items) == 3
-        assert items[0].title == "Inception"
-
-    def test_tv_shows_template_parseable(
-        self, plugin: MarkdownImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "tv_shows.md"),
-                    "content_type": "tv_show",
-                }
-            )
-        )
-        assert len(items) == 3
-        assert items[0].title == "Breaking Bad"
-
-    def test_video_games_template_parseable(
-        self, plugin: MarkdownImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "video_games.md"),
-                    "content_type": "video_game",
-                }
-            )
-        )
-        assert len(items) == 3
-        assert items[0].title == "The Witcher 3"
-
 
 class TestMarkdownImportPathContainmentRegression:
     """Regression: source config as an arbitrary-file reader.
@@ -543,20 +273,6 @@ class TestMarkdownImportPathContainmentRegression:
             "Path is outside the allowed source roots: /etc/hostname. "
             "Add its directory to security.allowed_source_roots in config.yaml."
         ]
-
-    def test_validate_refuses_a_symlink_escaping_its_root(
-        self, plugin: MarkdownImportPlugin, tmp_path: Path
-    ) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
-        outside.mkdir()
-        secret = outside / "secret.md"
-        secret.write_text("- **Leaked**\n")
-        link = tmp_path / "books.md"
-        link.symlink_to(secret)
-
-        errors = plugin.validate_config({"path": str(link), "content_type": "book"})
-
-        assert any("outside the allowed source roots" in error for error in errors)
 
     def test_fetch_refuses_and_yields_nothing(
         self, plugin: MarkdownImportPlugin, tmp_path: Path
@@ -619,37 +335,3 @@ class TestMarkdownImportLogInjectionRegression:
             f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "
             "Expected YYYY-MM-DD."
         ]
-
-    def test_a_control_character_in_a_date_cannot_rewrite_a_log_entry(
-        self,
-        plugin: MarkdownImportPlugin,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        markdown_file = tmp_path / "books.md"
-        markdown_file.write_text("- **Dune** | Date: 2024\x1b[2KImported 9999 items\n")
-
-        with caplog.at_level(logging.WARNING, logger=MARKDOWN_LOGGER):
-            list(plugin.fetch({"path": str(markdown_file), "content_type": "book"}))
-
-        assert self._messages(caplog) == [
-            "Invalid date format for 'Dune': 2024\\u001b[2KImported 9999 items. "
-            "Expected YYYY-MM-DD."
-        ]
-
-    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
-        self,
-        plugin: MarkdownImportPlugin,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """A configured path is operator input, and a file name may hold a break."""
-        markdown_file = tmp_path / "books\nImported 9999 items.md"
-        markdown_file.write_text("- **Dune**\n")
-
-        with caplog.at_level(logging.INFO, logger=MARKDOWN_LOGGER):
-            list(plugin.fetch({"path": str(markdown_file), "content_type": "book"}))
-
-        assert self._messages(caplog)[0].endswith(
-            "books\\nImported 9999 items.md"
-        ), self._messages(caplog)

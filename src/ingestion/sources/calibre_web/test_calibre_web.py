@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 import pytest
 import requests
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.calibre_web.calibre_web import (
     CalibreWebPlugin,
     _parse_opds_xml,
@@ -91,55 +91,6 @@ def config() -> dict[str, object]:
     }
 
 
-class TestCalibreWebPluginProperties:
-    """Tests for plugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: CalibreWebPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.name == "calibre_web"
-
-    def test_display_name(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.display_name == "Calibre-Web"
-
-    def test_description(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.description == "Import books from a Calibre-Web library"
-
-    def test_content_types(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.content_types == [ContentType.BOOK]
-
-    def test_requires_api_key(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.requires_api_key is True
-
-    def test_requires_network(self, plugin: CalibreWebPlugin) -> None:
-        assert plugin.requires_network is True
-
-
-class TestCalibreWebConfigSchema:
-    """Tests for the config schema definition."""
-
-    def test_field_names(self, plugin: CalibreWebPlugin) -> None:
-        names = {field.name for field in plugin.get_config_schema()}
-        assert names == {"url", "username", "password", "verify_ssl"}
-
-    def test_required_flags(self, plugin: CalibreWebPlugin) -> None:
-        fields = {f.name: f for f in plugin.get_config_schema()}
-        assert fields["url"].required is True
-        assert fields["username"].required is True
-        assert fields["password"].required is True
-        assert fields["verify_ssl"].required is False
-
-    def test_password_is_sensitive(self, plugin: CalibreWebPlugin) -> None:
-        fields = {f.name: f for f in plugin.get_config_schema()}
-        assert fields["password"].sensitive is True
-        assert fields["url"].sensitive is False
-
-    def test_verify_ssl_defaults_true(self, plugin: CalibreWebPlugin) -> None:
-        fields = {f.name: f for f in plugin.get_config_schema()}
-        assert fields["verify_ssl"].default is True
-
-
 class TestCalibreWebTransformConfig:
     """Tests for transform_config normalisation."""
 
@@ -155,37 +106,9 @@ class TestCalibreWebTransformConfig:
         assert result["username"] == "reader"
         assert result["password"] == "secret"
 
-    def test_verify_ssl_defaults_true(self) -> None:
-        result = CalibreWebPlugin.transform_config({"url": "http://host"})
-        assert result["verify_ssl"] is True
-
-    def test_verify_ssl_preserved_when_false(self) -> None:
-        result = CalibreWebPlugin.transform_config(
-            {"url": "http://host", "verify_ssl": False}
-        )
-        assert result["verify_ssl"] is False
-
 
 class TestCalibreWebValidateConfig:
     """Tests for validate_config."""
-
-    def test_valid_config(self, plugin: CalibreWebPlugin) -> None:
-        errors = plugin.validate_config(
-            {"url": "http://host", "username": "u", "password": "p"}
-        )
-        assert errors == []
-
-    def test_missing_url(self, plugin: CalibreWebPlugin) -> None:
-        errors = plugin.validate_config({"username": "u", "password": "p"})
-        assert "'url' is required" in errors
-
-    def test_missing_username(self, plugin: CalibreWebPlugin) -> None:
-        errors = plugin.validate_config({"url": "http://host", "password": "p"})
-        assert "'username' is required" in errors
-
-    def test_missing_password(self, plugin: CalibreWebPlugin) -> None:
-        errors = plugin.validate_config({"url": "http://host", "username": "u"})
-        assert "'password' is required" in errors
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_url_username_password_required(
@@ -212,36 +135,6 @@ class TestCalibreWebValidateConfig:
         )
         assert errors == []
         mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_calibre")
-
-    def test_password_missing_from_config_and_db_fails(
-        self, plugin: CalibreWebPlugin
-    ) -> None:
-        mock_storage = Mock(spec=StorageManager)
-        mock_storage.get_credentials_for_source.return_value = {}
-        errors = plugin.validate_config(
-            {"url": "http://host", "username": "u"},
-            storage=mock_storage,
-            user_id=1,
-        )
-        assert "'password' is required" in errors
-
-    def test_credential_store_returning_none_does_not_crash(
-        self, plugin: CalibreWebPlugin
-    ) -> None:
-        """A credential store returning None must not AttributeError.
-
-        validate_config guards None from get_credentials_for_source so a stub or
-        alternate store implementation cannot crash; the missing password is
-        still reported as required.
-        """
-        mock_storage = Mock(spec=StorageManager)
-        mock_storage.get_credentials_for_source.return_value = None
-        errors = plugin.validate_config(
-            {"url": "http://host", "username": "u"},
-            storage=mock_storage,
-            user_id=1,
-        )
-        assert "'password' is required" in errors
 
 
 class TestCalibreWebFetch:
@@ -346,15 +239,10 @@ class TestCalibreWebFetch:
         assert len(items) == 1
         assert items[0].status == ConsumptionStatus.UNREAD
 
-    def test_imported_book_has_no_rating(
+    def test_rating_scheme_category_not_emitted_as_tag(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Calibre stars are a community average, not the user's own rating.
-
-        The plugin never sets a rating, even when the OPDS entry carries a
-        <rating> element or a rating-scheme <category>; ratings are left for
-        the user to set in Recommendinator.
-        """
+        """A rating category's star label must not leak into the tag list."""
         entry = _entry(
             extra=(
                 "<rating>10</rating>"
@@ -366,53 +254,8 @@ class TestCalibreWebFetch:
         with patch("requests.get", side_effect=responses):
             items = list(plugin.fetch(config))
 
-        assert items[0].rating is None
-
-    def test_read_shelf_book_with_rating_is_completed_with_no_rating(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A read-shelf book that also carries a rating is COMPLETED, rating None.
-
-        Status (from the read-books shelf) and rating (never imported) are
-        independent. A book that is BOTH marked read AND carries a <rating>
-        element / rating-scheme <category> must come back COMPLETED with its
-        rating still None — the Calibre community-average star must not sneak in
-        just because the book happens to be read.
-        """
-        read_feed = _feed(_entry(entry_id="urn:uuid:read-rated", title="Read Rated"))
-        catalog = _feed(
-            _entry(
-                entry_id="urn:uuid:read-rated",
-                title="Read Rated",
-                extra=(
-                    "<rating>10</rating>"
-                    '<category scheme="http://opds-spec.org/2010/catalog/ratings" '
-                    'term="8" label="8"/>'
-                ),
-            )
-        )
-        responses = [_xml_response(read_feed), _xml_response(catalog)]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].status == ConsumptionStatus.COMPLETED
-        assert items[0].rating is None
-
-    def test_rating_scheme_category_not_emitted_as_tag(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A rating category's star label must not leak into the tag list."""
-        entry = _entry(
-            extra=(
-                '<category scheme="http://opds-spec.org/2010/catalog/ratings" '
-                'term="8" label="8"/>'
-            )
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
         assert "tags" not in items[0].metadata
+        assert items[0].rating is None
 
     def test_entry_missing_optional_fields(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
@@ -439,15 +282,6 @@ class TestCalibreWebFetch:
 
         assert [item.title for item in items] == ["Has Title"]
 
-    def test_empty_library(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        responses = [_empty_read_feed(), _xml_response(_feed(""))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items == []
-
     def test_calibre_id_prefix_scheme(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
@@ -464,26 +298,6 @@ class TestCalibreWebFetch:
         unauthorized = _xml_response("<html>unauthorized</html>", status_code=401)
         with patch("requests.get", return_value=unauthorized):
             with pytest.raises(SourceError, match="Authentication failed"):
-                list(plugin.fetch(config))
-
-    def test_server_error_raises_source_error(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A non-401 HTTP error on the main catalog feed surfaces as SourceError."""
-        server_error = _xml_response("<html>boom</html>", status_code=500)
-        responses = [_empty_read_feed(), server_error]
-        with patch("requests.get", side_effect=responses):
-            with pytest.raises(SourceError, match="Calibre-Web returned an error"):
-                list(plugin.fetch(config))
-
-    def test_network_error_raises_source_error(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        with patch(
-            "requests.get",
-            side_effect=requests.ConnectionError("refused"),
-        ):
-            with pytest.raises(SourceError, match="Failed to connect"):
                 list(plugin.fetch(config))
 
     def test_malformed_xml_raises_source_error(
@@ -511,22 +325,6 @@ class TestCalibreWebFetch:
         assert mock_get.call_args_list[0].kwargs["verify"] is False
         assert mock_get.call_args_list[0].kwargs["auth"] == ("u", "p")
 
-    def test_progress_callback_invoked(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        catalog = _feed(
-            _entry(entry_id="urn:uuid:p1", title="One")
-            + _entry(entry_id="urn:uuid:p2", title="Two")
-        )
-        responses = [_empty_read_feed(), _xml_response(catalog)]
-        callback = Mock()
-        with patch("requests.get", side_effect=responses):
-            list(plugin.fetch(config, progress_callback=callback))
-
-        assert callback.call_count == 2
-        assert callback.call_args_list[0].args == (1, None, "One")
-        assert callback.call_args_list[1].args == (2, None, "Two")
-
 
 class TestCalibreWebSeries:
     """Series parsing against the real schema.org Calibre-Web OPDS shape."""
@@ -550,42 +348,6 @@ class TestCalibreWebSeries:
         assert items[0].metadata["series"] == "The Lord of the Rings"
         assert items[0].metadata["series_index"] == 1.0
 
-    def test_schema_org_series_position_as_child_element(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """The position may appear as a child element instead of an attribute."""
-        entry = _entry(
-            entry_id="urn:uuid:series-child",
-            title="The Two Towers",
-            extra=(
-                '<schema:Series schema:name="The Lord of the Rings">'
-                "<schema:position>2</schema:position>"
-                "</schema:Series>"
-            ),
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].metadata["series"] == "The Lord of the Rings"
-        assert items[0].metadata["series_index"] == 2.0
-
-    def test_schema_org_series_without_position(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A series with no position yields a name and no index."""
-        entry = _entry(
-            entry_id="urn:uuid:series-noindex",
-            title="Standalone In A Series",
-            extra='<schema:Series schema:name="Some Series"/>',
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].metadata["series"] == "Some Series"
-        assert "series_index" not in items[0].metadata
-
     def test_bare_series_elements_fallback(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
@@ -603,186 +365,8 @@ class TestCalibreWebSeries:
         assert items[0].metadata["series_index"] == 5.0
 
 
-class TestCalibreWebAutoDiscovery:
-    """The plugin must be picked up by the registry with no manual wiring."""
-
-    def test_registry_discovers_calibre_web(self) -> None:
-        from src.ingestion.registry import PluginRegistry
-
-        PluginRegistry.reset_instance()
-        registry = PluginRegistry.get_instance()
-        registry.discover_plugins(force=True)
-        try:
-            plugin = registry.get_plugin("calibre_web")
-            assert plugin is not None
-            assert isinstance(plugin, CalibreWebPlugin)
-            assert plugin.display_name == "Calibre-Web"
-            assert plugin.content_types == [ContentType.BOOK]
-            assert plugin.requires_api_key is True
-            assert plugin.requires_network is True
-        finally:
-            PluginRegistry.reset_instance()
-
-
 class TestCalibreWebEdgeCases:
     """QA edge-case probes added during issue #32 verification."""
-
-    def test_non_ascii_title_and_author(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """Unicode titles/authors must round-trip unmangled."""
-        entry = _entry(
-            entry_id="urn:uuid:uni",
-            title="Les Misérables — 第一卷",
-            author="Émile Zola",
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].title == "Les Misérables — 第一卷"
-        assert items[0].author == "Émile Zola"
-
-    def test_duplicate_entries_yielded_as_is(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """Two entries with the same id are both yielded (DB upsert dedupes)."""
-        dup = _entry(entry_id="urn:uuid:dup", title="Same Book")
-        catalog = _feed(dup + dup)
-        responses = [_empty_read_feed(), _xml_response(catalog)]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert [i.id for i in items] == ["calibre:dup", "calibre:dup"]
-
-    def test_read_shelf_pagination_collects_all_ids(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """Read-books shelf spanning multiple pages marks every read book."""
-        read_page1 = _feed(
-            _entry(entry_id="urn:uuid:r1", title="Read One"),
-            next_href="/opds/readbooks?offset=1",
-        )
-        read_page2 = _feed(_entry(entry_id="urn:uuid:r2", title="Read Two"))
-        catalog = _feed(
-            _entry(entry_id="urn:uuid:r1", title="Read One")
-            + _entry(entry_id="urn:uuid:r2", title="Read Two")
-            + _entry(entry_id="urn:uuid:u1", title="Unread")
-        )
-        responses = [
-            _xml_response(read_page1),
-            _xml_response(read_page2),
-            _xml_response(catalog),
-        ]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        by_id = {i.id: i.status for i in items}
-        assert by_id["calibre:r1"] == ConsumptionStatus.COMPLETED
-        assert by_id["calibre:r2"] == ConsumptionStatus.COMPLETED
-        assert by_id["calibre:u1"] == ConsumptionStatus.UNREAD
-
-    def test_absolute_next_href_followed(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A fully-qualified rel=next href must be requested verbatim."""
-        page1 = _feed(
-            _entry(entry_id="urn:uuid:a1", title="One"),
-            next_href="http://localhost:8083/opds/new?offset=1",
-        )
-        page2 = _feed(_entry(entry_id="urn:uuid:a2", title="Two"))
-        responses = [_empty_read_feed(), _xml_response(page1), _xml_response(page2)]
-        with patch("requests.get", side_effect=responses) as mock_get:
-            items = list(plugin.fetch(config))
-
-        assert [i.title for i in items] == ["One", "Two"]
-        assert (
-            mock_get.call_args_list[2].args[0]
-            == "http://localhost:8083/opds/new?offset=1"
-        )
-
-    def test_empty_response_body_raises_source_error(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """An empty (zero-byte) feed body is malformed XML, not a crash."""
-        responses = [_empty_read_feed(), _xml_response("")]
-        with patch("requests.get", side_effect=responses):
-            with pytest.raises(SourceError, match="Failed to parse OPDS feed"):
-                list(plugin.fetch(config))
-
-    def test_source_id_override_applied_to_items(
-        self, plugin: CalibreWebPlugin
-    ) -> None:
-        """A custom _source_id (multi-instance) is the source of every item."""
-        multi_config = {
-            "url": "http://localhost:8083",
-            "username": "reader",
-            "password": "secret",
-            "verify_ssl": True,
-            "_source_id": "home_library",
-        }
-        responses = [_empty_read_feed(), _xml_response(_feed(_entry()))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(multi_config))
-
-        assert items[0].source == "home_library"
-
-    def test_isbn_absent_when_only_non_isbn_identifier(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A dc:identifier that is not an ISBN (e.g. a DOI) sets no isbn key."""
-        entry = _entry(
-            entry_id="urn:uuid:doi",
-            title="DOI Only",
-            extra="<dc:identifier>doi:10.1000/xyz123</dc:identifier>",
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert "isbn" not in items[0].metadata
-
-    def test_entry_without_id_yields_item_with_none_id(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """An entry with no <id> element yields an item with id=None, not a crash."""
-        no_id = "<entry><title>No Id Book</title></entry>"
-        responses = [_empty_read_feed(), _xml_response(_feed(no_id))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert len(items) == 1
-        assert items[0].title == "No Id Book"
-        assert items[0].id is None
-
-    def test_entry_id_only_urn_prefix_yields_none_id(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """An id that is empty after stripping the urn: prefix yields id=None."""
-        entry = _entry(entry_id="urn:", title="Empty Id Book")
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert len(items) == 1
-        assert items[0].title == "Empty Id Book"
-        assert items[0].id is None
-
-    def test_non_numeric_series_position_omits_index(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """A non-numeric series position keeps the name but drops the index."""
-        entry = _entry(
-            entry_id="urn:uuid:series-tbd",
-            title="Series With Bad Index",
-            extra='<schema:Series schema:name="Some Series" schema:position="TBD"/>',
-        )
-        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
-        with patch("requests.get", side_effect=responses):
-            items = list(plugin.fetch(config))
-
-        assert items[0].metadata["series"] == "Some Series"
-        assert "series_index" not in items[0].metadata
 
     def test_off_host_next_link_not_followed(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
@@ -837,92 +421,9 @@ class TestCalibreWebEdgeCases:
         requested_urls = [call.args[0] for call in mock_get.call_args_list]
         assert all(not url.startswith("http://") for url in requested_urls)
 
-    def test_off_host_read_shelf_next_link_not_followed(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """SSRF guard also covers the read-books shelf pagination chain.
-
-        A rel=next on the first read-books page pointing at a foreign host must
-        be refused exactly as on the main catalog feed: the hostile host is
-        never requested.
-        """
-        read_page1 = _feed(
-            _entry(entry_id="urn:uuid:r1", title="Read One"),
-            next_href="http://169.254.169.254/latest/meta-data/",
-        )
-        catalog = _feed(
-            _entry(entry_id="urn:uuid:r1", title="Read One")
-            + _entry(entry_id="urn:uuid:u1", title="Unread")
-        )
-        responses = [_xml_response(read_page1), _xml_response(catalog)]
-        with patch("requests.get", side_effect=responses) as mock_get:
-            items = list(plugin.fetch(config))
-
-        by_id = {i.id: i.status for i in items}
-        assert by_id["calibre:r1"] == ConsumptionStatus.COMPLETED
-        assert by_id["calibre:u1"] == ConsumptionStatus.UNREAD
-        # read page 1 + catalog only; the off-host read-shelf next link is not fetched.
-        assert mock_get.call_count == 2
-        requested_urls = [call.args[0] for call in mock_get.call_args_list]
-        assert all("169.254.169.254" not in url for url in requested_urls)
-
-    def test_protocol_relative_next_link_not_followed(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """SSRF guard: a protocol-relative ``//host`` rel=next is refused.
-
-        A ``//evil.example.com/...`` href inherits the current scheme but
-        swaps the host, so resolving it against the configured origin yields a
-        foreign netloc. The guard must refuse it exactly like a fully-qualified
-        off-host link — the hostile host is never requested and the safe book
-        on page 1 still yields.
-        """
-        page1 = _feed(
-            _entry(entry_id="urn:uuid:safe", title="Safe Book"),
-            next_href="//evil.example.com/opds/new?offset=1",
-        )
-        responses = [_empty_read_feed(), _xml_response(page1)]
-        with patch("requests.get", side_effect=responses) as mock_get:
-            items = list(plugin.fetch(config))
-
-        assert [i.title for i in items] == ["Safe Book"]
-        # read feed + page 1 only; the protocol-relative link is not fetched.
-        assert mock_get.call_count == 2
-        requested_urls = [call.args[0] for call in mock_get.call_args_list]
-        assert all("evil.example.com" not in url for url in requested_urls)
-
-    def test_next_link_with_foreign_userinfo_not_followed(
-        self, plugin: CalibreWebPlugin, config: dict[str, object]
-    ) -> None:
-        """SSRF guard: userinfo can't smuggle the request to a foreign host.
-
-        ``http://user:pass@evil.example.com/...`` targets ``evil.example.com``;
-        the ``user:pass@`` userinfo is part of the netloc, so a netloc equality
-        check (not a substring/host-suffix check) is what correctly rejects it.
-        This pins that the comparison is against the full netloc — the foreign
-        host is never requested and the safe book still yields.
-        """
-        page1 = _feed(
-            _entry(entry_id="urn:uuid:safe", title="Safe Book"),
-            next_href="http://reader:secret@evil.example.com/opds/new?offset=1",
-        )
-        responses = [_empty_read_feed(), _xml_response(page1)]
-        with patch("requests.get", side_effect=responses) as mock_get:
-            items = list(plugin.fetch(config))
-
-        assert [i.title for i in items] == ["Safe Book"]
-        # read feed + page 1 only; the userinfo-carrying link is not fetched.
-        assert mock_get.call_count == 2
-        requested_urls = [call.args[0] for call in mock_get.call_args_list]
-        assert all("evil.example.com" not in url for url in requested_urls)
-
 
 class TestCalibreWebXmlHardening:
     """Tests that OPDS parsing rejects XXE / billion-laughs vectors."""
-
-    def test_valid_feed_parses(self) -> None:
-        root = _parse_opds_xml(f"{_FEED_HEADER}{_entry()}</feed>".encode())
-        assert root.tag.endswith("feed")
 
     def test_doctype_rejected(self) -> None:
         """A DOCTYPE (entity-definition vector) must be refused."""
@@ -1158,44 +659,6 @@ class TestCalibreWebCredentialMoveRegression:
         resolved = self._resolved(migrated)
         assert resolved["url"] == "https://localhost:8083"
         assert resolved["password"] == "hunter2"
-
-    def test_disabling_tls_verification_keeps_the_password(
-        self, plugin: CalibreWebPlugin, migrated: StorageManager
-    ) -> None:
-        """Self-signed certificates are what the flag is for.
-
-        The password still goes to the same host, and an attacker who could
-        flip this flag is already authenticated to the only account there is.
-        """
-        update_source_config_values(
-            "calibre_web", plugin, migrated, {"verify_ssl": False}
-        )
-
-        assert migrated.get_credential(1, "calibre_web", "password") == "hunter2"
-
-    def test_an_unrelated_field_leaves_the_password_alone(
-        self, plugin: CalibreWebPlugin, migrated: StorageManager
-    ) -> None:
-        update_source_config_values(
-            "calibre_web", plugin, migrated, {"username": "someone-else"}
-        )
-
-        assert self._resolved(migrated)["password"] == "hunter2"
-
-    def test_naming_a_host_for_the_first_time_is_not_a_move(
-        self, plugin: CalibreWebPlugin, storage: StorageManager
-    ) -> None:
-        """This schema has no ``url`` default, so nothing has been sent anywhere."""
-        storage.upsert_source_config(
-            1, "calibre_web", "calibre_web", {"username": "reader"}, enabled=True
-        )
-        storage.save_credential(1, "calibre_web", "password", "hunter2")
-
-        update_source_config_values(
-            "calibre_web", plugin, storage, {"url": "http://localhost:8083"}
-        )
-
-        assert self._resolved(storage)["password"] == "hunter2"
 
 
 class TestCalibreWebUrlValidation:

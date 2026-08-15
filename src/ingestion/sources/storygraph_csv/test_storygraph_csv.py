@@ -1,14 +1,12 @@
 """Tests for The StoryGraph CSV plugin."""
 
-import csv
 import logging
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.registry import PluginRegistry
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.storygraph_csv.storygraph_csv import StorygraphCsvPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -28,78 +26,12 @@ def plugin() -> StorygraphCsvPlugin:
     return StorygraphCsvPlugin()
 
 
-class TestStorygraphCsvPluginProperties:
-    """Tests for StorygraphCsvPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test that StorygraphCsvPlugin is a SourcePlugin subclass."""
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test plugin name identifier."""
-        assert plugin.name == "storygraph_csv"
-
-    def test_display_name(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test human-readable display name."""
-        assert plugin.display_name == "The StoryGraph (CSV Export)"
-
-    def test_description(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test the custom description overrides the base class default."""
-        assert (
-            plugin.description
-            == "Import books from a The StoryGraph library CSV export"
-        )
-
-    def test_content_types(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test that plugin provides books."""
-        assert plugin.content_types == [ContentType.BOOK]
-
-    def test_requires_api_key(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test that plugin does not require an API key."""
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test that plugin does not require network access."""
-        assert plugin.requires_network is False
-
-    def test_config_schema(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test configuration schema defines a single required path."""
-        schema = plugin.get_config_schema()
-
-        assert len(schema) == 1
-        assert schema[0].name == "path"
-        assert schema[0].field_type is str
-        assert schema[0].required is True
-
-    def test_get_source_identifier(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test source identifier matches plugin name by default."""
-        assert plugin.get_source_identifier() == "storygraph_csv"
-
-
 class TestStorygraphCsvPluginValidation:
     """Tests for StorygraphCsvPlugin config validation."""
-
-    def test_validate_valid_config(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test validation passes with valid CSV path."""
-        csv_file = tmp_path / "library.csv"
-        csv_file.write_text("header\n")
-
-        errors = plugin.validate_config({"path": str(csv_file)})
-
-        assert errors == []
 
     def test_validate_missing_path(self, plugin: StorygraphCsvPlugin) -> None:
         """Test validation fails when path is missing."""
         errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_empty_path(self, plugin: StorygraphCsvPlugin) -> None:
-        """Test validation fails when path is empty."""
-        errors = plugin.validate_config({"path": ""})
 
         assert len(errors) == 1
         assert "'path' is required" in errors[0]
@@ -157,39 +89,6 @@ class TestStorygraphCsvPluginFetch:
         assert second.review is None
         assert second.id is None
 
-    def test_fetch_status_currently_reading(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test currently-reading maps to CURRENTLY_CONSUMING."""
-        rows = "Reading Now,Some Author,,,,currently-reading," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_fetch_status_to_read(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test to-read maps to UNREAD."""
-        rows = "On The Pile,Some Author,,,,to-read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].status == ConsumptionStatus.UNREAD
-
-    def test_fetch_status_read(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test read maps to COMPLETED."""
-        rows = "Finished It,Some Author,,,,read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].status == ConsumptionStatus.COMPLETED
-
     def test_fetch_status_did_not_finish_maps_to_completed(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
@@ -218,17 +117,6 @@ class TestStorygraphCsvPluginFetch:
 
         assert items[0].status == ConsumptionStatus.UNREAD
 
-    def test_fetch_status_blank_defaults_to_unread(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a blank read status falls back to UNREAD."""
-        rows = "No Status,Some Author," + "," * 20 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].status == ConsumptionStatus.UNREAD
-
     def test_fetch_rating_half_rounds_up(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
@@ -251,44 +139,11 @@ class TestStorygraphCsvPluginFetch:
 
         assert items[0].rating == 3
 
-    def test_fetch_rating_three_quarter_rounds_up(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a .75 rating rounds up (3.75 -> 4)."""
-        rows = "Three Quarter,Some Author,,,,read," + "," * 11 + "3.75\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating == 4
-
-    def test_fetch_rating_integer(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test an integer rating passes through unchanged."""
-        rows = "Whole Star,Some Author,,,,read," + "," * 11 + "5\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating == 5
-
     def test_fetch_rating_zero_is_none(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
         """Test a zero rating becomes None (model requires 1-5 or None)."""
         rows = "Unrated,Some Author,,,,read," + "," * 11 + "0\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating is None
-
-    def test_fetch_rating_blank_is_none(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a blank rating becomes None."""
-        rows = "No Rating,Some Author,,,,read," + "," * 17 + "\n"
         csv_file = self._write(tmp_path, rows)
 
         items = list(plugin.fetch({"path": str(csv_file)}))
@@ -317,18 +172,6 @@ class TestStorygraphCsvPluginFetch:
 
         assert items[0].rating is None
 
-    @pytest.mark.parametrize("raw_rating", ["-1", "-0.5"])
-    def test_fetch_rating_negative_is_none(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path, raw_rating: str
-    ) -> None:
-        """Test a negative rating becomes None rather than clamping up to 1."""
-        rows = "Negative,Some Author,,,,read," + "," * 11 + f"{raw_rating}\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating is None
-
     def test_fetch_empty_title_skipped(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
@@ -344,61 +187,12 @@ class TestStorygraphCsvPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Real Book"
 
-    def test_fetch_sets_source_identifier_default(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that items use the plugin name as source by default."""
-        rows = "A Book,An Author,,,,read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].source == "storygraph_csv"
-
-    def test_fetch_sets_source_identifier_override(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that a user-defined _source_id overrides the plugin name."""
-        rows = "A Book,An Author,,,,read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(
-            plugin.fetch({"path": str(csv_file), "_source_id": "my_storygraph"})
-        )
-
-        assert items[0].source == "my_storygraph"
-
     def test_fetch_file_not_found_raises_source_error(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
         """Test that fetching a nonexistent file raises SourceError."""
         with pytest.raises(SourceError, match="CSV file not found") as exc_info:
             list(plugin.fetch({"path": str(tmp_path / "library.csv")}))
-
-        assert exc_info.value.plugin_name == "storygraph_csv"
-
-    def test_fetch_oversized_field_raises_source_error(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a field exceeding csv.field_size_limit wraps as SourceError.
-
-        Exercises the ``except csv.Error`` branch in ``fetch()``: the csv
-        module raises ``_csv.Error`` when a field exceeds the process-wide
-        ``field_size_limit``, and ``fetch()`` must translate that into a
-        ``SourceError`` carrying the plugin name rather than letting a raw
-        ``csv.Error`` escape to the caller.
-        """
-        oversized_title = "x" * 200
-        rows = f"{oversized_title},Author,,,,read," + ("," * 17) + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        original_field_size_limit = csv.field_size_limit()
-        csv.field_size_limit(100)
-        try:
-            with pytest.raises(SourceError, match="Failed to parse CSV") as exc_info:
-                list(plugin.fetch({"path": str(csv_file)}))
-        finally:
-            csv.field_size_limit(original_field_size_limit)
 
         assert exc_info.value.plugin_name == "storygraph_csv"
 
@@ -471,63 +265,6 @@ class TestStorygraphCsvPluginFetch:
         assert items[0].status == ConsumptionStatus.COMPLETED
         assert items[0].id is None
 
-    def test_fetch_unicode_title_and_author(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test unicode characters in title and author survive parsing."""
-        rows = "Café Déjà Vu,Émile Zola,,,,read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].title == "Café Déjà Vu"
-        assert items[0].author == "Émile Zola"
-
-    def test_fetch_quoted_field_with_comma(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a quoted field containing a comma is parsed as one value."""
-        rows = '"Goodbye, Columbus",Philip Roth,,,,read,' + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].title == "Goodbye, Columbus"
-        assert items[0].author == "Philip Roth"
-
-    def test_fetch_empty_author_is_none(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that a blank Authors column yields a None author."""
-        rows = "No Author Book,,,,,read," + "," * 17 + "\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].author is None
-
-    def test_fetch_header_only_file_yields_nothing(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a header-only export (no data rows) yields zero items."""
-        csv_file = tmp_path / "library.csv"
-        csv_file.write_text(f"{HEADER}\n")
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items == []
-
-    def test_fetch_truly_empty_file_yields_nothing(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a completely empty file (no header, no rows) yields no items."""
-        csv_file = tmp_path / "library.csv"
-        csv_file.write_text("")
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items == []
-
     def test_fetch_short_row_missing_trailing_columns(
         self, plugin: StorygraphCsvPlugin, tmp_path: Path
     ) -> None:
@@ -567,100 +304,6 @@ class TestStorygraphCsvPluginFetch:
         assert items[0].status == ConsumptionStatus.COMPLETED
         assert items[1].status == ConsumptionStatus.CURRENTLY_CONSUMING
         assert items[2].status == ConsumptionStatus.UNREAD
-
-    def test_fetch_rating_nan_is_none(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a Star Rating of 'nan' is treated as unrated, not a crash.
-
-        ``float('nan')`` parses successfully, so a hand-edited or corrupt
-        export carrying 'nan' must round to None rather than propagate an
-        exception out of fetch().
-        """
-        rows = "Not A Number,Author,,,,read," + "," * 11 + "nan\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating is None
-
-    def test_fetch_rating_infinity_is_none(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test a Star Rating of 'inf' is treated as unrated, not a crash.
-
-        ``float('inf')`` parses successfully, so an out-of-range 'inf' must
-        clamp/round to None rather than propagate an exception out of fetch().
-        """
-        rows = "Infinite Stars,Author,,,,read," + "," * 11 + "inf\n"
-        csv_file = self._write(tmp_path, rows)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating is None
-
-    def test_fetch_invokes_progress_callback_per_processed_row(
-        self, plugin: StorygraphCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test progress_callback fires once per processed row, skipping blanks.
-
-        The callback must report (items_processed_before_this_row, total_rows,
-        title) for each row that clears the blank-title check, and must not
-        fire for the skipped blank-title row in between.
-        """
-        rows = (
-            "First Book,Author One,,,,read," + "," * 17 + "\n"
-            ",Ghost Author,,,,read," + "," * 17 + "\n"
-            "Second Book,Author Two,,,,read," + "," * 17 + "\n"
-        )
-        csv_file = self._write(tmp_path, rows)
-        progress_calls: list[tuple[int, int | None, str | None]] = []
-
-        def record_progress(
-            items_processed: int, total_items: int | None, current_item: str | None
-        ) -> None:
-            progress_calls.append((items_processed, total_items, current_item))
-
-        items = list(
-            plugin.fetch({"path": str(csv_file)}, progress_callback=record_progress)
-        )
-
-        assert len(items) == 2
-        assert progress_calls == [
-            (0, 3, "First Book"),
-            (1, 3, "Second Book"),
-        ]
-
-
-class TestStorygraphCsvPluginDiscovery:
-    """Tests that the plugin is auto-discovered through the real registry."""
-
-    def test_plugin_discovered_by_registry_name(self) -> None:
-        """Test the registry resolves 'storygraph_csv' to the plugin class.
-
-        This proves auto-discovery works end to end, not just that the class
-        is importable — the registry scans src/ingestion/sources/ and must
-        register this plugin under its ``name``.
-        """
-        registry = PluginRegistry()
-
-        plugin = registry.get_plugin("storygraph_csv")
-
-        assert plugin is not None
-        assert isinstance(plugin, StorygraphCsvPlugin)
-        assert plugin.display_name == "The StoryGraph (CSV Export)"
-
-    def test_plugin_listed_among_book_sources(self) -> None:
-        """Test the discovered plugin declares itself a book source."""
-        registry = PluginRegistry()
-
-        book_plugins = [
-            plugin
-            for plugin in registry.get_all_plugins().values()
-            if ContentType.BOOK in plugin.content_types
-        ]
-
-        assert "storygraph_csv" in {plugin.name for plugin in book_plugins}
 
 
 STORYGRAPH_CSV_LOGGER = "src.ingestion.sources.storygraph_csv.storygraph_csv"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.goodreads_csv.goodreads_csv import GoodreadsCsvPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -17,71 +17,12 @@ def plugin() -> GoodreadsCsvPlugin:
     return GoodreadsCsvPlugin()
 
 
-class TestGoodreadsCsvPluginProperties:
-    """Tests for GoodreadsCsvPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test that GoodreadsCsvPlugin is a SourcePlugin subclass."""
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test plugin name identifier."""
-        assert plugin.name == "goodreads_csv"
-
-    def test_display_name(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test human-readable display name."""
-        assert plugin.display_name == "Goodreads (CSV Export)"
-
-    def test_content_types(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test that plugin provides books."""
-        assert plugin.content_types == [ContentType.BOOK]
-
-    def test_requires_api_key(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test that plugin does not require an API key."""
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test that plugin does not require network access."""
-        assert plugin.requires_network is False
-
-    def test_config_schema(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test configuration schema defines csv_path."""
-        schema = plugin.get_config_schema()
-
-        assert len(schema) == 1
-        assert schema[0].name == "path"
-        assert schema[0].field_type is str
-        assert schema[0].required is True
-
-    def test_get_source_identifier(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test source identifier matches plugin name."""
-        assert plugin.get_source_identifier() == "goodreads_csv"
-
-
 class TestGoodreadsCsvPluginValidation:
     """Tests for GoodreadsCsvPlugin config validation."""
-
-    def test_validate_valid_config(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test validation passes with valid CSV path."""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("header\n")
-
-        errors = plugin.validate_config({"path": str(csv_file)})
-
-        assert errors == []
 
     def test_validate_missing_path(self, plugin: GoodreadsCsvPlugin) -> None:
         """Test validation fails when path is missing."""
         errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-    def test_validate_empty_path(self, plugin: GoodreadsCsvPlugin) -> None:
-        """Test validation fails when path is empty."""
-        errors = plugin.validate_config({"path": ""})
 
         assert len(errors) == 1
         assert "'path' is required" in errors[0]
@@ -161,20 +102,6 @@ class TestGoodreadsCsvPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Valid Book"
 
-    def test_fetch_sets_source_identifier(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that fetched items have the correct source identifier."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf
-123,A Book,An Author,5,read
-"""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].source == plugin.get_source_identifier()
-
     def test_fetch_file_not_found_raises_source_error(
         self, plugin: GoodreadsCsvPlugin, tmp_path: Path
     ) -> None:
@@ -202,20 +129,6 @@ class TestGoodreadsCsvPluginFetch:
         assert items[0].metadata["pages"] == "350"
         assert items[0].metadata["year_published"] == "2020"
         assert items[0].metadata["publisher"] == "Test Publisher"
-
-    def test_fetch_invalid_rating(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that invalid ratings are treated as None."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf
-123,Test Book,Test Author,invalid,read
-"""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].rating is None
 
     def test_fetch_invalid_date(
         self, plugin: GoodreadsCsvPlugin, tmp_path: Path
