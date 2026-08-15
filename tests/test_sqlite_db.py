@@ -908,7 +908,6 @@ class TestGetContentItemsSearch:
         assert [item.title for item in results] == ["The Hobbit"]
 
     def test_search_ands_with_type_filter(self, temp_db: SQLiteDB) -> None:
-        """Search combines with a content_type filter (AND)."""
         temp_db.save_content_item(
             ContentItem(
                 id="movie_avatar",
@@ -1352,13 +1351,6 @@ class TestTheDerivedSearchColumns:
     def test_a_creator_a_later_sync_fills_becomes_searchable(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The creator column is fill-only, so it can arrive after the title.
-
-        The derived columns are read back from the row rather than taken from
-        the item being saved, which is what makes this case work: enrichment
-        supplies the author on a second pass and the search text has to gain
-        it then.
-        """
         temp_db.save_content_item(
             ContentItem(
                 id="hobbit",
@@ -1941,27 +1933,57 @@ class TestRatingSetOnce:
 
 
 class TestBlankReviewNeverFillsTheColumn:
-    """Regression tests for a blank review reaching the fill-only leg.
+    """A whitespace review filled the column, blocking every later value."""
 
-    Bug reported: ``_upsert_content_item`` filled an empty ``review`` column
-    from any incoming value that was not ``None``, whitespace included. A
-    blank is then indistinguishable from a review the user wrote, so the
-    fill-only rule refuses every later value and the field is blocked for
-    good. ``complete_content_item`` hit this first: the upsert runs before
-    ``_write_completion``, so the blank was already stored by the time that
-    method's own guard was reached.
-    Root cause: the guard lived on ``_write_completion`` and on each surface's
-    request validation, never on the leg that does the filling — so a source
-    plugin yielding a whitespace CSV cell poisoned the column.
-    Fix: the upsert treats a blank incoming review as no review at all, on
-    both the fill and the insert leg, so nothing a door writes can block the
-    column.
-    """
+    @pytest.mark.parametrize("blank_review", ["", "   ", "\n"])
+    def test_insert_stores_null_for_a_blank_review_regression(
+        self, temp_db: SQLiteDB, blank_review: str
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="book_blank_new",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                review=blank_review,
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review is None
+
+    @pytest.mark.parametrize("blank_review", ["", "   ", "\n"])
+    def test_a_blank_review_does_not_block_a_later_fill_regression(
+        self, temp_db: SQLiteDB, blank_review: str
+    ) -> None:
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="book_blank_fill",
+                title="Foundation",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                review=blank_review,
+            )
+        )
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="book_blank_fill",
+                title="Foundation",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                review="Classic sci-fi",
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Classic sci-fi"
 
     def test_a_blank_review_does_not_overwrite_a_stored_one(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Guard: the fill-only rule is unchanged for a review that exists."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="book_blank_keep",
@@ -2000,7 +2022,6 @@ class TestStatusForwardOnly:
     def test_status_does_not_regress_completed_to_unread(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Completed items should not be reverted to unread by re-sync."""
         item_v1 = ContentItem(
             id="s2",
             title="Book B",
@@ -2152,7 +2173,6 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata["isbn"] == "9780441013593"
 
     def test_remaining_metadata_json_merges_additively(self, temp_db: SQLiteDB) -> None:
-        """Remaining metadata (non-column keys) should merge with existing taking precedence."""
         item_v1 = ContentItem(
             id="detail_6",
             title="Firefly",
@@ -2555,7 +2575,6 @@ class TestCompletionDateStamping:
     def test_ui_completion_stamps_date_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Marking an undated item complete records today's date."""
         item = ContentItem(
             id="stamp_1",
             title="Unread Book",
@@ -2760,6 +2779,29 @@ class TestCompleteContentItem:
         assert retrieved is not None
         assert retrieved.rating == 2
         assert retrieved.review == "On reflection, overrated"
+
+    @pytest.mark.parametrize("blank_review", ["", "   ", "\n"])
+    def test_blank_review_does_not_replace_the_stored_one_regression(
+        self, temp_db: SQLiteDB, blank_review: str
+    ) -> None:
+        """This door overwrites rather than fills, so a completion carrying a
+        blank replaced the review the user wrote — and, stored, that blank then
+        blocked the fill-only leg against every later one."""
+        db_id = self._seeded(temp_db)
+
+        temp_db.complete_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                review=blank_review,
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.review == "Loved it"
 
     def test_completion_and_creation_are_one_transaction_regression(
         self, temp_db: SQLiteDB
@@ -3153,8 +3195,6 @@ class TestTvSeasonSyncRegression:
         )
         db_id = temp_db.save_content_item(first)
 
-        # A later sync: season 1's incoming date is stale (earlier than what
-        # we already know), and season 2 is newly watched.
         resync = ContentItem(
             id="trakt:show1",
             title="Regression Show",
@@ -3178,8 +3218,6 @@ class TestTvSeasonSyncRegression:
             "1": "2026-06-01T00:00:00+00:00",  # later existing date kept
             "2": "2026-06-02T00:00:00+00:00",  # new season gap-filled
         }
-        # seasons_watched unions: the sync adds the season it now reports
-        # finished and removes nothing.
         assert retrieved.metadata.get("seasons_watched") == [1, 2]
 
     def test_sync_gap_fills_dates_onto_pre_feature_row_regression(
@@ -3561,7 +3599,6 @@ class TestCreatorColumnEdges:
     def test_a_later_sync_does_not_overwrite_a_stored_creator(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The creator is fill-only, like every other non-list column."""
         first = temp_db.save_content_item(
             ContentItem(
                 id="movie-fill-only",
@@ -3949,8 +3986,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert all_games[0].review == "Amazing game"
 
     def test_merge_moves_detail_row_when_kept_has_none(self, temp_db: SQLiteDB) -> None:
-        """When kept row has no detail row, duplicate's detail row is moved."""
-        # Insert kept row with no detail row
         keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-hollow",
@@ -3958,7 +3993,6 @@ class TestCrossSourceDuplicateDetectionRegression:
             normalized_title="hollow knight",
             source="steam",
         )
-        # Insert duplicate with a detail row
         with temp_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -4163,12 +4197,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.metadata.get("episodes") == 20
 
     def test_merge_metadata_additively_in_detail_table(self, temp_db: SQLiteDB) -> None:
-        """merge_detail_tables merges metadata JSON additively.
-
-        When both rows have metadata in a detail table, the merge should
-        combine them with existing keys taking precedence.
-        """
-        # Insert kept item with metadata via save_content_item
         kept = ContentItem(
             id="steam-witcher",
             title="The Witcher 3",
@@ -4179,7 +4207,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
         keep_id = temp_db.save_content_item(kept)
 
-        # Insert duplicate with different metadata via raw SQL
         with temp_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -4204,13 +4231,10 @@ class TestCrossSourceDuplicateDetectionRegression:
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
         assert retrieved.metadata is not None
-        # Genres merged additively
         genres = retrieved.metadata.get("genres", [])
         assert "RPG" in genres
         assert "Action" in genres
-        # Metadata merged: existing key (playtime_hours=120) takes precedence
         assert retrieved.metadata.get("playtime_hours") == 120
-        # New key from duplicate is added
         assert retrieved.metadata.get("award") == "GOTY 2015"
 
     def test_schema_migration_dedup_merges_detail_tables_regression(

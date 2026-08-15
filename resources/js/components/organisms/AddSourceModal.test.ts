@@ -222,4 +222,31 @@ describe('AddSourceModal', () => {
     expect(wrapper.emitted('created')).toEqual([['opt']])
     expect(wrapper.emitted('close')).toBeTruthy()
   })
+
+  describe('while a create is in flight', () => {
+    const FOCUSABLE =
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+      ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+    async function mountMidSubmit() {
+      const { wrapper, store } = await mountWithPlugins()
+      vi.spyOn(store, 'createSource').mockReturnValue(new Promise(() => {}))
+      await wrapper.find('#add-source-id').setValue('calibre-web')
+      await wrapper.find('#add-source-field-base_url').setValue('http://cw')
+      await wrapper.find('#add-source-field-username').setValue('me')
+      await wrapper
+        .find('[data-testid="add-source-secret-password"]')
+        .setValue('hunter2')
+      await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('keeps at least one focusable element so the focus trap cannot collapse', async () => {
+      // `disabled` everywhere left none, so Tab walked out (WCAG 2.4.3).
+      const wrapper = await mountMidSubmit()
+
+      expect(wrapper.element.querySelectorAll(FOCUSABLE).length).toBeGreaterThan(0)
+    })
+  })
 })
