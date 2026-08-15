@@ -10,10 +10,11 @@ Supports series detection for:
 import math
 import re
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from src.models.content import ContentItem, ContentType
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp
 
 # Upper bound on TV season numbers and counts. No real series approaches this,
@@ -391,6 +392,57 @@ def inject_seasons_watched_tracking(
                 merged[show_title].add(season_num)
 
     return merged
+
+
+def all_seasons_watched(
+    seasons_watched: Sequence[int] | None, total_seasons: int | None
+) -> bool:
+    """Whether every season of a show has been watched.
+
+    An unknown total means no: nothing proves a show finished without a count
+    of the seasons it has.
+    """
+    if not seasons_watched or not total_seasons or total_seasons < 1:
+        return False
+    # Deduplicated, and int-filtered because a stored list arrives from a JSON
+    # blob: `--seasons-watched 1,1,1` must not finish a three-season show.
+    return len({s for s in seasons_watched if isinstance(s, int)}) >= total_seasons
+
+
+def status_for_seasons_watched(
+    seasons_watched: Sequence[int] | None, total_seasons: int | None
+) -> ConsumptionStatus:
+    """The status a show's watched-season list implies."""
+    if not seasons_watched:
+        return ConsumptionStatus.UNREAD
+    if all_seasons_watched(seasons_watched, total_seasons):
+        return ConsumptionStatus.COMPLETED
+    return ConsumptionStatus.CURRENTLY_CONSUMING
+
+
+def seasons_watched_for_completed(total_seasons: int | None) -> list[int] | None:
+    """Every season of a show the user has marked completed.
+
+    ``None`` when the total is unknown — callers leave the stored list alone
+    rather than inventing a history from a count nobody reported.
+    """
+    if not total_seasons or total_seasons < 1:
+        return None
+    return list(range(1, min(total_seasons, MAX_SEASONS) + 1))
+
+
+def merge_seasons_watched(existing: Any, incoming: Any) -> list[int] | None:
+    """Union of a stored and an incoming watched-season list.
+
+    A sync may add a season, never remove one: manual check-offs share the
+    list. ``None`` when neither side is a list, leaving the stored value alone.
+    """
+    sides = [side for side in (existing, incoming) if isinstance(side, list)]
+    if not sides:
+        return None
+    return sorted(
+        {season for side in sides for season in side if isinstance(season, int)}
+    )
 
 
 def latest_season_watched_date(item: ContentItem) -> date | None:

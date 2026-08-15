@@ -1197,6 +1197,64 @@ class TestLibraryEditPartialUpdate:
         assert call_kwargs["review"] is UNSET
 
 
+class TestLibraryEditCompletesEverySeasonRegression:
+    """`library edit --status completed` left the checklist partial (#123).
+
+    Cause: the CLI sent the stored status when --status was absent, so storage
+    could not tell a stated status from a filled-in one. Fix: absent is UNSET.
+    """
+
+    def test_completed_status_ticks_every_season_regression(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """`--status completed` marks every season of the show watched."""
+        storage = StorageManager(sqlite_path=tmp_path / "library.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-1",
+                title="The Expanse",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                rating=None,
+                metadata={"seasons": 5, "seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--status", "completed"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.status == ConsumptionStatus.COMPLETED
+        assert stored.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
+
+    def test_seasons_only_edit_forwards_unset_status_regression(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """An absent --status reaches storage as UNSET, not the stored value."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(
+            db_id=1, content_type=ContentType.TV_SHOW
+        )
+        mock_storage.update_item_from_ui.return_value = True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--seasons-watched", "1,2"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["status"] is UNSET
+        assert call_kwargs["seasons_watched"] == [1, 2]
+
+
 class TestLibraryEditClearing:
     """Regression tests for clearing a rating or review from the CLI.
 

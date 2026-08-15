@@ -106,6 +106,12 @@ from src.storage.schema import (
 )
 from src.utils.dates import local_today, merge_seasons_watched_dates, utc_now
 from src.utils.list_merge import merge_string_lists
+from src.utils.series import (
+    all_seasons_watched,
+    merge_seasons_watched,
+    seasons_watched_for_completed,
+    status_for_seasons_watched,
+)
 from src.utils.sorting import normalize_for_search, search_text_matches
 
 
@@ -771,6 +777,16 @@ class SQLiteDB:
                 pass
             # Existing keys take precedence, incoming fills gaps
             merged_remaining = {**remaining_metadata, **existing_remaining}
+            # Exception: seasons_watched unions. Existing-wins is keyed on
+            # presence, so the empty list an in-progress show's first sync
+            # writes would be permanent, and a season finished since could
+            # never be promoted.
+            combined_seasons = merge_seasons_watched(
+                existing_remaining.get("seasons_watched"),
+                remaining_metadata.get("seasons_watched"),
+            )
+            if combined_seasons is not None:
+                merged_remaining["seasons_watched"] = combined_seasons
             # Exception: seasons_watched_dates merges per season, keeping the
             # later watch date — an earlier sync date never overwrites a
             # later manual/existing date, but a genuinely newer Trakt watch
@@ -892,7 +908,7 @@ class SQLiteDB:
             return
 
         # If all seasons are still watched, no regression needed
-        if total_seasons is None or len(seasons_watched) >= total_seasons:
+        if total_seasons is None or all_seasons_watched(seasons_watched, total_seasons):
             return
 
         # New seasons available that user hasn't watched.
@@ -1374,7 +1390,7 @@ class SQLiteDB:
     def update_item_from_ui(
         self,
         db_id: int,
-        status: str,
+        status: str | Unset = UNSET,
         rating: int | None | Unset = UNSET,
         review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
@@ -1391,10 +1407,12 @@ class SQLiteDB:
         status, rating and review, and status may go backward.
 
         Only the fields the caller actually supplied are written, but the
-        arguments say "not supplied" in three different ways, so read the one
+        arguments say "not supplied" in two different ways, so read the one
         you are passing:
 
-        - ``status`` is required and always written.
+        - ``status`` uses :data:`UNSET` for "leave it alone", because for a TV
+          show a supplied status is an instruction about the season list too
+          (see below) and an unsupplied one must not read as a fresh one.
         - ``rating`` and ``review`` use :data:`UNSET` for "leave it alone",
           because they are nullable and ``None`` therefore has to mean
           "clear it". A blank ``review`` clears it as well, so the only two
@@ -1413,9 +1431,14 @@ class SQLiteDB:
           ``tags`` on every save, so removing the last one there clears the
           stored list.
 
-        For TV shows with seasons_watched provided, status is auto-derived:
-        0 watched = unread, all watched = completed, partial = currently_consuming.
-        The auto-derived status overrides the status parameter.
+        For a TV show, status and the season list are two views of one fact, so
+        whichever the caller supplied fills in the one it did not. A supplied
+        ``seasons_watched`` with no status derives the status (0 watched =
+        unread, all watched = completed, partial = currently_consuming); a
+        supplied ``completed`` with no season list ticks every season, unless
+        the show's season total is unknown, in which case the stored list
+        stands. A caller supplying both is taken at its word: the edit dialog
+        derives the pair itself and sends a consistent one.
 
         Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
         detail-table metadata: a season newly checked off in this edit (not
@@ -1444,7 +1467,8 @@ class SQLiteDB:
 
         Args:
             db_id: Database ID of the item to update.
-            status: New status value (unread, currently_consuming, completed).
+            status: New status value (unread, currently_consuming, completed),
+                UNSET to leave unchanged.
             rating: New rating (1-5), None to clear, UNSET to leave unchanged.
             review: New review text, None or blank to clear, UNSET to leave
                 unchanged.
@@ -1482,10 +1506,11 @@ class SQLiteDB:
 
             content_type = row["content_type"]
             existing_status = row["status"]
-            resolved_status = status
+            resolved_status = existing_status if status is UNSET else status
 
-            # For TV shows with seasons_watched, auto-derive status
-            if content_type == "tv_show" and seasons_watched is not None:
+            # For a TV show, whichever of status and seasons the caller
+            # supplied derives the other; supplying both writes both as given.
+            if content_type == "tv_show":
                 cursor.execute(
                     "SELECT seasons, metadata FROM tv_show_details"
                     " WHERE content_item_id = ?",
@@ -1493,17 +1518,18 @@ class SQLiteDB:
                 )
                 tv_row = cursor.fetchone()
                 if tv_row:
-                    total_seasons = tv_row["seasons"] or 0
+                    total_seasons = tv_row["seasons"]
+                    if seasons_watched is None:
+                        if status == "completed":
+                            seasons_watched = seasons_watched_for_completed(
+                                total_seasons
+                            )
+                    elif status is UNSET:
+                        resolved_status = status_for_seasons_watched(
+                            seasons_watched, total_seasons
+                        ).value
 
-                    # Auto-derive status from seasons watched
-                    watched_count = len(seasons_watched)
-                    if watched_count == 0:
-                        resolved_status = "unread"
-                    elif total_seasons > 0 and watched_count >= total_seasons:
-                        resolved_status = "completed"
-                    else:
-                        resolved_status = "currently_consuming"
-
+                if tv_row and seasons_watched is not None:
                     # Merge seasons_watched into tv_show_details metadata
                     existing_metadata: dict[str, Any] = {}
                     if tv_row["metadata"]:

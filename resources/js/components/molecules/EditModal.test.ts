@@ -25,6 +25,15 @@ const defaultItem = {
   description: null,
 }
 
+const tvItem = {
+  ...defaultItem,
+  title: 'Test Show',
+  content_type: 'tv_show',
+  total_seasons: 5,
+  seasons_watched: [1, 2],
+  status: 'currently_consuming',
+}
+
 describe('EditModal', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -187,6 +196,49 @@ describe('EditModal', () => {
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
 
     expect((wrapper.emitted('save')![0][1] as { review: string | null }).review).toBe('  Loved it.  ')
+    wrapper.unmount()
+  })
+
+  it('picking completed ticks every season and sends both', async () => {
+    // Regression (#123): the modal resent the half-ticked checklist beside the
+    // new status, and the backend derived currently_consuming back over it.
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-status').setValue('completed')
+
+    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(5)
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    expect(wrapper.emitted('save')![0][1]).toEqual({
+      status: 'completed',
+      rating: null,
+      review: null,
+      genres: [],
+      tags: [],
+      description: null,
+      seasons_watched: [1, 2, 3, 4, 5],
+    })
+    wrapper.unmount()
+  })
+
+  it('emptying the checklist derives unread', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('.btn-secondary').find(b => b.text() === 'Deselect All')!.trigger('click')
+
+    // The select lost v-model when the derivation moved into handlers, so the
+    // dropdown showing what was sent is now a binding that can be dropped.
+    expect((wrapper.find('#edit-status').element as HTMLSelectElement).value).toBe('unread')
+
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    const payload = wrapper.emitted('save')![0][1] as { status: string; seasons_watched: number[] }
+    expect(payload.status).toBe('unread')
+    expect(payload.seasons_watched).toEqual([])
     wrapper.unmount()
   })
 

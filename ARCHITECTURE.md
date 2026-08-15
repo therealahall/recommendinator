@@ -69,6 +69,11 @@ Four methods on `SQLiteDB` write them.
 | `date_completed` | Later date wins |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
+A TV show's `seasons_watched` is the one metadata key the sync door merges as a
+union: a sync adds a season it has seen finished and can never drop one the user
+ticked by hand. Existing-wins would freeze the empty list an in-progress show's
+first sync writes.
+
 One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the sync raises its season count above the seasons the
@@ -93,8 +98,8 @@ supplied:
   resolved forward. A named date is written as given even when it precedes the
   stored one.
 - **`update_item_from_ui`** backs the web edit modal and `library edit`.
-  "Not supplied" is spelled three ways. `status` is required.
-  `rating` and `review` use the `UNSET` sentinel, because `None` has to mean
+  "Not supplied" is spelled two ways. `status`, `rating` and `review` use the
+  `UNSET` sentinel, because for the last two `None` has to mean
   clear. `seasons_watched`, `genres`, `tags` and `description` use `None`, so for
   those the *empty* value is the clear: `[]` or `""`. `PATCH /api/items/{id}` can
   clear all four. The web dialog sends `null` for an emptied description, and the
@@ -102,6 +107,13 @@ supplied:
 - **`set_item_ignored`** backs the Ignore buttons
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
+
+For a TV show, status and the season list are one fact. A supplied
+`seasons_watched` derives the status, a supplied `completed` ticks every season
+unless the season total is unknown, and a caller supplying both is taken at its
+word — the edit dialog derives the pair itself. `src/utils/series.py` owns that
+arithmetic for every caller: the edit door, the Trakt plugin and
+`_handle_tv_season_change`.
 
 **No door stores a blank review.** A stored `""` reads as a review the user wrote
 and blocks every later import from filling the field. The sync door declines to
@@ -233,8 +245,9 @@ Merge rules:
 - `ignored` is the OR of both rows
 - Genres and tags merge additively, monotonic columns (seasons, episodes) keep
   the higher value, and detail metadata merges existing-wins
-- `seasons_watched_dates` is the exception, merged per season keeping the later
-  watch date, so an ingestion date never overrides a user date
+- `seasons_watched` is the exception, unioned across both rows, and
+  `seasons_watched_dates` merged per season keeping the later watch date, so an
+  ingestion date never overrides a user date
 
 Consolidation deletes a row outright, so the `status` and `ignored` rules are
 what stop it reverting a completion or un-ignoring an item.

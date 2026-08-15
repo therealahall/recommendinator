@@ -42,6 +42,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp, parse_iso_timestamp
+from src.utils.series import all_seasons_watched
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -635,18 +636,25 @@ class TraktPlugin(SourcePlugin):
             if season_dates:
                 metadata["seasons_watched_dates"] = season_dates
 
+            # A show can finish by either count: every episode aired watched,
+            # or every season watched to its total. The second catches a show
+            # whose aired_episodes includes specials the user skipped.
+            completed = fully_watched or all_seasons_watched(
+                seasons_watched, total_seasons
+            )
+
             items[(ContentType.TV_SHOW, int(trakt_id))] = ContentItem(
                 id=f"trakt:{trakt_id}",
                 title=title,
                 content_type=ContentType.TV_SHOW,
                 status=(
                     ConsumptionStatus.COMPLETED
-                    if fully_watched
+                    if completed
                     else ConsumptionStatus.CURRENTLY_CONSUMING
                 ),
                 date_completed=(
                     local_date_from_iso_timestamp(entry.get("last_watched_at"))
-                    if fully_watched
+                    if completed
                     else None
                 ),
                 rating=None,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, computed } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
@@ -30,8 +30,11 @@ const description = ref(props.item.description ?? '')
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
-// Auto-derive TV status from season checklist
-watch(seasonsWatched, (watched) => {
+// Status and the checklist are two views of one fact, so each edit derives the
+// other and the payload is always self-consistent. Explicit handlers rather
+// than a watcher each way: watchers would retrigger each other.
+function onSeasonsChange(watched: number[]) {
+  seasonsWatched.value = watched
   if (!isTvShow.value) return
   const total = props.item.total_seasons!
   if (watched.length === 0) {
@@ -41,7 +44,14 @@ watch(seasonsWatched, (watched) => {
   } else {
     status.value = 'currently_consuming'
   }
-})
+}
+
+function onStatusChange(event: Event) {
+  status.value = (event.target as HTMLSelectElement).value
+  if (isTvShow.value && status.value === 'completed') {
+    seasonsWatched.value = Array.from({ length: props.item.total_seasons! }, (_, i) => i + 1)
+  }
+}
 
 function save() {
   const data: ItemEditRequest = {
@@ -79,7 +89,7 @@ function onBackdropClick(event: MouseEvent) {
 
       <div class="edit-field">
         <label for="edit-status">Status</label>
-        <select id="edit-status" v-model="status">
+        <select id="edit-status" :value="status" @change="onStatusChange">
           <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
@@ -98,8 +108,9 @@ function onBackdropClick(event: MouseEvent) {
 
       <div v-if="isTvShow" class="edit-field">
         <SeasonChecklist
-          v-model="seasonsWatched"
+          :model-value="seasonsWatched"
           :total-seasons="item.total_seasons!"
+          @update:model-value="onSeasonsChange"
         />
       </div>
 
