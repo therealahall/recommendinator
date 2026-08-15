@@ -97,7 +97,7 @@ fields it is less than you would expect:
 | `ignored` | Whatever the file states, in either direction. An absent column, a blank cell or a JSON `null` all say nothing, and your value stands |
 | `genre` | Merge in. An import never removes a genre |
 | `total_seasons` | Raise it. A smaller number is discarded |
-| `seasons_watched` | Merge in. An import adds a season, never removes one, so untick from the season checklist or `library edit --seasons-watched` |
+| `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
 | `year`, `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
 | creator: `author`, `director`, `creator`, `developer` | Fill an empty value, and nothing else. There is no edit surface for it either |
 

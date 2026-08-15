@@ -120,6 +120,11 @@ python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --descript
 **Only the flags you pass are written**, so a status-only edit cannot erase a
 rating. Passing one replaces it.
 
+A TV show is the exception, because status and the season list are one fact
+there: `--status unread` empties `seasons_watched` and `--status completed`
+ticks every season, whether or not you passed `--seasons-watched`. Pass both to
+say exactly what you mean.
+
 Emptying a field is a separate instruction. `--clear-rating` and `--clear-review`
 are the only way to store nothing there, and neither may be combined with its
 value flag. `--review ""` is refused, pointing you at `--clear-review`, because
