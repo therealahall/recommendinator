@@ -4114,7 +4114,7 @@ class TestUpdateItemFromUi:
         assert retrieved.metadata["seasons_watched_dates"] == {}
 
     def test_update_auto_derive_status_all_watched(self, temp_db: SQLiteDB) -> None:
-        """All seasons watched auto-derives status to completed."""
+        """All seasons watched, with no status supplied, derives completed."""
         item = ContentItem(
             id="ui_6",
             title="Short Show",
@@ -4124,16 +4124,14 @@ class TestUpdateItemFromUi:
         )
         db_id = temp_db.save_content_item(item)
 
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="unread", seasons_watched=[1, 2, 3]
-        )
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2, 3])
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
     def test_update_auto_derive_status_some_watched(self, temp_db: SQLiteDB) -> None:
-        """Partial seasons watched auto-derives status to currently_consuming."""
+        """Partial seasons watched, with no status supplied, derives consuming."""
         item = ContentItem(
             id="ui_7",
             title="Long Show",
@@ -4143,16 +4141,31 @@ class TestUpdateItemFromUi:
         )
         db_id = temp_db.save_content_item(item)
 
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="unread", seasons_watched=[1, 2]
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
+    def test_repeated_season_counts_once(self, temp_db: SQLiteDB) -> None:
+        """A season listed twice does not finish a show it has not finished."""
+        item = ContentItem(
+            id="ui_7a",
+            title="Repeated Season Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"seasons": 3},
         )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 1, 1])
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
     def test_update_auto_derive_status_none_watched(self, temp_db: SQLiteDB) -> None:
-        """Empty seasons watched auto-derives status to unread."""
+        """Emptying the checklist, with no status supplied, derives unread."""
         item = ContentItem(
             id="ui_8",
             title="Unwatched Show",
@@ -4162,7 +4175,7 @@ class TestUpdateItemFromUi:
         )
         db_id = temp_db.save_content_item(item)
 
-        temp_db.update_item_from_ui(db_id=db_id, status="completed", seasons_watched=[])
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[])
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
@@ -4649,9 +4662,8 @@ class TestCompletionDateTimezone:
     ) -> None:
         """Completing a show by ticking its last season dates it the same way.
 
-        The TV path derives the status from the season checklist rather than
-        taking the caller's, so it reaches the stamp by a different route than
-        the plain edit above.
+        A checklist edit sends no status, so the TV path derives one, reaching
+        the stamp by a different route than the plain edit above.
         """
         host_timezone("America/Los_Angeles")
         db_id = temp_db.save_content_item(
@@ -4665,9 +4677,7 @@ class TestCompletionDateTimezone:
         )
 
         with patch("src.utils.dates.utc_now", return_value=self.LOCAL_EVENING):
-            temp_db.update_item_from_ui(
-                db_id=db_id, status="currently_consuming", seasons_watched=[1, 2]
-            )
+            temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
@@ -5394,9 +5404,9 @@ class TestTvSeasonSyncRegression:
             "1": "2026-06-01T00:00:00+00:00",  # later existing date kept
             "2": "2026-06-02T00:00:00+00:00",  # new season gap-filled
         }
-        # seasons_watched stays existing-wins: a Trakt sync must not clobber
-        # manual check-offs.
-        assert retrieved.metadata.get("seasons_watched") == [1]
+        # seasons_watched unions: the sync adds the season it now reports
+        # finished and removes nothing.
+        assert retrieved.metadata.get("seasons_watched") == [1, 2]
 
     def test_sync_updates_to_genuinely_later_incoming_date_regression(
         self, temp_db: SQLiteDB
@@ -5493,6 +5503,115 @@ class TestTvSeasonSyncRegression:
         }
 
 
+class TestSeasonsWatchedSyncUnionRegression:
+    """A sync could not finish a season (#107).
+
+    Symptom: Trakt never completed a watched season. Cause: existing-wins on
+    key presence froze the empty list the first sync wrote. Fix: a union.
+    """
+
+    @staticmethod
+    def _sync(temp_db: SQLiteDB, seasons_watched: list[int]) -> int:
+        """Save the show as a Trakt sync does, reporting *seasons_watched*."""
+        return temp_db.save_content_item(
+            ContentItem(
+                id="trakt:union",
+                title="Union Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                source="trakt",
+                metadata={"total_seasons": 5, "seasons_watched": seasons_watched},
+            )
+        )
+
+    def test_sync_promotes_a_season_finished_since_the_last_sync_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A season Trakt now reports complete joins the stored list."""
+        db_id = self._sync(temp_db, [])
+        self._sync(temp_db, [1])
+        self._sync(temp_db, [1, 2])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
+
+    def test_sync_never_unticks_a_manual_check_off_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A season the user ticked survives a sync that does not report it."""
+        db_id = self._sync(temp_db, [1])
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 5])
+
+        self._sync(temp_db, [1, 2])
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata["seasons_watched"] == [1, 2, 5]
+
+
+class TestCompletedStatusFillsSeasonsRegression:
+    """Completing a show did not tick its seasons (#123).
+
+    Symptom: a stated completed left the checklist partial. Cause: status was
+    derived from seasons, never the reverse. Fix: the stated side derives the
+    other.
+    """
+
+    @staticmethod
+    def _show(temp_db: SQLiteDB, metadata: dict[str, object]) -> int:
+        return temp_db.save_content_item(
+            ContentItem(
+                id="tv_complete_1",
+                title="Half-Watched Show",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata=metadata,
+            )
+        )
+
+    def test_completed_status_ticks_every_season_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A stated completed with no checklist fills the season list."""
+        db_id = self._show(temp_db, {"seasons": 5, "seasons_watched": [1, 2]})
+
+        temp_db.update_item_from_ui(db_id=db_id, status="completed")
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+        assert retrieved.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
+
+    def test_supplied_status_outranks_a_supplied_checklist_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A stated status is not overwritten by the checklist beside it."""
+        db_id = self._show(temp_db, {"seasons": 5, "seasons_watched": [1, 2]})
+
+        temp_db.update_item_from_ui(
+            db_id=db_id, status="completed", seasons_watched=[1, 2]
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
+
+    def test_completed_leaves_the_checklist_alone_when_the_total_is_unknown(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """With no season count to fill from, the stored list stands."""
+        db_id = self._show(temp_db, {"seasons_watched": [1, 2]})
+
+        temp_db.update_item_from_ui(db_id=db_id, status="completed")
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+        assert retrieved.metadata["seasons_watched"] == [1, 2]
+
+
 class TestTvSeasonCountFromTraktMetadata:
     """Season counts written under the alias the Trakt plugin actually uses.
 
@@ -5550,11 +5669,7 @@ class TestTvSeasonCountFromTraktMetadata:
         """Ticking every season completes the show instead of sticking."""
         db_id = self._save_trakt_show(temp_db)
 
-        temp_db.update_item_from_ui(
-            db_id=db_id,
-            status="currently_consuming",
-            seasons_watched=[1, 2, 3, 4, 5],
-        )
+        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2, 3, 4, 5])
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None

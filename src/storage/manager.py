@@ -434,7 +434,7 @@ class StorageManager:
     def update_item_from_ui(
         self,
         db_id: int,
-        status: str,
+        status: str | Unset = UNSET,
         rating: int | None | Unset = UNSET,
         review: str | None | Unset = UNSET,
         seasons_watched: list[int] | None = None,
@@ -452,7 +452,9 @@ class StorageManager:
 
         Args:
             db_id: Database ID of the item to update.
-            status: New status value.
+            status: New status value, UNSET to leave unchanged. For a TV show
+                it also derives the season list, and is derived from it: see
+                SQLiteDB.update_item_from_ui.
             rating: New rating (1-5), None to clear, UNSET to leave unchanged.
             review: New review text, None or blank to clear, UNSET to leave
                 unchanged.

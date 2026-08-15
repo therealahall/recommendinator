@@ -19,6 +19,7 @@ from typing import Any
 from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
+from src.utils.series import merge_seasons_watched
 
 __all__ = [
     "ALLOWED_DETAIL_TABLES",
@@ -373,8 +374,9 @@ def _merge_detail_metadata(
     """Merge metadata JSON from the duplicate into the kept detail row.
 
     Returns None when the merge must be skipped, leaving the kept row as-is.
-    Existing keys win, incoming fills gaps. ``seasons_watched_dates`` instead
-    keeps the later watch date per season.
+    Existing keys win, incoming fills gaps. ``seasons_watched`` instead takes
+    the union of both rows and ``seasons_watched_dates`` the later watch date
+    per season.
     """
     # merge_detail_tables already guards both rows, so this only fires if that
     # guard regresses. Skipping matches every other degenerate case here: dedup
@@ -406,6 +408,15 @@ def _merge_detail_metadata(
     # Existing keys take precedence; incoming fills gaps
     merged = {**dup_meta, **keep_meta}
 
+    # Exception: seasons_watched is the union of both rows. Each row's list may
+    # hold seasons the user ticked by hand, so dropping either side's would
+    # lose watch history the dedup delete makes unrecoverable.
+    combined_seasons = merge_seasons_watched(
+        keep_meta.get("seasons_watched"), dup_meta.get("seasons_watched")
+    )
+    if combined_seasons is not None:
+        merged["seasons_watched"] = combined_seasons
+
     # Exception: seasons_watched_dates merges per season, keeping the later
     # watch date — a season only the duplicate has a date for is folded in,
     # a season both have keeps whichever date is later, and the kept row's
@@ -428,6 +439,7 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
     - If only the duplicate has a row, move it to the kept item.
     - If both have rows, merge genres/tags additively and fill nulls.
     - Metadata JSON is merged additively (existing keys preserved), except
+      ``seasons_watched``, which unions both rows, and
       ``seasons_watched_dates``, which merges per season keeping the later
       watch date across the two rows (see ``_merge_detail_metadata``).
 

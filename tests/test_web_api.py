@@ -2644,6 +2644,66 @@ def test_edit_invalid_status(client, mock_components):
     assert "Invalid status" in response.json()["detail"]
 
 
+class TestEditRouteCompletesEverySeasonRegression:
+    """Completing a show over PATCH left the checklist partial (#123).
+
+    Symptom: a stated completed kept the old half-ticked list. Cause: status
+    derived from seasons, never the reverse. Fix: the stated side fills the
+    other.
+    """
+
+    def test_patch_completed_ticks_every_season_regression(
+        self, mock_components, tmp_path
+    ):
+        """PATCH {"status": "completed"} marks every season of the show watched."""
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-1",
+                title="The Expanse",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 5, "seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1", json={"status": "completed"}
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "completed"
+        assert data["seasons_watched"] == [1, 2, 3, 4, 5]
+
+    def test_patch_keeps_the_checklist_the_dialog_sent(self, mock_components, tmp_path):
+        """A supplied season list stands: the dialog derived the pair itself."""
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-2",
+                title="Severance",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 5, "seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1",
+            json={"status": "completed", "seasons_watched": [1, 2, 3, 4, 5]},
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "completed"
+        assert data["seasons_watched"] == [1, 2, 3, 4, 5]
+
+
 def test_edit_response_includes_tv_metadata(client, mock_components):
     """GET /api/items response includes seasons_watched and total_seasons for TV."""
     mock_item = ContentItem(

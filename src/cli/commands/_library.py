@@ -361,13 +361,10 @@ def library_edit(
 
     storage = ctx.obj["storage"]
 
-    # Look up the item to get current status if not provided
     item = storage.get_content_item(item_id, user_id=user_id)
     if item is None:
         click.echo(f"Error: Item {item_id} not found.", err=True)
         raise click.Abort()
-
-    effective_status = status_str if status_str else get_enum_value(item.status)
 
     parsed_seasons: list[int] | None = None
     if seasons_watched is not None:
@@ -436,7 +433,7 @@ def library_edit(
     # explicit null the web edit dialog sends.
     updated = storage.update_item_from_ui(
         db_id=item_id,
-        status=effective_status,
+        status=unset_if_none(status_str),
         rating=None if clear_rating else unset_if_none(rating),
         review=None if clear_review else unset_if_none(review),
         seasons_watched=parsed_seasons,
