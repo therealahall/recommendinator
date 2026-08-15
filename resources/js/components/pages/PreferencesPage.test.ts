@@ -162,6 +162,34 @@ describe('PreferencesPage load failure', () => {
     wrapper.unmount()
   })
 
+  // Regression: the restore fired on the captured button being gone alone, so
+  // a keyboard user who Tabbed away mid-request was yanked back (WCAG 2.4.3).
+  it('leaves focus where the user moved it while the reload was in flight', async () => {
+    mockPreferencesGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(PreferencesPage, { attachTo: document.body })
+    await flushPromises()
+
+    let settleGet: (value: unknown) => void = () => {}
+    mockPreferencesGet.mockReturnValue(
+      new Promise((resolve) => {
+        settleGet = resolve
+      }),
+    )
+    const retry = wrapper.get('[data-testid="preferences-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    settleGet(PREFERENCES)
+    await flushPromises()
+
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+    wrapper.unmount()
+  })
+
   /**
    * Symptom: Retry had no perceivable outcome. Success unmounted the focused
    * button silently; a repeat failure left the alert text unchanged. Root

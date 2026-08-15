@@ -25,9 +25,13 @@ async function onRetrySources(): Promise<void> {
     : 'Sync sources loaded.'
   await nextTick()
   // Success unmounts the failure branch, Retry included, dropping the keyboard
-  // user to <body> (WCAG 2.4.3). Keyed on the element actually going away: a
-  // second failure leaves it mounted and must not throw the user out of it.
-  if (focused instanceof HTMLElement && !focused.isConnected) {
+  // user to <body> (WCAG 2.4.3). Restored only when focus actually fell there:
+  // someone who Tabbed away mid-request must not be yanked back.
+  if (
+    focused instanceof HTMLElement &&
+    !focused.isConnected &&
+    (document.activeElement === null || document.activeElement === document.body)
+  ) {
     sourcesPanel.value?.focus()
   }
 }

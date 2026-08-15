@@ -370,6 +370,45 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
+  // Regression: the restore fired on the captured button being gone alone, so
+  // a keyboard user who Tabbed away mid-request was yanked back (WCAG 2.4.3).
+  it('leaves focus where the user moved it while the reload was in flight', async () => {
+    mockPost.mockResolvedValue({})
+    let releaseSources: (value: unknown[]) => void = () => {}
+    let sourcesFail = true
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') {
+        return sourcesFail
+          ? Promise.reject(new Error('boom'))
+          : new Promise((resolve) => {
+              releaseSources = resolve
+            })
+      }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    sourcesFail = false
+    const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    releaseSources([enabledSource])
+    await flushPromises()
+
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+    wrapper.unmount()
+  })
+
   // Regression: a rejected /sync/sources emptied the list, so a request that
   // never landed rendered as configuration advice the user cannot act on.
   it('says the load failed rather than that nothing is configured', async () => {
