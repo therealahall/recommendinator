@@ -242,7 +242,7 @@ export const useDataStore = defineStore('data', () => {
         } else {
           syncStatus.value = 'completed'
           const errors = visibleErrors()
-          let msg = `Completed: ${buildCountsSummary(syncJobs.value)}`
+          let msg = `Completed: ${buildCountsSummary(newestJob(syncJobs.value))}`
           if (errors.length > 0) msg += ` — ${describeErrors(errors)}`
           syncMessage.value = msg
         }
@@ -281,18 +281,23 @@ export const useDataStore = defineStore('data', () => {
     )
   }
 
+  /** The run the banner reports on. Terminal jobs are retained across runs,
+   *  so the newest is the only one it can be describing. The caller's
+   *  non-empty branch is what guarantees there is one. */
+  function newestJob(jobs: SyncJobResponse[]): SyncJobResponse {
+    return jobs.reduce((newest, job) =>
+      (job.started_at ?? '') > (newest.started_at ?? '') ? job : newest,
+    )
+  }
+
   /** What the finished run did, in the words the `update` command uses. A
    *  count of items touched cannot tell a first import from a second run of
    *  it, which is the question the banner is read for. */
-  function buildCountsSummary(jobs: SyncJobResponse[]): string {
-    const sum = (pick: (job: SyncJobResponse) => number): number =>
-      jobs.reduce((total, job) => total + pick(job), 0)
-    const saved = sum((job) => job.items_processed)
-    const found = sum((job) => job.total_items || 0)
+  function buildCountsSummary(job: SyncJobResponse): string {
     return (
-      `${saved} of ${found} items saved (${sum((job) => job.items_added)} added, ` +
-      `${sum((job) => job.items_updated)} updated, ` +
-      `${sum((job) => job.items_unchanged)} unchanged)`
+      `${job.items_processed} of ${job.total_items || 0} items saved ` +
+      `(${job.items_added} added, ${job.items_updated} updated, ` +
+      `${job.items_unchanged} unchanged)`
     )
   }
 
