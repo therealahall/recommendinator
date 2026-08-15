@@ -1510,6 +1510,41 @@ describe('SyncSourceAccordion', () => {
       ])
     })
 
+    it('caps this source after the filter, not job.errors before it', () => {
+      // Capping job.errors first leaves a source whose failures all fall past
+      // the cap rendering nothing, on the umbrella run that produced them.
+      const job = makeJob({
+        source: 'All Sources',
+        status: 'completed',
+        errors: [
+          ...Array.from({ length: 6 }, (_, i) => ({
+            source: 'Sonarr',
+            message: `Sonarr ${i} failed`,
+          })),
+          ...Array.from({ length: 6 }, (_, i) => ({
+            source: 'Steam',
+            message: `Steam ${i} failed`,
+          })),
+        ],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      const items = wrapper
+        .get('[data-testid="source-sync-errors"]')
+        .findAll('li')
+        .map((li) => li.text())
+      expect(items).toEqual([
+        'Steam 0 failed',
+        'Steam 1 failed',
+        'Steam 2 failed',
+        'Steam 3 failed',
+        'Steam 4 failed',
+        '… and 1 more',
+      ])
+    })
+
     it('shows the messages without expanding the accordion', () => {
       const job = makeJob({
         status: 'completed',
