@@ -162,6 +162,83 @@ describe('PreferencesPage load failure', () => {
     wrapper.unmount()
   })
 
+  /**
+   * Symptom: Retry had no perceivable outcome. Success unmounted the focused
+   * button silently; a repeat failure left the alert text unchanged. Root
+   * cause: no live region, no focus fallback. Fix: a mounted role="status"
+   * region and the page wrapper to focus.
+   */
+  it('carries a silent live region before any retry has an outcome', async () => {
+    const wrapper = await mountFailed()
+
+    const status = wrapper.get('[data-testid="preferences-retry-status"]')
+    expect(status.text()).toBe('')
+    expect(status.attributes('role')).toBe('status')
+    expect(status.attributes('aria-live')).toBe('polite')
+    expect(status.attributes('aria-atomic')).toBe('true')
+  })
+
+  it('announces the reload and moves focus off the unmounted Retry', async () => {
+    mockPreferencesGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(PreferencesPage, { attachTo: document.body })
+    await flushPromises()
+
+    mockPreferencesGet.mockResolvedValue(PREFERENCES)
+    const retry = wrapper.get('[data-testid="preferences-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="preferences-retry-status"]').text()).toBe(
+      'Preferences loaded.',
+    )
+    expect(document.activeElement).toBe(wrapper.element)
+    // An unnamed tabindex="-1" div announces nothing when focus lands on it.
+    expect(wrapper.attributes('role')).toBe('group')
+    expect(
+      wrapper.get(`#${wrapper.attributes('aria-labelledby')}`).text(),
+    ).toBe('Preferences')
+    wrapper.unmount()
+  })
+
+  it('says a second failure failed rather than repeating in silence', async () => {
+    mockPreferencesGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(PreferencesPage, { attachTo: document.body })
+    await flushPromises()
+
+    const retry = wrapper.get('[data-testid="preferences-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="preferences-retry-status"]').text()).toBe(
+      "Still couldn't load preferences. Try again in a moment.",
+    )
+    // The button survived, so focus must stay on it.
+    expect(document.activeElement).toBe(retry.element)
+    wrapper.unmount()
+  })
+
+  // Every failure ends on the same words, and Vue skips the DOM write when a
+  // text node is unchanged — so deleting the in-flight line would leave the
+  // second and every later failure mutating nothing, and announcing nothing.
+  it('resets the region in flight so a repeated failure still announces', async () => {
+    const wrapper = await mountFailed()
+    const retry = wrapper.get('[data-testid="preferences-retry"]')
+    const status = wrapper.get('[data-testid="preferences-retry-status"]')
+    const failed = "Still couldn't load preferences. Try again in a moment."
+
+    await retry.trigger('click')
+    await flushPromises()
+    expect(status.text()).toBe(failed)
+
+    await retry.trigger('click')
+    expect(status.text()).toBe('Reloading preferences…')
+    await flushPromises()
+
+    expect(status.text()).toBe(failed)
+  })
+
   it('keeps the Retry button out of the alert region', async () => {
     // Alert content is announced as one chunk, so a button inside it has its
     // affordance buried in the error prose.

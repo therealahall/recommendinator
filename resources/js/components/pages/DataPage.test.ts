@@ -476,6 +476,134 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
+  /**
+   * Symptom: Retry had no perceivable outcome. Success unmounted the focused
+   * button silently; a repeat failure left the alert text unchanged. Root
+   * cause: no live region, no focus fallback. Fix: a mounted role="status"
+   * region and a panel to focus.
+   */
+  describe('DataPage retry outcome', () => {
+    async function mountFailed(retrySucceeds: boolean) {
+      mockPost.mockResolvedValue({})
+      let sourcesFail = true
+      mockGet.mockImplementation((path: string) => {
+        if (path !== '/sync/sources') return Promise.resolve({})
+        if (sourcesFail) return Promise.reject(new Error('boom'))
+        return Promise.resolve([enabledSource])
+      })
+
+      const wrapper = mount(DataPage, {
+        global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+        attachTo: document.body,
+      })
+      await flushPromises()
+      sourcesFail = !retrySucceeds
+      return wrapper
+    }
+
+    it('carries a silent live region before any retry has an outcome', async () => {
+      const wrapper = await mountFailed(true)
+
+      const status = wrapper.get('[data-testid="sync-sources-retry-status"]')
+      expect(status.text()).toBe('')
+      expect(status.attributes('role')).toBe('status')
+      expect(status.attributes('aria-live')).toBe('polite')
+      expect(status.attributes('aria-atomic')).toBe('true')
+      wrapper.unmount()
+    })
+
+    it('announces the reload and moves focus off the unmounted Retry', async () => {
+      const wrapper = await mountFailed(true)
+
+      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+      ;(retry.element as HTMLButtonElement).focus()
+      await retry.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="sync-sources-retry-status"]').text()).toBe(
+        'Sync sources loaded.',
+      )
+      const panel = wrapper.get('[data-testid="sync-sources-panel"]')
+      expect(document.activeElement).toBe(panel.element)
+      // An unnamed tabindex="-1" div announces nothing when focus lands on it.
+      expect(panel.attributes('role')).toBe('group')
+      expect(
+        wrapper.get(`#${panel.attributes('aria-labelledby')}`).text(),
+      ).toBe('Sync Sources')
+      wrapper.unmount()
+    })
+
+    it('says a second failure failed rather than repeating in silence', async () => {
+      const wrapper = await mountFailed(false)
+
+      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+      ;(retry.element as HTMLButtonElement).focus()
+      await retry.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="sync-sources-retry-status"]').text()).toBe(
+        "Still couldn't load sync sources. Try again in a moment.",
+      )
+      // The button survived, so focus must stay on it.
+      expect(document.activeElement).toBe(retry.element)
+      wrapper.unmount()
+    })
+
+    // A retry that succeeds into an empty list unmounts Retry with nothing in
+    // the loaded branch to fall back to: a focus target picked from the sources
+    // themselves would be null here and drop the user to <body>.
+    it('moves focus to the panel when the retry succeeds with no sources', async () => {
+      mockPost.mockResolvedValue({})
+      let sourcesFail = true
+      mockGet.mockImplementation((path: string) => {
+        if (path !== '/sync/sources') return Promise.resolve({})
+        return sourcesFail ? Promise.reject(new Error('boom')) : Promise.resolve([])
+      })
+
+      const wrapper = mount(DataPage, {
+        global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+        attachTo: document.body,
+      })
+      await flushPromises()
+      sourcesFail = false
+
+      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+      ;(retry.element as HTMLButtonElement).focus()
+      await retry.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No sync sources configured')
+      expect(wrapper.get('[data-testid="sync-sources-retry-status"]').text()).toBe(
+        'Sync sources loaded.',
+      )
+      expect(document.activeElement).toBe(
+        wrapper.get('[data-testid="sync-sources-panel"]').element,
+      )
+      wrapper.unmount()
+    })
+
+    // Every failure ends on the same words, and Vue skips the DOM write when a
+    // text node is unchanged — so deleting the in-flight line would leave the
+    // second and every later failure mutating nothing, and announcing nothing.
+    it('resets the region in flight so a repeated failure still announces', async () => {
+      const wrapper = await mountFailed(false)
+      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+      const status = wrapper.get('[data-testid="sync-sources-retry-status"]')
+      const failed = "Still couldn't load sync sources. Try again in a moment."
+
+      await retry.trigger('click')
+      await flushPromises()
+      expect(status.text()).toBe(failed)
+
+      await retry.trigger('click')
+      expect(status.text()).toBe('Reloading sync sources…')
+      await flushPromises()
+
+      expect(status.text()).toBe(failed)
+      wrapper.unmount()
+    })
+  })
+
   // The newer umbrella job carries no errors for a source it never ran, so
   // handing the row that job would blank the failure it still has.
   it('keeps the disabled row showing the errors of its own last run', async () => {

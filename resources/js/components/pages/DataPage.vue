@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
@@ -8,12 +8,28 @@ import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
 const data = useDataStore()
 const showAddSourceModal = ref(false)
 const retryingSources = ref(false)
+const retryMessage = ref('')
+const sourcesPanel = ref<HTMLElement | null>(null)
 
 async function onRetrySources(): Promise<void> {
   if (retryingSources.value) return
+  const focused = document.activeElement
   retryingSources.value = true
+  // The in-flight line is what makes a second failure audible: setting the same
+  // words twice leaves the region's text unchanged, so it announces nothing.
+  retryMessage.value = 'Reloading sync sources…'
   await data.loadSyncSources()
   retryingSources.value = false
+  retryMessage.value = data.syncSourcesError
+    ? "Still couldn't load sync sources. Try again in a moment."
+    : 'Sync sources loaded.'
+  await nextTick()
+  // Success unmounts the failure branch, Retry included, dropping the keyboard
+  // user to <body> (WCAG 2.4.3). Keyed on the element actually going away: a
+  // second failure leaves it mounted and must not throw the user out of it.
+  if (focused instanceof HTMLElement && !focused.isConnected) {
+    sourcesPanel.value?.focus()
+  }
 }
 
 onMounted(() => {
@@ -58,9 +74,17 @@ const orderedSources = computed(() => {
       <p class="page-description">Sync sources and enrich metadata from external APIs.</p>
     </div>
 
-    <div class="card">
+    <!-- Named and focusable, because a successful retry sends focus here. -->
+    <div
+      ref="sourcesPanel"
+      class="card focus-fallback"
+      data-testid="sync-sources-panel"
+      role="group"
+      aria-labelledby="sync-sources-heading"
+      tabindex="-1"
+    >
       <div class="sync-sources-header">
-        <h3>Sync Sources</h3>
+        <h3 id="sync-sources-heading">Sync Sources</h3>
         <button
           type="button"
           class="btn btn-primary"
@@ -162,6 +186,16 @@ const orderedSources = computed(() => {
           No sync sources configured. Add sources to config.yaml with enabled: true.
         </div>
       </template>
+
+      <!-- Outside the branches above, so it is already in the accessibility
+           tree when a retry finally gives it something to say (WCAG 4.1.3). -->
+      <p
+        class="retry-status"
+        data-testid="sync-sources-retry-status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ retryMessage }}</p>
     </div>
 
     <EnrichmentCard />

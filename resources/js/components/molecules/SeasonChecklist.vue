@@ -11,7 +11,16 @@ const emit = defineEmits<{
 }>()
 
 const watchedSet = computed(() => new Set(props.modelValue))
-const watchedCount = computed(() => props.modelValue.length)
+
+// Select All, Deselect All and a status change in the parent all rewrite the
+// whole checklist, and this counter is the only thing that reports the result —
+// so it announces rather than merely displays (WCAG 4.1.3). A sentence, because
+// "0 / 5" read aloud is not one.
+const watchedLabel = computed(() => {
+  const noun = props.totalSeasons === 1 ? 'season' : 'seasons'
+  if (props.modelValue.length === 0) return `No ${noun} watched`
+  return `${props.modelValue.length} of ${props.totalSeasons} ${noun} watched`
+})
 
 function toggle(season: number) {
   const current = new Set(props.modelValue)
@@ -38,7 +47,12 @@ function deselectAll() {
     <div class="season-controls">
       <button class="btn btn-small btn-secondary" type="button" @click="selectAll">Select All</button>
       <button class="btn btn-small btn-secondary" type="button" @click="deselectAll">Deselect All</button>
-      <span class="season-counter">{{ watchedCount }} / {{ totalSeasons }}</span>
+      <span
+        class="season-counter"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ watchedLabel }}</span>
     </div>
     <div class="season-grid" role="group" aria-label="Seasons watched">
       <label

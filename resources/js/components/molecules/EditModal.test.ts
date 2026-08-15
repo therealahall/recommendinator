@@ -275,6 +275,61 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  /**
+   * Symptom: picking a status silently rewrote every season tick. Root cause:
+   * the counter was a bare "0 / 5" with no live role, so the only report of the
+   * change reached nobody. Fix: the counter is the status message.
+   */
+  it('announces the emptied checklist when the status is set to unread', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...tvItem, status: 'completed', seasons_watched: [1, 2, 3, 4, 5] },
+        saving: false,
+      },
+      attachTo: document.body,
+    })
+
+    const counter = wrapper.get('.season-counter')
+    expect(counter.attributes('role')).toBe('status')
+    expect(counter.attributes('aria-live')).toBe('polite')
+    expect(counter.attributes('aria-atomic')).toBe('true')
+    expect(counter.text()).toBe('5 of 5 seasons watched')
+
+    await wrapper.find('#edit-status').setValue('unread')
+
+    expect(counter.text()).toBe('No seasons watched')
+    wrapper.unmount()
+  })
+
+  it('announces the new count when Select All ticks the checklist', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('.btn-secondary').find((b) => b.text() === 'Select All')!.trigger('click')
+
+    expect(wrapper.get('.season-counter').text()).toBe('5 of 5 seasons watched')
+    wrapper.unmount()
+  })
+
+  // Deselect All routes through the parent's onSeasonsChange, which also rewrites
+  // the status — a rewrite that skipped the counter would empty the checklist in
+  // silence, the same defect Select All was fixed for.
+  it('announces the emptied checklist when Deselect All clears it', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false },
+      attachTo: document.body,
+    })
+    expect(wrapper.get('.season-counter').text()).toBe('2 of 5 seasons watched')
+
+    await wrapper.findAll('.btn-secondary').find((b) => b.text() === 'Deselect All')!.trigger('click')
+
+    expect(wrapper.get('.season-counter').text()).toBe('No seasons watched')
+    expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe('unread')
+    wrapper.unmount()
+  })
+
   it('save serializes an empty description to null', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false },
