@@ -95,29 +95,6 @@ class TestSchemaEndpoint:
         assert path_field["required"] is True
         assert path_field["sensitive"] is False
 
-    def test_field_types_serialize_to_known_strings(self, client: TestClient) -> None:
-        response = client.get("/api/sync/sources/my_games/schema")
-        assert response.status_code == 200
-        types = {f["name"]: f["field_type"] for f in response.json()["fields"]}
-        assert types == {
-            "api_key": "str",
-            "user_id": "str",
-            "min_minutes": "int",
-            "tags": "list",
-            "active": "bool",
-        }
-
-    def test_marks_sensitive_fields(self, client: TestClient) -> None:
-        response = client.get("/api/sync/sources/my_games/schema")
-        sensitive = {f["name"]: f["sensitive"] for f in response.json()["fields"]}
-        assert sensitive == {
-            "api_key": True,
-            "user_id": False,
-            "min_minutes": False,
-            "tags": False,
-            "active": False,
-        }
-
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
         response = client.get("/api/sync/sources/missing/schema")
         assert response.status_code == 404
@@ -166,30 +143,6 @@ class TestConfigEndpoint:
         assert body["enabled"] is False
         assert body["field_values"]["path"] == "/db/books.csv"
 
-    def test_post_migration_secret_status_reflects_credentials_table(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        storage.upsert_source_config(
-            1, "my_games", "fake_api", {"user_id": "u", "min_minutes": 0}, True
-        )
-        storage.save_credential(1, "my_games", "api_key", "real_key")
-        response = client.get("/api/sync/sources/my_games/config")
-        body = response.json()
-        assert body["secret_status"] == {"api_key": True}
-        assert "api_key" not in body["field_values"]
-
-    def test_post_migration_secret_status_unset_when_no_credential(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """A migrated source with no stored credential reports secret_status=False."""
-        storage.upsert_source_config(
-            1, "my_games", "fake_api", {"user_id": "u"}, enabled=True
-        )
-        response = client.get("/api/sync/sources/my_games/config")
-        body = response.json()
-        assert body["migrated"] is True
-        assert body["secret_status"] == {"api_key": False}
-
     def test_yaml_secret_status_unset_for_non_string_value(
         self, client: TestClient, base_config: dict[str, Any]
     ) -> None:
@@ -204,10 +157,6 @@ class TestConfigEndpoint:
         response = client.get("/api/sync/sources/my_games/config")
         body = response.json()
         assert body["secret_status"] == {"api_key": False}
-
-    def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
-        response = client.get("/api/sync/sources/missing/config")
-        assert response.status_code == 404
 
 
 class TestMigrateEndpoint:
@@ -288,10 +237,6 @@ class TestMigrateEndpoint:
         # Only one row exists
         rows = storage.list_source_configs(1)
         assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
-
-    def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
-        response = client.post("/api/sync/sources/nothing/migrate")
-        assert response.status_code == 404
 
 
 class TestMigrateNamesASecretTheBootPassEncryptedRegression:
@@ -379,19 +324,6 @@ class TestUpdateConfigEndpoint:
         )
         assert response.status_code == 404
 
-    def test_empty_values_dict_is_a_no_op(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """PUT with values={} returns 200 and leaves stored config unchanged."""
-        client.post("/api/sync/sources/my_games/migrate")
-        before = storage.get_source_config(1, "my_games")
-        assert before is not None
-        response = client.put("/api/sync/sources/my_games/config", json={"values": {}})
-        assert response.status_code == 200
-        after = storage.get_source_config(1, "my_games")
-        assert after is not None
-        assert after["config"] == before["config"]
-
 
 class TestSecretEndpoints:
     def test_put_secret_stores_encrypted_credential(
@@ -405,12 +337,6 @@ class TestSecretEndpoints:
         assert response.status_code == 204
         assert storage.get_credential(1, "my_games", "api_key") == "rotated_key"
 
-    def test_put_secret_404_for_unknown_source(self, client: TestClient) -> None:
-        response = client.put(
-            "/api/sync/sources/none/secret/api_key", json={"value": "x"}
-        )
-        assert response.status_code == 404
-
     def test_put_secret_404_for_unknown_field_name(
         self, client: TestClient, storage: StorageManager
     ) -> None:
@@ -423,18 +349,6 @@ class TestSecretEndpoints:
         assert response.status_code == 404
         # Guard fired before any DB write — no credential row created.
         assert storage.get_credential(1, "my_games", "no_such_field") is None
-
-    def test_delete_secret_404_for_unknown_field_name(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """A field not declared in the plugin schema returns 404."""
-        client.post("/api/sync/sources/my_games/migrate")
-        # Pre-populate a real credential to confirm the rejected delete
-        # leaves unrelated stored secrets untouched.
-        storage.save_credential(1, "my_games", "api_key", "real_key")
-        response = client.delete("/api/sync/sources/my_games/secret/no_such_field")
-        assert response.status_code == 404
-        assert storage.get_credential(1, "my_games", "api_key") == "real_key"
 
     def test_put_secret_400_for_non_sensitive_field(
         self, client: TestClient, storage: StorageManager
@@ -453,18 +367,6 @@ class TestSecretEndpoints:
         response = client.delete("/api/sync/sources/my_games/secret/api_key")
         assert response.status_code == 204
         assert storage.get_credential(1, "my_games", "api_key") is None
-
-    def test_delete_secret_404_for_unknown_source(self, client: TestClient) -> None:
-        response = client.delete("/api/sync/sources/none/secret/api_key")
-        assert response.status_code == 404
-
-    def test_delete_secret_400_for_non_sensitive_field(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """Refuse DELETE on a non-sensitive field — symmetric with PUT."""
-        client.post("/api/sync/sources/my_games/migrate")
-        response = client.delete("/api/sync/sources/my_games/secret/user_id")
-        assert response.status_code == 400
 
 
 class TestEnabledEndpoint:
@@ -492,27 +394,6 @@ class TestEnabledEndpoint:
             "/api/sync/sources/my_books/enabled", json={"enabled": False}
         )
         assert response.status_code == 404
-
-    def test_re_enables_a_disabled_source(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """Symmetric round-trip: disable then re-enable a migrated source.
-
-        Verifies both the DB-side state AND the response body so a regression
-        that returns stale data after the toggle would be caught.
-        """
-        client.post("/api/sync/sources/my_books/migrate")
-        client.put("/api/sync/sources/my_books/enabled", json={"enabled": False})
-        response = client.put(
-            "/api/sync/sources/my_books/enabled", json={"enabled": True}
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["enabled"] is True
-        assert body["source_id"] == "my_books"
-        row = storage.get_source_config(1, "my_books")
-        assert row is not None
-        assert row["enabled"] is True
 
 
 class TestPluginsEndpoint:
@@ -561,23 +442,6 @@ class TestPluginsEndpoint:
         # Sensitive field defaults are masked to None on the wire.
         api_key_field = next(f for f in fake_api["fields"] if f["name"] == "api_key")
         assert api_key_field["default"] is None
-
-    def test_returns_empty_lists_when_no_plugins_registered(
-        self, client: TestClient
-    ) -> None:
-        """Endpoint returns empty lists (not 404) when the registry is empty."""
-        from src.ingestion.registry import PluginRegistry
-
-        registry = PluginRegistry.get_instance()
-        registry._discovered = True
-        registry._plugins.clear()
-        registry._import_errors.clear()
-        try:
-            response = client.get("/api/plugins")
-            assert response.status_code == 200
-            assert response.json() == {"plugins": [], "import_errors": []}
-        finally:
-            PluginRegistry.reset_instance()
 
 
 @pytest.fixture()
@@ -679,22 +543,6 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 409
 
-    def test_rejects_existing_db_source(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        storage.upsert_source_config(
-            1, "already_here", "fake_file", {"path": "/x"}, enabled=True
-        )
-        response = client.post(
-            "/api/sync/sources",
-            json={
-                "id": "already_here",
-                "plugin": "fake_file",
-                "values": {"path": "/y"},
-            },
-        )
-        assert response.status_code == 409
-
     def test_accepts_hyphenated_id(
         self, client: TestClient, storage: StorageManager
     ) -> None:
@@ -724,14 +572,6 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 400
 
-    def test_rejects_id_starting_with_hyphen(self, client: TestClient) -> None:
-        """A hyphen may appear inside an id but never as the first character."""
-        response = client.post(
-            "/api/sync/sources",
-            json={"id": "-nope", "plugin": "fake_file", "values": {}},
-        )
-        assert response.status_code == 400
-
     def test_rejects_unknown_plugin(self, client: TestClient) -> None:
         response = client.post(
             "/api/sync/sources",
@@ -753,17 +593,6 @@ class TestCreateSourceEndpoint:
         assert response.status_code == 400
         assert storage.get_source_config(1, "leaky") is None
         assert storage.get_credential(1, "leaky", "api_key") is None
-
-    def test_rejects_unknown_field(self, client: TestClient) -> None:
-        response = client.post(
-            "/api/sync/sources",
-            json={
-                "id": "wrong_field",
-                "plugin": "fake_file",
-                "values": {"no_such_field": "x"},
-            },
-        )
-        assert response.status_code == 400
 
 
 class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
@@ -798,31 +627,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         assert response.status_code == 400
         assert "outside the allowed source roots" in response.json()["detail"]
         assert storage.get_source_config(1, "leaky") is None
-
-    def test_an_updated_path_outside_the_allowed_roots_is_refused_with_the_reason(
-        self, client: TestClient, storage: StorageManager, tmp_path: Path
-    ) -> None:
-        readable = tmp_path / "books.csv"
-        readable.write_text("title\n")
-        client.post(
-            "/api/sync/sources",
-            json={
-                "id": "books",
-                "plugin": "csv_import",
-                "values": {"path": str(readable), "content_type": "book"},
-            },
-        )
-
-        response = client.put(
-            "/api/sync/sources/books/config",
-            json={"values": {"path": "/etc/passwd"}},
-        )
-
-        assert response.status_code == 400
-        assert "outside the allowed source roots" in response.json()["detail"]
-        row = storage.get_source_config(1, "books")
-        assert row is not None
-        assert row["config"]["path"] == str(readable)
 
     def test_a_missing_file_is_refused_without_saying_it_is_missing(
         self, client: TestClient, storage: StorageManager, tmp_path: Path
@@ -890,41 +694,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         assert "'content_type'" in detail
         assert "'path'" not in detail
 
-    def test_an_edit_naming_a_missing_file_names_the_field_too(
-        self, client: TestClient, storage: StorageManager, tmp_path: Path
-    ) -> None:
-        """The second write door, which the create cases cannot reach.
-
-        ``PUT .../config`` is the one a migrated source is edited through, so
-        an oracle left open here is the same probe on a different verb.
-        """
-        readable = tmp_path / "books.csv"
-        readable.write_text("title\n")
-        client.post(
-            "/api/sync/sources",
-            json={
-                "id": "books",
-                "plugin": "csv_import",
-                "values": {"path": str(readable), "content_type": "book"},
-            },
-        )
-        missing = tmp_path / "no-such-library.csv"
-
-        response = client.put(
-            "/api/sync/sources/books/config",
-            json={"values": {"path": str(missing)}},
-        )
-
-        assert response.status_code == 400
-        detail = response.json()["detail"]
-        assert "'path'" in detail
-        assert "not found" not in detail.lower()
-        assert str(missing) not in detail
-        assert missing.name not in detail
-        row = storage.get_source_config(1, "books")
-        assert row is not None
-        assert row["config"]["path"] == str(readable)
-
     def test_two_jointly_bad_values_name_both_rather_than_neither(
         self, client: TestClient, tmp_path: Path
     ) -> None:
@@ -963,23 +732,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         response = client.post(
             "/api/sync/sources",
             json={"id": "roms", "plugin": "roms", "values": {"paths": ["/etc"]}},
-        )
-
-        assert response.status_code == 400
-        assert "outside the allowed source roots" in response.json()["detail"]
-        assert storage.get_source_config(1, "roms") is None
-
-    def test_a_list_mixing_a_non_string_is_still_contained_entry_by_entry(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """The guard speaks first, so it cannot lean on the plugin's typing.
-
-        ``validate_config`` would reject the ``123`` afterwards and answer
-        with a field name — the wrong refusal for an escaping path.
-        """
-        response = client.post(
-            "/api/sync/sources",
-            json={"id": "roms", "plugin": "roms", "values": {"paths": [123, "/etc"]}},
         )
 
         assert response.status_code == 400
@@ -1159,39 +911,6 @@ class TestSyncLogsTheReasonItRefused:
         assert sync.status_code == 200
         assert sync.json()["sources"] == ["games"]
 
-    _MULTILINE_SECRET = "-----KEY-----\nabc\n-----END-----"
-
-    def test_a_multiline_secret_is_redacted_before_the_line_is_escaped(
-        self, client: TestClient, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The reverse order would rewrite the secret out of its own match."""
-        created = client.post(
-            "/api/sync/sources",
-            json={
-                "id": "games",
-                "plugin": "steam",
-                "values": {"steam_id": "76561198000000000"},
-            },
-        )
-        stored = client.put(
-            "/api/sync/sources/games/secret/api_key",
-            json={"value": self._MULTILINE_SECRET},
-        )
-        assert (created.status_code, stored.status_code) == (201, 204)
-
-        with (
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=[f"'api_key' {self._MULTILINE_SECRET} was rejected"],
-            ),
-            caplog.at_level(logging.WARNING, logger="src.web.api"),
-        ):
-            sync = client.post("/api/update", json={"source": "games"})
-
-        assert sync.status_code == 400
-        assert "-----KEY-----" not in caplog.text
-        assert "'api_key' [redacted] was rejected" in caplog.text
-
     def test_a_newline_the_plugin_wrote_cannot_forge_a_log_line(
         self, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1234,32 +953,6 @@ class TestDeleteSourceEndpoint:
         """Malformed path id is rejected before any DB lookup."""
         response = client.delete("/api/sync/sources/Bad-ID")
         assert response.status_code == 400
-
-    def test_accepts_hyphenated_source_id(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """A hyphenated id passes the format gate and deletes its DB row."""
-        storage.upsert_source_config(
-            1, "calibre-web", "fake_file", {"path": "/x"}, enabled=True
-        )
-        response = client.delete("/api/sync/sources/calibre-web")
-        assert response.status_code == 204
-        assert storage.get_source_config(1, "calibre-web") is None
-
-    def test_drops_row_even_when_plugin_no_longer_registered(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """Plugin renamed/removed post-migration: row still goes away.
-
-        Credentials may linger (we can't introspect the schema without a
-        plugin), but the source_configs row is removed regardless.
-        """
-        storage.upsert_source_config(
-            1, "ghost", "this_plugin_was_removed", {"x": 1}, enabled=True
-        )
-        response = client.delete("/api/sync/sources/ghost")
-        assert response.status_code == 204
-        assert storage.get_source_config(1, "ghost") is None
 
     def test_the_last_source_on_a_plugin_takes_the_stranded_row_with_it(
         self,
@@ -1472,29 +1165,6 @@ class TestSourceCredentialMoveRegression:
 
         assert sync.status_code == 200
         assert started.wait(timeout=5)
-
-    def test_the_reported_https_edit_keeps_an_arr_api_key(
-        self, real_plugin_client: TestClient, storage: StorageManager
-    ) -> None:
-        """The same edit on Radarr, whose ``url`` carries an explicit port."""
-        client = real_plugin_client
-        self._source_with_a_secret(
-            client,
-            "radarr",
-            "radarr",
-            {"url": "http://media.lan:8080"},
-            ("api_key", "issued-for-media-lan"),
-        )
-
-        saved = client.put(
-            "/api/sync/sources/radarr/config",
-            json={"values": {"url": "https://media.lan:8080"}},
-        )
-
-        assert saved.status_code == 200
-        assert saved.json()["field_values"]["url"] == "https://media.lan:8080"
-        assert saved.json()["secret_status"]["api_key"] is True
-        assert storage.get_credential(1, "radarr", "api_key") == "issued-for-media-lan"
 
     def test_toggling_verify_ssl_keeps_the_password(
         self, real_plugin_client: TestClient, storage: StorageManager

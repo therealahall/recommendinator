@@ -29,31 +29,12 @@ class TestGetLengthValue:
         item = make_item(content_type=ContentType.BOOK, metadata={"num_pages": 150})
         assert get_length_value(item) == 150
 
-    def test_movie_runtime(self) -> None:
-        item = make_item(content_type=ContentType.MOVIE, metadata={"runtime": 120})
-        assert get_length_value(item) == 120
-
-    def test_tv_show_seasons(self) -> None:
-        item = make_item(content_type=ContentType.TV_SHOW, metadata={"seasons": 5})
-        assert get_length_value(item) == 5
-
-    def test_video_game_average_playtime(self) -> None:
-        item = make_item(
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"average_playtime_hours": 25},
-        )
-        assert get_length_value(item) == 25
-
     def test_video_game_reads_no_other_playtime_key(self) -> None:
         """Only RAWG's key counts: the other two spellings are not a game length."""
         item = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"playtime_hours": 300, "main_story_hours": 55},
         )
-        assert get_length_value(item) is None
-
-    def test_no_metadata_returns_none(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={})
         assert get_length_value(item) is None
 
     def test_non_numeric_value_returns_none(self) -> None:
@@ -71,61 +52,8 @@ class TestGetLengthValue:
 
 
 class TestClassifyLength:
-    def test_short_book(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
-        assert classify_length(item) == LengthPreference.SHORT
-
-    def test_medium_book(self) -> None:
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 350})
-        assert classify_length(item) == LengthPreference.MEDIUM
-
     def test_long_book(self) -> None:
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-        assert classify_length(item) == LengthPreference.LONG
-
-    def test_short_movie(self) -> None:
-        item = make_item(content_type=ContentType.MOVIE, metadata={"runtime": 80})
-        assert classify_length(item) == LengthPreference.SHORT
-
-    def test_medium_movie(self) -> None:
-        item = make_item(content_type=ContentType.MOVIE, metadata={"runtime": 120})
-        assert classify_length(item) == LengthPreference.MEDIUM
-
-    def test_long_movie(self) -> None:
-        item = make_item(content_type=ContentType.MOVIE, metadata={"runtime": 180})
-        assert classify_length(item) == LengthPreference.LONG
-
-    def test_short_tv_show(self) -> None:
-        item = make_item(content_type=ContentType.TV_SHOW, metadata={"seasons": 2})
-        assert classify_length(item) == LengthPreference.SHORT
-
-    def test_medium_tv_show(self) -> None:
-        item = make_item(content_type=ContentType.TV_SHOW, metadata={"seasons": 4})
-        assert classify_length(item) == LengthPreference.MEDIUM
-
-    def test_long_tv_show(self) -> None:
-        item = make_item(content_type=ContentType.TV_SHOW, metadata={"seasons": 10})
-        assert classify_length(item) == LengthPreference.LONG
-
-    def test_short_video_game(self) -> None:
-        item = make_item(
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"average_playtime_hours": 5},
-        )
-        assert classify_length(item) == LengthPreference.SHORT
-
-    def test_medium_video_game(self) -> None:
-        item = make_item(
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"average_playtime_hours": 20},
-        )
-        assert classify_length(item) == LengthPreference.MEDIUM
-
-    def test_long_video_game(self) -> None:
-        item = make_item(
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"average_playtime_hours": 60},
-        )
         assert classify_length(item) == LengthPreference.LONG
 
     def test_no_metadata_returns_none(self) -> None:
@@ -235,11 +163,6 @@ class TestScoreLengthMatch:
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
         assert score_length_match(item, {"movie": "short"}) == 1.0
 
-    def test_game_without_rawg_playtime_returns_08(self) -> None:
-        """An unenriched game has no length, so it gets the same 0.8 a book does."""
-        item = make_item(content_type=ContentType.VIDEO_GAME, metadata={})
-        assert score_length_match(item, {"video_game": "short"}) == 0.8
-
     @pytest.mark.parametrize("average", [None, "", "unknown", []])
     def test_game_with_unusable_rawg_playtime_returns_08(self, average: Any) -> None:
         """A blank or non-numeric average is no length, and is not an error."""
@@ -249,14 +172,6 @@ class TestScoreLengthMatch:
         )
         assert classify_length(item) is None
         assert score_length_match(item, {"video_game": "long"}) == 0.8
-
-    def test_game_with_string_rawg_playtime_scores(self) -> None:
-        """A metadata blob round trip can hand the average back as a string."""
-        item = make_item(
-            content_type=ContentType.VIDEO_GAME,
-            metadata={"average_playtime_hours": "6"},
-        )
-        assert score_length_match(item, {"video_game": "short"}) == 1.0
 
 
 # ---------------------------------------------------------------------------

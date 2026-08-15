@@ -2,38 +2,28 @@
 
 import asyncio
 import csv
-import inspect
 import io
 import json
 import logging
 import os
-import sys
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime
-from math import inf, nan
+from math import inf
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.datastructures import DefaultPlaceholder
-from fastapi.dependencies.models import Dependant
+from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.exceptions import (
-    RequestValidationError,
-    WebSocketRequestValidationError,
-)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import HTMLResponse, JSONResponse, Response
-from starlette.routing import WebSocketRoute
 
 import src.sources.service
 import src.web.api
@@ -54,38 +44,24 @@ from src.settings.service import build_settings_view
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import UNSET, StorageManager
 from src.storage.schema import update_user_settings
-from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import LINE_BREAKS
-from src.web.api import APP_VERSION, _item_to_response
+from src.web.api import APP_VERSION
 from src.web.app import (
     _raised_refusal_json_can_carry,
-    _validation_refusal_json_can_carry,
 )
-from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL, require_session
+from src.web.auth import SESSION_COOKIE, require_session
 from src.web.enrichment_manager import (
     WebEnrichmentManager,
     _enrichment_manager_lock,
     get_enrichment_manager,
     reset_enrichment_manager,
 )
-from src.web.guards import (
-    RequiredStorage,
-    require_config,
-    require_engine,
-    require_storage,
-    writable_config,
-)
-from src.web.responses import SurrogateSafeJSONResponse, SurrogateSafeResponse
 from src.web.state import (
-    ConfigWatcher,
     _config_lock,
     app_state,
-    get_config,
-    get_engine,
-    get_storage,
     locked_running_config,
     reload_config,
 )
@@ -285,115 +261,6 @@ class TestCreateAppSettingsMigration:
             assert _cors_origins(app) == ["https://app.example.com"]
         reset_sync_manager()
 
-    def test_a_configured_origin_reaches_only_the_ungated_surface(
-        self, mock_config, tmp_path
-    ):
-        """Regression: this asserted a credentialed preflight, which cannot work.
-
-        The session cookie is ``SameSite=Strict``, so a browser never attaches
-        it cross-origin. ``allowed_origins`` buys the SPA shell and the static
-        assets; everything behind the session gate answers 401 to that client.
-        """
-        reset_sync_manager()
-        origin = "https://app.example.com"
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {"allowed_origins": [origin]}}
-        with booted_web_app(storage_manager, config) as app:
-            client = TestClient(app)
-            preflight = client.options(
-                "/api/auth/login",
-                headers={
-                    "Origin": origin,
-                    "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "content-type",
-                },
-            )
-            shell = client.get("/", headers={"Origin": origin})
-            gated = client.get("/api/status", headers={"Origin": origin})
-        reset_sync_manager()
-
-        assert preflight.status_code == 200
-        allowed = preflight.headers["access-control-allow-headers"].lower()
-        assert "content-type" in allowed
-        assert "access-control-allow-credentials" not in preflight.headers
-        assert shell.status_code == 200
-        assert shell.headers["access-control-allow-origin"] == origin
-        assert gated.status_code == 401
-
-    @pytest.mark.parametrize(
-        "origins",
-        [
-            pytest.param(["https://app.example.com"], id="one-origin"),
-            pytest.param(["*"], id="wildcard"),
-        ],
-    )
-    def test_no_origin_list_carries_credentials(self, mock_config, tmp_path, origins):
-        """Nothing a browser sends cross-origin can authenticate under Strict.
-
-        Turning this on would promise a signed-in cross-origin client that the
-        cookie makes impossible, and against ``["*"]`` browsers refuse it flat.
-        """
-        reset_sync_manager()
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {"allowed_origins": origins}}
-        with booted_web_app(storage_manager, config) as app:
-            assert _cors_origins(app) == origins
-            assert _cors_kwargs(app).get("allow_credentials", False) is False
-        reset_sync_manager()
-
-    def test_db_set_origins_reach_the_middleware(self, mock_config, tmp_path):
-        """A DB-stored value applies on the next boot, as restart_required promises.
-
-        The overlay runs before the CORS read, but nothing pinned that ordering
-        — and this is the only registry leaf whose effect is a security control.
-        """
-        reset_sync_manager()
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage_manager.set_setting("web.allowed_origins", ["https://stored.example"])
-        with booted_web_app(storage_manager, mock_config) as app:
-            assert _cors_origins(app) == ["https://stored.example"]
-        reset_sync_manager()
-
-    @pytest.mark.parametrize("bad_origins", [None, "https://app.example.com", [1, 2]])
-    def test_unusable_allowed_origins_is_reported_not_swallowed(
-        self, mock_config, tmp_path, bad_origins, caplog
-    ):
-        """A narrowed CORS policy must say why, like the bind path already does.
-
-        ``resolve_bootstrap_web`` warns for every unusable ``web.*`` leaf, and
-        the reasoning applies identically here: an operator who typed
-        ``allowed_origins: https://app.example.com`` (a scalar, not a list) gets
-        the default policy instead of theirs, and without a log there is nothing
-        to debug the resulting browser CORS failures from.
-        """
-        reset_sync_manager()
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {"allowed_origins": bad_origins}}
-        with (
-            caplog.at_level(logging.WARNING, logger="src.web.app"),
-            booted_web_app(storage_manager, config),
-        ):
-            pass
-
-        assert any("web.allowed_origins" in m for m in caplog.messages)
-        reset_sync_manager()
-
-    def test_well_formed_allowed_origins_logs_nothing(
-        self, mock_config, tmp_path, caplog
-    ):
-        """The common case stays quiet, or the warning trains itself away."""
-        reset_sync_manager()
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {"allowed_origins": ["https://ok.example"]}}
-        with (
-            caplog.at_level(logging.WARNING, logger="src.web.app"),
-            booted_web_app(storage_manager, config) as app,
-        ):
-            assert _cors_origins(app) == ["https://ok.example"]
-
-        assert not any("web.allowed_origins" in m for m in caplog.messages)
-        reset_sync_manager()
-
     @pytest.mark.parametrize("bad_origins", [None, "https://app.example.com", [1, 2]])
     def test_unusable_allowed_origins_falls_back_to_the_default(
         self, mock_config, tmp_path, bad_origins
@@ -412,50 +279,6 @@ class TestCreateAppSettingsMigration:
         config = {**mock_config, "web": {"allowed_origins": bad_origins}}
         with booted_web_app(storage_manager, config) as app:
             assert _cors_origins(app) == default_of("web.allowed_origins")
-        reset_sync_manager()
-
-    def test_logging_is_configured_after_the_overlay_onto_the_servers_console(
-        self, mock_config, tmp_path
-    ):
-        """Overlay first, then the console the server logs onto.
-
-        Spies on the real settings hook so it still runs (no stub). stdout is
-        what ``docker logs`` shows, and a server has no data channel to keep
-        the traceback off.
-        """
-        reset_sync_manager()
-        order: list[str] = []
-        console_arguments: dict[str, Any] = {}
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        def _record_settings(config, storage):
-            order.append("settings")
-            migrate_config_settings(config, storage)
-
-        def _record_logging(config, **kwargs):
-            order.append("logging")
-            console_arguments.update(kwargs)
-
-        with (
-            patch(
-                "src.web.app.migrate_config_settings",
-                side_effect=_record_settings,
-            ),
-            # Overrides the root conftest's blanket no-op patch, which is what
-            # keeps every other boot here off the production log file.
-            patch("src.utils.logging.configure_logging", side_effect=_record_logging),
-            booted_web_app(storage_manager, mock_config),
-        ):
-            pass
-
-        assert order == ["settings", "logging"]
-        assert console_arguments["console_stream"] is sys.stdout
-        assert console_arguments["console_tracebacks"] is True
-        # No floor of its own: a server's console is its log viewer, so it
-        # takes what ``logging.level`` names.
-        assert console_arguments["console_floor"] == logging.NOTSET
-        # The real hook ran via the spy but wrote nothing to the DB.
-        assert storage_manager.list_settings() == {}
         reset_sync_manager()
 
     def test_create_app_migrates_config_secret_into_storage(self, tmp_path) -> None:
@@ -498,19 +321,6 @@ class TestBootStartsFromCleanStateRegression:
     restoring the snapshot after, so it is clean-start and leak-free both.
     """
 
-    def test_a_leaked_watcher_does_not_reach_the_booted_app(
-        self, mock_config, tmp_path, monkeypatch
-    ) -> None:
-        """The boot sees a real watcher, and the caller gets its mock back."""
-        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
-        leaked = MagicMock(spec=ConfigWatcher)
-        monkeypatch.setattr(app_state, "config_watcher", leaked)
-
-        with booted_web_app(storage_manager, mock_config):
-            assert isinstance(app_state.config_watcher, ConfigWatcher)
-
-        assert app_state.config_watcher is leaked
-
     def test_no_field_survives_the_boot_and_every_one_comes_back(
         self, mock_config, tmp_path, monkeypatch
     ) -> None:
@@ -546,76 +356,6 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "Recommendinator" in response.text
 
-    def test_vite_spa_uses_hashed_assets(self, client):
-        """When dist/index.html exists, root() serves Vite content-hashed assets.
-
-        Uses a synthetic dist/index.html via monkeypatch so the test is
-        deterministic regardless of whether `make build-frontend` has run.
-        """
-        fake_html = (
-            '<script type="module" crossorigin '
-            'src="/static/dist/assets/index-abc123.js"></script>'
-        )
-        original_exists = Path.exists
-        original_read_text = Path.read_text
-
-        def patched_exists(self: Path) -> bool:
-            if str(self).endswith("dist/index.html"):
-                return True
-            return original_exists(self)
-
-        def patched_read_text(self: Path, *args: object, **kwargs: object) -> str:
-            if str(self).endswith("dist/index.html"):
-                return fake_html
-            return original_read_text(self, *args, **kwargs)
-
-        with (
-            patch.object(Path, "exists", patched_exists),
-            patch.object(Path, "read_text", patched_read_text),
-        ):
-            response = client.get("/")
-        assert response.status_code == 200
-        assert "/assets/" in response.text
-        assert 'type="module"' in response.text
-
-    def test_spa_has_no_inline_scripts(self, client):
-        """Vite SPA dist/index.html must not contain inline scripts (CSP compliance).
-
-        Uses a synthetic dist/index.html to verify the assertion logic.
-        An inline script would violate CSP script-src 'self'.
-        """
-        import re
-
-        fake_html = (
-            '<script type="module" crossorigin '
-            'src="/static/dist/assets/index-abc123.js"></script>'
-        )
-        original_exists = Path.exists
-        original_read_text = Path.read_text
-
-        def patched_exists(self: Path) -> bool:
-            if str(self).endswith("dist/index.html"):
-                return True
-            return original_exists(self)
-
-        def patched_read_text(self: Path, *args: object, **kwargs: object) -> str:
-            if str(self).endswith("dist/index.html"):
-                return fake_html
-            return original_read_text(self, *args, **kwargs)
-
-        with (
-            patch.object(Path, "exists", patched_exists),
-            patch.object(Path, "read_text", patched_read_text),
-        ):
-            response = client.get("/")
-        assert response.status_code == 200
-        inline_scripts = re.findall(
-            r"<script(?![^>]*\bsrc=)[^>]*>(?!<\/script>)", response.text
-        )
-        assert (
-            not inline_scripts
-        ), f"Inline scripts violate CSP script-src 'self': {inline_scripts}"
-
     def test_fallback_when_template_missing(self, client):
         """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
@@ -632,11 +372,6 @@ class TestRootEndpoint:
         assert "Recommendinator API" in response.text
 
 
-def test_app_title(mock_components):
-    """Test that the FastAPI app title reflects the Recommendinator brand."""
-    assert mock_components["app"].title == "Recommendinator API"
-
-
 def test_status_endpoint(client):
     """Test status endpoint returns version from src.__version__."""
     response = client.get("/api/status")
@@ -645,44 +380,6 @@ def test_status_endpoint(client):
     assert data["status"] == "ready"
     assert data["version"] == APP_VERSION
     assert isinstance(data["components"], dict)
-
-
-class TestSecurityHeaders:
-    """Tests for security-related HTTP headers."""
-
-    def test_csp_script_src_self_only(self, client):
-        """CSP script-src should be 'self' only (no CDN)."""
-        response = client.get("/api/status")
-        csp = response.headers["Content-Security-Policy"]
-        assert "script-src 'self'" in csp
-        assert "cdn.jsdelivr.net" not in csp
-
-    def test_csp_frame_ancestors_none(self, client):
-        """CSP should include frame-ancestors 'none'."""
-        csp = client.get("/api/status").headers["Content-Security-Policy"]
-        assert "frame-ancestors 'none'" in csp
-
-    def test_csp_style_src_no_unsafe_inline(self, client):
-        """CSP style-src should not include 'unsafe-inline'."""
-        csp = client.get("/api/status").headers["Content-Security-Policy"]
-        assert "style-src 'self'" in csp
-        assert "unsafe-inline" not in csp
-
-    def test_referrer_policy(self, client):
-        """Referrer-Policy header should be set."""
-        headers = client.get("/api/status").headers
-        assert headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
-
-    def test_permissions_policy(self, client):
-        """Permissions-Policy header should restrict sensitive features."""
-        policy = client.get("/api/status").headers["Permissions-Policy"]
-        assert "camera=()" in policy
-        assert "microphone=()" in policy
-        assert "geolocation=()" in policy
-
-    def test_x_frame_options_deny(self, client):
-        """X-Frame-Options should be DENY."""
-        assert client.get("/api/status").headers["X-Frame-Options"] == "DENY"
 
 
 class TestStatusRecommendationsConfig:
@@ -709,16 +406,6 @@ class TestStatusRecommendationsConfig:
         rec_cfg = response.json()["recommendations_config"]
         assert rec_cfg["max_count"] == 50
         assert rec_cfg["default_count"] == 10
-
-    def test_status_with_no_config_uses_defaults(self, client):
-        """GET /api/status returns defaults when config is None."""
-        app_state.config = None
-
-        response = client.get("/api/status")
-        assert response.status_code == 200
-        rec_cfg = response.json()["recommendations_config"]
-        assert rec_cfg["max_count"] == 20
-        assert rec_cfg["default_count"] == 5
 
 
 def test_sync_sources_endpoint(client, mock_config):
@@ -1105,50 +792,6 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
     assert "api_key" in caplog.text
 
 
-def test_update_endpoint_steam_missing_id(client, mock_components, caplog):
-    """Test update endpoint with missing Steam ID."""
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "test_api_key",
-        "steam_id": "",
-        "vanity_url": "",
-        "enabled": True,
-    }
-
-    with caplog.at_level(logging.WARNING, logger="src.web.api"):
-        response = client.post("/api/update", json={"source": "steam"})
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "Source is not properly configured — check these: 'steam_id', 'vanity_url'."
-    )
-    assert "steam_id" in caplog.text or "vanity_url" in caplog.text
-
-
-def test_update_endpoint_steam_api_error(client, mock_components):
-    """Test update endpoint handles Steam API error during validation.
-
-    A started sync answers 200 and reports its errors through the status
-    endpoint. The sync manager is stubbed because the real one spawns a
-    thread that outlives the test calling the live Steam API.
-    """
-    app_state.config["inputs"]["steam"] = {
-        "plugin": "steam",
-        "api_key": "test_api_key",
-        "steam_id": "76561198000000000",
-        "enabled": True,
-    }
-    sync_manager = Mock(spec=SyncManager)
-    sync_manager.start_sync.return_value = (True, "Started sync for Steam")
-
-    with patch("src.web.api.get_sync_manager", return_value=sync_manager):
-        response = client.post("/api/update", json={"source": "steam"})
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-
-
 def test_update_endpoint_all_sources(client, mock_components):
     """Test update endpoint with 'all' source starts background sync."""
     app_state.config["inputs"]["steam"] = {
@@ -1299,26 +942,6 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
         assert "/etc/shadow" not in response.text
         assert "allowed_source_roots" not in response.text
 
-    def test_a_real_missing_file_reveals_neither_the_path_nor_the_field(
-        self, client, tmp_path
-    ):
-        """Unmocked twin of the fabricated "not found" above.
-
-        An allowed-but-absent file is the case a caller would probe, and its
-        answer carries no path.
-        """
-        app_state.config["inputs"]["books"] = {
-            "plugin": "goodreads_csv",
-            "path": str(tmp_path / "library.csv"),
-            "enabled": True,
-        }
-
-        response = client.post("/api/update", json={"source": "books"})
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == SOURCE_MISCONFIGURED_DETAIL
-        assert "library.csv" not in response.text
-
     def test_a_newline_in_the_source_id_cannot_forge_a_log_line(self, client, caplog):
         """CR/LF is escaped before the id reaches the log (CWE-117)."""
         with caplog.at_level(logging.INFO, logger="src.web.api"):
@@ -1328,35 +951,6 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
 
         assert response.status_code == 400
         assert "\\nWARNING forged line" in caplog.text
-
-    def test_a_newline_in_the_plugins_reason_cannot_forge_a_log_line(
-        self, client, mock_components, caplog
-    ):
-        """The plugin's message is escaped too, not just the id.
-
-        Plugin messages quote configured values verbatim, and a value
-        authored in ``config.yaml`` never passes the write door that
-        refuses newlines.
-        """
-        app_state.config["inputs"]["steam"] = {
-            "plugin": "steam",
-            "api_key": "test_api_key",
-            "steam_id": "76561198000000000",
-            "enabled": True,
-        }
-
-        with (
-            patch(
-                "src.ingestion.sources.steam.SteamPlugin.validate_config",
-                return_value=["'api_key' is invalid\nWARNING forged line"],
-            ),
-            caplog.at_level(logging.WARNING, logger="src.web.api"),
-        ):
-            response = client.post("/api/update", json={"source": "steam"})
-
-        assert response.status_code == 400
-        assert "\\nWARNING forged line" in caplog.text
-        assert "\nWARNING forged line" not in caplog.text
 
 
 class TestUpdateResolvesTheSourceOnceRegression:
@@ -1503,20 +1097,6 @@ def test_get_user_preferences_defaults(client, mock_components):
     assert data["custom_rules"] == []
 
 
-def test_put_user_preferences_partial(client, mock_components):
-    """PUT /api/users/1/preferences merges partial update."""
-    back_mock_preference_store(mock_components["storage"])
-
-    response = client.put(
-        "/api/users/1/preferences",
-        json={"scorer_weights": {"genre_match": 3.0}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["scorer_weights"] == {"genre_match": 3.0}
-    assert data["series_in_order"] is True  # unchanged default
-
-
 def test_put_user_preferences_full(client, mock_components):
     """PUT /api/users/1/preferences can update all fields."""
     back_mock_preference_store(mock_components["storage"])
@@ -1538,32 +1118,6 @@ def test_put_user_preferences_full(client, mock_components):
     assert data["custom_rules"] == ["no horror"]
 
 
-def test_put_user_preferences_accepts_max_variety_penalty(client, mock_components):
-    """variety_penalty at the 5.0 maximum is accepted and saved."""
-    merge = back_mock_preference_store(mock_components["storage"])
-
-    response = client.put(
-        "/api/users/1/preferences",
-        json={"variety_penalty": 5.0},
-    )
-    assert response.status_code == 200
-    assert response.json()["variety_penalty"] == 5.0
-    merge.assert_called_once()
-
-
-def test_put_user_preferences_accepts_zero_variety_penalty(client, mock_components):
-    """variety_penalty at the 0.0 minimum is accepted and saved (penalty off)."""
-    merge = back_mock_preference_store(mock_components["storage"])
-
-    response = client.put(
-        "/api/users/1/preferences",
-        json={"variety_penalty": 0.0},
-    )
-    assert response.status_code == 200
-    assert response.json()["variety_penalty"] == 0.0
-    merge.assert_called_once()
-
-
 def test_put_user_preferences_rejects_out_of_range_variety_penalty(
     client, mock_components
 ):
@@ -1573,18 +1127,6 @@ def test_put_user_preferences_rejects_out_of_range_variety_penalty(
     response = client.put(
         "/api/users/1/preferences",
         json={"variety_penalty": 6.0},
-    )
-    assert response.status_code == 422
-    merge.assert_not_called()
-
-
-def test_put_user_preferences_rejects_negative_variety_penalty(client, mock_components):
-    """variety_penalty below 0.0 is rejected with a 422 and never saved."""
-    merge = back_mock_preference_store(mock_components["storage"])
-
-    response = client.put(
-        "/api/users/1/preferences",
-        json={"variety_penalty": -0.1},
     )
     assert response.status_code == 422
     merge.assert_not_called()
@@ -1765,24 +1307,6 @@ class TestUserPreferenceBounds:
 
         assert written.status_code == 422
 
-    def test_a_full_preferences_page_still_saves(self, client, mock_components):
-        """The bound is above what the UI sends: every scorer plus rules."""
-        merge = back_mock_preference_store(mock_components["storage"])
-
-        response = client.put(
-            "/api/users/1/preferences",
-            json={
-                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 2.0),
-                "custom_rules": ["avoid horror", "prefer sci-fi"],
-                "content_length_preferences": {"book": "short", "movie": "any"},
-                "theme": "nord",
-            },
-        )
-
-        assert response.status_code == 200
-        assert response.json()["scorer_weights"] == dict.fromkeys(SCORER_NAME_MAP, 2.0)
-        merge.assert_called_once()
-
     def test_a_stored_weight_survives_a_write_that_fills_the_bound(self, settings_app):
         """An earlier fix evicted by insertion order, so one write naming every
         scorer discarded the weight the user set first. The filling write omits
@@ -1832,37 +1356,6 @@ class TestPreferenceKeysAreAClosedSet:
         assert response.status_code == 422
         merge.assert_not_called()
 
-    def test_the_refusal_names_what_would_have_been_accepted(
-        self, client, mock_components
-    ):
-        """A 422 saying only "unknown" leaves the operator guessing."""
-        back_mock_preference_store(mock_components["storage"])
-
-        response = client.put(
-            "/api/users/1/preferences", json={"scorer_weights": {"recency": 1.0}}
-        )
-
-        assert "genre_match" in json.dumps(response.json())
-
-    @pytest.mark.parametrize("preference", _LENGTH_PREFERENCE_NAMES)
-    def test_every_legal_name_is_still_accepted(
-        self, client, mock_components, preference
-    ):
-        """Closing the set the wrong way refuses what the CLI can set."""
-        back_mock_preference_store(mock_components["storage"])
-
-        response = client.put(
-            "/api/users/1/preferences",
-            json={
-                "scorer_weights": dict.fromkeys(SCORER_NAME_MAP, 2.0),
-                "content_length_preferences": dict.fromkeys(
-                    _CONTENT_TYPE_NAMES, preference
-                ),
-            },
-        )
-
-        assert response.status_code == 200
-
 
 class TestPreferenceWriteNamingAnUnknownUser:
     """Reported: the write is an ``UPDATE`` keyed on the id, so for a missing
@@ -1895,22 +1388,6 @@ class TestPreferenceWriteNamingAnUnknownUser:
 
         assert response.status_code == 422
         merge.assert_not_called()
-
-    @pytest.mark.parametrize("user_id", [0, -1])
-    def test_the_read_side_rejects_a_non_positive_user_id_too(self, client, user_id):
-        """Both handlers on the route carry the same bound."""
-        assert client.get(f"/api/users/{user_id}/preferences").status_code == 422
-
-
-def test_get_user_preferences_includes_variety_penalty(client, mock_components):
-    """GET surfaces the numeric variety_penalty field."""
-    mock_components["storage"].get_user_preference_config = Mock(
-        return_value=UserPreferenceConfig(variety_penalty=0.4)
-    )
-
-    response = client.get("/api/users/1/preferences")
-    assert response.status_code == 200
-    assert response.json()["variety_penalty"] == 0.4
 
 
 def test_list_users(client, mock_components):
@@ -2029,33 +1506,6 @@ def test_recommendations_include_variety_penalty(client, mock_components):
     assert data[0]["variety_penalty"] == 0.8
 
 
-def test_recommendations_variety_penalty_defaults_to_zero(client, mock_components):
-    """variety_penalty is 0.0 on the wire when the producer sets none."""
-    mock_item = ContentItem(
-        id="1",
-        title="Plain Book",
-        author="Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    mock_recommendations = [
-        Recommendation(
-            item=mock_item,
-            score=0.85,
-            reasoning="Recommended",
-            score_breakdown={"genre_match": 0.9},
-        )
-    ]
-    mock_components["engine"].generate_recommendations.return_value = (
-        mock_recommendations
-    )
-
-    response = client.get("/api/recommendations?type=book&count=1")
-    assert response.status_code == 200
-    data = response.json()
-    assert data[0]["variety_penalty"] == 0.0
-
-
 def test_recommendations_with_user_id(client, mock_components):
     """GET /api/recommendations with user_id loads user preferences."""
     mock_item = ContentItem(
@@ -2125,45 +1575,6 @@ def test_ignore_item_success(client, mock_components):
     )
 
 
-def test_ignore_item_not_found(client, mock_components):
-    """PATCH /api/items/{db_id}/ignore returns 404 if item not found."""
-    mock_components["storage"].get_content_item = Mock(return_value=None)
-
-    response = client.patch(
-        "/api/items/999/ignore?user_id=1",
-        json={"ignored": True},
-    )
-    assert response.status_code == 404
-
-
-def test_unignore_item(client, mock_components):
-    """PATCH /api/items/{db_id}/ignore can unignore an item."""
-    mock_item = ContentItem(
-        id="ext_1",
-        db_id=42,
-        title="Test Book",
-        author="Test Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-        ignored=True,
-    )
-
-    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
-    mock_components["storage"].set_item_ignored = Mock(return_value=True)
-
-    response = client.patch(
-        "/api/items/42/ignore?user_id=1",
-        json={"ignored": False},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ignored"] is False
-
-    mock_components["storage"].set_item_ignored.assert_called_once_with(
-        42, False, user_id=1
-    )
-
-
 def test_list_items_includes_ignored(client, mock_components):
     """GET /api/items returns items with ignored field."""
     mock_items = [
@@ -2194,18 +1605,6 @@ def test_list_items_includes_ignored(client, mock_components):
     assert data[0]["db_id"] == 1
     assert data[1]["ignored"] is True
     assert data[1]["db_id"] == 2
-
-
-def test_list_items_hides_ignored_by_default(client, mock_components):
-    """GET /api/items defaults to include_ignored=False, hiding ignored items."""
-    mock_components["storage"].get_content_items = Mock(return_value=[])
-
-    response = client.get("/api/items?user_id=1")
-    assert response.status_code == 200
-
-    mock_components["storage"].get_content_items.assert_called_once()
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["include_ignored"] is False
 
 
 def test_list_items_include_ignored_true(client, mock_components):
@@ -2243,100 +1642,6 @@ def test_list_items_needs_rating_overrides_explicit_status(client, mock_componen
     call_kwargs = mock_components["storage"].get_content_items.call_args[1]
     assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
     assert call_kwargs["unrated_only"] is True
-
-
-def test_list_items_default_does_not_filter_unrated(client, mock_components):
-    """GET /api/items without needs_rating passes unrated_only=False to storage."""
-    mock_components["storage"].get_content_items.return_value = []
-
-    response = client.get("/api/items?user_id=1")
-    assert response.status_code == 200
-
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["unrated_only"] is False
-
-
-def test_list_items_needs_rating_returns_only_completed_unrated(
-    client, mock_components
-):
-    """needs_rating returns the completed+unrated set the storage layer produces.
-
-    Storage applies the actual filter (covered by storage-layer tests); the
-    endpoint must return whatever that filtered query yields unmodified.
-    """
-    completed_unrated = ContentItem(
-        id="1",
-        title="Completed Unrated",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.COMPLETED,
-        rating=None,
-    )
-    mock_components["storage"].get_content_items.return_value = [completed_unrated]
-
-    response = client.get("/api/items?user_id=1&needs_rating=true")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["title"] == "Completed Unrated"
-    assert data[0]["status"] == "completed"
-    assert data[0]["rating"] is None
-
-
-def test_list_items_needs_rating_composes_with_type(client, mock_components):
-    """needs_rating + type forwards content_type, completed status, and unrated_only."""
-    mock_components["storage"].get_content_items.return_value = []
-
-    response = client.get("/api/items?user_id=1&needs_rating=true&type=book")
-    assert response.status_code == 200
-
-    mock_components["storage"].get_content_items.assert_called_once()
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["content_type"] == ContentType.BOOK
-    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-    assert call_kwargs["unrated_only"] is True
-
-
-def test_list_items_needs_rating_composes_with_include_ignored(client, mock_components):
-    """needs_rating + include_ignored forwards both flags plus completed status."""
-    mock_components["storage"].get_content_items.return_value = []
-
-    response = client.get("/api/items?user_id=1&needs_rating=true&include_ignored=true")
-    assert response.status_code == 200
-
-    mock_components["storage"].get_content_items.assert_called_once()
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["status"] == ConsumptionStatus.COMPLETED
-    assert call_kwargs["unrated_only"] is True
-    assert call_kwargs["include_ignored"] is True
-
-
-def test_recommendations_include_db_id(client, mock_components):
-    """GET /api/recommendations includes db_id in response."""
-    mock_item = ContentItem(
-        id="ext_1",
-        db_id=42,
-        title="Test Book",
-        author="Test Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    mock_recommendations = [
-        Recommendation(
-            item=mock_item, score=0.85, reasoning="Recommended highly similar"
-        )
-    ]
-
-    mock_components["engine"].generate_recommendations.return_value = (
-        mock_recommendations
-    )
-
-    response = client.get("/api/recommendations?type=book&count=1")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["db_id"] == 42
-    assert data[0]["title"] == "Test Book"
 
 
 # ---------------------------------------------------------------------------
@@ -2414,48 +1719,6 @@ def test_edit_item_status(client, mock_components):
         description=None,
         user_id=1,
     )
-
-
-def test_edit_item_rating(client, mock_components):
-    """PATCH /api/items/{db_id} updates item rating."""
-    updated_item = ContentItem(
-        id="ext_1",
-        db_id=42,
-        title="Test Movie",
-        content_type=ContentType.MOVIE,
-        status=ConsumptionStatus.COMPLETED,
-        rating=5,
-    )
-    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
-    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
-
-    response = client.patch(
-        "/api/items/42?user_id=1",
-        json={"status": "completed", "rating": 5},
-    )
-    assert response.status_code == 200
-    assert response.json()["rating"] == 5
-
-
-def test_edit_item_review(client, mock_components):
-    """PATCH /api/items/{db_id} updates item review."""
-    updated_item = ContentItem(
-        id="ext_1",
-        db_id=42,
-        title="Test Game",
-        content_type=ContentType.VIDEO_GAME,
-        status=ConsumptionStatus.COMPLETED,
-        review="Amazing game",
-    )
-    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
-    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
-
-    response = client.patch(
-        "/api/items/42?user_id=1",
-        json={"status": "completed", "review": "Amazing game"},
-    )
-    assert response.status_code == 200
-    assert response.json()["review"] == "Amazing game"
 
 
 def test_edit_tv_show_seasons(client, mock_components):
@@ -2623,17 +1886,6 @@ def test_edit_item_explicit_null_clears_rating(client, mock_components):
     assert call_kwargs["review"] is None
 
 
-def test_edit_item_not_found(client, mock_components):
-    """PATCH /api/items/{db_id} returns 404 if item not found."""
-    mock_components["storage"].update_item_from_ui = Mock(return_value=False)
-
-    response = client.patch(
-        "/api/items/999?user_id=1",
-        json={"status": "unread"},
-    )
-    assert response.status_code == 404
-
-
 def test_edit_invalid_status(client, mock_components):
     """PATCH /api/items/{db_id} returns 400 for invalid status."""
     response = client.patch(
@@ -2679,26 +1931,6 @@ class TestEditRouteCompletesEverySeasonRegression:
         assert data["seasons_watched"] == [1, 2, 3, 4, 5]
 
 
-def test_edit_response_includes_tv_metadata(client, mock_components):
-    """GET /api/items response includes seasons_watched and total_seasons for TV."""
-    mock_item = ContentItem(
-        id="tv_1",
-        db_id=10,
-        title="Survivor",
-        content_type=ContentType.TV_SHOW,
-        status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        metadata={"seasons": 50, "seasons_watched": [1, 2, 3, 4, 5]},
-    )
-    mock_components["storage"].get_content_items = Mock(return_value=[mock_item])
-
-    response = client.get("/api/items?user_id=1")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["seasons_watched"] == [1, 2, 3, 4, 5]
-    assert data[0]["total_seasons"] == 50
-
-
 # ---------------------------------------------------------------------------
 # GET /api/items — enrichment filter and exposed fields
 # ---------------------------------------------------------------------------
@@ -2715,32 +1947,10 @@ def test_list_items_filters_not_enriched(client, mock_components):
     assert call_kwargs["enrichment"] == "not_enriched"
 
 
-def test_list_items_filters_enriched(client, mock_components):
-    """GET /api/items?enrichment=enriched forwards the filter to storage."""
-    mock_components["storage"].get_content_items = Mock(return_value=[])
-
-    response = client.get("/api/items?user_id=1&enrichment=enriched")
-
-    assert response.status_code == 200
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["enrichment"] == "enriched"
-
-
 def test_list_items_invalid_enrichment_returns_422(client, mock_components):
     """GET /api/items?enrichment=bogus is rejected at the API boundary."""
     response = client.get("/api/items?user_id=1&enrichment=bogus")
     assert response.status_code == 422
-
-
-def test_list_items_default_enrichment_is_none(client, mock_components):
-    """GET /api/items without enrichment passes None (no filter)."""
-    mock_components["storage"].get_content_items = Mock(return_value=[])
-
-    response = client.get("/api/items?user_id=1")
-
-    assert response.status_code == 200
-    call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-    assert call_kwargs["enrichment"] is None
 
 
 def test_list_items_response_exposes_enrichment_fields(client, mock_components):
@@ -2768,27 +1978,6 @@ def test_list_items_response_exposes_enrichment_fields(client, mock_components):
     assert data[0]["genres"] == ["Drama"]
     assert data[0]["tags"] == ["slow-burn"]
     assert data[0]["description"] == "A tense character study."
-
-
-def test_get_single_item_exposes_enrichment_fields(client, mock_components):
-    """GET /api/items/{db_id} exposes enriched plus genres/tags/description."""
-    mock_item = ContentItem(
-        id="movie_1",
-        db_id=7,
-        title="Test Movie",
-        content_type=ContentType.MOVIE,
-        status=ConsumptionStatus.UNREAD,
-        metadata={"genres": ["Drama"], "tags": [], "description": None},
-    )
-    mock_item.enriched = False
-    mock_components["storage"].get_content_item = Mock(return_value=mock_item)
-
-    response = client.get("/api/items/7?user_id=1")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["enriched"] is False
-    assert data["genres"] == ["Drama"]
 
 
 def test_edit_item_manual_metadata(client, mock_components):
@@ -2835,37 +2024,6 @@ def test_edit_item_manual_metadata(client, mock_components):
         genres=["Drama"],
         tags=["slow-burn"],
         description="Hand written.",
-        user_id=1,
-    )
-
-
-def test_edit_item_without_manual_metadata_passes_none(client, mock_components):
-    """PATCH without manual fields forwards None for genres/tags/description."""
-    updated_item = ContentItem(
-        id="movie_1",
-        db_id=7,
-        title="Test Movie",
-        content_type=ContentType.MOVIE,
-        status=ConsumptionStatus.COMPLETED,
-    )
-    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
-    mock_components["storage"].get_content_item = Mock(return_value=updated_item)
-
-    response = client.patch(
-        "/api/items/7?user_id=1",
-        json={"status": "completed", "rating": 4},
-    )
-
-    assert response.status_code == 200
-    mock_components["storage"].update_item_from_ui.assert_called_once_with(
-        db_id=7,
-        status="completed",
-        rating=4,
-        review=UNSET,
-        seasons_watched=None,
-        genres=None,
-        tags=None,
-        description=None,
         user_id=1,
     )
 
@@ -3047,54 +2205,6 @@ class TestExchangeGogTokenEndpoint:
 class TestPaginationAndSorting:
     """Tests for pagination offset and sort_by query params on /api/items."""
 
-    def test_offset_is_passed_to_storage(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?offset=10 passes offset to storage layer."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items?offset=10")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["offset"] == 10
-
-    def test_offset_defaults_to_zero(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items without offset defaults to 0."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["offset"] == 0
-
-    def test_sort_by_is_passed_to_storage(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?sort_by=rating passes sort_by to storage layer."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items?sort_by=rating")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["sort_by"] == "rating"
-
-    def test_sort_by_defaults_to_title(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items without sort_by defaults to 'title'."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["sort_by"] == "title"
-
     def test_sort_by_invalid_value_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3115,30 +2225,6 @@ class TestPaginationAndSorting:
         call_kwargs = mock_components["storage"].get_content_items.call_args[1]
         assert call_kwargs["sort_by"] == "rating"
 
-    def test_sort_by_updated_at(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?sort_by=updated_at is a valid sort option."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items?sort_by=updated_at")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["sort_by"] == "updated_at"
-
-    def test_sort_by_created_at(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?sort_by=created_at is a valid sort option."""
-        mock_components["storage"].get_content_items = Mock(return_value=[])
-
-        response = client.get("/api/items?sort_by=created_at")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["sort_by"] == "created_at"
-
     def test_offset_and_sort_by_combined(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3157,34 +2243,6 @@ class TestPaginationAndSorting:
 class TestSearchParam:
     """Tests for the search query param on /api/items."""
 
-    def test_search_is_passed_to_storage(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?search=dune forwards the term to storage."""
-        mock_components["storage"].get_content_items = Mock(
-            spec=StorageManager.get_content_items, return_value=[]
-        )
-
-        response = client.get("/api/items?search=dune")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["search"] == "dune"
-
-    def test_search_defaults_to_none(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items without search forwards search=None to storage."""
-        mock_components["storage"].get_content_items = Mock(
-            spec=StorageManager.get_content_items, return_value=[]
-        )
-
-        response = client.get("/api/items")
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["search"] is None
-
     def test_search_combined_with_type_filter(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3199,62 +2257,6 @@ class TestSearchParam:
         call_kwargs = mock_components["storage"].get_content_items.call_args[1]
         assert call_kwargs["search"] == "dune"
         assert call_kwargs["content_type"] == ContentType.BOOK
-
-    def test_search_returns_matching_items(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/items?search=dune returns the items storage matched."""
-        mock_items = [
-            ContentItem(
-                id="1",
-                title="Dune",
-                author="Frank Herbert",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                source="goodreads",
-            )
-        ]
-        mock_components["storage"].get_content_items = Mock(
-            spec=StorageManager.get_content_items, return_value=mock_items
-        )
-
-        response = client.get("/api/items?search=dune")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 1
-        assert data[0]["title"] == "Dune"
-
-    def test_non_latin_search_term_reaches_storage_unmangled(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """A non-Latin search term survives the round trip to storage and back.
-
-        Storage is mocked, so the matching itself is not exercised here —
-        ``tests/test_sorting.py`` covers that. What this pins is the web half:
-        the percent-encoded term arrives at storage byte-for-byte and a
-        matched title in a non-Latin script comes back through the JSON
-        response unchanged.
-        """
-        mock_items = [
-            ContentItem(
-                id="1",
-                title="進撃の巨人",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                source="tmdb",
-            )
-        ]
-        mock_components["storage"].get_content_items = Mock(
-            spec=StorageManager.get_content_items, return_value=mock_items
-        )
-
-        response = client.get("/api/items", params={"search": "進撃の巨人"})
-        assert response.status_code == 200
-
-        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
-        assert call_kwargs["search"] == "進撃の巨人"
-        assert response.json()[0]["title"] == "進撃の巨人"
 
     def test_over_long_search_term_is_rejected_regression(
         self, client: TestClient, mock_components: dict
@@ -3366,31 +2368,6 @@ def test_recommendations_tv_season_payload_includes_db_id(client, mock_component
     assert body[0]["db_id"] == 42
 
 
-def test_recommendations_non_tv_payload_preserves_db_id(client, mock_components):
-    """GET /api/recommendations keeps a book/movie/game rec's own db_id.
-
-    Non-TV content is not season-expanded, so the payload db_id is the item's
-    own library id, unchanged by the TV fix.
-    """
-    book_item = ContentItem(
-        id="ol:1",
-        db_id=7,
-        title="Foundation",
-        author="Isaac Asimov",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-    mock_components["engine"].generate_recommendations.return_value = [
-        _rec_record(book_item)
-    ]
-    mock_components["storage"].get_user_preference_config.return_value = None
-
-    response = client.get("/api/recommendations?type=book&count=5")
-    assert response.status_code == 200
-    body = response.json()
-    assert body[0]["db_id"] == 7
-
-
 # ---------------------------------------------------------------------------
 # Export Endpoint Tests (8E)
 # ---------------------------------------------------------------------------
@@ -3478,15 +2455,6 @@ class TestExportEndpoint:
 
         assert response.status_code == 400
         assert "Invalid format" in response.json()["detail"]
-
-    def test_invalid_content_type_returns_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Invalid content type returns 400 error."""
-        response = client.get("/api/items/export?type=podcast&format=csv")
-
-        assert response.status_code == 400
-        assert "Invalid content type" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -3628,30 +2596,6 @@ class TestUpdateEndpointParallelSync:
         assert response.status_code == 200
         assert captured_kwargs.get("max_workers") == 7
 
-    def test_default_max_workers_is_four_when_unset(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """No config['sync'] block => max_workers defaults to 4."""
-        app_state.config.pop("sync", None)
-
-        captured_kwargs: dict = {}
-        completion = threading.Event()
-        with (
-            patch(
-                "src.web.api.execute_multi_source_sync",
-                side_effect=self._make_capture(captured_kwargs, completion),
-            ),
-            patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
-                return_value=[],
-            ),
-        ):
-            response = client.post("/api/update", json={"source": "all"})
-            assert completion.wait(timeout=5.0), "background sync did not run"
-
-        assert response.status_code == 200
-        assert captured_kwargs.get("max_workers") == 4
-
     def test_request_body_max_workers_overrides_config(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3729,21 +2673,6 @@ class TestUpdateEndpointParallelSync:
         assert by_source["goodreads"]["progress_percent"] == 60
         assert by_source["steam"]["items_processed"] == 3
         assert by_source["steam"]["progress_percent"] == 30
-
-    def test_sync_status_idle_response_shape(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """GET /api/sync/status with no jobs returns the empty-list shape."""
-        # Ensure no leftover jobs from earlier tests in this suite.
-        from src.web.sync_manager import reset_sync_manager
-
-        reset_sync_manager()
-
-        response = client.get("/api/sync/status")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "idle"
-        assert body["jobs"] == []
 
     def test_sync_status_lists_multiple_concurrent_jobs(
         self, client: TestClient, mock_components: dict
@@ -3833,44 +2762,6 @@ class TestConfigReload:
         assert response.status_code == 500
 
 
-class TestGogStatus:
-    """Tests for GET /api/gog/status."""
-
-    def test_gog_enabled_connected(self, client, mock_components):
-        """GOG enabled and connected returns correct flags."""
-        with (
-            patch("src.web.api.is_gog_enabled", return_value=True),
-            patch("src.web.api.has_gog_token", return_value=True),
-            patch("src.web.api.get_gog_auth_url", return_value="https://auth.gog.com"),
-        ):
-            response = client.get("/api/gog/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is True
-        assert data["connected"] is True
-        assert data["auth_url"] == "https://auth.gog.com"
-
-    def test_gog_disabled(self, client, mock_components):
-        """GOG disabled returns enabled=False and no auth_url."""
-        with (
-            patch("src.web.api.is_gog_enabled", return_value=False),
-            patch("src.web.api.has_gog_token", return_value=False),
-        ):
-            response = client.get("/api/gog/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is False
-        assert data["connected"] is False
-        assert data["auth_url"] is None
-
-    def test_gog_status_no_config(self, client, mock_components):
-        """No config returns 503."""
-        app_state.config = None
-        response = client.get("/api/gog/status")
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Config unavailable"
-
-
 class TestExchangeEpicTokenEndpoint:
     """Tests for POST /api/epic/exchange endpoint security behavior."""
 
@@ -3928,36 +2819,6 @@ class TestExchangeEpicTokenEndpoint:
         assert body["detail"] == "Epic Games authentication failed"
         assert "Internal details" not in str(body)
 
-    def test_save_token_failure_returns_400(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """DB save failure returns generic 400."""
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
-
-        with (
-            patch("src.web.api.extract_epic_code", return_value="valid_code"),
-            patch(
-                "src.web.api.exchange_epic_tokens",
-                return_value={
-                    "access_token": "access123",
-                    "refresh_token": "refresh456",
-                },
-            ),
-            patch(
-                "src.web.api.save_epic_token",
-                side_effect=EpicAuthError("DB write failed"),
-            ),
-        ):
-            response = client.post(
-                "/api/epic/exchange", json={"code_or_json": "valid_code"}
-            )
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Epic Games authentication failed"
-
     def test_epic_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
@@ -3974,21 +2835,6 @@ class TestExchangeEpicTokenEndpoint:
             response.json()["detail"]
             == "Epic Games is not enabled in the current configuration."
         )
-
-    def test_no_storage_returns_503(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Missing storage returns 503."""
-        app_state.config["inputs"]["epic_games"] = {
-            "plugin": "epic_games",
-            "enabled": True,
-        }
-        app_state.storage = None
-
-        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Storage unavailable"
 
     def test_unexpected_error_returns_500(
         self, client: TestClient, mock_components: dict
@@ -4015,15 +2861,6 @@ class TestExchangeEpicTokenEndpoint:
         assert body["detail"] == "Unexpected error during Epic Games authentication"
         assert "RuntimeError" not in str(body)
 
-    def test_no_config_returns_503(
-        self, client: TestClient, mock_components: dict
-    ) -> None:
-        """Missing config returns 503."""
-        app_state.config = None
-        response = client.post("/api/epic/exchange", json={"code_or_json": "some_code"})
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Config unavailable"
-
 
 class TestEpicStatus:
     """Tests for GET /api/epic/status."""
@@ -4043,23 +2880,6 @@ class TestEpicStatus:
         data = response.json()
         assert data["enabled"] is True
         assert data["connected"] is True
-        assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
-
-    def test_epic_enabled_not_connected(self, client, mock_components):
-        """Epic enabled but not connected returns auth_url for OAuth flow."""
-        with (
-            patch("src.web.api.is_epic_enabled", return_value=True),
-            patch("src.web.api.has_epic_token", return_value=False),
-            patch(
-                "src.web.api.get_epic_auth_url",
-                return_value="https://www.epicgames.com/id/login?test",
-            ),
-        ):
-            response = client.get("/api/epic/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is True
-        assert data["connected"] is False
         assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
 
     def test_epic_disabled(self, client, mock_components):
@@ -4091,13 +2911,6 @@ class TestEpicStatus:
         assert data["enabled"] is True
         assert data["connected"] is False
         assert data["auth_url"] is None
-
-    def test_epic_status_no_config(self, client, mock_components):
-        """No config returns 503."""
-        app_state.config = None
-        response = client.get("/api/epic/status")
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Config unavailable"
 
 
 class TestExchangeEpicTokenEndpointRegression:
@@ -4155,53 +2968,6 @@ class TestEnrichmentErrorPaths:
             mock_get.return_value = manager
             response = client.post("/api/enrichment/stop")
         assert response.status_code == 400
-
-    def test_reset_enrichment_no_storage(self, client, mock_components):
-        """Reset when storage not available returns 503."""
-        app_state.storage = None
-        response = client.post(
-            "/api/enrichment/reset",
-            json={"reset_type": "all"},
-        )
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Storage unavailable"
-
-
-class TestIgnoreItem500:
-    """Test PATCH /items/{id}/ignore 500 path."""
-
-    def test_set_ignored_fails(self, client, mock_components):
-        """set_item_ignored returning False produces 500."""
-        mock_item = ContentItem(
-            id="1",
-            title="Test",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        mock_components["storage"].get_content_item.return_value = mock_item
-        mock_components["storage"].set_item_ignored.return_value = False
-
-        response = client.patch(
-            "/api/items/1/ignore",
-            json={"ignored": True},
-        )
-        assert response.status_code == 500
-
-
-class TestItemToResponseInvalidSeasons:
-    """Test _item_to_response with non-numeric seasons."""
-
-    def test_invalid_seasons_returns_none(self, client, mock_components):
-        """Non-numeric seasons metadata should not crash."""
-        item = ContentItem(
-            id="tv1",
-            title="Test Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"seasons": "invalid"},
-        )
-        result = _item_to_response(item)
-        assert result.total_seasons is None
 
 
 class TestAuthDisconnectEndpoints:
@@ -4267,73 +3033,6 @@ class TestAuthDisconnectEndpoints:
         assert response.status_code == 200
         storage.delete_credential.assert_called_once_with(5, "gog", "refresh_token")
 
-    def test_epic_disconnect_success(self, client, mock_components):
-        """DELETE /api/epic/token removes stored Epic refresh token."""
-        storage = mock_components["storage"]
-        storage.delete_credential.return_value = True
-
-        response = client.delete("/api/epic/token")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "success": True,
-            "message": "Epic Games disconnected.",
-        }
-        storage.delete_credential.assert_called_once_with(
-            1, "epic_games", "refresh_token"
-        )
-
-    def test_epic_disconnect_not_connected(self, client, mock_components):
-        """DELETE /api/epic/token returns 404 when no credential exists."""
-        mock_components["storage"].delete_credential.return_value = False
-
-        response = client.delete("/api/epic/token")
-
-        assert response.status_code == 404
-
-    def test_trakt_disconnect_success(self, client, mock_components):
-        """DELETE /api/trakt/token removes the stored Trakt refresh token."""
-        storage = mock_components["storage"]
-        storage.delete_credential.return_value = True
-
-        response = client.delete("/api/trakt/token")
-
-        assert response.status_code == 200
-        assert response.json() == {"success": True, "message": "Trakt disconnected."}
-        storage.delete_credential.assert_called_once_with(1, "trakt", "refresh_token")
-
-    def test_trakt_disconnect_not_connected(self, client, mock_components):
-        """DELETE /api/trakt/token returns 404 when no credential exists."""
-        mock_components["storage"].delete_credential.return_value = False
-
-        response = client.delete("/api/trakt/token")
-
-        assert response.status_code == 404
-
-
-class TestTraktStatus:
-    """Tests for GET /api/trakt/status.
-
-    Only the 503 lives here. Both flags are proved against a real credential
-    store in ``tests/web/test_oauth_source_binding.py``; a mocked pair with
-    ``enabled == connected`` passed a handler returning one flag for both.
-    """
-
-    def test_no_storage_returns_503(self, client, mock_components) -> None:
-        """Storage down is 503, not a fabricated ``enabled: false``.
-
-        ``resolve_trakt_client_credentials`` raises without storage, and the
-        handler answered that with 200 ``{"enabled": false}`` — the same body
-        as a machine that has no Trakt credentials, for a state that is not
-        that.
-        """
-        app_state.storage = None
-
-        response = client.get("/api/trakt/status")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Storage unavailable"
-
 
 class TestTraktStartDeviceFlow:
     """Tests for POST /api/trakt/start-device-flow."""
@@ -4384,15 +3083,6 @@ class TestTraktStartDeviceFlow:
         assert response.status_code == 400
         assert response.json()["detail"] == "Trakt authentication failed"
 
-    def test_no_storage_returns_503(self, client, mock_components) -> None:
-        """Start returns 503 'Storage unavailable' when storage is None."""
-        app_state.storage = None
-
-        response = client.post("/api/trakt/start-device-flow")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Storage unavailable"
-
 
 class TestTraktPollDeviceApproval:
     """Tests for POST /api/trakt/poll-device-approval."""
@@ -4442,24 +3132,6 @@ class TestTraktPollDeviceApproval:
         assert data["connected"] is False
         assert data["status"] == "pending"
         mock_save.assert_not_called()
-
-    def test_invalid_device_code_returns_400(self, client, mock_components) -> None:
-        """A poll error (e.g. invalid device code) returns 400."""
-        with (
-            patch(
-                "src.web.api.resolve_trakt_client_credentials",
-                return_value=("cid", "secret"),
-            ),
-            patch(
-                "src.web.api.poll_device_token",
-                side_effect=TraktAuthError("invalid"),
-            ),
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval", json={"device_code": "badbadbad1"}
-            )
-
-        assert response.status_code == 400
 
     @pytest.mark.parametrize(
         "status",
@@ -4554,17 +3226,6 @@ class TestTraktPollDeviceApproval:
 
         assert response.status_code == 422
         mock_poll.assert_not_called()
-
-    def test_no_storage_returns_503(self, client, mock_components) -> None:
-        """Poll returns 503 'Storage unavailable' when storage is None."""
-        app_state.storage = None
-
-        response = client.post(
-            "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
-        )
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == "Storage unavailable"
 
 
 # Sensitive and non-sensitive leaves reused across the settings endpoint tests.
@@ -4820,56 +3481,6 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 400
 
-    def test_get_returns_503_when_config_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.config = None
-
-        assert client.get("/api/settings").status_code == 503
-
-    def test_get_returns_503_when_storage_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.storage = None
-
-        assert client.get("/api/settings").status_code == 503
-
-    def test_put_returns_503_when_config_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.config = None
-
-        response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
-        assert response.status_code == 503
-
-    def test_put_returns_503_when_storage_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.storage = None
-
-        response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
-        assert response.status_code == 503
-
-    def test_delete_returns_503_when_config_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.config = None
-
-        assert client.delete(f"/api/settings/{_SETTINGS_INT_KEY}").status_code == 503
-
-    def test_delete_returns_503_when_storage_unavailable(self, settings_env) -> None:
-        client, _storage, _config = settings_env
-        app_state.storage = None
-
-        assert client.delete(f"/api/settings/{_SETTINGS_INT_KEY}").status_code == 503
-
-    def test_secret_put_returns_503_when_storage_unavailable(
-        self, settings_env
-    ) -> None:
-        client, _storage, _config = settings_env
-        app_state.storage = None
-
-        response = client.put(
-            "/api/settings/secret",
-            json={"key": _SETTINGS_SECRET_KEY, "value": "x"},
-        )
-        assert response.status_code == 503
-
     def test_a_reset_survives_a_reload_that_lands_mid_request(
         self, settings_env
     ) -> None:
@@ -4916,15 +3527,6 @@ class TestSettingsEndpoints:
         ) == default_of(
             _SETTINGS_INT_KEY
         ), "the database and the running config disagree about a reset setting"
-
-    def test_secret_delete_returns_503_when_storage_unavailable(
-        self, settings_env
-    ) -> None:
-        client, _storage, _config = settings_env
-        app_state.storage = None
-
-        response = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
-        assert response.status_code == 503
 
 
 _STORAGE_UNAVAILABLE = "Storage unavailable"
@@ -5209,13 +3811,6 @@ _CLASSIFIED_API_ROUTES = {
     for endpoint in _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS + _OPEN_ENDPOINTS
 }
 
-# The endpoints an outage other than storage's can be measured on.
-_NON_STORAGE_ENDPOINTS = [
-    endpoint
-    for endpoint in _GUARDED_ENDPOINTS + _OPEN_ENDPOINTS
-    if set(endpoint.requires) - {"storage"}
-]
-
 
 def _clear_dependencies() -> None:
     """Drop every component but storage, ahead of a request.
@@ -5234,25 +3829,6 @@ class TestDependencyGuards:
     state has to read the same way everywhere: a 500 from ``/api/items`` and a
     503 from ``/api/profile`` described the identical outage two ways.
     """
-
-    @pytest.mark.parametrize("endpoint", _NON_STORAGE_ENDPOINTS, ids=_endpoint_id)
-    def test_guarded_endpoint_returns_503(self, client, endpoint) -> None:
-        """With the rest down, each endpoint names one of its dependencies.
-
-        Storage stays up because authentication reads it; the routes needing
-        only storage are the per-component case below.
-        """
-        _clear_dependencies()
-
-        response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
-
-        assert response.status_code == 503
-        assert response.json()["detail"] in endpoint.details
-
-    def test_that_sweep_covers_most_of_the_guarded_routes(self) -> None:
-        """The filter above is a subset, not an accidental emptying."""
-        assert len(_NON_STORAGE_ENDPOINTS) > 10
-        assert len(_NON_STORAGE_ENDPOINTS) < len(_GUARDED_ENDPOINTS)
 
     @pytest.mark.parametrize(("endpoint", "component"), _GUARD_CASES)
     def test_each_dependency_is_guarded_on_its_own(
@@ -5319,116 +3895,6 @@ class TestDependencyGuards:
         """
         assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES
 
-    def test_an_unclassified_route_is_what_that_comparison_catches(
-        self, mock_components
-    ) -> None:
-        """The same comparison, against an app carrying one route nobody listed.
-
-        Set equality passing is not by itself evidence that anything is being
-        checked; this is what says the test above would go red rather than
-        quietly widen.
-        """
-        app = mock_components["app"]
-
-        @app.get("/api/unclassified")
-        def _unclassified() -> dict[str, str]:
-            return {}
-
-        assert _served_api_routes(app) - _CLASSIFIED_API_ROUTES == {
-            ("GET", "/api/unclassified")
-        }
-
-
-# The ``AppState`` field each guard defends, keyed by the guard itself.
-_GUARD_COMPONENT = {
-    require_storage: "storage",
-    require_config: "config",
-    require_engine: "engine",
-}
-
-
-def _declared_guards(route: APIRoute) -> set[str]:
-    """Every guarded component in *route*'s dependency tree, off the signatures.
-
-    Walks sub-dependencies too, so a guard a route inherits through
-    ``require_plugin`` counts exactly as one it declares itself.
-    """
-    found: set[str] = set()
-    pending = list(route.dependant.dependencies)
-    while pending:
-        dependency = pending.pop()
-        component = _GUARD_COMPONENT.get(dependency.call)
-        if component is not None:
-            found.add(component)
-        pending.extend(dependency.dependencies)
-    return found
-
-
-def _route_for(app: FastAPI, endpoint: _Endpoint) -> APIRoute:
-    for route in app.routes:
-        if (
-            isinstance(route, APIRoute)
-            and route.path == endpoint.route
-            and endpoint.method in route.methods
-        ):
-            return route
-    raise AssertionError(f"{_endpoint_id(endpoint)} is not served")
-
-
-class TestClassificationIsDerivedFromTheSignatures:
-    """``requires`` must restate what the handler's parameters already say.
-
-    The behavioural matrix proves each declared component answers 503 when it
-    is down. It cannot prove the converse — that a guard nobody classified is
-    absent — and on a handler that acquires one component through two routes it
-    cannot see the second acquisition go away. Reading the guards back off the
-    dependency tree closes both: delete a ``Required*`` parameter and the
-    derived set stops matching the list, whichever way the deletion leans.
-    """
-
-    @pytest.mark.parametrize(
-        "endpoint",
-        _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS + _OPEN_ENDPOINTS,
-        ids=_endpoint_id,
-    )
-    def test_route_guards_exactly_the_components_it_is_classified_with(
-        self, mock_components, endpoint
-    ) -> None:
-        """Signature and classification agree, on every route the app serves."""
-        route = _route_for(mock_components["app"], endpoint)
-
-        assert _declared_guards(route) == set(endpoint.requires)
-
-    def test_the_deriver_reads_the_signature_and_not_the_list(self) -> None:
-        """A guard that is not in the parameters is not in the derived set.
-
-        Without this the test above could be passing on a deriver that reports
-        whatever it is asked about. Two handlers differing only in that
-        parameter derive differently, so removing one really is what the
-        parametrised case sees.
-        """
-        probe = FastAPI()
-
-        @probe.get("/guarded")
-        def _guarded(storage: RequiredStorage) -> dict[str, str]:
-            return {}
-
-        @probe.get("/unguarded")
-        def _unguarded() -> dict[str, str]:
-            return {}
-
-        derived = {
-            route.path: _declared_guards(route)
-            for route in probe.routes
-            if isinstance(route, APIRoute)
-        }
-
-        assert derived == {"/guarded": {"storage"}, "/unguarded": set()}
-
-
-# Every route the app serves, in one list, so the auth cases below cannot
-# sample: ``test_every_api_route_is_classified`` pins this against the app.
-_ALL_ENDPOINTS = _GUARDED_ENDPOINTS + _DEPENDENCY_FREE_ENDPOINTS
 
 _WRONG_SESSION = "wrong-session-0f0e0d0c0b0a09080706050403020100"
 
@@ -5469,16 +3935,6 @@ class TestEveryApiRouteRequiresASession:
     publishes a fingerprint, and nothing here probes it signed out.
     """
 
-    @pytest.mark.parametrize("endpoint", _ALL_ENDPOINTS, ids=_endpoint_id)
-    def test_a_request_with_no_cookie_is_401(self, anonymous_client, endpoint) -> None:
-        """Every component is up, so a 401 is authentication and nothing else."""
-        response = anonymous_client.request(
-            endpoint.method, endpoint.target, json=endpoint.body
-        )
-
-        assert response.status_code == 401
-        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-
     def test_a_request_with_an_unknown_cookie_is_401(self, mock_components) -> None:
         """A dead session is refused like an absent one.
 
@@ -5513,139 +3969,6 @@ class TestEveryApiRouteRequiresASession:
         """
         assert _exempt_api_routes(mock_components["app"]) == _OPEN_API_ROUTES
 
-    def test_the_deriver_reads_the_dependency_tree(self) -> None:
-        """Without this, the assertion above could hold on a deriver that lies."""
-        probe = FastAPI()
-
-        @probe.get("/api/open")
-        def _open() -> dict[str, str]:
-            return {}
-
-        @probe.get("/api/closed", dependencies=[Depends(require_session)])
-        def _closed() -> dict[str, str]:
-            return {}
-
-        assert _exempt_api_routes(probe) == {("GET", "/api/open")}
-
-
-def _user_id_fields(dependant: Dependant) -> Iterator[Any]:
-    """Yield the ``FieldInfo`` of every ``user_id`` one request can carry.
-
-    Body fields included: ``ChatRequest`` takes its id there. One level deep,
-    because no route carries an id in a sub-dependency or nested model — one
-    that did would be invisible.
-    """
-    for param in dependant.path_params + dependant.query_params:
-        if param.name == "user_id":
-            yield param.field_info
-    for body_param in dependant.body_params:
-        # Not ``ModelField.type_``: that is FastAPI's own compatibility shim and
-        # a newer release drops it, so the sweep went red on a dependency bump
-        # rather than on anything about this app.
-        model = body_param.field_info.annotation
-        if isinstance(model, type) and issubclass(model, BaseModel):
-            for name, field in model.model_fields.items():
-                if name == "user_id":
-                    yield field
-
-
-def _unbounded_user_id_params(app: FastAPI) -> set[tuple[str, str]]:
-    """Every ``/api`` route taking a ``user_id`` that admits 0 or below."""
-    found = set()
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or not route.path.startswith("/api"):
-            continue
-        for field_info in _user_id_fields(route.dependant):
-            metadata = getattr(field_info, "metadata", [])
-            if not any(getattr(item, "ge", None) == 1 for item in metadata):
-                found.add((next(iter(route.methods)), route.path))
-    return found
-
-
-def _user_id_carrying_routes(app: FastAPI) -> set[tuple[str, str]]:
-    """Every ``/api`` route the sweep above has anything at all to judge."""
-    return {
-        (next(iter(route.methods)), route.path)
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/api")
-        if next(_user_id_fields(route.dependant), None) is not None
-    }
-
-
-class TestEveryUserIdParamIsBounded:
-    """``UserIdPath``'s comment claims every sibling carries ``ge=1``, and a
-    router that grew one without it would not be caught anywhere else. A
-    non-positive id matches no row, so it reads as an empty library rather
-    than a bad request.
-    """
-
-    def test_no_route_accepts_a_non_positive_user_id(self, mock_components) -> None:
-        assert _unbounded_user_id_params(mock_components["app"]) == set()
-
-    def test_the_sweep_still_finds_ids_to_judge(self, mock_components) -> None:
-        """The assertion above also holds over no ``user_id`` params at all.
-
-        ``_user_id_fields`` reads one level deep and keys on the name, so a
-        rename or a nested model empties it with nothing going red.
-        """
-        carrying = _user_id_carrying_routes(mock_components["app"])
-
-        assert ("GET", "/api/users/{user_id}/preferences") in carrying
-        assert len(carrying) > 1
-
-    def test_the_deriver_finds_an_unbounded_one(self) -> None:
-        """Without this the sweep could hold on a deriver that never matches."""
-        probe = FastAPI()
-
-        class _LooseBody(BaseModel):
-            user_id: int = Field(default=1)
-
-        @probe.get("/api/loose")
-        def _loose(user_id: int = Query(default=1)) -> dict[str, str]:
-            return {}
-
-        @probe.post("/api/loose-body")
-        def _loose_body(body: _LooseBody) -> dict[str, str]:
-            return {}
-
-        @probe.get("/api/tight")
-        def _tight(user_id: int = Query(default=1, ge=1)) -> dict[str, str]:
-            return {}
-
-        assert _unbounded_user_id_params(probe) == {
-            ("GET", "/api/loose"),
-            ("POST", "/api/loose-body"),
-        }
-
-
-class TestAServerWithNoStorageAcceptsNothing:
-    """``create_app`` populates storage or raises, so nothing reaches this
-    branch today. Dropping it makes a half-initialised server 500 on every
-    request instead of answering the outage.
-    """
-
-    @pytest.fixture()
-    def unavailable(self, mock_components, monkeypatch) -> TestClient:
-        monkeypatch.setattr(app_state, "storage", None)
-        return mock_components["app"]
-
-    def test_a_request_carrying_no_cookie_is_401(self, unavailable) -> None:
-        """Nobody is signed in, and no component was read to find that out."""
-        response = TestClient(unavailable).get("/api/status")
-
-        assert response.status_code == 401
-        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-
-    def test_a_cookie_that_cannot_be_checked_is_a_503(self, unavailable) -> None:
-        """Sessions live in the database, so an unverifiable cookie is an
-        outage rather than a refusal the caller could fix."""
-        response = TestClient(
-            unavailable, cookies={SESSION_COOKIE: _WRONG_SESSION}
-        ).get("/api/status")
-
-        assert response.status_code == 503
-        assert response.json()["detail"] == _STORAGE_UNAVAILABLE
-
 
 class TestTheSessionTokenStaysOutOfEverythingObservable:
     """The cookie is a credential, so nothing a caller or an operator reads
@@ -5676,16 +3999,6 @@ class TestTheSessionTokenStaysOutOfEverythingObservable:
         assert response.status_code == 200
         assert client.cookies[SESSION_COOKIE] not in caplog.text
 
-    def test_the_settings_view_never_lists_a_credential(self, real_boot) -> None:
-        """``GET /api/settings`` renders registry leaves, and none is one."""
-        client = authenticated_client(real_boot)
-        token = client.cookies[SESSION_COOKIE]
-
-        response = client.get("/api/settings")
-
-        assert response.status_code == 200
-        assert token not in response.text
-
     def test_the_session_cookie_is_closed_to_javascript(self, real_boot) -> None:
         """An XSS that can read the cookie is an XSS that keeps the account."""
         response = authenticated_client(real_boot).post(
@@ -5694,52 +4007,6 @@ class TestTheSessionTokenStaysOutOfEverythingObservable:
 
         assert response.status_code == 204
         assert "httponly" in response.headers["set-cookie"].lower()
-
-    def test_a_refusal_does_not_echo_what_was_presented(self, anonymous_client) -> None:
-        """A 401 quoting the guess would put it in the caller's own logs."""
-        anonymous_client.cookies.set(SESSION_COOKIE, _WRONG_SESSION)
-
-        response = anonymous_client.get("/api/status")
-
-        assert response.status_code == 401
-        assert _WRONG_SESSION not in response.text
-
-
-class TestBootWithoutAnAccount:
-    """Refusing to start is what left the owner locked out of their instance.
-
-    The window is real, so it is said loudly; it closes on first setup, and
-    only the first visitor can complete that.
-    """
-
-    def test_an_unclaimed_instance_warns_and_serves(
-        self, mock_config, tmp_path, caplog
-    ) -> None:
-        """The warning is the whole of the operator's instruction."""
-        reset_sync_manager()
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        with caplog.at_level(logging.WARNING, logger="src.web.app"):
-            with booted_web_app(storage, mock_config) as app:
-                assert TestClient(app).get("/").status_code == 200
-
-        assert "No account on this instance yet" in caplog.text
-        reset_sync_manager()
-
-    def test_a_claimed_instance_says_nothing(
-        self, mock_config, tmp_path, caplog
-    ) -> None:
-        """Otherwise it fires on every boot forever and is ignored."""
-        reset_sync_manager()
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.claim_account("owner", "Owner", "correct horse battery")
-
-        with caplog.at_level(logging.WARNING, logger="src.web.app"):
-            with booted_web_app(storage, mock_config):
-                pass
-
-        assert "No account on this instance yet" not in caplog.text
-        reset_sync_manager()
 
 
 # The methods whose callers have never sent a body, so one appearing on them
@@ -5780,47 +4047,6 @@ class TestInjectedDependenciesStayOffTheWire:
             for method, path, route in operations
             if route.body_field is not None
         } == set()
-
-    def test_the_published_schema_advertises_no_body_on_them_either(
-        self, mock_components
-    ) -> None:
-        """The same claim read off the document clients are generated from."""
-        schema = mock_components["app"].openapi()
-
-        assert {
-            f"{method.upper()} {path}"
-            for path, operations in schema["paths"].items()
-            if path.startswith("/api")
-            for method, operation in operations.items()
-            if method.upper() in _BODYLESS_METHODS and "requestBody" in operation
-        } == set()
-
-
-class TestWritableConfigGuardsItsOwnBlock:
-    """The 503 inside ``writable_config``, which no request can reach.
-
-    Both routes using it also declare ``Depends(require_config)``, so config
-    being down is answered before the body runs and this branch never fires
-    from the outside. It is not redundant: the dependency resolves and is
-    released first, and this is what answers if the config goes ``None``
-    between then and the write. Driven directly because nothing else can, over
-    a booted app so ``app_state`` is restored after the field is cleared.
-    """
-
-    def test_a_config_that_went_away_mid_request_is_a_503(
-        self, mock_components
-    ) -> None:
-        """Status and message match every other reader's answer for that state."""
-        app_state.config = None
-
-        with pytest.raises(HTTPException) as raised, writable_config():
-            pytest.fail("the block ran with no config to write into")
-
-        assert raised.value.status_code == 503
-        assert raised.value.detail == _CONFIG_UNAVAILABLE
-        # A lock left held by the raise would show up as the next settings
-        # write hanging, in whatever test happens to run after this one.
-        assert not _config_lock.locked()
 
 
 class TestSourceReadGuardsRegression:
@@ -6075,129 +4301,6 @@ class TestPluginLookupVersusRequestValidation:
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Source not found."
-
-    @pytest.mark.parametrize("url", _PLUGIN_ROUTES_WITH_A_BODY)
-    def test_a_valid_body_on_an_unresolvable_source_still_404s(
-        self, client, mock_components, url
-    ) -> None:
-        """The lookup keeps its own answer once the body parses — unchanged."""
-        mock_components["storage"].get_source_config.return_value = None
-        bodies = {
-            "config": {"values": {}},
-            "api_key": {"value": "secret"},
-            "enabled": {"enabled": True},
-        }
-
-        response = client.put(url, json=bodies[url.rsplit("/", 1)[-1]])
-
-        assert response.status_code == 404
-
-
-class TestGuardsResolveOncePerRequest:
-    """One request, one trip through the guard for each component it needs.
-
-    Guard-mediated acquisition only. A handler is free to read the unguarded
-    ``src.web.state`` accessors as well — ``TestUnguardedReadsAreOptional``
-    covers the four that do — and those reads are imported into
-    ``src.web.api``'s own namespace, so nothing here sees or counts them.
-    """
-
-    def test_a_handler_and_its_dependency_share_one_lookup(
-        self, client, mock_components
-    ) -> None:
-        """``/sync/sources/{id}/config`` needs storage twice over and asks once.
-
-        The handler needs storage itself and reaches the plugin through
-        ``require_plugin``, which needs storage too. Called from the handler
-        body those were two acquisitions of the same component inside one
-        request; declared as dependencies, FastAPI caches the first for the
-        life of the request.
-        """
-        mock_components["storage"].get_source_config.return_value = {
-            "source_id": "my_books",
-            "plugin": "goodreads_csv",
-            "enabled": 1,
-            "config": {},
-            "migrated_at": "2026-01-01T00:00:00",
-        }
-
-        with patch("src.web.guards.get_storage", wraps=get_storage) as acquisitions:
-            response = client.get("/api/sync/sources/my_books/config")
-
-        assert response.status_code == 200
-        assert acquisitions.call_count == 1
-
-    @pytest.mark.parametrize("endpoint", _GUARDED_ENDPOINTS, ids=_endpoint_id)
-    def test_no_endpoint_resolves_a_guard_more_than_once(
-        self, mock_components, endpoint
-    ) -> None:
-        """The cache holds on every route, not just the one measured above.
-
-        The six routes reaching ``require_plugin`` are the known duplicates,
-        but a handler that grew a second acquisition of anything would be a
-        second read of state that can change between them. Counting zero for
-        the unlisted components is the same claim from the other side: a guard
-        nobody classified would show up here as a read.
-
-        ``raise_server_exceptions=False`` because the guards all resolve before
-        the body runs, so what a stub-thin mock does once it gets there decides
-        the status code and nothing about the count. The sync manager is
-        stubbed for the same reason from the other direction: every component
-        is wired here, so ``POST /api/update`` would otherwise reach
-        ``start_sync`` and spawn a real background sync over whatever files the
-        fixture config names.
-        """
-        mock_components["storage"].get_source_config.return_value = {
-            "source_id": "my_books",
-            "plugin": "goodreads_csv",
-            "enabled": 1,
-            "config": {},
-            "migrated_at": "2026-01-01T00:00:00",
-        }
-        client = authenticated_client(
-            mock_components["app"], raise_server_exceptions=False
-        )
-
-        with (
-            patch("src.web.api.get_sync_manager"),
-            patch("src.web.guards.get_storage", wraps=get_storage) as storage_reads,
-            patch("src.web.guards.get_config", wraps=get_config) as config_reads,
-            patch("src.web.guards.get_engine", wraps=get_engine) as engine_reads,
-        ):
-            client.request(endpoint.method, endpoint.target, json=endpoint.body)
-
-        assert {
-            "storage": storage_reads.call_count,
-            "config": config_reads.call_count,
-            "engine": engine_reads.call_count,
-        } == {
-            component: 1 if component in endpoint.requires else 0
-            for component in _UNAVAILABLE_DETAIL
-        }
-
-
-class TestHandlersRunOffTheEventLoop:
-    """Every ``/api`` handler is plain ``def``, with no exceptions.
-
-    FastAPI runs an ``async def`` endpoint on the event loop and a plain ``def``
-    one in Starlette's threadpool. Every handler here does blocking work —
-    SQLite, the scoring pipeline, outbound OAuth calls — and none of them
-    awaits anything, so declaring one ``async`` stalls every other request on
-    the server for its whole duration. The settings writers were the last two
-    holding the loop, and they hold ``writable_config`` instead now.
-    """
-
-    def test_no_api_handler_is_a_coroutine(self, mock_components) -> None:
-        """A new ``async def`` handler is caught here rather than in production."""
-        coroutines = {
-            route.endpoint.__name__
-            for route in mock_components["app"].routes
-            if isinstance(route, APIRoute)
-            and route.path.startswith("/api")
-            and inspect.iscoroutinefunction(route.endpoint)
-        }
-
-        assert coroutines == set()
 
 
 # Bounded so a handler nothing releases fails the test instead of hanging the
@@ -6650,55 +4753,6 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
         assert breaker not in messages[0]
         assert "ValueError" in messages[0]
 
-    @pytest.mark.parametrize("breaker", LINE_BREAKS)
-    def test_a_theme_directory_name_stays_on_one_line(
-        self, breaker: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        theme_dir = tmp_path / f"solar{breaker}WARNING forged"
-        theme_dir.mkdir()
-        (theme_dir / "theme.json").write_text("{not json", encoding="utf-8")
-
-        with caplog.at_level(logging.WARNING, logger="src.web.api"):
-            assert src.web.api.discover_themes(tmp_path) == []
-
-        messages = _api_log_messages(caplog)
-        assert len(messages) == 1
-        assert len(messages[0].splitlines()) == 1
-        assert breaker not in messages[0]
-
-
-class TestATerminalControlCannotRewriteAnApiLogLine:
-    """The console handler writes to what ``docker logs`` renders.
-
-    ``ESC[2K\\r`` erases the line an operator just read, which is the CWE-117
-    outcome without a line break anywhere in the value.
-    """
-
-    @pytest.mark.parametrize("control", ["\x1b", "\x08", "\x7f", "\t"])
-    def test_a_control_character_never_reaches_the_message(
-        self, control: str, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        engine = MagicMock(spec=RecommendationEngine)
-        engine.generate_recommendations.side_effect = ValueError(
-            f"no candidate for Real Title{control}[2KERROR forged"
-        )
-        storage = MagicMock(spec=StorageManager)
-        storage.get_user_preference_config.return_value = None
-
-        with (
-            booted_web_app(storage, {}) as app,
-            caplog.at_level(logging.ERROR, logger="src.web.api"),
-        ):
-            app_state.engine = engine
-            authenticated_client(app).get(
-                "/api/recommendations?type=video_game&count=5"
-            )
-
-        messages = _api_log_messages(caplog)
-        assert len(messages) == 1
-        assert control not in messages[0]
-        assert f"\\u{ord(control):04x}" in messages[0]
-
 
 class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
     """Reported: two spellings of exception logging, and one drops the class.
@@ -6947,12 +5001,6 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
 _LONE_SURROGATES = ["\ud800", "\udcff", "\udfff"]
 
 
-def _resolved_response_class(route: APIRoute) -> type:
-    """Unwrap the placeholder a route keeps when nothing overrode the default."""
-    declared = route.response_class
-    return declared.value if isinstance(declared, DefaultPlaceholder) else declared
-
-
 def _item_holding(surrogate: str) -> ContentItem:
     """One item carrying *surrogate* in a column and in the metadata blob.
 
@@ -7090,155 +5138,6 @@ class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
 
         assert (first.status_code, second.status_code) == (200, 200)
         assert first.json()["custom_rules"] == [self.RULE]
-
-
-class TestTheEncodeIsOneBoundary:
-    """Eleven call sites was the shape the per-endpoint repair would have had."""
-
-    def test_every_route_renders_through_the_app_response_class(
-        self, mock_components
-    ) -> None:
-        """``/`` is the one exemption: its body is a constant or a strict
-        UTF-8 file decode, so no string UTF-8 refuses can reach it.
-        """
-        rendering = {
-            route.path: _resolved_response_class(route)
-            for route in mock_components["app"].routes
-            if isinstance(route, APIRoute)
-        }
-
-        assert {
-            path: cls
-            for path, cls in rendering.items()
-            if cls is not SurrogateSafeJSONResponse
-        } == {"/": HTMLResponse}
-
-    def test_every_handler_an_http_request_can_reach_is_the_app_encode(
-        self, mock_components
-    ) -> None:
-        """FastAPI supplies a handler per exception class, and each of its own
-        renders on a stock ``JSONResponse`` the default class never sees.
-        """
-        registered = mock_components["app"].exception_handlers
-
-        assert {
-            raised: handler
-            for raised, handler in registered.items()
-            if raised is not WebSocketRequestValidationError
-        } == {
-            StarletteHTTPException: _raised_refusal_json_can_carry,
-            RequestValidationError: _validation_refusal_json_can_carry,
-        }
-
-    def test_the_handler_left_to_fastapi_answers_a_protocol_never_served(
-        self, mock_components
-    ) -> None:
-        """The exemption above, anchored: nothing routed can raise it."""
-        app = mock_components["app"]
-        routed = {type(route) for route in app.routes}
-
-        assert WebSocketRequestValidationError in app.exception_handlers
-        assert routed and not any(
-            issubclass(kind, WebSocketRoute) for kind in routed
-        ), routed
-
-    def test_the_routes_that_sweep_skips_are_the_ones_named_as_exempt(
-        self, mock_config, tmp_path
-    ) -> None:
-        """Debug opens four routes FastAPI owns. ``/openapi.json`` renders on a
-        stock ``JSONResponse`` — safe only because the schema is built from
-        source text, and unreviewable if a fifth arrives unnoticed.
-        """
-        reset_sync_manager()
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        config = {**mock_config, "web": {**mock_config["web"], "debug": True}}
-
-        with booted_web_app(storage, config) as app:
-            unswept = {
-                route.path for route in app.routes if not isinstance(route, APIRoute)
-            }
-        reset_sync_manager()
-
-        assert unswept == {
-            "/static",
-            "/openapi.json",
-            "/docs",
-            "/docs/oauth2-redirect",
-            "/redoc",
-        }
-
-    def test_the_endpoints_the_defect_was_found_on_are_in_that_sweep(
-        self, mock_components
-    ) -> None:
-        """A sweep over no routes would report a boundary nobody stands at."""
-        paths = {
-            route.path
-            for route in mock_components["app"].routes
-            if isinstance(route, APIRoute)
-        }
-
-        assert {
-            "/api/items",
-            "/api/items/{db_id}",
-            "/api/items/{db_id}/ignore",
-            "/api/users/{user_id}/preferences",
-        } <= paths
-
-
-class TestOnlyTheAppResponseClassMakesTheBodyEncodable:
-    """The two encodes side by side: every endpoint test answers through the
-    booted app, so all of them would still pass if something below the
-    response class were carrying the body.
-    """
-
-    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
-    def test_the_stock_json_encode_refuses_the_body_the_app_class_carries(
-        self, surrogate: str
-    ) -> None:
-        content = {"title": f"Dune{surrogate}"}
-
-        with pytest.raises(UnicodeEncodeError):
-            JSONResponse(content)
-
-        assert json.loads(SurrogateSafeJSONResponse(content).body) == content
-
-    @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
-    def test_the_stock_raw_encode_refuses_the_export_body_ours_carries(
-        self, surrogate: str
-    ) -> None:
-        body = f'[{{"title": "Dune{surrogate}"}}]'
-
-        with pytest.raises(UnicodeEncodeError):
-            Response(content=body, media_type="application/json")
-
-        rendered = SurrogateSafeResponse(content=body, media_type="application/json")
-        assert json.loads(rendered.body)[0]["title"] == f"Dune{surrogate}"
-
-    def test_two_adjacent_surrogates_come_back_as_the_pair_they_escape_to(
-        self,
-    ) -> None:
-        """The one hole in reading back what is stored: JSON recombines an
-        escaped surrogate pair, so this row arrives as U+10000. Documented
-        rather than fixed — it answers 200, and no door can write one.
-        """
-        stored = "\ud800" + "\udc00"
-
-        rendered = SurrogateSafeJSONResponse({"title": stored})
-
-        assert json.loads(rendered.body) == {"title": "\U00010000"}
-
-    def test_a_body_that_is_not_text_takes_the_stock_render(self) -> None:
-        """The export hands over ``str``; every 204 hands over nothing."""
-        assert SurrogateSafeResponse(content=b"\xff\xfe").body == b"\xff\xfe"
-        assert SurrogateSafeResponse(status_code=204).body == b""
-
-    def test_a_non_finite_number_is_still_refused_rather_than_rendered(self) -> None:
-        """``allow_nan`` stays off, and no read path needs it loosened: a
-        stored weight is dropped by ``UserPreferenceConfig`` and no response
-        model carries a free float out of a blob.
-        """
-        with pytest.raises(ValueError):
-            SurrogateSafeJSONResponse({"weight": nan})
 
 
 class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:

@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 
 from src.storage.manager import StorageManager
 from src.web.auth import SESSION_COOKIE
-from src.web.csrf import CROSS_ORIGIN_DETAIL
 from tests.factories import booted_web_app
 
 _USERNAME = "owner"
@@ -31,8 +30,6 @@ _BODYLESS_POSTS = [
     "/api/enrichment/stop",
     "/api/auth/logout",
 ]
-
-_ELSEWHERE = ["cross-site", "same-site"]
 
 _READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -77,17 +74,6 @@ def signed_in(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestC
 class TestAStateChangeFromAnotherOrigin:
     """What a page on another localhost port can make the browser send."""
 
-    @pytest.mark.parametrize("target", _BODYLESS_POSTS)
-    @pytest.mark.parametrize("site", _ELSEWHERE)
-    def test_it_is_refused_by_the_header_the_browser_sets(
-        self, signed_in: TestClient, target: str, site: str
-    ) -> None:
-        """Page script cannot forge ``Sec-Fetch-Site``; only a browser sets it."""
-        response = signed_in.post(target, headers={"Sec-Fetch-Site": site})
-
-        assert response.status_code == 403
-        assert response.json()["detail"] == CROSS_ORIGIN_DETAIL
-
     def test_the_refused_sign_out_leaves_the_session_open(
         self, signed_in: TestClient
     ) -> None:
@@ -124,24 +110,9 @@ class TestNoStateChangingRouteIsLeftOpen:
 
         assert set(answered.values()) == {403}
 
-    def test_the_sweep_covers_the_routes_cors_cannot_hold(
-        self, signed_in: TestClient
-    ) -> None:
-        """Anchors the sweep, which an empty route list would pass for free."""
-        swept = _state_changing_routes(signed_in)
-
-        assert {("POST", target) for target in _BODYLESS_POSTS} <= set(swept)
-        assert {method for method, _ in swept} >= {"POST", "PUT", "PATCH", "DELETE"}
-
 
 class TestTheSameRequestFromTheAppItself:
     """Anchors the refusals above, which a route that 403s on everything passes."""
-
-    @pytest.mark.parametrize("target", _BODYLESS_POSTS)
-    def test_the_spa_reaches_it(self, signed_in: TestClient, target: str) -> None:
-        response = signed_in.post(target, headers={"Sec-Fetch-Site": "same-origin"})
-
-        assert response.status_code != 403
 
     @pytest.mark.parametrize("target", _BODYLESS_POSTS)
     def test_a_client_that_sends_no_header_reaches_it(

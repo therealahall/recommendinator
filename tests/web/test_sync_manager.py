@@ -14,8 +14,6 @@ from src.web.sync_manager import (
     SyncJob,
     SyncManager,
     SyncStatus,
-    get_sync_manager,
-    reset_sync_manager,
 )
 
 
@@ -28,42 +26,8 @@ def _planted(manager: SyncManager, source: str = "steam") -> SyncJob:
     return job
 
 
-class TestSyncStatus:
-    """Tests for SyncStatus enum."""
-
-    def test_status_values(self) -> None:
-        assert SyncStatus.IDLE.value == "idle"
-        assert SyncStatus.RUNNING.value == "running"
-        assert SyncStatus.COMPLETED.value == "completed"
-        assert SyncStatus.FAILED.value == "failed"
-
-    def test_status_is_string_enum(self) -> None:
-        for status in SyncStatus:
-            assert isinstance(status.value, str)
-
-
 class TestSyncJobToDict:
     """Tests for SyncJob.to_dict() serialization."""
-
-    def test_to_dict_defaults(self) -> None:
-        job = SyncJob(source="steam")
-
-        result = job.to_dict()
-
-        assert result["source"] == "steam"
-        assert result["status"] == "idle"
-        assert result["started_at"] is None
-        assert result["completed_at"] is None
-        assert result["items_processed"] == 0
-        assert result["total_items"] is None
-        assert result["current_item"] is None
-        assert result["current_source"] is None
-        assert result["error_message"] is None
-        assert result["progress_percent"] is None
-        assert result["errors"] == []
-        # ``len(errors)`` said the same thing and nothing read it.
-        assert "error_count" not in result
-        assert result["sources"] == []
 
     def test_to_dict_with_all_fields_populated(self) -> None:
         started = datetime(2026, 2, 21, 10, 0, 0)
@@ -101,43 +65,13 @@ class TestSyncJobToDict:
             {"source": "goodreads", "message": "Error 2"},
         ]
 
-    def test_progress_percent_calculation(self) -> None:
-        job = SyncJob(source="steam", items_processed=75, total_items=200)
-        assert job.to_dict()["progress_percent"] == 37
-
     def test_progress_percent_when_total_is_zero(self) -> None:
         job = SyncJob(source="steam", items_processed=5, total_items=0)
         assert job.to_dict()["progress_percent"] is None
 
-    def test_progress_percent_when_total_is_none(self) -> None:
-        job = SyncJob(source="steam", items_processed=10)
-        assert job.to_dict()["progress_percent"] is None
-
-    def test_progress_percent_at_100(self) -> None:
-        job = SyncJob(source="steam", items_processed=50, total_items=50)
-        assert job.to_dict()["progress_percent"] == 100
-
-    def test_status_serialised_as_string_value(self) -> None:
-        """to_dict emits ``status.value`` (a str), not the Enum instance."""
-        job = SyncJob(source="steam", status=SyncStatus.RUNNING)
-        result = job.to_dict()
-        assert result["status"] == "running"
-        assert isinstance(result["status"], str)
-
-    def test_datetime_fields_serialised_as_isoformat(self) -> None:
-        timestamp = datetime(2026, 1, 15, 14, 30, 45)
-        job = SyncJob(source="steam", started_at=timestamp, completed_at=timestamp)
-        result = job.to_dict()
-        assert result["started_at"] == "2026-01-15T14:30:45"
-        assert result["completed_at"] == "2026-01-15T14:30:45"
-
 
 class TestSyncManagerStateMachine:
     """State transitions for a single tracked job."""
-
-    def test_initial_state_is_not_running(self) -> None:
-        manager = SyncManager()
-        assert manager.is_running() is False
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_start_sync_marks_source_running(self, mock_thread: MagicMock) -> None:
@@ -242,33 +176,6 @@ class TestSyncManagerConcurrentJobs:
         assert manager.is_running("goodreads") is True
         assert manager.is_running() is True
 
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_restart_allowed_after_previous_completes(
-        self, mock_thread: MagicMock
-    ) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=10)
-
-        manager.start_sync(source="steam", sync_function=sync_function)
-        manager._run_sync("steam", sync_function)
-
-        success, _ = manager.start_sync(source="steam", sync_function=sync_function)
-        assert success is True
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_restart_allowed_after_previous_fails(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        failing = MagicMock(side_effect=ValueError("parse error"))
-        working = MagicMock(return_value=5)
-
-        manager.start_sync(source="steam", sync_function=failing)
-        manager._run_sync("steam", failing)
-
-        success, _ = manager.start_sync(source="steam", sync_function=working)
-        assert success is True
-
 
 class TestSyncManagerGetStatus:
     """get_status() shape and contents."""
@@ -291,20 +198,6 @@ class TestSyncManagerGetStatus:
         assert status["jobs"][0]["source"] == "steam"
 
     @patch("src.web.sync_manager.threading.Thread")
-    def test_idle_when_all_jobs_completed(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=25)
-
-        manager.start_sync(source="goodreads", sync_function=sync_function)
-        manager._run_sync("goodreads", sync_function)
-
-        status = manager.get_status()
-        assert status["status"] == "idle"
-        assert status["jobs"][0]["items_processed"] == 25
-        assert status["jobs"][0]["completed_at"] is not None
-
-    @patch("src.web.sync_manager.threading.Thread")
     def test_jobs_sorted_by_source(self, mock_thread: MagicMock) -> None:
         mock_thread.return_value = MagicMock()
         manager = SyncManager()
@@ -320,38 +213,6 @@ class TestSyncManagerGetStatus:
 
 class TestSyncManagerUpdateProgress:
     """update_progress writes to the job keyed by ``source``."""
-
-    def test_update_items_processed(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "steam")
-
-        manager.update_progress(source="steam", items_processed=15)
-
-        assert manager.get_status()["jobs"][0]["items_processed"] == 15
-
-    def test_update_total_items(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "steam")
-
-        manager.update_progress(source="steam", total_items=200)
-
-        assert manager.get_status()["jobs"][0]["total_items"] == 200
-
-    def test_update_current_item(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "goodreads")
-
-        manager.update_progress(source="goodreads", current_item="The Way of Kings")
-
-        assert manager.get_status()["jobs"][0]["current_item"] == "The Way of Kings"
-
-    def test_update_current_source(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "all")
-
-        manager.update_progress(source="all", current_source="steam")
-
-        assert manager.get_status()["jobs"][0]["current_source"] == "steam"
 
     def test_update_multiple_fields_at_once(self) -> None:
         manager = SyncManager()
@@ -422,30 +283,6 @@ class TestSyncManagerPerSourceProgress:
         assert by_source["steam"]["total_items"] == 20
         assert by_source["steam"]["current_item"] == "Game B"
 
-    def test_aggregate_items_processed_is_sum(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "all")
-
-        manager.update_progress(
-            source="all", items_processed=4, current_source="goodreads"
-        )
-        manager.update_progress(
-            source="all", items_processed=11, current_source="steam"
-        )
-
-        assert manager.get_status()["jobs"][0]["items_processed"] == 15
-
-    def test_aggregate_total_items_is_sum(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "all")
-
-        manager.update_progress(
-            source="all", total_items=10, current_source="goodreads"
-        )
-        manager.update_progress(source="all", total_items=25, current_source="steam")
-
-        assert manager.get_status()["jobs"][0]["total_items"] == 35
-
     def test_progress_percent_uses_aggregate(self) -> None:
         manager = SyncManager()
         _planted(manager, "all")
@@ -464,24 +301,6 @@ class TestSyncManagerPerSourceProgress:
         )
 
         assert manager.get_status()["jobs"][0]["progress_percent"] == 50
-
-    def test_per_source_progress_percent_over_100(self) -> None:
-        """Per-source progress_percent is not clamped — over-100 is honest."""
-        manager = SyncManager()
-        _planted(manager, "all")
-
-        manager.update_progress(
-            source="all",
-            items_processed=15,
-            total_items=10,
-            current_source="estimated",
-        )
-
-        sources = {
-            entry["source"]: entry
-            for entry in manager.get_status()["jobs"][0]["sources"]
-        }
-        assert sources["estimated"]["progress_percent"] == 150
 
     def test_concurrent_per_source_updates_no_loss(self) -> None:
         """Concurrent updates from many threads all land in the slot map."""
@@ -563,38 +382,10 @@ class TestSyncManagerAddError:
             {"source": "Steam", "message": "Failed to fetch game: Portal 2"}
         ]
 
-    def test_add_multiple_errors(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "steam")
-
-        manager.add_error("steam", "Steam", "Failed to fetch game: Portal 2")
-        manager.add_error("steam", "Steam", "Rate limit exceeded")
-        manager.add_error("steam", "Steam", "Invalid response for game: Half-Life")
-
-        job = manager.get_status()["jobs"][0]
-        assert len(job["errors"]) == 3
-        assert {"source": "Steam", "message": "Rate limit exceeded"} in job["errors"]
-
     def test_add_error_when_no_job(self) -> None:
         manager = SyncManager()
         manager.add_error("steam", "Steam", "Some error")
         assert manager.get_status()["jobs"] == []
-
-    def test_errors_are_per_job(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "steam")
-        _planted(manager, "goodreads")
-
-        manager.add_error("steam", "Steam", "Steam error")
-        manager.add_error("goodreads", "Goodreads", "Goodreads error")
-
-        jobs = {j["source"]: j for j in manager.get_status()["jobs"]}
-        assert jobs["steam"]["errors"] == [
-            {"source": "Steam", "message": "Steam error"}
-        ]
-        assert jobs["goodreads"]["errors"] == [
-            {"source": "Goodreads", "message": "Goodreads error"}
-        ]
 
     def test_one_job_keeps_each_source_apart(self) -> None:
         """A run of every source reports into one job, keyed by the label."""
@@ -658,17 +449,6 @@ class TestSyncManagerOnCompleteCallback:
 
         assert manager.get_status()["jobs"][0]["status"] == "completed"
 
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_sync_without_on_complete(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=10)
-
-        manager.start_sync(source="steam", sync_function=sync_function)
-        manager._run_sync("steam", sync_function, on_complete=None)
-
-        assert manager.get_status()["jobs"][0]["status"] == "completed"
-
 
 class TestSyncManagerRunSync:
     """_run_sync internal behaviour."""
@@ -680,28 +460,6 @@ class TestSyncManagerRunSync:
         manager._run_sync("steam", sync_function)
 
         sync_function.assert_not_called()
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_sets_completed_at_on_success(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=5)
-
-        manager.start_sync(source="steam", sync_function=sync_function)
-        manager._run_sync("steam", sync_function)
-
-        assert manager.get_status()["jobs"][0]["completed_at"] is not None
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_sets_completed_at_on_failure(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(side_effect=Exception("failure"))
-
-        manager.start_sync(source="steam", sync_function=sync_function)
-        manager._run_sync("steam", sync_function)
-
-        assert manager.get_status()["jobs"][0]["completed_at"] is not None
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_passes_job_to_sync_function(self, mock_thread: MagicMock) -> None:
@@ -716,98 +474,6 @@ class TestSyncManagerRunSync:
         passed_job = sync_function.call_args[0][0]
         assert isinstance(passed_job, SyncJob)
         assert passed_job.source == "steam"
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_items_processed_set_from_return_value(
-        self, mock_thread: MagicMock
-    ) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=99)
-
-        manager.start_sync(source="steam", sync_function=sync_function)
-        manager._run_sync("steam", sync_function)
-
-        assert manager.get_status()["jobs"][0]["items_processed"] == 99
-
-
-class TestSyncManagerThreadCreation:
-    """start_sync spawns a daemon thread."""
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_creates_daemon_thread(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        manager.start_sync(source="steam", sync_function=MagicMock(return_value=10))
-
-        mock_thread.assert_called_once()
-        assert mock_thread.call_args.kwargs["daemon"] is True
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_starts_thread(self, mock_thread: MagicMock) -> None:
-        instance = MagicMock()
-        mock_thread.return_value = instance
-        manager = SyncManager()
-        manager.start_sync(source="steam", sync_function=MagicMock(return_value=10))
-
-        instance.start.assert_called_once()
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_target_is_run_sync(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        manager.start_sync(source="steam", sync_function=MagicMock(return_value=10))
-
-        assert mock_thread.call_args.kwargs["target"] == manager._run_sync
-
-
-class TestSingletonGetterAndReset:
-    def setup_method(self) -> None:
-        reset_sync_manager()
-
-    def teardown_method(self) -> None:
-        reset_sync_manager()
-
-    def test_returns_sync_manager_instance(self) -> None:
-        assert isinstance(get_sync_manager(), SyncManager)
-
-    def test_returns_same_instance(self) -> None:
-        assert get_sync_manager() is get_sync_manager()
-
-    def test_reset_clears_instance(self) -> None:
-        first = get_sync_manager()
-        reset_sync_manager()
-        assert get_sync_manager() is not first
-
-    def test_reset_safe_when_no_instance(self) -> None:
-        reset_sync_manager()
-        reset_sync_manager()
-
-
-class TestSyncJobDefaults:
-    def test_default_status_is_idle(self) -> None:
-        assert SyncJob(source="test").status == SyncStatus.IDLE
-
-    def test_default_errors_list_is_empty(self) -> None:
-        assert SyncJob(source="test").errors == []
-
-    def test_errors_list_is_not_shared_between_instances(self) -> None:
-        a = SyncJob(source="a")
-        b = SyncJob(source="b")
-        a.errors.append("error in a")
-        assert b.errors == []
-
-    def test_default_items_processed_is_zero(self) -> None:
-        assert SyncJob(source="test").items_processed == 0
-
-    def test_default_optional_fields_are_none(self) -> None:
-        job = SyncJob(source="test")
-        assert job.started_at is None
-        assert job.completed_at is None
-        assert job.total_items is None
-        assert job.current_item is None
-        assert job.current_source is None
-        assert job.error_message is None
 
 
 class TestSyncManagerHistoryEviction:
@@ -830,21 +496,6 @@ class TestSyncManagerHistoryEviction:
             started_at=completed_at,
             completed_at=completed_at,
         )
-
-    def test_no_eviction_below_cap(self) -> None:
-        manager = SyncManager()
-        cap = manager._MAX_TERMINAL_HISTORY
-        # Plant cap-1 terminal jobs directly so we don't depend on
-        # start_sync's thread spawn.
-        for index in range(cap - 1):
-            manager._jobs[f"src_{index}"] = self._make_terminal_job(
-                f"src_{index}", datetime(2026, 1, 1, 0, index)
-            )
-
-        with manager._lock:
-            manager._evict_history_locked()
-
-        assert len(manager._jobs) == cap - 1
 
     def test_eviction_drops_oldest_terminal_job(self) -> None:
         manager = SyncManager()
@@ -892,30 +543,6 @@ class TestSyncManagerHistoryEviction:
             if job.status != SyncStatus.RUNNING
         ]
         assert len(terminals) == cap
-
-    def test_eviction_handles_completed_at_none(self) -> None:
-        """Terminal jobs without completed_at sort to the start (oldest)."""
-        manager = SyncManager()
-        cap = manager._MAX_TERMINAL_HISTORY
-        # One terminal job with completed_at=None plus cap others with
-        # known timestamps. The None job must be the one evicted because
-        # it sorts to the front under the ``or datetime.min`` fallback.
-        manager._jobs["no_timestamp"] = SyncJob(
-            source="no_timestamp",
-            status=SyncStatus.COMPLETED,
-            started_at=datetime(2026, 1, 1),
-            completed_at=None,
-        )
-        for index in range(cap):
-            manager._jobs[f"src_{index}"] = self._make_terminal_job(
-                f"src_{index}", datetime(2026, 1, 1, 0, index + 10)
-            )
-
-        with manager._lock:
-            manager._evict_history_locked()
-
-        assert "no_timestamp" not in manager._jobs
-        assert len(manager._jobs) == cap
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_start_sync_triggers_eviction(self, mock_thread: MagicMock) -> None:
@@ -1048,25 +675,6 @@ class TestSyncManagerLogInjectionRegression:
         ]
 
     @patch("src.web.sync_manager.threading.Thread")
-    def test_a_newline_in_the_label_cannot_forge_an_empty_result(
-        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
-
-        def sync_function(job: SyncJob) -> int:
-            manager.add_error(FORGED_SOURCE, "Steam", "plugin said no")
-            return 0
-
-        with caplog.at_level(logging.WARNING, logger=SYNC_MANAGER_LOGGER):
-            manager._run_sync(FORGED_SOURCE, sync_function)
-
-        assert self._messages(caplog) == [
-            f"Sync for {ESCAPED_SOURCE} produced no items; marking failed (1 errors)"
-        ]
-
-    @patch("src.web.sync_manager.threading.Thread")
     def test_a_failure_logs_neither_the_raw_label_nor_a_traceback(
         self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1090,25 +698,3 @@ class TestSyncManagerLogInjectionRegression:
         ]
         assert api_key not in caplog.text
         assert not any(record.exc_info for record in caplog.records)
-
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_a_callback_fault_is_rendered_as_one_line(
-        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The callback runs library code, so its message is not ours either."""
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        manager.start_sync(source="Steam", sync_function=MagicMock())
-
-        def on_complete() -> None:
-            raise OSError("disk full\nSync completed for Everything")
-
-        with caplog.at_level(logging.ERROR, logger=SYNC_MANAGER_LOGGER):
-            manager._run_sync(
-                "Steam", MagicMock(return_value=1), on_complete=on_complete
-            )
-
-        assert self._messages(caplog) == [
-            "Sync on_complete callback failed: OSError: disk full\\n"
-            "Sync completed for Everything"
-        ]

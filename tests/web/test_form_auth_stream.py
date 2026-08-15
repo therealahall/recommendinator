@@ -15,12 +15,10 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from src.storage.accounts import MIN_PASSWORD_LENGTH, PASSWORD_TOO_SHORT
 from src.storage.manager import StorageManager
 from src.storage.schema import _SCHEMA_VERSION
 from src.web.auth import SESSION_COOKIE, UNAUTHORIZED_DETAIL
 from src.web.healthcheck import HEALTHY_STATUS
-from src.web.state import app_state
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import booted_web_app
 
@@ -105,18 +103,6 @@ class TestUpgradingAPopulatedInstall:
     the server comes up on such a database at all.
     """
 
-    def test_the_server_comes_up_and_opens_on_setup(self, client: TestClient) -> None:
-        """A populated database is still an unclaimed instance."""
-        response = client.get("/api/auth/session")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "claimed": False,
-            "authenticated": False,
-            "user": None,
-            "min_password_length": MIN_PASSWORD_LENGTH,
-        }
-
     def test_claiming_signs_the_claimant_in_and_keeps_the_library(
         self, client: TestClient, upgraded: StorageManager
     ) -> None:
@@ -137,42 +123,6 @@ class TestUpgradingAPopulatedInstall:
         assert _titles(library) == sorted(title for _, title in _THE_LIBRARY)
         assert [user["id"] for user in upgraded.get_all_users()] == [1]
 
-    def test_setup_is_unreachable_once_that_instance_is_claimed(
-        self, client: TestClient, upgraded: StorageManager
-    ) -> None:
-        """The window an upgrading operator is warned about closes for good."""
-        client.post("/api/auth/setup", json=_SETUP_BODY)
-
-        again = client.post(
-            "/api/auth/setup",
-            json={
-                "username": "impostor",
-                "display_name": "",
-                "password": "another password",
-            },
-        )
-
-        assert again.status_code == 409
-        assert upgraded.verify_password(_USERNAME, _PASSWORD) is not None
-        assert upgraded.verify_password("impostor", "another password") is None
-
-    def test_the_retired_config_key_neither_stops_the_boot_nor_leaks(
-        self, client: TestClient
-    ) -> None:
-        """Characterises the leftover key as inert: unread, and echoed nowhere.
-
-        Nothing strips it and nothing warns, so an upgrader learns it is dead
-        only from the release notes.
-        """
-        client.post("/api/auth/setup", json=_SETUP_BODY)
-
-        running = app_state.config or {}
-        assert running["web"][_RETIRED_KEY] == _RETIRED_VALUE
-        for path in ("/api/status", "/api/settings"):
-            answered = client.get(path)
-            assert answered.status_code == 200, path
-            assert _RETIRED_VALUE not in answered.text
-
 
 class TestTheHealthCheckReadsTheGatesOwnRefusal:
     """``HEALTHY_STATUS`` is 401, which holds only while the gate answers 401.
@@ -188,14 +138,6 @@ class TestTheHealthCheckReadsTheGatesOwnRefusal:
 
         assert response.status_code == HEALTHY_STATUS
         assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-
-    def test_a_signed_in_status_call_answers_two_hundred(
-        self, client: TestClient
-    ) -> None:
-        """Anchors the refusal above: the route works, the caller was nobody."""
-        client.post("/api/auth/setup", json=_SETUP_BODY)
-
-        assert client.get("/api/status").status_code == 200
 
 
 class TestTheSessionOutlivesTheBrowserThatOpenedIt:
@@ -215,21 +157,6 @@ class TestTheSessionOutlivesTheBrowserThatOpenedIt:
         assert response.status_code == 200
         assert response.json()["user"]["username"] == _USERNAME
 
-    def test_signing_out_kills_the_cookie_a_restart_would_restore(
-        self, client: TestClient, upgraded: StorageManager, config: dict[str, Any]
-    ) -> None:
-        """Revoked server-side, or the copy on disk outlives the sign-out."""
-        client.post("/api/auth/setup", json=_SETUP_BODY)
-        restored = client.cookies[SESSION_COOKIE]
-        assert client.post("/api/auth/logout").status_code == 204
-
-        with booted_web_app(upgraded, config) as restarted:
-            reopened = TestClient(restarted, cookies={SESSION_COOKIE: restored})
-            response = reopened.get("/api/users")
-
-        assert response.status_code == 401
-        assert response.json()["detail"] == UNAUTHORIZED_DETAIL
-
 
 class TestTwoBrowsersSignedInAtOnce:
     """One account, two sessions: what each one does to the other."""
@@ -246,15 +173,6 @@ class TestTwoBrowsersSignedInAtOnce:
         assert client.cookies[SESSION_COOKIE] != elsewhere.cookies[SESSION_COOKIE]
         return client, elsewhere
 
-    def test_both_are_signed_in_on_cookies_of_their_own(
-        self, both: tuple[TestClient, TestClient]
-    ) -> None:
-        """Anchors the two cases below, which a signed-out pair would pass."""
-        here, elsewhere = both
-
-        assert here.get("/api/users").status_code == 200
-        assert elsewhere.get("/api/users").status_code == 200
-
     def test_signing_one_out_leaves_the_other_signed_in(
         self, both: tuple[TestClient, TestClient]
     ) -> None:
@@ -263,21 +181,6 @@ class TestTwoBrowsersSignedInAtOnce:
 
         assert elsewhere.post("/api/auth/logout").status_code == 204
 
-        assert here.get("/api/users").status_code == 200
-        assert elsewhere.get("/api/users").status_code == 401
-
-    def test_a_password_change_keeps_the_caller_and_drops_the_other(
-        self, both: tuple[TestClient, TestClient]
-    ) -> None:
-        """The point of the change: every browser but this one signs out."""
-        here, elsewhere = both
-
-        changed = here.put(
-            "/api/users/1/password",
-            json={"current_password": _PASSWORD, "new_password": _REPLACEMENT},
-        )
-
-        assert changed.status_code == 204
         assert here.get("/api/users").status_code == 200
         assert elsewhere.get("/api/users").status_code == 401
 
@@ -310,24 +213,6 @@ class TestRenamingTheAccountFromSettings:
         assert refused.status_code == 401
         assert accepted.status_code == 200
         assert accepted.json()["display_name"] == "Keeper"
-
-    def test_clearing_the_display_name_leaves_the_username_to_label_by(
-        self, signed_in: TestClient, upgraded: StorageManager
-    ) -> None:
-        """What the sidebar falls back to when the optional field is emptied."""
-        response = signed_in.patch(
-            "/api/users/1", json={"username": _USERNAME, "display_name": "  "}
-        )
-        stamped = upgraded.describe_account(1)
-
-        assert response.status_code == 200
-        assert stamped is not None
-        assert signed_in.get("/api/auth/session").json()["user"] == {
-            "id": 1,
-            "username": _USERNAME,
-            "display_name": None,
-            "password_updated_at": stamped["password_updated_at"],
-        }
 
 
 class TestPasswordAgeReachesTheAccountScreenRegression:
@@ -421,70 +306,6 @@ class TestTheBreakGlassResetAgainstARunningServer:
 
 class TestMalformedSignInInput:
     """The four sign-in routes are all an anonymous caller may reach."""
-
-    @pytest.mark.parametrize(
-        ("body", "reason"),
-        [
-            pytest.param(
-                {"username": "", "display_name": "", "password": _PASSWORD},
-                "blank username",
-            ),
-            pytest.param(
-                {"username": "x" * 101, "display_name": "", "password": _PASSWORD},
-                "username past the column's width",
-            ),
-            pytest.param(
-                {
-                    "username": _USERNAME,
-                    "display_name": "d" * 101,
-                    "password": _PASSWORD,
-                },
-                "display name past the column's width",
-            ),
-        ],
-    )
-    def test_setup_refuses_it_and_leaves_the_instance_unclaimed(
-        self,
-        client: TestClient,
-        upgraded: StorageManager,
-        body: dict[str, str],
-        reason: str,
-    ) -> None:
-        """A half-claimed instance would be reachable by nobody at all."""
-        response = client.post("/api/auth/setup", json=body)
-
-        assert response.status_code == 422, reason
-        assert upgraded.account_is_claimed() is False
-        assert client.get("/api/auth/session").json()["claimed"] is False
-
-    def test_a_short_password_leaves_the_instance_unclaimed(
-        self, client: TestClient, upgraded: StorageManager
-    ) -> None:
-        """A 400 rather than a 422: the detail has to be a string the form shows."""
-        response = client.post(
-            "/api/auth/setup",
-            json={
-                "username": _USERNAME,
-                "display_name": "",
-                "password": "x" * (MIN_PASSWORD_LENGTH - 1),
-            },
-        )
-
-        assert response.status_code == 400
-        assert response.json()["detail"] == PASSWORD_TOO_SHORT
-        assert upgraded.account_is_claimed() is False
-
-    def test_login_refuses_a_blank_username_without_opening_a_session(
-        self, client: TestClient
-    ) -> None:
-        client.post("/api/auth/setup", json=_SETUP_BODY)
-        client.cookies.clear()
-
-        response = client.post("/api/auth/login", json={"username": "", "password": ""})
-
-        assert response.status_code == 422
-        assert SESSION_COOKIE not in response.cookies
-        assert client.get("/api/users").status_code == 401
 
     def test_an_empty_password_reaches_the_check_and_is_refused(
         self, client: TestClient

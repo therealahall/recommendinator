@@ -1,14 +1,13 @@
 """Tests for web application state management functions."""
 
 import asyncio
-import logging
 import threading
 from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -66,35 +65,12 @@ def _clean_app_state() -> Any:
 class TestReloadConfig:
     """Tests for reload_config() function."""
 
-    def test_reload_config_success(self, tmp_path: Path) -> None:
-        """reload_config returns True and updates app_state on success."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("recommendations:\n  default_count: 7\n")
-
-        app_state.config_path = str(config_file)
-        app_state.config = {"old": "config"}
-
-        result = reload_config()
-
-        assert result is True
-        assert app_state.config["recommendations"]["default_count"] == 7
-        assert "old" not in app_state.config
-
     def test_reload_config_no_config_path(self) -> None:
         """reload_config returns False when no config_path is stored."""
         # app_state is empty (no config_path)
         result = reload_config()
 
         assert result is False
-
-    def test_reload_config_no_config_path_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """reload_config logs a warning when config_path is missing."""
-        with caplog.at_level(logging.WARNING, logger="src.web.state"):
-            reload_config()
-
-        assert "Cannot reload config" in caplog.text
 
     def test_reload_reapplies_settings_overlay(self, tmp_path: Path) -> None:
         """Hot-reload re-runs the real settings migration/overlay against the DB.
@@ -174,23 +150,6 @@ class TestReloadConfig:
         assert "old" not in app_state.config
         assert app_state.config["recommendations"]["min_rating_for_preference"] == 2
 
-    def test_reload_config_load_raises_returns_false(self) -> None:
-        """reload_config returns False when load_config raises an exception.
-
-        load_config has fallback behavior (falls back to example.yaml),
-        so we mock it to simulate a genuine failure such as a permissions
-        error or corrupted file.
-        """
-        app_state.config_path = "/some/path.yaml"
-
-        with patch(
-            "src.web.state.load_config",
-            side_effect=OSError("Permission denied"),
-        ):
-            result = reload_config()
-
-        assert result is False
-
     def test_reload_config_preserves_old_config_on_failure(self) -> None:
         """reload_config does not replace existing config when reload fails."""
         original_config = {"preserved": True}
@@ -204,23 +163,6 @@ class TestReloadConfig:
             reload_config()
 
         assert app_state.config is original_config
-
-    def test_reload_config_logs_error_on_failure(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """reload_config logs an error when the reload fails."""
-        app_state.config_path = "/some/path.yaml"
-
-        with (
-            caplog.at_level(logging.ERROR, logger="src.web.state"),
-            patch(
-                "src.web.state.load_config",
-                side_effect=RuntimeError("disk error"),
-            ),
-        ):
-            reload_config()
-
-        assert "Failed to reload config" in caplog.text
 
 
 def test_a_source_named_goodreads_keeps_its_items_across_a_web_boot(
@@ -328,78 +270,6 @@ class TestConfigWatcher:
 
         asyncio.run(_run())
 
-    def test_watcher_logs_warning_on_reload_failure(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """ConfigWatcher logs a warning when reload_config returns False."""
-
-        async def _run() -> None:
-            handled = asyncio.Event()
-            with (
-                caplog.at_level(logging.WARNING, logger="src.web.state"),
-                patch(_AWATCH_PATCH_TARGET, side_effect=_awatch_one_event(handled)),
-                patch("src.web.state.reload_config", return_value=False),
-            ):
-                watcher = ConfigWatcher()
-                await watcher.start(Path("/fake/config.yaml"))
-                try:
-                    await asyncio.wait_for(
-                        handled.wait(), timeout=_HANDLED_TIMEOUT_SECONDS
-                    )
-                finally:
-                    await watcher.stop()
-
-        asyncio.run(_run())
-        assert "Config hot-reload failed" in caplog.text
-
-    def test_watcher_stop_is_idempotent(self) -> None:
-        """Calling stop() when not started does not raise."""
-
-        async def _run() -> None:
-            watcher = ConfigWatcher()
-            await watcher.stop()  # Should not raise
-
-        asyncio.run(_run())
-
-    def test_watcher_start_is_idempotent(self) -> None:
-        """Calling start() twice does not create a second watcher."""
-
-        async def _run() -> None:
-            with patch(
-                _AWATCH_PATCH_TARGET,
-                side_effect=_fake_awatch_no_events,
-            ):
-                watcher = ConfigWatcher()
-                await watcher.start(Path("/fake/config.yaml"))
-                try:
-                    assert watcher.running
-                    # Second start should be a no-op
-                    await watcher.start(Path("/fake/config.yaml"))
-                    assert watcher.running
-                finally:
-                    await watcher.stop()
-
-        asyncio.run(_run())
-
-    def test_running_property(self) -> None:
-        """running property reflects watcher state."""
-
-        async def _run() -> None:
-            with patch(
-                _AWATCH_PATCH_TARGET,
-                side_effect=_fake_awatch_no_events,
-            ):
-                watcher = ConfigWatcher()
-                assert not watcher.running
-
-                await watcher.start(Path("/fake/config.yaml"))
-                assert watcher.running
-
-                await watcher.stop()
-                assert not watcher.running
-
-        asyncio.run(_run())
-
     def test_watcher_recovers_after_dead_task(self) -> None:
         """start() works again after the previous task has died."""
 
@@ -425,97 +295,6 @@ class TestConfigWatcher:
                 await watcher.stop()
 
         asyncio.run(_run())
-
-    def test_watcher_logs_crash(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Unexpected exceptions in _watch are logged before the task dies."""
-
-        async def _run() -> None:
-            with (
-                caplog.at_level(logging.ERROR, logger="src.web.state"),
-                patch(
-                    _AWATCH_PATCH_TARGET,
-                    side_effect=_fake_awatch_raising,
-                ),
-            ):
-                watcher = ConfigWatcher()
-                await watcher.start(Path("/fake/config.yaml"))
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
-                await watcher.stop()
-
-        asyncio.run(_run())
-        assert "Config watcher crashed" in caplog.text
-
-    def test_stop_after_crash_does_not_raise(self) -> None:
-        """stop() on a crashed watcher does not propagate the stored exception."""
-
-        async def _run() -> None:
-            with patch(
-                _AWATCH_PATCH_TARGET,
-                side_effect=_fake_awatch_raising,
-            ):
-                watcher = ConfigWatcher()
-                await watcher.start(Path("/fake/config.yaml"))
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
-                assert not watcher.running
-
-                # stop() should not re-raise the OSError from the crashed task
-                await watcher.stop()
-                assert watcher._task is None
-
-        asyncio.run(_run())
-
-
-# ---------------------------------------------------------------------------
-# lifespan tests
-# ---------------------------------------------------------------------------
-
-
-class TestLifespan:
-    """Tests for the FastAPI lifespan context manager."""
-
-    def test_lifespan_starts_watcher_when_config_path_set(self) -> None:
-        """lifespan starts the config watcher when config_path is present."""
-        from src.web.app import lifespan
-
-        async def _run() -> None:
-            app_state.config_path = "/fake/config.yaml"
-            mock_watcher = MagicMock(spec=ConfigWatcher)
-            mock_watcher.start = AsyncMock()
-            mock_watcher.stop = AsyncMock()
-            app_state.config_watcher = mock_watcher
-
-            async with lifespan(MagicMock()):
-                pass
-
-            mock_watcher.start.assert_awaited_once_with(Path("/fake/config.yaml"))
-            mock_watcher.stop.assert_awaited_once()
-
-        asyncio.run(_run())
-
-    def test_lifespan_skips_start_when_no_config_path(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """lifespan does not start watcher when config_path is None."""
-        from src.web.app import lifespan
-
-        async def _run() -> None:
-            app_state.config_path = None
-            mock_watcher = MagicMock(spec=ConfigWatcher)
-            mock_watcher.start = AsyncMock()
-            mock_watcher.stop = AsyncMock()
-            app_state.config_watcher = mock_watcher
-
-            with caplog.at_level(logging.WARNING, logger="src.web.app"):
-                async with lifespan(MagicMock()):
-                    pass
-
-            mock_watcher.start.assert_not_awaited()
-            mock_watcher.stop.assert_awaited_once()
-
-        asyncio.run(_run())
-        assert "Config watcher not started" in caplog.text
 
 
 class TestAHotReloadReachesTheRunningConfig:

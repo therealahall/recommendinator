@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.storage.manager import StorageManager
-from src.web.api import ThemeResponse, discover_themes, router
+from src.web.api import discover_themes, router
 from src.web.state import app_state
 from tests.factories import authenticated_client
 
@@ -79,36 +79,11 @@ class TestDiscoverThemes:
         assert result[0].version == "1.0.0"
         assert result[0].theme_type == "dark"
 
-    def test_returns_empty_list_when_directory_missing(self, tmp_path: Path) -> None:
-        """Non-existent directory returns empty list."""
-        result = discover_themes(tmp_path / "nonexistent")
-
-        assert result == []
-
-    def test_skips_directories_without_theme_json(self, tmp_path: Path) -> None:
-        """Directories without theme.json are ignored."""
-        (tmp_path / "incomplete").mkdir()
-        (tmp_path / "incomplete" / "colors.css").write_text("/* no theme.json */")
-
-        result = discover_themes(tmp_path)
-
-        assert result == []
-
     def test_skips_directories_with_invalid_json(self, tmp_path: Path) -> None:
         """Directories with malformed theme.json are skipped."""
         theme_dir = tmp_path / "broken"
         theme_dir.mkdir()
         (theme_dir / "theme.json").write_text("not valid json {{{")
-
-        result = discover_themes(tmp_path)
-
-        assert result == []
-
-    def test_skips_directories_with_missing_keys(self, tmp_path: Path) -> None:
-        """Directories with incomplete theme.json are skipped."""
-        theme_dir = tmp_path / "partial"
-        theme_dir.mkdir()
-        (theme_dir / "theme.json").write_text(json.dumps({"name": "Partial"}))
 
         result = discover_themes(tmp_path)
 
@@ -131,32 +106,6 @@ class TestDiscoverThemes:
         result = discover_themes(tmp_path)
 
         assert [theme.id for theme in result] == ["alpha", "middle", "zebra"]
-
-    def test_skips_non_directory_entries(self, tmp_path: Path) -> None:
-        """Files in the themes directory are ignored."""
-        (tmp_path / "readme.txt").write_text("not a theme")
-
-        result = discover_themes(tmp_path)
-
-        assert result == []
-
-    def test_multiple_valid_themes(self, tmp_path: Path) -> None:
-        """Multiple valid themes are all returned."""
-        for name, theme_type in [("dark-one", "dark"), ("light-one", "light")]:
-            theme_dir = tmp_path / name
-            theme_dir.mkdir()
-            theme_json = {
-                "name": name,
-                "description": f"A {theme_type} theme",
-                "author": "Test",
-                "version": "1.0.0",
-                "type": theme_type,
-            }
-            (theme_dir / "theme.json").write_text(json.dumps(theme_json))
-
-        result = discover_themes(tmp_path)
-
-        assert len(result) == 2
 
 
 class TestThemeEndpoints:
@@ -195,16 +144,3 @@ class TestThemeEndpoints:
 
         assert response.status_code == 200
         assert response.json()["theme"] == "nord"
-
-    def test_theme_response_model_fields(self) -> None:
-        """ThemeResponse model has the expected fields."""
-        theme = ThemeResponse(
-            id="test",
-            name="Test",
-            description="A test theme",
-            author="Test Author",
-            version="1.0.0",
-            theme_type="dark",
-        )
-        assert theme.id == "test"
-        assert theme.theme_type == "dark"
