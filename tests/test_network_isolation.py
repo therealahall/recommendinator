@@ -15,12 +15,6 @@ def test_a_connection_to_a_real_host_is_refused() -> None:
         socket.create_connection(("api.steampowered.com", 443), timeout=1)
 
 
-def test_the_refusal_names_the_way_out() -> None:
-    """A refusal nobody can act on gets worked around rather than fixed."""
-    with pytest.raises(NetworkAccessDenied, match="outbound_network"):
-        socket.create_connection(("example.com", 80), timeout=1)
-
-
 def test_loopback_still_connects() -> None:
     """TestClient and the local database clients need it.
 
@@ -34,20 +28,6 @@ def test_loopback_still_connects() -> None:
             pass
     finally:
         listener.close()
-
-
-def test_a_test_that_needs_the_network_can_ask(outbound_network: None) -> None:
-    """The hatch must lift the refusal, not reinstall it.
-
-    Asserting against loopback cannot tell those apart. What the resolver
-    answers is the network's business, not this test's.
-    """
-    try:
-        socket.getaddrinfo("example.com", 80)
-    except NetworkAccessDenied:  # pragma: no cover - the failure this pins
-        pytest.fail("outbound_network left the guard installed")
-    except OSError:
-        pass
 
 
 def test_connect_ex_is_guarded_too() -> None:

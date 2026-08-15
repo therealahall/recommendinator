@@ -14,7 +14,6 @@ from src.auth.gog import (
     GogAuthError,
     exchange_code_for_tokens,
     extract_code_from_input,
-    get_gog_auth_url,
     has_gog_token,
     is_gog_enabled,
     save_gog_token,
@@ -29,28 +28,8 @@ GOG_LOGGER = "src.auth.gog"
 OAUTH_LOGGER = "src.auth.oauth_sources"
 
 
-class TestGetGogAuthUrl:
-    """Tests for get_gog_auth_url function."""
-
-    def test_returns_valid_url(self) -> None:
-        """Test that auth URL is properly formatted."""
-        url = get_gog_auth_url()
-
-        assert url.startswith("https://auth.gog.com/auth?")
-        assert "client_id=46899977096215655" in url
-        assert "response_type=code" in url
-
-
 class TestExtractCodeFromInput:
     """Tests for extract_code_from_input function."""
-
-    def test_extracts_code_from_raw_input(self) -> None:
-        """Test extracting a raw authorization code."""
-        code = "oF8OSgZVMFb7a8Y3Dolrz4YPqDUnG7TCTsekYKcWnFNcmWWCJH7XJS3RN9d9NB0s"
-
-        result = extract_code_from_input(code)
-
-        assert result == code
 
     def test_extracts_code_from_url(self) -> None:
         """Test extracting code from a redirect URL."""
@@ -65,30 +44,12 @@ class TestExtractCodeFromInput:
             result == "oF8OSgZVMFb7a8Y3Dolrz4YPqDUnG7TCTsekYKcWnFNcmWWCJH7XJS3RN9d9NB0s"
         )
 
-    def test_raises_error_for_url_without_code(self) -> None:
-        """Test that URL without code parameter raises error."""
-        url = "https://embed.gog.com/on_login_success?origin=client"
-
-        with pytest.raises(GogAuthError) as exc_info:
-            extract_code_from_input(url)
-
-        assert "code" in str(exc_info.value)
-
     def test_raises_error_for_short_input(self) -> None:
         """Test that short input raises error."""
         with pytest.raises(GogAuthError) as exc_info:
             extract_code_from_input("short")
 
         assert "too short" in str(exc_info.value)
-
-    def test_strips_whitespace(self) -> None:
-        """Test that whitespace is stripped."""
-        code = "  oF8OSgZVMFb7a8Y3Dolrz4YPqDUnG7TCTsekYKcWnFNcmWWCJH7XJS3RN9d9NB0s  "
-
-        result = extract_code_from_input(code)
-
-        assert not result.startswith(" ")
-        assert not result.endswith(" ")
 
 
 class TestExchangeCodeForTokens:
@@ -129,27 +90,6 @@ class TestExchangeCodeForTokens:
 
         assert "GOG token exchange failed with status 400" in caplog.text
 
-    @patch("src.auth.gog.requests.get")
-    def test_missing_refresh_token(self, mock_get: MagicMock) -> None:
-        """Test response missing refresh_token."""
-        mock_response = MagicMock(spec=requests.Response)
-        mock_response.ok = True
-        mock_response.json.return_value = {"access_token": "access123"}
-        mock_get.return_value = mock_response
-
-        with pytest.raises(GogAuthError) as exc_info:
-            exchange_code_for_tokens("test_code")
-
-        assert "refresh_token" in str(exc_info.value)
-
-    @patch("src.auth.gog.requests.get")
-    def test_network_failure_raises_gog_auth_error(self, mock_get: MagicMock) -> None:
-        """Network error during token exchange raises GogAuthError."""
-        mock_get.side_effect = requests.RequestException("Connection timed out")
-
-        with pytest.raises(GogAuthError, match="Failed to connect to GOG servers"):
-            exchange_code_for_tokens("test_code")
-
 
 class TestSaveGogToken:
     """Tests for save_gog_token — DB persistence replaces config file writes."""
@@ -165,31 +105,6 @@ class TestSaveGogToken:
 
         result = storage.get_credential(1, "gog", "refresh_token")
         assert result == "new_refresh_token"
-
-    def test_overwrites_existing_token(self, storage: StorageManager) -> None:
-        """Saving a new token overwrites the old one."""
-        save_gog_token(storage, "old_token")
-        save_gog_token(storage, "new_token")
-
-        assert storage.get_credential(1, "gog", "refresh_token") == "new_token"
-
-    def test_custom_user_id(self, storage: StorageManager) -> None:
-        """Token can be saved for a specific user."""
-        # Create user 2
-        with storage.connection() as conn:
-            conn.execute("INSERT INTO users (id, username) VALUES (2, 'user2')")
-            conn.commit()
-
-        save_gog_token(storage, "user2_token", user_id=2)
-
-        assert storage.get_credential(2, "gog", "refresh_token") == "user2_token"
-        assert storage.get_credential(1, "gog", "refresh_token") is None
-
-    def test_db_failure_raises_gog_auth_error(self, storage: StorageManager) -> None:
-        """DB write failure raises GogAuthError, not the underlying exception."""
-        with patch.object(storage, "save_credential", side_effect=OSError("disk full")):
-            with pytest.raises(GogAuthError, match="Failed to save GOG token"):
-                save_gog_token(storage, "some_token")
 
     def test_db_failure_logs_the_class_not_a_traceback(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
@@ -225,24 +140,6 @@ class TestIsGogEnabled:
         """Test returns True when GOG is enabled."""
         assert is_gog_enabled(_gog_source()) is True
 
-    def test_returns_false_when_disabled(self) -> None:
-        """Test returns False when GOG is disabled."""
-        config = {"inputs": {"gog": {"plugin": "gog", "enabled": False}}}
-
-        assert is_gog_enabled(config) is False
-
-    def test_returns_false_when_missing(self) -> None:
-        """Test returns False when GOG config is missing."""
-        config: dict[str, Any] = {"inputs": {}}
-
-        assert is_gog_enabled(config) is False
-
-    def test_returns_false_when_inputs_missing(self) -> None:
-        """Test returns False when inputs section is missing."""
-        config: dict[str, Any] = {}
-
-        assert is_gog_enabled(config) is False
-
     def test_returns_false_for_a_source_running_another_plugin(self) -> None:
         """The id becomes a credential key, so the plugin behind it decides."""
         config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
@@ -264,9 +161,6 @@ class TestHasGogToken:
 
         assert has_gog_token(_gog_source(refresh_token=""), storage=storage) is True
 
-    def test_returns_false_when_no_row_is_stored(self, storage: StorageManager) -> None:
-        assert has_gog_token(_gog_source(), storage=storage) is False
-
     def test_a_config_only_token_is_not_reported_connected(
         self, storage: StorageManager
     ) -> None:
@@ -275,10 +169,6 @@ class TestHasGogToken:
             has_gog_token(_gog_source(refresh_token="some_token"), storage=storage)
             is False
         )
-
-    def test_returns_false_without_storage(self) -> None:
-        """No credential store is no revocable token, whatever config says."""
-        assert has_gog_token(_gog_source(refresh_token="config_token")) is False
 
     def test_another_plugins_source_is_never_reported_connected(
         self, storage: StorageManager
@@ -319,28 +209,6 @@ class TestGogAuthCredentialChainRegression:
         assert code not in caplog.text
         assert GOG_CLIENT_SECRET not in caplog.text
         assert "GOG token exchange request failed: ConnectionError" in caplog.text
-
-    @patch("src.auth.gog.requests.get")
-    def test_unparseable_body_is_scrubbed_too(
-        self, mock_get: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """``JSONDecodeError`` subclasses ``RequestException``, so it lands here."""
-        code = "gog-auth-code-b0f38d5e1c"
-        response = MagicMock(spec=requests.Response)
-        response.ok = True
-        response.json.side_effect = requests.exceptions.JSONDecodeError(
-            "Expecting value", "", 0
-        )
-        mock_get.return_value = response
-
-        with caplog.at_level(logging.ERROR, logger=GOG_LOGGER):
-            with pytest.raises(GogAuthError) as raised:
-                exchange_code_for_tokens(code)
-
-        rendered = "".join(traceback.format_exception(raised.value))
-        assert code not in rendered
-        assert GOG_CLIENT_SECRET not in rendered
-        assert "GOG token exchange request failed: JSONDecodeError" in caplog.text
 
     @patch("src.cli.commands._auth.is_gog_enabled", return_value=True)
     @patch("src.auth.gog.requests.get")

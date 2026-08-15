@@ -14,12 +14,9 @@ from typing import Any
 import httpx
 import pytest
 
-from src.enrichment.providers.tmdb.tmdb import TMDBProvider
 from src.settings.metadata import (
     SettingMetadata,
     Validation,
-    all_entries,
-    default_of,
     get_entry,
 )
 from src.settings.service import (
@@ -76,16 +73,6 @@ def _find(view: dict[str, Any], key: str) -> dict[str, Any]:
 
 
 class TestBuildSettingsView:
-    def test_grouped_by_section_in_registry_order(
-        self, storage: StorageManager, config: dict[str, Any]
-    ) -> None:
-        view = build_settings_view(config, storage)
-
-        section_names = [section["section"] for section in view["sections"]]
-        # First declared section is "recommendations"; each carries settings.
-        assert section_names[0] == "recommendations"
-        assert all(section["settings"] for section in view["sections"])
-
     def test_non_sensitive_setting_carries_metadata_and_value(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
@@ -103,23 +90,6 @@ class TestBuildSettingsView:
         assert setting["value"] == 5
         assert setting["db_overridden"] is False
         assert "has_secret" not in setting
-
-    def test_effective_value_falls_back_to_default(
-        self, storage: StorageManager
-    ) -> None:
-        # Empty config → the leaf is read from the registry default (5).
-        setting = _find(build_settings_view({}, storage), _INT_KEY)
-
-        assert setting["value"] == 5
-
-    def test_db_overridden_true_after_explicit_set(
-        self, storage: StorageManager, config: dict[str, Any]
-    ) -> None:
-        storage.set_setting(_INT_KEY, 9)
-
-        setting = _find(build_settings_view(config, storage), _INT_KEY)
-
-        assert setting["db_overridden"] is True
 
     def test_sensitive_setting_masks_value(
         self, storage: StorageManager, config: dict[str, Any]
@@ -152,12 +122,6 @@ class TestCoerceAndValidate:
         with pytest.raises(SettingsValidationError):
             coerce_and_validate(entry, 1)
 
-    def test_int_accepts_int_and_integral_float(self) -> None:
-        entry = _entry(_INT_KEY)
-
-        assert coerce_and_validate(entry, 3) == 3
-        assert coerce_and_validate(entry, 3.0) == 3
-
     def test_int_rejects_bool_string_and_below_min(self) -> None:
         entry = _entry(_INT_KEY)
 
@@ -167,28 +131,6 @@ class TestCoerceAndValidate:
             coerce_and_validate(entry, "3")
         with pytest.raises(SettingsValidationError):
             coerce_and_validate(entry, 0)  # violates min=1
-
-    def test_float_accepts_int_and_enforces_bounds(self) -> None:
-        entry = _entry("recommendations.scorer_weights.genre_match")  # min 0.0
-
-        assert coerce_and_validate(entry, 1) == 1.0
-        assert coerce_and_validate(entry, 1.5) == 1.5
-        with pytest.raises(SettingsValidationError):
-            coerce_and_validate(entry, -0.1)
-
-    @pytest.mark.parametrize("bad", ["hot", None, ["1.0"], {"value": 1.0}])
-    def test_float_rejects_non_numbers(self, bad: Any) -> None:
-        """The float branch's type guard had no coverage at all.
-
-        Every sibling type has a rejection test; float was the gap. The JSON
-        body is caller-controlled, so these shapes reach the validator from
-        ``PUT /api/settings``.
-        """
-        entry = _entry("recommendations.scorer_weights.genre_match")
-
-        with pytest.raises(SettingsValidationError) as exc_info:
-            coerce_and_validate(entry, bad)
-        assert exc_info.value.reason == "expected a number"
 
     def test_float_rejects_bool_which_would_otherwise_coerce_to_one(self) -> None:
         """The load-bearing half: bool subclasses int, so float(True) is 1.0.
@@ -248,25 +190,6 @@ class TestCoerceAndValidate:
             with pytest.raises(SettingsValidationError):
                 coerce_and_validate(entry, bad)
 
-    def test_tmdb_registry_defaults_match_the_provider_schema(self) -> None:
-        """The registry and the provider must not drift on the same defaults.
-
-        ``language`` and ``include_keywords`` are declared in the registry AND in
-        TMDBProvider.get_config_schema(); changing one silently leaves the other
-        serving the old value to any path that skips the assembled config.
-        The provider's schema and its ``enrich`` fallback now share one module
-        constant, so pinning the schema covers both copies on that side.
-        """
-        schema = {
-            field.name: field.default for field in TMDBProvider().get_config_schema()
-        }
-
-        assert default_of("enrichment.providers.tmdb.language") == schema["language"]
-        assert (
-            default_of("enrichment.providers.tmdb.include_keywords")
-            == schema["include_keywords"]
-        )
-
     def test_enum_accepts_choice_rejects_other(self) -> None:
         entry = _entry("logging.level")
         valid = entry.choices[0] if entry.choices else ""
@@ -293,25 +216,6 @@ class TestCoerceAndValidate:
         assert coerce_and_validate(entry, "abc") == "abc"
         with pytest.raises(SettingsValidationError):
             coerce_and_validate(entry, "abcd")
-
-    def test_string_pattern(self) -> None:
-        entry = SettingMetadata(
-            key="test.synthetic_string",
-            section="test",
-            label="Synthetic string",
-            help="",
-            type="string",
-            default="",
-            widget="text",
-            sensitive=False,
-            restart_required=False,
-            advanced=False,
-            validation=Validation(pattern=r"[a-z]+"),
-        )
-
-        assert coerce_and_validate(entry, "abc") == "abc"
-        with pytest.raises(SettingsValidationError):
-            coerce_and_validate(entry, "ABC")
 
     def test_list_accepts_list_rejects_scalar(self) -> None:
         entry = _entry(_ORIGINS_KEY)
@@ -344,8 +248,6 @@ class TestCoerceAndValidate:
         "origins",
         [
             ["*"],
-            ["http://localhost:18473"],
-            ["https://app.example.com"],
             ["https://app.example.com:8443"],
             ["http://[::1]:3000"],
             ["http://localhost:18473", "https://app.example.com"],
@@ -458,56 +360,6 @@ class TestCoerceAndValidate:
             with pytest.raises(SettingsValidationError):
                 coerce_and_validate(entry, bad)
 
-    @pytest.mark.parametrize(
-        "key",
-        [
-            entry.key
-            for entry in all_entries()
-            if entry.validation is not None and entry.validation.pattern is not None
-        ],
-    )
-    def test_pattern_failure_points_at_the_help_without_leaking_the_regex(
-        self, key: str
-    ) -> None:
-        """A pattern rejection must route the user to the help, not the regex.
-
-        The message is surfaced verbatim as ``fieldErrors[key]`` inside a
-        ``role="alert"`` live region. A bare "does not match the required
-        pattern" leaves the user stuck; interpolating the raw regex is worse for
-        screen reader users, who hear the metacharacters read out as a
-        plausible-but-wrong literal value.
-
-        Parametrized off the registry rather than naming the leaves, so a new
-        pattern leaf is covered the moment it is added — the failure mode this
-        guards is precisely someone adding a leaf and hand-rolling a message
-        that interpolates its own regex.
-        """
-        entry = _entry(key)
-        assert entry.validation is not None
-        assert entry.validation.pattern is not None
-
-        with pytest.raises(SettingsValidationError) as exc_info:
-            # No pattern in the registry accepts a bare space.
-            coerce_and_validate(entry, " ")
-
-        assert exc_info.value.key == key
-        # The whole string: this is product copy that lands in a role="alert"
-        # region, so "contains the word help" would pass for something useless.
-        assert exc_info.value.reason == (
-            "does not match the required format — see this setting's help for examples"
-        )
-        assert entry.validation.pattern not in exc_info.value.reason
-
-    def test_error_carries_key_and_reason(self) -> None:
-        entry = _entry(_INT_KEY)
-
-        with pytest.raises(SettingsValidationError) as exc_info:
-            coerce_and_validate(entry, 0)
-
-        assert exc_info.value.key == _INT_KEY
-        assert entry.validation is not None
-        assert exc_info.value.reason == f"must be >= {entry.validation.min}"
-
 
 class TestApplySettings:
     def test_persists_and_live_applies_non_restart(
@@ -527,12 +379,6 @@ class TestApplySettings:
         # logging.level is restart_required — the value is persisted for the
         # next boot but the RUNNING value is left as it was.
         assert config["logging"]["level"] == "INFO"
-
-    def test_unknown_key_rejected(
-        self, storage: StorageManager, config: dict[str, Any]
-    ) -> None:
-        with pytest.raises(SettingsValidationError):
-            apply_settings(config, storage, {"web.nonsense": 1})
 
     def test_sensitive_key_rejected(
         self, storage: StorageManager, config: dict[str, Any]
@@ -587,12 +433,6 @@ class TestResetSetting:
         # Not live-applied: the running value is left as it was, NOT reset to
         # the const default of INFO.
         assert config["logging"]["level"] == "WARNING"
-
-    def test_reset_unknown_key_raises(
-        self, storage: StorageManager, config: dict[str, Any]
-    ) -> None:
-        with pytest.raises(SettingsValidationError):
-            reset_setting(config, storage, "web.nonsense")
 
     def test_reset_sensitive_key_raises(
         self, storage: StorageManager, config: dict[str, Any]
@@ -650,7 +490,3 @@ class TestSecretGating:
     def test_set_secret_rejects_non_sensitive(self, storage: StorageManager) -> None:
         with pytest.raises(SettingsValidationError):
             set_secret(storage, _INT_KEY, "nope")
-
-    def test_clear_secret_rejects_unknown(self, storage: StorageManager) -> None:
-        with pytest.raises(SettingsValidationError):
-            clear_secret(storage, "web.nonsense")

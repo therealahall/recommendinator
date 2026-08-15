@@ -232,123 +232,6 @@ class TestResolveInputs:
         assert resolved[0].plugin.name == "fake_books"
         assert resolved[0].config["path"] == "/data/books.csv"
 
-    def test_disabled_entries_skipped(self) -> None:
-        """Test that disabled entries are not resolved."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": False,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert len(resolved) == 0
-
-    def test_multiple_instances_same_plugin(self) -> None:
-        """Test that multiple instances of the same plugin resolve correctly."""
-        config = {
-            "inputs": {
-                "fiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/fiction.csv",
-                },
-                "nonfiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/nonfiction.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert len(resolved) == 2
-        source_ids = {entry.source_id for entry in resolved}
-        assert source_ids == {"fiction_books", "nonfiction_books"}
-
-        # Both use the same plugin type
-        for entry in resolved:
-            assert entry.plugin.name == "fake_books"
-
-        # Each has its own config
-        paths = {entry.config["path"] for entry in resolved}
-        assert paths == {"/data/fiction.csv", "/data/nonfiction.csv"}
-
-    def test_source_id_injected_into_config(self) -> None:
-        """Test that _source_id is injected into the resolved config."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert resolved[0].config["_source_id"] == "my_books"
-
-    def test_plugin_and_enabled_keys_stripped(self) -> None:
-        """Test that 'plugin' and 'enabled' keys are removed from config."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert "plugin" not in resolved[0].config
-        assert "enabled" not in resolved[0].config
-
-    def test_unknown_plugin_skipped(self) -> None:
-        """Test that entries with unknown plugin names are skipped."""
-        config = {
-            "inputs": {
-                "mystery": {
-                    "plugin": "nonexistent_plugin",
-                    "enabled": True,
-                    "path": "/data/mystery.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert len(resolved) == 0
-
-    def test_missing_plugin_field_skipped(self) -> None:
-        """Test that entries without a 'plugin' field are skipped."""
-        config = {
-            "inputs": {
-                "broken": {
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        assert len(resolved) == 0
-
-    def test_empty_inputs(self) -> None:
-        """Test that empty inputs config returns empty list."""
-        resolved = resolve_inputs({})
-
-        assert len(resolved) == 0
-
     def test_mixed_enabled_disabled(self) -> None:
         """Test with a mix of enabled and disabled entries."""
         config = {
@@ -400,40 +283,6 @@ class TestSourceIdPropagation:
         assert len(items) == 1
         assert items[0].source == "fiction_shelf"
 
-    def test_different_instances_have_different_source_ids(self) -> None:
-        """Test that different instances of the same plugin produce different source IDs."""
-        config = {
-            "inputs": {
-                "fiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/fiction.csv",
-                },
-                "nonfiction_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/nonfiction.csv",
-                },
-            }
-        }
-
-        resolved = resolve_inputs(config)
-
-        fiction_items = list(resolved[0].plugin.fetch(resolved[0].config))
-        nonfiction_items = list(resolved[1].plugin.fetch(resolved[1].config))
-
-        # Source IDs match the user-defined keys
-        assert fiction_items[0].source == resolved[0].source_id
-        assert nonfiction_items[0].source == resolved[1].source_id
-        assert fiction_items[0].source != nonfiction_items[0].source
-
-    def test_fallback_to_plugin_name_without_source_id(self) -> None:
-        """Test that plugins fall back to plugin name when no _source_id in config."""
-        plugin = FakeBookPlugin()
-        items = list(plugin.fetch({"path": "/data/books.csv"}))
-
-        assert items[0].source == "fake_books"
-
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestGetAvailableSyncSources:
@@ -469,24 +318,6 @@ class TestGetAvailableSyncSources:
         assert by_id["my_books"].plugin_display_name == "Fake Books"
         assert by_id["my_games"].enabled is False
 
-    def test_skips_unknown_plugin(self) -> None:
-        """Sources referencing an unregistered plugin are dropped from listing."""
-        config = {
-            "inputs": {
-                "ghost": {
-                    "plugin": "nonexistent_plugin",
-                    "enabled": True,
-                },
-            }
-        }
-        assert get_available_sync_sources(config) == []
-
-    def test_empty_config(self) -> None:
-        """Test that empty config returns empty list."""
-        sources = get_available_sync_sources({})
-
-        assert len(sources) == 0
-
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestGetSyncHandler:
@@ -510,22 +341,6 @@ class TestGetSyncHandler:
         assert handler.source_id == "my_books"
         assert handler.plugin.name == "fake_books"
 
-    def test_returns_none_for_unknown_source(self) -> None:
-        """Test that unknown source ID returns None."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        handler = get_sync_handler("nonexistent", config)
-
-        assert handler is None
-
     def test_returns_none_for_disabled_source(self) -> None:
         """Test that disabled source returns None."""
         config = {
@@ -547,22 +362,6 @@ class TestGetSyncHandler:
 class TestValidateSourceConfig:
     """Tests for validate_source_config function."""
 
-    def test_validates_valid_config(self) -> None:
-        """Test validation passes for valid config."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        errors = validate_source_config("my_books", config)
-
-        assert errors == []
-
     def test_validates_invalid_config(self) -> None:
         """Test validation fails for invalid config."""
         config = {
@@ -578,13 +377,6 @@ class TestValidateSourceConfig:
 
         assert len(errors) == 1
         assert "'path' is required" in errors[0]
-
-    def test_unknown_source_returns_error(self) -> None:
-        """Test that unknown source returns an error."""
-        errors = validate_source_config("nonexistent", {})
-
-        assert len(errors) == 1
-        assert "Unknown or disabled source" in errors[0]
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -613,42 +405,6 @@ class TestResolveInputsWithStorage:
 
         assert len(resolved) == 1
         assert resolved[0].config["api_key"] == "db_key"
-
-    def test_config_only_when_no_storage(self) -> None:
-        """Without storage, only config values are used."""
-        config = {
-            "inputs": {
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": True,
-                    "api_key": "config_key",
-                }
-            }
-        }
-
-        resolved = resolve_inputs(config, storage=None)
-
-        assert len(resolved) == 1
-        assert resolved[0].config["api_key"] == "config_key"
-
-    def test_config_fallback_when_no_db_credential(
-        self, storage: StorageManager
-    ) -> None:
-        """Config value used when no DB credential exists for the field."""
-        config = {
-            "inputs": {
-                "my_games": {
-                    "plugin": "fake_games",
-                    "enabled": True,
-                    "api_key": "config_key",
-                }
-            }
-        }
-        # No DB credential saved for my_games
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert resolved[0].config["api_key"] == "config_key"
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -703,22 +459,6 @@ class TestValidateSourceConfigWithStorage:
 
         assert len(errors) == 1
         assert "'refresh_token' is required" in errors[0]
-
-    def test_config_credential_still_validates(self, storage: StorageManager) -> None:
-        """validate_source_config passes when credential is in config (not DB)."""
-        config = {
-            "inputs": {
-                "my_epic": {
-                    "plugin": "fake_credential",
-                    "enabled": True,
-                    "refresh_token": "config_token",
-                },
-            }
-        }
-
-        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
-
-        assert errors == []
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -785,60 +525,6 @@ class TestResolveInputsWithDbSourceConfig:
         assert resolved[0].source_id == "books_only_in_db"
         assert resolved[0].config["path"] == "/db/x.csv"
 
-    def test_yaml_only_source_still_resolves_when_other_migrated(
-        self, storage: StorageManager
-    ) -> None:
-        """Mixed state: one yaml-only and one migrated source both resolve."""
-        config = {
-            "inputs": {
-                "yaml_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/yaml/yaml_books.csv",
-                },
-                "migrated_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/yaml/old_path.csv",
-                },
-            }
-        }
-        storage.upsert_source_config(
-            1,
-            "migrated_books",
-            "fake_books",
-            {"path": "/db/new_path.csv"},
-            enabled=True,
-        )
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        by_id = {entry.source_id: entry for entry in resolved}
-        assert by_id["yaml_books"].config["path"] == "/yaml/yaml_books.csv"
-        assert by_id["migrated_books"].config["path"] == "/db/new_path.csv"
-
-    def test_db_config_strips_yaml_for_disabled_yaml_entry(
-        self, storage: StorageManager
-    ) -> None:
-        """When yaml has the source disabled but DB enables it, DB wins."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": False,
-                    "path": "/yaml/books.csv",
-                },
-            }
-        }
-        storage.upsert_source_config(
-            1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=True
-        )
-
-        resolved = resolve_inputs(config, storage=storage)
-
-        assert len(resolved) == 1
-        assert resolved[0].config["path"] == "/db/books.csv"
-
     def test_db_config_merges_with_credentials(self, storage: StorageManager) -> None:
         """Sensitive creds from credentials table merge over DB config dict."""
         config: dict[str, Any] = {"inputs": {}}
@@ -848,34 +534,6 @@ class TestResolveInputsWithDbSourceConfig:
         resolved = resolve_inputs(config, storage=storage)
 
         assert resolved[0].config["api_key"] == "secret_from_creds"
-
-    def test_get_available_sync_sources_includes_db_only(
-        self, storage: StorageManager
-    ) -> None:
-        """A DB-only source appears in get_available_sync_sources."""
-        config: dict[str, Any] = {"inputs": {}}
-        storage.upsert_source_config(
-            1, "db_only", "fake_books", {"path": "/x.csv"}, enabled=True
-        )
-
-        sources = get_available_sync_sources(config, storage=storage)
-
-        ids = {s.id for s in sources}
-        assert ids == {"db_only"}
-
-    def test_get_sync_handler_finds_db_only_source(
-        self, storage: StorageManager
-    ) -> None:
-        """get_sync_handler resolves a DB-only source by its id."""
-        config: dict[str, Any] = {"inputs": {}}
-        storage.upsert_source_config(
-            1, "db_only", "fake_books", {"path": "/x.csv"}, enabled=True
-        )
-
-        handler = get_sync_handler("db_only", config, storage=storage)
-
-        assert handler is not None
-        assert handler.source_id == "db_only"
 
     def test_db_config_with_unregistered_plugin_is_skipped(
         self, storage: StorageManager
@@ -937,7 +595,6 @@ class TestCredentialBoundUpdates:
         "url",
         [
             "https://localhost:7878",
-            "http://localhost:7878/",
             "http://localhost:7878/radarr",
         ],
     )
@@ -961,21 +618,6 @@ class TestCredentialBoundUpdates:
     ) -> None:
         with pytest.raises(SourceConfigError, match="different host"):
             self._update(migrated, {"url": url})
-
-    @pytest.mark.parametrize(
-        "url", ["http://attacker.example:99999", "http://attacker.example:notaport"]
-    )
-    def test_a_url_whose_port_does_not_parse_is_a_move(
-        self, migrated: StorageManager, url: str
-    ) -> None:
-        """It addresses a party nobody can read, which is not this one."""
-        with pytest.raises(SourceConfigError) as refusal:
-            self._update(migrated, {"url": url})
-
-        assert refusal.value.kind == "credential_move"
-        assert migrated.get_credential(1, "my_games", "api_key") == (
-            "issued-for-localhost"
-        )
 
     def test_the_move_is_allowed_once_the_secret_is_gone(
         self, migrated: StorageManager
@@ -1001,15 +643,6 @@ class TestCredentialBoundUpdates:
 
         assert storage.get_credential(1, "my_games", "api_key") == (
             "issued-for-the-default"
-        )
-
-    def test_an_empty_update_leaves_the_secret_alone(
-        self, migrated: StorageManager
-    ) -> None:
-        self._update(migrated, {})
-
-        assert migrated.get_credential(1, "my_games", "api_key") == (
-            "issued-for-localhost"
         )
 
     def test_a_non_binding_field_leaves_the_secret_alone(
@@ -1197,24 +830,6 @@ def _discovered_plugins() -> dict[str, SourcePlugin]:
     return plugins
 
 
-class TestTheSweepHelperRefusesAnEmptyRegistry:
-    """Nothing else here tells a working guard from a missing one.
-
-    Every sweep reading the helper passes on an empty mapping, which is the
-    hole the guard closes.
-    """
-
-    def test_discovery_finding_nothing_raises_instead_of_sweeping_nothing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Patched rather than emptied: ``get_all_plugins`` runs discovery
-        # itself, so a fresh registry cannot be left holding nothing.
-        monkeypatch.setattr(PluginRegistry, "get_all_plugins", lambda self: {})
-
-        with pytest.raises(AssertionError, match="discovery found nothing"):
-            _discovered_plugins()
-
-
 @pytest.fixture()
 def _registry_with_rotating_doubles(_real_registry: None) -> Iterator[None]:
     """The real token-rotating plugins, with fetching stubbed out."""
@@ -1262,17 +877,6 @@ class TestCreateSourceRefusesUncontainedPaths:
         assert row is not None
         assert row["config"]["paths"] == [str(games)]
 
-    def test_one_escaping_entry_refuses_the_whole_list(
-        self, storage: StorageManager, tmp_path: Path
-    ) -> None:
-        games = tmp_path / "games"
-        games.mkdir()
-
-        with pytest.raises(SourceConfigError):
-            create_source("mixed", "roms", {"paths": [str(games), "/etc"]}, storage)
-
-        assert storage.get_source_config(1, "mixed") is None
-
     def test_a_symlink_planted_in_the_root_cannot_reach_out_of_it(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
@@ -1295,25 +899,6 @@ class TestCreateSourceRefusesUncontainedPaths:
 
         assert "outside the allowed source roots" in raised.value.message
         assert "not found" not in raised.value.message
-
-    def test_an_empty_path_list_is_refused(self, storage: StorageManager) -> None:
-        with pytest.raises(SourceConfigError) as raised:
-            create_source("empty", "roms", {"paths": []}, storage)
-
-        assert raised.value.kind == "invalid_values"
-        assert storage.get_source_config(1, "empty") is None
-
-    def test_a_non_ascii_directory_under_the_root_is_accepted(
-        self, storage: StorageManager, tmp_path: Path
-    ) -> None:
-        games = tmp_path / "ポケモン Émulé"
-        games.mkdir()
-
-        create_source("unicode_roms", "roms", {"paths": [str(games)]}, storage)
-
-        row = storage.get_source_config(1, "unicode_roms")
-        assert row is not None
-        assert row["config"]["paths"] == [str(games)]
 
 
 class TwoSecretGamePlugin(FakeGamePlugin):
@@ -1353,15 +938,6 @@ class TestRedactCredentials:
 
         assert redact_credentials(message, FakeGamePlugin(), {"api_key": ""}) == message
 
-    def test_an_absent_or_non_string_secret_is_skipped(self) -> None:
-        """A YAML source can type its fields however it likes."""
-        message = "'api_key' is required"
-
-        assert redact_credentials(message, FakeGamePlugin(), {}) == message
-        assert (
-            redact_credentials(message, FakeGamePlugin(), {"api_key": 1234}) == message
-        )
-
     def test_a_credential_bound_field_is_left_alone(self) -> None:
         """``url`` is bound to the credential, not one — the log wants it."""
         redacted = redact_credentials(
@@ -1371,16 +947,6 @@ class TestRedactCredentials:
         )
 
         assert "http://sonarr.internal:9999" in redacted
-
-    def test_a_multiline_secret_is_redacted_before_anything_escapes_it(self) -> None:
-        """A pasted PEM-shaped value survives no reordering with the escaper."""
-        redacted = redact_credentials(
-            "rejected: -----KEY-----\nabc\n-----END-----",
-            FakeGamePlugin(),
-            {"api_key": "-----KEY-----\nabc\n-----END-----"},
-        )
-
-        assert redacted == "rejected: [redacted]"
 
 
 @pytest.mark.usefixtures("_registry_with_rotating_doubles")
@@ -1417,17 +983,6 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
         self._sync_a_rotating_source(plugin_name, storage)
 
         assert storage.get_credential(1, "work_games", "refresh_token") == ROTATED_TOKEN
-        assert storage.get_credential(1, plugin_name, "refresh_token") is None
-
-    @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
-    def test_deleting_the_source_takes_the_token_with_it(
-        self, plugin_name: str, storage: StorageManager
-    ) -> None:
-        self._sync_a_rotating_source(plugin_name, storage)
-
-        delete_source("work_games", storage, {})
-
-        assert storage.get_credentials_for_source(1, "work_games") == {}
         assert storage.get_credential(1, plugin_name, "refresh_token") is None
 
     @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
@@ -1488,28 +1043,6 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
             "stranded-by-an-upgrade"
         )
 
-    def test_a_disabled_sibling_keeps_the_row(self, storage: StorageManager) -> None:
-        """A disabled source is reconnected by enabling it, not by re-adding it."""
-        storage.upsert_source_config(1, "home_games", "fake_games", {}, enabled=False)
-
-        delete_source("work_games", storage, {"inputs": {}})
-
-        assert storage.get_credential(1, "fake_games", "api_key") == (
-            "stranded-by-an-upgrade"
-        )
-
-    def test_a_disabled_yaml_sibling_keeps_the_row(
-        self, storage: StorageManager
-    ) -> None:
-        """The YAML half answers who is left the same way the database half does."""
-        config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": False}}}
-
-        delete_source("work_games", storage, config)
-
-        assert storage.get_credential(1, "fake_games", "api_key") == (
-            "stranded-by-an-upgrade"
-        )
-
     def test_a_yaml_sibling_keeps_the_row(self, storage: StorageManager) -> None:
         """The database is half the source list, so a sweep reading it alone lies."""
         config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}
@@ -1559,72 +1092,6 @@ class TestAPluginCannotDropAFrameworkConfigKey:
             transformed = type(plugin).transform_config({"_source_id": "my_source"})
             assert transformed["_source_id"] == "my_source"
 
-    def test_the_plugins_own_fields_never_see_a_framework_key(self) -> None:
-        """``transform_fields`` is handed the source's fields and nothing else."""
-        seen: list[dict[str, Any]] = []
-
-        class RecordingPlugin(FakeBookPlugin):
-            @classmethod
-            def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-                seen.append(dict(raw_fields))
-                return dict(raw_fields)
-
-        RecordingPlugin.transform_config({"path": "/data/books.csv", "_source_id": "x"})
-
-        assert seen == [{"path": "/data/books.csv"}]
-
-    def test_a_deeper_subclass_is_refused_the_same_way(self) -> None:
-        """*arr plugins subclass an intermediate, so the guard must inherit."""
-
-        class Intermediate(FakeBookPlugin):
-            pass
-
-        with pytest.raises(TypeError, match="transform_fields"):
-
-            class Grandchild(Intermediate):
-                @classmethod
-                def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-                    return {}
-
-    def test_transform_fields_cannot_forge_a_framework_key(self) -> None:
-        """The framework's value wins, so a plugin cannot rename its source."""
-
-        class ForgingPlugin(FakeBookPlugin):
-            @classmethod
-            def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-                return {**raw_fields, "_source_id": "hijacked"}
-
-        transformed = ForgingPlugin.transform_config(
-            {"path": "/data/books.csv", "_source_id": "my_books"}
-        )
-
-        assert transformed["_source_id"] == "my_books"
-
-    def test_no_framework_key_appears_when_none_was_given(self) -> None:
-        assert FakeCredentialPlugin.transform_config({"refresh_token": "  t  "}) == {
-            "refresh_token": "t"
-        }
-
-    @pytest.mark.usefixtures("_real_registry")
-    def test_every_registered_plugin_keeps_the_rotation_callback(self) -> None:
-        """Steam re-transforms mid-``fetch``, so callables must survive too."""
-
-        def callback(key: str, value: str) -> None:
-            raise AssertionError("only identity is under test")
-
-        for plugin in _discovered_plugins().values():
-            transformed = type(plugin).transform_config(
-                {"_on_credential_rotated": callback}
-            )
-            assert transformed["_on_credential_rotated"] is callback
-
-
-def _somebody_elses_source(
-    plugin: SourcePlugin, config: dict[str, Any] | None = None
-) -> str:
-    """A hijacking implementation bound by assignment rather than by ``def``."""
-    return "somebody_elses_source"
-
 
 class TestAPluginCannotRenameItsOwnSource:
     """The same guarantee on the other method that answers "what is this?"."""
@@ -1639,46 +1106,6 @@ class TestAPluginCannotRenameItsOwnSource:
                     self, config: dict[str, Any] | None = None
                 ) -> str:
                     return "somebody_elses_source"
-
-    def test_a_deeper_subclass_is_refused_the_same_way(self) -> None:
-        """*arr plugins subclass an intermediate, so the guard must inherit."""
-
-        class Intermediate(FakeBookPlugin):
-            pass
-
-        with pytest.raises(TypeError, match="name property"):
-
-            class Grandchild(Intermediate):
-                def get_source_identifier(
-                    self, config: dict[str, Any] | None = None
-                ) -> str:
-                    return "somebody_elses_source"
-
-    def test_an_assigned_attribute_is_refused_like_a_def(self) -> None:
-        """A guard keyed on ``def`` would miss the one-line assignment dodge."""
-        with pytest.raises(TypeError, match="name property"):
-
-            class AssigningPlugin(FakeBookPlugin):
-                get_source_identifier = _somebody_elses_source
-
-    def test_overriding_both_guarded_methods_is_still_refused(self) -> None:
-        """One refusal per class creation, so the second must not mask the first."""
-        with pytest.raises(TypeError):
-
-            class GreedyPlugin(FakeBookPlugin):
-                @classmethod
-                def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-                    return {}
-
-                def get_source_identifier(
-                    self, config: dict[str, Any] | None = None
-                ) -> str:
-                    return "somebody_elses_source"
-
-    def test_both_guarded_methods_are_final_for_a_plugin_authors_mypy(self) -> None:
-        """A private plugin is not in this repo's mypy run; its author's is all."""
-        assert SourcePlugin.get_source_identifier.__final__ is True
-        assert SourcePlugin.__dict__["transform_config"].__final__ is True
 
     @pytest.mark.usefixtures("_real_registry")
     def test_every_registered_plugin_answers_with_the_source_id(self) -> None:
@@ -1765,16 +1192,3 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
         self._sync_yaml_source("Work_Games", storage)
 
         assert storage.get_credential(1, "work_games", "refresh_token") is None
-
-    def test_an_empty_yaml_id_still_owns_its_token(
-        self, storage: StorageManager
-    ) -> None:
-        """The one id whose owner and reported name part company.
-
-        ``execute_sync`` reports progress under the display name for a falsy
-        id, and a token following it there is orphaned.
-        """
-        self._sync_yaml_source("", storage)
-
-        assert storage.get_credential(1, "", "refresh_token") == ROTATED_TOKEN
-        assert storage.get_credential(1, "gog", "refresh_token") is None

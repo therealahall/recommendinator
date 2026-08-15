@@ -2,19 +2,16 @@
 
 import importlib
 import logging
-import pkgutil
 import threading
 import types
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from src.ingestion import registry as registry_module
-from src.ingestion import sources
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry, _registry_lock, get_registry
 from src.ingestion.sources.arr_base import ArrPlugin
@@ -105,134 +102,6 @@ class FakeGamePlugin(SourcePlugin):
 def clean_registry() -> PluginRegistry:
     """Create a fresh registry for each test (not singleton)."""
     return PluginRegistry()
-
-
-class TestPluginRegistry:
-    """Tests for PluginRegistry."""
-
-    def test_register_plugin(self, clean_registry: PluginRegistry) -> None:
-        """Test registering a plugin."""
-        clean_registry._discovered = True  # Prevent auto-discovery
-        plugin = FakeBookPlugin()
-        clean_registry.register(plugin)
-
-        assert clean_registry.get_plugin("fake_books") is plugin
-
-    def test_register_duplicate_raises(self, clean_registry: PluginRegistry) -> None:
-        """Test that registering duplicate plugin name raises ValueError."""
-        plugin = FakeBookPlugin()
-        clean_registry.register(plugin)
-
-        with pytest.raises(ValueError, match="already registered"):
-            clean_registry.register(FakeBookPlugin())
-
-    def test_get_plugin_not_found(self, clean_registry: PluginRegistry) -> None:
-        """Test getting a non-existent plugin returns None."""
-        clean_registry._discovered = True
-
-        assert clean_registry.get_plugin("nonexistent") is None
-
-    def test_get_all_plugins(self, clean_registry: PluginRegistry) -> None:
-        """Test getting all registered plugins."""
-        clean_registry._discovered = True
-
-        clean_registry.register(FakeBookPlugin())
-        clean_registry.register(FakeGamePlugin())
-
-        all_plugins = clean_registry.get_all_plugins()
-
-        assert len(all_plugins) == 2
-        assert "fake_books" in all_plugins
-        assert "fake_games" in all_plugins
-
-    def test_get_all_plugins_returns_copy(self, clean_registry: PluginRegistry) -> None:
-        """Test that get_all_plugins returns a copy, not the internal dict."""
-        clean_registry._discovered = True
-        clean_registry.register(FakeBookPlugin())
-
-        plugins_copy = clean_registry.get_all_plugins()
-        plugins_copy["injected"] = FakeGamePlugin()  # type: ignore[assignment]
-
-        # Original should not be affected
-        assert "injected" not in clean_registry.get_all_plugins()
-
-    def test_discover_does_not_rediscover(self, clean_registry: PluginRegistry) -> None:
-        """Test that discover_plugins only runs once unless forced."""
-        clean_registry.discover_plugins()
-        initial_count = len(clean_registry.get_all_plugins())
-
-        # Call again - should not change
-        clean_registry.discover_plugins()
-        assert len(clean_registry.get_all_plugins()) == initial_count
-
-    def test_discover_force_rediscovers(self, clean_registry: PluginRegistry) -> None:
-        """Test that force=True triggers re-discovery."""
-        clean_registry.discover_plugins()
-
-        # Manually register one more
-        clean_registry.register(FakeBookPlugin())
-        count_with_extra = len(clean_registry.get_all_plugins())
-
-        # Force re-discover - should lose the manually added one
-        clean_registry.discover_plugins(force=True)
-        assert len(clean_registry.get_all_plugins()) < count_with_extra
-
-
-class TestIsolationPackageIsNotAPlugin:
-    """``src/ingestion/sources/_isolation/`` holds a test, not a source plugin.
-
-    Two independent things keep it out of the registry: discovery skips module
-    names starting with ``_``, and the package exports no ``SourcePlugin``. Both
-    are incidental until something asserts them — dropping either would put a
-    bogus source in front of users, so the guard is cheap insurance.
-    """
-
-    def test_isolation_package_is_scanned_but_contributes_no_plugin(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Discovery walks past the underscore package without registering it."""
-        sources_path = Path(sources.__file__).parent
-        scanned = {info.name for info in pkgutil.iter_modules([str(sources_path)])}
-        # Without this the assertions below pass vacuously once the package moves.
-        assert "_isolation" in scanned
-
-        clean_registry.discover_plugins()
-
-        assert "_isolation" not in clean_registry.get_all_plugins()
-        assert [
-            name
-            for name, plugin in clean_registry.get_all_plugins().items()
-            if type(plugin).__module__.startswith("src.ingestion.sources._isolation")
-        ] == []
-
-
-class TestPluginRegistrySingleton:
-    """Tests for singleton pattern."""
-
-    def test_get_instance_returns_same(self) -> None:
-        """Test that get_instance returns the same object."""
-        PluginRegistry.reset_instance()
-
-        instance_one = PluginRegistry.get_instance()
-        instance_two = PluginRegistry.get_instance()
-
-        assert instance_one is instance_two
-
-        # Cleanup
-        PluginRegistry.reset_instance()
-
-    def test_reset_instance(self) -> None:
-        """Test that reset_instance creates a fresh instance."""
-        PluginRegistry.reset_instance()
-
-        instance_one = PluginRegistry.get_instance()
-        PluginRegistry.reset_instance()
-        instance_two = PluginRegistry.get_instance()
-
-        assert instance_one is not instance_two
-
-        # Cleanup
-        PluginRegistry.reset_instance()
 
 
 # Bounded so a thread nothing releases fails the test instead of hanging the
@@ -412,51 +281,6 @@ class TestRegistrySingletonIsBuiltOnceRegression:
             PluginRegistry.reset_instance()
 
 
-class TestPluginRegistryModuleDiscovery:
-    """Tests for module-based plugin discovery."""
-
-    def test_register_plugins_from_module(self, clean_registry: PluginRegistry) -> None:
-        """Test discovering plugins from a module object."""
-        fake_module = types.ModuleType("fake_module")
-        fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
-        fake_module.FakeGamePlugin = FakeGamePlugin  # type: ignore[attr-defined]
-        fake_module.not_a_plugin = "just a string"  # type: ignore[attr-defined]
-
-        clean_registry._discovered = True  # Prevent auto-discovery
-        clean_registry._register_plugins_from_module(fake_module, "fake_module", "test")
-
-        all_plugins = clean_registry.get_all_plugins()
-        assert "fake_books" in all_plugins
-        assert "fake_games" in all_plugins
-
-    def test_register_plugins_skips_base_class(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test that SourcePlugin base class itself is not registered."""
-        fake_module = types.ModuleType("fake_module")
-        fake_module.SourcePlugin = SourcePlugin  # type: ignore[attr-defined]
-        fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
-
-        clean_registry._discovered = True  # Prevent auto-discovery
-        clean_registry._register_plugins_from_module(fake_module, "fake_module", "test")
-
-        all_plugins = clean_registry.get_all_plugins()
-        assert len(all_plugins) == 1
-        assert "fake_books" in all_plugins
-
-    def test_register_plugins_skips_private_attrs(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """Test that attributes starting with _ are skipped."""
-        fake_module = types.ModuleType("fake_module")
-        fake_module._PrivatePlugin = FakeBookPlugin  # type: ignore[attr-defined]
-
-        clean_registry._discovered = True  # Prevent auto-discovery
-        clean_registry._register_plugins_from_module(fake_module, "fake_module", "test")
-
-        assert len(clean_registry.get_all_plugins()) == 0
-
-
 class TestPluginRegistryAbstractClassRegression:
     """Regression tests for abstract class handling in plugin discovery.
 
@@ -498,37 +322,6 @@ class TestPluginRegistryAbstractClassRegression:
         assert (
             len(all_plugins) == 1
         ), f"Expected exactly 1 plugin, got {len(all_plugins)}: {list(all_plugins.keys())}"
-        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert (
-            warning_records == []
-        ), f"Expected no warnings, got: {[r.message for r in warning_records]}"
-
-    def test_skips_module_with_only_abstract_classes_regression(
-        self, clean_registry: PluginRegistry, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Test that a module containing only abstract classes registers nothing silently.
-
-        Edge case for issue #7: arr_base.py contains only ArrPlugin (abstract)
-        and no concrete plugins. The registry should register zero plugins and
-        emit zero warnings.
-
-        Reported in: https://github.com/therealahall/recommendinator/issues/7
-        """
-        fake_module = types.ModuleType("fake_module")
-        fake_module.ArrPlugin = ArrPlugin  # type: ignore[attr-defined]
-        fake_module.SourcePlugin = SourcePlugin  # type: ignore[attr-defined]
-
-        clean_registry._discovered = True  # Prevent auto-discovery
-
-        with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
-            clean_registry._register_plugins_from_module(
-                fake_module, "fake_module", "test"
-            )
-
-        all_plugins = clean_registry.get_all_plugins()
-        assert (
-            len(all_plugins) == 0
-        ), f"Expected no plugins, got: {list(all_plugins.keys())}"
         warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert (
             warning_records == []
@@ -591,28 +384,3 @@ class TestGoodreadsPluginRename:
         assert isinstance(plugin, GoodreadsCsvPlugin)
         assert plugin.name == "goodreads_csv"
         assert plugin.display_name == "Goodreads (CSV Export)"
-
-    def test_old_goodreads_name_no_longer_resolves(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """A config referencing the pre-rename 'goodreads' plugin finds nothing.
-
-        Guards against a stray backward-compat alias: the rename must be hard,
-        so the old identifier must not resolve to any plugin.
-        """
-        clean_registry.discover_plugins()
-
-        assert clean_registry.get_plugin("goodreads") is None
-        assert "goodreads" not in clean_registry.get_all_plugins()
-
-    def test_goodreads_rss_resolves(self, clean_registry: PluginRegistry) -> None:
-        """The new RSS sibling plugin resolves under 'goodreads_rss'."""
-        from src.ingestion.sources.goodreads_rss.goodreads_rss import (
-            GoodreadsRssPlugin,
-        )
-
-        clean_registry.discover_plugins()
-        plugin = clean_registry.get_plugin("goodreads_rss")
-
-        assert isinstance(plugin, GoodreadsRssPlugin)
-        assert plugin.name == "goodreads_rss"

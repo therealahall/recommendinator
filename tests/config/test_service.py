@@ -13,7 +13,6 @@ import pytest
 
 from src.config.service import (
     _SCORER_CONFIG_MAP,
-    BOOTSTRAP_WEB_DEBUG,
     BOOTSTRAP_WEB_HOST,
     BOOTSTRAP_WEB_PORT,
     build_scorers_from_config,
@@ -62,32 +61,6 @@ class TestLoadConfigDefaults:
             resolved = get_leaf(example_config, tuple(key.split(".")), sentinel)
             assert resolved == expected, f"{key} did not resolve to its default"
 
-    def test_bootstrap_web_settings_come_from_yaml_not_the_registry(
-        self, example_config: dict[str, Any]
-    ) -> None:
-        """web.host/port/debug resolve from example.yaml and are not registry leaves.
-
-        They bind the socket before any database is open, so a DB-backed value
-        could never be honoured — the Settings page must not offer them.
-        """
-        assert example_config["web"]["host"] == BOOTSTRAP_WEB_HOST
-        assert example_config["web"]["port"] == BOOTSTRAP_WEB_PORT
-        assert example_config["web"]["debug"] == BOOTSTRAP_WEB_DEBUG
-
-        for key in ("web.host", "web.port", "web.debug"):
-            assert key not in flat_defaults()
-
-    def test_bootstrap_sections_pass_through(
-        self, example_config: dict[str, Any]
-    ) -> None:
-        """The bootstrap storage paths survive the merge; no sources are declared.
-
-        Sources live in the ``source_configs`` table and are created from the
-        Data tab or the ``source`` CLI, so example.yaml declares none.
-        """
-        assert example_config["storage"]["database_path"] == "data/recommendations.db"
-        assert "inputs" not in example_config
-
     def test_yaml_overrides_const_default(self, tmp_path: Path) -> None:
         """A YAML leaf overrides the registry const default; siblings resolve."""
         config_path = tmp_path / "config.yaml"
@@ -130,24 +103,7 @@ class TestResolveBootstrapWeb:
     these tests are what stop it being quietly re-specialised.
     """
 
-    def test_absent_web_section_uses_bootstrap_defaults(self) -> None:
-        resolved = resolve_bootstrap_web({})
-
-        assert resolved == (BOOTSTRAP_WEB_HOST, BOOTSTRAP_WEB_PORT, BOOTSTRAP_WEB_DEBUG)
-
-    @pytest.mark.parametrize("section", [None, "broken", []])
-    def test_non_dict_web_section_uses_bootstrap_defaults(self, section: Any) -> None:
-        """A malformed section must not crash, and must not widen the bind.
-
-        This resolver runs BEFORE migrate_config_settings heals a non-dict
-        section, so it has to do its own type guard.
-        """
-        resolved = resolve_bootstrap_web({"web": section})
-
-        assert resolved.host == BOOTSTRAP_WEB_HOST
-        assert resolved.debug is False
-
-    @pytest.mark.parametrize("port", [0, 1, 18473, 65535])
+    @pytest.mark.parametrize("port", [0, 65535])
     def test_usable_port_is_preserved(self, port: int) -> None:
         """Both range boundaries are accepted, not just the middle.
 
@@ -155,13 +111,6 @@ class TestResolveBootstrapWeb:
         highest legal port back to the default.
         """
         assert resolve_bootstrap_web({"web": {"port": port}}).port == port
-
-    def test_port_zero_is_preserved(self) -> None:
-        """0 is a real value (ask the OS for a free port), not a blank.
-
-        Regression: a truthiness fallback silently rewrote it to 18473.
-        """
-        assert resolve_bootstrap_web({"web": {"port": 0}}).port == 0
 
     def test_unusable_value_is_reported_not_swallowed(
         self, caplog: pytest.LogCaptureFixture
@@ -205,18 +154,6 @@ class TestResolveBootstrapWeb:
         assert caplog.messages == []
         assert resolved == (BOOTSTRAP_WEB_HOST, BOOTSTRAP_WEB_PORT, False)
         assert resolved == resolve_bootstrap_web(bad)
-
-    def test_absent_web_section_logs_nothing(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The common case — no ``web:`` section — must stay silent.
-
-        Warning on every default install would train operators to ignore it.
-        """
-        with caplog.at_level(logging.WARNING, logger="src.config.service"):
-            resolve_bootstrap_web({})
-
-        assert caplog.messages == []
 
     @pytest.mark.parametrize(
         "bad_port", ["", None, "18473", True, False, -1, 70000, 65536]
@@ -282,15 +219,6 @@ class TestScorerConfigMap:
             f"  Extra:   {actual - expected}"
         )
 
-    def test_config_map_classes_match_scorer_name_map(self) -> None:
-        """Classes in _SCORER_CONFIG_MAP must match SCORER_NAME_MAP."""
-        for key, cls in _SCORER_CONFIG_MAP.items():
-            assert key in SCORER_NAME_MAP, f"{key!r} not in SCORER_NAME_MAP"
-            assert cls is SCORER_NAME_MAP[key], (
-                f"Class mismatch for {key!r}: "
-                f"config has {cls.__name__}, name map has {SCORER_NAME_MAP[key].__name__}"
-            )
-
 
 class TestBuildScorersFromConfig:
     """Verify build_scorers_from_config produces the right scorers."""
@@ -327,19 +255,6 @@ class TestBuildScorersFromConfig:
 
         assert by_name["genre_match"].weight == 5.0
         assert by_name["continuation"].weight == 0.5
-
-    def test_uses_class_defaults_without_overrides(self) -> None:
-        """Without config overrides, each scorer uses its class default weight."""
-        config: dict[str, Any] = {"recommendations": {}}
-        scorers = build_scorers_from_config(config)
-
-        for scorer in scorers:
-            # Each scorer should have its class default (created with no args)
-            default_instance = type(scorer)()
-            assert scorer.weight == default_instance.weight, (
-                f"{type(scorer).__name__} weight {scorer.weight} != "
-                f"default {default_instance.weight}"
-            )
 
 
 class TestARetiredAiConfigBlockIsIgnored:

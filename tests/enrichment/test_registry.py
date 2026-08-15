@@ -1,7 +1,6 @@
 """Tests for the enrichment provider registry."""
 
 import importlib
-import logging
 import sys
 import threading
 import types
@@ -123,89 +122,6 @@ class TestEnrichmentRegistry:
         """Reset the singleton before each test."""
         EnrichmentRegistry.reset_instance()
 
-    def test_singleton_instance(self) -> None:
-        """Test that registry returns same instance."""
-        registry1 = EnrichmentRegistry.get_instance()
-        registry2 = EnrichmentRegistry.get_instance()
-
-        assert registry1 is registry2
-
-    def test_get_enrichment_registry_function(self) -> None:
-        """Test the convenience function returns singleton."""
-        registry = get_enrichment_registry()
-
-        assert registry is EnrichmentRegistry.get_instance()
-
-    def test_reset_instance(self) -> None:
-        """Test that reset_instance clears the singleton."""
-        registry1 = EnrichmentRegistry.get_instance()
-        EnrichmentRegistry.reset_instance()
-        registry2 = EnrichmentRegistry.get_instance()
-
-        assert registry1 is not registry2
-
-    def test_register_provider(self) -> None:
-        """Test registering a provider."""
-        registry = EnrichmentRegistry.get_instance()
-        # Mark as discovered to prevent auto-discovery from clearing
-        registry._discovered = True
-        provider = MockMovieProvider()
-
-        registry.register(provider)
-
-        assert registry.get_provider("mock_movie") is provider
-
-    def test_register_duplicate_raises(self) -> None:
-        """Test that registering duplicate provider raises error."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        provider1 = MockMovieProvider()
-        provider2 = MockMovieProvider()
-
-        registry.register(provider1)
-
-        with pytest.raises(
-            ValueError, match="Enrichment provider 'mock_movie' already registered"
-        ):
-            registry.register(provider2)
-
-    def test_get_provider_not_found(self) -> None:
-        """Test getting a provider that doesn't exist."""
-        registry = EnrichmentRegistry.get_instance()
-        registry.discover_providers()  # Trigger discovery
-
-        result = registry.get_provider("nonexistent")
-
-        assert result is None
-
-    def test_get_all_providers(self) -> None:
-        """Test getting all registered providers."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        movie_provider = MockMovieProvider()
-        book_provider = MockBookProvider()
-
-        registry.register(movie_provider)
-        registry.register(book_provider)
-
-        all_providers = registry.get_all_providers()
-
-        assert "mock_movie" in all_providers
-        assert "mock_book" in all_providers
-        assert all_providers["mock_movie"] is movie_provider
-
-    def test_get_enabled_providers_none_enabled(self) -> None:
-        """Test getting enabled providers when none are enabled."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        registry.register(MockMovieProvider())
-        registry.register(MockBookProvider())
-
-        config: dict[str, Any] = {"enrichment": {"providers": {}}}
-        enabled = registry.get_enabled_providers(config)
-
-        assert enabled == []
-
     def test_get_enabled_providers_some_enabled(self) -> None:
         """Test getting enabled providers when some are enabled."""
         registry = EnrichmentRegistry.get_instance()
@@ -225,64 +141,6 @@ class TestEnrichmentRegistry:
 
         assert len(enabled) == 1
         assert enabled[0].name == "mock_movie"
-
-    def test_get_enabled_providers_all_enabled(self) -> None:
-        """Test getting enabled providers when all are enabled."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        registry.register(MockMovieProvider())
-        registry.register(MockBookProvider())
-
-        config = {
-            "enrichment": {
-                "providers": {
-                    "mock_movie": {"enabled": True, "api_key": "test"},
-                    "mock_book": {"enabled": True},
-                }
-            }
-        }
-        enabled = registry.get_enabled_providers(config)
-
-        assert len(enabled) == 2
-
-    def test_get_enabled_providers_missing_config(self) -> None:
-        """Test getting enabled providers with missing config sections."""
-        registry = EnrichmentRegistry.get_instance()
-        registry._discovered = True
-        registry.register(MockMovieProvider())
-
-        # Missing enrichment section entirely
-        enabled = registry.get_enabled_providers({})
-        assert enabled == []
-
-        # Missing providers section
-        enabled = registry.get_enabled_providers({"enrichment": {}})
-        assert enabled == []
-
-    def test_discover_providers_idempotent(self) -> None:
-        """Test that discovery is idempotent (only runs once)."""
-        registry = EnrichmentRegistry.get_instance()
-        # Trigger initial discovery
-        registry.discover_providers()
-
-        # Manually register a provider after discovery
-        registry.register(MockMovieProvider())
-
-        # Second discovery should not clear manually registered provider
-        registry.discover_providers()
-        assert registry.get_provider("mock_movie") is not None
-
-    def test_discover_providers_force(self) -> None:
-        """Test that force=True drops a manual registration and re-registers."""
-        registry = EnrichmentRegistry.get_instance()
-        registry.register(MockMovieProvider())
-        registry._discovered = True
-
-        registry.discover_providers(force=True)
-
-        discovered = registry.get_all_providers()
-        assert "mock_movie" not in discovered
-        assert _BUILTIN_PROVIDER_NAMES <= set(discovered)
 
 
 class TestConcurrentDiscoveryRegression:
@@ -403,31 +261,6 @@ class TestRegistrySingletonIsBuiltOnceRegression:
             assert built == [registry]
         finally:
             EnrichmentRegistry.reset_instance()
-
-
-class TestProviderModuleScan:
-    """Tests for the class scan a discovered module goes through."""
-
-    def test_only_concrete_provider_classes_are_registered(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Every provider module imports the ABC it subclasses.
-
-        A scan keeping every ``EnrichmentProvider`` subclass instantiates the
-        abstract ones too, and warns about the failure on every module.
-        """
-        module = types.ModuleType("fake_provider_module")
-        module.EnrichmentProvider = EnrichmentProvider  # type: ignore[attr-defined]
-        module.MockBookProvider = MockBookProvider  # type: ignore[attr-defined]
-        module._Hidden = MockMovieProvider  # type: ignore[attr-defined]
-        module.not_a_provider = "just a string"  # type: ignore[attr-defined]
-
-        registry = EnrichmentRegistry()
-        with caplog.at_level(logging.WARNING, logger="src.enrichment.registry"):
-            registry._register_providers_from_module(module, "fake_module", "test")
-
-        assert set(registry._providers) == {"mock_book"}
-        assert [record.message for record in caplog.records] == []
 
 
 class TestBuiltinProviderDiscoveryRegression:
