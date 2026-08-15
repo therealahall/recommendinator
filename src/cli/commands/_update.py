@@ -19,6 +19,8 @@ from src.sources.service import (
     misconfigured_detail,
     redact_credentials,
     resolve_inputs,
+    source_plugin_not_loaded,
+    unusable_detail,
     validate_source_config,
 )
 from src.utils.text import sanitize_for_log
@@ -79,7 +81,11 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
 
         click.echo("Available sources:")
         for info in available:
-            status = "enabled" if info.enabled else "disabled"
+            status = (
+                f"unusable: {unusable_detail(info.plugin_not_loaded)}"
+                if info.plugin_not_loaded is not None
+                else "enabled" if info.enabled else "disabled"
+            )
             click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
         return
 
@@ -108,9 +114,14 @@ def update(ctx: click.Context, source: str, workers: int | None) -> None:
             if resolved_entry.source_id == source
         ]
         if not resolved:
+            not_loaded = source_plugin_not_loaded(source, config, storage=storage)
             click.echo(
-                f"Error: Unknown or disabled source '{source}'. "
-                "Use --source list to see available sources.",
+                (
+                    f"Error: {unusable_detail(not_loaded)}"
+                    if not_loaded is not None
+                    else f"Error: Unknown or disabled source '{source}'. "
+                    "Use --source list to see available sources."
+                ),
                 err=True,
             )
             raise click.Abort()

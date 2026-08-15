@@ -141,6 +141,21 @@ class FakeApiPlugin(SourcePlugin):
         )
 
 
+#: A shipped mismatch, so no interface can pass by matching the two names:
+#: module ``generic_csv`` is what fails, plugin ``csv_import`` is what a
+#: source asks for.
+FAILED_PLUGIN_MODULE = "generic_csv"
+FAILED_PLUGIN_REASON = "ModuleNotFoundError: No module named 'nonesuch'"
+UNLOADED_PLUGIN = "csv_import"
+
+#: The wording every interface refuses such a source with, spelled out here so
+#: a change to it fails rather than following the code.
+UNLOADED_PLUGIN_DETAIL = (
+    "Plugin 'csv_import' is not loaded. Modules that failed to import: "
+    "generic_csv: ModuleNotFoundError: No module named 'nonesuch'"
+)
+
+
 @pytest.fixture()
 def registry_with_source_fakes() -> Iterator[None]:
     """Replace the ``PluginRegistry`` singleton with the two source-config fakes.
@@ -151,7 +166,26 @@ def registry_with_source_fakes() -> Iterator[None]:
     registry = PluginRegistry.get_instance()
     registry._discovered = True
     registry._plugins.clear()
+    registry._import_errors.clear()
     registry.register(FakeFilePlugin())
     registry.register(FakeApiPlugin())
+    yield
+    PluginRegistry.reset_instance()
+
+
+@pytest.fixture()
+def registry_with_a_failed_import() -> Iterator[None]:
+    """The two fakes, plus a module discovery could not import.
+
+    ``tests/test_registry.py`` proves a raising module lands here; this is the
+    same state, reached without a real broken module in the tree.
+    """
+    registry = PluginRegistry.get_instance()
+    registry._discovered = True
+    registry._plugins.clear()
+    registry._import_errors.clear()
+    registry.register(FakeFilePlugin())
+    registry.register(FakeApiPlugin())
+    registry._import_errors[FAILED_PLUGIN_MODULE] = FAILED_PLUGIN_REASON
     yield
     PluginRegistry.reset_instance()

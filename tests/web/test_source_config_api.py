@@ -23,6 +23,12 @@ from src.recommendations.engine import RecommendationEngine
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import StorageManager
 from tests.factories import authenticated_client, booted_web_app
+from tests.fakes.source_plugins import (
+    FAILED_PLUGIN_MODULE,
+    FAILED_PLUGIN_REASON,
+    UNLOADED_PLUGIN,
+    UNLOADED_PLUGIN_DETAIL,
+)
 
 
 @pytest.fixture()
@@ -519,9 +525,11 @@ class TestPluginsEndpoint:
         response = client.get("/api/plugins")
         assert response.status_code == 200
         body = response.json()
-        assert {p["name"] for p in body} == {"fake_file", "fake_api"}
+        assert set(body.keys()) == {"plugins", "import_errors"}
+        assert {p["name"] for p in body["plugins"]} == {"fake_file", "fake_api"}
+        assert body["import_errors"] == []
 
-        fake_api = next(p for p in body if p["name"] == "fake_api")
+        fake_api = next(p for p in body["plugins"] if p["name"] == "fake_api")
         # Top-level fields cover the entire PluginInfoResponse shape.
         assert set(fake_api.keys()) == {
             "name",
@@ -554,21 +562,84 @@ class TestPluginsEndpoint:
         api_key_field = next(f for f in fake_api["fields"] if f["name"] == "api_key")
         assert api_key_field["default"] is None
 
-    def test_returns_empty_list_when_no_plugins_registered(
+    def test_returns_empty_lists_when_no_plugins_registered(
         self, client: TestClient
     ) -> None:
-        """Endpoint returns ``[]`` (not 404) when the registry is empty."""
+        """Endpoint returns empty lists (not 404) when the registry is empty."""
         from src.ingestion.registry import PluginRegistry
 
         registry = PluginRegistry.get_instance()
         registry._discovered = True
         registry._plugins.clear()
+        registry._import_errors.clear()
         try:
             response = client.get("/api/plugins")
             assert response.status_code == 200
-            assert response.json() == []
+            assert response.json() == {"plugins": [], "import_errors": []}
         finally:
             PluginRegistry.reset_instance()
+
+
+@pytest.fixture()
+def broken_plugin_client(
+    registry_with_a_failed_import: None,
+    storage: StorageManager,
+    base_config: dict[str, Any],
+) -> Iterator[TestClient]:
+    """A client configured against a plugin whose module never imported."""
+    base_config["inputs"]["my_books"] = {
+        "plugin": UNLOADED_PLUGIN,
+        "enabled": True,
+    }
+    engine = Mock(spec=RecommendationEngine)
+    engine.storage = storage
+
+    with booted_web_app(storage, base_config, engine=engine) as app:
+        yield authenticated_client(app)
+
+
+class TestFailedPluginImportIsReportedRegression:
+    """Symptom: goodreads_rss needs defusedxml, the container lacked it, and
+    the plugin was simply absent from the Data page and the Add-Source picker.
+
+    Cause: the registry dropped the module silently. Fix: report it on both.
+    """
+
+    def test_the_source_listing_names_the_module_and_the_reason(
+        self, broken_plugin_client: TestClient
+    ) -> None:
+        """The Data page renders this entry instead of losing the source."""
+        response = broken_plugin_client.get("/api/sync/sources")
+
+        assert response.status_code == 200
+        entry = next(item for item in response.json() if item["id"] == "my_books")
+        assert entry["enabled"] is False
+        assert entry["plugin_not_loaded"] == {
+            "plugin": UNLOADED_PLUGIN,
+            "failures": [
+                {"module": FAILED_PLUGIN_MODULE, "reason": FAILED_PLUGIN_REASON}
+            ],
+        }
+
+    def test_the_picker_says_why_a_plugin_is_missing_from_it(
+        self, broken_plugin_client: TestClient
+    ) -> None:
+        """Add Source can only explain a gap the endpoint reports."""
+        body = broken_plugin_client.get("/api/plugins").json()
+
+        assert UNLOADED_PLUGIN not in {p["name"] for p in body["plugins"]}
+        assert body["import_errors"] == [
+            {"module": FAILED_PLUGIN_MODULE, "reason": FAILED_PLUGIN_REASON}
+        ]
+
+    def test_syncing_it_is_refused_with_the_import_failure(
+        self, broken_plugin_client: TestClient
+    ) -> None:
+        """Mirrors the CLI abort; the source still cannot run."""
+        response = broken_plugin_client.post("/api/update", json={"source": "my_books"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == UNLOADED_PLUGIN_DETAIL
 
 
 class TestCreateSourceEndpoint:

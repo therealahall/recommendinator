@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.ingestion.plugin_base import SourcePlugin
+from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class PluginRegistry:
         Use get_instance() or get_registry() instead of direct instantiation.
         """
         self._plugins: dict[str, SourcePlugin] = {}
+        self._import_errors: dict[str, str] = {}
         self._discovered = False
 
     @classmethod
@@ -101,12 +103,29 @@ class PluginRegistry:
         staging._discover_builtin_plugins()
         staging._discover_private_plugins()
         plugins = staging._plugins
+        import_errors = staging._import_errors
 
         with _registry_lock:
             self._plugins = plugins
+            self._import_errors = import_errors
             self._discovered = True
 
         logger.info("Discovered %d plugins: %s", len(plugins), list(plugins.keys()))
+        if import_errors:
+            logger.warning(
+                "%d plugin module(s) failed to load: %s",
+                len(import_errors),
+                sanitize_for_log(", ".join(sorted(import_errors))),
+            )
+
+    def _record_import_failure(self, module_name: str, error: BaseException) -> None:
+        """Retain what the catch used to drop.
+
+        A plugin whose module raised is otherwise indistinguishable from one
+        that was never installed, so both interfaces blamed the operator's
+        config for a stale container.
+        """
+        self._import_errors[module_name] = f"{type(error).__name__}: {error}"
 
     def _discover_builtin_plugins(self) -> None:
         """Discover built-in plugins from src/ingestion/sources/."""
@@ -124,15 +143,21 @@ class PluginRegistry:
                     module = importlib.import_module(
                         f"src.ingestion.sources.{module_name}"
                     )
-                    self._register_plugins_from_module(module, f"builtin:{module_name}")
+                    self._register_plugins_from_module(module, module_name, "builtin")
                 except Exception as error:
+                    self._record_import_failure(module_name, error)
                     logger.warning(
                         "Failed to load built-in plugin module %s: %s",
-                        module_name,
-                        error,
+                        sanitize_for_log(module_name),
+                        exception_for_log(error),
                     )
         except ImportError as error:
-            logger.warning("Failed to import sources package: %s", error)
+            # Filed under the package: the operator gets the same
+            # module-to-reason answer whether one plugin died or all of them.
+            self._record_import_failure("src.ingestion.sources", error)
+            logger.warning(
+                "Failed to import sources package: %s", exception_for_log(error)
+            )
 
     def _discover_private_plugins(self) -> None:
         """Discover private plugins from private/plugins/.
@@ -182,21 +207,25 @@ class PluginRegistry:
             module_name = py_file.stem
             try:
                 module = importlib.import_module(f"private.plugins.{module_name}")
-                self._register_plugins_from_module(module, f"private:{module_name}")
+                self._register_plugins_from_module(module, module_name, "private")
             except Exception as error:
+                self._record_import_failure(module_name, error)
                 logger.warning(
                     "Failed to import private module %s while scanning for "
                     "source plugins: %s",
-                    module_name,
-                    error,
+                    sanitize_for_log(module_name),
+                    exception_for_log(error),
                 )
 
-    def _register_plugins_from_module(self, module: Any, source: str) -> None:
+    def _register_plugins_from_module(
+        self, module: Any, module_name: str, origin: str
+    ) -> None:
         """Register all SourcePlugin subclasses from a module.
 
         Args:
             module: Imported module to scan
-            source: Description of source for logging (e.g., "builtin:goodreads_csv")
+            module_name: The module's own name, which keys a load failure
+            origin: Where it was found ("builtin" or "private")
         """
         for attr_name in dir(module):
             if attr_name.startswith("_"):
@@ -214,14 +243,19 @@ class PluginRegistry:
                     plugin_instance = attr()
                     self.register(plugin_instance)
                     logger.debug(
-                        "Registered plugin %s from %s", plugin_instance.name, source
+                        "Registered plugin %s from %s:%s",
+                        plugin_instance.name,
+                        origin,
+                        module_name,
                     )
                 except Exception as error:
+                    self._record_import_failure(module_name, error)
                     logger.warning(
-                        "Failed to instantiate plugin %s from %s: %s",
+                        "Failed to instantiate plugin %s from %s:%s: %s",
                         attr_name,
-                        source,
-                        error,
+                        origin,
+                        sanitize_for_log(module_name),
+                        exception_for_log(error),
                     )
 
     def register(self, plugin: SourcePlugin) -> None:
@@ -263,6 +297,17 @@ class PluginRegistry:
         """
         self.discover_plugins()
         return dict(self._plugins)
+
+    def get_import_errors(self) -> dict[str, str]:
+        """Every module the last pass could not load, mapped to why.
+
+        Triggers discovery if not already done.
+
+        Returns:
+            Dict mapping module name to the exception that lost it
+        """
+        self.discover_plugins()
+        return dict(self._import_errors)
 
 
 def get_registry() -> PluginRegistry:

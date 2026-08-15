@@ -1451,6 +1451,7 @@ describe('useDataStore', () => {
           display_name: 'Steam',
           plugin_display_name: 'Steam',
           enabled: true,
+          plugin_not_loaded: null,
         },
       ]
 
@@ -1459,7 +1460,7 @@ describe('useDataStore', () => {
       expect(store.syncSources[0].enabled).toBe(false)
     })
 
-    it('loadAvailablePlugins fetches and caches plugin metadata', async () => {
+    it('loadAvailablePlugins caches the plugins and what failed to load', async () => {
       const plugins = [
         {
           name: 'fake_file',
@@ -1471,7 +1472,12 @@ describe('useDataStore', () => {
           fields: [],
         },
       ]
-      mockGet.mockResolvedValueOnce(plugins)
+      // Regression: the endpoint answered a bare array, so a plugin whose
+      // module raised was simply absent and the picker could not say why.
+      const importErrors = [
+        { module: 'goodreads_rss', reason: "ModuleNotFoundError: No module named 'defusedxml'" },
+      ]
+      mockGet.mockResolvedValueOnce({ plugins, import_errors: importErrors })
 
       const store = useDataStore()
       const result = await store.loadAvailablePlugins()
@@ -1479,6 +1485,7 @@ describe('useDataStore', () => {
       expect(mockGet).toHaveBeenCalledWith('/plugins')
       expect(result).toEqual(plugins)
       expect(store.availablePlugins).toEqual(plugins)
+      expect(store.pluginImportErrors).toEqual(importErrors)
     })
 
     it('createSource POSTs the payload and refreshes the listing', async () => {
@@ -1546,12 +1553,14 @@ describe('useDataStore', () => {
           display_name: 'Goner',
           plugin_display_name: 'Fake File',
           enabled: true,
+          plugin_not_loaded: null,
         },
         {
           id: 'survivor',
           display_name: 'Survivor',
           plugin_display_name: 'Fake File',
           enabled: true,
+          plugin_not_loaded: null,
         },
       ]
       store.sourceConfigs = {
@@ -1611,6 +1620,7 @@ describe('useDataStore', () => {
           display_name: 'Still Here',
           plugin_display_name: 'Fake File',
           enabled: true,
+          plugin_not_loaded: null,
         },
       ]
 

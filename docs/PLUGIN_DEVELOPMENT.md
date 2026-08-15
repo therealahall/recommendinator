@@ -336,6 +336,13 @@ from src.ingestion.sources.<plugin>.<plugin> import *  # noqa: F401, F403
 Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
 source.
 
+A module that raises on import is kept as a failure rather than dropped:
+`source plugins` and the Add-Source picker name it and the exception. While any
+module has failed, a source naming a plugin that is not registered stays listed
+as unusable and reports every failure of that pass — a module that raised never
+declared the plugin name it would have provided, so no failure can be tied to
+one source. It still cannot sync.
+
 ## Configuration
 
 Sources are **named instances**: a user-defined id plus a plugin name, so one

@@ -16,6 +16,7 @@ const baseSource = {
   display_name: 'Steam',
   plugin_display_name: 'Steam',
   enabled: true,
+  plugin_not_loaded: null,
 }
 
 const disabledSource = {
@@ -459,6 +460,7 @@ describe('SyncSourceAccordion', () => {
       display_name: 'Trakt (work)',
       plugin_display_name: 'Trakt',
       enabled: true,
+      plugin_not_loaded: null,
     }
     const traktConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -736,6 +738,7 @@ describe('SyncSourceAccordion', () => {
       display_name: 'GOG (work)',
       plugin_display_name: 'GOG',
       enabled: true,
+      plugin_not_loaded: null,
     }
     const gogConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -1049,6 +1052,7 @@ describe('SyncSourceAccordion', () => {
       display_name: 'Epic (work)',
       plugin_display_name: 'Epic Games',
       enabled: true,
+      plugin_not_loaded: null,
     }
     const epicConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -1121,6 +1125,7 @@ describe('SyncSourceAccordion', () => {
             display_name: id,
             plugin_display_name: plugin,
             enabled: sourceEnabled,
+            plugin_not_loaded: null,
           },
           syncing: false,
         },

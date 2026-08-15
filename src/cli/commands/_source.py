@@ -22,17 +22,18 @@ from src.ingestion.plugin_base import SourcePlugin
 from src.sources.service import (
     SourceConfigError,
     build_config_view,
+    build_plugins_view,
     build_schema_view,
     clear_source_secret_value,
     create_source,
     delete_source,
     field_type_name,
     get_available_sync_sources,
-    list_available_plugins,
     migrate_source,
     resolve_source_plugin,
     set_source_enabled_state,
     set_source_secret_value,
+    unusable_detail,
     update_source_config_values,
 )
 
@@ -98,6 +99,17 @@ def source_list(ctx: click.Context, output_format: str) -> None:
             "display_name": entry.display_name,
             "plugin_display_name": entry.plugin_display_name,
             "enabled": entry.enabled,
+            "plugin_not_loaded": (
+                {
+                    "plugin": entry.plugin_not_loaded.plugin,
+                    "failures": [
+                        {"module": failure.module, "reason": failure.reason}
+                        for failure in entry.plugin_not_loaded.failures
+                    ],
+                }
+                if entry.plugin_not_loaded is not None
+                else None
+            ),
         }
         for entry in sources
     ]
@@ -106,23 +118,28 @@ def source_list(ctx: click.Context, output_format: str) -> None:
         click.echo(json.dumps(payload, indent=2))
         return
 
-    if not payload:
+    if not sources:
         click.echo("No sync sources configured.")
         return
 
     rows = [
         [
-            item["id"],
-            item["display_name"],
-            item["plugin_display_name"],
-            "yes" if item["enabled"] else "no",
+            entry.id,
+            entry.display_name,
+            entry.plugin_display_name,
+            "yes" if entry.enabled else "no",
+            (
+                unusable_detail(entry.plugin_not_loaded)
+                if entry.plugin_not_loaded is not None
+                else ""
+            ),
         ]
-        for item in payload
+        for entry in sources
     ]
     click.echo(
         tabulate(
             rows,
-            headers=["ID", "Display Name", "Plugin", "Enabled"],
+            headers=["ID", "Display Name", "Plugin", "Enabled", "Load Error"],
             tablefmt="grid",
         )
     )
@@ -463,32 +480,41 @@ def source_clear_secret(ctx: click.Context, source_id: str, field_name: str) -> 
 @click.pass_context
 def source_plugins(ctx: click.Context, output_format: str) -> None:
     """List every registered source plugin (mirrors GET /api/plugins)."""
-    plugins = list_available_plugins()
+    view = build_plugins_view()
     if output_format == "json":
-        click.echo(json.dumps(plugins, indent=2))
+        click.echo(json.dumps(view, indent=2))
         return
 
-    if not plugins:
-        click.echo("No source plugins registered.")
-        return
-
-    rows = [
-        [
-            p["name"],
-            p["display_name"],
-            ",".join(p["content_types"]),
-            "yes" if p["requires_api_key"] else "no",
-            "yes" if p["requires_network"] else "no",
+    plugins = view["plugins"]
+    if plugins:
+        rows = [
+            [
+                p["name"],
+                p["display_name"],
+                ",".join(p["content_types"]),
+                "yes" if p["requires_api_key"] else "no",
+                "yes" if p["requires_network"] else "no",
+            ]
+            for p in plugins
         ]
-        for p in plugins
-    ]
-    click.echo(
-        tabulate(
-            rows,
-            headers=["Name", "Display Name", "Content Types", "API Key", "Network"],
-            tablefmt="grid",
+        click.echo(
+            tabulate(
+                rows,
+                headers=["Name", "Display Name", "Content Types", "API Key", "Network"],
+                tablefmt="grid",
+            )
         )
-    )
+    else:
+        click.echo("No source plugins registered.")
+
+    # Printed after the table, not instead of it: a build can lose one plugin
+    # module and still hold the rest.
+    for failure in view["import_errors"]:
+        click.echo(
+            f"Plugin module '{failure['module']}' failed to load: "
+            f"{failure['reason']}",
+            err=True,
+        )
 
 
 @source.command("create")

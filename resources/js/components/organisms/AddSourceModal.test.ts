@@ -147,6 +147,23 @@ describe('AddSourceModal', () => {
     setActivePinia(createPinia())
   })
 
+  // Regression: goodreads_rss needed defusedxml, the container lacked it, and
+  // the plugin was simply absent from this picker with nothing saying why.
+  it('says which plugin is missing from the picker and why', async () => {
+    const { wrapper, store } = await mountWithPlugins()
+    store.pluginImportErrors = [
+      {
+        module: 'goodreads_rss',
+        reason: "ModuleNotFoundError: No module named 'defusedxml'",
+      },
+    ]
+    await wrapper.vm.$nextTick()
+
+    const notice = wrapper.get('[data-testid="add-source-import-errors"]').text()
+    expect(notice).toContain('goodreads_rss')
+    expect(notice).toContain("No module named 'defusedxml'")
+  })
+
   it('prefills the Source id from the selected plugin name', async () => {
     const { wrapper } = await mountWithPlugins()
     const input = wrapper.find('#add-source-id')

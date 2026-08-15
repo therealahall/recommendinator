@@ -82,12 +82,12 @@ from src.sources.service import (
     SOURCE_ID_PATTERN,
     SourceConfigError,
     build_config_view,
+    build_plugins_view,
     build_schema_view,
     clear_source_secret_value,
     create_source,
     delete_source,
     get_available_sync_sources,
-    list_available_plugins,
     migrate_source,
     misconfigured_detail,
     redact_credentials,
@@ -95,6 +95,8 @@ from src.sources.service import (
     resolve_source_plugin,
     set_source_enabled_state,
     set_source_secret_value,
+    source_plugin_not_loaded,
+    unusable_detail,
     update_source_config_values,
 )
 from src.storage.accounts import (
@@ -310,13 +312,35 @@ class UpdateRequest(BaseModel):
     )
 
 
+class PluginImportErrorResponse(BaseModel):
+    """A plugin module that did not load, and the exception that lost it."""
+
+    module: str
+    reason: str
+
+
+class PluginNotLoadedResponse(BaseModel):
+    """The plugin a source asks for, and every module that failed to import.
+
+    ``failures`` is the whole pass: none of them can be tied to ``plugin``.
+    """
+
+    plugin: str
+    failures: list[PluginImportErrorResponse]
+
+
 class SyncSourceResponse(BaseModel):
-    """Response model for a sync source."""
+    """Response model for a sync source.
+
+    ``plugin_not_loaded`` is set when the source's plugin is missing; it is
+    listed anyway, and still cannot sync.
+    """
 
     id: str
     display_name: str
     plugin_display_name: str
     enabled: bool
+    plugin_not_loaded: PluginNotLoadedResponse | None = None
 
 
 class UserResponse(BaseModel):
@@ -724,6 +748,13 @@ class PluginInfoResponse(BaseModel):
     requires_api_key: bool
     requires_network: bool
     fields: list[SourceFieldSchema]
+
+
+class PluginListResponse(BaseModel):
+    """Every installed plugin, and every module that failed to become one."""
+
+    plugins: list[PluginInfoResponse]
+    import_errors: list[PluginImportErrorResponse]
 
 
 class SourceCreateRequest(BaseModel):
@@ -1425,9 +1456,14 @@ def update_data(
             logger.info(
                 "Sync requested for unavailable source_id=%s", sanitize_for_log(source)
             )
+            not_loaded = source_plugin_not_loaded(source, config, storage=storage)
             raise HTTPException(
                 status_code=400,
-                detail="Source is disabled or not configured.",
+                detail=(
+                    unusable_detail(not_loaded)
+                    if not_loaded is not None
+                    else "Source is disabled or not configured."
+                ),
             )
         # Validate the entry resolved above rather than resolving the id again:
         # a delete landing between the two makes the second lookup miss, and its
@@ -1616,15 +1652,28 @@ def get_sync_sources(
             display_name=source.display_name,
             plugin_display_name=source.plugin_display_name,
             enabled=source.enabled,
+            plugin_not_loaded=(
+                PluginNotLoadedResponse(
+                    plugin=source.plugin_not_loaded.plugin,
+                    failures=[
+                        PluginImportErrorResponse(
+                            module=failure.module, reason=failure.reason
+                        )
+                        for failure in source.plugin_not_loaded.failures
+                    ],
+                )
+                if source.plugin_not_loaded is not None
+                else None
+            ),
         )
         for source in sources
     ]
 
 
-@router.get("/plugins", response_model=list[PluginInfoResponse])
-def list_plugins() -> list[PluginInfoResponse]:
+@router.get("/plugins", response_model=PluginListResponse)
+def list_plugins() -> PluginListResponse:
     """List every registered source plugin (for the Add-Source picker)."""
-    return [PluginInfoResponse(**info) for info in list_available_plugins()]
+    return PluginListResponse(**build_plugins_view())
 
 
 @router.post(

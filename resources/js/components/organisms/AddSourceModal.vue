@@ -224,6 +224,21 @@ async function submit(): Promise<void> {
         <p v-if="selectedPlugin" class="help-text">
           {{ selectedPlugin.description }}
         </p>
+        <!--
+          Plain content, not a live region: it is already populated when the
+          dialog opens, and a region arriving that way is read as content
+          rather than a status change (WCAG 4.1.3).
+        -->
+        <ul
+          v-if="data.pluginImportErrors.length"
+          class="add-source-import-errors"
+          data-testid="add-source-import-errors"
+        >
+          <li v-for="failure in data.pluginImportErrors" :key="failure.module">
+            Plugin module "{{ failure.module }}" is missing from this list
+            because it failed to load. {{ failure.reason }}
+          </li>
+        </ul>
       </div>
 
       <div class="add-source-field">
@@ -458,6 +473,20 @@ async function submit(): Promise<void> {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--text-secondary, var(--text-primary));
+}
+
+.add-source-import-errors {
+  margin: 0;
+  padding: var(--space-2);
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-error) 35%, transparent);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.add-source-import-errors li + li {
+  margin-top: var(--space-1);
 }
 
 .add-source-actions {

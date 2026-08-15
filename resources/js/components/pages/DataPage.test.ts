@@ -31,6 +31,7 @@ const enabledSource = {
   display_name: 'Steam',
   plugin_display_name: 'Steam',
   enabled: true,
+  plugin_not_loaded: null,
 }
 
 const disabledSource = {
@@ -38,6 +39,7 @@ const disabledSource = {
   display_name: 'Roms',
   plugin_display_name: 'ROMs',
   enabled: false,
+  plugin_not_loaded: null,
 }
 
 /** Mount with an "All Sources" run in flight and both sources listed. */
@@ -284,6 +286,53 @@ describe('DataPage rows during a Sync All', () => {
     )
     expect(wrapper.find('[data-testid="sync-sources-retry"]').attributes('type'))
       .toBe('button')
+    wrapper.unmount()
+  })
+
+  // Regression: a source whose plugin module raised vanished from the page,
+  // which then advised adding sources to config.yaml — where it already was.
+  it('names the module and the reason a source cannot run', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) =>
+      path === '/sync/sources'
+        ? Promise.resolve([
+            {
+              ...enabledSource,
+              id: 'my_site',
+              display_name: 'My Site',
+              enabled: false,
+              plugin_not_loaded: {
+                plugin: 'personal_site',
+                failures: [
+                  {
+                    module: 'personal_site_games',
+                    reason: 'ImportError: no scraper module',
+                  },
+                ],
+              },
+            },
+          ])
+        : Promise.resolve({}),
+    )
+
+    const wrapper = mount(DataPage, {
+      global: {
+        stubs: {
+          SyncSourceAccordion: true,
+          AddSourceModal: true,
+          EnrichmentCard: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const notice = wrapper.get('[data-testid="unusable-sources"]').text()
+    expect(notice).toContain('personal_site')
+    expect(notice).toContain('personal_site_games')
+    expect(notice).toContain('ImportError: no scraper module')
+    expect(wrapper.text()).not.toContain('No sync sources configured')
+    // No accordion: its schema and config reads would 404 on expand.
+    expect(wrapper.findAllComponents(SyncSourceAccordion)).toHaveLength(0)
     wrapper.unmount()
   })
 

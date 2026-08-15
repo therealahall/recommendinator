@@ -44,22 +44,41 @@ SourceConfigErrorKind = Literal[
 ]
 
 
+@dataclass(frozen=True)
+class PluginImportFailure:
+    """A plugin module that did not load, and the exception that lost it."""
+
+    module: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class PluginNotLoaded:
+    """A configured plugin is missing, and every module this build lost.
+
+    Nothing ties a failure to *plugin*: a module that raised never declared
+    the plugin name it would have provided.
+    """
+
+    plugin: str
+    failures: tuple[PluginImportFailure, ...]
+
+
 @dataclass
 class SyncSourceInfo:
     """Info about a configured sync source.
 
-    ``enabled`` reflects whichever side is authoritative — the DB
-    ``source_configs`` row when the source has been migrated, the YAML
-    ``inputs.<id>.enabled`` flag otherwise. Listing endpoints surface
-    disabled sources too (so the UI can render them in a muted state),
-    but ``resolve_inputs`` continues to filter them out for sync
-    execution.
+    ``enabled`` follows whichever side is authoritative, the DB row or YAML.
+    ``plugin_not_loaded`` is set when the plugin is missing: listed rather
+    than dropped, since vanishing hid the failure. ``resolve_inputs`` stays
+    the sync gate.
     """
 
     id: str
     display_name: str
     plugin_display_name: str
     enabled: bool
+    plugin_not_loaded: PluginNotLoaded | None = None
 
 
 @dataclass
@@ -91,6 +110,48 @@ class ConfiguredSource:
     fields: dict[str, Any]
 
 
+def _declared_plugin_name(
+    db_row: SourceConfigDict | None, yaml_entry: Any
+) -> str | None:
+    """The plugin *source_id* asks for, whether or not this build can load it."""
+    if db_row is not None:
+        return db_row["plugin"]
+    if not isinstance(yaml_entry, dict):
+        return None
+    plugin_name = yaml_entry.get("plugin")
+    return str(plugin_name) if plugin_name else None
+
+
+def _plugin_not_loaded(plugin_name: str | None) -> PluginNotLoaded | None:
+    """*plugin_name* is unregistered and this build lost modules — say which.
+
+    ``None`` when the plugin is there, or when nothing failed to import and
+    the name is simply wrong.
+    """
+    if plugin_name is None:
+        return None
+    registry = get_registry()
+    if registry.get_plugin(plugin_name) is not None:
+        return None
+    failures = registry.get_import_errors()
+    if not failures:
+        return None
+    return PluginNotLoaded(
+        plugin=plugin_name,
+        failures=tuple(
+            PluginImportFailure(module=module, reason=reason)
+            for module, reason in sorted(failures.items())
+        ),
+    )
+
+
+def _failed_modules(not_loaded: PluginNotLoaded) -> str:
+    """Each lost module and its reason, one string, for a log or a message."""
+    return "; ".join(
+        f"{failure.module}: {failure.reason}" for failure in not_loaded.failures
+    )
+
+
 def _authoritative_source(
     source_id: str,
     db_row: SourceConfigDict | None,
@@ -100,18 +161,21 @@ def _authoritative_source(
 
     ``None`` when neither declares a plugin this build ships.
     """
-    plugin_name: str | None
+    plugin_name = _declared_plugin_name(db_row, yaml_entry)
+    if plugin_name is None:
+        # A DB row always carries a plugin, so only a YAML entry reaches here,
+        # and only a malformed one is worth a word.
+        if isinstance(yaml_entry, dict):
+            logger.warning(
+                "Input '%s' has no 'plugin' field, skipping",
+                sanitize_for_log(source_id),
+            )
+        return None
+
     if db_row is not None:
-        plugin_name = db_row["plugin"]
         enabled = db_row["enabled"]
         fields = db_row["config"]
     else:
-        if not isinstance(yaml_entry, dict):
-            return None
-        plugin_name = yaml_entry.get("plugin")
-        if not plugin_name:
-            logger.warning("Input '%s' has no 'plugin' field, skipping", source_id)
-            return None
         enabled = bool(yaml_entry.get("enabled", False))
         fields = {
             key: value
@@ -121,10 +185,16 @@ def _authoritative_source(
 
     plugin = get_registry().get_plugin(plugin_name)
     if plugin is None:
+        not_loaded = _plugin_not_loaded(plugin_name)
         logger.warning(
-            "Input '%s' references unknown plugin '%s', skipping",
-            source_id,
-            plugin_name,
+            "Input '%s' cannot use plugin '%s': %s",
+            sanitize_for_log(source_id),
+            sanitize_for_log(plugin_name),
+            (
+                sanitize_for_log(_failed_modules(not_loaded))
+                if not_loaded
+                else "no such plugin"
+            ),
         )
         return None
 
@@ -308,10 +378,25 @@ def get_available_sync_sources(
 
     sources: list[SyncSourceInfo] = []
     for source_id in sorted(set(inputs_config.keys()) | set(db_configs.keys())):
-        source = _authoritative_source(
-            source_id, db_configs.get(source_id), inputs_config.get(source_id)
-        )
+        configured_row = db_configs.get(source_id)
+        yaml_entry = inputs_config.get(source_id)
+        source = _authoritative_source(source_id, configured_row, yaml_entry)
         if source is None:
+            not_loaded = _plugin_not_loaded(
+                _declared_plugin_name(configured_row, yaml_entry)
+            )
+            if not_loaded is None:
+                continue
+            sources.append(
+                SyncSourceInfo(
+                    id=source_id,
+                    display_name=humanize_source_id(source_id),
+                    # The plugin's own display name died with its module.
+                    plugin_display_name=not_loaded.plugin,
+                    enabled=False,
+                    plugin_not_loaded=not_loaded,
+                )
+            )
             continue
 
         sources.append(
@@ -323,6 +408,28 @@ def get_available_sync_sources(
             )
         )
     return sources
+
+
+def source_plugin_not_loaded(
+    source_id: str,
+    config: dict[str, Any] | None,
+    storage: StorageManager | None = None,
+    user_id: int = 1,
+) -> PluginNotLoaded | None:
+    """The missing plugin that makes *source_id* unusable, if that is why."""
+    db_row = (
+        storage.get_source_config(user_id, source_id) if storage is not None else None
+    )
+    yaml_entry = (config or {}).get("inputs", {}).get(source_id)
+    return _plugin_not_loaded(_declared_plugin_name(db_row, yaml_entry))
+
+
+def unusable_detail(not_loaded: PluginNotLoaded) -> str:
+    """Said the same way wherever a source is refused for a plugin that died."""
+    return (
+        f"Plugin '{not_loaded.plugin}' is not loaded. "
+        f"Modules that failed to import: {_failed_modules(not_loaded)}"
+    )
 
 
 def get_sync_handler(
@@ -1048,6 +1155,21 @@ def list_available_plugins() -> list[dict[str, Any]]:
             }
         )
     return plugins
+
+
+def build_plugins_view() -> dict[str, Any]:
+    """The Add-Source picker's whole answer: what loaded, and what did not.
+
+    A plugin missing from the list is otherwise a plugin the operator has no
+    way to ask about.
+    """
+    return {
+        "plugins": list_available_plugins(),
+        "import_errors": [
+            {"module": module, "reason": reason}
+            for module, reason in sorted(get_registry().get_import_errors().items())
+        ],
+    }
 
 
 def create_source(
