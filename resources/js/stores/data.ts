@@ -52,6 +52,7 @@ export const useDataStore = defineStore('data', () => {
   const syncStatus = ref<'idle' | 'running' | 'completed' | 'failed'>('idle')
   const syncMessage = ref('')
   const syncLoading = ref(false)
+  const syncSourcesError = ref('')
   // Optimistic set of in-flight source labels — populated immediately on
   // triggerSync so the per-accordion Sync button switches to "Syncing…"
   // without waiting for the next /sync/status poll.
@@ -133,12 +134,15 @@ export const useDataStore = defineStore('data', () => {
   // Sync actions
   async function loadSyncSources() {
     syncLoading.value = true
+    syncSourcesError.value = ''
     try {
       // Config reload is best-effort — the endpoint may not be available during init
       await api.post('/config/reload').catch(() => {})
       syncSources.value = await api.get<SyncSourceResponse[]>('/sync/sources')
-    } catch {
-      syncSources.value = []
+    } catch (err) {
+      // The list is left alone: emptying it makes a failed read look like a
+      // configuration the user is told to go and fix.
+      syncSourcesError.value = err instanceof Error ? err.message : 'Unknown error'
     } finally {
       syncLoading.value = false
     }
@@ -657,6 +661,7 @@ export const useDataStore = defineStore('data', () => {
     syncJobs,
     syncMessage,
     syncLoading,
+    syncSourcesError,
     // Helpers
     isSourceIdSyncing,
     jobForSourceId,

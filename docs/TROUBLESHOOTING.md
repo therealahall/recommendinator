@@ -119,8 +119,10 @@ cross-origin — the request arrives signed out either way.
 
 ### Preferences reset after a refresh
 
-Click **Save Preferences** and check the network tab. A 401 there is the session
-again; anything else, read the error the API returned.
+The form is built from what the server returned, so a page that could not load
+says so and offers **Retry** instead of showing empty defaults. If the values
+really did change, click **Save Preferences** and read the error the API
+returned. A 401 there is the session again.
 
 ## CLI
 

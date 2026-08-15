@@ -14,34 +14,54 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div :aria-busy="prefs.loading || undefined">
+    <!-- aria-busy sits on this wrapper because it is the only node present in
+         every outcome: assistive tech tracking the state has to hear the flag
+         flip to false, and on the common path (preferences arrive) the card
+         below is replaced by the form, so a flag there would vanish instead of
+         clearing (4.1.3). Mirrors SettingsPage. -->
     <div class="page-header">
       <h2>Preferences</h2>
       <p class="page-description">Customize how recommendations are generated.</p>
     </div>
-    <div class="card" :aria-busy="prefs.loading || undefined">
-      <div v-if="prefs.loading" class="empty-state">Loading preferences...</div>
-      <template v-else>
-        <ThemeSelector v-model="prefs.pendingTheme" />
-        <ScoringPrefs />
-        <RulesPrefs />
-        <ProfilePanel />
-        <div class="pref-actions">
-          <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
-            {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
-          </button>
-          <div aria-live="polite" aria-atomic="true">
-            <span
-              v-if="prefs.saveStatus === 'saved'"
-              class="save-status text-success"
-            >Saved!</span>
-            <span
-              v-else-if="prefs.saveStatus === 'error'"
-              class="save-status text-error"
-            >Error: {{ prefs.saveError }}</span>
-          </div>
+
+    <!-- The form renders only off server values. Save PUTs every field, so a
+         form built on this store's empty defaults would blank what is stored. -->
+    <div v-if="!prefs.hasLoaded" class="card">
+      <div v-if="prefs.loadError" class="empty-state">
+        <!-- The Retry button sits OUTSIDE the alert: alert content is announced
+             as one chunk, which buries the control's affordance. -->
+        <span role="alert">Couldn't load preferences.</span>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          data-testid="preferences-retry"
+          @click="prefs.load()"
+        >Retry</button>
+      </div>
+      <div v-else class="empty-state">Loading preferences...</div>
+    </div>
+
+    <div v-else class="card">
+      <ThemeSelector v-model="prefs.pendingTheme" />
+      <ScoringPrefs />
+      <RulesPrefs />
+      <ProfilePanel />
+      <div class="pref-actions">
+        <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
+          {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
+        </button>
+        <div aria-live="polite" aria-atomic="true">
+          <span
+            v-if="prefs.saveStatus === 'saved'"
+            class="save-status text-success"
+          >Saved!</span>
+          <span
+            v-else-if="prefs.saveStatus === 'error'"
+            class="save-status text-error"
+          >Error: {{ prefs.saveError }}</span>
         </div>
-      </template>
+      </div>
     </div>
   </div>
 </template>
