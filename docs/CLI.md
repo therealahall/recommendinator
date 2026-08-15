@@ -121,9 +121,9 @@ python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --descript
 rating. Passing one replaces it.
 
 A TV show is the exception, because status and the season list are one fact
-there: `--status unread` empties `seasons_watched` and `--status completed`
-ticks every season, whether or not you passed `--seasons-watched`. Pass both to
-say exactly what you mean.
+there. Omit `--seasons-watched` and the status fills it in: `--status unread`
+empties it, `--status completed` ticks every season. Pass both and both are
+written as given.
 
 Emptying a field is a separate instruction. `--clear-rating` and `--clear-review`
 are the only way to store nothing there, and neither may be combined with its
