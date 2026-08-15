@@ -1184,14 +1184,11 @@ class TestAnImportedTitleCannotForgeALogLine:
         assert _FORGED_TITLE not in caplog.text
         assert all(len(message.splitlines()) == 1 for message in caplog.messages)
 
-    def test_the_client_facing_error_keeps_the_title_raw(self) -> None:
-        """``result.errors`` is a JSON body ``/api/sync/status`` serves.
-
-        An escape would reach the UI as the literal backslashes it is.
-        """
+    def test_the_client_facing_error_escapes_the_title_as_well(self) -> None:
+        """``result.errors`` reaches a terminal, not only the web UI."""
         result = _sync_one_forged_title(save_error=ValueError("db error"))
 
-        assert result.errors == [f"Failed to process '{_FORGED_TITLE}'"]
+        assert result.errors == [f"Failed to process '{_ESCAPED_TITLE}'"]
 
     def test_a_message_less_save_fault_still_names_its_class(
         self, caplog: pytest.LogCaptureFixture
@@ -1321,6 +1318,23 @@ class TestEveryCharacterThatEndsAnEntryIsEscapedByTheSinks:
         assert all(
             "Dune" in message for message in caplog.messages if "forged" in message
         )
+
+
+class TestAReportedTitleCannotRewriteTheTerminalRegression:
+    """Reported: ``update`` echoes ``result.errors`` straight to the terminal.
+
+    Cause: the reported error escaped lone surrogates only, so a title
+    carrying ``ESC[2K\\r`` erased the line the operator just read (CWE-117).
+    Fix: it shares the escaped copy the log sinks use.
+    """
+
+    def test_the_reported_error_carries_the_control_sequence_escaped(self) -> None:
+        result = _sync_one_forged_title(
+            title=f"Dune{_ANSI_ERASE_LINE}\rOwned",
+            save_error=ValueError("db error"),
+        )
+
+        assert result.errors == ["Failed to process 'Dune\\u001b[2K\\rOwned'"]
 
 
 #: What ``os.fsdecode`` leaves of a ROM filename holding an undecodable byte.
