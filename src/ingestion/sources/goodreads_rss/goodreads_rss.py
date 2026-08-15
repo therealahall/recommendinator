@@ -1,7 +1,7 @@
 """Goodreads public-shelf sync via RSS.
 
 Goodreads exposes every *public* profile's shelves as RSS feeds at
-``https://www.goodreads.com/review/list/<user_id>.rss?shelf=<shelf>``. This
+``https://www.goodreads.com/review/list_rss/<user_id>?shelf=<shelf>``. This
 plugin fetches one feed per requested shelf, paginates through all results,
 and maps each ``<item>`` to a :class:`ContentItem`. The ``metadata`` dict
 shares ``book_id``/``isbn``/``pages``/``year_published`` with the sibling
@@ -25,6 +25,7 @@ from collections.abc import Iterator
 from datetime import date
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from xml.etree.ElementTree import Element
 
 import defusedxml.ElementTree as ET
@@ -50,6 +51,15 @@ logger = logging.getLogger(__name__)
 # Base host for Goodreads RSS feeds.
 GOODREADS_BASE = "https://www.goodreads.com"
 
+# The only feed path Goodreads still serves to a signed-out client. The newer
+# ``/review/list/<id>.rss`` answers 302 to the sign-in page for every profile,
+# public ones included.
+FEED_PATH = "/review/list_rss"
+
+# Where that redirect lands. ``requests`` follows it to a 200 HTML page, so
+# without this check the parser blames Goodreads' markup for an access refusal.
+SIGN_IN_PATH = "/user/sign_in"
+
 # Shelves synced when the user does not override the ``shelves`` config field.
 DEFAULT_SHELVES = ["read", "currently-reading", "to-read"]
 
@@ -73,9 +83,11 @@ USER_AGENT = (
     "(+https://github.com/therealahall/recommendinator)"
 )
 
+# ``*/*`` because Goodreads' negotiation has answered 406 to an Accept naming
+# only RSS and XML, and nothing here needs a particular type back.
 REQUEST_HEADERS = {
     "User-Agent": USER_AGENT,
-    "Accept": "application/rss+xml, application/xml;q=0.9",
+    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
 }
 
 # Consumption-status precedence for cross-shelf deduplication. A book that
@@ -355,7 +367,7 @@ class GoodreadsRssPlugin(SourcePlugin):
 
     def _fetch_page(self, user_id: str, shelf: str, page: int) -> str:
         """GET a single RSS page for a shelf, returning the response body."""
-        url = f"{GOODREADS_BASE}/review/list/{user_id}.rss"
+        url = f"{GOODREADS_BASE}{FEED_PATH}/{user_id}"
         params: dict[str, str | int] = {
             "shelf": shelf,
             "per_page": PER_PAGE,
@@ -376,6 +388,12 @@ class GoodreadsRssPlugin(SourcePlugin):
             raise GoodreadsRssError(
                 self.name, f"Failed to fetch shelf '{shelf}': {scrubbed}"
             ) from error
+        if urlsplit(response.url).path == SIGN_IN_PATH:
+            raise GoodreadsRssError(
+                self.name,
+                f"Goodreads sent shelf '{shelf}' to its sign-in page: the "
+                "profile's shelves are not public",
+            )
         return response.text
 
     def _parse_items(self, xml_text: str, shelf: str) -> list[Element]:

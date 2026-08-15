@@ -7,6 +7,7 @@ import math
 from datetime import date
 from typing import Any
 
+import defusedxml.ElementTree as ET
 import pytest
 import requests
 
@@ -72,11 +73,21 @@ def _feed(items_xml: str) -> str:
 
 
 class _FakeResponse:
-    """Minimal stand-in for ``requests.Response`` used by the fake ``get``."""
+    """Minimal stand-in for ``requests.Response`` used by the fake ``get``.
 
-    def __init__(self, text: str, status_code: int = 200) -> None:
+    ``url`` is the URL the response came from *after* redirects, which is how
+    the plugin recognises a sign-in redirect, so it defaults to the feed.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        status_code: int = 200,
+        url: str = "https://www.goodreads.com/review/list_rss/12345",
+    ) -> None:
         self.text = text
         self.status_code = status_code
+        self.url = url
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -813,7 +824,11 @@ class TestGoodreadsRssPluginFetch:
     def test_requests_the_shelf_rss_endpoint(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The user id rides in the feed path; the shelf rides in the query."""
+        """The user id rides in the feed path; the shelf rides in the query.
+
+        ``list_rss`` and not ``list/<id>.rss``: see
+        :class:`TestGoodreadsRssSignInRedirectRegression`.
+        """
         requested: list[str] = []
 
         def _get(
@@ -829,7 +844,7 @@ class TestGoodreadsRssPluginFetch:
 
         list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
 
-        assert requested == ["https://www.goodreads.com/review/list/12345.rss"]
+        assert requested == ["https://www.goodreads.com/review/list_rss/12345"]
 
     def test_empty_shelf_is_clean_no_op(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
@@ -890,11 +905,10 @@ class TestGoodreadsRssRegression:
 
 
 class TestGoodreadsRssUserAgentRegression:
-    """Regression: a real sync 403'd on every shelf.
+    """Regression: a real sync 403'd, then 406'd, on every shelf.
 
-    The request carried no ``User-Agent``, so it went out as
-    ``python-requests/x.y`` — which Amazon's edge, in front of Goodreads,
-    refuses. It names this app now.
+    No ``User-Agent`` meant Amazon's edge refused it. Naming the app exposed
+    the next one: a 406 on an ``Accept`` naming only RSS and XML.
     """
 
     def test_the_request_identifies_the_app_and_asks_for_rss(
@@ -922,6 +936,75 @@ class TestGoodreadsRssUserAgentRegression:
         assert "python-requests" not in headers["User-Agent"]
         assert "Mozilla" not in headers["User-Agent"]
         assert "rss" in headers["Accept"]
+        # Naming only RSS and XML is what got the 406.
+        assert "*/*" in headers["Accept"]
+
+
+# Head of the real sign-in page a live sync got on 2026-08-14, Amazon's session
+# ids replaced. The ``&&`` is verbatim: the first bare ``&`` in that page, at
+# the line 20 column 1140 the error named.
+_SIGN_IN_PAGE = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Sign in</title>
+
+<meta content='telephone=no' name='format-detection'>
+<link href='https://www.goodreads.com/user/sign_in' rel='canonical'>
+
+  <script type="text/javascript">
+    var ue_mid = "PLACEHOLDER";
+    var ue_sid = "000-0000000-0000000";
+    if("ue_https" in e){f=e.ue_https}else{f=e.location&&e.location.protocol=="https:"?1:0}
+  </script>
+</head>
+</html>
+"""
+
+
+class TestGoodreadsRssSignInRedirectRegression:
+    """Regression: every shelf failed as "not well-formed", line 20 column 1140.
+
+    ``/review/list/<id>.rss`` 302s to the sign-in page even for a public
+    profile, and that HTML parsed as broken RSS. ``list_rss`` serves
+    signed-out, and a redirect there is now named.
+    """
+
+    def test_the_captured_page_is_the_parse_failure_that_was_reported(self) -> None:
+        """Test the fixture still reproduces the reported expat error.
+
+        A fixture edited into valid XML would make the test below vacuous.
+        """
+        with pytest.raises(ET.ParseError, match="not well-formed"):
+            ET.fromstring(_SIGN_IN_PAGE)
+
+    def test_the_sign_in_page_is_named_not_reported_as_malformed_rss(
+        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test the sign-in page raises an access error, not a parse error."""
+
+        def _get(
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
+        ) -> Any:
+            return _FakeResponse(
+                _SIGN_IN_PAGE,
+                url="https://www.goodreads.com/user/sign_in?returnurl=%2Ffeed",
+            )
+
+        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
+
+        with pytest.raises(GoodreadsRssError) as exc_info:
+            list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
+
+        message = str(exc_info.value)
+        assert "sign-in page" in message
+        assert "not public" in message
+        assert "Malformed RSS" not in message
+        assert "not well-formed" not in message
+        assert "12345" not in message
+        assert "goodreads.com" not in message
 
 
 class TestGoodreadsRssPluginErrors:
