@@ -2704,6 +2704,216 @@ class TestEditRouteCompletesEverySeasonRegression:
         assert data["seasons_watched"] == [1, 2, 3, 4, 5]
 
 
+class TestASeasonOnlyEditNeedsNoStatusRegression:
+    """``library edit`` could make a season-only edit; PATCH could not.
+
+    Symptom: a body with no ``status`` answered 422. Cause:
+    ``ItemEditRequest.status`` was required. Fix: an omitted one forwards
+    UNSET, and storage derives the status from the seasons.
+    """
+
+    @pytest.mark.parametrize(
+        ("seasons_watched", "derived"),
+        [
+            ([1, 2, 3], "completed"),
+            ([1], "currently_consuming"),
+            ([], "unread"),
+        ],
+    )
+    def test_the_season_list_alone_derives_the_status(
+        self, mock_components, tmp_path, seasons_watched, derived
+    ):
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-3",
+                title="Andor",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 3, "seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1",
+            json={"seasons_watched": seasons_watched},
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == derived
+        assert data["seasons_watched"] == seasons_watched
+
+    def test_a_rating_edit_leaves_the_status_and_the_checklist_alone(
+        self, mock_components, tmp_path
+    ):
+        """A default filled in for the missing status — ``unread`` most
+        plausibly — would now empty a finished show's checklist on a rating
+        change, which is what makes these two rules load-bearing together.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-8",
+                title="Chernobyl",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"seasons": 3, "seasons_watched": [1, 2, 3]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(f"/api/items/{db_id}?user_id=1", json={"rating": 4})
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["rating"] == 4
+        assert data["status"] == "completed"
+        assert data["seasons_watched"] == [1, 2, 3]
+
+    def test_an_explicit_null_status_is_still_refused(self, client, mock_components):
+        """Optional is not nullable. Catches the narrowing this fix invites:
+        keying the forward on ``request.status is not None`` rather than on
+        the field being supplied would blank the stored status.
+        """
+        mock_components["storage"].update_item_from_ui = Mock(
+            spec=StorageManager.update_item_from_ui, return_value=True
+        )
+
+        response = client.patch("/api/items/42?user_id=1", json={"status": None})
+
+        assert response.status_code == 400
+        assert "Invalid status" in response.json()["detail"]
+        mock_components["storage"].update_item_from_ui.assert_not_called()
+
+
+class TestAStatedUnreadClearsTheChecklistRegression:
+    """Marking a finished show unread kept every season ticked.
+
+    Symptom: the row read unread with all seasons watched, and the next
+    checklist touch snapped it back. Cause: only ``completed`` derived a
+    season list. Fix: ``unread`` writes an empty one.
+    """
+
+    @staticmethod
+    def _finished_show(storage: StorageManager) -> int:
+        return storage.save_content_item(
+            ContentItem(
+                id="show-4",
+                title="Dark",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"seasons": 3, "seasons_watched": [1, 2, 3]},
+            ),
+            user_id=1,
+        )
+
+    def test_patch_unread_empties_the_season_list(self, mock_components, tmp_path):
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = self._finished_show(storage)
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1", json={"status": "unread"}
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "unread"
+        assert data["seasons_watched"] == []
+
+    def test_patch_unread_drops_the_dates_the_variety_ladder_reads(
+        self, mock_components, tmp_path
+    ):
+        """An emptied checklist leaves no stamps behind.
+
+        ``latest_season_watched_date`` dates a show's completion event off
+        ``seasons_watched_dates``, so clearing the list by any route that
+        skips the metadata rebuild would keep dating a show nobody started.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-6",
+                title="Fringe",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 3, "seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        ticked = client.patch(
+            f"/api/items/{db_id}?user_id=1", json={"seasons_watched": [1, 2, 3]}
+        )
+        assert ticked.status_code == 200, ticked.text
+        stamped = storage.get_content_item(db_id, user_id=1)
+        assert stamped is not None
+        assert list(stamped.metadata["seasons_watched_dates"]) == ["3"]
+
+        reset = client.patch(f"/api/items/{db_id}?user_id=1", json={"status": "unread"})
+
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["seasons_watched"] == []
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.metadata["seasons_watched"] == []
+        assert stored.metadata["seasons_watched_dates"] == {}
+
+    def test_patch_unread_clears_a_show_whose_season_total_is_unknown(
+        self, mock_components, tmp_path
+    ):
+        """Nothing has to be known about a show to know none of it was
+        watched, so folding this branch under the season total ``completed``
+        waits on would silently leave the checklist ticked.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="show-7",
+                title="Utopia",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1", json={"status": "unread"}
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "unread"
+        assert data["seasons_watched"] == []
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.metadata["seasons_watched"] == []
+
+    def test_patch_currently_consuming_keeps_the_season_list(
+        self, mock_components, tmp_path
+    ):
+        """Being part-way through says nothing about which seasons."""
+        storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+        db_id = self._finished_show(storage)
+        client = _client_on(mock_components["app"], storage)
+
+        response = client.patch(
+            f"/api/items/{db_id}?user_id=1", json={"status": "currently_consuming"}
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["status"] == "currently_consuming"
+        assert data["seasons_watched"] == [1, 2, 3]
+
+
 def test_edit_response_includes_tv_metadata(client, mock_components):
     """GET /api/items response includes seasons_watched and total_seasons for TV."""
     mock_item = ContentItem(

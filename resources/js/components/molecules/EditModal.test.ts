@@ -223,6 +223,39 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  // Regression: only "completed" derived the checklist, so marking a finished
+  // show unread for a rewatch resent every season ticked — and the next
+  // checklist edit snapped the status straight back to completed.
+  it('picking unread clears the checklist and sends it empty', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: { ...tvItem, status: 'completed', seasons_watched: [1, 2, 3, 4, 5] }, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-status').setValue('unread')
+
+    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(0)
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+    const payload = wrapper.emitted('save')![0][1] as { status: string; seasons_watched: number[] }
+    expect(payload.status).toBe('unread')
+    expect(payload.seasons_watched).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('picking in progress leaves the ticked seasons alone', async () => {
+    // The status says nothing about which seasons, so deriving them from it
+    // would be inventing an answer the user did not give.
+    const wrapper = mount(EditModal, {
+      props: { item: { ...tvItem, status: 'completed', seasons_watched: [1, 2, 3, 4, 5] }, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-status').setValue('currently_consuming')
+
+    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(5)
+    wrapper.unmount()
+  })
+
   it('emptying the checklist derives unread', async () => {
     const wrapper = mount(EditModal, {
       props: { item: tvItem, saving: false },
