@@ -279,6 +279,22 @@ class TestUpdateDbOnlySourceRegression:
         assert "enabled" in result.output
 
 
+def _run_rom_update(storage: StorageManager, root: Path) -> Any:
+    """``update --source roms`` over *root*, against a real storage manager."""
+    config: dict[str, Any] = {
+        "inputs": {"roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}}
+    }
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch("src.cli.main.create_storage_manager", return_value=storage),
+        patch(
+            "src.cli.main.create_recommendation_engine",
+            return_value=MagicMock(spec=RecommendationEngine),
+        ),
+    ):
+        return CliRunner().invoke(cli, ["update", "--source", "roms"])
+
+
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
     """Reported: one ROM named in invalid UTF-8 lost the whole sync.
 
@@ -289,20 +305,7 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
 
     @staticmethod
     def _run(storage: StorageManager, root: Path) -> Any:
-        config: dict[str, Any] = {
-            "inputs": {
-                "roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}
-            }
-        }
-        with (
-            patch("src.cli.main.load_config", return_value=config),
-            patch("src.cli.main.create_storage_manager", return_value=storage),
-            patch(
-                "src.cli.main.create_recommendation_engine",
-                return_value=MagicMock(spec=RecommendationEngine),
-            ),
-        ):
-            return CliRunner().invoke(cli, ["update", "--source", "roms"])
+        return _run_rom_update(storage, root)
 
     def test_the_odd_rom_and_its_neighbours_all_land(self, tmp_path: Path) -> None:
         """Catches a revert of either half.
@@ -321,7 +324,9 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
         result = self._run(storage, root)
 
         assert result.exit_code == 0, result.output
-        assert "Total: 3 items updated." in result.output
+        assert "Total: 3 of 3 items saved (3 added, 0 updated, 0 unchanged)." in (
+            result.output
+        )
         with storage.connection() as conn:
             rows = conn.execute(
                 "SELECT title, external_id FROM content_items"
@@ -376,6 +381,76 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
             ]
         assert titles != [""], "the ROM landed with no title at all"
         assert len(titles) == 1, titles
+
+
+class TestASecondRomScanReportsNothingChangedRegression:
+    """Reported: two runs of ``update --source roms`` both said 40 items.
+
+    Cause: the upsert returned a row id, never what it wrote. Fix: it compares
+    the stored row against the incoming one. ROMs, not books: a different
+    detail table.
+    """
+
+    @staticmethod
+    def _stash(tmp_path: Path) -> Path:
+        root = tmp_path / "roms"
+        root.mkdir()
+        for number in range(1, 41):
+            (root / f"Game {number:02d}.zip").write_bytes(b"rom")
+        return root
+
+    def test_the_first_scan_of_forty_roms_reports_forty_added(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = _run_rom_update(storage, self._stash(tmp_path))
+
+        assert result.exit_code == 0, result.output
+        assert "Total: 40 of 40 items saved (40 added, 0 updated, 0 unchanged)." in (
+            result.output
+        )
+
+    def test_scanning_the_same_forty_again_reports_forty_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        """The acceptance case: nothing on disk moved, so nothing is claimed."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = self._stash(tmp_path)
+        _run_rom_update(storage, root)
+
+        result = _run_rom_update(storage, root)
+
+        assert result.exit_code == 0, result.output
+        assert "Total: 40 of 40 items saved (0 added, 0 updated, 40 unchanged)." in (
+            result.output
+        )
+
+    def test_one_retitled_rom_is_the_only_one_reported_as_updated(
+        self, tmp_path: Path
+    ) -> None:
+        """Catches a rewrite that calls the whole scan unchanged when most of
+        it is: a re-tagged filename still matching its row moved 1 of the 40.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = self._stash(tmp_path)
+        _run_rom_update(storage, root)
+        (root / "Game 07.zip").rename(root / "GAME 07.zip")
+
+        result = _run_rom_update(storage, root)
+
+        assert result.exit_code == 0, result.output
+        assert "Total: 40 of 40 items saved (0 added, 1 updated, 39 unchanged)." in (
+            result.output
+        )
+        with storage.connection() as conn:
+            titles = [
+                row["title"]
+                for row in conn.execute(
+                    "SELECT title FROM content_items WHERE title LIKE '%07'"
+                ).fetchall()
+            ]
+        assert titles == ["GAME 07"]
 
 
 def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:

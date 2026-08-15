@@ -343,7 +343,9 @@ def test_a_healthy_update_puts_no_log_record_on_the_console(
     )
 
     assert result.exit_code == 0, result.stderr
-    assert "Total: 1 items updated." in result.stdout
+    assert (
+        "Total: 1 of 1 items saved (1 added, 0 updated, 0 unchanged)." in result.stdout
+    )
     assert result.stderr == "Updating data from my_csv (workers=4)...\n"
     # Anchors the silence: those records were emitted, and the file is where
     # "check the logs" sends the operator to read them.

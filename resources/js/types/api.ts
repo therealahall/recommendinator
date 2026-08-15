@@ -195,6 +195,9 @@ export interface SyncSourceProgressResponse {
   total_items: number | null
   current_item: string | null
   progress_percent: number | null
+  items_added: number
+  items_updated: number
+  items_unchanged: number
 }
 
 export interface SyncErrorResponse {
@@ -213,6 +216,9 @@ export interface SyncJobResponse {
   current_source: string | null
   error_message: string | null
   progress_percent: number | null
+  items_added: number
+  items_updated: number
+  items_unchanged: number
   errors: SyncErrorResponse[]
   sources: SyncSourceProgressResponse[]
 }

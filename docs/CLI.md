@@ -43,7 +43,13 @@ Imports from one source or all of them.
 ```bash
 python3.11 -m src.cli update --source goodreads_csv
 python3.11 -m src.cli update --source all
+python3.11 -m src.cli update --source roms --format json
 ```
+
+Each source reports how many items the plugin found, how many were saved, and
+how those split into added, updated and unchanged — so a second run of the same
+import reads as 40 unchanged rather than as another 40 items. `--format json`
+emits the document `GET /api/sync/status` serves for the same run.
 
 ### `recommend`
 

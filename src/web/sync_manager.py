@@ -41,6 +41,9 @@ class _SourceProgress:
     items_processed: int = 0
     total_items: int | None = None
     current_item: str | None = None
+    items_added: int = 0
+    items_updated: int = 0
+    items_unchanged: int = 0
 
 
 @dataclass
@@ -62,6 +65,7 @@ class SyncJob:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert job to dictionary for API response."""
+        progress_slots = list(self.source_progress.values())
         sources = [
             {
                 "source": name,
@@ -73,6 +77,9 @@ class SyncJob:
                     if progress.total_items and progress.total_items > 0
                     else None
                 ),
+                "items_added": progress.items_added,
+                "items_updated": progress.items_updated,
+                "items_unchanged": progress.items_unchanged,
             }
             for name, progress in sorted(self.source_progress.items())
         ]
@@ -85,6 +92,9 @@ class SyncJob:
             ),
             "items_processed": self.items_processed,
             "total_items": self.total_items,
+            "items_added": sum(entry.items_added for entry in progress_slots),
+            "items_updated": sum(entry.items_updated for entry in progress_slots),
+            "items_unchanged": sum(entry.items_unchanged for entry in progress_slots),
             "current_item": self.current_item,
             "current_source": self.current_source,
             "error_message": self.error_message,
@@ -351,6 +361,28 @@ class SyncManager:
                     job.total_items = total_items
                 if current_item is not None:
                     job.current_item = current_item
+
+    def record_source_result(
+        self,
+        source: str,
+        synced_source: str,
+        items_added: int,
+        items_updated: int,
+        items_unchanged: int,
+    ) -> None:
+        """Record what one finished source did, on the job keyed by ``source``.
+
+        ``synced_source`` names the per-source slot, the same key
+        ``update_progress`` writes progress into.
+        """
+        with self._lock:
+            job = self._jobs.get(source)
+            if job is None:
+                return
+            slot = job.source_progress.setdefault(synced_source, _SourceProgress())
+            slot.items_added = items_added
+            slot.items_updated = items_updated
+            slot.items_unchanged = items_unchanged
 
     def add_error(self, source: str, failed_source: str, error: str) -> None:
         """Append an error to the job keyed by ``source``.

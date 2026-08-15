@@ -353,6 +353,9 @@ const progress = computed<SyncSourceProgressResponse | null>(() => {
       total_items: job.total_items,
       current_item: job.current_item,
       progress_percent: job.progress_percent,
+      items_added: job.items_added,
+      items_updated: job.items_updated,
+      items_unchanged: job.items_unchanged,
     }
   }
   return (
@@ -369,6 +372,21 @@ const progressLabel = computed<string>(() => {
     return `${entry.items_processed}/${entry.total_items}${pct}`
   }
   return `${entry.items_processed} items`
+})
+
+// What the last run did to THIS source, which is the whole question a re-sync
+// is run to answer: a count of items touched reads the same either way.
+const resultLabel = computed<string>(() => {
+  const job = props.job
+  if (props.syncing || !job || job.status === 'running') return ''
+  const entry = job.sources.find(
+    (slot) => slot.source === props.source.display_name,
+  )
+  if (!entry) return ''
+  return (
+    `${entry.items_added} added, ${entry.items_updated} updated, ` +
+    `${entry.items_unchanged} unchanged`
+  )
 })
 
 // An "All Sources" job carries every source's failures, and the remedy for one
@@ -444,6 +462,15 @@ const errorsTitleId = computed<string>(() =>
             class="source-accordion-progress-item"
           >{{ progress.current_item }}</span>
         </span>
+        <!--
+          Plain content, not a live region: it renders on the poll that ends
+          the sync, and the page-level banner is what announces (WCAG 4.1.3).
+        -->
+        <span
+          v-if="resultLabel"
+          class="source-accordion-result"
+          data-testid="source-sync-result"
+        >{{ resultLabel }}</span>
       </span>
     </template>
 
@@ -770,6 +797,13 @@ const errorsTitleId = computed<string>(() =>
 }
 
 .source-accordion-progress-counts {
+  font-variant-numeric: tabular-nums;
+}
+
+.source-accordion-result {
+  margin-left: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 

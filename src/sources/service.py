@@ -593,6 +593,34 @@ def _yaml_entry_for(source_id: str, config: dict[str, Any] | None) -> dict[str, 
     return entry if isinstance(entry, dict) else {}
 
 
+def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
+    """Return the source listing shape, matching ``SyncSourceResponse``.
+
+    Both CLI spellings of the listing (``source list`` and
+    ``update --source list``) serialise through here.
+    """
+    return [
+        {
+            "id": entry.id,
+            "display_name": entry.display_name,
+            "plugin_display_name": entry.plugin_display_name,
+            "enabled": entry.enabled,
+            "plugin_not_loaded": (
+                {
+                    "plugin": entry.plugin_not_loaded.plugin,
+                    "failures": [
+                        {"module": failure.module, "reason": failure.reason}
+                        for failure in entry.plugin_not_loaded.failures
+                    ],
+                }
+                if entry.plugin_not_loaded is not None
+                else None
+            ),
+        }
+        for entry in sources
+    ]
+
+
 def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
     """Return the schema response shape for *plugin*.
 
