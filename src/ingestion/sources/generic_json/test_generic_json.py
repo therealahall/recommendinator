@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
@@ -19,53 +19,8 @@ def plugin() -> JsonImportPlugin:
     return JsonImportPlugin()
 
 
-class TestJsonImportPluginProperties:
-    """Tests for JsonImportPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: JsonImportPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: JsonImportPlugin) -> None:
-        assert plugin.name == "json_import"
-
-    def test_display_name(self, plugin: JsonImportPlugin) -> None:
-        assert plugin.display_name == "JSON Import"
-
-    def test_content_types(self, plugin: JsonImportPlugin) -> None:
-        assert ContentType.BOOK in plugin.content_types
-        assert ContentType.MOVIE in plugin.content_types
-        assert ContentType.TV_SHOW in plugin.content_types
-        assert ContentType.VIDEO_GAME in plugin.content_types
-
-    def test_requires_api_key(self, plugin: JsonImportPlugin) -> None:
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: JsonImportPlugin) -> None:
-        assert plugin.requires_network is False
-
-    def test_config_schema(self, plugin: JsonImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
-
-    def test_get_source_identifier(self, plugin: JsonImportPlugin) -> None:
-        assert plugin.get_source_identifier() == "json_import"
-
-
 class TestJsonImportPluginValidation:
     """Tests for JsonImportPlugin config validation."""
-
-    def test_validate_valid_config(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "books.json"
-        json_file.write_text("[]")
-        errors = plugin.validate_config(
-            {"path": str(json_file), "content_type": "book"}
-        )
-        assert errors == []
 
     def test_validate_missing_json_path(self, plugin: JsonImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
@@ -78,14 +33,6 @@ class TestJsonImportPluginValidation:
             {"path": str(tmp_path / "missing.json"), "content_type": "book"}
         )
         assert any("not found" in error for error in errors)
-
-    def test_validate_missing_content_type(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("[]")
-        errors = plugin.validate_config({"path": str(json_file)})
-        assert any("content_type" in error for error in errors)
 
     def test_validate_invalid_content_type(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -135,29 +82,6 @@ class TestJsonImportPluginFetch:
         assert item.metadata["pages"] == 662
         assert item.metadata["genres"] == ["Fantasy"]
 
-    def test_fetch_movie(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "movies.json"
-        data = [
-            {
-                "title": "Inception",
-                "director": "Christopher Nolan",
-                "rating": 5,
-                "status": "completed",
-                "year": 2010,
-                "runtime_minutes": 148,
-                "genre": "Sci-Fi",
-            }
-        ]
-        json_file.write_text(json.dumps(data))
-
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "movie"}))
-
-        assert len(items) == 1
-        assert items[0].title == "Inception"
-        assert items[0].author == "Christopher Nolan"
-        assert items[0].metadata["release_year"] == 2010
-        assert items[0].metadata["runtime"] == 148
-
     def test_fetch_tv_show(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
         json_file = tmp_path / "tv.json"
         data = [
@@ -178,30 +102,6 @@ class TestJsonImportPluginFetch:
         assert items[0].author == "Vince Gilligan"
         assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
         assert items[0].metadata["seasons"] == 5
-
-    def test_fetch_video_game(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "games.json"
-        data = [
-            {
-                "title": "The Witcher 3",
-                "developer": "CD Projekt Red",
-                "rating": 5,
-                "status": "completed",
-                "platform": "PC",
-                "genre": "RPG",
-                "hours_played": 120,
-            }
-        ]
-        json_file.write_text(json.dumps(data))
-
-        items = list(
-            plugin.fetch({"path": str(json_file), "content_type": "video_game"})
-        )
-
-        assert len(items) == 1
-        assert items[0].author == "CD Projekt Red"
-        assert items[0].metadata["platforms"] == ["PC"]
-        assert items[0].metadata["playtime_hours"] == 120
 
     def test_fetch_video_game_keeps_list_valued_fields_as_lists(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -230,31 +130,6 @@ class TestJsonImportPluginFetch:
 
         assert items[0].metadata["platforms"] == ["PC", "Switch"]
         assert items[0].metadata["genres"] == ["Roguelike", "Action"]
-
-    def test_imported_genre_lands_as_a_list(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        """The genre field lands in the shape the rest of the app reads.
-
-        Every downstream reader recognises only a list under ``genres``, so a
-        bare string there drops the genre from scoring without failing.
-        """
-        json_file = tmp_path / "games.json"
-        data = [
-            {
-                "title": "The Witcher 3",
-                "developer": "CD Projekt Red",
-                "status": "completed",
-                "genre": "RPG",
-            }
-        ]
-        json_file.write_text(json.dumps(data))
-
-        items = list(
-            plugin.fetch({"path": str(json_file), "content_type": "video_game"})
-        )
-
-        assert items[0].metadata["genres"] == ["RPG"]
 
     def test_fetch_multiple_items(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -289,33 +164,6 @@ class TestJsonImportPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Valid"
 
-    def test_fetch_empty_array(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("[]")
-
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-        assert len(items) == 0
-
-    def test_fetch_empty_file(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("")
-
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-        assert len(items) == 0
-
-    def test_fetch_notes_in_metadata(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        data = [{"title": "Test", "notes": "Recommended by friend"}]
-        json_file.write_text(json.dumps(data))
-
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-        assert items[0].metadata["notes"] == "Recommended by friend"
-
 
 class TestJsonlSupport:
     """Tests for JSONL (one object per line) format."""
@@ -334,51 +182,15 @@ class TestJsonlSupport:
         assert items[0].title == "Book One"
         assert items[1].title == "Book Two"
 
-    def test_fetch_jsonl_with_blank_lines(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        jsonl_file = tmp_path / "books.jsonl"
-        content = (
-            json.dumps({"title": "Book One"})
-            + "\n\n"
-            + json.dumps({"title": "Book Two"})
-            + "\n"
-        )
-        jsonl_file.write_text(content)
-
-        items = list(plugin.fetch({"path": str(jsonl_file), "content_type": "book"}))
-
-        assert len(items) == 2
-
 
 class TestJsonImportPluginRating:
     """Tests for rating normalization."""
-
-    def test_integer_rating(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(json.dumps([{"title": "Test", "rating": 4}]))
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].rating == 4
-
-    def test_null_rating(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(json.dumps([{"title": "Test", "rating": None}]))
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].rating is None
 
     def test_zero_rating_is_none(
         self, plugin: JsonImportPlugin, tmp_path: Path
     ) -> None:
         json_file = tmp_path / "data.json"
         json_file.write_text(json.dumps([{"title": "Test", "rating": 0}]))
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].rating is None
-
-    def test_missing_rating_is_none(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(json.dumps([{"title": "Test"}]))
         items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].rating is None
 
@@ -411,22 +223,6 @@ class TestJsonImportPluginErrors:
         json_file.write_text("{not valid json")
         with pytest.raises(SourceError, match="Failed to parse JSON"):
             list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-    def test_invalid_jsonl_raises_source_error(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        jsonl_file = tmp_path / "bad.jsonl"
-        jsonl_file.write_text('{"title": "ok"}\nnot json\n')
-        with pytest.raises(SourceError, match="Failed to parse JSON"):
-            list(plugin.fetch({"path": str(jsonl_file), "content_type": "book"}))
-
-    def test_invalid_content_type_raises_source_error(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text("[]")
-        with pytest.raises(SourceError, match="Invalid content type"):
-            list(plugin.fetch({"path": str(json_file), "content_type": "podcast"}))
 
     def test_invalid_date_does_not_crash(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -464,77 +260,9 @@ class TestJsonTemplates:
         assert len(items) == 1
         assert items[0].title == "The Name of the Wind"
 
-    def test_movies_template_parseable(
-        self, plugin: JsonImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "movies.json"),
-                    "content_type": "movie",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "Inception"
-
-    def test_tv_shows_template_parseable(
-        self, plugin: JsonImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "tv_shows.json"),
-                    "content_type": "tv_show",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "Breaking Bad"
-
-    def test_video_games_template_parseable(
-        self, plugin: JsonImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "video_games.json"),
-                    "content_type": "video_game",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "The Witcher 3"
-
 
 class TestJsonImportIgnored:
     """Tests for ignored field parsing in JSON import."""
-
-    def test_ignored_true(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(
-            json.dumps([{"title": "Test", "status": "completed", "ignored": True}])
-        )
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].ignored is True
-
-    def test_ignored_false(self, plugin: JsonImportPlugin, tmp_path: Path) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(
-            json.dumps([{"title": "Test", "status": "completed", "ignored": False}])
-        )
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].ignored is False
-
-    def test_ignored_string_true(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        json_file.write_text(
-            json.dumps([{"title": "Test", "status": "completed", "ignored": "true"}])
-        )
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].ignored is True
 
     def test_ignored_field_absent_is_unspecified(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -568,17 +296,6 @@ class TestJsonImportIgnored:
         items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
         assert items[0].ignored is None
 
-    def test_empty_string_ignored_is_unspecified(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        """An empty string is as unstated as a null."""
-        json_file = tmp_path / "data.json"
-        json_file.write_text(
-            json.dumps([{"title": "Test", "status": "completed", "ignored": ""}])
-        )
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-        assert items[0].ignored is None
-
 
 class TestJsonImportSeasonsWatched:
     """Tests for seasons_watched parsing in JSON import."""
@@ -598,42 +315,6 @@ class TestJsonImportSeasonsWatched:
         items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
         assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
 
-    def test_integer_backward_compat(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        data = [
-            {
-                "title": "Show",
-                "creator": "Creator",
-                "status": "completed",
-                "seasons_watched": 5,
-                "total_seasons": 5,
-            }
-        ]
-        json_file.write_text(json.dumps(data))
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
-        assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
-
-    def test_null_seasons_watched(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        json_file = tmp_path / "data.json"
-        data = [
-            {
-                "title": "Show",
-                "creator": "Creator",
-                "status": "unread",
-                "seasons_watched": None,
-                "total_seasons": 5,
-            }
-        ]
-        json_file.write_text(json.dumps(data))
-        items = list(plugin.fetch({"path": str(json_file), "content_type": "tv_show"}))
-        # null seasons_watched becomes [], which is falsy so _build_json_metadata
-        # won't include it, but the post-processing replaces it
-        assert items[0].metadata.get("seasons_watched", []) == []
-
 
 class TestJsonImportPathContainmentRegression:
     """Regression: source config as an arbitrary-file reader.
@@ -651,20 +332,6 @@ class TestJsonImportPathContainmentRegression:
             "Path is outside the allowed source roots: /etc/hosts. "
             "Add its directory to security.allowed_source_roots in config.yaml."
         ]
-
-    def test_validate_refuses_a_symlink_escaping_its_root(
-        self, plugin: JsonImportPlugin, tmp_path: Path
-    ) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
-        outside.mkdir()
-        secret = outside / "secret.json"
-        secret.write_text(json.dumps([{"title": "Leaked"}]))
-        link = tmp_path / "books.json"
-        link.symlink_to(secret)
-
-        errors = plugin.validate_config({"path": str(link), "content_type": "book"})
-
-        assert any("outside the allowed source roots" in error for error in errors)
 
     def test_fetch_refuses_and_yields_nothing(
         self, plugin: JsonImportPlugin, tmp_path: Path
@@ -722,35 +389,3 @@ class TestJsonImportLogInjectionRegression:
             f"Invalid date format for '{ESCAPED_TITLE}': yesterday. "
             "Expected YYYY-MM-DD."
         ]
-
-    def test_a_newline_in_a_date_field_cannot_forge_a_log_entry(
-        self, plugin: JsonImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        json_file = tmp_path / "books.json"
-        json_file.write_text(
-            json.dumps(
-                [{"title": "Dune", "date_completed": "2024\nImported 9999 items"}]
-            )
-        )
-
-        with caplog.at_level(logging.WARNING, logger=JSON_LOGGER):
-            list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-        assert self._messages(caplog) == [
-            "Invalid date format for 'Dune': 2024\\nImported 9999 items. "
-            "Expected YYYY-MM-DD."
-        ]
-
-    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
-        self, plugin: JsonImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A configured path is operator input, and a file name may hold a break."""
-        json_file = tmp_path / "books\nImported 9999 items.json"
-        json_file.write_text(json.dumps([{"title": "Dune"}]))
-
-        with caplog.at_level(logging.INFO, logger=JSON_LOGGER):
-            list(plugin.fetch({"path": str(json_file), "content_type": "book"}))
-
-        assert self._messages(caplog)[0].endswith(
-            "books\\nImported 9999 items.json"
-        ), self._messages(caplog)

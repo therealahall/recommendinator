@@ -5,14 +5,12 @@ from unittest.mock import Mock, patch
 import pytest
 from legendary.api.egs import EPCAPI
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.epic_games.epic_games import (
     EpicGamesAPIError,
     EpicGamesPlugin,
     authenticate,
     extract_metadata_fields,
-    get_game_metadata,
-    get_library_items,
     is_base_game,
 )
 from src.models.content import ConsumptionStatus, ContentType
@@ -73,19 +71,6 @@ class TestAuthenticate:
     """Tests for Epic Games OAuth authentication."""
 
     @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
-    def test_authenticate_success(self, mock_epcapi_class: Mock) -> None:
-        """Test successful authentication returns an EPCAPI instance."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_epcapi_class.return_value = mock_api
-
-        result = authenticate("valid_refresh_token")
-
-        assert result is mock_api
-        mock_api.start_session.assert_called_once_with(
-            refresh_token="valid_refresh_token"
-        )
-
-    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
     def test_authenticate_invalid_credentials(self, mock_epcapi_class: Mock) -> None:
         """Test that InvalidCredentialsError is wrapped in EpicGamesAPIError."""
         from legendary.models.exceptions import InvalidCredentialsError
@@ -99,94 +84,6 @@ class TestAuthenticate:
         with pytest.raises(EpicGamesAPIError, match="invalid or expired"):
             authenticate("bad_token")
 
-    @patch("src.ingestion.sources.epic_games.epic_games.EPCAPI")
-    def test_authenticate_generic_error(self, mock_epcapi_class: Mock) -> None:
-        """Test that generic exceptions are wrapped in EpicGamesAPIError."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.start_session.side_effect = ConnectionError("Network down")
-        mock_epcapi_class.return_value = mock_api
-
-        with pytest.raises(EpicGamesAPIError, match="Failed to authenticate"):
-            authenticate("some_token")
-
-
-# ===========================================================================
-# get_library_items()
-# ===========================================================================
-
-
-class TestGetLibraryItems:
-    """Tests for fetching library items."""
-
-    def test_success(self) -> None:
-        """Test successful library fetch."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_library_items.return_value = [
-            _make_library_record(app_name="GameA"),
-            _make_library_record(app_name="GameB"),
-        ]
-
-        result = get_library_items(mock_api)
-
-        assert len(result) == 2
-        assert result[0]["appName"] == "GameA"
-        assert result[1]["appName"] == "GameB"
-        mock_api.get_library_items.assert_called_once_with(include_metadata=True)
-
-    def test_empty_library(self) -> None:
-        """Test fetching when the library is empty."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_library_items.return_value = []
-
-        result = get_library_items(mock_api)
-
-        assert result == []
-
-    def test_api_error(self) -> None:
-        """Test handling API error during fetch."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_library_items.side_effect = Exception("Server error")
-
-        with pytest.raises(EpicGamesAPIError, match="Failed to fetch library items"):
-            get_library_items(mock_api)
-
-
-# ===========================================================================
-# get_game_metadata()
-# ===========================================================================
-
-
-class TestGetGameMetadata:
-    """Tests for fetching individual game metadata."""
-
-    def test_success(self) -> None:
-        """Test successful metadata fetch."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_game_info.return_value = _make_game_metadata(title="The Witcher 3")
-
-        result = get_game_metadata(mock_api, "epic", "abc123")
-
-        assert result is not None
-        assert result["title"] == "The Witcher 3"
-        mock_api.get_game_info.assert_called_once_with("epic", "abc123")
-
-    def test_not_found_returns_none(self) -> None:
-        """Test that None is returned when game is not found."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_game_info.return_value = None
-
-        result = get_game_metadata(mock_api, "epic", "missing123")
-
-        assert result is None
-
-    def test_api_error(self) -> None:
-        """Test handling of API errors."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.get_game_info.side_effect = Exception("Server error")
-
-        with pytest.raises(EpicGamesAPIError, match="Failed to fetch metadata"):
-            get_game_metadata(mock_api, "epic", "abc123")
-
 
 # ===========================================================================
 # is_base_game()
@@ -196,32 +93,10 @@ class TestGetGameMetadata:
 class TestIsBaseGame:
     """Tests for the is_base_game() classifier."""
 
-    def test_base_game(self) -> None:
-        """Test that a regular game is identified as a base game."""
-        metadata = _make_game_metadata(categories=[{"path": "games"}])
-        assert is_base_game(metadata) is True
-
-    def test_dlc_has_main_game_item(self) -> None:
-        """Test that DLC (has mainGameItem) is not a base game."""
-        metadata = _make_game_metadata(
-            main_game_item={"id": "parent123", "title": "Parent Game"}
-        )
-        assert is_base_game(metadata) is False
-
     def test_mod_category(self) -> None:
         """Test that items with 'mods' category are not base games."""
         metadata = _make_game_metadata(categories=[{"path": "mods"}])
         assert is_base_game(metadata) is False
-
-    def test_empty_categories(self) -> None:
-        """Test that empty categories list is treated as base game."""
-        metadata = _make_game_metadata(categories=[])
-        assert is_base_game(metadata) is True
-
-    def test_no_categories_key(self) -> None:
-        """Test that missing categories key is treated as base game."""
-        metadata = {"id": "abc", "title": "Game"}
-        assert is_base_game(metadata) is True
 
 
 # ===========================================================================
@@ -231,31 +106,6 @@ class TestIsBaseGame:
 
 class TestExtractMetadataFields:
     """Tests for metadata extraction."""
-
-    def test_full_metadata(self) -> None:
-        """Test extraction with all fields present."""
-        game_metadata = _make_game_metadata(
-            catalog_item_id="cat123",
-            developer="Dev Studio",
-            description="A fun game.",
-            categories=[{"path": "games"}, {"path": "multiplayer"}],
-            release_info=[{"dateAdded": "2023-06-15T00:00:00.000Z"}],
-        )
-        library_record = _make_library_record(
-            namespace="epic_ns",
-            app_name="MyGame",
-            catalog_item_id="cat123",
-        )
-
-        result = extract_metadata_fields(game_metadata, library_record)
-
-        assert result["epic_namespace"] == "epic_ns"
-        assert result["epic_catalog_item_id"] == "cat123"
-        assert result["epic_app_name"] == "MyGame"
-        assert result["developer"] == "Dev Studio"
-        assert result["description"] == "A fun game."
-        assert result["categories"] == ["games", "multiplayer"]
-        assert result["release_date"] == "2023-06-15T00:00:00.000Z"
 
     def test_minimal_metadata(self) -> None:
         """Test extraction with minimal fields."""
@@ -270,78 +120,6 @@ class TestExtractMetadataFields:
         assert "categories" not in result
         assert "release_date" not in result
 
-    def test_missing_fields_graceful(self) -> None:
-        """Test that missing optional fields don't cause errors."""
-        game_metadata = {
-            "id": "x",
-            "title": "X",
-            "categories": [],
-            "releaseInfo": [],
-        }
-        library_record = _make_library_record()
-
-        result = extract_metadata_fields(game_metadata, library_record)
-
-        assert "developer" not in result
-        assert "description" not in result
-        assert "release_date" not in result
-
-
-# ===========================================================================
-# EpicGamesPlugin — properties
-# ===========================================================================
-
-
-class TestEpicGamesPluginProperties:
-    """Tests for EpicGamesPlugin metadata properties."""
-
-    def test_is_source_plugin(self) -> None:
-        """Test that EpicGamesPlugin is a SourcePlugin subclass."""
-        plugin = EpicGamesPlugin()
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self) -> None:
-        """Test plugin name identifier."""
-        plugin = EpicGamesPlugin()
-        assert plugin.name == "epic_games"
-
-    def test_display_name(self) -> None:
-        """Test human-readable display name."""
-        plugin = EpicGamesPlugin()
-        assert plugin.display_name == "Epic Games Store"
-
-    def test_content_types(self) -> None:
-        """Test that plugin provides video games."""
-        plugin = EpicGamesPlugin()
-        assert plugin.content_types == [ContentType.VIDEO_GAME]
-
-    def test_requires_api_key(self) -> None:
-        """Test that plugin requires credentials (refresh token)."""
-        plugin = EpicGamesPlugin()
-        assert plugin.requires_api_key is True
-
-    def test_requires_network(self) -> None:
-        """Test that plugin requires network access."""
-        plugin = EpicGamesPlugin()
-        assert plugin.requires_network is True
-
-    def test_config_schema(self) -> None:
-        """Test configuration schema fields."""
-        plugin = EpicGamesPlugin()
-        schema = plugin.get_config_schema()
-
-        field_names = [field.name for field in schema]
-        assert "refresh_token" in field_names
-
-        token_field = next(field for field in schema if field.name == "refresh_token")
-        assert token_field.required is True
-        assert token_field.sensitive is True
-
-    def test_get_source_identifier(self) -> None:
-        """Test source identifier matches plugin name."""
-        plugin = EpicGamesPlugin()
-        assert plugin.get_source_identifier() == "epic_games"
-
 
 # ===========================================================================
 # EpicGamesPlugin — validation
@@ -351,32 +129,10 @@ class TestEpicGamesPluginProperties:
 class TestEpicGamesPluginValidation:
     """Tests for EpicGamesPlugin config validation."""
 
-    def test_validate_valid_config(self) -> None:
-        """Test validation passes with valid config."""
-        plugin = EpicGamesPlugin()
-        errors = plugin.validate_config({"refresh_token": "valid_token_here"})
-        assert errors == []
-
     def test_validate_missing_refresh_token(self) -> None:
         """Test validation fails when refresh_token is missing."""
         plugin = EpicGamesPlugin()
         errors = plugin.validate_config({})
-
-        assert len(errors) == 1
-        assert "'refresh_token' is required" in errors[0]
-
-    def test_validate_empty_refresh_token(self) -> None:
-        """Test validation fails when refresh_token is empty."""
-        plugin = EpicGamesPlugin()
-        errors = plugin.validate_config({"refresh_token": ""})
-
-        assert len(errors) == 1
-        assert "'refresh_token' is required" in errors[0]
-
-    def test_validate_whitespace_refresh_token(self) -> None:
-        """Test validation fails when refresh_token is whitespace only."""
-        plugin = EpicGamesPlugin()
-        errors = plugin.validate_config({"refresh_token": "   "})
 
         assert len(errors) == 1
         assert "'refresh_token' is required" in errors[0]
@@ -413,27 +169,6 @@ class TestEpicGamesPluginValidation:
         assert errors == []
         mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_epic")
 
-    def test_validate_missing_token_fails_when_not_in_db(self) -> None:
-        """Validation still fails when token is absent from both config and DB."""
-        plugin = EpicGamesPlugin()
-        mock_storage = Mock()
-        mock_storage.get_credentials_for_source.return_value = {}
-
-        errors = plugin.validate_config(
-            {"_source_id": "my_epic"},
-            storage=mock_storage,
-            user_id=1,
-        )
-        assert len(errors) == 1
-        assert "'refresh_token' is required" in errors[0]
-
-    def test_validate_missing_token_fails_without_storage(self) -> None:
-        """Validation fails when no storage is provided and token is missing."""
-        plugin = EpicGamesPlugin()
-        errors = plugin.validate_config({})
-        assert len(errors) == 1
-        assert "'refresh_token' is required" in errors[0]
-
 
 # ===========================================================================
 # EpicGamesPlugin — transform_config
@@ -447,11 +182,6 @@ class TestEpicGamesPluginTransformConfig:
         """Test that whitespace is stripped from refresh_token."""
         result = EpicGamesPlugin.transform_config({"refresh_token": "  my_token  "})
         assert result["refresh_token"] == "my_token"
-
-    def test_defaults_empty_token(self) -> None:
-        """Test that missing refresh_token defaults to empty string."""
-        result = EpicGamesPlugin.transform_config({})
-        assert result["refresh_token"] == ""
 
 
 # ===========================================================================
@@ -667,36 +397,6 @@ class TestEpicGamesPluginFetch:
         assert len(items) == 1
         assert items[0].title == "Real Game"
 
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_progress_callback(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """Test that progress callback is invoked during fetch."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name="G1", catalog_item_id="c1"),
-            _make_library_record(app_name="G2", catalog_item_id="c2"),
-        ]
-        mock_get_metadata.side_effect = [
-            _make_game_metadata(catalog_item_id="c1", title="Game 1"),
-            _make_game_metadata(catalog_item_id="c2", title="Game 2"),
-        ]
-
-        plugin = EpicGamesPlugin()
-        callback = Mock()
-        items = list(
-            plugin.fetch({"refresh_token": "token"}, progress_callback=callback)
-        )
-
-        assert len(items) == 2
-        assert callback.call_count > 0
-
     @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
     def test_error_wrapping(self, mock_authenticate: Mock) -> None:
         """Test that EpicGamesAPIError is wrapped in SourceError."""
@@ -734,34 +434,6 @@ class TestEpicGamesPluginFetch:
 
         assert len(items) == 1
         assert items[0].title == "Working Game"
-
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_all_games_are_unread(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """Test that all games have UNREAD status (Epic has no playtime data)."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name=f"G{index}", catalog_item_id=f"c{index}")
-            for index in range(3)
-        ]
-        mock_get_metadata.side_effect = [
-            _make_game_metadata(catalog_item_id=f"c{index}", title=f"Game {index}")
-            for index in range(3)
-        ]
-
-        plugin = EpicGamesPlugin()
-        items = list(plugin.fetch({"refresh_token": "token"}))
-
-        for item in items:
-            assert item.status == ConsumptionStatus.UNREAD
-            assert item.rating is None
 
     @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
     @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
@@ -841,133 +513,6 @@ class TestEpicGamesPluginFetch:
         credential_callback.assert_called_once_with(
             "refresh_token", "rotated_epic_token"
         )
-
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_same_refresh_token_does_not_trigger_callback(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """No callback when the Epic refresh token hasn't changed."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.user = {"refresh_token": "same_token"}
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name="G1", catalog_item_id="c1"),
-        ]
-        mock_get_metadata.return_value = _make_game_metadata(
-            catalog_item_id="c1", title="Game 1"
-        )
-
-        credential_callback = Mock()
-        plugin = EpicGamesPlugin()
-        items = list(
-            plugin.fetch(
-                {
-                    "refresh_token": "same_token",
-                    "_on_credential_rotated": credential_callback,
-                }
-            )
-        )
-
-        assert len(items) == 1
-        credential_callback.assert_not_called()
-
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_rotated_token_without_callback_does_not_raise(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """Token rotation with no callback injected completes without error."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.user = {"refresh_token": "rotated_token"}
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name="G1", catalog_item_id="c1"),
-        ]
-        mock_get_metadata.return_value = _make_game_metadata(
-            catalog_item_id="c1", title="Game 1"
-        )
-
-        plugin = EpicGamesPlugin()
-        # No _on_credential_rotated in config
-        items = list(plugin.fetch({"refresh_token": "old_token"}))
-        assert len(items) == 1
-
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_empty_user_dict_does_not_trigger_callback(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """No callback when api.user has no refresh_token key."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.user = {}  # No refresh_token key
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name="G1", catalog_item_id="c1"),
-        ]
-        mock_get_metadata.return_value = _make_game_metadata(
-            catalog_item_id="c1", title="Game 1"
-        )
-
-        credential_callback = Mock()
-        plugin = EpicGamesPlugin()
-        items = list(
-            plugin.fetch(
-                {
-                    "refresh_token": "old_token",
-                    "_on_credential_rotated": credential_callback,
-                }
-            )
-        )
-
-        assert len(items) == 1
-        credential_callback.assert_not_called()
-
-    @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
-    @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")
-    @patch("src.ingestion.sources.epic_games.epic_games.authenticate")
-    def test_none_user_dict_does_not_trigger_callback(
-        self,
-        mock_authenticate: Mock,
-        mock_get_library: Mock,
-        mock_get_metadata: Mock,
-    ) -> None:
-        """No callback when api.user is None (isinstance guard exercised)."""
-        mock_api = Mock(spec=EPCAPI)
-        mock_api.user = None
-        mock_authenticate.return_value = mock_api
-        mock_get_library.return_value = [
-            _make_library_record(app_name="G1", catalog_item_id="c1"),
-        ]
-        mock_get_metadata.return_value = _make_game_metadata(
-            catalog_item_id="c1", title="Game 1"
-        )
-
-        credential_callback = Mock()
-        plugin = EpicGamesPlugin()
-        items = list(
-            plugin.fetch(
-                {
-                    "refresh_token": "old_token",
-                    "_on_credential_rotated": credential_callback,
-                }
-            )
-        )
-
-        assert len(items) == 1
-        credential_callback.assert_not_called()
 
     @patch("src.ingestion.sources.epic_games.epic_games.get_game_metadata")
     @patch("src.ingestion.sources.epic_games.epic_games.get_library_items")

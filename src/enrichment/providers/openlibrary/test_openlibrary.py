@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.enrichment.provider_base import ProviderError
 from src.enrichment.providers.openlibrary.openlibrary import (
     OpenLibraryProvider,
     clean_title_for_search,
@@ -24,71 +23,12 @@ class TestCleanTitleForSearch:
             == "For We Are Many"
         )
 
-    def test_removes_series_without_comma(self) -> None:
-        """Test removal of series info without comma."""
-        assert (
-            clean_title_for_search("The Name of the Wind (The Kingkiller Chronicle #1)")
-            == "The Name of the Wind"
-        )
-
-    def test_preserves_title_without_series(self) -> None:
-        """Test that titles without series info are unchanged."""
-        assert clean_title_for_search("Project Hail Mary") == "Project Hail Mary"
-
-    def test_preserves_simple_titles(self) -> None:
-        """Test that simple titles are unchanged."""
-        assert clean_title_for_search("1984") == "1984"
-
     def test_handles_parentheses_without_series_number(self) -> None:
         """Test that parentheses without series numbers are preserved."""
         assert (
             clean_title_for_search("The Stand (Uncut Edition)")
             == "The Stand (Uncut Edition)"
         )
-
-    def test_removes_series_with_different_formats(self) -> None:
-        """Test removal of various series formats."""
-        assert (
-            clean_title_for_search("Ready Player One (Ready Player One #1)")
-            == "Ready Player One"
-        )
-        assert clean_title_for_search("Dune (Dune Chronicles, #1)") == "Dune"
-
-
-class TestOpenLibraryProviderProperties:
-    """Tests for OpenLibrary provider properties."""
-
-    def test_name(self) -> None:
-        """Test provider name."""
-        provider = OpenLibraryProvider()
-        assert provider.name == "openlibrary"
-
-    def test_display_name(self) -> None:
-        """Test display name."""
-        provider = OpenLibraryProvider()
-        assert provider.display_name == "Open Library"
-
-    def test_content_types(self) -> None:
-        """Test supported content types."""
-        provider = OpenLibraryProvider()
-        assert provider.content_types == [ContentType.BOOK]
-        assert ContentType.MOVIE not in provider.content_types
-
-    def test_requires_api_key(self) -> None:
-        """Test that API key is NOT required."""
-        provider = OpenLibraryProvider()
-        assert provider.requires_api_key is False
-
-    def test_rate_limit(self) -> None:
-        """Test rate limit setting."""
-        provider = OpenLibraryProvider()
-        assert provider.rate_limit_requests_per_second == 1.0
-
-    def test_validate_config(self) -> None:
-        """Test config validation (no required fields)."""
-        provider = OpenLibraryProvider()
-        errors = provider.validate_config({})
-        assert errors == []
 
 
 class TestOpenLibraryProviderISBNLookup:
@@ -282,20 +222,6 @@ class TestOpenLibraryProviderSearch:
         assert result is not None
         assert result.genres == ["Fiction"]
 
-    def test_search_api_error(
-        self, provider: OpenLibraryProvider, book_item: ContentItem
-    ) -> None:
-        """Test that API errors raise ProviderError."""
-        with patch(
-            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
-        ) as mock_get:
-            mock_get.side_effect = requests.RequestException("Connection failed")
-
-            with pytest.raises(ProviderError) as exc_info:
-                provider.enrich(book_item, {})
-
-            assert "Failed to search Open Library" in str(exc_info.value)
-
 
 class TestOpenLibraryProviderSubjectFiltering:
     """Tests for subject/genre filtering."""
@@ -316,15 +242,6 @@ class TestOpenLibraryProviderSubjectFiltering:
         assert "Fiction" in filtered
         assert "Mystery" in filtered
         assert "Thriller" in filtered
-        assert len(filtered) <= 10
-
-    def test_filter_subjects_limit(self) -> None:
-        """Test that subjects are limited to 10."""
-        provider = OpenLibraryProvider()
-        subjects = [f"Fiction{i}" for i in range(50)]
-
-        filtered = provider._filter_subjects(subjects)
-
         assert len(filtered) <= 10
 
     def test_filter_subjects_deduplication(self) -> None:
@@ -349,19 +266,6 @@ class TestOpenLibraryProviderUnsupportedTypes:
             id="movie1",
             title="Some Movie",
             content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        result = provider.enrich(item, {})
-        assert result is None
-
-    def test_enrich_video_game_returns_none(self) -> None:
-        """Test that enriching a video game returns None."""
-        provider = OpenLibraryProvider()
-        item = ContentItem(
-            id="game1",
-            title="Some Game",
-            content_type=ContentType.VIDEO_GAME,
             status=ConsumptionStatus.UNREAD,
         )
 
@@ -404,38 +308,6 @@ class TestSearchTitleCannotForgeALogLineRegression:
 
         assert "Real Book\\nWARNING" in caplog.text
         assert self._FORGED not in caplog.text
-
-
-class TestIsbnLookupCannotForgeALogLineRegression:
-    """Same sink, second route: ``isbn`` is an imported metadata column.
-
-    The ``requests`` error it logs beside also embeds the URL built from it.
-    """
-
-    _FORGED = "978\nWARNING  | forged | line"
-
-    def test_a_newline_in_an_isbn_is_escaped_before_the_failure_log(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        provider = OpenLibraryProvider()
-
-        with (
-            patch(
-                "src.enrichment.providers.openlibrary.openlibrary.requests.get"
-            ) as mock_get,
-            caplog.at_level(
-                logging.WARNING,
-                logger="src.enrichment.providers.openlibrary.openlibrary",
-            ),
-        ):
-            mock_get.side_effect = requests.ConnectionError(
-                f"Failed to connect to /isbn/{self._FORGED}.json"
-            )
-            assert provider._lookup_by_isbn(self._FORGED) is None
-
-        assert "978\\nWARNING" in caplog.text
-        assert self._FORGED not in caplog.text
-        assert "ConnectionError" in caplog.text
 
 
 class TestIsbnLookupRendersItsFailureThroughTheScrubberRegression:

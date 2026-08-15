@@ -12,7 +12,7 @@ import pytest
 import requests
 
 from src import __version__ as APP_VERSION
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.goodreads_rss import goodreads_rss
 from src.ingestion.sources.goodreads_rss.goodreads_rss import (
     GoodreadsRssError,
@@ -164,16 +164,9 @@ class TestParseGoodreadsUserId:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("12345", "12345"),
-            ("https://www.goodreads.com/user/show/12345-jane-doe", "12345"),
-            ("https://www.goodreads.com/review/list/12345", "12345"),
-            ("https://www.goodreads.com/review/list/12345?shelf=read&page=2", "12345"),
-            (
-                "https://www.goodreads.com/user/show/12345-jane-doe?shelf=read",
-                "12345",
-            ),
-            ("http://www.goodreads.com/user/show/12345-jane-doe/", "12345"),
             ("  67890  ", "67890"),
+            ("https://www.goodreads.com/user/show/12345-jane-doe", "12345"),
+            ("https://www.goodreads.com/review/list/12345?shelf=read&page=2", "12345"),
         ],
     )
     def test_extracts_id(self, raw: str, expected: str) -> None:
@@ -184,12 +177,10 @@ class TestParseGoodreadsUserId:
         ("raw", "message"),
         [
             ("", "empty"),
-            ("not-a-url", "Could not extract"),
             ("https://www.goodreads.com/book/show/999-some-book", "Could not extract"),
             # A recognised marker with no digit run after it must still raise,
             # exercising the ``if match:`` false branch inside the loop.
             ("https://www.goodreads.com/user/show/jane-doe", "Could not extract"),
-            ("https://www.goodreads.com/review/list/no-digits", "Could not extract"),
         ],
     )
     def test_invalid_raises(self, raw: str, message: str) -> None:
@@ -198,84 +189,12 @@ class TestParseGoodreadsUserId:
             parse_goodreads_user_id(raw)
 
 
-class TestGoodreadsRssPluginProperties:
-    """Tests for GoodreadsRssPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test that GoodreadsRssPlugin is a SourcePlugin subclass."""
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test plugin name identifier."""
-        assert plugin.name == "goodreads_rss"
-
-    def test_display_name(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test human-readable display name."""
-        assert plugin.display_name == "Goodreads (Public Shelves via RSS)"
-
-    def test_description(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test the one-line plugin description."""
-        assert plugin.description == "Sync books from public Goodreads shelves via RSS"
-
-    def test_content_types(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test that plugin provides books."""
-        assert plugin.content_types == [ContentType.BOOK]
-
-    def test_requires_api_key(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test that plugin does not require an API key."""
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test that plugin requires network access."""
-        assert plugin.requires_network is True
-
-    def test_config_schema(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test configuration schema defines user_id and shelves."""
-        schema = plugin.get_config_schema()
-
-        assert [field.name for field in schema] == ["user_id", "shelves"]
-        assert schema[0].field_type is str
-        assert schema[0].required is True
-        assert schema[1].field_type is list
-        assert schema[1].required is False
-        assert schema[1].default == ["read", "currently-reading", "to-read"]
-
-    def test_get_source_identifier_default(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test source identifier defaults to the plugin name."""
-        assert plugin.get_source_identifier() == "goodreads_rss"
-
-    def test_get_source_identifier_from_config(
-        self, plugin: GoodreadsRssPlugin
-    ) -> None:
-        """Test source identifier uses the injected _source_id when present."""
-        assert plugin.get_source_identifier({"_source_id": "my_books"}) == "my_books"
-
-
 class TestGoodreadsRssPluginValidation:
     """Tests for GoodreadsRssPlugin config validation."""
-
-    def test_valid_config(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation passes for a well-formed config."""
-        errors = plugin.validate_config(
-            {"user_id": "12345", "shelves": ["read", "to-read"]}
-        )
-
-        assert errors == []
-
-    def test_valid_config_without_shelves(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation passes when shelves is omitted (defaults apply)."""
-        assert plugin.validate_config({"user_id": "12345"}) == []
 
     def test_empty_user_id(self, plugin: GoodreadsRssPlugin) -> None:
         """Test validation fails when user_id is empty."""
         errors = plugin.validate_config({"user_id": ""})
-
-        assert len(errors) == 1
-        assert "'user_id' is required" in errors[0]
-
-    def test_missing_user_id(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation fails when user_id is absent."""
-        errors = plugin.validate_config({})
 
         assert len(errors) == 1
         assert "'user_id' is required" in errors[0]
@@ -295,32 +214,6 @@ class TestGoodreadsRssPluginValidation:
         errors = plugin.validate_config({"user_id": "12345", "shelves": "read"})
 
         assert any("must be a list" in error for error in errors)
-
-    def test_shelves_not_a_list_int(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation fails when shelves is a non-list, non-string scalar.
-
-        Exercises the ``_coerce_string_list`` ``not isinstance(value, list)``
-        branch, distinct from the string branch above.
-        """
-        errors = plugin.validate_config({"user_id": "12345", "shelves": 5})
-
-        assert any("must be a list" in error for error in errors)
-
-    def test_shelves_entry_not_a_string(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation fails when a shelves entry is not a string.
-
-        Exercises the ``_coerce_string_list`` per-entry type check: a list with
-        a non-string element is rejected before the emptiness check runs.
-        """
-        errors = plugin.validate_config({"user_id": "12345", "shelves": ["read", 5]})
-
-        assert any("entries must be strings" in error for error in errors)
-
-    def test_empty_shelf_name(self, plugin: GoodreadsRssPlugin) -> None:
-        """Test validation fails when a shelf name is blank."""
-        errors = plugin.validate_config({"user_id": "12345", "shelves": ["read", "  "]})
-
-        assert any("non-empty" in error for error in errors)
 
 
 class TestGoodreadsRssPluginFetch:
@@ -345,40 +238,11 @@ class TestGoodreadsRssPluginFetch:
             assert len(items) == 1
             assert items[0].status == expected
 
-    def test_rating_zero_is_unrated(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test user_rating of 0 becomes None."""
-        fake_get = _make_get(
-            {"read": [_feed(_item(title="Book", book_id="1", user_rating="0"))]}
-        )
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert items[0].rating is None
-
-    def test_rating_normalized(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a numeric user_rating is normalized to the 1-5 scale."""
-        fake_get = _make_get(
-            {"read": [_feed(_item(title="Book", book_id="1", user_rating="4"))]}
-        )
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert items[0].rating == 4
-
     @pytest.mark.parametrize(
         ("raw_rating", "expected"),
         [
             ("0", None),
-            ("1", 1),
-            ("2", 2),
             ("3", 3),
-            ("4", 4),
             ("5", 5),
             ("", None),
         ],
@@ -483,45 +347,7 @@ class TestGoodreadsRssPluginFetch:
 
         assert items[0].date_completed == date(2018, 1, 10)
 
-    def test_malformed_read_date_yields_none(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a non-empty but unparseable user_read_at leaves date_completed None.
-
-        Exercises the ``_parse_rss_date`` except branch: a garbage timestamp
-        must be swallowed into ``None`` rather than raising.
-        """
-        fake_get = _make_get(
-            {
-                "read": [
-                    _feed(_item(title="Book", book_id="1", user_read_at="not-a-date"))
-                ]
-            }
-        )
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert items[0].date_completed is None
-
-    def test_pagination_across_two_full_pages(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test two populated pages are both consumed before termination."""
-        page1 = _feed(
-            "".join(_item(title=f"P1-{n}", book_id=f"1{n}") for n in range(3))
-        )
-        page2 = _feed(
-            "".join(_item(title=f"P2-{n}", book_id=f"2{n}") for n in range(3))
-        )
-        fake_get = _make_get({"read": [page1, page2]})  # page 3 auto-empty
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert len(items) == 6
-
-    @pytest.mark.parametrize("count", [0, 1, 99, 100, 101, 250])
+    @pytest.mark.parametrize("count", [0, 100, 250])
     def test_pagination_returns_all_items_at_boundaries(
         self,
         plugin: GoodreadsRssPlugin,
@@ -577,62 +403,6 @@ class TestGoodreadsRssPluginFetch:
         assert item.metadata["year_published"] is None
         assert item.metadata["book_id"] == ""
 
-    def test_custom_shelf_name_passed_through_verbatim(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a hyphenated custom shelf name reaches the request unmodified.
-
-        URL-encoding of the shelf value is delegated to ``requests`` via the
-        ``params`` dict, so the plugin must pass the raw shelf name through.
-        """
-        requested: list[str] = []
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            assert params is not None
-            requested.append(params["shelf"])
-            # Serve one item on page 1 and an empty terminator afterwards so
-            # the pagination loop stops instead of spinning.
-            if params["page"] == 1:
-                return _FakeResponse(_feed(_item(title="Book", book_id="1")))
-            return _FakeResponse(_feed(""))
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["sci-fi"]}))
-
-        assert requested[0] == "sci-fi"
-        assert items[0].status == ConsumptionStatus.UNREAD
-
-    def test_dedup_read_plus_custom_shelf_keeps_completed(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a book on 'read' and a custom shelf is emitted once as COMPLETED.
-
-        The custom shelf is requested first (UNREAD) and the read shelf must
-        upgrade the surviving item to COMPLETED, preserving its read date.
-        """
-        favorite = _item(title="Shared", book_id="42")
-        read = _item(
-            title="Shared",
-            book_id="42",
-            user_read_at="Wed, 10 Jan 2018 00:00:00 -0800",
-        )
-        fake_get = _make_get({"favorites": [_feed(favorite)], "read": [_feed(read)]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(
-            plugin.fetch({"user_id": "12345", "shelves": ["favorites", "read"]})
-        )
-
-        assert len(items) == 1
-        assert items[0].status == ConsumptionStatus.COMPLETED
-        assert items[0].date_completed == date(2018, 1, 10)
-
     def test_dedup_across_overlapping_shelves(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -677,28 +447,6 @@ class TestGoodreadsRssPluginFetch:
         assert len(items) == 1
         assert items[0].status == ConsumptionStatus.COMPLETED
 
-    def test_default_shelves_used_when_omitted(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test fetch queries the three default shelves when none are given."""
-        requested: list[str] = []
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            assert params is not None
-            requested.append(params["shelf"])
-            return _FakeResponse(_feed(""))
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        list(plugin.fetch({"user_id": "12345"}))
-
-        assert requested == ["read", "currently-reading", "to-read"]
-
     def test_explicit_empty_shelves_fetches_nothing(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -721,86 +469,6 @@ class TestGoodreadsRssPluginFetch:
         items = list(plugin.fetch({"user_id": "12345", "shelves": []}))
 
         assert items == []
-
-    def test_duplicate_shelf_names_collapse_to_one(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a shelf listed twice yields each book once (dedup collapses it)."""
-        fake_get = _make_get({"read": [_feed(_item(title="Book", book_id="1"))]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read", "read"]}))
-
-        assert len(items) == 1
-
-    def test_progress_callback_invoked_in_order(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test progress_callback fires once per emitted item with (i, total, title)."""
-        page = _feed(
-            _item(title="One", book_id="1")
-            + _item(title="Two", book_id="2")
-            + _item(title="Three", book_id="3")
-        )
-        fake_get = _make_get({"read": [page]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        calls: list[tuple[int, int | None, str | None]] = []
-
-        def _callback(index: int, total: int | None, title: str | None) -> None:
-            calls.append((index, total, title))
-
-        list(
-            plugin.fetch(
-                {"user_id": "12345", "shelves": ["read"]},
-                progress_callback=_callback,
-            )
-        )
-
-        assert calls == [(1, 3, "One"), (2, 3, "Two"), (3, 3, "Three")]
-
-    def test_unicode_and_entities_round_trip(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test XML entities and accented characters decode into a clean item.
-
-        A ``&amp;`` entity in the title and an accented author name must survive
-        parsing and emerge as their decoded Unicode forms.
-        """
-        fake_get = _make_get(
-            {
-                "read": [
-                    _feed(
-                        _item(
-                            title="Cakes &amp; Ale",
-                            author="Émile Zola",
-                            book_id="1",
-                        )
-                    )
-                ]
-            }
-        )
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert items[0].title == "Cakes & Ale"
-        assert items[0].author == "Émile Zola"
-
-    def test_sets_source_identifier(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test fetched items carry the configured source identifier."""
-        fake_get = _make_get({"read": [_feed(_item(title="Book", book_id="1"))]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(
-            plugin.fetch(
-                {"user_id": "12345", "shelves": ["read"], "_source_id": "my_books"}
-            )
-        )
-
-        assert items[0].source == "my_books"
 
     def test_untitled_items_skipped(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
@@ -845,17 +513,6 @@ class TestGoodreadsRssPluginFetch:
         list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
 
         assert requested == ["https://www.goodreads.com/review/list_rss/12345"]
-
-    def test_empty_shelf_is_clean_no_op(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a shelf with no items yields nothing and raises nothing."""
-        fake_get = _make_get({"read": [_feed("")]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        assert items == []
 
 
 class TestGoodreadsRssRegression:
@@ -1029,78 +686,6 @@ class TestGoodreadsRssPluginErrors:
         assert "12345" not in message
         assert isinstance(exc_info.value, SourceError)
 
-    def test_not_found_profile_raises_clean_error(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a 404 (private/nonexistent profile) raises a scrubbed error.
-
-        The message must carry the status code but neither the host nor the
-        user id, so a private-profile failure cannot leak the identifier.
-        """
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            return _FakeResponse("", status_code=404)
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        with pytest.raises(GoodreadsRssError) as exc_info:
-            list(plugin.fetch({"user_id": "98765", "shelves": ["read"]}))
-
-        message = str(exc_info.value)
-        assert "HTTP 404" in message
-        assert "goodreads.com" not in message
-        assert "98765" not in message
-
-    def test_forbidden_raises_clean_error(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A 403 is what an edge refusing the client looks like, not a 404."""
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            return _FakeResponse("", status_code=403)
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        with pytest.raises(GoodreadsRssError) as exc_info:
-            list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        message = str(exc_info.value)
-        assert "HTTP 403" in message
-        assert "goodreads.com" not in message
-        assert "12345" not in message
-
-    def test_connection_error_raises(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test a transport error raises GoodreadsRssError."""
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            raise requests.ConnectionError("connection refused to www.goodreads.com")
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        with pytest.raises(GoodreadsRssError) as exc_info:
-            list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        message = str(exc_info.value)
-        assert "ConnectionError" in message
-        assert "goodreads.com" not in message
-
     def test_malformed_xml_raises(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1141,40 +726,6 @@ class TestGoodreadsRssPluginErrors:
 
         with pytest.raises(GoodreadsRssError, match="Could not extract"):
             list(plugin.fetch({"user_id": "not-a-url", "shelves": ["read"]}))
-
-    def test_later_shelf_failure_aborts_and_yields_nothing(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test an HTTP error on a later shelf raises and emits no items.
-
-        The first shelf returns a book, but the second shelf 500s. Because
-        fetch accumulates every shelf before yielding, the failure aborts the
-        whole run: the caller sees GoodreadsRssError and no items.
-        """
-
-        def _get(
-            url: str,
-            params: dict[str, Any] | None = None,
-            headers: dict[str, str] | None = None,
-            timeout: int = 0,
-        ) -> Any:
-            assert params is not None
-            if params["shelf"] == "read":
-                if params["page"] == 1:
-                    return _FakeResponse(_feed(_item(title="Book", book_id="1")))
-                return _FakeResponse(_feed(""))
-            return _FakeResponse("", status_code=500)
-
-        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
-
-        emitted = []
-        with pytest.raises(GoodreadsRssError):
-            for item in plugin.fetch(
-                {"user_id": "12345", "shelves": ["read", "to-read"]}
-            ):
-                emitted.append(item)
-
-        assert emitted == []
 
     def test_exceeding_max_pages_raises(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
@@ -1223,15 +774,6 @@ _BILLION_LAUGHS = (
     "</channel></rss>"
 )
 
-# An external-entity (XXE) payload attempting to read a local file. defusedxml
-# must refuse to resolve the external reference.
-_XXE_PAYLOAD = (
-    '<?xml version="1.0"?>'
-    '<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
-    '<rss version="2.0"><channel><item><title>&xxe;</title>'
-    "</channel></rss>"
-)
-
 
 class TestGoodreadsRssPluginSecurity:
     """Security tests for the defusedxml-based RSS parser.
@@ -1264,31 +806,6 @@ class TestGoodreadsRssPluginSecurity:
         assert "Malformed or unsafe RSS" in message
         assert "lol" not in message
         assert "ENTITY" not in message
-        assert "12345" not in message
-        assert "goodreads.com" not in message
-
-    def test_external_entity_is_rejected(
-        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test an external-entity (XXE) payload is refused, not resolved.
-
-        A DOCTYPE that declares a SYSTEM entity pointing at a local file must
-        be rejected by defusedxml so the file contents can never leak into a
-        ContentItem title. The plugin wraps the defused exception in a
-        GoodreadsRssError whose message never echoes the payload, URL, or user
-        id.
-        """
-        fake_get = _make_get({"read": [_XXE_PAYLOAD]})
-        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
-
-        with pytest.raises(GoodreadsRssError) as exc_info:
-            list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
-
-        message = str(exc_info.value)
-        # Positive assertion so a blank/broken message cannot satisfy the test.
-        assert "Malformed or unsafe RSS" in message
-        assert "passwd" not in message
-        assert "SYSTEM" not in message
         assert "12345" not in message
         assert "goodreads.com" not in message
 

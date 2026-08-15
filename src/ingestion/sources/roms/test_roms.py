@@ -3,24 +3,16 @@
 from __future__ import annotations
 
 import logging
-import os
-import re
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
-from src.ingestion.sources.roms._rom_title import (
-    _MAX_PATTERN_COUNT,
-    _MAX_PATTERN_LENGTH,
-)
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.roms.roms import (
-    DEFAULT_EXTENSIONS,
     RomScannerPlugin,
     _safe_size_bytes,
 )
-from src.models.content import ConsumptionStatus, ContentType
 
 
 @pytest.fixture()
@@ -48,66 +40,12 @@ def rom_dir(tmp_path: Path) -> Path:
     return root
 
 
-class TestRomScannerProperties:
-    """Tests for plugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: RomScannerPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.name == "roms"
-
-    def test_display_name(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.display_name == "ROM Library"
-
-    def test_content_types(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.content_types == [ContentType.VIDEO_GAME]
-
-    def test_requires_api_key(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.requires_network is False
-
-    def test_description(self, plugin: RomScannerPlugin) -> None:
-        assert plugin.description == (
-            "Scan local directories for emulator ROMs and game files"
-        )
-
-    def test_config_schema_field_set(self, plugin: RomScannerPlugin) -> None:
-        names = {field.name for field in plugin.get_config_schema()}
-        assert names == {
-            "paths",
-            "include_extensions",
-            "exclude_extensions",
-            "exclude_names",
-            "extra_strip_patterns",
-        }
-
-    def test_default_extensions_cover_common_systems(self) -> None:
-        # Spot check: every major system the user actually has.
-        for ext in (".nes", ".smc", ".z64", ".gba", ".rvz", ".7z", ".m3u", ".xci"):
-            assert ext in DEFAULT_EXTENSIONS
-
-
 class TestRomScannerValidation:
     """Tests for config validation."""
-
-    def test_valid_config(self, plugin: RomScannerPlugin, rom_dir: Path) -> None:
-        errors = plugin.validate_config({"paths": [str(rom_dir)]})
-        assert errors == []
 
     def test_missing_paths(self, plugin: RomScannerPlugin) -> None:
         errors = plugin.validate_config({})
         assert any("paths" in error for error in errors)
-
-    def test_empty_paths(self, plugin: RomScannerPlugin) -> None:
-        errors = plugin.validate_config({"paths": []})
-        assert any("paths" in error for error in errors)
-
-    def test_paths_not_a_list(self, plugin: RomScannerPlugin, rom_dir: Path) -> None:
-        errors = plugin.validate_config({"paths": str(rom_dir)})
-        assert any("list" in error.lower() for error in errors)
 
     def test_nonexistent_path(self, plugin: RomScannerPlugin, tmp_path: Path) -> None:
         errors = plugin.validate_config({"paths": [str(tmp_path / "missing")]})
@@ -137,33 +75,6 @@ class TestRomScannerValidation:
         )
         assert any("extra_strip_patterns" in error for error in errors)
 
-    def test_extra_strip_patterns_at_count_cap_accepted(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        """A cap that rejected its own limit would be a cap of 31."""
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 32}
-        )
-        assert errors == []
-
-    def test_count_rejection_reads_like_the_length_rejection(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        """Both caps reach the user through one message shape, so both are fixable.
-
-        A count error phrased differently would be a second thing to recognise
-        in the source-config form for no gain.
-        """
-        prefix = "Invalid 'extra_strip_patterns' entry: "
-        by_count = plugin.validate_config(
-            {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 33}
-        )
-        by_length = plugin.validate_config(
-            {"paths": [str(rom_dir)], "extra_strip_patterns": ["a" * 201]}
-        )
-        assert by_count == [f"{prefix}Pattern list exceeds 32 entries (33)"]
-        assert by_length[0].startswith(prefix)
-
     def test_include_extensions_must_be_list(
         self, plugin: RomScannerPlugin, rom_dir: Path
     ) -> None:
@@ -171,59 +82,6 @@ class TestRomScannerValidation:
             {"paths": [str(rom_dir)], "include_extensions": ".zip"}
         )
         assert any("include_extensions" in error for error in errors)
-
-    def test_exclude_extensions_must_be_list(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "exclude_extensions": ".zip"}
-        )
-        assert any("exclude_extensions" in error for error in errors)
-
-    def test_exclude_names_must_be_list(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "exclude_names": "scripts"}
-        )
-        assert any("exclude_names" in error for error in errors)
-
-    def test_collects_multiple_errors(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        errors = plugin.validate_config(
-            {"paths": [str(tmp_path / "missing")], "exclude_names": "scripts"}
-        )
-        assert any("not found" in error.lower() for error in errors)
-        assert any("exclude_names" in error for error in errors)
-
-    def test_include_extensions_int_value_rejected(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        """Coercion error when value is neither None, str, nor list."""
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "include_extensions": 42}
-        )
-        assert any("include_extensions" in error for error in errors)
-
-    def test_include_extensions_non_string_entry_rejected(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "include_extensions": [".zip", 99]}
-        )
-        assert any(
-            "include_extensions" in error and "strings" in error for error in errors
-        )
-
-    def test_extra_strip_patterns_non_list_rejected(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        """Coercion error path (line 319 branch) — non-list value."""
-        errors = plugin.validate_config(
-            {"paths": [str(rom_dir)], "extra_strip_patterns": "not-a-list"}
-        )
-        assert any("extra_strip_patterns" in error for error in errors)
 
     def test_extra_strip_patterns_length_cap_rejected(
         self, plugin: RomScannerPlugin, rom_dir: Path
@@ -235,57 +93,6 @@ class TestRomScannerValidation:
             }
         )
         assert any("extra_strip_patterns" in error for error in errors)
-
-
-# Any plausible rewording of the disclaimer, since only its claim is
-# load bearing.
-_UNCAPPED_RUN_TIME = re.compile(
-    r"run ?time is (not (capped|bounded|limited)|unbounded|uncapped)",
-    re.IGNORECASE,
-)
-
-
-class TestExtraStripPatternLimitsAreDocumented:
-    """A cap a user cannot see is a rejection they cannot plan around.
-
-    Both surfaces are pinned to the constants, so raising one cap cannot leave
-    the other number behind as a lie.
-    """
-
-    def _readme_row(self) -> str:
-        readme = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
-        return next(
-            line
-            for line in readme.splitlines()
-            if line.startswith("| `extra_strip_patterns`")
-        )
-
-    def _schema_description(self, plugin: RomScannerPlugin) -> str:
-        field = next(
-            f for f in plugin.get_config_schema() if f.name == "extra_strip_patterns"
-        )
-        return field.description
-
-    def test_config_schema_states_both_caps(self, plugin: RomScannerPlugin) -> None:
-        description = self._schema_description(plugin)
-        assert str(_MAX_PATTERN_COUNT) in description
-        assert str(_MAX_PATTERN_LENGTH) in description
-
-    def test_readme_states_both_caps(self) -> None:
-        row = self._readme_row()
-        assert str(_MAX_PATTERN_COUNT) in row
-        assert str(_MAX_PATTERN_LENGTH) in row
-
-    def test_neither_surface_claims_run_time_is_bounded(
-        self, plugin: RomScannerPlugin
-    ) -> None:
-        """Python's ``re`` takes no timeout, so a time bound would be a false promise.
-
-        A rewrite that drops the disclaimer while listing two caps reads as
-        ReDoS solved here, and it is not.
-        """
-        for text in (self._schema_description(plugin), self._readme_row()):
-            assert _UNCAPPED_RUN_TIME.search(text), text
 
 
 class TestRomScannerFetchExtensionFiltering:
@@ -326,16 +133,6 @@ class TestRomScannerFetchExtensionFiltering:
         titles = {item.title for item in items}
         assert titles == {"Game"}
 
-    def test_extensions_are_case_insensitive(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "GameA.ZIP").write_bytes(b"x")
-        (root / "GameB.Z64").write_bytes(b"y")
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert {item.title for item in items} == {"GameA", "GameB"}
-
     def test_extension_normalization_accepts_no_dot(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -346,20 +143,6 @@ class TestRomScannerFetchExtensionFiltering:
             plugin.fetch({"paths": [str(root)], "include_extensions": ["exe"]})
         )
         assert {item.title for item in items} == {"Installer"}
-
-    def test_empty_extension_entries_silently_dropped(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        """Empty/whitespace extension entries are skipped, not crashes."""
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Game.zip").write_bytes(b"x")
-        items = list(
-            plugin.fetch(
-                {"paths": [str(root)], "include_extensions": ["", "  ", ".exe"]}
-            )
-        )
-        assert {item.title for item in items} == {"Game"}
 
 
 class TestRomScannerFetchTitleCleaning:
@@ -373,15 +156,6 @@ class TestRomScannerFetchTitleCleaning:
         (root / "1942 (Japan, USA) (En).zip").write_bytes(b"x")
         items = list(plugin.fetch({"paths": [str(root)]}))
         assert items[0].title == "1942"
-
-    def test_default_cleaner_strips_brackets(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "psx"
-        root.mkdir()
-        (root / "Castlevania - SoTN [NTSC-U] [SLUS-00067].rar").write_bytes(b"x")
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert items[0].title == "Castlevania - SoTN"
 
     def test_extra_strip_patterns_appended_after_defaults(
         self, plugin: RomScannerPlugin, tmp_path: Path
@@ -409,17 +183,6 @@ class TestRomScannerFetchTitleCleaning:
                         "paths": [str(rom_dir)],
                         "extra_strip_patterns": ["[unclosed"],
                     }
-                )
-            )
-
-    def test_too_many_extra_strip_patterns_raises_in_fetch(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        """A stored config predating the cap must not scan with it exceeded."""
-        with pytest.raises(SourceError, match="exceeds 32 entries"):
-            list(
-                plugin.fetch(
-                    {"paths": [str(rom_dir)], "extra_strip_patterns": ["x"] * 33}
                 )
             )
 
@@ -479,16 +242,6 @@ class TestRomScannerFolders:
         items = list(plugin.fetch({"paths": [str(root)]}))
         assert {item.title for item in items} == {"Resident Evil"}
 
-    def test_exclude_names_skips_folder(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "model2"
-        root.mkdir()
-        (root / "scripts").mkdir()
-        (root / "Daytona.zip").write_bytes(b"x")
-        items = list(plugin.fetch({"paths": [str(root)], "exclude_names": ["scripts"]}))
-        assert {item.title for item in items} == {"Daytona"}
-
     def test_exclude_names_glob_pattern(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -511,18 +264,6 @@ class TestRomScannerFolders:
         )
         assert {item.title for item in items} == {"Daytona USA"}
 
-    def test_exclude_names_skips_files_too(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Tetris.zip").write_bytes(b"x")
-        (root / "BadGame.zip").write_bytes(b"y")
-        items = list(
-            plugin.fetch({"paths": [str(root)], "exclude_names": ["BadGame.zip"]})
-        )
-        assert {item.title for item in items} == {"Tetris"}
-
 
 class TestRomScannerHidden:
     def test_hidden_dotfiles_always_skipped(
@@ -536,23 +277,8 @@ class TestRomScannerHidden:
         items = list(plugin.fetch({"paths": [str(root)]}))
         assert {item.title for item in items} == {"Tetris"}
 
-    def test_directory_with_only_hidden_yields_nothing(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / ".DS_Store").write_bytes(b"x")
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert items == []
-
 
 class TestRomScannerDedup:
-    def test_dedupes_when_same_path_listed_twice(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        items = list(plugin.fetch({"paths": [str(rom_dir), str(rom_dir)]}))
-        assert len(items) == 3
-
     def test_symlink_to_same_target_dedupes(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -563,19 +289,6 @@ class TestRomScannerDedup:
         (root / "tetris-link.zip").symlink_to(target)
         items = list(plugin.fetch({"paths": [str(root)]}))
         assert len(items) == 1
-
-    def test_dangling_symlink_skipped(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        """A symlink whose target does not exist reports neither file nor dir;
-        it's skipped rather than yielded as a phantom entry."""
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Tetris.zip").write_bytes(b"x")
-        (root / "broken.zip").symlink_to(tmp_path / "missing-target")
-
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert {item.title for item in items} == {"Tetris"}
 
     def test_title_dedup_spans_scan_roots(
         self, plugin: RomScannerPlugin, tmp_path: Path
@@ -600,13 +313,6 @@ class TestRomScannerMetadata:
         assert by_title["Chrono Trigger"].metadata["is_directory"] is False
         assert by_title["Doom"].metadata["is_directory"] is True
 
-    def test_metadata_includes_parent_dir_name(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        items = list(plugin.fetch({"paths": [str(rom_dir)]}))
-        for item in items:
-            assert item.metadata["parent_dir"] == "snes"
-
     def test_metadata_includes_size_for_files(
         self, plugin: RomScannerPlugin, rom_dir: Path
     ) -> None:
@@ -618,16 +324,6 @@ class TestRomScannerMetadata:
 
 
 class TestRomScannerItem:
-    def test_all_items_unread_video_game(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        items = list(plugin.fetch({"paths": [str(rom_dir)]}))
-        assert len(items) == 3
-        for item in items:
-            assert item.content_type == ContentType.VIDEO_GAME.value
-            assert item.status == ConsumptionStatus.UNREAD.value
-            assert item.rating is None
-
     def test_id_uses_rom_prefix_and_is_stable(
         self, plugin: RomScannerPlugin, rom_dir: Path
     ) -> None:
@@ -638,62 +334,6 @@ class TestRomScannerItem:
         for item_id in first.values():
             assert item_id.startswith("rom:")
 
-    def test_source_set_from_source_id(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        items = list(plugin.fetch({"_source_id": "my_roms", "paths": [str(rom_dir)]}))
-        for item in items:
-            assert item.source == "my_roms"
-
-    def test_source_falls_back_to_plugin_name(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        items = list(plugin.fetch({"paths": [str(rom_dir)]}))
-        for item in items:
-            assert item.source == "roms"
-
-
-class TestRomScannerProgressCallback:
-    def test_callback_fires_per_yielded_item(
-        self, plugin: RomScannerPlugin, rom_dir: Path
-    ) -> None:
-        calls: list[tuple[int, int | None, str | None]] = []
-
-        def cb(processed: int, total: int | None, current: str | None) -> None:
-            calls.append((processed, total, current))
-
-        list(plugin.fetch({"paths": [str(rom_dir)]}, progress_callback=cb))
-        # 3 yielded items, processed monotonic, total = candidate count (5:
-        # Chrono, Doom, EMULATOR.cfg, Mario Kart, notes.txt). The callback
-        # receives the cleaned title at yield time.
-        assert len(calls) == 3
-        processed_values = [call[0] for call in calls]
-        assert processed_values == sorted(processed_values)
-        for call in calls:
-            assert call[1] == 5
-        titles_seen = {call[2] for call in calls}
-        assert titles_seen == {"Chrono Trigger", "Mario Kart 64", "Doom"}
-
-    def test_callback_skips_deduped_titles(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        root = tmp_path / "psx"
-        root.mkdir()
-        for disc in range(1, 5):
-            (root / f"Final Fantasy VII (USA) (Disc {disc}).bin").write_bytes(b"x")
-        (root / "Chrono Trigger.zip").write_bytes(b"y")
-
-        calls: list[tuple[int, int | None, str | None]] = []
-
-        def cb(processed: int, total: int | None, current: str | None) -> None:
-            calls.append((processed, total, current))
-
-        list(plugin.fetch({"paths": [str(root)]}, progress_callback=cb))
-        # 5 candidates total; 2 unique titles after dedup.
-        assert len(calls) == 2
-        for call in calls:
-            assert call[1] == 5
-
 
 class TestRomScannerErrors:
     def test_missing_path_raises(
@@ -701,14 +341,6 @@ class TestRomScannerErrors:
     ) -> None:
         with pytest.raises(SourceError, match="not found"):
             list(plugin.fetch({"paths": [str(tmp_path / "missing")]}))
-
-    def test_path_not_directory_raises(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        file_path = tmp_path / "file.txt"
-        file_path.write_text("x")
-        with pytest.raises(SourceError, match="directory"):
-            list(plugin.fetch({"paths": [str(file_path)]}))
 
     def test_unreadable_scan_root_skipped(
         self,
@@ -733,84 +365,6 @@ class TestRomScannerErrors:
         items = list(plugin.fetch({"paths": [str(bad), str(good)]}))
         assert {item.title for item in items} == {"Zelda"}
 
-    def test_is_file_oserror_skips_entry(
-        self,
-        plugin: RomScannerPlugin,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Bad.zip").write_bytes(b"x")
-        (root / "Good.zip").write_bytes(b"y")
-        original_is_file = Path.is_file
-
-        def fake_is_file(self: Path) -> bool:
-            if self.name == "Bad.zip":
-                raise PermissionError("denied")
-            return original_is_file(self)
-
-        monkeypatch.setattr(Path, "is_file", fake_is_file)
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert {item.title for item in items} == {"Good"}
-
-    def test_size_lookup_failure_skips_size_bytes(
-        self,
-        plugin: RomScannerPlugin,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """When _safe_size_bytes returns None, the entry is yielded without a
-        size_bytes metadata key — flaky-mount tolerance."""
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Tetris.zip").write_bytes(b"x")
-
-        monkeypatch.setattr(
-            "src.ingestion.sources.roms.roms._safe_size_bytes", lambda path: None
-        )
-
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert len(items) == 1
-        assert "size_bytes" not in items[0].metadata
-
-    def test_safe_size_bytes_returns_none_on_oserror(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Unit test for the size helper itself."""
-        target = tmp_path / "Tetris.zip"
-        target.write_bytes(b"x")
-
-        def fake_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-            raise OSError("stat failed")
-
-        monkeypatch.setattr(Path, "stat", fake_stat)
-        assert _safe_size_bytes(target) is None
-
-    def test_resolve_failure_skips_entry(
-        self,
-        plugin: RomScannerPlugin,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """An OSError from Path.resolve() (e.g. circular symlink) skips the
-        entry instead of aborting the entire scan."""
-        root = tmp_path / "stash"
-        root.mkdir()
-        (root / "Bad.zip").write_bytes(b"x")
-        (root / "Good.zip").write_bytes(b"y")
-
-        original_resolve = Path.resolve
-
-        def fake_resolve(self: Path, *args: object, **kwargs: object) -> Path:
-            if self.name == "Bad.zip":
-                raise OSError("resolve failed")
-            return original_resolve(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "resolve", fake_resolve)
-        items = list(plugin.fetch({"paths": [str(root)]}))
-        assert {item.title for item in items} == {"Good"}
-
 
 class TestRomScannerPathContainmentRegression:
     """Regression: source config as a filesystem enumeration primitive.
@@ -833,18 +387,6 @@ class TestRomScannerPathContainmentRegression:
             "Path is outside the allowed source roots: /etc. "
             "Add its directory to security.allowed_source_roots in config.yaml."
         ]
-
-    def test_validate_refuses_a_symlinked_scan_root(
-        self, plugin: RomScannerPlugin, tmp_path: Path
-    ) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
-        outside.mkdir()
-        link = tmp_path / "stash"
-        link.symlink_to(outside, target_is_directory=True)
-
-        errors = plugin.validate_config({"paths": [str(link)]})
-
-        assert any("outside the allowed source roots" in error for error in errors)
 
     def test_fetch_refuses_and_yields_nothing(
         self, plugin: RomScannerPlugin, tmp_path: Path

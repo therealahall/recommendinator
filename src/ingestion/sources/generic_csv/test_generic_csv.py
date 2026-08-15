@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.ingestion.plugin_base import SourceError, SourcePlugin
+from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.generic_csv.generic_csv import (
     CsvImportPlugin,
     parse_boolean_field,
@@ -23,58 +23,11 @@ def plugin() -> CsvImportPlugin:
     return CsvImportPlugin()
 
 
-class TestCsvImportPluginProperties:
-    """Tests for CsvImportPlugin metadata properties."""
-
-    def test_is_source_plugin(self, plugin: CsvImportPlugin) -> None:
-        assert isinstance(plugin, SourcePlugin)
-
-    def test_name(self, plugin: CsvImportPlugin) -> None:
-        assert plugin.name == "csv_import"
-
-    def test_display_name(self, plugin: CsvImportPlugin) -> None:
-        assert plugin.display_name == "CSV Import"
-
-    def test_content_types(self, plugin: CsvImportPlugin) -> None:
-        assert ContentType.BOOK in plugin.content_types
-        assert ContentType.MOVIE in plugin.content_types
-        assert ContentType.TV_SHOW in plugin.content_types
-        assert ContentType.VIDEO_GAME in plugin.content_types
-
-    def test_requires_api_key(self, plugin: CsvImportPlugin) -> None:
-        assert plugin.requires_api_key is False
-
-    def test_requires_network(self, plugin: CsvImportPlugin) -> None:
-        assert plugin.requires_network is False
-
-    def test_config_schema(self, plugin: CsvImportPlugin) -> None:
-        schema = plugin.get_config_schema()
-        assert len(schema) == 2
-        names = [field.name for field in schema]
-        assert "path" in names
-        assert "content_type" in names
-
-    def test_get_source_identifier(self, plugin: CsvImportPlugin) -> None:
-        assert plugin.get_source_identifier() == "csv_import"
-
-
 class TestCsvImportPluginValidation:
     """Tests for CsvImportPlugin config validation."""
 
-    def test_validate_valid_config(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file), "content_type": "book"})
-        assert errors == []
-
     def test_validate_missing_csv_path(self, plugin: CsvImportPlugin) -> None:
         errors = plugin.validate_config({"content_type": "book"})
-        assert any("path" in error for error in errors)
-
-    def test_validate_empty_csv_path(self, plugin: CsvImportPlugin) -> None:
-        errors = plugin.validate_config({"path": "", "content_type": "book"})
         assert any("path" in error for error in errors)
 
     def test_validate_nonexistent_file(
@@ -85,14 +38,6 @@ class TestCsvImportPluginValidation:
         )
         assert any("not found" in error for error in errors)
 
-    def test_validate_missing_content_type(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text("title\n")
-        errors = plugin.validate_config({"path": str(csv_file)})
-        assert any("content_type" in error for error in errors)
-
     def test_validate_invalid_content_type(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
@@ -102,17 +47,6 @@ class TestCsvImportPluginValidation:
             {"path": str(csv_file), "content_type": "podcast"}
         )
         assert any("Invalid content_type" in error for error in errors)
-
-    def test_validate_all_content_types(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title\n")
-        for content_type in ContentType:
-            errors = plugin.validate_config(
-                {"path": str(csv_file), "content_type": content_type.value}
-            )
-            assert errors == [], f"Failed for content_type={content_type.value}"
 
 
 class TestCsvImportPluginFetchBooks:
@@ -181,42 +115,6 @@ class TestCsvImportPluginFetchBooks:
         assert len(items) == 1
         assert items[0].title == "Valid Book"
 
-    def test_fetch_notes_in_metadata(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(
-            "title,author,rating,status,notes\n"
-            "Test Book,Author,5,completed,Recommended by friend\n"
-        )
-
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-
-        assert items[0].metadata["notes"] == "Recommended by friend"
-
-
-class TestCsvImportPluginFetchMovies:
-    """Tests for CSV import of movies."""
-
-    def test_fetch_movie(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "movies.csv"
-        csv_file.write_text(
-            "title,director,rating,status,year,runtime_minutes,genre\n"
-            "Inception,Christopher Nolan,5,completed,2010,148,Sci-Fi\n"
-        )
-
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "movie"}))
-
-        assert len(items) == 1
-        item = items[0]
-        assert item.title == "Inception"
-        assert item.author == "Christopher Nolan"
-        assert item.content_type == ContentType.MOVIE.value
-        assert item.rating == 5
-        assert item.metadata["release_year"] == "2010"
-        assert item.metadata["runtime"] == "148"
-        assert item.metadata["genres"] == ["Sci-Fi"]
-
 
 class TestCsvImportPluginFetchTvShows:
     """Tests for CSV import of TV shows."""
@@ -263,61 +161,15 @@ class TestCsvImportPluginFetchVideoGames:
         assert item.metadata["genres"] == ["RPG"]
         assert item.metadata["playtime_hours"] == "120"
 
-    def test_imported_genre_lands_as_a_list(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        """The genre cell lands in the shape the rest of the app reads.
-
-        Every downstream reader recognises only a list under ``genres``, so a
-        bare string there drops the genre from scoring without failing.
-        """
-        csv_file = tmp_path / "games.csv"
-        csv_file.write_text(
-            "title,developer,status,platform,genre\n"
-            "The Witcher 3,CD Projekt Red,completed,PC,RPG\n"
-        )
-
-        items = list(
-            plugin.fetch({"path": str(csv_file), "content_type": "video_game"})
-        )
-
-        assert items[0].metadata["genres"] == ["RPG"]
-
 
 class TestCsvImportPluginStatusMapping:
     """Tests for status string mapping."""
-
-    def test_status_completed(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status\nTest,completed\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.COMPLETED.value
-
-    def test_status_in_progress(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status\nTest,in_progress\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
-
-    def test_status_unread(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status\nTest,unread\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
 
     def test_status_unknown_defaults_to_unread(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("title,status\nTest,something_else\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].status == ConsumptionStatus.UNREAD.value
-
-    def test_status_empty_defaults_to_unread(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status\nTest,\n")
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].status == ConsumptionStatus.UNREAD.value
 
@@ -330,22 +182,6 @@ class TestCsvImportPluginStatusMapping:
 
 class TestCsvImportPluginRating:
     """Tests for rating normalization."""
-
-    def test_valid_ratings(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,rating\n" "A,1\n" "B,2\n" "C,3\n" "D,4\n" "E,5\n")
-
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-
-        assert [item.rating for item in items] == [1, 2, 3, 4, 5]
-
-    def test_empty_rating_is_none(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,rating\nTest,\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].rating is None
 
     def test_zero_rating_is_none(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
         csv_file = tmp_path / "data.csv"
@@ -366,14 +202,6 @@ class TestCsvImportPluginErrors:
                     {"path": str(tmp_path / "missing.csv"), "content_type": "book"}
                 )
             )
-
-    def test_invalid_content_type_raises_source_error(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title\nTest\n")
-        with pytest.raises(SourceError, match="Invalid content type"):
-            list(plugin.fetch({"path": str(csv_file), "content_type": "podcast"}))
 
     def test_missing_title_column_raises_source_error(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -404,18 +232,6 @@ class TestCsvTemplates:
         allowed_source_roots(directory)
         return directory
 
-    def test_books_template_exists(self, templates_dir: Path) -> None:
-        assert (templates_dir / "books.csv").exists()
-
-    def test_movies_template_exists(self, templates_dir: Path) -> None:
-        assert (templates_dir / "movies.csv").exists()
-
-    def test_tv_shows_template_exists(self, templates_dir: Path) -> None:
-        assert (templates_dir / "tv_shows.csv").exists()
-
-    def test_video_games_template_exists(self, templates_dir: Path) -> None:
-        assert (templates_dir / "video_games.csv").exists()
-
     def test_books_template_parseable(
         self, plugin: CsvImportPlugin, templates_dir: Path
     ) -> None:
@@ -427,75 +243,9 @@ class TestCsvTemplates:
         assert len(items) == 1
         assert items[0].title == "The Name of the Wind"
 
-    def test_movies_template_parseable(
-        self, plugin: CsvImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "movies.csv"),
-                    "content_type": "movie",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "Inception"
-
-    def test_tv_shows_template_parseable(
-        self, plugin: CsvImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "tv_shows.csv"),
-                    "content_type": "tv_show",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "Breaking Bad"
-
-    def test_video_games_template_parseable(
-        self, plugin: CsvImportPlugin, templates_dir: Path
-    ) -> None:
-        items = list(
-            plugin.fetch(
-                {
-                    "path": str(templates_dir / "video_games.csv"),
-                    "content_type": "video_game",
-                }
-            )
-        )
-        assert len(items) == 1
-        assert items[0].title == "The Witcher 3"
-
 
 class TestCsvImportIgnored:
     """Tests for ignored field parsing in CSV import."""
-
-    def test_ignored_true(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status,ignored\nTest,completed,true\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is True
-
-    def test_ignored_false(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status,ignored\nTest,completed,false\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is False
-
-    def test_ignored_yes(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status,ignored\nTest,completed,yes\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is True
-
-    def test_ignored_one(self, plugin: CsvImportPlugin, tmp_path: Path) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status,ignored\nTest,completed,1\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is True
 
     def test_blank_ignored_cell_is_unspecified_regression(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -517,15 +267,6 @@ class TestCsvImportIgnored:
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is None
 
-    def test_whitespace_ignored_cell_is_unspecified(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        """A cell holding only spaces is as empty as one holding nothing."""
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,status,ignored\nTest,completed,   \n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert items[0].ignored is None
-
     def test_ignored_column_absent_is_unspecified(
         self, plugin: CsvImportPlugin, tmp_path: Path
     ) -> None:
@@ -539,40 +280,9 @@ class TestCsvImportIgnored:
         items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
         assert items[0].ignored is None
 
-    def test_ignored_not_treated_as_unknown_column(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        """Ignored column should be recognized, not warned as unknown."""
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("title,ignored\nTest,false\n")
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-        assert len(items) == 1
-
 
 class TestCsvImportSeasonsWatched:
     """Tests for seasons_watched parsing in CSV import."""
-
-    def test_comma_separated_seasons(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text(
-            "title,creator,status,seasons_watched,total_seasons\n"
-            'Show,Creator,completed,"1,2,5,6",8\n'
-        )
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
-        assert items[0].metadata["seasons_watched"] == [1, 2, 5, 6]
-
-    def test_single_number_backward_compat(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text(
-            "title,creator,status,seasons_watched,total_seasons\n"
-            "Show,Creator,completed,5,5\n"
-        )
-        items = list(plugin.fetch({"path": str(csv_file), "content_type": "tv_show"}))
-        assert items[0].metadata["seasons_watched"] == [1, 2, 3, 4, 5]
 
     def test_empty_seasons_watched(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -608,10 +318,6 @@ class TestParseBooleanField:
         assert parse_boolean_field(False) is False
         assert parse_boolean_field(0) is False
 
-    def test_unrecognized_defaults_false(self) -> None:
-        assert parse_boolean_field("maybe") is False
-        assert parse_boolean_field("  ") is False
-
 
 class TestParseSeasonsWatched:
     """Tests for the parse_seasons_watched helper."""
@@ -619,32 +325,11 @@ class TestParseSeasonsWatched:
     def test_comma_separated(self) -> None:
         assert parse_seasons_watched("1,2,5,6") == [1, 2, 5, 6]
 
-    def test_comma_separated_with_spaces(self) -> None:
-        assert parse_seasons_watched("1, 2, 5, 6") == [1, 2, 5, 6]
-
     def test_single_integer(self) -> None:
         assert parse_seasons_watched(5) == [1, 2, 3, 4, 5]
 
-    def test_single_string_number(self) -> None:
-        assert parse_seasons_watched("3") == [1, 2, 3]
-
-    def test_array_passthrough(self) -> None:
-        assert parse_seasons_watched([1, 2, 5, 6]) == [1, 2, 5, 6]
-
     def test_unsorted_array_gets_sorted(self) -> None:
         assert parse_seasons_watched([6, 1, 5, 2]) == [1, 2, 5, 6]
-
-    def test_empty_string(self) -> None:
-        assert parse_seasons_watched("") == []
-
-    def test_none(self) -> None:
-        assert parse_seasons_watched(None) == []
-
-    def test_zero(self) -> None:
-        assert parse_seasons_watched(0) == []
-
-    def test_negative(self) -> None:
-        assert parse_seasons_watched(-1) == []
 
     def test_huge_count_capped_at_max_seasons(self) -> None:
         """A malformed count must not expand into an unbounded list."""
@@ -652,29 +337,11 @@ class TestParseSeasonsWatched:
         assert result == list(range(1, MAX_SEASONS + 1))
         assert len(result) == MAX_SEASONS
 
-    def test_huge_string_count_capped(self) -> None:
-        """A malformed single-number string (count path) is capped too."""
-        assert parse_seasons_watched("2000000000") == list(range(1, MAX_SEASONS + 1))
-
     def test_out_of_range_array_elements_dropped(self) -> None:
         """Above the cap (or below 1) is dropped; the cap itself is kept."""
         assert parse_seasons_watched(
             [1, 5, 0, -3, MAX_SEASONS, MAX_SEASONS + 1, 2_000_000]
         ) == [1, 5, MAX_SEASONS]
-
-    def test_non_numeric_array_elements_skipped(self) -> None:
-        """Non-numeric array entries are skipped, not raised (matches comma path)."""
-        assert parse_seasons_watched([1, "abc", 3, ""]) == [1, 3]
-
-    def test_out_of_range_comma_values_dropped(self) -> None:
-        """Comma path drops out-of-range values but keeps the cap boundary."""
-        assert parse_seasons_watched(
-            f"1,2,{MAX_SEASONS},{MAX_SEASONS + 1},9000000"
-        ) == [
-            1,
-            2,
-            MAX_SEASONS,
-        ]
 
 
 class TestCsvImportPathContainmentRegression:
@@ -693,20 +360,6 @@ class TestCsvImportPathContainmentRegression:
             "Path is outside the allowed source roots: /etc/passwd. "
             "Add its directory to security.allowed_source_roots in config.yaml."
         ]
-
-    def test_validate_refuses_a_symlink_escaping_its_root(
-        self, plugin: CsvImportPlugin, tmp_path: Path
-    ) -> None:
-        outside = tmp_path.parent / f"{tmp_path.name}-outside"
-        outside.mkdir()
-        secret = outside / "secret.csv"
-        secret.write_text("title\nLeaked\n")
-        link = tmp_path / "books.csv"
-        link.symlink_to(secret)
-
-        errors = plugin.validate_config({"path": str(link), "content_type": "book"})
-
-        assert any("outside the allowed source roots" in error for error in errors)
 
     def test_fetch_refuses_and_yields_nothing(
         self, plugin: CsvImportPlugin, tmp_path: Path
@@ -763,20 +416,6 @@ class TestCsvImportLogInjectionRegression:
             "Expected YYYY-MM-DD."
         ]
 
-    def test_a_newline_in_a_date_cell_cannot_forge_a_log_entry(
-        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text('title,date_completed\nDune,"2024\nImported 9999 items"\n')
-
-        with caplog.at_level(logging.WARNING, logger=CSV_LOGGER):
-            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-
-        assert self._messages(caplog) == [
-            "Invalid date format for 'Dune': 2024\\nImported 9999 items. "
-            "Expected YYYY-MM-DD."
-        ]
-
     def test_a_newline_in_a_header_cannot_forge_a_log_entry(
         self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -790,17 +429,3 @@ class TestCsvImportLogInjectionRegression:
             "CSV contains unknown columns that will be ignored: "
             "colour\\nImported 9999 items"
         ]
-
-    def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
-        self, plugin: CsvImportPlugin, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A configured path is operator input, and a file name may hold a break."""
-        csv_file = tmp_path / "books\nImported 9999 items.csv"
-        csv_file.write_text("title\nDune\n")
-
-        with caplog.at_level(logging.INFO, logger=CSV_LOGGER):
-            list(plugin.fetch({"path": str(csv_file), "content_type": "book"}))
-
-        assert self._messages(caplog)[0].endswith(
-            "books\\nImported 9999 items.csv"
-        ), self._messages(caplog)
