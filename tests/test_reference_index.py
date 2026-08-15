@@ -1,8 +1,7 @@
 """Tests for the taste-signal index behind adaptations and references.
 
 The behaviour these lookups produce is pinned by
-``tests/test_recommendation_engine.py`` and
-``tests/test_recommendation_characterisation.py``. What is pinned here is the
+``tests/test_recommendation_engine.py``. What is pinned here is the
 cost: each signal item is derived once per request, and a candidate reaches
 its matches through the index rather than by comparing itself against the
 whole signal set.

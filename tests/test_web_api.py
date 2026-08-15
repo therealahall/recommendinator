@@ -35,7 +35,6 @@ from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import SyncResult, SyncResultCallback
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.content_length import LengthPreference
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.recommendations.scorers import SCORER_NAME_MAP
@@ -1174,7 +1173,6 @@ def test_put_user_preferences_merges_for_the_user_named_in_the_path(
 
 _OVER_LONG_THEME_ID = "k" * (UserPreferenceConfig.MAX_THEME_ID_LENGTH + 1)
 _CONTENT_TYPE_NAMES = [member.value for member in ContentType]
-_LENGTH_PREFERENCE_NAMES = [member.value for member in LengthPreference]
 
 
 class TestUserPreferenceBounds:
