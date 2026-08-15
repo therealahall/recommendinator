@@ -109,11 +109,12 @@ supplied:
   writes `ignored` alone.
 
 For a TV show, status and the season list are one fact. A supplied
-`seasons_watched` derives the status, a supplied `completed` ticks every season
-unless the season total is unknown, and a caller supplying both is taken at its
-word — the edit dialog derives the pair itself. `src/utils/series.py` owns that
-arithmetic for every caller: the edit door, the Trakt plugin and
-`_handle_tv_season_change`.
+`seasons_watched` derives the status; a supplied status with no list writes one:
+`completed` ticks every season unless the total is unknown, `unread` empties it,
+and `currently_consuming` leaves the stored list alone, since "in progress" names
+no seasons. A caller supplying both, like the edit dialog, is taken at its word.
+`src/utils/series.py` owns that arithmetic for every caller: the edit door, the
+Trakt plugin and `_handle_tv_season_change`.
 
 **No door stores a blank review.** A stored `""` reads as a review the user wrote
 and blocks every later import from filling the field. The sync door declines to

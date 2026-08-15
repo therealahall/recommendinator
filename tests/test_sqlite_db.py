@@ -5347,6 +5347,102 @@ class TestTvSeasonSyncRegression:
         # Still completed — no new seasons
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
+    def test_zero_stored_season_count_keeps_completed_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A stored season count of 0 must not un-complete a show.
+
+        Reported: import flipped it to currently_consuming on every run.
+        Cause: the guard now asks ``all_seasons_watched``, False for an
+        unknown total. Fix: a falsy total is nothing to compare against.
+        """
+        item = ContentItem(
+            id="tv_zero_seasons",
+            title="Zero Season Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 0, "seasons_watched": [1, 2]},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+
+        temp_db.save_content_item(item)
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.COMPLETED
+        assert retrieved.metadata is not None
+        assert retrieved.metadata.get("seasons_watched") == [1, 2]
+
+    def test_a_csv_total_seasons_of_zero_keeps_completed_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Reported against a CSV row of ``total_seasons,0``, re-imported.
+
+        The alias and the string are the importer's own output, and the
+        pinned 0 rules out a NULL column standing in for it.
+        """
+        item = ContentItem(
+            id="tv_csv_zero_seasons",
+            title="Zero Season Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"total_seasons": "0", "seasons_watched": [1, 2]},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        with temp_db.connection() as conn:
+            stored = conn.execute(
+                "SELECT seasons FROM tv_show_details WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+        assert stored["seasons"] == 0
+
+        first = temp_db.get_content_item(db_id)
+        assert first is not None
+        assert first.status == ConsumptionStatus.COMPLETED
+
+        temp_db.save_content_item(item)
+
+        second = temp_db.get_content_item(db_id)
+        assert second is not None
+        assert second.status == ConsumptionStatus.COMPLETED
+
+    def test_a_zero_total_still_regresses_once_a_real_count_arrives(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Would catch widening the zero guard into an unconditional False.
+
+        It suppresses the comparison, not the regression behind it.
+        """
+        item = ContentItem(
+            id="tv_zero_then_counted",
+            title="Counted Later",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"seasons": 0, "seasons_watched": [1, 2]},
+        )
+        db_id = temp_db.save_content_item(item)
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="tv_zero_then_counted",
+                title="Counted Later",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons": 3},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
+        assert retrieved.metadata is not None
+        assert str(retrieved.metadata.get("seasons")) == "3"
+
     def test_sync_keeps_later_existing_date_over_earlier_incoming_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -8413,3 +8509,57 @@ class TestSurrogateBoundToSqliteRegression:
         assert detail["author"] == "Volt\\udcffaire"
         assert detail["publisher"] == "Cram\\udcffer"
         assert json.loads(detail["metadata"])["path"] == "/books/Cand\\udcffide.epub"
+
+    def test_the_completion_door_writes_the_escape_too(self, temp_db: SQLiteDB) -> None:
+        """The upsert's escaped copy never reached ``_write_completion``.
+
+        It re-bound the caller's own review, so this raised at the bind.
+        """
+        item = ContentItem(
+            id="book:completed\udcff",
+            title="Cand\udcffide",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            review="Bes\udcfft read of the year",
+        )
+
+        db_id = temp_db.complete_content_item(item)
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT title, review FROM content_items WHERE id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["title"] == "Cand\\udcffide"
+        assert row["review"] == "Bes\\udcfft read of the year"
+
+    def test_the_completion_doors_escape_keeps_every_typed_field(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """``_surrogate_free`` round-trips through ``model_dump``.
+
+        An unvalidated ``model_copy`` could hand the upsert a plain string
+        where a ContentType or a date belongs, so the detail row and the
+        supplied date are read back rather than assumed.
+        """
+        item = ContentItem(
+            id="tv:completed\udcff",
+            title="The Expa\udcffnse",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            date_completed=date(2026, 2, 1),
+            metadata={"seasons": 6, "network": "Sy\udcfffy"},
+        )
+
+        db_id = temp_db.complete_content_item(item)
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.content_type == ContentType.TV_SHOW
+        assert stored.status == ConsumptionStatus.COMPLETED
+        assert stored.date_completed == date(2026, 2, 1)
+        assert stored.rating == 5
+        assert stored.title == "The Expa\\udcffnse"
+        assert stored.metadata["network"] == "Sy\\udcfffy"
