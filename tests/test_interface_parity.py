@@ -11,7 +11,7 @@ import re
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import click
 import pytest
@@ -19,6 +19,7 @@ from click.testing import CliRunner
 from pydantic import BaseModel, ValidationError
 
 from src.cli.commands._preferences import preferences_set_length
+from src.ingestion.sync import SyncResult
 from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
@@ -45,6 +46,10 @@ from src.web.api import (
     CompletionRequest,
     ItemEditRequest,
     RecommendationResponse,
+    SyncErrorResponse,
+    SyncJobResponse,
+    SyncSourceProgressResponse,
+    SyncStatusResponse,
     UserPreferenceResponse,
     UserResponse,
 )
@@ -721,4 +726,121 @@ class TestRecommendationJsonIsTheSameOnBothSurfaces:
 
         assert json.loads(self._cli_document(engine)) == json.loads(
             self._web_document(engine)
+        )
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSyncReportJsonKeysAgree:
+    """``update --format json`` and ``GET /api/sync/status`` answer alike.
+
+    The CLI shapes its finished run by hand while the web serialises a live
+    ``SyncJob``, so a count added to one is a count the other never learns of.
+    """
+
+    _CONFIG = {
+        "inputs": {"books": {"plugin": "fake_file", "enabled": True, "path": "b.csv"}}
+    }
+
+    RESULT = SyncResult(
+        source_name="Books",
+        items_synced=3,
+        items_added=1,
+        items_updated=1,
+        items_unchanged=1,
+        total_items=4,
+        errors=["Failed to process 'Dune'"],
+    )
+
+    def _cli_document(
+        self, config: dict[str, Any], results: list[SyncResult] | None = None
+    ) -> dict[str, Any]:
+        """What ``update --format json`` prints for :data:`RESULT`."""
+        with patch(
+            "src.cli.commands._update.execute_multi_source_sync",
+            return_value=[self.RESULT] if results is None else results,
+        ):
+            result = _invoke_with_mocks(
+                CliRunner(mix_stderr=False),
+                ["update", "--format", "json"],
+                MagicMock(spec=StorageManager),
+                config=config,
+            )
+
+        assert result.exit_code == 0, result.stderr
+        document: dict[str, Any] = json.loads(result.stdout)
+        return document
+
+    def test_the_document_is_the_status_response_the_web_serves(self) -> None:
+        """Every key the response model declares, and no key it does not."""
+        document = self._cli_document(self._CONFIG)
+        job = document["jobs"][0]
+
+        assert set(document) == set(SyncStatusResponse.model_fields)
+        assert set(job) == set(SyncJobResponse.model_fields)
+        assert set(job["sources"][0]) == set(SyncSourceProgressResponse.model_fields)
+        assert set(job["errors"][0]) == set(SyncErrorResponse.model_fields)
+
+    def test_the_document_validates_as_the_response_model(self) -> None:
+        """The key sets agreeing is not the types agreeing."""
+        validated = SyncStatusResponse(**self._cli_document(self._CONFIG))
+
+        assert validated.jobs[0].items_added == 1
+        assert validated.jobs[0].items_updated == 1
+        assert validated.jobs[0].items_unchanged == 1
+        assert validated.jobs[0].sources[0].total_items == 4
+
+    def test_a_run_that_saved_nothing_and_errored_is_failed_on_both(self) -> None:
+        """``SyncManager._run_sync`` calls that combination failed and lifts
+        the first message; a CLI that called it completed would report a
+        failed run as a success to the same parser.
+        """
+        job = self._cli_document(
+            self._CONFIG,
+            [SyncResult(source_name="Books", errors=["Set the path to the export"])],
+        )["jobs"][0]
+
+        assert job["status"] == "failed"
+        assert job["error_message"] == "Set the path to the export"
+
+    def test_a_run_with_no_source_emits_the_empty_response(self) -> None:
+        """Not a line of prose: a piped caller parses this document too."""
+        document = self._cli_document({"inputs": {}})
+
+        assert document == {"status": "idle", "jobs": []}
+        assert SyncStatusResponse(**document).jobs == []
+
+    @pytest.mark.parametrize(
+        ("interface", "model"),
+        [
+            pytest.param("SyncJobResponse", SyncJobResponse, id="job"),
+            pytest.param(
+                "SyncSourceProgressResponse",
+                SyncSourceProgressResponse,
+                id="source",
+            ),
+        ],
+    )
+    def test_the_typescript_interface_declares_the_same_fields(
+        self, interface: str, model: type[BaseModel]
+    ) -> None:
+        """The UI reads these counts off the wire; nothing else notices when
+        the Python side grows one and the interface does not."""
+        source = (_REPO_ROOT / FRONTEND_TYPES).read_text()
+        match = re.search(
+            rf"^export interface {interface} \{{(?P<body>[^}}]*)\}}",
+            source,
+            re.MULTILINE,
+        )
+
+        assert match is not None, (
+            f"{FRONTEND_TYPES} no longer declares {interface} as a plain"
+            f" interface body, so it can no longer be checked against the"
+            f" response model."
+        )
+        assert set(re.findall(r"^\s*(\w+):", match.group("body"), re.MULTILINE)) == set(
+            model.model_fields
+        ), (
+            f"{FRONTEND_TYPES} and {interface} disagree about what a sync"
+            f" reports, so the UI reads a field the API never sends or ignores"
+            f" one it does."
         )

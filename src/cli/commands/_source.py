@@ -24,6 +24,7 @@ from src.sources.service import (
     build_config_view,
     build_plugins_view,
     build_schema_view,
+    build_sources_view,
     clear_source_secret_value,
     create_source,
     delete_source,
@@ -93,56 +94,38 @@ def source_list(ctx: click.Context, output_format: str) -> None:
     sources = get_available_sync_sources(
         config, storage=storage, user_id=_SOURCE_DEFAULT_USER_ID
     )
-    payload = [
-        {
-            "id": entry.id,
-            "display_name": entry.display_name,
-            "plugin_display_name": entry.plugin_display_name,
-            "enabled": entry.enabled,
-            "plugin_not_loaded": (
-                {
-                    "plugin": entry.plugin_not_loaded.plugin,
-                    "failures": [
-                        {"module": failure.module, "reason": failure.reason}
-                        for failure in entry.plugin_not_loaded.failures
-                    ],
-                }
-                if entry.plugin_not_loaded is not None
-                else None
-            ),
-        }
-        for entry in sources
-    ]
 
     if output_format == "json":
-        click.echo(json.dumps(payload, indent=2))
+        click.echo(json.dumps(build_sources_view(sources), indent=2))
         return
 
     if not sources:
         click.echo("No sync sources configured.")
         return
 
+    # The column only earns its width on an install where a plugin failed to
+    # load. The JSON key stays unconditional — a machine reader needs the
+    # shape to hold whether or not today's run has anything to put in it.
+    any_unusable = any(entry.plugin_not_loaded is not None for entry in sources)
+    headers = ["ID", "Display Name", "Plugin", "Enabled"]
     rows = [
         [
             entry.id,
             entry.display_name,
             entry.plugin_display_name,
             "yes" if entry.enabled else "no",
-            (
-                unusable_detail(entry.plugin_not_loaded)
-                if entry.plugin_not_loaded is not None
-                else ""
-            ),
         ]
         for entry in sources
     ]
-    click.echo(
-        tabulate(
-            rows,
-            headers=["ID", "Display Name", "Plugin", "Enabled", "Load Error"],
-            tablefmt="grid",
-        )
-    )
+    if any_unusable:
+        headers.append("Load Error")
+        for row, entry in zip(rows, sources, strict=True):
+            row.append(
+                unusable_detail(entry.plugin_not_loaded)
+                if entry.plugin_not_loaded is not None
+                else ""
+            )
+    click.echo(tabulate(rows, headers=headers, tablefmt="grid"))
 
 
 @source.command("show")

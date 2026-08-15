@@ -9,6 +9,7 @@ import type {
   SourceConfigResponse,
   SourceSchemaResponse,
   SyncErrorResponse,
+  SyncSourceProgressResponse,
 } from '@/types/api'
 
 const baseSource = {
@@ -1397,8 +1398,11 @@ describe('SyncSourceAccordion', () => {
         current_source: 'Steam',
         error_message: null,
         progress_percent: 40,
+        items_added: 0,
+        items_updated: 0,
+        items_unchanged: 0,
         errors: [] as SyncErrorResponse[],
-        sources: [] as never[],
+        sources: [] as SyncSourceProgressResponse[],
         ...overrides,
       }
     }
@@ -1430,6 +1434,9 @@ describe('SyncSourceAccordion', () => {
             total_items: 8,
             current_item: 'Portal 2',
             progress_percent: 87,
+            items_added: 7,
+            items_updated: 0,
+            items_unchanged: 0,
           },
         ],
       })
@@ -1458,6 +1465,44 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.text()).toContain('4 items')
       expect(wrapper.text()).not.toContain('4/null')
       expect(wrapper.text()).not.toContain('4/0')
+    })
+
+    it('says what the finished run changed for this source', () => {
+      // A second run of the same source saves the same count as the first,
+      // so the row has to say that nothing in it moved.
+      const job = makeJob({
+        status: 'completed',
+        source: 'All Sources',
+        sources: [
+          {
+            source: 'Steam',
+            items_processed: 40,
+            total_items: 40,
+            current_item: null,
+            progress_percent: 100,
+            items_added: 0,
+            items_updated: 0,
+            items_unchanged: 40,
+          },
+        ],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      expect(wrapper.get('[data-testid="source-sync-result"]').text()).toBe(
+        '0 added, 0 updated, 40 unchanged',
+      )
+    })
+
+    it('shows no result line while the source is still syncing', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job: makeJob() },
+      })
+
+      expect(wrapper.find('[data-testid="source-sync-result"]').exists()).toBe(
+        false,
+      )
     })
 
     it('renders each error message for a completed job', () => {

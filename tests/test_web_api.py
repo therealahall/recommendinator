@@ -42,7 +42,7 @@ from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.ingestion.paths import get_allowed_source_roots
-from src.ingestion.sync import SyncErrorCallback, SyncResult
+from src.ingestion.sync import SyncResult, SyncResultCallback
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.content_length import LengthPreference
@@ -3814,10 +3814,10 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         completion = threading.Event()
 
         def fake_execute(
-            *, error_callback: SyncErrorCallback, **_kwargs: object
+            *, result_callback: SyncResultCallback, **_kwargs: object
         ) -> list[SyncResult]:
             try:
-                error_callback("Sonarr", self.REMEDY)
+                result_callback(SyncResult(source_name="Sonarr", errors=[self.REMEDY]))
                 return [SyncResult(source_name="Goodreads Csv", items_synced=3)]
             finally:
                 completion.set()
@@ -3838,6 +3838,72 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
         assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
+
+
+class TestSyncStatusReportsWhatTheRunChangedRegression:
+    """Reported: a re-sync of the same 40 items read as 40 synced.
+
+    Cause: the job carried a count of items touched. Fix: each source's
+    result lands on its slot as it finishes, and the job sums them.
+    """
+
+    RESULT = SyncResult(
+        source_name="Goodreads Csv",
+        items_synced=40,
+        items_unchanged=40,
+        total_items=40,
+    )
+
+    def test_a_re_sync_that_changed_nothing_says_so(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """The counts must land on the slot progress already writes into: a
+        second slot would leave the row the UI reads showing zeroes.
+        """
+        completion = threading.Event()
+
+        def fake_execute(
+            *,
+            progress_callback: Any,
+            result_callback: SyncResultCallback,
+            **_kwargs: object,
+        ) -> list[SyncResult]:
+            try:
+                progress_callback(40, 40, "Dune", "Goodreads Csv")
+                result_callback(self.RESULT)
+                return [self.RESULT]
+            finally:
+                completion.set()
+
+        with (
+            patch("src.web.api.execute_multi_source_sync", side_effect=fake_execute),
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200
+        job = client.get("/api/sync/status").json()["jobs"][0]
+        assert (job["items_added"], job["items_updated"], job["items_unchanged"]) == (
+            0,
+            0,
+            40,
+        )
+        assert job["sources"] == [
+            {
+                "source": "Goodreads Csv",
+                "items_processed": 40,
+                "total_items": 40,
+                "current_item": "Dune",
+                "progress_percent": 100,
+                "items_added": 0,
+                "items_updated": 0,
+                "items_unchanged": 40,
+            }
+        ]
 
 
 class TestConfigReload:

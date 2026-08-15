@@ -99,7 +99,7 @@ _COMMAND_TREE: dict[str, Any] = {
 _PARAM_SURFACE: dict[tuple[str, ...], tuple[str, ...]] = {
     ("status",): ("--format",),
     ("recommend",): ("--count", "--format", "--type", "--user"),
-    ("update",): ("--source", "--workers"),
+    ("update",): ("--format", "--source", "--workers"),
     ("complete",): ("--author", "--rating", "--review", "--title", "--type"),
     ("preferences", "get"): ("--format", "--user"),
     ("preferences", "set-weight"): ("--user", "scorer_name", "weight"),

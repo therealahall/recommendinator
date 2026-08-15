@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
+from src.storage.manager import SaveOutcome
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -24,21 +25,34 @@ logger = logging.getLogger(__name__)
 # Callback signature: (items_processed, total_items, current_item_title, current_source)
 SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
 
-# Callback signature: (source_name, error_message). The source is named because
-# a multi-source run reports into one job, and a message with no attribution
-# leaves the operator guessing which source it came from.
-SyncErrorCallback = Callable[[str, str], None]
-
 
 @dataclass
 class SyncResult:
-    """Result of a sync operation."""
+    """Result of a sync operation.
+
+    ``items_synced`` counts the saves that succeeded; the three outcome
+    counters split those by what the save did, so a re-sync that changed
+    nothing is distinguishable from the import that added everything.
+    """
 
     source_name: str
     items_synced: int = 0
+    items_added: int = 0
+    items_updated: int = 0
+    items_unchanged: int = 0
     total_items: int = 0
     errors: list[str] = field(default_factory=list)
 
+
+# Called with each source's result as that source finishes, rather than once
+# the whole run is over: a caller polling a multi-source job otherwise sees
+# nothing of the first source until the last one has finished too.
+SyncResultCallback = Callable[[SyncResult], None]
+
+
+#: What both interfaces call a run over every source. One spelling, because
+#: the web keys its job record on it and the CLI reports under it.
+ALL_SOURCES_LABEL = "All Sources"
 
 # Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag
 # (via Click IntRange) and the config-file path so a malicious or
@@ -181,18 +195,29 @@ def execute_sync(
                 safe_title,
             )
 
-            db_id = storage_manager.save_content_item(item)
+            saved = storage_manager.save_content_item_outcome(item)
             result.items_synced += 1
+            if saved.outcome is SaveOutcome.ADDED:
+                result.items_added += 1
+            elif saved.outcome is SaveOutcome.UPDATED:
+                result.items_updated += 1
+            else:
+                result.items_unchanged += 1
 
             # Mark for enrichment if enabled
-            if mark_for_enrichment and db_id:
+            if mark_for_enrichment:
                 try:
-                    storage_manager.mark_item_needs_enrichment(db_id)
+                    storage_manager.mark_item_needs_enrichment(saved.db_id)
                 except Exception as enrich_error:
                     logger.warning(
                         "[SYNC] Failed to mark '%s' for enrichment: %s",
                         safe_title,
                         exception_for_log(enrich_error),
+                    )
+                    # Reported, not merely logged: the web reads no log file,
+                    # so the errors list is the only channel that reaches it.
+                    result.errors.append(
+                        f"Saved '{item.title}' but could not queue it for enrichment"
                     )
 
         except Exception as error:
@@ -210,10 +235,13 @@ def execute_sync(
             result.errors.append(f"Failed to process '{item.title}'")
 
     logger.info(
-        "[SYNC] %s: Completed. %d/%d items saved.",
+        "[SYNC] %s: Completed. %d/%d items saved (%d added, %d updated, %d unchanged).",
         safe_source_name,
         result.items_synced,
         result.total_items,
+        result.items_added,
+        result.items_updated,
+        result.items_unchanged,
     )
     return result
 
@@ -227,7 +255,7 @@ def execute_multi_source_sync(
     sources: list[tuple[SourcePlugin, dict[str, Any]]],
     storage_manager: StorageManager,
     progress_callback: SyncProgressCallback | None = None,
-    error_callback: SyncErrorCallback | None = None,
+    result_callback: SyncResultCallback | None = None,
     mark_for_enrichment: bool = False,
     user_id: int = 1,
     max_workers: int = 1,
@@ -240,7 +268,7 @@ def execute_multi_source_sync(
     enforced inside each plugin, so cross-source parallelism is safe.
 
     Thread-safety contract: when ``max_workers > 1``, ``progress_callback``
-    and ``error_callback`` may be invoked concurrently from multiple worker
+    and ``result_callback`` may be invoked concurrently from multiple worker
     threads. Both callers in this codebase honour that contract — the web
     ``SyncManager`` takes a lock internally, and the CLI ``cli_progress``
     serialises ``click.echo`` via its own lock — but any future caller
@@ -251,9 +279,9 @@ def execute_multi_source_sync(
         storage_manager: Storage manager for saving items.
         progress_callback: Optional callback for progress updates. Must be
             thread-safe when ``max_workers > 1``.
-        error_callback: Optional callback for error reporting, called with the
-            name of the source that produced each message. Must be thread-safe
-            when ``max_workers > 1``.
+        result_callback: Optional callback handed each source's result as that
+            source finishes, errors and counts alike. Must be thread-safe when
+            ``max_workers > 1``.
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
         user_id: User ID for credential storage (default 1).
         max_workers: Maximum sources to sync concurrently. ``1`` (default)
@@ -264,6 +292,12 @@ def execute_multi_source_sync(
     """
 
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
+        result = _sync_one(plugin, plugin_config)
+        if result_callback:
+            result_callback(result)
+        return result
+
+    def _sync_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
         safe_plugin_name = sanitize_for_log(plugin.name)
         logger.info("[SYNC] === Starting sync for source: %s ===", safe_plugin_name)
         try:
@@ -318,11 +352,6 @@ def execute_multi_source_sync(
             results = [future.result() for future in futures]
     else:
         results = [_run_one(plugin, cfg) for plugin, cfg in sources]
-
-    if error_callback:
-        for result in results:
-            for error_message in result.errors:
-                error_callback(result.source_name, error_message)
 
     total_synced = sum(result.items_synced for result in results)
     logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)

@@ -77,6 +77,8 @@ from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
 from src.storage.sqlite_db import (
     FutureCompletionDateError as FutureCompletionDateError,
 )
+from src.storage.sqlite_db import SavedItem as SavedItem
+from src.storage.sqlite_db import SaveOutcome as SaveOutcome
 from src.storage.sqlite_db import SQLiteDB
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
@@ -165,8 +167,22 @@ class StorageManager:
         Returns:
             Database ID of the saved item
         """
+        return self.save_content_item_outcome(item, user_id=user_id).db_id
+
+    def save_content_item_outcome(
+        self, item: ContentItem, user_id: int | None = None
+    ) -> SavedItem:
+        """Save a content item, reporting whether the write changed anything.
+
+        Args:
+            item: ContentItem to save
+            user_id: User ID (defaults to item.user_id)
+
+        Returns:
+            The row's database ID and the outcome of the write.
+        """
         with self._save_lock:
-            return self.sqlite_db.save_content_item(item, user_id=user_id)
+            return self.sqlite_db.save_content_item_outcome(item, user_id=user_id)
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None

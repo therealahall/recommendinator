@@ -97,6 +97,9 @@ function allSourcesRunning(): SyncJobResponse {
     current_source: 'Steam',
     error_message: null,
     progress_percent: 87,
+    items_added: 5,
+    items_updated: 1,
+    items_unchanged: 1,
     errors: [],
     sources: [
       {
@@ -105,6 +108,9 @@ function allSourcesRunning(): SyncJobResponse {
         total_items: 8,
         current_item: 'Portal 2',
         progress_percent: 87,
+        items_added: 5,
+        items_updated: 1,
+        items_unchanged: 1,
       },
     ],
   }
@@ -124,6 +130,9 @@ function romsFailedEarlier(): SyncJobResponse {
     current_source: null,
     error_message: null,
     progress_percent: 75,
+    items_added: 3,
+    items_updated: 0,
+    items_unchanged: 0,
     errors: [{ source: 'Roms', message: 'Set verify_ssl to false' }],
     sources: [],
   }

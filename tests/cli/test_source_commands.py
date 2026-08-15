@@ -70,6 +70,52 @@ class TestSourceList:
         assert "my_books" in result.output
         assert "my_games" in result.output
 
+    def test_the_update_alias_lists_the_same_json(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """``update --source list`` is the same listing, so a piped caller
+        must get the same document rather than a table on stdout."""
+        listing = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        alias = _invoke_with_mocks(
+            cli_runner,
+            ["update", "--source", "list", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert alias.exit_code == 0
+        assert json.loads(alias.output) == json.loads(listing.output)
+
+    def test_the_table_drops_the_load_error_column_on_a_healthy_install(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """Reported: every install rendered a column that is always empty.
+
+        The JSON key stays unconditional, which is what a machine reader
+        needs; only the table is asked to earn its width.
+        """
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0
+        assert "Load Error" not in result.output
+        assert "Enabled" in result.output
+
     def test_list_json_matches_api_shape(
         self,
         cli_runner: CliRunner,

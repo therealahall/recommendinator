@@ -68,6 +68,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -145,6 +146,26 @@ class FutureCompletionDateError(ValueError):
 
     def __init__(self) -> None:
         super().__init__("A completion date cannot be in the future.")
+
+
+class SaveOutcome(Enum):
+    """What an ingestion write did to the row it landed on.
+
+    ``UNCHANGED`` means every column already held the value the write carried,
+    not merely that the row existed.
+    """
+
+    ADDED = "added"
+    UPDATED = "updated"
+    UNCHANGED = "unchanged"
+
+
+@dataclass(frozen=True)
+class SavedItem:
+    """The row an ingestion write landed on, and what it did to it."""
+
+    db_id: int
+    outcome: SaveOutcome
 
 
 _T = TypeVar("_T")
@@ -369,11 +390,28 @@ class SQLiteDB:
         Returns:
             Database ID of the saved item
         """
+        return self.save_content_item_outcome(item, user_id=user_id).db_id
+
+    def save_content_item_outcome(
+        self, item: ContentItem, user_id: int | None = None
+    ) -> SavedItem:
+        """Save *item*, reporting whether the write changed anything.
+
+        What :meth:`save_content_item` does, for the caller that has to tell a
+        first import from a second run of it.
+
+        Args:
+            item: ContentItem to save
+            user_id: User ID (defaults to item.user_id or default user)
+
+        Returns:
+            The row's database ID and the outcome of the write.
+        """
         with self.connection() as conn:
             cursor = conn.cursor()
-            db_id = self._upsert_content_item(cursor, item, user_id)
+            saved = self._upsert_content_item(cursor, item, user_id)
             conn.commit()
-            return db_id
+            return saved
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None
@@ -412,7 +450,7 @@ class SQLiteDB:
         """
         with self.connection() as conn:
             cursor = conn.cursor()
-            db_id = self._upsert_content_item(cursor, item, user_id)
+            db_id = self._upsert_content_item(cursor, item, user_id).db_id
             self._write_completion(
                 cursor,
                 db_id,
@@ -495,7 +533,7 @@ class SQLiteDB:
 
     def _upsert_content_item(
         self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
-    ) -> int:
+    ) -> SavedItem:
         """Insert or update *item*'s row and detail row under the sync rules.
 
         The shared body of :meth:`save_content_item` and
@@ -510,7 +548,7 @@ class SQLiteDB:
             user_id: User ID (defaults to item.user_id or default user).
 
         Returns:
-            Database ID of the saved item.
+            The row's database ID, and what this write did to it.
         """
         # The one door every plugin's items pass, so the SQLite text guarantee
         # is taken here rather than in each of them.
@@ -552,6 +590,7 @@ class SQLiteDB:
         # whether a *different* row exists with the same normalized title.
         # This happens when both sources have already been imported and
         # each has its own row.  Merge the duplicate into the kept row.
+        merged_a_duplicate = False
         if existing_id is not None and normalized_title:
             cursor.execute(
                 """SELECT id FROM content_items
@@ -567,6 +606,7 @@ class SQLiteDB:
             # Normally at most one match, but loop defensively in case
             # prior dedup ran partially and left multiple duplicates.
             dup_rows = cursor.fetchall()
+            merged_a_duplicate = bool(dup_rows)
             for dup_row in dup_rows:
                 dup_id = int(dup_row["id"])
                 self._merge_duplicate_into(
@@ -595,72 +635,62 @@ class SQLiteDB:
             #   - ignored: only when the incoming value states one
             #   - None incoming values never overwrite existing data
             cursor.execute(
-                "SELECT status, rating, review, date_completed"
-                " FROM content_items WHERE id = ?",
+                "SELECT title, normalized_title, source, status, rating, review,"
+                " date_completed, ignored FROM content_items WHERE id = ?",
                 (existing_id,),
             )
             existing_row = cursor.fetchone()
 
-            set_parts = ["updated_at = CURRENT_TIMESTAMP"]
-            params: list[str | int | None] = []
+            # Title is an identity field and always present; normalized_title
+            # tracks it. The rest are only offered when the incoming value
+            # states something the rules above let it state.
+            offered: dict[str, str | int | None] = {
+                "title": item.title,
+                "normalized_title": normalized_title,
+                "status": resolve_status_forward(
+                    existing_row["status"], get_enum_value(item.status)
+                ),
+            }
 
-            # Title: always update (identity field, always present)
-            set_parts.append("title = ?")
-            params.append(item.title)
-
-            # Keep normalized_title in sync with title
-            set_parts.append("normalized_title = ?")
-            params.append(normalize_title_for_matching(item.title))
-
-            # Source: update if incoming is not None
             if item.source is not None:
-                set_parts.append("source = ?")
-                params.append(item.source)
+                offered["source"] = item.source
 
-            # Status: only advance forward
-            existing_status = existing_row["status"] if existing_row else None
-            resolved_status = resolve_status_forward(
-                existing_status, get_enum_value(item.status)
-            )
-            set_parts.append("status = ?")
-            params.append(resolved_status)
-
-            # Rating: fill only — never overwrite the user's own value
-            existing_rating = existing_row["rating"] if existing_row else None
-            if existing_rating is None and item.rating is not None:
-                set_parts.append("rating = ?")
-                params.append(item.rating)
-
-            # Review: fill only — never overwrite the user's own value
-            existing_review = existing_row["review"] if existing_row else None
-            if existing_review is None and incoming_review is not None:
-                set_parts.append("review = ?")
-                params.append(incoming_review)
+            # Rating and review: fill only — never overwrite the user's own.
+            if existing_row["rating"] is None and item.rating is not None:
+                offered["rating"] = item.rating
+            if existing_row["review"] is None and incoming_review is not None:
+                offered["review"] = incoming_review
 
             # Date completed: only if incoming is not None and later
             if item.date_completed is not None:
                 incoming_date_str = item.date_completed.isoformat()
-                existing_date_str = (
-                    existing_row["date_completed"] if existing_row else None
-                )
+                existing_date_str = existing_row["date_completed"]
                 if existing_date_str is None or incoming_date_str > existing_date_str:
-                    set_parts.append("date_completed = ?")
-                    params.append(incoming_date_str)
+                    offered["date_completed"] = incoming_date_str
 
             # Ignored: only a stated value counts. True and False both win —
             # that is how an edited export un-ignores an item — while None
             # means the source said nothing and the stored flag stands.
             if item.ignored is not None:
-                set_parts.append("ignored = ?")
-                params.append(1 if item.ignored else 0)
+                offered["ignored"] = 1 if item.ignored else 0
 
-            set_clause = ", ".join(set_parts)
-            params.append(existing_id)
-            cursor.execute(
-                f"UPDATE content_items SET {set_clause} WHERE id = ?",
-                params,
-            )
+            # Writing only the columns that actually move is what lets a
+            # re-sync report itself as unchanged, and keeps ``updated_at`` — a
+            # user-facing sort key — off a row nothing happened to.
+            changed = {
+                column: value
+                for column, value in offered.items()
+                if existing_row[column] != value
+            }
+            if changed:
+                set_clause = ", ".join(f"{column} = ?" for column in changed)
+                cursor.execute(
+                    f"UPDATE content_items SET {set_clause},"
+                    " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    [*changed.values(), existing_id],
+                )
             db_id = existing_id
+            row_changed = bool(changed) or merged_a_duplicate
         else:
             # Insert new item into base table
             cursor.execute(
@@ -674,7 +704,7 @@ class SQLiteDB:
                     effective_user_id,
                     item.id,
                     item.title,
-                    normalize_title_for_matching(item.title),
+                    normalized_title,
                     content_type_value,
                     get_enum_value(item.status),
                     item.rating,
@@ -688,23 +718,33 @@ class SQLiteDB:
             if lastrowid is None:
                 raise RuntimeError("INSERT did not return a row ID")
             db_id = lastrowid
+            row_changed = True
 
         # Save to type-specific detail table
-        self._save_detail_table(cursor, db_id, item, content_type_value)
+        detail_changed = self._save_detail_table(
+            cursor, db_id, item, content_type_value
+        )
 
         # After the detail write, so the derived columns read the creator that
         # was actually stored rather than the one this sync offered.
         write_derived_columns(cursor, db_id)
 
         # For TV shows, check if new seasons should regress status
-        if content_type_value == "tv_show":
+        season_regressed = content_type_value == "tv_show" and (
             self._handle_tv_season_change(cursor, db_id)
+        )
 
-        return db_id
+        if existing_id is None:
+            outcome = SaveOutcome.ADDED
+        elif row_changed or detail_changed or season_regressed:
+            outcome = SaveOutcome.UPDATED
+        else:
+            outcome = SaveOutcome.UNCHANGED
+        return SavedItem(db_id=db_id, outcome=outcome)
 
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
-    ) -> None:
+    ) -> bool:
         """Save item to appropriate type-specific detail table.
 
         For existing rows, enrichment is the source of truth:
@@ -723,6 +763,9 @@ class SQLiteDB:
             db_id: Content item database ID
             item: ContentItem to save
             content_type: Content type as string
+
+        Returns:
+            Whether the write moved any column of the detail row.
 
         Raises:
             KeyError: For a content type with no field declaration, like
@@ -839,28 +882,30 @@ class SQLiteDB:
         col_names.append("metadata")
         values.append(metadata_json)
 
-        placeholders = ", ".join("?" for _ in values)
-        col_list = ", ".join(col_names)
         if existing_data:
-            # UPDATE existing row
-            set_clauses = ", ".join(
-                f"{name} = ?" for name in col_names if name != "content_item_id"
-            )
-            update_values = [
-                val
-                for name, val in zip(col_names, values, strict=True)
-                if name != "content_item_id"
-            ]
-            update_values.append(db_id)
+            # Same reason as the base row's write: a column already holding
+            # the value this sync carries is not an update of anything.
+            changed = {
+                name: value
+                for name, value in zip(col_names, values, strict=True)
+                if name != "content_item_id" and existing_data.get(name) != value
+            }
+            if not changed:
+                return False
+            set_clauses = ", ".join(f"{name} = ?" for name in changed)
             cursor.execute(
                 f"UPDATE {table} SET {set_clauses} WHERE content_item_id = ?",
-                update_values,
+                [*changed.values(), db_id],
             )
-        else:
-            cursor.execute(
-                f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
-                values,
-            )
+            return True
+
+        placeholders = ", ".join("?" for _ in values)
+        col_list = ", ".join(col_names)
+        cursor.execute(
+            f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
+            values,
+        )
+        return True
 
     def _merge_duplicate_into(
         self, cursor: sqlite3.Cursor, keep_id: int, delete_id: int
@@ -889,7 +934,7 @@ class SQLiteDB:
         # Delete the duplicate row (cascades to detail tables)
         cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
-    def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> None:
+    def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
         """Regress TV show status when new seasons arrive during sync.
 
         When a sync updates the total season count for a TV show and the
@@ -906,6 +951,9 @@ class SQLiteDB:
         Args:
             cursor: Database cursor (within an active transaction).
             db_id: Content item database ID.
+
+        Returns:
+            Whether the status was regressed.
         """
         cursor.execute(
             "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
@@ -916,7 +964,7 @@ class SQLiteDB:
         )
         row = cursor.fetchone()
         if not row:
-            return
+            return False
 
         status = row["status"]
         ignored = bool(row["ignored"])
@@ -924,29 +972,29 @@ class SQLiteDB:
 
         # Only applies when currently completed
         if status != "completed":
-            return
+            return False
 
         # Parse seasons_watched from metadata
         metadata_raw = row["metadata"]
         if not metadata_raw:
-            return
+            return False
         try:
             metadata = json.loads(metadata_raw)
         except (json.JSONDecodeError, TypeError):
-            return
+            return False
 
         seasons_watched = metadata.get("seasons_watched")
         if not isinstance(seasons_watched, list):
-            return
+            return False
 
         # If all seasons are still watched, no regression needed
         if total_seasons is None or all_seasons_watched(seasons_watched, total_seasons):
-            return
+            return False
 
         # New seasons available that user hasn't watched.
         # If ignored, leave status alone.
         if ignored:
-            return
+            return False
 
         # Regress to currently_consuming
         cursor.execute(
@@ -954,6 +1002,7 @@ class SQLiteDB:
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (db_id,),
         )
+        return True
 
     def get_content_item(
         self, db_id: int, user_id: int | None = None

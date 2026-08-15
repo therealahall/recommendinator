@@ -247,6 +247,34 @@ describe('useDataStore', () => {
     expect(store.syncMessage).not.toContain('/0')
   })
 
+  it('checkSyncStatus counts errors while the run is still going', async () => {
+    // Errors reach the job as each source finishes. Before that they only
+    // arrived once the whole run was over, so a multi-source run showed
+    // nothing of a source that had already failed.
+    mockGet.mockResolvedValue({
+      status: 'running',
+      jobs: [
+        {
+          source: 'All Sources',
+          status: 'running',
+          items_processed: 5,
+          total_items: 20,
+          current_item: 'Portal 2',
+          errors: [
+            { source: 'Sonarr', message: 'Set verify_ssl to false' },
+            { source: 'Steam', message: 'Rate limit exceeded' },
+          ],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncMessage).toContain('2 error(s) so far')
+  })
+
   it('checkSyncStatus matches the "all" source ID to the "All Sources" job', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
@@ -283,6 +311,9 @@ describe('useDataStore', () => {
           status: 'completed',
           items_processed: 42,
           total_items: 42,
+          items_added: 2,
+          items_updated: 0,
+          items_unchanged: 40,
           errors: [],
           sources: [],
         },
@@ -293,7 +324,11 @@ describe('useDataStore', () => {
     await store.checkSyncStatus()
 
     expect(store.syncStatus).toBe('completed')
-    expect(store.syncMessage).toContain('42 items synced')
+    // The whole point of the counts: 42 saved reads the same on a first
+    // import and on a re-run that changed nothing.
+    expect(store.syncMessage).toBe(
+      'Completed: 42 of 42 items saved (2 added, 0 updated, 40 unchanged)',
+    )
     expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
@@ -434,6 +469,10 @@ describe('useDataStore', () => {
           source: 'All Sources',
           status: 'completed',
           items_processed: 90,
+          total_items: 90,
+          items_added: 90,
+          items_updated: 0,
+          items_unchanged: 0,
           errors: [
             { source: 'Sonarr', message: 'Set verify_ssl to false' },
             { source: 'Steam', message: 'Rate limit exceeded' },
@@ -444,6 +483,10 @@ describe('useDataStore', () => {
           source: 'Goodreads',
           status: 'completed',
           items_processed: 10,
+          total_items: 10,
+          items_added: 10,
+          items_updated: 0,
+          items_unchanged: 0,
           errors: [{ source: 'Goodreads', message: 'Row 4 has no title' }],
           sources: [],
         },
@@ -453,7 +496,7 @@ describe('useDataStore', () => {
     const store = useDataStore()
     await store.checkSyncStatus()
 
-    expect(store.syncMessage).toContain('100 items synced')
+    expect(store.syncMessage).toContain('100 of 100 items saved')
     expect(store.syncMessage).toContain('Sonarr: Set verify_ssl to false')
     expect(store.syncMessage).toContain('(+2 more)')
   })

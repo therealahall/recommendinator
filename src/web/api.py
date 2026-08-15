@@ -49,7 +49,9 @@ from src.auth.trakt import (
 )
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.sync import (
+    ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
+    SyncResult,
     execute_multi_source_sync,
     resolve_max_workers,
 )
@@ -488,6 +490,9 @@ class SyncSourceProgressResponse(BaseModel):
     total_items: int | None
     current_item: str | None
     progress_percent: int | None
+    items_added: int
+    items_updated: int
+    items_unchanged: int
 
 
 class SyncErrorResponse(BaseModel):
@@ -508,6 +513,9 @@ class SyncJobResponse(BaseModel):
     current_source: str | None
     error_message: str | None
     progress_percent: int | None
+    items_added: int
+    items_updated: int
+    items_unchanged: int
     errors: list[SyncErrorResponse] = []
     sources: list[SyncSourceProgressResponse] = []
 
@@ -1426,7 +1434,7 @@ def update_data(
     """
     sync_manager = get_sync_manager()
     source = request.source
-    source_label = humanize_source_id(source) if source != "all" else "All Sources"
+    source_label = humanize_source_id(source) if source != "all" else ALL_SOURCES_LABEL
 
     # Multiple sources can sync concurrently; the duplicate check happens
     # atomically inside ``sync_manager.start_sync`` further down. Two
@@ -1518,8 +1526,16 @@ def update_data(
                 current_source=current_source,
             )
 
-        def error_callback(failed_source: str, error_message: str) -> None:
-            sync_manager.add_error(source_label, failed_source, error_message)
+        def result_callback(result: SyncResult) -> None:
+            sync_manager.record_source_result(
+                source_label,
+                result.source_name,
+                items_added=result.items_added,
+                items_updated=result.items_updated,
+                items_unchanged=result.items_unchanged,
+            )
+            for error_message in result.errors:
+                sync_manager.add_error(source_label, result.source_name, error_message)
 
         max_workers = resolve_max_workers(config, override=request.max_workers)
 
@@ -1527,7 +1543,7 @@ def update_data(
             sources=source_pairs,
             storage_manager=storage,
             progress_callback=progress_callback,
-            error_callback=error_callback,
+            result_callback=result_callback,
             mark_for_enrichment=auto_enrich,
             user_id=1,
             max_workers=max_workers,

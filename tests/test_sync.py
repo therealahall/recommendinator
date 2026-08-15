@@ -22,7 +22,7 @@ from src.ingestion.sync import (
     resolve_max_workers,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.manager import StorageManager
+from src.storage.manager import SavedItem, SaveOutcome, StorageManager
 from src.utils.text import LINE_BREAKS
 from tests.factories import make_item
 
@@ -130,7 +130,7 @@ class TestExecuteSync:
         assert result.items_synced == 2
         assert result.total_items == 2
         assert result.errors == []
-        assert storage.save_content_item.call_count == 2
+        assert storage.save_content_item_outcome.call_count == 2
 
     def test_sync_records_save_errors(self) -> None:
         """Errors during save are recorded but don't stop the sync."""
@@ -140,7 +140,12 @@ class TestExecuteSync:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.side_effect = [None, ValueError("db error"), None]
+        saved = SavedItem(db_id=1, outcome=SaveOutcome.ADDED)
+        storage.save_content_item_outcome.side_effect = [
+            saved,
+            ValueError("db error"),
+            saved,
+        ]
 
         result = execute_sync(
             plugin=plugin,
@@ -235,7 +240,7 @@ class TestExecuteSync:
         assert result.items_synced == 0
         assert result.total_items == 0
         assert result.errors == []
-        storage.save_content_item.assert_not_called()
+        storage.save_content_item_outcome.assert_not_called()
 
     def test_plugin_config_passed_through(self) -> None:
         """Plugin receives the config dict (with injected credential callback)."""
@@ -287,7 +292,7 @@ class TestExecuteMultiSourceSync:
         assert len(results) == 2
         assert results[0].items_synced == 1
         assert results[1].items_synced == 2
-        assert storage.save_content_item.call_count == 3
+        assert storage.save_content_item_outcome.call_count == 3
 
     def test_source_error_continues(self) -> None:
         """A failing source doesn't block subsequent sources.
@@ -307,12 +312,12 @@ class TestExecuteMultiSourceSync:
         plugin_b.fetch.return_value = iter([make_item("B1")])
 
         storage = MagicMock(spec=StorageManager)
-        error_callback = MagicMock()
+        reported: list[SyncResult] = []
 
         results = execute_multi_source_sync(
             sources=[(plugin_a, {}), (plugin_b, {})],
             storage_manager=storage,
-            error_callback=error_callback,
+            result_callback=reported.append,
         )
 
         assert len(results) == 2
@@ -321,7 +326,43 @@ class TestExecuteMultiSourceSync:
         assert results[1].items_synced == 1
         # Named, not just reported: one job covers every source, so a bare
         # message leaves the operator guessing which one to go and fix.
-        error_callback.assert_called_once_with("Failing", remedy)
+        assert [(entry.source_name, entry.errors) for entry in reported] == [
+            ("Failing", [remedy]),
+            ("Working", []),
+        ]
+
+    def test_each_source_is_reported_before_the_next_one_starts(self) -> None:
+        """Catches a return to reporting once the whole run is over, which
+        left the web's error count at zero however early a source failed."""
+        events: list[str] = []
+
+        def fetch(name: str) -> Any:
+            def _fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+                events.append(f"fetching {name}")
+                return iter([make_item(f"{name} 1")])
+
+            return _fetch
+
+        plugins = []
+        for name in ("A", "B"):
+            plugin = MagicMock(spec=SourcePlugin)
+            plugin.name = f"source_{name.lower()}"
+            plugin.display_name = f"Source {name}"
+            plugin.fetch.side_effect = fetch(name)
+            plugins.append(plugin)
+
+        execute_multi_source_sync(
+            sources=[(plugin, {}) for plugin in plugins],
+            storage_manager=MagicMock(spec=StorageManager),
+            result_callback=lambda result: events.append(f"done {result.source_name}"),
+        )
+
+        assert events == [
+            "fetching A",
+            "done Source A",
+            "fetching B",
+            "done Source B",
+        ]
 
     def test_a_request_fault_quoting_a_key_is_still_swallowed(self) -> None:
         """The substitution exists for this: ``requests`` quotes the url.
@@ -468,12 +509,12 @@ class TestExecuteMultiSourceSync:
         plugin_b.fetch.side_effect = fetch_ok
 
         storage = MagicMock(spec=StorageManager)
-        error_callback = MagicMock()
+        reported: list[SyncResult] = []
 
         results = execute_multi_source_sync(
             sources=[(plugin_a, {}), (plugin_b, {})],
             storage_manager=storage,
-            error_callback=error_callback,
+            result_callback=reported.append,
             max_workers=2,
         )
 
@@ -484,7 +525,10 @@ class TestExecuteMultiSourceSync:
         assert results[0].items_synced == 0
         assert results[0].errors == ["boom"]
         assert results[1].items_synced == 1
-        error_callback.assert_called_once_with("Failing", "boom")
+        assert {(entry.source_name, tuple(entry.errors)) for entry in reported} == {
+            ("Failing", ("boom",)),
+            ("Working", ()),
+        }
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""
@@ -494,7 +538,9 @@ class TestExecuteMultiSourceSync:
         plugin.fetch.return_value = iter([make_item("Book 1")])
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.return_value = 1
+        storage.save_content_item_outcome.return_value = SavedItem(
+            db_id=1, outcome=SaveOutcome.ADDED
+        )
 
         results = execute_multi_source_sync(
             sources=[(plugin, {})],
@@ -903,7 +949,10 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.side_effect = [1, 2]
+        storage.save_content_item_outcome.side_effect = [
+            SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
+            SavedItem(db_id=2, outcome=SaveOutcome.ADDED),
+        ]
 
         result = execute_sync(
             plugin=plugin,
@@ -925,7 +974,7 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.return_value = 1
+        storage.save_content_item_outcome.return_value = 1
 
         result = execute_sync(
             plugin=plugin,
@@ -945,7 +994,7 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.return_value = 1
+        storage.save_content_item_outcome.return_value = 1
 
         # Don't pass mark_for_enrichment - should default to False
         result = execute_sync(
@@ -965,7 +1014,10 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.side_effect = [1, 2]
+        storage.save_content_item_outcome.side_effect = [
+            SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
+            SavedItem(db_id=2, outcome=SaveOutcome.ADDED),
+        ]
         storage.mark_item_needs_enrichment.side_effect = [
             Exception("enrichment error"),
             None,
@@ -981,26 +1033,9 @@ class TestAutoEnrichmentHook:
         # Both items should be synced even though first enrichment marking failed
         assert result.items_synced == 2
         assert storage.mark_item_needs_enrichment.call_count == 2
-
-    def test_mark_for_enrichment_skipped_when_no_db_id(self) -> None:
-        """Enrichment marking is skipped when save returns None/0."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.save_content_item.return_value = None  # No DB ID
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            mark_for_enrichment=True,
-        )
-
-        assert result.items_synced == 1
-        storage.mark_item_needs_enrichment.assert_not_called()
+        # The failure is reported, not just logged: nothing else shows the
+        # operator that one item will never be enriched.
+        assert result.errors == ["Saved 'Book 1' but could not queue it for enrichment"]
 
 
 _FORGED_TITLE = "Dune\nERROR    | src.ingestion.sync | forged"
@@ -1019,7 +1054,7 @@ def _sync_one_forged_title(
     plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
 
     storage = MagicMock(spec=StorageManager)
-    storage.save_content_item.side_effect = save_error
+    storage.save_content_item_outcome.side_effect = save_error
     storage.mark_item_needs_enrichment.side_effect = enrich_error
 
     return execute_sync(
@@ -1416,3 +1451,141 @@ class TestIgnoreFlagSurvivesReimport:
         assert stored.rating == 5
         assert stored.review == "Loved it"
         assert stored.status == ConsumptionStatus.COMPLETED
+
+
+class TestASyncSaysWhatItChangedRegression:
+    """Reported: two runs of ``update --source roms`` read identically.
+
+    Symptom: the second changed nothing and still said "Updated 40 items".
+    Cause: the upsert reported only a row id.
+    Fix: it compares stored values and reports added/updated/unchanged.
+    """
+
+    def _import(self, csv_path: Path, storage: StorageManager) -> SyncResult:
+        return execute_sync(
+            plugin=CsvImportPlugin(),
+            plugin_config={"path": str(csv_path), "content_type": "book"},
+            storage_manager=storage,
+        )
+
+    def _library_csv(
+        self, tmp_path: Path, first: tuple[str, str] = ("Book 1", "to-read")
+    ) -> Path:
+        """Forty books, the first of which the caller can retitle or advance."""
+        books = [first, *((f"Book {number}", "to-read") for number in range(2, 41))]
+        rows = "".join(f"{title},{status}\n" for title, status in books)
+        csv_path = tmp_path / "books.csv"
+        csv_path.write_text(f"title,status\n{rows}", encoding="utf-8")
+        return csv_path
+
+    def _updated_at(self, storage: StorageManager) -> list[str]:
+        with storage.connection() as conn:
+            rows = conn.execute(
+                "SELECT updated_at FROM content_items ORDER BY id"
+            ).fetchall()
+        return [row["updated_at"] for row in rows]
+
+    def test_the_first_import_of_forty_reports_forty_added(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = self._import(self._library_csv(tmp_path), storage)
+
+        assert (result.items_synced, result.total_items) == (40, 40)
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            40,
+            0,
+            0,
+        )
+
+    def test_running_the_same_import_again_reports_forty_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        """The acceptance criterion: a second identical run changed nothing."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        csv_path = self._library_csv(tmp_path)
+        self._import(csv_path, storage)
+
+        result = self._import(csv_path, storage)
+
+        assert result.items_synced == 40
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            0,
+            0,
+            40,
+        )
+
+    def test_one_book_finished_upstream_is_the_only_one_reported_as_updated(
+        self, tmp_path: Path
+    ) -> None:
+        """A partial change reports both counts, not one lump of forty."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        self._import(self._library_csv(tmp_path), storage)
+
+        result = self._import(self._library_csv(tmp_path, ("Book 1", "read")), storage)
+
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            0,
+            1,
+            39,
+        )
+
+    def test_a_new_book_alongside_forty_old_ones_reports_both_counts(
+        self, tmp_path: Path
+    ) -> None:
+        """A retitled row is a new item: the importer keys on the title."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        self._import(self._library_csv(tmp_path), storage)
+
+        result = self._import(
+            self._library_csv(tmp_path, ("Book Forty-One", "to-read")), storage
+        )
+
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            1,
+            0,
+            39,
+        )
+
+    def test_an_unchanged_re_sync_leaves_the_sort_key_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """Catches a rewrite that counts the outcomes but writes anyway:
+        ``updated_at`` orders the library, so a no-op sync would reshuffle it.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        csv_path = self._library_csv(tmp_path)
+        self._import(csv_path, storage)
+        before = self._updated_at(storage)
+
+        self._import(csv_path, storage)
+
+        assert self._updated_at(storage) == before
+
+    def test_an_item_carrying_genres_is_unchanged_on_the_second_import(
+        self, tmp_path: Path
+    ) -> None:
+        """Catches a mergeable column re-serialised into a form the stored one
+        never equals: every source carrying genres would read as updated for
+        good, which is the reported bug for the sources that carry them.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        csv_path = tmp_path / "genres.csv"
+        csv_path.write_text(
+            "title,status,genre,author\nDune,read,Science Fiction,Frank Herbert\n",
+            encoding="utf-8",
+        )
+        self._import(csv_path, storage)
+
+        result = self._import(csv_path, storage)
+
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            0,
+            0,
+            1,
+        )
+        # Unchanged is only worth asserting while the merge path ran at all.
+        with storage.connection() as conn:
+            stored = conn.execute("SELECT genres FROM book_details").fetchone()
+        assert stored["genres"] == '["Science Fiction"]'
