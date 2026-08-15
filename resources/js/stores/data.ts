@@ -242,7 +242,9 @@ export const useDataStore = defineStore('data', () => {
         } else {
           syncStatus.value = 'completed'
           const errors = visibleErrors()
-          let msg = `Completed: ${buildCountsSummary(newestJob(syncJobs.value))}`
+          // Named: two per-source syncs can run at once.
+          const newest = newestJob(syncJobs.value)
+          let msg = `Completed (${newest.source}): ${buildCountsSummary(newest)}`
           if (errors.length > 0) msg += ` — ${describeErrors(errors)}`
           syncMessage.value = msg
         }
