@@ -78,7 +78,9 @@ One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the sync raises its season count above the seasons the
 user checked off, because new seasons mean the show is not finished. It needs an
-existing `seasons_watched` list, and it skips ignored items.
+existing `seasons_watched` list, and it skips ignored items. A stored season
+count that is unknown or zero gives it nothing to compare against, so no
+regression happens there either.
 
 A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
 (`parse_ignored_field`, `src/ingestion/sources/generic_csv/generic_csv.py`). That
