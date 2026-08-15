@@ -10,6 +10,24 @@ from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 
+def _api_response(payload: list[dict]) -> Mock:
+    """Build a mock 200 response carrying *payload* as JSON."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 200
+    response.headers = {}
+    response.json.return_value = payload
+    response.raise_for_status = Mock()
+    return response
+
+
+def _redirect_response(location: str) -> Mock:
+    """Build a mock 301 pointing at *location*."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 301
+    response.headers = {"Location": location}
+    return response
+
+
 @pytest.fixture()
 def plugin() -> RadarrPlugin:
     """Create a RadarrPlugin instance."""
@@ -85,12 +103,30 @@ class TestRadarrPluginProperties:
 
     def test_config_schema(self, plugin: RadarrPlugin) -> None:
         schema = plugin.get_config_schema()
-        assert len(schema) == 2
         names = [field.name for field in schema]
-        assert "url" in names
-        assert "api_key" in names
+        assert names == ["url", "api_key", "verify_ssl"]
         api_key_field = next(field for field in schema if field.name == "api_key")
         assert api_key_field.sensitive is True
+
+    def test_verify_ssl_is_optional_and_defaults_on(self, plugin: RadarrPlugin) -> None:
+        field = next(
+            field for field in plugin.get_config_schema() if field.name == "verify_ssl"
+        )
+        assert field.field_type is bool
+        assert field.required is False
+        assert field.default is True
+        # Nothing about a TLS toggle names where the api key is sent.
+        assert field.credential_bound is False
+
+    def test_transform_fields_defaults_verify_ssl_on(self) -> None:
+        assert (
+            RadarrPlugin.transform_fields({"url": "https://radarr.lan"})["verify_ssl"]
+            is True
+        )
+
+    def test_transform_fields_keeps_verify_ssl_off(self) -> None:
+        raw = {"url": "https://radarr.lan", "verify_ssl": False}
+        assert RadarrPlugin.transform_fields(raw)["verify_ssl"] is False
 
     def test_get_source_identifier(self, plugin: RadarrPlugin) -> None:
         assert plugin.get_source_identifier() == "radarr"
@@ -195,11 +231,8 @@ class TestRadarrPluginFetch:
             collections = []
 
         def side_effect(*args, **kwargs):
-            response = Mock(spec=requests.Response)
-            response.raise_for_status = Mock()
             url = args[0] if args else ""
-            response.json.return_value = collections if "collection" in url else movies
-            return response
+            return _api_response(collections if "collection" in url else movies)
 
         self.mock_get.side_effect = side_effect
 
@@ -403,7 +436,7 @@ class TestRadarrPluginErrors:
     ) -> None:
         import requests as req
 
-        mock_response = Mock(spec=requests.Response)
+        mock_response = _api_response([])
         mock_response.raise_for_status.side_effect = req.HTTPError("401 Unauthorized")
         self.mock_get.return_value = mock_response
 
@@ -452,11 +485,8 @@ class TestRadarrCollections:
         ]
 
         def side_effect(*args, **kwargs):
-            response = Mock(spec=requests.Response)
-            response.raise_for_status = Mock()
             url = args[0] if args else ""
-            response.json.return_value = collections if "collection" in url else movies
-            return response
+            return _api_response(collections if "collection" in url else movies)
 
         self.mock_get.side_effect = side_effect
 
@@ -467,3 +497,76 @@ class TestRadarrCollections:
         assert items[0].metadata.get("movie_number") == 1
         assert items[1].metadata.get("series_name") == "Back to the Future Collection"
         assert items[1].metadata.get("movie_number") == 2
+
+
+class TestRadarrTls:
+    """Radarr behind TLS, across both of the request sites it uses."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_requests(self):
+        with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
+            self.mock_get = mock_get
+            yield
+
+    def _serve(self, movies: list[dict], collections: list[dict]) -> None:
+        def side_effect(*args, **kwargs):
+            url = args[0] if args else ""
+            return _api_response(collections if "collection" in url else movies)
+
+        self.mock_get.side_effect = side_effect
+
+    def test_an_https_url_is_fetched_with_verification_on(
+        self,
+        plugin: RadarrPlugin,
+        sample_movies: list[dict],
+    ) -> None:
+        self._serve(sample_movies, [])
+
+        items = list(plugin.fetch({"url": "https://radarr.lan", "api_key": "key"}))
+
+        assert len(items) == 3
+        requested = [call[0][0] for call in self.mock_get.call_args_list]
+        assert "https://radarr.lan/api/v3/movie" in requested
+        assert all(call[1]["verify"] is True for call in self.mock_get.call_args_list)
+
+    def test_verify_ssl_false_reaches_the_collections_call_too(
+        self,
+        plugin: RadarrPlugin,
+        sample_movies: list[dict],
+    ) -> None:
+        """The collections fetch is a second request site, easily missed."""
+        self._serve(sample_movies, [])
+
+        list(
+            plugin.fetch(
+                {
+                    "url": "https://radarr.lan",
+                    "api_key": "key",
+                    "verify_ssl": False,
+                }
+            )
+        )
+
+        requested = [call[0][0] for call in self.mock_get.call_args_list]
+        assert "https://radarr.lan/api/v3/collection" in requested
+        assert all(call[1]["verify"] is False for call in self.mock_get.call_args_list)
+
+    def test_a_redirect_to_another_host_is_refused_regression(
+        self,
+        plugin: RadarrPlugin,
+    ) -> None:
+        """Bug: a redirect handed ``X-Api-Key`` to a host nobody configured.
+
+        ``requests`` strips ``Authorization`` across hosts, but not a custom
+        header. A redirect off the origin is refused now.
+        """
+        self.mock_get.return_value = _redirect_response(
+            "http://attacker.example/api/v3/movie"
+        )
+
+        with pytest.raises(SourceError, match="Refused a redirect") as raised:
+            list(plugin.fetch({"url": "http://radarr.lan", "api_key": "key"}))
+
+        assert "attacker.example" in str(raised.value)
+        self.mock_get.assert_called_once()
+        assert self.mock_get.call_args[0][0] == "http://radarr.lan/api/v3/movie"
