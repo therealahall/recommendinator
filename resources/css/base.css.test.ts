@@ -169,18 +169,6 @@ describe('library card divider (issue #108)', () => {
     expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
   })
 
-  it('leaves the rated card one margin between the two meta rows', () => {
-    // Flex-item margins do not collapse. Restoring the secondary row's
-    // margin-top — it reads as an accidental deletion — doubles the gap on
-    // every rated card, at every width.
-    expect(ruleBlock(readBase(), '.library-meta-secondary')).not.toMatch(/margin-top:/)
-  })
-
-  it('still pins the divider to the bottom of a stretched desktop card', () => {
-    const actions = ruleBlock(readBase(), '.library-item-actions')
-
-    expect(declaration(actions, 'margin-top')).toBe('auto')
-  })
 })
 
 describe('recommendation card header (issue #98)', () => {

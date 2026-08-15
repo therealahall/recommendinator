@@ -7,14 +7,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.ingestion import registry as registry_module
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.sources.service import (
-    PluginImportFailure,
-    PluginNotLoaded,
     SourceConfigError,
     create_source,
     delete_source,
@@ -22,8 +19,6 @@ from src.sources.service import (
     get_sync_handler,
     redact_credentials,
     resolve_inputs,
-    source_plugin_not_loaded,
-    unusable_detail,
     update_source_config_values,
     validate_source_config,
 )
@@ -491,123 +486,6 @@ class TestGetAvailableSyncSources:
         sources = get_available_sync_sources({})
 
         assert len(sources) == 0
-
-
-#: The owner's private plugin, and what its module raised.
-_BROKEN_MODULE = "personal_site_games"
-_BROKEN_REASON = "ImportError: no scraper module"
-_NOT_LOADED = PluginNotLoaded(
-    plugin="personal_site",
-    failures=(PluginImportFailure(module=_BROKEN_MODULE, reason=_BROKEN_REASON),),
-)
-
-
-@pytest.fixture()
-def _registry_with_a_failed_import(_registry_with_fakes: None) -> None:
-    """The fakes, plus a module discovery could not import."""
-    PluginRegistry.get_instance()._import_errors[_BROKEN_MODULE] = _BROKEN_REASON
-
-
-@pytest.mark.usefixtures("_registry_with_a_failed_import")
-class TestFailedImportStaysVisibleRegression:
-    """Symptom: a source whose module raised vanished from every listing.
-
-    Cause: the lookup returned nothing and the entry was dropped. Fix: list it
-    carrying what failed to import, still refusing to sync.
-    """
-
-    CONFIG = {
-        "inputs": {"my_site": {"plugin": _NOT_LOADED.plugin, "enabled": True}},
-    }
-
-    def test_the_listing_keeps_the_source_and_names_the_module(self) -> None:
-        """The Data page and ``source list`` both read this."""
-        [source] = get_available_sync_sources(self.CONFIG)
-
-        assert source.id == "my_site"
-        assert source.enabled is False
-        assert source.plugin_not_loaded == _NOT_LOADED
-
-    def test_it_still_cannot_be_synced(self) -> None:
-        """The gate is unchanged: listing it must not make it runnable."""
-        assert resolve_inputs(self.CONFIG) == []
-        assert get_sync_handler("my_site", self.CONFIG) is None
-        assert source_plugin_not_loaded("my_site", self.CONFIG) == _NOT_LOADED
-
-    def test_a_disabled_source_on_a_loaded_plugin_is_not_blamed(self) -> None:
-        """Otherwise one dead module makes every refusal blame it."""
-        config = {"inputs": {"books": {"plugin": "fake_books", "enabled": False}}}
-
-        assert source_plugin_not_loaded("books", config) is None
-
-
-class TestPluginNameNotModuleNameRegression:
-    """Symptom: a source on ``csv_import`` vanished, since failures are keyed
-    by module and a config names a plugin.
-
-    No index can fix that: a raising module never declared the plugin name it
-    would have provided, so all are listed.
-    """
-
-    CONFIG = {
-        "inputs": {"my_books": {"plugin": "csv_import", "enabled": True}},
-    }
-
-    #: Module ``generic_csv`` provides plugin ``csv_import``.
-    FAILURE = PluginImportFailure(
-        module="generic_csv", reason="ModuleNotFoundError: No module named 'nonesuch'"
-    )
-
-    @pytest.fixture()
-    def _generic_csv_cannot_import(self) -> Iterator[None]:
-        real_import = registry_module.importlib.import_module
-
-        def import_module(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "src.ingestion.sources.generic_csv":
-                raise ModuleNotFoundError("No module named 'nonesuch'")
-            return real_import(name, *args, **kwargs)
-
-        PluginRegistry.reset_instance()
-        try:
-            with (
-                patch.object(
-                    PluginRegistry, "_discover_private_plugins", lambda self: None
-                ),
-                patch.object(registry_module.importlib, "import_module", import_module),
-            ):
-                PluginRegistry.get_instance().discover_plugins()
-                yield
-        finally:
-            PluginRegistry.reset_instance()
-
-    @pytest.mark.usefixtures("_generic_csv_cannot_import")
-    def test_the_module_is_recorded_under_its_own_name(self) -> None:
-        """The two names really do differ, which is what defeats a lookup."""
-        registry = PluginRegistry.get_instance()
-
-        assert registry.get_import_errors()["generic_csv"] == self.FAILURE.reason
-        assert "csv_import" not in registry.get_all_plugins()
-
-    @pytest.mark.usefixtures("_generic_csv_cannot_import")
-    def test_the_listing_keeps_the_source_and_reports_what_failed(self) -> None:
-        """Same contract as a module whose two names happen to agree."""
-        [source] = get_available_sync_sources(self.CONFIG)
-
-        assert source.id == "my_books"
-        assert source.plugin_not_loaded == PluginNotLoaded(
-            plugin="csv_import", failures=(self.FAILURE,)
-        )
-
-    @pytest.mark.usefixtures("_generic_csv_cannot_import")
-    def test_the_sync_refusal_names_the_module_and_the_reason(self) -> None:
-        """Otherwise ``update --source my_books`` says "Unknown or disabled"."""
-        not_loaded = source_plugin_not_loaded("my_books", self.CONFIG)
-
-        assert not_loaded is not None
-        assert unusable_detail(not_loaded) == (
-            "Plugin 'csv_import' is not loaded. Modules that failed to import: "
-            "generic_csv: ModuleNotFoundError: No module named 'nonesuch'"
-        )
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")

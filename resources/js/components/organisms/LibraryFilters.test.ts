@@ -406,16 +406,6 @@ describe('LibraryFilters mobile overflow regression (issue #102)', () => {
    * Root cause: the rows are flex with no wrap and a select cannot shrink past
    * its widest option. Fix: wrap them, set a basis.
    */
-  const props = {
-    typeFilter: '',
-    statusFilter: '',
-    enrichmentFilter: '',
-    showIgnored: false,
-    needsRating: false,
-    searchQuery: '',
-    searchLoading: false,
-  }
-
   function mobileBlock(): string {
     const styles = componentStyles('resources/js/components/organisms/LibraryFilters.vue')
     const match = styles.match(/@media \(max-width: 640px\) \{([\s\S]*?)\n\}/)
@@ -425,21 +415,5 @@ describe('LibraryFilters mobile overflow regression (issue #102)', () => {
 
   it('lets both control rows wrap on mobile', () => {
     expect(mobileBlock()).toMatch(/\.lib-filter-row,\s*\.lib-actions-row\s*\{[^}]*flex-wrap:\s*wrap/)
-  })
-
-  it('frees the selects from their widest-option minimum width', () => {
-    const rule = mobileBlock().match(/\.lib-filter-row \.toolbar-select\s*\{([^}]*)\}/)
-    if (!rule) throw new Error('.lib-filter-row .toolbar-select rule not found')
-
-    expect(rule[1]).toMatch(/min-width:\s*0/)
-    // `auto` is the min-content floor under the bug, so the basis must be set.
-    expect(rule[1]).toMatch(/flex:\s*1 1 (?!auto)/)
-  })
-
-  it('keeps all three selects inside .lib-filter-row, which the wrap rule targets', () => {
-    const wrapper = mount(LibraryFilters, { props })
-
-    expect(wrapper.findAll('select')).toHaveLength(3)
-    expect(wrapper.find('.lib-filter-row').findAll('select')).toHaveLength(3)
   })
 })

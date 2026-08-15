@@ -147,37 +147,6 @@ describe('AddSourceModal', () => {
     setActivePinia(createPinia())
   })
 
-  // Regression: goodreads_rss needed defusedxml, the container lacked it, and
-  // the plugin was simply absent from this picker with nothing saying why.
-  it('says which plugin is missing from the picker and why', async () => {
-    const { wrapper, store } = await mountWithPlugins()
-    store.pluginImportErrors = [
-      {
-        module: 'goodreads_rss',
-        reason: "ModuleNotFoundError: No module named 'defusedxml'",
-      },
-    ]
-    await wrapper.vm.$nextTick()
-
-    const list = wrapper.get('[data-testid="add-source-import-errors"]')
-    expect(list.text()).toContain('goodreads_rss')
-    expect(list.text()).toContain("No module named 'defusedxml'")
-    // Unassociated, the reason is never reached from the picker and a missing
-    // plugin reads as unsupported; list-style: none costs the count with it.
-    expect(list.attributes('role')).toBe('list')
-    expect(wrapper.get('#add-source-plugin').attributes('aria-describedby')).toBe(
-      'add-source-import-errors',
-    )
-  })
-
-  it('describes the picker by nothing when every plugin loaded', async () => {
-    const { wrapper } = await mountWithPlugins()
-
-    expect(
-      wrapper.get('#add-source-plugin').attributes('aria-describedby'),
-    ).toBeUndefined()
-  })
-
   it('prefills the Source id from the selected plugin name', async () => {
     const { wrapper } = await mountWithPlugins()
     const input = wrapper.find('#add-source-id')

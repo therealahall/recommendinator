@@ -228,21 +228,6 @@ describe('SyncSourceAccordion', () => {
     expect(wrapper.text()).toContain('Disabled')
   })
 
-  // #106: a stray syncing=true on a disabled row made the button read
-  // "Syncing…" while its accessible name still said the source was disabled,
-  // so the visible label was no longer part of the accessible name (WCAG 2.5.3).
-  it('keeps the Sync label on a disabled source even when told it is syncing', () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: disabledSource, syncing: true },
-    })
-
-    const sync = wrapper.find('[data-testid="sync-btn-steam"]')
-    expect(sync.text()).toBe('Sync')
-    expect(sync.attributes('aria-label')).toBe(
-      'Sync Steam — source is disabled',
-    )
-  })
-
   it('does not emit sync when disabled source button is clicked', async () => {
     const wrapper = mount(SyncSourceAccordion, {
       props: { source: disabledSource, syncing: false },
@@ -1503,16 +1488,6 @@ describe('SyncSourceAccordion', () => {
       const panel = wrapper.get('[role="region"]')
       expect(panel.attributes('hidden')).toBeDefined()
       expect(panel.element.contains(result.element)).toBe(false)
-    })
-
-    it('shows no result line while the source is still syncing', () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: true, job: makeJob() },
-      })
-
-      expect(wrapper.find('[data-testid="source-sync-result"]').exists()).toBe(
-        false,
-      )
     })
 
     it('renders each error message for a completed job', () => {

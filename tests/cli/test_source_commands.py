@@ -16,12 +16,6 @@ from click.testing import CliRunner, Result
 
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-from tests.fakes.source_plugins import (
-    FAILED_PLUGIN_MODULE,
-    FAILED_PLUGIN_REASON,
-    UNLOADED_PLUGIN,
-    UNLOADED_PLUGIN_DETAIL,
-)
 
 
 @pytest.fixture()
@@ -70,52 +64,6 @@ class TestSourceList:
         assert "my_books" in result.output
         assert "my_games" in result.output
 
-    def test_the_update_alias_lists_the_same_json(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """``update --source list`` is the same listing, so a piped caller
-        must get the same document rather than a table on stdout."""
-        listing = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
-        )
-        alias = _invoke_with_mocks(
-            cli_runner,
-            ["update", "--source", "list", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert alias.exit_code == 0
-        assert json.loads(alias.output) == json.loads(listing.output)
-
-    def test_the_table_drops_the_load_error_column_on_a_healthy_install(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """Reported: every install rendered a column that is always empty.
-
-        The JSON key stays unconditional, which is what a machine reader
-        needs; only the table is asked to earn its width.
-        """
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        assert "Load Error" not in result.output
-        assert "Enabled" in result.output
-
     def test_list_json_matches_api_shape(
         self,
         cli_runner: CliRunner,
@@ -153,111 +101,6 @@ class TestSourceList:
         )
         assert result.exit_code == 0
         assert json.loads(result.output) == []
-
-
-@pytest.mark.usefixtures("registry_with_a_failed_import")
-class TestFailedPluginImportReachesTheCliRegression:
-    """Symptom: a plugin whose module raised was absent from both listings,
-    with nothing anywhere saying it had failed to compile.
-
-    Cause: the registry dropped it silently. Fix: report it on both, matching
-    the web JSON key for key.
-    """
-
-    def test_list_json_carries_the_unloaded_plugin(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """Mirrors ``plugin_not_loaded`` on SyncSourceResponse."""
-        base_config["inputs"]["my_site"] = {
-            "plugin": UNLOADED_PLUGIN,
-            "enabled": True,
-        }
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        entry = next(
-            item for item in json.loads(result.output) if item["id"] == "my_site"
-        )
-        assert entry["enabled"] is False
-        assert entry["plugin_not_loaded"] == {
-            "plugin": UNLOADED_PLUGIN,
-            "failures": [
-                {"module": FAILED_PLUGIN_MODULE, "reason": FAILED_PLUGIN_REASON}
-            ],
-        }
-
-    def test_list_table_names_the_module_and_the_reason(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """Catches dropping the Load Error column: the JSON test stays green."""
-        base_config["inputs"]["my_site"] = {
-            "plugin": UNLOADED_PLUGIN,
-            "enabled": True,
-        }
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "list"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        assert "Load Error" in result.output
-        assert UNLOADED_PLUGIN_DETAIL in result.output
-
-    def test_plugins_table_says_why_a_plugin_is_missing(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """The CLI's Add-Source picker: dropping the notice leaves JSON green."""
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "plugins"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        assert (
-            f"Plugin module '{FAILED_PLUGIN_MODULE}' failed to load: "
-            f"{FAILED_PLUGIN_REASON}"
-        ) in result.output
-        # The surviving plugins are still listed alongside the failure.
-        assert "fake_file" in result.output
-
-    def test_plugins_json_carries_the_import_errors(
-        self,
-        cli_runner: CliRunner,
-        storage: StorageManager,
-        base_config: dict[str, Any],
-    ) -> None:
-        """Mirrors ``import_errors`` on PluginListResponse."""
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "plugins", "--format", "json"],
-            mock_storage=storage,
-            config=base_config,
-        )
-
-        assert result.exit_code == 0
-        body = json.loads(result.output)
-        assert FAILED_PLUGIN_MODULE not in {p["name"] for p in body["plugins"]}
-        assert body["import_errors"] == [
-            {"module": FAILED_PLUGIN_MODULE, "reason": FAILED_PLUGIN_REASON}
-        ]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

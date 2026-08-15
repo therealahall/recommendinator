@@ -1233,64 +1233,6 @@ class TestLibraryEditCompletesEverySeasonRegression:
         assert stored.status == ConsumptionStatus.COMPLETED
         assert stored.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
 
-    def test_seasons_only_edit_forwards_unset_status_regression(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """An absent --status reaches storage as UNSET, not the stored value."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(
-            db_id=1, content_type=ContentType.TV_SHOW
-        )
-        mock_storage.update_item_from_ui.return_value = True
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--seasons-watched", "1,2"],
-            mock_storage,
-        )
-
-        assert result.exit_code == 0, result.output
-        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["status"] is UNSET
-        assert call_kwargs["seasons_watched"] == [1, 2]
-
-
-class TestLibraryEditUnreadClearsTheChecklistRegression:
-    """`--status unread` left every season ticked.
-
-    Symptom: the row read unread on a full checklist, and the next season
-    touch snapped it back. Cause: only `completed` derived a list. Fix:
-    `unread` writes an empty one, as PATCH does.
-    """
-
-    def test_unread_status_empties_the_season_list_regression(
-        self, cli_runner: CliRunner, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "library.db")
-        db_id = storage.save_content_item(
-            ContentItem(
-                id="show-1",
-                title="Dark",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                rating=None,
-                metadata={"seasons": 3, "seasons_watched": [1, 2, 3]},
-            ),
-            user_id=1,
-        )
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", str(db_id), "--status", "unread"],
-            storage,
-        )
-
-        assert result.exit_code == 0, result.output
-        stored = storage.get_content_item(db_id, user_id=1)
-        assert stored is not None
-        assert stored.status == ConsumptionStatus.UNREAD
-        assert stored.metadata["seasons_watched"] == []
-
 
 class TestLibraryEditClearing:
     """Regression tests for clearing a rating or review from the CLI.

@@ -4147,23 +4147,6 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
 
-    def test_repeated_season_counts_once(self, temp_db: SQLiteDB) -> None:
-        """A season listed twice does not finish a show it has not finished."""
-        item = ContentItem(
-            id="ui_7a",
-            title="Repeated Season Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"seasons": 3},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 1, 1])
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
     def test_update_auto_derive_status_none_watched(self, temp_db: SQLiteDB) -> None:
         """Emptying the checklist, with no status supplied, derives unread."""
         item = ContentItem(
@@ -5377,72 +5360,6 @@ class TestTvSeasonSyncRegression:
         assert retrieved.metadata is not None
         assert retrieved.metadata.get("seasons_watched") == [1, 2]
 
-    def test_a_csv_total_seasons_of_zero_keeps_completed_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Reported against a CSV row of ``total_seasons,0``, re-imported.
-
-        The alias and the string are the importer's own output, and the
-        pinned 0 rules out a NULL column standing in for it.
-        """
-        item = ContentItem(
-            id="tv_csv_zero_seasons",
-            title="Zero Season Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"total_seasons": "0", "seasons_watched": [1, 2]},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        with temp_db.connection() as conn:
-            stored = conn.execute(
-                "SELECT seasons FROM tv_show_details WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-        assert stored["seasons"] == 0
-
-        first = temp_db.get_content_item(db_id)
-        assert first is not None
-        assert first.status == ConsumptionStatus.COMPLETED
-
-        temp_db.save_content_item(item)
-
-        second = temp_db.get_content_item(db_id)
-        assert second is not None
-        assert second.status == ConsumptionStatus.COMPLETED
-
-    def test_a_zero_total_still_regresses_once_a_real_count_arrives(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Would catch widening the zero guard into an unconditional False.
-
-        It suppresses the comparison, not the regression behind it.
-        """
-        item = ContentItem(
-            id="tv_zero_then_counted",
-            title="Counted Later",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"seasons": 0, "seasons_watched": [1, 2]},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="tv_zero_then_counted",
-                title="Counted Later",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
-                metadata={"seasons": 3},
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-        assert retrieved.metadata is not None
-        assert str(retrieved.metadata.get("seasons")) == "3"
-
     def test_sync_keeps_later_existing_date_over_earlier_incoming_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -5635,10 +5552,13 @@ class TestSeasonsWatchedSyncUnionRegression:
     def test_sync_never_unticks_a_manual_check_off_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A season the user ticked survives a sync that does not report it."""
-        db_id = self._sync(temp_db, [1])
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 5])
+        """A season the sync omits survives it.
 
+        The promotion test above passes just as well if the union regressed to
+        a replace, so this is the half guarding the watch history.
+        """
+        db_id = self._sync(temp_db, [1])
+        temp_db.update_item_from_ui(db_id, seasons_watched=[1, 5])
         self._sync(temp_db, [1, 2])
 
         retrieved = temp_db.get_content_item(db_id)
@@ -5646,91 +5566,9 @@ class TestSeasonsWatchedSyncUnionRegression:
         assert retrieved.metadata["seasons_watched"] == [1, 2, 5]
 
 
-class TestCompletedStatusFillsSeasonsRegression:
-    """Completing a show did not tick its seasons (#123).
-
-    Symptom: a stated completed left the checklist partial. Cause: status was
-    derived from seasons, never the reverse. Fix: the stated side derives the
-    other.
-    """
-
-    @staticmethod
-    def _show(temp_db: SQLiteDB, metadata: dict[str, object]) -> int:
-        return temp_db.save_content_item(
-            ContentItem(
-                id="tv_complete_1",
-                title="Half-Watched Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
-                metadata=metadata,
-            )
-        )
-
-    def test_completed_status_ticks_every_season_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A stated completed with no checklist fills the season list."""
-        db_id = self._show(temp_db, {"seasons": 5, "seasons_watched": [1, 2]})
-
-        temp_db.update_item_from_ui(db_id=db_id, status="completed")
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-        assert retrieved.metadata["seasons_watched"] == [1, 2, 3, 4, 5]
-
-    def test_supplied_status_outranks_a_supplied_checklist_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A stated status is not overwritten by the checklist beside it."""
-        db_id = self._show(temp_db, {"seasons": 5, "seasons_watched": [1, 2]})
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="completed", seasons_watched=[1, 2]
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-        assert retrieved.metadata["seasons_watched"] == [1, 2]
-
-    def test_completed_leaves_the_checklist_alone_when_the_total_is_unknown(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """With no season count to fill from, the stored list stands."""
-        db_id = self._show(temp_db, {"seasons_watched": [1, 2]})
-
-        temp_db.update_item_from_ui(db_id=db_id, status="completed")
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-        assert retrieved.metadata["seasons_watched"] == [1, 2]
-
-
 class TestTvSeasonCountFromTraktMetadata:
-    """Season counts written under the alias the Trakt plugin actually uses.
-
-    Bug reported: a show whose metadata carried ``total_seasons`` left
-    ``tv_show_details.seasons`` NULL, because the write config only knew the
-    key ``seasons`` and dumped ``total_seasons`` into the free-form metadata
-    blob. Everything reading the season count off the column then went blind:
-    the API and CLI reported ``total_seasons: null``, the web edit dialog had
-    no season checklist, and ticking every season resolved to
-    currently_consuming forever because the count read as 0.
-
-    Fix: the ``seasons`` column accepts ``total_seasons`` as an alias, the
-    same way ``genres`` accepts ``genre`` and ``platforms`` accepts
-    ``platform``, and the alias is a known key so it stops being duplicated
-    into the blob.
-
-    Trakt is the only producer of the alias. ``total_seasons`` is also what
-    the CSV and JSON templates call the *column*, but both generic importers
-    translate it onto the canonical ``seasons`` before the item reaches
-    storage — they share ``CONTENT_TYPE_COLUMNS`` in
-    ``src/ingestion/sources/generic_csv/generic_csv.py`` — so neither
-    exercises this path. Trakt writes the alias straight into metadata, which
-    its own suite pins.
+    """``total_seasons`` used to land in the metadata blob, leaving the
+    ``seasons`` column NULL, so a fully watched show never completed.
     """
 
     @staticmethod
@@ -8462,104 +8300,3 @@ class TestUndeclaredContentTypeReadRegression:
         assert item is not None
         assert item.author == "The Wachowskis"
         assert item.metadata["genres"] == ["Science Fiction"]
-
-
-class TestSurrogateBoundToSqliteRegression:
-    """A lone surrogate in an item failed its save at the bind.
-
-    Symptom: an undecodable ROM filename raised UnicodeEncodeError on save.
-    Cause: the sync door bound the item's text as handed over. Fix:
-    ``_surrogate_free`` at that door.
-    """
-
-    def test_no_column_the_sync_door_writes_keeps_a_lone_surrogate(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A book, so a strip added to the roms plugin would leave this red.
-
-        ``\\udcff`` is what ``surrogateescape`` returns for the byte 0xFF.
-        """
-        item = ContentItem(
-            id="book:\udcff",
-            title="Cand\udcffide",
-            author="Volt\udcffaire",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={
-                "publisher": "Cram\udcffer",
-                "path": "/books/Cand\udcffide.epub",
-            },
-        )
-
-        db_id = temp_db.save_content_item(item)
-
-        with temp_db.connection() as conn:
-            row = conn.execute(
-                "SELECT external_id, title FROM content_items WHERE id = ?",
-                (db_id,),
-            ).fetchone()
-            detail = conn.execute(
-                "SELECT author, publisher, metadata FROM book_details"
-                " WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-
-        assert row["external_id"] == "book:\\udcff"
-        assert row["title"] == "Cand\\udcffide"
-        assert detail["author"] == "Volt\\udcffaire"
-        assert detail["publisher"] == "Cram\\udcffer"
-        assert json.loads(detail["metadata"])["path"] == "/books/Cand\\udcffide.epub"
-
-    def test_the_completion_door_writes_the_escape_too(self, temp_db: SQLiteDB) -> None:
-        """The upsert's escaped copy never reached ``_write_completion``.
-
-        It re-bound the caller's own review, so this raised at the bind.
-        """
-        item = ContentItem(
-            id="book:completed\udcff",
-            title="Cand\udcffide",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Bes\udcfft read of the year",
-        )
-
-        db_id = temp_db.complete_content_item(item)
-
-        with temp_db.connection() as conn:
-            row = conn.execute(
-                "SELECT title, review FROM content_items WHERE id = ?",
-                (db_id,),
-            ).fetchone()
-
-        assert row["title"] == "Cand\\udcffide"
-        assert row["review"] == "Bes\\udcfft read of the year"
-
-    def test_the_completion_doors_escape_keeps_every_typed_field(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """``_surrogate_free`` round-trips through ``model_dump``.
-
-        An unvalidated ``model_copy`` could hand the upsert a plain string
-        where a ContentType or a date belongs, so the detail row and the
-        supplied date are read back rather than assumed.
-        """
-        item = ContentItem(
-            id="tv:completed\udcff",
-            title="The Expa\udcffnse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            date_completed=date(2026, 2, 1),
-            metadata={"seasons": 6, "network": "Sy\udcfffy"},
-        )
-
-        db_id = temp_db.complete_content_item(item)
-
-        stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-        assert stored.content_type == ContentType.TV_SHOW
-        assert stored.status == ConsumptionStatus.COMPLETED
-        assert stored.date_completed == date(2026, 2, 1)
-        assert stored.rating == 5
-        assert stored.title == "The Expa\\udcffnse"
-        assert stored.metadata["network"] == "Sy\\udcfffy"

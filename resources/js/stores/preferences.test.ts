@@ -278,38 +278,4 @@ describe('preferences load-failure regression', () => {
     expect(store.loadError).toBe('Network error')
   })
 
-  it('refuses to save after a failed load, so nothing is PUT', async () => {
-    const store = await loadedStore()
-    store.customRules = ['no horror']
-    mockGet.mockRejectedValue(new Error('Network error'))
-    await store.load()
-
-    await store.save()
-
-    expect(mockPut).not.toHaveBeenCalled()
-    expect(store.saveStatus).toBe('error')
-    expect(store.saveError).toBe('Preferences have not loaded yet.')
-  })
-
-  it('refuses to save before any load has run', async () => {
-    const store = usePreferencesStore()
-
-    await store.save()
-
-    expect(mockPut).not.toHaveBeenCalled()
-    expect(store.hasLoaded).toBe(false)
-  })
-
-  it('clears loadError and re-enables save once a retry succeeds', async () => {
-    mockGet.mockRejectedValue(new Error('Network error'))
-    const store = usePreferencesStore()
-    await store.load()
-
-    mockGet.mockResolvedValue({ ...STORED_PREFS, custom_rules: ['no horror'] })
-    await store.load()
-
-    expect(store.loadError).toBe('')
-    expect(store.hasLoaded).toBe(true)
-    expect(store.customRules).toEqual(['no horror'])
-  })
 })

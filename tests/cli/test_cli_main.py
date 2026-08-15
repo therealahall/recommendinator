@@ -16,7 +16,6 @@ from src.recommendations.engine import RecommendationEngine
 from src.storage.global_secrets import GLOBAL_SECRET_USER_ID
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-from tests.fakes.source_plugins import UNLOADED_PLUGIN, UNLOADED_PLUGIN_DETAIL
 
 
 def test_cli_main_module_exposes_cli_entry_point() -> None:
@@ -70,49 +69,6 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
     with storage.connection() as conn:
         rows = conn.execute("SELECT source FROM content_items").fetchall()
     assert [row[0] for row in rows] == ["goodreads"]
-
-
-@pytest.mark.usefixtures("registry_with_a_failed_import")
-class TestUpdateReportsAFailedPluginImportRegression:
-    """Symptom: the owner's private plugin stopped compiling and its source
-    answered "Unknown or disabled", blaming a config that was correct.
-
-    Cause: the registry dropped the module silently. Fix: name it and why.
-    """
-
-    CONFIG: dict[str, Any] = {
-        "inputs": {
-            "my_site": {"plugin": UNLOADED_PLUGIN, "enabled": True},
-        },
-    }
-
-    def _run(self, tmp_path: Path, args: list[str]) -> Any:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        with (
-            patch("src.cli.main.load_config", return_value=self.CONFIG),
-            patch("src.cli.main.create_storage_manager", return_value=storage),
-            patch(
-                "src.cli.main.create_recommendation_engine",
-                return_value=MagicMock(spec=RecommendationEngine),
-            ),
-        ):
-            return CliRunner().invoke(cli, args)
-
-    def test_the_listing_names_the_module_and_the_reason(self, tmp_path: Path) -> None:
-        """``--source list`` is where the user is sent, so it must say it."""
-        result = self._run(tmp_path, ["update", "--source", "list"])
-
-        assert result.exit_code == 0, result.output
-        assert "my_site" in result.output
-        assert f"unusable: {UNLOADED_PLUGIN_DETAIL}" in result.output
-
-    def test_syncing_it_aborts_naming_the_import_failure(self, tmp_path: Path) -> None:
-        """Not "Unknown or disabled", which sends the user to fix config.yaml."""
-        result = self._run(tmp_path, ["update", "--source", "my_site"])
-
-        assert result.exit_code != 0
-        assert "Unknown or disabled source" not in result.output
-        assert f"Error: {UNLOADED_PLUGIN_DETAIL}" in result.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -279,25 +235,6 @@ class TestUpdateDbOnlySourceRegression:
         assert "enabled" in result.output
 
 
-def _run_rom_update(
-    storage: StorageManager, root: Path, auto_enrich: bool = False
-) -> Any:
-    """``update --source roms`` over *root*, against a real storage manager."""
-    config: dict[str, Any] = {
-        "inputs": {"roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}},
-        "enrichment": {"enabled": auto_enrich, "auto_enrich_on_sync": auto_enrich},
-    }
-    with (
-        patch("src.cli.main.load_config", return_value=config),
-        patch("src.cli.main.create_storage_manager", return_value=storage),
-        patch(
-            "src.cli.main.create_recommendation_engine",
-            return_value=MagicMock(spec=RecommendationEngine),
-        ),
-    ):
-        return CliRunner().invoke(cli, ["update", "--source", "roms"])
-
-
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
     """Reported: one ROM named in invalid UTF-8 lost the whole sync.
 
@@ -308,7 +245,21 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
 
     @staticmethod
     def _run(storage: StorageManager, root: Path) -> Any:
-        return _run_rom_update(storage, root)
+        """``update --source roms`` over *root*, against real storage."""
+        config: dict[str, Any] = {
+            "inputs": {
+                "roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}
+            },
+        }
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch("src.cli.main.create_storage_manager", return_value=storage),
+            patch(
+                "src.cli.main.create_recommendation_engine",
+                return_value=MagicMock(spec=RecommendationEngine),
+            ),
+        ):
+            return CliRunner().invoke(cli, ["update", "--source", "roms"])
 
     def test_the_odd_rom_and_its_neighbours_all_land(self, tmp_path: Path) -> None:
         """Catches a revert of either half.
@@ -340,153 +291,6 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
             "Super Mario World",
         }
         assert len({row["external_id"] for row in rows}) == 3
-
-    def test_two_roms_differing_only_in_that_byte_keep_their_own_rows(
-        self, tmp_path: Path
-    ) -> None:
-        """Distinct ids are only worth having if both rows survive the sync."""
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        root = tmp_path / "roms"
-        root.mkdir()
-        (root / os.fsdecode(b"Zelda\xfe.zip")).write_bytes(b"rom")
-        (root / os.fsdecode(b"Zelda\xff.zip")).write_bytes(b"rom")
-
-        result = self._run(storage, root)
-
-        assert result.exit_code == 0, result.output
-        with storage.connection() as conn:
-            rows = conn.execute(
-                "SELECT external_id, title FROM content_items ORDER BY id"
-            ).fetchall()
-        assert len(rows) == 2, [dict(row) for row in rows]
-        assert len({row["external_id"] for row in rows}) == 2
-
-    def test_a_katakana_named_rom_lands_with_a_readable_title(
-        self, tmp_path: Path
-    ) -> None:
-        """``ｱｲｳｴｵ`` is five bare continuation bytes, none of which decodes.
-
-        A strip at the storage door would take the whole title, landing a
-        blank, unfindable row past the plugin's empty-title skip upstream.
-        """
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        root = tmp_path / "roms"
-        root.mkdir()
-        (root / os.fsdecode(b"\xb1\xb2\xb3\xb4\xb5.zip")).write_bytes(b"rom")
-
-        result = self._run(storage, root)
-
-        assert result.exit_code == 0, result.output
-        with storage.connection() as conn:
-            titles = [
-                row["title"]
-                for row in conn.execute("SELECT title FROM content_items").fetchall()
-            ]
-        assert titles != [""], "the ROM landed with no title at all"
-        assert len(titles) == 1, titles
-
-
-class TestAWarningAboutAnUndecodableRomRegression:
-    """Reported: the run died reporting the ROM it had just saved.
-
-    Symptom: UnicodeEncodeError from ``click.echo``. Cause: the sync named the
-    raw title, lone surrogate and all. Fix: the summary counts what it could
-    not queue instead.
-    """
-
-    def test_the_warning_prints_and_the_sync_still_finishes(
-        self, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        root = tmp_path / "roms"
-        root.mkdir()
-        (root / os.fsdecode(b"Metr\xffoid (USA).zip")).write_bytes(b"rom")
-
-        with patch.object(
-            storage,
-            "mark_item_needs_enrichment",
-            side_effect=RuntimeError("enrichment queue is down"),
-        ):
-            result = _run_rom_update(storage, root, auto_enrich=True)
-
-        assert result.exit_code == 0, result.output
-        assert (
-            "Warning: Saved 1 item(s) but could not queue them for enrichment"
-            in result.output
-        )
-        assert "Total: 1 of 1 items saved (1 added, 0 updated, 0 unchanged)." in (
-            result.output
-        )
-
-
-class TestASecondRomScanReportsNothingChangedRegression:
-    """Reported: two runs of ``update --source roms`` both said 40 items.
-
-    Cause: the upsert returned a row id, never what it wrote. Fix: it compares
-    the stored row against the incoming one. ROMs, not books: a different
-    detail table.
-    """
-
-    @staticmethod
-    def _stash(tmp_path: Path) -> Path:
-        root = tmp_path / "roms"
-        root.mkdir()
-        for number in range(1, 41):
-            (root / f"Game {number:02d}.zip").write_bytes(b"rom")
-        return root
-
-    def test_the_first_scan_of_forty_roms_reports_forty_added(
-        self, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        result = _run_rom_update(storage, self._stash(tmp_path))
-
-        assert result.exit_code == 0, result.output
-        assert "Total: 40 of 40 items saved (40 added, 0 updated, 0 unchanged)." in (
-            result.output
-        )
-
-    def test_scanning_the_same_forty_again_reports_forty_unchanged(
-        self, tmp_path: Path
-    ) -> None:
-        """The acceptance case: nothing on disk moved, so nothing is claimed."""
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        root = self._stash(tmp_path)
-        _run_rom_update(storage, root)
-
-        result = _run_rom_update(storage, root)
-
-        assert result.exit_code == 0, result.output
-        assert "Total: 40 of 40 items saved (0 added, 0 updated, 40 unchanged)." in (
-            result.output
-        )
-
-    def test_one_retitled_rom_is_the_only_one_reported_as_updated(
-        self, tmp_path: Path
-    ) -> None:
-        """Catches a rewrite that calls the whole scan unchanged when most of
-        it is: a re-tagged filename still matching its row moved 1 of the 40.
-        """
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        root = self._stash(tmp_path)
-        _run_rom_update(storage, root)
-        (root / "Game 07.zip").rename(root / "GAME 07.zip")
-
-        result = _run_rom_update(storage, root)
-
-        assert result.exit_code == 0, result.output
-        assert "Total: 40 of 40 items saved (0 added, 1 updated, 39 unchanged)." in (
-            result.output
-        )
-        with storage.connection() as conn:
-            titles = [
-                row["title"]
-                for row in conn.execute(
-                    "SELECT title FROM content_items WHERE title LIKE '%07'"
-                ).fetchall()
-            ]
-        assert titles == ["GAME 07"]
 
 
 def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:

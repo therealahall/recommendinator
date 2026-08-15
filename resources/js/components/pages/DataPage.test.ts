@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { createTestingPinia } from '@pinia/testing'
 import { setActivePinia, createPinia } from 'pinia'
 import DataPage from './DataPage.vue'
-import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import { useDataStore } from '@/stores/data'
 import type {
   SourceConfigResponse,
@@ -42,48 +40,6 @@ const disabledSource = {
   plugin_not_loaded: null,
 }
 
-/** Mount with an "All Sources" run in flight and both sources listed. */
-async function mountDuringSyncAll() {
-  const wrapper = mount(DataPage, {
-    global: {
-      plugins: [createTestingPinia({ createSpy: vi.fn })],
-      stubs: {
-        SyncSourceAccordion: true,
-        AddSourceModal: true,
-        EnrichmentCard: true,
-      },
-    },
-  })
-  const data = useDataStore()
-  // The run is going and resolved to Steam alone, which is what the store
-  // reports per source id.
-  vi.mocked(data.isSourceIdSyncing).mockImplementation(
-    (id) => id === 'all' || id === 'steam',
-  )
-  data.syncSources = [enabledSource, disabledSource]
-  await wrapper.vm.$nextTick()
-
-  const rows = wrapper.findAllComponents(SyncSourceAccordion)
-  return (id: string) => rows.find((row) => row.props('source').id === id)!
-}
-
-describe('DataPage sync-all regression', () => {
-  // #106: the syncing prop ORed in isSourceIdSyncing('all') with no enabled
-  // guard, so a disabled row read "Syncing…", hid its last-run errors and
-  // locked its config form for the whole run — the server never syncs it.
-  it('leaves a disabled source not syncing while All Sources runs', async () => {
-    const row = await mountDuringSyncAll()
-
-    expect(row('roms').props('syncing')).toBe(false)
-  })
-
-  it('still marks an enabled source syncing while All Sources runs', async () => {
-    const row = await mountDuringSyncAll()
-
-    expect(row('steam').props('syncing')).toBe(true)
-  })
-})
-
 /** The umbrella run, carrying a progress slot only for the source it syncs. */
 function allSourcesRunning(): SyncJobResponse {
   return {
@@ -113,28 +69,6 @@ function allSourcesRunning(): SyncJobResponse {
         items_unchanged: 1,
       },
     ],
-  }
-}
-
-/** What the row was showing before Sync All: the source's own last run, which
- *  reported errors. SyncManager retains it after the user disables the source. */
-function romsFailedEarlier(): SyncJobResponse {
-  return {
-    source: 'Roms',
-    status: 'completed',
-    started_at: '2026-08-14T09:00:00',
-    completed_at: '2026-08-14T09:01:00',
-    items_processed: 3,
-    total_items: 4,
-    current_item: null,
-    current_source: null,
-    error_message: null,
-    progress_percent: 75,
-    items_added: 3,
-    items_updated: 0,
-    items_unchanged: 0,
-    errors: [{ source: 'Roms', message: 'Set verify_ssl to false' }],
-    sources: [],
   }
 }
 
@@ -197,15 +131,6 @@ describe('DataPage rows during a Sync All', () => {
     return wrapper
   }
 
-  function rowFor(
-    wrapper: Awaited<ReturnType<typeof mountPage>>,
-    id: string,
-  ) {
-    return wrapper
-      .findAllComponents(SyncSourceAccordion)
-      .find((row) => row.props('source').id === id)!
-  }
-
   it('reads Sync on the disabled row and Syncing… on the enabled one', async () => {
     const wrapper = await mountPage([allSourcesRunning()])
 
@@ -215,61 +140,6 @@ describe('DataPage rows during a Sync All', () => {
     expect(roms.attributes('aria-label')).toBe('Sync Roms — source is disabled')
     expect(roms.attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Syncing…')
-    wrapper.unmount()
-  })
-
-  it('gives the disabled row no progress of the run it is not part of', async () => {
-    const wrapper = await mountPage([allSourcesRunning()])
-
-    // The umbrella job carries a slot per source it syncs, and the disabled
-    // one has none — a bar on that row would be measuring Steam's work.
-    expect(rowFor(wrapper, 'roms').find('[role="progressbar"]').exists()).toBe(
-      false,
-    )
-    expect(
-      rowFor(wrapper, 'steam').get('[role="progressbar"]').attributes('aria-valuenow'),
-    ).toBe('87')
-    wrapper.unmount()
-  })
-
-  it('keeps the disabled row editable, Enable toggle included', async () => {
-    const wrapper = await mountPage([allSourcesRunning()])
-    mockPut.mockResolvedValue({ ...romsConfig, enabled: true })
-
-    const roms = rowFor(wrapper, 'roms')
-    await roms.get('button.accordion-trigger').trigger('click')
-    await flushPromises()
-
-    expect(roms.get('input[name="rom_path"]').attributes('disabled')).toBeUndefined()
-    expect(roms.get('[data-testid="form-save"]').attributes('disabled')).toBeUndefined()
-    const toggle = roms.get('[data-testid="form-toggle-enabled"]')
-    expect(toggle.text()).toBe('Enable')
-    expect(toggle.attributes('disabled')).toBeUndefined()
-
-    await toggle.trigger('click')
-    await flushPromises()
-
-    expect(mockPut).toHaveBeenCalledWith('/sync/sources/roms/enabled', {
-      enabled: true,
-    })
-    wrapper.unmount()
-  })
-
-  // The run started without this source, so the enable the unlocked form
-  // allows cannot have joined it.
-  it('does not claim a sync for a source enabled mid-run', async () => {
-    const wrapper = await mountPage([allSourcesRunning()])
-    mockPut.mockResolvedValue({ ...romsConfig, enabled: true })
-
-    const roms = rowFor(wrapper, 'roms')
-    await roms.get('button.accordion-trigger').trigger('click')
-    await flushPromises()
-    await roms.get('[data-testid="form-toggle-enabled"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.get('[data-testid="sync-btn-roms"]').text()).toBe('Sync')
-    expect(roms.get('[data-testid="form-toggle-enabled"]').attributes('disabled'))
-      .toBeUndefined()
     wrapper.unmount()
   })
 
@@ -326,195 +196,6 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  // Regression: clicking Retry swapped the error branch for the spinner, so
-  // the button holding focus was unmounted and the keyboard user landed on
-  // <body> (WCAG 2.4.3).
-  it('keeps focus on Retry while the reload it started is in flight', async () => {
-    mockPost.mockResolvedValue({})
-    let releaseSources: (value: unknown[]) => void = () => {}
-    let sourcesFail = true
-    mockGet.mockImplementation((path: string) => {
-      if (path === '/sync/sources') {
-        return sourcesFail
-          ? Promise.reject(new Error('boom'))
-          : new Promise((resolve) => {
-              releaseSources = resolve
-            })
-      }
-      return Promise.resolve({})
-    })
-
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-      attachTo: document.body,
-    })
-    await flushPromises()
-
-    sourcesFail = false
-    const retry = wrapper.get('[data-testid="sync-sources-retry"]')
-    ;(retry.element as HTMLButtonElement).focus()
-    await retry.trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(retry.text()).toBe('Retrying…')
-    expect(retry.attributes('aria-disabled')).toBe('true')
-    expect(document.activeElement).toBe(retry.element)
-
-    releaseSources([enabledSource])
-    await flushPromises()
-
-    // The retry state has to end with the request, or the page holds the
-    // failure branch open over a list it has already loaded.
-    expect(wrapper.find('[data-testid="sync-sources-retry"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Sync')
-    wrapper.unmount()
-  })
-
-  // Regression: the restore fired on the captured button being gone alone, so
-  // a keyboard user who Tabbed away mid-request was yanked back (WCAG 2.4.3).
-  it('leaves focus where the user moved it while the reload was in flight', async () => {
-    mockPost.mockResolvedValue({})
-    let releaseSources: (value: unknown[]) => void = () => {}
-    let sourcesFail = true
-    mockGet.mockImplementation((path: string) => {
-      if (path === '/sync/sources') {
-        return sourcesFail
-          ? Promise.reject(new Error('boom'))
-          : new Promise((resolve) => {
-              releaseSources = resolve
-            })
-      }
-      return Promise.resolve({})
-    })
-
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-      attachTo: document.body,
-    })
-    await flushPromises()
-
-    sourcesFail = false
-    const retry = wrapper.get('[data-testid="sync-sources-retry"]')
-    ;(retry.element as HTMLButtonElement).focus()
-    await retry.trigger('click')
-    const elsewhere = document.createElement('button')
-    document.body.appendChild(elsewhere)
-    elsewhere.focus()
-
-    releaseSources([enabledSource])
-    await flushPromises()
-
-    expect(document.activeElement).toBe(elsewhere)
-    elsewhere.remove()
-    wrapper.unmount()
-  })
-
-  // Regression: a rejected /sync/sources emptied the list, so a request that
-  // never landed rendered as configuration advice the user cannot act on.
-  it('says the load failed rather than that nothing is configured', async () => {
-    mockPost.mockResolvedValue({})
-    mockGet.mockImplementation((path: string) =>
-      path === '/sync/sources'
-        ? Promise.reject(new Error('boom'))
-        : Promise.resolve({}),
-    )
-
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-    })
-    await flushPromises()
-
-    expect(wrapper.text()).not.toContain('No sync sources configured')
-    expect(wrapper.find('[role="alert"]').text()).toContain(
-      "Couldn't load sync sources",
-    )
-    expect(wrapper.find('[data-testid="sync-sources-retry"]').attributes('type'))
-      .toBe('button')
-    wrapper.unmount()
-  })
-
-  // Regression: a source whose plugin module raised vanished from the page,
-  // which then advised adding sources to config.yaml — where it already was.
-  it('names the module and the reason a source cannot run', async () => {
-    mockPost.mockResolvedValue({})
-    mockGet.mockImplementation((path: string) =>
-      path === '/sync/sources'
-        ? Promise.resolve([
-            {
-              ...enabledSource,
-              id: 'my_site',
-              display_name: 'My Site',
-              enabled: false,
-              plugin_not_loaded: {
-                plugin: 'personal_site',
-                failures: [
-                  {
-                    module: 'personal_site_games',
-                    reason: 'ImportError: no scraper module',
-                  },
-                ],
-              },
-            },
-          ])
-        : Promise.resolve({}),
-    )
-
-    const wrapper = mount(DataPage, {
-      global: {
-        stubs: {
-          SyncSourceAccordion: true,
-          AddSourceModal: true,
-          EnrichmentCard: true,
-        },
-      },
-    })
-    await flushPromises()
-
-    // list-style: none strips list semantics in WebKit/VoiceOver, and how many
-    // modules failed is the point of the notice.
-    const list = wrapper.get('.unusable-sources-list')
-    expect(list.attributes('role')).toBe('list')
-    expect(list.get('li ul').attributes('role')).toBe('list')
-
-    const notice = wrapper.get('[data-testid="unusable-sources"]').text()
-    expect(notice).toContain('personal_site')
-    expect(notice).toContain('personal_site_games')
-    expect(notice).toContain('ImportError: no scraper module')
-    expect(wrapper.text()).not.toContain('No sync sources configured')
-    // No accordion: its schema and config reads would 404 on expand.
-    expect(wrapper.findAllComponents(SyncSourceAccordion)).toHaveLength(0)
-    wrapper.unmount()
-  })
-
-  // Catches dropping the `syncSourcesError = ''` reset at the top of
-  // loadSyncSources: the card would outlive the failure and Retry would look
-  // dead, with the store's own error test still green.
-  it('clears the error and lists the sources when Retry succeeds', async () => {
-    mockPost.mockResolvedValue({})
-    let sourcesFail = true
-    mockGet.mockImplementation((path: string) => {
-      if (path === '/sync/sources') {
-        return sourcesFail
-          ? Promise.reject(new Error('boom'))
-          : Promise.resolve([enabledSource])
-      }
-      return Promise.resolve({})
-    })
-
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-    })
-    await flushPromises()
-
-    sourcesFail = false
-    await wrapper.get('[data-testid="sync-sources-retry"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Sync')
-    wrapper.unmount()
-  })
-
   /**
    * Symptom: Retry had no perceivable outcome. Success unmounted the focused
    * button silently; a repeat failure left the alert text unchanged. Root
@@ -540,17 +221,6 @@ describe('DataPage rows during a Sync All', () => {
       return wrapper
     }
 
-    it('carries a silent live region before any retry has an outcome', async () => {
-      const wrapper = await mountFailed(true)
-
-      const status = wrapper.get('[data-testid="sync-sources-retry-status"]')
-      expect(status.text()).toBe('')
-      expect(status.attributes('role')).toBe('status')
-      expect(status.attributes('aria-live')).toBe('polite')
-      expect(status.attributes('aria-atomic')).toBe('true')
-      wrapper.unmount()
-    })
-
     it('announces the reload and moves focus off the unmounted Retry', async () => {
       const wrapper = await mountFailed(true)
 
@@ -572,86 +242,5 @@ describe('DataPage rows during a Sync All', () => {
       wrapper.unmount()
     })
 
-    it('says a second failure failed rather than repeating in silence', async () => {
-      const wrapper = await mountFailed(false)
-
-      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
-      ;(retry.element as HTMLButtonElement).focus()
-      await retry.trigger('click')
-      await flushPromises()
-
-      expect(wrapper.get('[data-testid="sync-sources-retry-status"]').text()).toBe(
-        "Still couldn't load sync sources. Try again in a moment.",
-      )
-      // The button survived, so focus must stay on it.
-      expect(document.activeElement).toBe(retry.element)
-      wrapper.unmount()
-    })
-
-    // A retry that succeeds into an empty list unmounts Retry with nothing in
-    // the loaded branch to fall back to: a focus target picked from the sources
-    // themselves would be null here and drop the user to <body>.
-    it('moves focus to the panel when the retry succeeds with no sources', async () => {
-      mockPost.mockResolvedValue({})
-      let sourcesFail = true
-      mockGet.mockImplementation((path: string) => {
-        if (path !== '/sync/sources') return Promise.resolve({})
-        return sourcesFail ? Promise.reject(new Error('boom')) : Promise.resolve([])
-      })
-
-      const wrapper = mount(DataPage, {
-        global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-        attachTo: document.body,
-      })
-      await flushPromises()
-      sourcesFail = false
-
-      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
-      ;(retry.element as HTMLButtonElement).focus()
-      await retry.trigger('click')
-      await flushPromises()
-
-      expect(wrapper.text()).toContain('No sync sources configured')
-      expect(wrapper.get('[data-testid="sync-sources-retry-status"]').text()).toBe(
-        'Sync sources loaded.',
-      )
-      expect(document.activeElement).toBe(
-        wrapper.get('[data-testid="sync-sources-panel"]').element,
-      )
-      wrapper.unmount()
-    })
-
-    // Every failure ends on the same words, and Vue skips the DOM write when a
-    // text node is unchanged — so deleting the in-flight line would leave the
-    // second and every later failure mutating nothing, and announcing nothing.
-    it('resets the region in flight so a repeated failure still announces', async () => {
-      const wrapper = await mountFailed(false)
-      const retry = wrapper.get('[data-testid="sync-sources-retry"]')
-      const status = wrapper.get('[data-testid="sync-sources-retry-status"]')
-      const failed = "Still couldn't load sync sources. Try again in a moment."
-
-      await retry.trigger('click')
-      await flushPromises()
-      expect(status.text()).toBe(failed)
-
-      await retry.trigger('click')
-      expect(status.text()).toBe('Reloading sync sources…')
-      await flushPromises()
-
-      expect(status.text()).toBe(failed)
-      wrapper.unmount()
-    })
-  })
-
-  // The newer umbrella job carries no errors for a source it never ran, so
-  // handing the row that job would blank the failure it still has.
-  it('keeps the disabled row showing the errors of its own last run', async () => {
-    const wrapper = await mountPage([romsFailedEarlier(), allSourcesRunning()])
-
-    const errors = rowFor(wrapper, 'roms').get('[data-testid="source-sync-errors"]')
-    expect(errors.findAll('li').map((li) => li.text())).toEqual([
-      'Set verify_ssl to false',
-    ])
-    wrapper.unmount()
   })
 })

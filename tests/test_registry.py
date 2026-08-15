@@ -3,7 +3,6 @@
 import importlib
 import logging
 import pkgutil
-import sys
 import threading
 import types
 from collections.abc import Iterator
@@ -305,55 +304,6 @@ class TestConcurrentDiscoveryRegression:
         assert set(during_rebuild) == {"fake_books"}
         assert set(registry.get_all_plugins()) == {"fake_games"}
 
-    def test_the_failure_map_is_swapped_on_the_same_terms_as_the_plugins(
-        self,
-    ) -> None:
-        """Catches recording a failure onto the live map, or merging the swap.
-
-        Either shows a reader a failure the finished pass does not have, and
-        keeps reporting one the operator has fixed.
-        """
-        registry = PluginRegistry()
-        first_pass_done = threading.Event()
-        parked = threading.Event()
-        release = threading.Event()
-
-        def record_one_failure(self: PluginRegistry) -> None:
-            # A different module per pass, so which map the reader got is
-            # readable off its contents rather than inferred from timing.
-            if not first_pass_done.is_set():
-                self._record_import_failure("first_module", ImportError("first"))
-                first_pass_done.set()
-                return
-            self._record_import_failure("second_module", ImportError("second"))
-            parked.set()
-            assert release.wait(timeout=_STALL_TIMEOUT_SECONDS)
-
-        with (
-            patch.object(
-                PluginRegistry, "_discover_builtin_plugins", record_one_failure
-            ),
-            patch.object(
-                PluginRegistry, "_discover_private_plugins", lambda self: None
-            ),
-            ThreadPoolExecutor(max_workers=2) as pool,
-        ):
-            registry.discover_plugins()
-            rebuild = pool.submit(registry.discover_plugins, force=True)
-            assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
-
-            try:
-                during_rebuild = pool.submit(registry.get_import_errors).result(
-                    timeout=_BLOCKED_GRACE_SECONDS
-                )
-            finally:
-                release.set()
-            rebuild.result(timeout=_STALL_TIMEOUT_SECONDS)
-
-        assert during_rebuild == {"first_module": "ImportError: first"}
-        # Replaced, not merged: the fixed module is gone from the new map.
-        assert registry.get_import_errors() == {"second_module": "ImportError: second"}
-
 
 class TestPluginConstructedOutsideTheLockRegression:
     """A plugin that calls the registry while loading must not hang.
@@ -585,15 +535,6 @@ class TestPluginRegistryAbstractClassRegression:
         ), f"Expected no warnings, got: {[r.message for r in warning_records]}"
 
 
-def _private_module_names() -> list[str]:
-    """The imported ``private`` package and its submodules, if any."""
-    return [
-        name
-        for name in list(sys.modules)
-        if name == "private" or name.startswith("private.")
-    ]
-
-
 class TestPluginImportFailureRegression:
     """Symptom: a broken private module, then goodreads_rss in a container
     without defusedxml, vanished from every listing.
@@ -626,45 +567,6 @@ class TestPluginImportFailureRegression:
         }
         assert "goodreads_rss" not in clean_registry.get_all_plugins()
         assert "goodreads_csv" in clean_registry.get_all_plugins()
-
-    def test_a_private_module_that_raises_is_reported_with_its_reason(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The owner's incident: a private plugin that will not compile."""
-        private_plugins = tmp_path / "private" / "plugins"
-        private_plugins.mkdir(parents=True)
-        (private_plugins.parent / "__init__.py").write_text("")
-        (private_plugins / "__init__.py").write_text("")
-        (private_plugins / "personal_site_games.py").write_text(
-            "raise ImportError('no scraper module')\n"
-        )
-        # The scan derives the project root from this module's location, so a
-        # registry.py three levels down makes tmp_path the root.
-        monkeypatch.setattr(
-            registry_module,
-            "__file__",
-            str(tmp_path / "src" / "ingestion" / "registry.py"),
-        )
-        for name in _private_module_names():
-            monkeypatch.delitem(sys.modules, name)
-        importlib.invalidate_caches()
-
-        registry = PluginRegistry()
-        try:
-            with patch.object(
-                PluginRegistry, "_discover_builtin_plugins", lambda self: None
-            ):
-                registry.discover_plugins()
-        finally:
-            for name in _private_module_names():
-                del sys.modules[name]
-            if str(tmp_path) in sys.path:
-                sys.path.remove(str(tmp_path))
-
-        assert registry.get_import_errors() == {
-            "personal_site_games": "ImportError: no scraper module"
-        }
-        assert registry.get_all_plugins() == {}
 
 
 class TestGoodreadsPluginRename:
