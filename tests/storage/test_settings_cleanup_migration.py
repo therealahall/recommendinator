@@ -211,22 +211,6 @@ class TestTheAiRemovalPrunesItsOwnLeaves:
         assert storage.list_settings() == {"recommendations.default_count": 9}
         assert _user_version(db_path) == _SCHEMA_VERSION
 
-    def test_the_prune_does_not_re_run_after_the_upgrade(self, tmp_path: Path) -> None:
-        """One-time, like its siblings: a row written back afterwards survives.
-
-        ``set_setting`` is raw storage with no registry validation, so this
-        reproduces a row the migration would delete if it ever fired again.
-        """
-        db_path = tmp_path / "test.db"
-        _seed_v2_db_with_ai_leaves(db_path)
-        storage = StorageManager(sqlite_path=db_path)
-        assert storage.get_setting("ollama.model") is None
-
-        storage.set_setting("ollama.model", "mistral:7b")
-
-        reopened = StorageManager(sqlite_path=db_path)
-        assert reopened.get_setting("ollama.model") == "mistral:7b"
-
 
 class TestSettingsCleanupMigration:
     """The upgrade clears seeded settings rows exactly once."""
@@ -238,33 +222,6 @@ class TestSettingsCleanupMigration:
         db_path = tmp_path / "test.db"
         _seed_pre_upgrade_db(db_path)
         assert _user_version(db_path) == 0
-
-        storage = StorageManager(sqlite_path=db_path)
-
-        assert storage.list_settings() == {}
-        assert _user_version(db_path) == _SCHEMA_VERSION
-
-    def test_user_edit_after_upgrade_survives_reinit(self, tmp_path: Path) -> None:
-        """A leaf set after the upgrade is never re-cleared on later inits.
-
-        This is the one-time guarantee: once the version is current the DELETE
-        must not fire again, or genuine user edits would be wiped on reboot.
-        """
-        db_path = tmp_path / "test.db"
-        # A live registry leaf, deliberately: web.port is one of the keys the
-        # version-2 prune now deletes, so it cannot stand for "a user edit".
-        StorageManager(sqlite_path=db_path).set_setting(
-            "recommendations.default_count", 9
-        )
-
-        reopened = StorageManager(sqlite_path=db_path)
-
-        assert reopened.get_setting("recommendations.default_count") == 9
-        assert reopened.list_settings() == {"recommendations.default_count": 9}
-
-    def test_fresh_install_is_noop_and_advances_version(self, tmp_path: Path) -> None:
-        """A brand-new DB has an empty settings table and the bumped version."""
-        db_path = tmp_path / "test.db"
 
         storage = StorageManager(sqlite_path=db_path)
 

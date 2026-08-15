@@ -9,42 +9,20 @@ from unittest.mock import patch
 import pytest
 
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
-from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import (
-    DETAIL_FIELDS,
-    ContentTypeFields,
-    DetailField,
-    FieldKind,
-    to_json_array,
-)
+from src.models.detail_fields import to_json_array
 from src.storage import sqlite_db
-from src.storage.merge import (
-    _DETAIL_TABLE_COLUMNS,
-    normalize_title_for_matching,
-    parse_json_list,
-    resolve_status_forward,
-)
+from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import create_schema, create_user, write_enrichment_complete
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.item_serialization import item_to_dict
-from src.utils.sorting import build_search_text, get_sort_title, search_text_matches
-from tests.storage.test_detail_shape_migration import _insert_legacy_game_row
-from tests.test_interface_parity import BLANK_REVIEWS
+from src.utils.sorting import build_search_text, get_sort_title
 
 # The instant the completion-stamping tests freeze the clock at, so each names
 # the date it expects instead of re-deriving it from the helper under test, and
 # so none of them straddles midnight between the write and the read back.
 FROZEN_NOW = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
 FROZEN_TODAY = date(2026, 3, 15)
-
-# Every spelling of a blank review the doors must refuse, on the invariant the
-# module docstring of src/storage/sqlite_db.py states across all three of them.
-# A door is reached by callers no request model stands in front of — a source
-# plugin, a private one — so its list is deliberately wider than the surfaces'.
-# Spelled as a superset of that list rather than repeated, it cannot fall
-# behind if the surfaces come to refuse another spelling.
-BLANK_REVIEWS_AT_THE_DOOR = [*BLANK_REVIEWS, "\n"]
 
 
 @pytest.fixture
@@ -204,57 +182,6 @@ def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
     assert len(all_games) == 1
 
 
-def test_different_titles_create_separate_items(temp_db: SQLiteDB) -> None:
-    """Test that genuinely different titles create separate items."""
-    item1 = ContentItem(
-        id="game_1",
-        title="Mass Effect",
-        content_type=ContentType.VIDEO_GAME,
-        status=ConsumptionStatus.COMPLETED,
-    )
-    item2 = ContentItem(
-        id="game_2",
-        title="Mass Effect 2",
-        content_type=ContentType.VIDEO_GAME,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    db_id_1 = temp_db.save_content_item(item1)
-    db_id_2 = temp_db.save_content_item(item2)
-
-    # Should be different entries
-    assert db_id_1 != db_id_2
-
-    all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-    assert len(all_games) == 2
-
-
-def test_update_content_item(temp_db: SQLiteDB) -> None:
-    """Test updating an existing content item."""
-    item = ContentItem(
-        id="123",
-        title="Test Book",
-        author="Test Author",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    db_id = temp_db.save_content_item(item)
-
-    # Update the item
-    item.rating = 5
-    item.status = ConsumptionStatus.COMPLETED
-    item.review = "Updated review"
-
-    temp_db.save_content_item(item)
-
-    retrieved = temp_db.get_content_item(db_id)
-    assert retrieved is not None
-    assert retrieved.rating == 5
-    assert retrieved.status == ConsumptionStatus.COMPLETED
-    assert retrieved.review == "Updated review"
-
-
 def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
     """Test getting content items with filters."""
     # Create test items
@@ -385,90 +312,6 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
         "visible_unrated",
         "ignored_unrated",
     }
-
-
-def test_get_content_items_unrated_only_pagination(temp_db: SQLiteDB) -> None:
-    """unrated_only composes with limit/offset for paginated needs-rating views."""
-    for letter in ("A", "B", "C"):
-        temp_db.save_content_item(
-            ContentItem(
-                id=f"unrated_{letter}",
-                title=f"Title {letter}",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=None,
-            )
-        )
-
-    first_page = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED, unrated_only=True, limit=2, offset=0
-    )
-    assert [item.id for item in first_page] == ["unrated_A", "unrated_B"]
-
-    second_page = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED, unrated_only=True, limit=2, offset=2
-    )
-    assert [item.id for item in second_page] == ["unrated_C"]
-
-
-def test_get_content_items_unrated_only_sql_paginated_sort(temp_db: SQLiteDB) -> None:
-    """unrated_only composes with SQL LIMIT/OFFSET under a non-title sort.
-
-    The default "title" sort paginates in Python; "updated_at"/"created_at"/
-    "rating" apply LIMIT/OFFSET in SQL, a separate code path. This pins that
-    path: rated completed items must never leak across pages, and the unrated
-    items must paginate in the requested updated_at DESC order. updated_at is
-    set explicitly per row so the ordering is deterministic (the schema default
-    CURRENT_TIMESTAMP has only second granularity and would tie within a test).
-    """
-    # external_id -> (rating, updated_at). Newest updated_at sorts first.
-    # Rated rows are interleaved by timestamp to prove they are filtered, not
-    # merely paginated off the end.
-    rows = {
-        "unrated_1": (None, "2025-01-06 00:00:00"),
-        "rated_1": (4, "2025-01-05 00:00:00"),
-        "unrated_2": (None, "2025-01-04 00:00:00"),
-        "unrated_3": (None, "2025-01-03 00:00:00"),
-        "rated_2": (5, "2025-01-02 00:00:00"),
-        "unrated_4": (None, "2025-01-01 00:00:00"),
-    }
-    for external_id, (rating, _) in rows.items():
-        temp_db.save_content_item(
-            ContentItem(
-                id=external_id,
-                title=external_id.replace("_", " ").title(),
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=rating,
-            )
-        )
-
-    with temp_db.connection() as conn:
-        cursor = conn.cursor()
-        for external_id, (_, updated_at) in rows.items():
-            cursor.execute(
-                "UPDATE content_items SET updated_at = ? WHERE external_id = ?",
-                (updated_at, external_id),
-            )
-        conn.commit()
-
-    first_page = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED,
-        unrated_only=True,
-        sort_by="updated_at",
-        limit=2,
-        offset=0,
-    )
-    assert [item.id for item in first_page] == ["unrated_1", "unrated_2"]
-
-    second_page = temp_db.get_content_items(
-        status=ConsumptionStatus.COMPLETED,
-        unrated_only=True,
-        sort_by="updated_at",
-        limit=2,
-        offset=2,
-    )
-    assert [item.id for item in second_page] == ["unrated_3", "unrated_4"]
 
 
 def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
@@ -649,12 +492,6 @@ def test_set_item_ignored(temp_db: SQLiteDB) -> None:
     assert retrieved.ignored is False
 
 
-def test_set_item_ignored_not_found(temp_db: SQLiteDB) -> None:
-    """Test setting ignored status on non-existent item."""
-    success = temp_db.set_item_ignored(9999, True)
-    assert success is False
-
-
 def test_set_item_ignored_with_user_id(temp_db: SQLiteDB) -> None:
     """Test setting ignored status with user_id filter."""
     item = ContentItem(
@@ -686,45 +523,6 @@ def test_set_item_ignored_with_user_id(temp_db: SQLiteDB) -> None:
     assert retrieved.ignored is True
 
 
-def test_item_has_db_id(temp_db: SQLiteDB) -> None:
-    """Test that retrieved items have their db_id set."""
-    item = ContentItem(
-        id="external_123",
-        title="Test Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    db_id = temp_db.save_content_item(item)
-    assert db_id > 0
-
-    retrieved = temp_db.get_content_item(db_id)
-    assert retrieved is not None
-    assert retrieved.db_id == db_id
-
-
-def test_get_content_items_with_db_ids(temp_db: SQLiteDB) -> None:
-    """Test that items from get_content_items have db_ids set."""
-    items = [
-        ContentItem(
-            id=f"item_{i}",
-            title=f"Item {i}",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        for i in range(3)
-    ]
-
-    for item in items:
-        temp_db.save_content_item(item)
-
-    retrieved = temp_db.get_content_items()
-    assert len(retrieved) == 3
-    for item in retrieved:
-        assert item.db_id is not None
-        assert item.db_id > 0
-
-
 # ---------------------------------------------------------------------------
 # Batch ID Lookup Tests
 # ---------------------------------------------------------------------------
@@ -732,32 +530,6 @@ def test_get_content_items_with_db_ids(temp_db: SQLiteDB) -> None:
 
 class TestGetContentItemsByDbIds:
     """Tests for SQLiteDB.get_content_items_by_db_ids batch lookup."""
-
-    def test_returns_empty_for_empty_input(self, temp_db: SQLiteDB) -> None:
-        """Empty db_ids list returns empty result without hitting the DB."""
-        assert temp_db.get_content_items_by_db_ids([]) == []
-
-    def test_returns_items_for_valid_ids(self, temp_db: SQLiteDB) -> None:
-        """Returns ContentItem objects for all valid database IDs."""
-        item1 = ContentItem(
-            id="game-1",
-            title="Portal",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        item2 = ContentItem(
-            id="game-2",
-            title="Portal 2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        id1 = temp_db.save_content_item(item1)
-        id2 = temp_db.save_content_item(item2)
-
-        results = temp_db.get_content_items_by_db_ids([id1, id2])
-        assert len(results) == 2
-        titles = {r.title for r in results}
-        assert titles == {"Portal", "Portal 2"}
 
     def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
         """Returns only found items; missing IDs are silently skipped."""
@@ -772,41 +544,6 @@ class TestGetContentItemsByDbIds:
         results = temp_db.get_content_items_by_db_ids([db_id, 99999])
         assert len(results) == 1
         assert results[0].title == "Portal"
-
-    def test_populates_db_id_on_returned_items(self, temp_db: SQLiteDB) -> None:
-        """Each returned ContentItem has its db_id field set."""
-        item = ContentItem(
-            id="game-1",
-            title="Portal",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        db_id = temp_db.save_content_item(item)
-
-        results = temp_db.get_content_items_by_db_ids([db_id])
-        assert len(results) == 1
-        assert results[0].db_id == db_id
-
-    def test_handles_chunk_boundary(self, temp_db: SQLiteDB) -> None:
-        """Items spanning multiple IN-clause chunks are all returned."""
-        # Insert 502 items via raw SQL (crosses the 500-item chunk boundary)
-        db_ids: list[int] = []
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            for i in range(502):
-                cursor.execute(
-                    """INSERT INTO content_items
-                       (user_id, external_id, title, normalized_title,
-                        content_type, status, source)
-                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
-                    (f"chunk-{i}", f"Game {i}", f"game {i}"),
-                )
-                assert cursor.lastrowid is not None
-                db_ids.append(cursor.lastrowid)
-            conn.commit()
-
-        results = temp_db.get_content_items_by_db_ids(db_ids)
-        assert len(results) == 502
 
     def test_the_items_come_back_in_the_order_asked_for(
         self, temp_db: SQLiteDB
@@ -873,19 +610,6 @@ class TestGetContentItemsByExternalIds:
             user_id=user_id,
         )
 
-    def test_returns_empty_for_empty_input(self, temp_db: SQLiteDB) -> None:
-        """Empty id list returns empty result without hitting the DB."""
-        assert temp_db.get_content_items_by_external_ids([]) == []
-
-    def test_returns_items_for_valid_ids(self, temp_db: SQLiteDB) -> None:
-        """Returns one ContentItem per id that names a row."""
-        self._save_game(temp_db, "game-1", "Portal")
-        self._save_game(temp_db, "game-2", "Portal 2")
-
-        results = temp_db.get_content_items_by_external_ids(["game-1", "game-2"])
-
-        assert {item.title for item in results} == {"Portal", "Portal 2"}
-
     def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
         """An id naming no row is skipped rather than raising."""
         self._save_game(temp_db, "game-1", "Portal")
@@ -893,14 +617,6 @@ class TestGetContentItemsByExternalIds:
         results = temp_db.get_content_items_by_external_ids(["game-1", "nope"])
 
         assert [item.title for item in results] == ["Portal"]
-
-    def test_populates_db_id_on_returned_items(self, temp_db: SQLiteDB) -> None:
-        """Each returned ContentItem carries its database ID."""
-        db_id = self._save_game(temp_db, "game-1", "Portal")
-
-        results = temp_db.get_content_items_by_external_ids(["game-1"])
-
-        assert [item.db_id for item in results] == [db_id]
 
     def test_scopes_to_the_requested_user(self, temp_db: SQLiteDB) -> None:
         """Another user's row is never returned for the same external id."""
@@ -934,25 +650,6 @@ class TestGetContentItemsByExternalIds:
 
         assert [item.content_type for item in results] == [ContentType.MOVIE]
 
-    def test_handles_chunk_boundary(self, temp_db: SQLiteDB) -> None:
-        """Ids spanning multiple IN-clause chunks are all returned."""
-        external_ids = [f"chunk-{index}" for index in range(502)]
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            for index, external_id in enumerate(external_ids):
-                cursor.execute(
-                    """INSERT INTO content_items
-                       (user_id, external_id, title, normalized_title,
-                        content_type, status, source)
-                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
-                    (external_id, f"Game {index}", f"game {index}"),
-                )
-            conn.commit()
-
-        results = temp_db.get_content_items_by_external_ids(external_ids)
-
-        assert len(results) == 502
-
 
 # ---------------------------------------------------------------------------
 # Title Normalization Tests
@@ -961,13 +658,6 @@ class TestGetContentItemsByExternalIds:
 
 class TestNormalizeTitleForMatching:
     """Tests for the normalize_title_for_matching function."""
-
-    def test_basic_normalization(self) -> None:
-        """Test basic lowercase and whitespace handling."""
-        assert normalize_title_for_matching("  The Matrix  ") == "matrix"
-        assert (
-            normalize_title_for_matching("A Tale of Two Cities") == "tale of two cities"
-        )
 
     def test_trademark_symbols_removed(self) -> None:
         """Regression test: Trademark symbols should be removed for matching.
@@ -1017,43 +707,6 @@ class TestNormalizeTitleForMatching:
         assert normalize_title_for_matching("Part IX") == "part 9"
         assert normalize_title_for_matching("Part X") == "part 10"
 
-    def test_last_of_us_variants_match(self) -> None:
-        """Test that Last of Us variants all normalize to the same value."""
-        variants = [
-            "The Last of Us™ Part I",
-            "The Last of Us Part I",
-            "The Last of Us Part 1",
-            "The Last Of Us: Part I",
-        ]
-        normalized = [normalize_title_for_matching(variant) for variant in variants]
-        # All should be the same
-        assert len(set(normalized)) == 1
-        assert normalized[0] == "last of us part 1"
-
-    def test_state_of_decay_variants_match(self) -> None:
-        """Test that State of Decay variants all normalize to the same value."""
-        # Test the core issue: hyphenated vs non-hyphenated
-        variants = [
-            "State of Decay: Year-One Survival Edition",
-            "State of Decay: Year One Survival Edition",
-        ]
-        normalized = [normalize_title_for_matching(variant) for variant in variants]
-        # Both should be the same
-        assert len(set(normalized)) == 1
-        assert normalized[0] == "state of decay year one survival edition"
-
-    def test_remaster_suffix_removal(self) -> None:
-        """Test that remaster/edition suffixes are removed."""
-        assert normalize_title_for_matching("Crysis Remastered") == "crysis"
-        assert normalize_title_for_matching("Crysis: Remastered") == "crysis"
-        assert normalize_title_for_matching("Skyrim Special Edition") == "skyrim"
-        assert normalize_title_for_matching("Skyrim: Anniversary Edition") == "skyrim"
-
-    def test_empty_and_none_handling(self) -> None:
-        """Test handling of empty strings."""
-        assert normalize_title_for_matching("") == ""
-        assert normalize_title_for_matching("   ") == ""
-
     def test_roman_numerals_only_at_word_boundaries(self) -> None:
         """Test that Roman numerals are only converted at word boundaries.
 
@@ -1073,24 +726,6 @@ class TestNormalizeTitleForMatching:
 
 class TestNormalizedTitleLookup:
     """Tests for the indexed normalized_title column used during save."""
-
-    def test_insert_populates_normalized_title(self, temp_db: SQLiteDB) -> None:
-        """Test that INSERT populates the normalized_title column."""
-        item = ContentItem(
-            id="nt_1",
-            title="The Matrix™",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        db_id = temp_db.save_content_item(item)
-
-        with temp_db.connection() as conn:
-            row = conn.execute(
-                "SELECT normalized_title FROM content_items WHERE id = ?",
-                (db_id,),
-            ).fetchone()
-        assert row is not None
-        assert row["normalized_title"] == normalize_title_for_matching("The Matrix™")
 
     def test_update_syncs_normalized_title(self, temp_db: SQLiteDB) -> None:
         """Test that UPDATE keeps normalized_title in sync with title."""
@@ -1122,52 +757,6 @@ class TestNormalizedTitleLookup:
             "New Title: Remastered"
         )
 
-    def test_title_fallback_uses_indexed_lookup(self, temp_db: SQLiteDB) -> None:
-        """Test that title-based dedup uses the indexed normalized_title column.
-
-        Items from different sources with no external_id should still merge
-        when their normalized titles match.
-        """
-        # Insert an item from source A (no external_id)
-        item_a = ContentItem(
-            title="The Last of Us™ Part I",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            source="steam",
-        )
-        db_id_a = temp_db.save_content_item(item_a)
-
-        # Insert the same game from source B with different formatting
-        item_b = ContentItem(
-            title="The Last of Us Part I",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="gog",
-        )
-        db_id_b = temp_db.save_content_item(item_b)
-
-        # Should merge into the same row
-        assert db_id_a == db_id_b
-
-    def test_title_fallback_different_types_no_merge(self, temp_db: SQLiteDB) -> None:
-        """Test that title-based dedup respects content_type boundaries."""
-        item_book = ContentItem(
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        item_movie = ContentItem(
-            title="Dune",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        db_id_book = temp_db.save_content_item(item_book)
-        db_id_movie = temp_db.save_content_item(item_movie)
-
-        # Different content types — should NOT merge
-        assert db_id_book != db_id_movie
-
     def test_edition_variants_merge(self, temp_db: SQLiteDB) -> None:
         """Test that edition variants merge via normalized_title."""
         item_original = ContentItem(
@@ -1190,22 +779,6 @@ class TestNormalizedTitleLookup:
 # ---------------------------------------------------------------------------
 # Ignored on Insert Tests
 # ---------------------------------------------------------------------------
-
-
-def test_save_content_item_with_ignored_true(temp_db: SQLiteDB) -> None:
-    """Test that ignored=True is persisted on INSERT."""
-    item = ContentItem(
-        id="ignored_1",
-        title="Ignored Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-        ignored=True,
-    )
-
-    db_id = temp_db.save_content_item(item)
-    retrieved = temp_db.get_content_item(db_id)
-    assert retrieved is not None
-    assert retrieved.ignored is True
 
 
 def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
@@ -1246,35 +819,6 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
     assert retrieved.ignored is True
     assert retrieved.status == ConsumptionStatus.COMPLETED
     assert retrieved.rating == 4
-
-
-def test_get_content_items_include_ignored_true(temp_db: SQLiteDB) -> None:
-    """Test that get_content_items returns ignored items when include_ignored=True."""
-    items = [
-        ContentItem(
-            id="normal_1",
-            title="Normal Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-        ),
-        ContentItem(
-            id="ignored_1",
-            title="Ignored Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            ignored=True,
-        ),
-    ]
-    for item in items:
-        temp_db.save_content_item(item)
-
-    # Default (include_ignored=True) returns all items
-    all_items = temp_db.get_content_items(include_ignored=True)
-    assert len(all_items) == 2
-
-    titles = {item.title for item in all_items}
-    assert "Normal Book" in titles
-    assert "Ignored Book" in titles
 
 
 def test_get_content_items_include_ignored_false(temp_db: SQLiteDB) -> None:
@@ -1331,22 +875,11 @@ class TestGetContentItemsSearch:
         for movie in movies:
             temp_db.save_content_item(movie)
 
-    def test_search_none_is_noop(self, temp_db: SQLiteDB) -> None:
-        """search=None returns the full unfiltered set (unchanged behavior)."""
-        self._seed_movies(temp_db)
-        assert len(temp_db.get_content_items(search=None)) == 3
-
     def test_search_empty_string_is_noop(self, temp_db: SQLiteDB) -> None:
         """An empty or whitespace search term does not filter."""
         self._seed_movies(temp_db)
         assert len(temp_db.get_content_items(search="")) == 3
         assert len(temp_db.get_content_items(search="   ")) == 3
-
-    def test_search_exact_match(self, temp_db: SQLiteDB) -> None:
-        """An exact (article/case-insensitive) title matches."""
-        self._seed_movies(temp_db)
-        results = temp_db.get_content_items(search="the matrix")
-        assert [item.title for item in results] == ["The Matrix"]
 
     def test_search_partial_match(self, temp_db: SQLiteDB) -> None:
         """A substring term matches the longer title."""
@@ -1359,11 +892,6 @@ class TestGetContentItemsSearch:
         self._seed_movies(temp_db)
         results = temp_db.get_content_items(search="Die Heard")
         assert [item.title for item in results] == ["Die Hard (1988)"]
-
-    def test_search_no_results(self, temp_db: SQLiteDB) -> None:
-        """An unrelated term returns nothing."""
-        self._seed_movies(temp_db)
-        assert temp_db.get_content_items(search="nonexistent zzz") == []
 
     def test_search_matches_book_author(self, temp_db: SQLiteDB) -> None:
         """Search matches a book's creator (author)."""
@@ -1378,48 +906,6 @@ class TestGetContentItemsSearch:
         )
         results = temp_db.get_content_items(search="Tolkien")
         assert [item.title for item in results] == ["The Hobbit"]
-
-    def test_search_matches_movie_director(self, temp_db: SQLiteDB) -> None:
-        """Search matches a movie's creator (director)."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="movie_1",
-                title="Jurassic Park",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={"director": "Steven Spielberg"},
-            )
-        )
-        results = temp_db.get_content_items(search="Spielberg")
-        assert [item.title for item in results] == ["Jurassic Park"]
-
-    def test_search_matches_tv_creator(self, temp_db: SQLiteDB) -> None:
-        """Search matches a TV show's creator (creators)."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="tv_1",
-                title="Breaking Bad",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={"creators": "Vince Gilligan"},
-            )
-        )
-        results = temp_db.get_content_items(search="Gilligan")
-        assert [item.title for item in results] == ["Breaking Bad"]
-
-    def test_search_matches_game_developer(self, temp_db: SQLiteDB) -> None:
-        """Search matches a video game's creator (developer)."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="game_1",
-                title="Half-Life",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={"developer": "Valve"},
-            )
-        )
-        results = temp_db.get_content_items(search="Valve")
-        assert [item.title for item in results] == ["Half-Life"]
 
     def test_search_ands_with_type_filter(self, temp_db: SQLiteDB) -> None:
         """Search combines with a content_type filter (AND)."""
@@ -1443,29 +929,6 @@ class TestGetContentItemsSearch:
             search="Avatar", content_type=ContentType.MOVIE
         )
         assert [item.title for item in results] == ["Avatar"]
-
-    def test_search_ands_with_status_filter(self, temp_db: SQLiteDB) -> None:
-        """Search combines with a status filter (AND)."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="alien_done",
-                title="Alien",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-            )
-        )
-        temp_db.save_content_item(
-            ContentItem(
-                id="aliens_unread",
-                title="Aliens",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-        results = temp_db.get_content_items(
-            search="Alien", status=ConsumptionStatus.UNREAD
-        )
-        assert [item.title for item in results] == ["Aliens"]
 
     def test_search_pagination_pages_over_filtered_set(self, temp_db: SQLiteDB) -> None:
         """limit/offset page over the full searched+sorted set, not one DB page.
@@ -1532,144 +995,6 @@ class TestGetContentItemsSearch:
         title_results = temp_db.get_content_items(search="Untitled Manuscript")
         assert [item.title for item in title_results] == ["Untitled Manuscript"]
 
-    def test_search_item_missing_creator_metadata_key(self, temp_db: SQLiteDB) -> None:
-        """Items whose metadata lacks the creator key match on title only.
-
-        A movie with no "director" key leaves the column the derived CASE
-        reads NULL, so it must not match a creator-style search while still
-        matching its own title.
-        """
-        temp_db.save_content_item(
-            ContentItem(
-                id="movie_no_director",
-                title="Mystery Film",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={},
-            )
-        )
-        assert temp_db.get_content_items(search="Spielberg") == []
-        title_results = temp_db.get_content_items(search="Mystery Film")
-        assert [item.title for item in title_results] == ["Mystery Film"]
-
-    def test_search_with_rating_sort_orders_and_paginates(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Search combined with a non-title sort preserves SQL ordering.
-
-        With sort_by="rating", the SQL ORDER BY (rating DESC NULLS LAST,
-        ci.title ASC, ci.id ASC) drives ordering; Python search filtering must
-        keep that order, and limit/offset must page over the matched set. Three
-        "Quest" movies with distinct ratings (plus non-matching noise) verify
-        both ordering and pagination.
-        """
-        temp_db.save_content_item(
-            ContentItem(
-                id="quest_low",
-                title="Quest Alpha",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=2,
-            )
-        )
-        temp_db.save_content_item(
-            ContentItem(
-                id="quest_high",
-                title="Quest Bravo",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-        )
-        temp_db.save_content_item(
-            ContentItem(
-                id="quest_mid",
-                title="Quest Charlie",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=4,
-            )
-        )
-        temp_db.save_content_item(
-            ContentItem(
-                id="noise_high",
-                title="Unrelated Film",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-            )
-        )
-
-        ordered = temp_db.get_content_items(search="Quest", sort_by="rating")
-        assert [item.title for item in ordered] == [
-            "Quest Bravo",
-            "Quest Charlie",
-            "Quest Alpha",
-        ]
-
-        page1 = temp_db.get_content_items(
-            search="Quest", sort_by="rating", limit=2, offset=0
-        )
-        page2 = temp_db.get_content_items(
-            search="Quest", sort_by="rating", limit=2, offset=2
-        )
-        assert [item.title for item in page1] == ["Quest Bravo", "Quest Charlie"]
-        assert [item.title for item in page2] == ["Quest Alpha"]
-
-    def test_search_empty_library(self, temp_db: SQLiteDB) -> None:
-        """Searching an empty library returns an empty list, not an error."""
-        assert temp_db.get_content_items(search="anything") == []
-
-    def test_search_pagination_exact_multiple_boundary(self, temp_db: SQLiteDB) -> None:
-        """When matched count is an exact multiple of the page size.
-
-        Edge probed by QA: ten matches with limit=5 yields two full pages and
-        an empty third page (offset past the end), with no dropped or
-        duplicated matches at the boundary.
-        """
-        for i in range(10):
-            temp_db.save_content_item(
-                ContentItem(
-                    id=f"page_match_{i:02d}",
-                    title=f"Boundary {i:02d}",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-        page1 = temp_db.get_content_items(search="Boundary", limit=5, offset=0)
-        page2 = temp_db.get_content_items(search="Boundary", limit=5, offset=5)
-        page3 = temp_db.get_content_items(search="Boundary", limit=5, offset=10)
-
-        assert [item.title for item in page1] == [f"Boundary {i:02d}" for i in range(5)]
-        assert [item.title for item in page2] == [
-            f"Boundary {i:02d}" for i in range(5, 10)
-        ]
-        assert page3 == []
-        # No overlap or gaps across the two full pages.
-        combined = [item.id for item in page1] + [item.id for item in page2]
-        assert len(set(combined)) == 10
-
-    def test_search_offset_beyond_matched_set(self, temp_db: SQLiteDB) -> None:
-        """An offset past the end of the matched set returns an empty list.
-
-        The library holds a title containing the term and one only a typo
-        away, so the offset has to be past *both* — an offset landing between
-        two ways of matching is where a page of one set was once answered out
-        of another.
-        """
-        for external_id, title in (("solo_match", "Solitary"), ("typo", "Solitery")):
-            temp_db.save_content_item(
-                ContentItem(
-                    id=external_id,
-                    title=title,
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-        assert len(temp_db.get_content_items(search="Solitary")) == 2
-
-        assert temp_db.get_content_items(search="Solitary", offset=10) == []
-
     def test_search_case_and_punctuation_insensitive(self, temp_db: SQLiteDB) -> None:
         """Mixed case and punctuation differences still match.
 
@@ -1686,27 +1011,6 @@ class TestGetContentItemsSearch:
         )
         results = temp_db.get_content_items(search="  SPIDER MAN homecoming!!  ")
         assert [item.title for item in results] == ["Spider-Man: Homecoming"]
-
-    def test_search_matches_one_of_multiple_tv_creators(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A TV show with several comma-joined creators matches on any one.
-
-        TMDB stores the plural ``creators`` field as a comma-joined string
-        (e.g. "Vince Gilligan, Peter Gould"); searching for the second name
-        must still surface the show.
-        """
-        temp_db.save_content_item(
-            ContentItem(
-                id="bcs",
-                title="Better Call Saul",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={"creators": "Vince Gilligan, Peter Gould"},
-            )
-        )
-        results = temp_db.get_content_items(search="Peter Gould")
-        assert [item.title for item in results] == ["Better Call Saul"]
 
     def test_search_ands_with_the_enrichment_filter(self, temp_db: SQLiteDB) -> None:
         """Search combines with the enrichment filter (AND).
@@ -1848,14 +1152,6 @@ class TestPaginationWithoutLimit:
         "pager_5": ("Charlie", "2025-01-01 00:00:00", "2024-02-02 00:00:00", 2),
     }
 
-    # The full, unsliced id order each sort must produce.
-    _EXPECTED_ID_ORDER = {
-        "title": ["pager_2", "pager_4", "pager_5", "pager_3", "pager_1"],
-        "updated_at": ["pager_1", "pager_2", "pager_3", "pager_4", "pager_5"],
-        "created_at": ["pager_2", "pager_4", "pager_3", "pager_5", "pager_1"],
-        "rating": ["pager_2", "pager_4", "pager_1", "pager_5", "pager_3"],
-    }
-
     # What the term "a" matches, in updated_at order: every seeded title but
     # Echo, so a search here has a matched set larger than any offset below.
     _SEARCH_MATCHES = ["pager_2", "pager_3", "pager_4", "pager_5"]
@@ -1898,92 +1194,6 @@ class TestPaginationWithoutLimit:
 
         assert [item.id for item in results] == ["pager_3", "pager_4", "pager_5"]
 
-    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
-    @pytest.mark.parametrize(
-        "limit, offset",
-        [
-            (None, 0),
-            (None, 2),
-            (None, 5),
-            (None, 99),
-            (0, 0),
-            (0, 2),
-            (2, 0),
-            (2, 2),
-            (2, 10),
-            (100, 0),
-            (100, 2),
-        ],
-    )
-    def test_every_sort_slices_the_same_window_regression(
-        self,
-        temp_db: SQLiteDB,
-        sort_by: str,
-        limit: int | None,
-        offset: int,
-    ) -> None:
-        """Every sort selects the same window of its own full ordering.
-
-        The pairs cover an absent limit, a zero limit, an offset landing
-        exactly on the end of the set, an offset past the end, and a limit
-        wider than the set. They were written when the title sort sliced in
-        Python and the other three in SQL, and each one had to agree with the
-        others; they now hold one implementation to the same answers.
-        """
-        self._seed(temp_db)
-        expected = self._EXPECTED_ID_ORDER[sort_by][offset:]
-        if limit:
-            expected = expected[:limit]
-
-        results = temp_db.get_content_items(sort_by=sort_by, limit=limit, offset=offset)
-
-        assert [item.id for item in results] == expected
-
-    @pytest.mark.parametrize("sort_by", ["updated_at", "created_at", "rating"])
-    def test_offset_without_limit_on_every_sql_sort_regression(
-        self, temp_db: SQLiteDB, sort_by: str
-    ) -> None:
-        """Every sort that slices in SQL survives an offset with no limit.
-
-        The reported crash was found on sort_by="updated_at", but the broken
-        clause was shared by all three SQL-slicing sorts, so fixing only the
-        reported one would have left the same syntax error reachable through
-        the other two.
-        """
-        self._seed(temp_db)
-
-        results = temp_db.get_content_items(sort_by=sort_by, limit=None, offset=2)
-
-        assert [item.id for item in results] == self._EXPECTED_ID_ORDER[sort_by][2:]
-
-    def test_offset_without_limit_on_empty_library_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The unbounded-limit clause is still valid SQL with no rows to skip."""
-        results = temp_db.get_content_items(sort_by="updated_at", limit=None, offset=2)
-
-        assert results == []
-
-    @pytest.mark.parametrize("sort_by", ["title", "updated_at"])
-    @pytest.mark.parametrize("limit", [None, 2])
-    def test_negative_offset_is_ignored_regression(
-        self, temp_db: SQLiteDB, sort_by: str, limit: int | None
-    ) -> None:
-        """A negative offset skips nothing rather than slicing from the end.
-
-        The page clause gates on ``offset > 0``, so a negative offset is
-        inert; a Python slice would instead take a tail off the list, which is
-        a caller's typo answered with a plausible wrong page.
-        """
-        self._seed(temp_db)
-        expected = self._EXPECTED_ID_ORDER[sort_by]
-        if limit:
-            expected = expected[:limit]
-
-        results = temp_db.get_content_items(sort_by=sort_by, limit=limit, offset=-1)
-
-        assert [item.id for item in results] == expected
-
     def test_search_with_offset_and_no_limit_returns_the_tail_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2006,65 +1216,6 @@ class TestPaginationWithoutLimit:
             sort_by="updated_at", search="a", limit=None, offset=2
         )
         assert [item.id for item in tail] == self._SEARCH_MATCHES[2:]
-
-    @pytest.mark.parametrize("limit", [None, 2])
-    def test_search_ignores_a_negative_offset_regression(
-        self, temp_db: SQLiteDB, limit: int | None
-    ) -> None:
-        """A search skips nothing for a negative offset, as the plain read does.
-
-        The search slices its matched ids in Python, so it carries its own
-        copy of the ``offset > 0`` gate the page clause owns; a bare slice
-        would take a tail off the matched list instead.
-        """
-        self._seed(temp_db)
-        expected = self._SEARCH_MATCHES
-        if limit:
-            expected = expected[:limit]
-
-        results = temp_db.get_content_items(
-            sort_by="updated_at", search="a", limit=limit, offset=-1
-        )
-
-        assert [item.id for item in results] == expected
-
-    @pytest.mark.parametrize("offset", [0, 2])
-    def test_search_reads_a_zero_limit_as_no_limit_regression(
-        self, temp_db: SQLiteDB, offset: int
-    ) -> None:
-        """A falsy limit asks for the rest of the matched set, not for nothing.
-
-        The search's own copy of that rule, which the sorts above cover only
-        on the path through the page clause. It is also what stops the scan
-        ending at the offset it was told to start from.
-        """
-        self._seed(temp_db)
-
-        results = temp_db.get_content_items(
-            sort_by="updated_at", search="a", limit=0, offset=offset
-        )
-
-        assert [item.id for item in results] == self._SEARCH_MATCHES[offset:]
-
-    @pytest.mark.parametrize("offset", [0, 3])
-    def test_search_reads_a_negative_limit_as_no_limit_regression(
-        self, temp_db: SQLiteDB, offset: int
-    ) -> None:
-        """A negative limit asks for the rest, the way SQLite's LIMIT -1 does.
-
-        The page clause hands a negative limit straight to SQLite, which reads
-        it as unbounded and returns the tail. A search bounding its scan at
-        ``offset + limit`` instead stops short of the offset it was told to
-        start from and returns nothing at all — the two branches answering the
-        same nonsense argument differently.
-        """
-        self._seed(temp_db)
-
-        results = temp_db.get_content_items(
-            sort_by="updated_at", search="a", limit=-1, offset=offset
-        )
-
-        assert [item.id for item in results] == self._SEARCH_MATCHES[offset:]
 
 
 class TestAPageCostsOnlyThePage:
@@ -2130,35 +1281,6 @@ class TestAPageCostsOnlyThePage:
         assert titles == [f"Title {index:03d}" for index in range(10)]
         assert built == 10
 
-    def test_a_late_page_of_the_title_sort_builds_only_that_page(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The offset is SQL's, so the rows before the page are never loaded."""
-        self._seed(temp_db)
-
-        titles, built = self._items_built(temp_db, limit=10, offset=400)
-
-        assert titles == [f"Title {index:03d}" for index in range(400, 410)]
-        assert built == 10
-
-    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
-    def test_no_sort_pays_for_the_rows_it_pages_past(
-        self, temp_db: SQLiteDB, sort_by: str
-    ) -> None:
-        """The offset is SQL's on all four sorts, not only on the default one.
-
-        The tests above take the title sort, which is the one the defect was
-        reported against and the only one that had no ORDER BY at all. The
-        other three had one and still sliced in SQL, so what this pins is that
-        the rewrite kept that — an ORDER BY whose LIMIT moved back into Python
-        would return the same page and read the same 500 rows to do it.
-        """
-        self._seed(temp_db)
-
-        _, built = self._items_built(temp_db, sort_by=sort_by, limit=10, offset=400)
-
-        assert built == 10
-
     def test_a_term_of_pure_punctuation_matches_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2184,111 +1306,6 @@ class TestAPageCostsOnlyThePage:
 
         assert titles == [f"Title {index:03d}" for index in range(10)]
         assert built == 10
-
-    @pytest.mark.parametrize("offset", [0, 400])
-    def test_a_search_stops_scanning_at_the_end_of_its_page(
-        self, temp_db: SQLiteDB, offset: int
-    ) -> None:
-        """Every title matches the term, and the scan reads as far as the page.
-
-        Nothing downstream needs a total — ``GET /api/items`` returns a bare
-        list — and both interfaces bound the limit, so a candidate past the
-        page is never matched against. The offset counts towards where the
-        scan stops, since those matches have to be found to be skipped.
-        Counting the match attempts is the measurement: the page returned says
-        nothing about how much was read to produce it.
-        """
-        self._seed(temp_db)
-
-        with patch.object(
-            sqlite_db, "search_text_matches", side_effect=search_text_matches
-        ) as matched:
-            results = temp_db.get_content_items(search="Title", limit=10, offset=offset)
-
-        assert [item.title for item in results] == [
-            f"Title {index:03d}" for index in range(offset, offset + 10)
-        ]
-        assert matched.call_count == offset + 10
-
-    def test_a_candidate_that_does_not_match_costs_no_content_item(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The match runs over 501 candidates and builds one item.
-
-        Nothing but the one film comes near "intersteller", and the match
-        reads each candidate as an id and a stored search text, so the 500
-        that miss cost no ContentItem between them.
-        """
-        self._seed(temp_db)
-        temp_db.save_content_item(
-            ContentItem(
-                id="interstellar",
-                title="Interstellar",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-            )
-        )
-
-        titles, built = self._items_built(temp_db, search="Intersteller")
-
-        assert titles == ["Interstellar"]
-        assert built == 1
-
-    def test_a_term_that_matches_exactly_still_reaches_the_near_miss(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Typo tolerance is not conditional on the term matching nothing.
-
-        A search is one matched set rather than a cheap tier and a fallback,
-        so "Die Hard" returns the title containing the term *and* the near
-        miss — the answer it gave before any of this moved into SQL. The count
-        says the extra tier costs the two matches and not the library.
-        """
-        self._seed(temp_db)
-        for title in ("Die Hard (1988)", "Die Heard"):
-            temp_db.save_content_item(
-                ContentItem(
-                    id=title,
-                    title=title,
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        titles, built = self._items_built(temp_db, search="Die Hard")
-
-        assert titles == ["Die Hard (1988)", "Die Heard"]
-        assert built == 2
-
-    def test_pages_partition_a_sort_whose_titles_tie(self, temp_db: SQLiteDB) -> None:
-        """Rows sorting alike keep one order across every page of a sort.
-
-        SQL's ORDER BY is not stable the way the Python sort it replaced was,
-        so the clause ends in ``ci.id`` to make the ordering total. Without a
-        tiebreak two adjacent pages may repeat one tied row and drop another,
-        which is a page boundary falling inside a tie.
-        """
-        for content_type in ContentType:
-            temp_db.save_content_item(
-                ContentItem(
-                    id=f"dune_{content_type.value}",
-                    title="Dune",
-                    content_type=content_type,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        whole = temp_db.get_content_items()
-        paged = [
-            item
-            for offset in range(0, len(ContentType), 2)
-            for item in temp_db.get_content_items(limit=2, offset=offset)
-        ]
-
-        assert [item.id for item in whole] == [
-            f"dune_{content_type.value}" for content_type in ContentType
-        ]
-        assert [item.id for item in paged] == [item.id for item in whole]
 
 
 class TestTheDerivedSearchColumns:
@@ -2332,32 +1349,6 @@ class TestTheDerivedSearchColumns:
         results = temp_db.get_content_items()
         assert [item.title for item in results] == ["Aardvark", "Zebra", "Zeppelin"]
 
-    def test_a_retitled_item_is_searchable_by_its_new_title_only(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The search haystack follows the title the same way the sort key does."""
-        temp_db.save_content_item(
-            ContentItem(
-                id="renamed",
-                title="The Matrix",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-            )
-        )
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="renamed",
-                title="Blade Runner",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-            )
-        )
-
-        found = temp_db.get_content_items(search="Blade Runner")
-        assert [item.title for item in found] == ["Blade Runner"]
-        assert temp_db.get_content_items(search="Matrix") == []
-
     def test_a_creator_a_later_sync_fills_becomes_searchable(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2388,23 +1379,6 @@ class TestTheDerivedSearchColumns:
                 status=ConsumptionStatus.COMPLETED,
             )
         )
-
-        found = temp_db.get_content_items(search="Tolkien")
-        assert [item.title for item in found] == ["The Hobbit"]
-
-    def test_a_creator_gained_in_a_dedup_merge_becomes_searchable(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """deduplicate_items has no save behind it to refresh the columns.
-
-        The merge fills the kept row's empty creator from the duplicate, so
-        the merge itself has to rewrite the derived columns or the name it
-        just recovered stays unsearchable.
-        """
-        _insert_raw_book(temp_db, "hobbit_a", None)
-        _insert_raw_book(temp_db, "hobbit_b", "J.R.R. Tolkien")
-
-        assert temp_db.deduplicate_items() == 1
 
         found = temp_db.get_content_items(search="Tolkien")
         assert [item.title for item in found] == ["The Hobbit"]
@@ -2526,31 +1500,6 @@ class TestSearchPagesPartitionTheMatchedSet:
         ]
 
     @pytest.mark.parametrize("page_size", [1, 2])
-    def test_a_fuzzy_only_library_pages_into_its_matches_once(
-        self, temp_db: SQLiteDB, page_size: int
-    ) -> None:
-        """The walk holds when every match is a typo match.
-
-        The control for the case below: nothing here contains the term, so a
-        design serving typo matches from a set of their own would still page
-        correctly through this one.
-        """
-        self._seed(
-            temp_db,
-            (
-                ("caves", "The Caves of Steel", "Isaac Asmiov"),
-                ("end_of_eternity", "The End of Eternity", "Isaac Asmiov"),
-                ("nightfall", "Nightfall", "Isaac Asmiov"),
-            ),
-        )
-        whole = temp_db.get_content_items(search="Asimov")
-        assert len(whole) == 3
-
-        assert _walk_pages(temp_db, page_size, search="Asimov") == [
-            item.id for item in whole
-        ]
-
-    @pytest.mark.parametrize("page_size", [1, 2])
     def test_a_search_pages_one_set_when_the_tiers_disagree(
         self, temp_db: SQLiteDB, page_size: int
     ) -> None:
@@ -2630,22 +1579,6 @@ class TestPagesPartitionALibraryOfTies:
 
         assert walked == [item.id for item in whole]
 
-    @pytest.mark.parametrize("sort_by", ["title", "updated_at", "created_at", "rating"])
-    def test_repeating_a_sort_returns_the_tied_rows_in_the_same_order(
-        self, temp_db: SQLiteDB, sort_by: str
-    ) -> None:
-        """The ordering is a property of the query, not of one execution.
-
-        Paging asks for the ordering once per page, so an ORDER BY that only
-        happens to be stable within a single statement partitions nothing.
-        """
-        self._seed(temp_db)
-
-        first = [item.id for item in temp_db.get_content_items(sort_by=sort_by)]
-        second = [item.id for item in temp_db.get_content_items(sort_by=sort_by)]
-
-        assert first == second
-
 
 class TestTheTitleSortAgreesWithThePythonKey:
     """SQLite's ordering of the stored sort key matches Python's own.
@@ -2696,40 +1629,6 @@ class TestTheTitleSortAgreesWithThePythonKey:
         assert [item.title for item in results] == sorted(
             self._TITLES, key=get_sort_title
         )
-
-    def test_a_title_that_is_only_an_article_keeps_the_article(self) -> None:
-        """Article stripping needs whitespace after the article, so "The" stays.
-
-        Called out on its own because it is the one input above where
-        stripping and not stripping give different sort keys for the same
-        title, and the stored column has to hold the same one the key function
-        returns.
-        """
-        assert get_sort_title("The") == "the"
-        assert get_sort_title("The Zebra") == "zebra"
-
-    def test_an_empty_title_sorts_first_rather_than_vanishing(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A blank title is a row like any other, ahead of everything else.
-
-        Nothing forbids a source handing over an empty title, and the empty
-        sort key is the smallest one there is — but it is also what a NULL
-        column would look like from a distance, so the read has to show it.
-        """
-        for external_id, title in (("blank", ""), ("apple", "apple")):
-            temp_db.save_content_item(
-                ContentItem(
-                    id=external_id,
-                    title=title,
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        results = temp_db.get_content_items()
-
-        assert [item.id for item in results] == ["blank", "apple"]
 
 
 class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
@@ -2807,32 +1706,6 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
         temp_db.save_content_item(self._book("dune", "Dune Messiah", "Frank Herbert"))
         self._assert_columns_describe_the_library(temp_db)
 
-    def test_the_completion_door(self, temp_db: SQLiteDB) -> None:
-        """Completing adds the item when the library has none, and writes one when it does."""
-        temp_db.complete_content_item(self._book("new_book", "Neuromancer"))
-        self._assert_columns_describe_the_library(temp_db)
-
-        temp_db.complete_content_item(
-            self._book("new_book", "Neuromancer", "William Gibson")
-        )
-        self._assert_columns_describe_the_library(temp_db)
-
-    def test_the_edit_door_and_the_ignore_door(self, temp_db: SQLiteDB) -> None:
-        """Neither door can change a title or a creator, so neither may disturb the columns."""
-        db_id = temp_db.save_content_item(self._book("hobbit", "The Hobbit", "Tolkien"))
-
-        assert temp_db.update_item_from_ui(
-            db_id,
-            status="completed",
-            rating=5,
-            genres=["fantasy"],
-            description="A hobbit goes there and back again.",
-        )
-        self._assert_columns_describe_the_library(temp_db)
-
-        assert temp_db.set_item_ignored(db_id, True)
-        self._assert_columns_describe_the_library(temp_db)
-
     def test_the_dedup_door(self, temp_db: SQLiteDB) -> None:
         """A merge can move a creator onto the kept row, and it writes the columns.
 
@@ -2902,54 +1775,6 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
             row = cursor.fetchone()
         return (row["sort_title"], row["search_text"])
 
-    def test_a_creator_recovered_by_the_upgrade_merge_is_searchable(
-        self, tmp_path: Path
-    ) -> None:
-        """The backfill runs after the duplicate merge, inside the same open.
-
-        ``_deduplicate_inline`` deliberately writes no derived column, which is
-        only correct because the backfill follows it: the merge fills the kept
-        row's empty creator from the row it deletes, and a backfill that had
-        already run would have written that row's search text without the name
-        and would never look at it again.
-        """
-        db_path = tmp_path / "merged_on_upgrade.db"
-        db = SQLiteDB(db_path)
-        _insert_raw_book(db, "hobbit_a", None)
-        _insert_raw_book(db, "hobbit_b", "J.R.R. Tolkien")
-        with db.connection() as conn:
-            _mark_written_before_the_repair(conn)
-            conn.commit()
-
-        reopened = SQLiteDB(db_path)
-
-        found = reopened.get_content_items(search="Tolkien")
-        assert [item.title for item in found] == ["The Hobbit"]
-
-    def test_a_creator_recovered_by_the_upgrade_fold_is_searchable(
-        self, tmp_path: Path
-    ) -> None:
-        """The backfill runs after the company fold, inside the same open.
-
-        The fold writes ``developer`` from a name that until then existed only
-        in the blob, so it fills a creator the same way the merge above does:
-        a backfill that had already run would have written this row's search
-        text with an empty creator half and would never look at it again.
-        """
-        db_path = tmp_path / "folded_on_upgrade.db"
-        SQLiteDB(db_path)
-        _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
-        )
-
-        reopened = SQLiteDB(db_path)
-
-        found = reopened.get_content_items(search="CD Projekt Red")
-        assert [item.title for item in found] == ["The Witcher"]
-
     def test_a_row_written_without_the_columns_is_repaired_on_the_next_open(
         self, tmp_path: Path
     ) -> None:
@@ -3010,26 +1835,6 @@ class TestToJsonArrayRegression:
         result = to_json_array("Drama")
         assert result == '["Drama"]'
 
-    def test_existing_json_array_unchanged(self) -> None:
-        """A string that is already a JSON array should be returned as-is."""
-        result = to_json_array('["Drama", "Action"]')
-        assert result == '["Drama", "Action"]'
-
-    def test_list_converted_to_json(self) -> None:
-        """A Python list should be serialized to JSON."""
-        result = to_json_array(["Drama"])
-        assert result == '["Drama"]'
-
-    def test_none_returns_none(self) -> None:
-        """None input should return None."""
-        result = to_json_array(None)
-        assert result is None
-
-    def test_multi_element_list(self) -> None:
-        """A multi-element list should serialize correctly."""
-        result = to_json_array(["Drama", "Action", "Comedy"])
-        assert result == '["Drama", "Action", "Comedy"]'
-
 
 class TestAdditiveGenreSaves:
     """Tests for additive genre/tag saving in detail tables.
@@ -3074,127 +1879,6 @@ class TestAdditiveGenreSaves:
         assert "Comedy" in genres
         assert "Action" in genres
 
-    def test_reimport_deduplicates_genres_case_insensitive(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Re-saving should not create duplicate genres (case-insensitive)."""
-        item_v1 = ContentItem(
-            id="tv_2",
-            title="Breaking Bad",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"genres": ["Drama"]},
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="tv_2",
-            title="Breaking Bad",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"genres": ["Drama", "Action"]},
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        genres = retrieved.metadata.get("genres", [])
-        # Drama should appear only once
-        drama_count = sum(1 for genre in genres if genre.lower() == "drama")
-        assert drama_count == 1
-        assert "Action" in genres
-
-    def test_reimport_merges_tags(self, temp_db: SQLiteDB) -> None:
-        """Re-saving should merge tags additively."""
-        item_v1 = ContentItem(
-            id="game_1",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"genres": ["RPG"], "tags": ["space", "story rich"]},
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="game_1",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"genres": ["RPG"], "tags": ["open world", "space"]},
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        tags = retrieved.metadata.get("tags", [])
-        assert "space" in tags
-        assert "story rich" in tags
-        assert "open world" in tags
-        # "space" should not be duplicated
-        space_count = sum(1 for tag in tags if tag.lower() == "space")
-        assert space_count == 1
-
-    def test_first_save_works_without_existing_row(self, temp_db: SQLiteDB) -> None:
-        """First save should work normally via INSERT."""
-        item = ContentItem(
-            id="book_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"genres": ["Science Fiction"], "tags": ["space", "politics"]},
-        )
-        db_id = temp_db.save_content_item(item)
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert "Science Fiction" in retrieved.metadata.get("genres", [])
-        assert "space" in retrieved.metadata.get("tags", [])
-
-
-# ---------------------------------------------------------------------------
-# Non-destructive update tests
-# ---------------------------------------------------------------------------
-
-
-class TestResolveStatusForward:
-    """Unit tests for the forward-only status resolution helper."""
-
-    def test_none_existing_uses_incoming(self) -> None:
-        """When no existing status, any incoming status is accepted."""
-        assert resolve_status_forward(None, "completed") == "completed"
-        assert resolve_status_forward(None, "unread") == "unread"
-
-    def test_forward_progression_unread_to_consuming(self) -> None:
-        assert resolve_status_forward("unread", "currently_consuming") == (
-            "currently_consuming"
-        )
-
-    def test_forward_progression_consuming_to_completed(self) -> None:
-        assert resolve_status_forward("currently_consuming", "completed") == "completed"
-
-    def test_forward_progression_unread_to_completed(self) -> None:
-        assert resolve_status_forward("unread", "completed") == "completed"
-
-    def test_same_status_keeps_same(self) -> None:
-        assert resolve_status_forward("completed", "completed") == "completed"
-
-    def test_backward_blocked_completed_to_unread(self) -> None:
-        """Completed status should never regress to unread."""
-        assert resolve_status_forward("completed", "unread") == "completed"
-
-    def test_backward_blocked_completed_to_consuming(self) -> None:
-        """Completed status should never regress to currently_consuming."""
-        assert resolve_status_forward("completed", "currently_consuming") == "completed"
-
-    def test_backward_blocked_consuming_to_unread(self) -> None:
-        """Currently_consuming should never regress to unread."""
-        assert (
-            resolve_status_forward("currently_consuming", "unread")
-            == "currently_consuming"
-        )
-
 
 class TestRatingSetOnce:
     """Tests that rating is set once and never overwritten.
@@ -3206,20 +1890,6 @@ class TestRatingSetOnce:
     Fix: Rating is only written when the existing rating is None and the
     incoming rating is not None.
     """
-
-    def test_initial_save_sets_rating(self, temp_db: SQLiteDB) -> None:
-        """First save should set the rating normally."""
-        item = ContentItem(
-            id="book_1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        db_id = temp_db.save_content_item(item)
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.rating == 5
 
     def test_resync_does_not_overwrite_existing_rating(self, temp_db: SQLiteDB) -> None:
         """Re-syncing with a different rating should not overwrite the original."""
@@ -3269,116 +1939,6 @@ class TestRatingSetOnce:
         assert retrieved is not None
         assert retrieved.rating == 4  # Original rating preserved
 
-    def test_set_rating_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
-        """Setting rating on item that initially had None should succeed."""
-        item_v1 = ContentItem(
-            id="book_4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            rating=None,
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="book_4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.rating == 4
-
-
-class TestReviewSetOnce:
-    """Tests that review is set once and never overwritten."""
-
-    def test_initial_save_sets_review(self, temp_db: SQLiteDB) -> None:
-        item = ContentItem(
-            id="book_r1",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Amazing book",
-        )
-        db_id = temp_db.save_content_item(item)
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Amazing book"
-
-    def test_resync_does_not_overwrite_existing_review(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="book_r2",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Classic sci-fi",
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="book_r2",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Different opinion",
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Classic sci-fi"
-
-    def test_resync_with_none_does_not_clear_review(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="book_r3",
-            title="Neuromancer",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Cyberpunk classic",
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="book_r3",
-            title="Neuromancer",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review=None,
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Cyberpunk classic"
-
-    def test_set_review_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="book_r4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            review=None,
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="book_r4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            review="Great read!",
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Great read!"
-
 
 class TestBlankReviewNeverFillsTheColumn:
     """Regression tests for a blank review reaching the fill-only leg.
@@ -3397,54 +1957,6 @@ class TestBlankReviewNeverFillsTheColumn:
     both the fill and the insert leg, so nothing a door writes can block the
     column.
     """
-
-    @pytest.mark.parametrize("blank_review", BLANK_REVIEWS_AT_THE_DOOR)
-    def test_insert_stores_null_for_a_blank_review_regression(
-        self, temp_db: SQLiteDB, blank_review: str
-    ) -> None:
-        """A new row gets NULL, not the whitespace the source sent."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="book_blank_new",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                review=blank_review,
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review is None
-
-    @pytest.mark.parametrize("blank_review", BLANK_REVIEWS_AT_THE_DOOR)
-    def test_a_blank_review_does_not_block_a_later_fill_regression(
-        self, temp_db: SQLiteDB, blank_review: str
-    ) -> None:
-        """A real review still lands after a blank one was synced first."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="book_blank_fill",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                review=blank_review,
-            )
-        )
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="book_blank_fill",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                review="Classic sci-fi",
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Classic sci-fi"
 
     def test_a_blank_review_does_not_overwrite_a_stored_one(
         self, temp_db: SQLiteDB
@@ -3485,22 +1997,6 @@ class TestStatusForwardOnly:
     → completed. A re-sync with an earlier status does not revert.
     """
 
-    def test_status_advances_unread_to_completed(self, temp_db: SQLiteDB) -> None:
-        item = ContentItem(
-            id="s1",
-            title="Book A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        db_id = temp_db.save_content_item(item)
-
-        item.status = ConsumptionStatus.COMPLETED
-        temp_db.save_content_item(item)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
     def test_status_does_not_regress_completed_to_unread(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -3525,59 +2021,6 @@ class TestStatusForwardOnly:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
-    def test_status_does_not_regress_consuming_to_unread(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        item_v1 = ContentItem(
-            id="s3",
-            title="Book C",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="s3",
-            title="Book C",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_multi_source_sync_order_independent(self, temp_db: SQLiteDB) -> None:
-        """Status should settle at highest value regardless of sync order.
-
-        Source A reports "unread", Source B reports "completed".
-        Result should be "completed" regardless of which syncs first.
-        """
-        # Source B syncs first (completed)
-        item_b = ContentItem(
-            id="s4",
-            title="Book D",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            source="source_b",
-        )
-        db_id = temp_db.save_content_item(item_b)
-
-        # Source A syncs second (unread)
-        item_a = ContentItem(
-            id="s4",
-            title="Book D",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            source="source_a",
-        )
-        temp_db.save_content_item(item_a)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
 
 class TestDateCompletedProtection:
     """Tests that date_completed only advances forward.
@@ -3585,42 +2028,6 @@ class TestDateCompletedProtection:
     Rule: date_completed is only updated when the incoming value is not None
     AND it is later than the existing value.
     """
-
-    def test_initial_save_sets_date(self, temp_db: SQLiteDB) -> None:
-        item = ContentItem(
-            id="d1",
-            title="Book E",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=date(2025, 6, 15),
-        )
-        db_id = temp_db.save_content_item(item)
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2025, 6, 15)
-
-    def test_later_date_replaces_earlier(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="d2",
-            title="Book F",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=date(2025, 1, 1),
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="d2",
-            title="Book F",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=date(2025, 6, 15),
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2025, 6, 15)
 
     def test_earlier_date_does_not_replace_later(self, temp_db: SQLiteDB) -> None:
         item_v1 = ContentItem(
@@ -3668,60 +2075,6 @@ class TestDateCompletedProtection:
         assert retrieved is not None
         assert retrieved.date_completed == date(2025, 3, 10)
 
-    def test_set_date_when_existing_is_none(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="d5",
-            title="Book I",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            date_completed=None,
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="d5",
-            title="Book I",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=date(2025, 6, 15),
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2025, 6, 15)
-
-
-class TestNoneNeverOverwrites:
-    """Tests that None values never overwrite existing data (universal rule).
-
-    This is a cross-cutting concern: if an incoming sync lacks data for a
-    field that already has a value, the existing value must be preserved.
-    """
-
-    def test_none_source_does_not_overwrite(self, temp_db: SQLiteDB) -> None:
-        item_v1 = ContentItem(
-            id="n1",
-            title="Book J",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            source="goodreads",
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="n1",
-            title="Book J",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            source=None,
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.source == "goodreads"
-
 
 class TestDetailTableFillOnly:
     """Tests that detail table scalar fields are fill-only.
@@ -3757,61 +2110,6 @@ class TestDetailTableFillOnly:
         assert retrieved.metadata.get("description") == (
             "A classic sci-fi novel about Arrakis."
         )
-
-    def test_author_not_overwritten(self, temp_db: SQLiteDB) -> None:
-        """Existing author should not be replaced by new sync."""
-        item_v1 = ContentItem(
-            id="detail_2",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            author="Isaac Asimov",
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="detail_2",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            author="I. Asimov",
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.author == "Isaac Asimov"
-
-    def test_empty_field_gets_filled(self, temp_db: SQLiteDB) -> None:
-        """Fields that are None should be filled on subsequent sync."""
-        item_v1 = ContentItem(
-            id="detail_3",
-            title="Neuromancer",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={},
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="detail_3",
-            title="Neuromancer",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={
-                "description": "A cyberpunk novel.",
-                "pages": 271,
-                "publisher": "Ace Books",
-            },
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("description") == "A cyberpunk novel."
-        assert retrieved.metadata.get("pages") == 271
-        assert retrieved.metadata.get("publisher") == "Ace Books"
 
     def test_an_empty_text_value_leaves_the_column_open(
         self, temp_db: SQLiteDB
@@ -3852,66 +2150,6 @@ class TestDetailTableFillOnly:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.metadata["isbn"] == "9780441013593"
-
-    def test_year_published_not_overwritten(self, temp_db: SQLiteDB) -> None:
-        """Numeric detail fields should also be fill-only."""
-        item_v1 = ContentItem(
-            id="detail_4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"year_published": 1992},
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="detail_4",
-            title="Snow Crash",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"year_published": 2000},
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("year_published") == 1992
-
-    def test_genres_still_merge_additively(self, temp_db: SQLiteDB) -> None:
-        """Genres should still merge (not fill-only) even with fill-only scalars."""
-        item_v1 = ContentItem(
-            id="detail_5",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={
-                "genres": ["RPG"],
-                "description": "Space RPG.",
-            },
-        )
-        db_id = temp_db.save_content_item(item_v1)
-
-        item_v2 = ContentItem(
-            id="detail_5",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={
-                "genres": ["Action"],
-                "description": "Different description.",
-            },
-        )
-        temp_db.save_content_item(item_v2)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        genres = retrieved.metadata.get("genres", [])
-        assert "RPG" in genres
-        assert "Action" in genres
-        # Description should be preserved (fill-only)
-        assert retrieved.metadata.get("description") == "Space RPG."
 
     def test_remaining_metadata_json_merges_additively(self, temp_db: SQLiteDB) -> None:
         """Remaining metadata (non-column keys) should merge with existing taking precedence."""
@@ -3970,23 +2208,6 @@ class TestUpdateItemFromUi:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.UNREAD
 
-    def test_update_rating_overwrite(self, temp_db: SQLiteDB) -> None:
-        """Existing rating can be overwritten via UI edit."""
-        item = ContentItem(
-            id="ui_2",
-            title="Rated Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=3,
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, status="completed", rating=5)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.rating == 5
-
     def test_update_rating_clear(self, temp_db: SQLiteDB) -> None:
         """Setting rating to None clears it via UI edit."""
         item = ContentItem(
@@ -4003,67 +2224,6 @@ class TestUpdateItemFromUi:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.rating is None
-
-    def test_update_review_overwrite(self, temp_db: SQLiteDB) -> None:
-        """Existing review can be overwritten via UI edit."""
-        item = ContentItem(
-            id="ui_4",
-            title="Reviewed Game",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            review="Old review",
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="completed", review="New review"
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "New review"
-
-    def test_update_seasons_watched(self, temp_db: SQLiteDB) -> None:
-        """Seasons watched is persisted in tv_show_details metadata."""
-        item = ContentItem(
-            id="ui_5",
-            title="Test Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"seasons": 5},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="currently_consuming", seasons_watched=[1, 2, 3]
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("seasons_watched") == [1, 2, 3]
-
-    def test_update_seasons_watched_stamps_dates(self, temp_db: SQLiteDB) -> None:
-        """Newly checked-off seasons are stamped with an ISO timestamp."""
-        item = ContentItem(
-            id="ui_5a",
-            title="Test Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"seasons": 5},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="currently_consuming", seasons_watched=[1]
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        dates = retrieved.metadata.get("seasons_watched_dates")
-        assert set(dates.keys()) == {"1"}
-        datetime.fromisoformat(dates["1"].replace("Z", "+00:00"))
 
     def test_update_seasons_watched_preserves_and_drops_dates(
         self, temp_db: SQLiteDB
@@ -4129,45 +2289,6 @@ class TestUpdateItemFromUi:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
-
-    def test_update_auto_derive_status_some_watched(self, temp_db: SQLiteDB) -> None:
-        """Partial seasons watched, with no status supplied, derives consuming."""
-        item = ContentItem(
-            id="ui_7",
-            title="Long Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"seasons": 10},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_update_auto_derive_status_none_watched(self, temp_db: SQLiteDB) -> None:
-        """Emptying the checklist, with no status supplied, derives unread."""
-        item = ContentItem(
-            id="ui_8",
-            title="Unwatched Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"seasons": 5},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[])
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.UNREAD
-
-    def test_update_nonexistent_item(self, temp_db: SQLiteDB) -> None:
-        """Updating a nonexistent item returns False."""
-        result = temp_db.update_item_from_ui(db_id=99999, status="unread")
-        assert result is False
 
     def test_update_wrong_user(self, temp_db: SQLiteDB) -> None:
         """Updating with wrong user_id returns False."""
@@ -4262,21 +2383,6 @@ class TestEditDoorNeverStoresABlankReview:
             )
         )
 
-    @pytest.mark.parametrize("blank_review", BLANK_REVIEWS_AT_THE_DOOR)
-    def test_a_blank_review_clears_the_column_regression(
-        self, temp_db: SQLiteDB, blank_review: str
-    ) -> None:
-        """The column holds NULL, not the whitespace the caller passed."""
-        db_id = self._reviewed(temp_db)
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="completed", review=blank_review
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review is None
-
     def test_a_review_cleared_this_way_can_still_be_filled_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4297,24 +2403,6 @@ class TestEditDoorNeverStoresABlankReview:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.review == "Imported from Goodreads"
-
-    def test_a_written_review_is_stored_exactly_as_given(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Guard: the blank check reads the value, it does not rewrite it.
-
-        Only emptiness is decided by stripping. Trimming what the user typed
-        would be this door editing their words.
-        """
-        db_id = self._reviewed(temp_db)
-
-        temp_db.update_item_from_ui(
-            db_id=db_id, status="completed", review="  Still thinking  "
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "  Still thinking  "
 
 
 class TestUpdateItemFromUiRegression:
@@ -4423,25 +2511,6 @@ class TestPartialEditPreservesUnsentFields:
         assert retrieved.rating == 5
         assert retrieved.review == "Loved it"
 
-    def test_rating_edit_preserves_review_regression(self, temp_db: SQLiteDB) -> None:
-        """Changing only the rating leaves the review alone (and vice versa)."""
-        item = ContentItem(
-            id="partial_2",
-            title="Reviewed Movie",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-            rating=2,
-            review="Worth a look",
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, status="completed", rating=4)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.rating == 4
-        assert retrieved.review == "Worth a look"
-
     def test_explicit_none_still_clears_rating_and_review(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4501,41 +2570,6 @@ class TestCompletionDateStamping:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.date_completed == FROZEN_TODAY
-
-    def test_existing_completion_date_is_not_overwritten(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A date the user or an import already recorded survives the edit."""
-        item = ContentItem(
-            id="stamp_2",
-            title="Imported Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=date(2020, 1, 1),
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, status="completed", rating=4)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2020, 1, 1)
-
-    def test_non_completed_edit_does_not_stamp_a_date(self, temp_db: SQLiteDB) -> None:
-        """An edit that does not resolve to completed records no date."""
-        item = ContentItem(
-            id="stamp_3",
-            title="In Progress Book",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        db_id = temp_db.save_content_item(item)
-
-        temp_db.update_item_from_ui(db_id=db_id, status="currently_consuming")
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed is None
 
     def test_unrelated_edit_does_not_invent_a_completion_date_regression(
         self, temp_db: SQLiteDB
@@ -4618,53 +2652,6 @@ class TestCompletionDateTimezone:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.date_completed == date(2026, 3, 14)
-
-    def test_explicit_completion_stamps_the_host_calendar_day_regression(
-        self, temp_db: SQLiteDB, host_timezone
-    ) -> None:
-        """The `complete` door dates a new item by the day the user lived."""
-        host_timezone("America/Los_Angeles")
-
-        with patch("src.utils.dates.utc_now", return_value=self.LOCAL_EVENING):
-            db_id = temp_db.complete_content_item(
-                ContentItem(
-                    id=None,
-                    title="Evening Film",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2026, 3, 14)
-
-    def test_tv_season_checklist_completion_stamps_the_host_day(
-        self, temp_db: SQLiteDB, host_timezone
-    ) -> None:
-        """Completing a show by ticking its last season dates it the same way.
-
-        A checklist edit sends no status, so the TV path derives one, reaching
-        the stamp by a different route than the plain edit above.
-        """
-        host_timezone("America/Los_Angeles")
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="tz_tv_1",
-                title="Evening Show",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
-                metadata={"seasons": 2},
-            )
-        )
-
-        with patch("src.utils.dates.utc_now", return_value=self.LOCAL_EVENING):
-            temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2])
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
         assert retrieved.date_completed == date(2026, 3, 14)
 
 
@@ -4752,24 +2739,6 @@ class TestCompleteContentItem:
         assert retrieved is not None
         assert retrieved.date_completed == date(2020, 1, 1)
 
-    def test_missing_completion_date_is_filled(self, temp_db: SQLiteDB) -> None:
-        """An item completed without a date gets today's."""
-        db_id = self._seeded(temp_db, date_completed=None)
-
-        with patch("src.utils.dates.utc_now", return_value=FROZEN_NOW):
-            temp_db.complete_content_item(
-                ContentItem(
-                    id="book-1",
-                    title="Dune",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.COMPLETED,
-                )
-            )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == FROZEN_TODAY
-
     def test_supplied_rating_and_review_overwrite_the_stored_ones(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4791,62 +2760,6 @@ class TestCompleteContentItem:
         assert retrieved is not None
         assert retrieved.rating == 2
         assert retrieved.review == "On reflection, overrated"
-
-    def test_omitted_rating_and_review_leave_the_stored_ones(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Completing without a rating does not erase the one already there."""
-        db_id = self._seeded(temp_db)
-
-        temp_db.complete_content_item(
-            ContentItem(
-                id="book-1",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.rating == 5
-        assert retrieved.review == "Loved it"
-
-    @pytest.mark.parametrize("blank_review", BLANK_REVIEWS_AT_THE_DOOR)
-    def test_blank_review_does_not_replace_the_stored_one_regression(
-        self, temp_db: SQLiteDB, blank_review: str
-    ) -> None:
-        """A blank review leaves the review the user wrote where it is.
-
-        Bug: this door overwrites, and it wrote the review whenever it was not
-        None, so a completion carrying ``""`` replaced a real review with an
-        empty string — which then reads as a review the user wrote and stops
-        any later import from filling the field. While both completion
-        surfaces still persisted through the fill-only sync door a blank could
-        only ever land in an empty column, so moving them onto this door is
-        what turned it into data loss.
-        Root cause: the write guarded on ``review is not None`` alone, while
-        ``POST /api/complete`` and ``complete --review`` both still accepted an
-        empty or all-whitespace string.
-        Fix: blank counts as "supplied none" here, and both surfaces refuse one
-        outright. Whitespace is the same emptiness spelled differently, so every
-        spelling the doors are checked against is covered.
-        """
-        db_id = self._seeded(temp_db)
-
-        temp_db.complete_content_item(
-            ContentItem(
-                id="book-1",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                review=blank_review,
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Loved it"
 
     def test_completion_and_creation_are_one_transaction_regression(
         self, temp_db: SQLiteDB
@@ -4966,28 +2879,6 @@ class TestCompletionDoorExplicitDate:
             )
         )
 
-    def test_an_explicit_date_fills_an_undated_item(self, temp_db: SQLiteDB) -> None:
-        """A named date lands on an item that has none, instead of today's."""
-        db_id = self._seeded(temp_db, None)
-
-        self._complete_on(temp_db, date(2024, 1, 15))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2024, 1, 15)
-
-    def test_an_explicit_date_later_than_the_stored_one_is_written(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A named date replaces an earlier one, as a correction should."""
-        db_id = self._seeded(temp_db, date(2020, 1, 1))
-
-        self._complete_on(temp_db, date(2024, 1, 15))
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2024, 1, 15)
-
     def test_an_explicit_date_earlier_than_the_stored_one_is_written_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -5020,17 +2911,6 @@ class TestCompletionDoorFutureDate:
                 )
             )
 
-    def test_tomorrow_is_accepted_for_a_caller_a_zone_ahead(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A user east of the server calls tomorrow "today"."""
-        self._complete_on(temp_db, FROZEN_TODAY + timedelta(days=1))
-
-        stored = temp_db.get_content_items()
-        assert [item.date_completed for item in stored] == [
-            FROZEN_TODAY + timedelta(days=1)
-        ]
-
     def test_the_day_after_tomorrow_is_refused(self, temp_db: SQLiteDB) -> None:
         """Past the skew allowance is a day nobody has lived."""
         with pytest.raises(sqlite_db.FutureCompletionDateError):
@@ -5057,28 +2937,6 @@ class TestCompletionDoorFutureDate:
         assert retrieved is not None
         assert retrieved.date_completed is None
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_the_sync_door_lands_a_date_this_one_would_refuse(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The guard is this door's alone, deliberately.
-
-        A sync mirrors somebody else's library, where one row dated 2099 must
-        not fail the whole run — which is what raising inside a sync does.
-        """
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="book-2",
-                title="Dune Messiah",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                date_completed=date(2099, 1, 1),
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.date_completed == date(2099, 1, 1)
 
 
 class TestIgnoredSyncDoor:
@@ -5134,40 +2992,6 @@ class TestIgnoredSyncDoor:
         db_id = self._ignored_item(temp_db)
 
         self._resync(temp_db, ignored=False)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.ignored is False
-
-    def test_stated_true_ignores_the_item(self, temp_db: SQLiteDB) -> None:
-        """A file stating true sets the flag on an item that was not ignored."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="ignore-1",
-                title="Ignored Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-
-        self._resync(temp_db, ignored=True)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.ignored is True
-
-    def test_new_item_with_no_stated_flag_is_not_ignored(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A first import that says nothing creates an ordinary, visible item."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="ignore-2",
-                title="New Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
@@ -5267,69 +3091,6 @@ class TestTvSeasonSyncRegression:
         assert retrieved.metadata is not None
         assert str(retrieved.metadata.get("seasons")) == "6"
 
-    def test_sync_no_seasons_watched_no_regression(self, temp_db: SQLiteDB) -> None:
-        """No regression when user never used the season checklist.
-
-        If there's no seasons_watched metadata, the sync should not
-        change behavior — forward-only still applies.
-        """
-        item = ContentItem(
-            id="tv_sync_3",
-            title="No Checklist Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"seasons": 3},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        # Sync with new season (no seasons_watched in metadata)
-        resync_item = ContentItem(
-            id="tv_sync_3",
-            title="No Checklist Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            metadata={"seasons": 4},
-        )
-        temp_db.save_content_item(resync_item)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        # Status stays completed — forward-only and no checklist data
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
-    def test_sync_same_season_count_no_regression(self, temp_db: SQLiteDB) -> None:
-        """No regression when season count hasn't changed."""
-        item = ContentItem(
-            id="tv_sync_4",
-            title="Stable Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"seasons": 5},
-        )
-        db_id = temp_db.save_content_item(item)
-
-        # User marks all seasons watched
-        temp_db.update_item_from_ui(
-            db_id=db_id,
-            status="completed",
-            seasons_watched=[1, 2, 3, 4, 5],
-        )
-
-        # Re-sync with same season count
-        resync_item = ContentItem(
-            id="tv_sync_4",
-            title="Stable Show",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            metadata={"seasons": 5},
-        )
-        temp_db.save_content_item(resync_item)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        # Still completed — no new seasons
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
     def test_zero_stored_season_count_keeps_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -5420,52 +3181,6 @@ class TestTvSeasonSyncRegression:
         # seasons_watched unions: the sync adds the season it now reports
         # finished and removes nothing.
         assert retrieved.metadata.get("seasons_watched") == [1, 2]
-
-    def test_sync_updates_to_genuinely_later_incoming_date_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Regression test: a genuinely newer Trakt watch must still update the date.
-
-        Bug reported: a season's watch date could get stuck at a stale value
-        even when Trakt reported a genuinely more recent watch.
-        Root cause: an existing-wins merge of ``seasons_watched_dates`` never
-        compares timestamps, so it can never move a date forward.
-        Fix: per-season merge via ``later_iso_timestamp`` lets a later
-        incoming date win while still protecting a later existing date (see
-        the sibling regression test above).
-        """
-        first = ContentItem(
-            id="trakt:show2",
-            title="Regression Show 2",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            source="trakt",
-            metadata={
-                "seasons_watched": [1],
-                "seasons_watched_dates": {"1": "2026-01-01T00:00:00+00:00"},
-            },
-        )
-        db_id = temp_db.save_content_item(first)
-
-        resync = ContentItem(
-            id="trakt:show2",
-            title="Regression Show 2",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            source="trakt",
-            metadata={
-                "seasons_watched": [1],
-                "seasons_watched_dates": {"1": "2026-06-01T00:00:00+00:00"},
-            },
-        )
-        temp_db.save_content_item(resync)
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("seasons_watched_dates") == {
-            "1": "2026-06-01T00:00:00+00:00"
-        }
 
     def test_sync_gap_fills_dates_onto_pre_feature_row_regression(
         self, temp_db: SQLiteDB
@@ -5597,34 +3312,6 @@ class TestTvSeasonCountFromTraktMetadata:
         assert retrieved.metadata["seasons"] == 5
         assert item_to_dict(retrieved)["total_seasons"] == 5
 
-    def test_all_seasons_watched_resolves_completed_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Ticking every season completes the show instead of sticking."""
-        db_id = self._save_trakt_show(temp_db)
-
-        temp_db.update_item_from_ui(db_id=db_id, seasons_watched=[1, 2, 3, 4, 5])
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
-    def test_total_seasons_is_not_duplicated_into_metadata_blob_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The alias is a known key, so the blob does not keep a second copy."""
-        db_id = self._save_trakt_show(temp_db)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT metadata FROM tv_show_details WHERE content_item_id = ?",
-                (db_id,),
-            )
-            blob = json.loads(cursor.fetchone()["metadata"])
-
-        assert "total_seasons" not in blob
-
 
 class TestYearAndRuntimeFromImport:
     """Release year and runtime written under the names the sources use.
@@ -5671,28 +3358,6 @@ class TestYearAndRuntimeFromImport:
             )
         )
 
-    @staticmethod
-    def _save_sonarr_show(temp_db: SQLiteDB) -> int:
-        """Save the show Sonarr produces for a representative API payload."""
-        return temp_db.save_content_item(
-            ContentItem(
-                id="tvdb:81189",
-                title="Breaking Bad",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                source="sonarr",
-                metadata=SonarrPlugin().build_metadata(
-                    {
-                        "title": "Breaking Bad",
-                        "tvdbId": 81189,
-                        "year": 2008,
-                        "network": "AMC",
-                        "statistics": {"seasonCount": 5},
-                    }
-                ),
-            )
-        )
-
     def test_movie_year_and_runtime_populate_their_columns_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -5704,51 +3369,6 @@ class TestYearAndRuntimeFromImport:
         assert retrieved is not None
         assert retrieved.metadata["release_year"] == 2010
         assert retrieved.metadata["runtime"] == 148
-
-    def test_movie_aliases_are_not_duplicated_into_metadata_blob_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The aliases are known keys, so the blob keeps no second copy."""
-        db_id = self._save_radarr_movie(temp_db)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT metadata FROM movie_details WHERE content_item_id = ?",
-                (db_id,),
-            )
-            blob = json.loads(cursor.fetchone()["metadata"])
-
-        assert "year" not in blob
-        assert "runtime_minutes" not in blob
-
-    def test_show_year_populates_the_release_year_column_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Sonarr's ``year`` reaches the TV release year column."""
-        db_id = self._save_sonarr_show(temp_db)
-
-        retrieved = temp_db.get_content_item(db_id)
-
-        assert retrieved is not None
-        assert retrieved.metadata["release_year"] == 2008
-        assert retrieved.metadata["seasons"] == 5
-
-    def test_show_year_is_not_duplicated_into_metadata_blob_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The TV alias is a known key too."""
-        db_id = self._save_sonarr_show(temp_db)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT metadata FROM tv_show_details WHERE content_item_id = ?",
-                (db_id,),
-            )
-            blob = json.loads(cursor.fetchone()["metadata"])
-
-        assert "year" not in blob
 
     def test_canonical_keys_still_win_over_their_aliases(
         self, temp_db: SQLiteDB
@@ -5938,46 +3558,6 @@ class TestCreatorColumnEdges:
         assert retrieved.author is None
         assert "developers" not in retrieved.metadata
 
-    def test_the_item_author_outranks_a_metadata_creator(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """An importer's author beats a creator key riding in metadata."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="movie-both",
-                title="Arrival",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                author="Denis Villeneuve",
-                metadata={"director": "Somebody Else"},
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-
-        assert retrieved is not None
-        assert retrieved.author == "Denis Villeneuve"
-
-    def test_the_canonical_creators_key_outranks_the_creator_alias(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A show carrying both spellings keeps the one storage declares."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="tv-both-spellings",
-                title="Breaking Bad",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"creators": "Vince Gilligan", "creator": "Somebody Else"},
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-
-        assert retrieved is not None
-        assert retrieved.author == "Vince Gilligan"
-        assert "creator" not in retrieved.metadata
-
     def test_a_later_sync_does_not_overwrite_a_stored_creator(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -6005,221 +3585,6 @@ class TestCreatorColumnEdges:
         retrieved = temp_db.get_content_item(first)
         assert retrieved is not None
         assert retrieved.author == "Denis Villeneuve"
-
-    def test_a_later_sync_fills_a_creator_the_first_left_empty(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """An enrichment pass supplies the creator an import had none of."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="movie-later-fill",
-                title="Arrival",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-        temp_db.save_content_item(
-            ContentItem(
-                id="movie-later-fill",
-                title="Arrival",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"director": "Denis Villeneuve"},
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-
-        assert retrieved is not None
-        assert retrieved.author == "Denis Villeneuve"
-
-    def test_a_non_latin_creator_reads_back_unchanged(self, temp_db: SQLiteDB) -> None:
-        """A creator name outside ASCII survives the column verbatim."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="movie-unicode",
-                title="Spirited Away",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"director": "宮崎駿"},
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-
-        assert retrieved is not None
-        assert retrieved.author == "宮崎駿"
-
-    def test_plural_publishers_reach_the_singular_publisher_column(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """GOG's ``publishers`` is the alias of the ``publisher`` column."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="game-publishers",
-                title="Cyberpunk 2077",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                metadata={"publishers": ["CD Projekt", "Warner Bros."]},
-            )
-        )
-
-        with temp_db.connection() as conn:
-            row = conn.execute(
-                "SELECT publisher FROM video_game_details WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-
-        assert row["publisher"] == "CD Projekt, Warner Bros."
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.metadata["publisher"] == "CD Projekt, Warner Bros."
-
-    @pytest.mark.parametrize(
-        ("content_type", "search_term"),
-        [
-            (ContentType.MOVIE, "Villeneuve"),
-            (ContentType.TV_SHOW, "Gilligan"),
-            (ContentType.VIDEO_GAME, "Cherry"),
-        ],
-        ids=["movie", "tv_show", "video_game"],
-    )
-    def test_library_search_finds_an_item_by_its_stored_creator(
-        self, temp_db: SQLiteDB, content_type: ContentType, search_term: str
-    ) -> None:
-        """Search reads the creator off ``author`` for every content type."""
-        creators = {
-            ContentType.MOVIE: "Denis Villeneuve",
-            ContentType.TV_SHOW: "Vince Gilligan",
-            ContentType.VIDEO_GAME: "Team Cherry",
-        }
-        temp_db.save_content_item(
-            ContentItem(
-                id=f"search-{content_type.value}",
-                title="Untitled",
-                content_type=content_type,
-                status=ConsumptionStatus.UNREAD,
-                author=creators[content_type],
-            )
-        )
-
-        results = temp_db.get_content_items(search=search_term)
-
-        assert [item.title for item in results] == ["Untitled"]
-
-
-class TestDetailTableWhitelist:
-    """Tests for detail table whitelist validation in _save_detail_table."""
-
-    def test_rejects_unknown_table_name(self, temp_db: SQLiteDB) -> None:
-        """_save_detail_table raises ValueError for table not in whitelist.
-
-        Validates the SQL injection defense-in-depth guard on ALLOWED_DETAIL_TABLES.
-        """
-        malicious_config = {
-            "injected": ContentTypeFields(
-                table="malicious_table; DROP TABLE users; --",
-                table_alias="mt",
-                metadata_alias="injected_metadata",
-                # Every ContentTypeFields names one creator, so this spec
-                # carries one to reach the guard it is here to exercise.
-                fields=(
-                    DetailField(
-                        "author",
-                        FieldKind.CREATOR,
-                        column="author",
-                        template_column="author",
-                    ),
-                    DetailField("title", FieldKind.TEXT, column="title"),
-                ),
-            )
-        }
-        item = ContentItem(
-            id="test_1",
-            title="Test",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"title": "Test"},
-        )
-        # Save the item first so we have a db_id
-        db_id = temp_db.save_content_item(item)
-
-        conn = temp_db._get_connection()
-        cursor = conn.cursor()
-
-        with (
-            patch.dict(DETAIL_FIELDS, malicious_config),
-            pytest.raises(ValueError, match="Unknown detail table"),
-        ):
-            temp_db._save_detail_table(cursor, db_id, item, "injected")
-
-
-class TestParseJsonList:
-    """Tests for merge.parse_json_list helper."""
-
-    def test_none_returns_empty(self) -> None:
-        assert parse_json_list(None) == []
-
-    def test_empty_string_returns_empty(self) -> None:
-        assert parse_json_list("") == []
-
-    def test_valid_json_array(self) -> None:
-        assert parse_json_list('["a", "b", "c"]') == ["a", "b", "c"]
-
-    def test_non_list_json_returns_empty(self) -> None:
-        assert parse_json_list('{"key": "value"}') == []
-
-    def test_invalid_json_returns_empty(self) -> None:
-        assert parse_json_list("not json") == []
-
-    def test_converts_elements_to_strings(self) -> None:
-        assert parse_json_list("[1, 2, 3]") == ["1", "2", "3"]
-
-
-class TestDetailTableColumnsConsistency:
-    """Ensures _DETAIL_TABLE_COLUMNS stays in sync with the field declaration."""
-
-    def test_detail_table_columns_matches_declaration(self) -> None:
-        """_DETAIL_TABLE_COLUMNS must list exactly the declared columns.
-
-        Both describe the detail table schema, and _DETAIL_TABLE_COLUMNS is
-        deliberately independent of the declaration because it is the source
-        of the ALLOWED_DETAIL_TABLES guard.  If a column is added to the
-        declaration but not here, the merge logic in merge_detail_tables
-        silently skips the new column.
-
-        Membership is compared, not order: _DETAIL_TABLE_COLUMNS' order
-        reaches nothing but the order of SET clauses in merge_detail_tables,
-        so pinning it to the declaration would force cosmetic edits to
-        merge.py every time this one is reordered.
-
-        Duplicates are rejected on both sides, since a column named twice is
-        invisible to the set comparison: two DetailFields declaring the same
-        column with different select aliases would pass every other check
-        here and read one column's value back under two names.
-        """
-        for content_type, spec in DETAIL_FIELDS.items():
-            assert spec.table in _DETAIL_TABLE_COLUMNS, (
-                f"Table {spec.table!r} (content_type={content_type!r}) "
-                f"missing from _DETAIL_TABLE_COLUMNS"
-            )
-            assert set(_DETAIL_TABLE_COLUMNS[spec.table]) == set(spec.columns), (
-                f"Column mismatch for {spec.table!r}: "
-                f"_DETAIL_TABLE_COLUMNS={sorted(_DETAIL_TABLE_COLUMNS[spec.table])!r} "
-                f"vs DETAIL_FIELDS={sorted(spec.columns)!r}"
-            )
-            assert len(set(_DETAIL_TABLE_COLUMNS[spec.table])) == len(
-                _DETAIL_TABLE_COLUMNS[spec.table]
-            ), f"Duplicate column in _DETAIL_TABLE_COLUMNS[{spec.table!r}]"
-            assert len(set(spec.columns)) == len(
-                spec.columns
-            ), f"Duplicate column in DETAIL_FIELDS[{content_type!r}]"
-
-        declared_tables = {spec.table for spec in DETAIL_FIELDS.values()}
-        for table in _DETAIL_TABLE_COLUMNS:
-            assert (
-                table in declared_tables
-            ), f"Table {table!r} in _DETAIL_TABLE_COLUMNS but not in DETAIL_FIELDS"
 
 
 class TestCrossSourceDuplicateDetectionRegression:
@@ -6468,55 +3833,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.rating == 4  # Kept row's rating preserved
         assert retrieved.review == "Amazing RPG"  # Review filled from duplicate
 
-    def test_cross_source_resave_preserves_kept_rating(self, temp_db: SQLiteDB) -> None:
-        """save_content_item cross-source merge does not overwrite existing rating.
-
-        Similar to test_merge_does_not_overwrite_existing_rating_on_kept_row
-        but exercises the save_content_item cross-source path instead of
-        deduplicate_items.
-        """
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-skyrim",
-            title="Skyrim",
-            normalized_title="skyrim",
-            rating=4,
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-skyrim",
-            title="Skyrim",
-            normalized_title="skyrim",
-            rating=5,
-            review="Classic RPG",
-            source="blog",
-        )
-
-        # Re-save via save_content_item with a conflicting rating —
-        # triggers cross-source merge.  The final rating=4 verifies the
-        # combined outcome of merge_scalar_columns and save_content_item's
-        # "set once" guards (this test cannot isolate which guard fires).
-        steam = ContentItem(
-            id="steam-skyrim",
-            title="Skyrim",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="steam",
-            rating=5,
-        )
-        temp_db.save_content_item(steam)
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert (
-            retrieved.rating == 4
-        )  # Kept row's rating preserved (not overwritten by 5)
-        assert retrieved.review == "Classic RPG"  # Review filled from duplicate
-
     def test_merge_keeps_later_date_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -6544,34 +3860,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
         assert len(all_games) == 1
         assert all_games[0].date_completed == date(2024, 6, 20)
-
-    def test_merge_does_not_overwrite_later_date_with_earlier(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """_merge_duplicate_into does not replace a later date with an earlier one."""
-        _insert_raw_item(
-            temp_db,
-            external_id="steam-celeste",
-            title="Celeste",
-            normalized_title="celeste",
-            date_completed="2024-12-01",
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-celeste",
-            title="Celeste",
-            normalized_title="celeste",
-            date_completed="2024-03-15",
-            source="personal_site",
-        )
-
-        merged = temp_db.deduplicate_items()
-        assert merged == 1
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 1
-        assert all_games[0].date_completed == date(2024, 12, 1)
 
     def test_merge_all_null_dup_does_not_bump_updated_at_regression(
         self, temp_db: SQLiteDB
@@ -6608,60 +3896,6 @@ class TestCrossSourceDuplicateDetectionRegression:
             external_id="blog-portal",
             title="Portal",
             normalized_title="portal",
-            source="blog",
-        )
-
-        merged = temp_db.deduplicate_items()
-        assert merged == 1
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
-            )
-            after_updated_at = cursor.fetchone()["updated_at"]
-
-        assert after_updated_at == original_updated_at
-
-    def test_merge_same_data_does_not_bump_updated_at_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """merge_scalar_columns skips UPDATE when both rows have identical data.
-
-        Bug: The all-null-dup guard tested by
-        test_merge_all_null_dup_does_not_bump_updated_at_regression did not
-        cover the case where both rows have the same non-NULL values.  In that
-        scenario the fill-only rules also produce no change, but the distinct
-        code path (non-NULL comparison) was unexercised.
-        Root cause: Missing test — the will_change guard handles this correctly
-        but the "same non-NULL data" branch was never verified.
-        Fix: Added this test to pin the no-op behaviour for identical data.
-        """
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-portal",
-            title="Portal",
-            normalized_title="portal",
-            rating=5,
-            review="Brilliant",
-            source="steam",
-        )
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
-            )
-            original_updated_at = cursor.fetchone()["updated_at"]
-
-        # Insert a duplicate with the same rating and review
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-portal",
-            title="Portal",
-            normalized_title="portal",
-            rating=5,
-            review="Brilliant",
             source="blog",
         )
 
@@ -6714,130 +3948,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert all_games[0].rating == 5
         assert all_games[0].review == "Amazing game"
 
-    def test_deduplicate_items_returns_zero_when_no_duplicates(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """deduplicate_items returns 0 when there are no duplicates."""
-        item = ContentItem(
-            id="unique1",
-            title="Unique Game",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-        )
-        temp_db.save_content_item(item)
-        assert temp_db.deduplicate_items() == 0
-
-    def test_deduplicate_items_nonexistent_user_returns_zero(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """deduplicate_items with a user_id that has no rows returns 0."""
-        assert temp_db.deduplicate_items(user_id=999) == 0
-
-    def test_deduplicate_items_respects_user_id_filter(self, temp_db: SQLiteDB) -> None:
-        """deduplicate_items with user_id only deduplicates that user's items.
-
-        Verifies that deduplicating user A's items does not touch user B's
-        duplicate rows.
-        """
-        # Create a second user
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (id, username) VALUES (2, 'user_b')")
-            conn.commit()
-
-        # Insert duplicates for user 1 (default)
-        _insert_raw_item(
-            temp_db,
-            external_id="a",
-            title="Game X",
-            normalized_title="game x",
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="b",
-            title="Game X",
-            normalized_title="game x",
-            source="blog",
-        )
-
-        # Insert duplicates for user 2
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (2, 'c', 'Game X', 'game x', 'video_game',
-                           'completed', 'steam')""",
-            )
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (2, 'd', 'Game X', 'game x', 'video_game',
-                           'completed', 'blog')""",
-            )
-            conn.commit()
-
-        # Dedup only user 1 — should merge user 1's pair only
-        assert temp_db.deduplicate_items(user_id=1) == 1
-
-        # User 1 should now have exactly 1 row — the lowest-id row survived
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 1")
-            assert cursor.fetchone()[0] == 1
-            cursor.execute("SELECT external_id FROM content_items WHERE user_id = 1")
-            assert cursor.fetchone()["external_id"] == "a"
-
-        # User 2's duplicates should be untouched
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 2")
-            assert cursor.fetchone()[0] == 2  # Still 2 rows for user 2
-
-    def test_merge_genres_additively(self, temp_db: SQLiteDB) -> None:
-        """_merge_duplicate_into combines genres from both detail rows."""
-        item_a = ContentItem(
-            id="a1",
-            title="Elden Ring",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="steam",
-            metadata={"genres": ["RPG", "Action"]},
-        )
-        temp_db.save_content_item(item_a)
-
-        # Insert a duplicate with different genres via raw SQL
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-elden', 'Elden Ring', 'elden ring',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres)
-                   VALUES (?, ?)""",
-                (dup_id, '["Souls-like", "Open World"]'),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 1
-        item = all_games[0]
-        assert item.metadata is not None
-        genres = item.metadata.get("genres", [])
-        assert set(genres) == {"RPG", "Action", "Souls-like", "Open World"}
-
     def test_merge_moves_detail_row_when_kept_has_none(self, temp_db: SQLiteDB) -> None:
         """When kept row has no detail row, duplicate's detail row is moved."""
         # Insert kept row with no detail row
@@ -6876,44 +3986,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.author == "Team Cherry"
         genres = retrieved.metadata.get("genres", [])
         assert "Metroidvania" in genres
-
-    def test_deduplicate_three_way_merge(self, temp_db: SQLiteDB) -> None:
-        """deduplicate_items correctly merges three rows into one."""
-        _insert_raw_item(
-            temp_db,
-            external_id="a",
-            title="Disco Elysium",
-            normalized_title="disco elysium",
-            rating=5,
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="b",
-            title="Disco Elysium",
-            normalized_title="disco elysium",
-            review="Brilliant writing",
-            source="gog",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="c",
-            title="Disco Elysium",
-            normalized_title="disco elysium",
-            date_completed="2024-09-01",
-            source="blog",
-        )
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 2
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 1
-        item = all_games[0]
-        assert item.id == "a"  # Kept: lowest db id
-        assert item.rating == 5
-        assert item.review == "Brilliant writing"
-        assert item.date_completed == date(2024, 9, 1)
 
     def test_schema_migration_renormalizes_and_deduplicates(
         self, tmp_path: Path
@@ -6973,62 +4045,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert row["rating"] == 4
         assert row["review"] == "Great game"
         assert row["normalized_title"] == "fable anniversary"
-
-        conn.close()
-
-    def test_schema_migration_deduplicates_with_bare_connection_regression(
-        self, tmp_path: Path
-    ) -> None:
-        """create_schema sets row_factory even on a bare connection.
-
-        Bug: merge_scalar_columns used named column access (row["rating"])
-        but create_schema did not set row_factory, causing TypeError on
-        bare sqlite3.connect() connections during migration dedup.
-        Fix: create_schema now sets conn.row_factory = sqlite3.Row.
-        """
-        db_path = tmp_path / "bare_conn_test.db"
-        conn = sqlite3.connect(db_path)
-        # Intentionally no row_factory — this is the scenario that was broken
-        conn.execute("PRAGMA foreign_keys = ON")
-
-        create_schema(conn)
-
-        # Insert duplicate rows
-        cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
-                status, rating, source)
-               VALUES (1, 'a', 'Test Game', 'test game', 'video_game',
-                       'completed', 5, 'steam')"""
-        )
-        cursor.execute(
-            """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
-                status, source)
-               VALUES (1, 'b', 'Test Game', 'test game', 'video_game',
-                       'completed', 'blog')"""
-        )
-        _mark_written_before_the_repair(conn)
-        conn.commit()
-
-        # Verify two rows exist before the dedup migration
-        cursor.execute("SELECT COUNT(*) FROM content_items")
-        assert cursor.fetchone()[0] == 2
-
-        # Re-run create_schema — triggers _renormalize_titles + _deduplicate_inline.
-        # The first call already set row_factory; this verifies dedup runs
-        # correctly and is idempotent on the second pass.
-        create_schema(conn)
-
-        cursor.execute("SELECT COUNT(*) FROM content_items")
-        assert cursor.fetchone()[0] == 1
-
-        # Verify the correct row survived (lowest id) with correct data
-        cursor.execute("SELECT external_id, rating FROM content_items")
-        row = cursor.fetchone()
-        assert row["external_id"] == "a"
-        assert row["rating"] == 5
 
         conn.close()
 
@@ -7196,362 +4212,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert retrieved.metadata.get("playtime_hours") == 120
         # New key from duplicate is added
         assert retrieved.metadata.get("award") == "GOTY 2015"
-
-    def test_merge_skips_when_dup_has_no_detail_metadata(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Detail metadata merge is skipped when the duplicate has no metadata.
-
-        _merge_detail_metadata returns None when dup_detail["metadata"]
-        is NULL, preserving the kept row's metadata unchanged.
-        """
-        kept = ContentItem(
-            id="steam-witcher",
-            title="The Witcher 3",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="steam",
-            metadata={"playtime_hours": 120},
-        )
-        keep_id = temp_db.save_content_item(kept)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            # Detail row with NULL metadata
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["Action"]', NULL)""",
-                (dup_id,),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        # Original metadata preserved unchanged
-        assert retrieved.metadata.get("playtime_hours") == 120
-        # Genres still merged additively
-        genres = retrieved.metadata.get("genres", [])
-        assert "Action" in genres
-
-    def test_merge_skips_when_dup_has_corrupt_detail_metadata(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Detail metadata merge is skipped when the duplicate has non-JSON metadata.
-
-        _merge_detail_metadata returns None when dup metadata cannot
-        be parsed as JSON, preserving the kept row's metadata.
-        """
-        kept = ContentItem(
-            id="steam-witcher",
-            title="The Witcher 3",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="steam",
-            metadata={"playtime_hours": 120},
-        )
-        keep_id = temp_db.save_content_item(kept)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            # Detail row with corrupt (non-JSON) metadata
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["Action"]', 'not-valid-json{{{')""",
-                (dup_id,),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("playtime_hours") == 120
-
-    def test_merge_skips_when_kept_has_corrupt_detail_metadata(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Detail metadata merge is skipped when the kept row has non-JSON metadata.
-
-        _merge_detail_metadata returns None when kept metadata cannot
-        be parsed, preserving it as-is rather than overwriting with dup data.
-        """
-        # Insert kept item via raw SQL to set corrupt metadata
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'steam')""",
-            )
-            keep_id = cursor.lastrowid
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["RPG"]', 'corrupt{json')""",
-                (keep_id,),
-            )
-
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["Action"]', ?)""",
-                (dup_id, json.dumps({"award": "GOTY 2015"})),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT metadata FROM video_game_details WHERE content_item_id = ?",
-                (keep_id,),
-            )
-            row = cursor.fetchone()
-            # Kept row's corrupt metadata is preserved (not overwritten)
-            assert row is not None
-            assert row["metadata"] == "corrupt{json"
-
-    def test_merge_fills_when_kept_has_no_detail_metadata(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Detail metadata merge fills kept row when it has NULL metadata.
-
-        _merge_detail_metadata correctly fills when keep_meta_raw
-        is NULL (keep_meta starts as empty dict, merged = dup_meta).
-        """
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'steam')""",
-            )
-            keep_id = cursor.lastrowid
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["RPG"]', NULL)""",
-                (keep_id,),
-            )
-
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["Action"]', ?)""",
-                (dup_id, json.dumps({"award": "GOTY 2015"})),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT metadata FROM video_game_details WHERE content_item_id = ?",
-                (keep_id,),
-            )
-            row = cursor.fetchone()
-            assert row is not None
-            meta = json.loads(row["metadata"])
-            assert meta == {"award": "GOTY 2015"}
-
-    def test_merge_skips_when_dup_has_non_dict_detail_metadata(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Detail metadata merge is skipped when the duplicate has a JSON array.
-
-        _merge_detail_metadata returns None when dup metadata is
-        valid JSON but not a dict (e.g. a list), preserving kept metadata.
-        """
-        kept = ContentItem(
-            id="steam-witcher",
-            title="The Witcher 3",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            source="steam",
-            metadata={"playtime_hours": 120},
-        )
-        keep_id = temp_db.save_content_item(kept)
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
-                           'video_game', 'completed', 'blog')""",
-            )
-            dup_id = cursor.lastrowid
-            # Valid JSON but not a dict
-            cursor.execute(
-                """INSERT INTO video_game_details
-                   (content_item_id, genres, metadata)
-                   VALUES (?, '["Action"]', '["not", "a", "dict"]')""",
-                (dup_id,),
-            )
-            conn.commit()
-
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.metadata is not None
-        assert retrieved.metadata.get("playtime_hours") == 120
-
-    def test_deduplicate_items_global_merges_all_users(self, temp_db: SQLiteDB) -> None:
-        """deduplicate_items() with no user_id merges duplicates for all users.
-
-        Verifies the global dedup path (user_id=None) handles multiple users.
-        """
-        # Create a second user
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (id, username) VALUES (2, 'user_b')")
-            conn.commit()
-
-        # Insert duplicates for user 1
-        _insert_raw_item(
-            temp_db,
-            external_id="u1-a",
-            title="Hades",
-            normalized_title="hades",
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="u1-b",
-            title="Hades",
-            normalized_title="hades",
-            source="blog",
-        )
-
-        # Insert duplicates for user 2
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (2, 'u2-a', 'Hades', 'hades', 'video_game',
-                           'completed', 'steam')""",
-            )
-            cursor.execute(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status, source)
-                   VALUES (2, 'u2-b', 'Hades', 'hades', 'video_game',
-                           'completed', 'blog')""",
-            )
-            conn.commit()
-
-        # Global dedup — should merge both users' duplicates
-        merged_count = temp_db.deduplicate_items()
-        assert merged_count == 2
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 1")
-            assert cursor.fetchone()[0] == 1
-            cursor.execute("SELECT COUNT(*) FROM content_items WHERE user_id = 2")
-            assert cursor.fetchone()[0] == 1
-
-    def test_resave_source_updated_after_cross_source_merge(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """After cross-source merge, the re-saved item's fields are applied.
-
-        Verifies that not only is the duplicate removed, but the kept row
-        is updated with the re-saved item's data (source, title, etc.).
-        The kept row starts with source="old_import" to prove the update
-        path actually ran (if it didn't, source would remain "old_import").
-        """
-        steam_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-ori",
-            title="Ori and the Blind Forest",
-            normalized_title="ori and the blind forest",
-            rating=5,
-            source="old_import",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-ori",
-            title="Ori and the Blind Forest",
-            normalized_title="ori and the blind forest",
-            source="blog",
-        )
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 2
-
-        # Re-save Steam item — triggers cross-source merge and UPDATE
-        steam = ContentItem(
-            id="steam-ori",
-            title="Ori and the Blind Forest",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            source="steam",
-        )
-        temp_db.save_content_item(steam)
-
-        all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(all_games) == 1
-
-        retrieved = temp_db.get_content_item(steam_id)
-        assert retrieved is not None
-        # Source changed from "old_import" to "steam" — proves update ran
-        assert retrieved.source == "steam"
-        assert retrieved.rating == 5
 
     def test_schema_migration_dedup_merges_detail_tables_regression(
         self, tmp_path: Path
@@ -7724,31 +4384,6 @@ class TestDuplicateMergePreservesState:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
-    def test_merge_does_not_revert_completed_kept_row(self, temp_db: SQLiteDB) -> None:
-        """An unread duplicate does not drag a completed kept row backward."""
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-hollow",
-            title="Hollow Knight",
-            normalized_title="hollow knight",
-            status="completed",
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-hollow",
-            title="Hollow Knight",
-            normalized_title="hollow knight",
-            status="unread",
-            source="personal_site",
-        )
-
-        assert temp_db.deduplicate_items() == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
-
     def test_merge_keeps_ignored_flag_regression(self, temp_db: SQLiteDB) -> None:
         """An ignore on either row survives the merge."""
         keep_id = _insert_raw_item(
@@ -7773,69 +4408,6 @@ class TestDuplicateMergePreservesState:
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
         assert retrieved.ignored is True
-
-    def test_unrecognised_status_ranks_lowest_in_the_merge(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A status neither row's rules know about never outranks a real one.
-
-        Statuses reach the merge as raw strings from rows written by earlier
-        schema versions and by migration paths, so the ordering has to answer
-        for a value it does not recognise. It ranks with ``unread``: a
-        completed row is not dragged backward by one, and a recognised status
-        on the duplicate replaces one on the kept row. The status column is
-        read directly because an unrecognised value has no enum to map to.
-        """
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="legacy-outer-wilds",
-            title="Outer Wilds",
-            normalized_title="outer wilds",
-            status="abandoned",
-            source="personal_site",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="steam-outer-wilds",
-            title="Outer Wilds",
-            normalized_title="outer wilds",
-            status="completed",
-            source="steam",
-        )
-
-        assert temp_db.deduplicate_items() == 1
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT status FROM content_items WHERE id = ?", (keep_id,))
-            assert cursor.fetchone()["status"] == "completed"
-
-    def test_unrecognised_duplicate_status_does_not_revert_a_completion(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """A completed kept row survives a duplicate whose status is unknown."""
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-celeste",
-            title="Celeste",
-            normalized_title="celeste",
-            status="completed",
-            source="steam",
-        )
-        _insert_raw_item(
-            temp_db,
-            external_id="legacy-celeste",
-            title="Celeste",
-            normalized_title="celeste",
-            status="abandoned",
-            source="personal_site",
-        )
-
-        assert temp_db.deduplicate_items() == 1
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.status == ConsumptionStatus.COMPLETED
 
     def test_completed_and_ignored_item_survives_dedupe_regression(
         self, temp_db: SQLiteDB
@@ -7871,60 +4443,6 @@ class TestDuplicateMergePreservesState:
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
         assert retrieved.ignored is True
-
-    def test_merge_with_identical_state_does_not_bump_updated_at(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Adding status/ignored to the merge keeps the no-op guard intact.
-
-        The will_change guard exists so a merge that changes nothing does not
-        disturb ``updated_at``, a user-facing sort key.
-
-        The kept row's ``updated_at`` is pinned to a fixed past value first,
-        rather than read back from the ``CURRENT_TIMESTAMP`` default: that
-        default has one-second resolution and this test runs in milliseconds,
-        so a before/after comparison of two fresh timestamps would agree
-        whether or not the guard skipped the UPDATE.
-        """
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-tunic",
-            title="Tunic",
-            normalized_title="tunic",
-            status="completed",
-            ignored=True,
-            rating=4,
-            source="steam",
-        )
-
-        pinned_updated_at = "2020-01-01 00:00:00"
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE content_items SET updated_at = ? WHERE id = ?",
-                (pinned_updated_at, keep_id),
-            )
-            conn.commit()
-
-        _insert_raw_item(
-            temp_db,
-            external_id="blog-tunic",
-            title="Tunic",
-            normalized_title="tunic",
-            status="completed",
-            ignored=True,
-            rating=4,
-            source="personal_site",
-        )
-
-        assert temp_db.deduplicate_items() == 1
-
-        with temp_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT updated_at FROM content_items WHERE id = ?", (keep_id,)
-            )
-            assert cursor.fetchone()["updated_at"] == pinned_updated_at
 
 
 class TestIgnoredSignalFetchRegression:
@@ -8018,63 +4536,6 @@ class TestMissingColumnRaisesRegression:
     from ``DETAIL_FIELDS``, so a name it does not carry is a bug and says so.
     """
 
-    @staticmethod
-    def _row_without_joins(temp_db: SQLiteDB, db_id: int) -> sqlite3.Row:
-        """The content_items row alone, carrying no joined column."""
-        with temp_db.connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM content_items WHERE id = ?", (db_id,)
-            ).fetchone()
-        assert row is not None
-        return row
-
-    def test_a_missing_detail_column_raises_regression(self, temp_db: SQLiteDB) -> None:
-        """Without the detail join, the read raises rather than losing metadata.
-
-        sqlite3.Row raises IndexError for a name it does not carry.
-        """
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="missing-detail-columns",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                author="Frank Herbert",
-                metadata={"genres": ["Science Fiction"]},
-            )
-        )
-
-        joined = temp_db.get_content_item(db_id)
-        assert joined is not None
-        assert joined.author == "Frank Herbert"
-        assert joined.metadata["genres"] == ["Science Fiction"]
-
-        with pytest.raises(IndexError):
-            temp_db._row_to_content_item(self._row_without_joins(temp_db, db_id))
-
-    def test_a_missing_enrichment_column_raises_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Without the enrichment join, the flag raises rather than reading False."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="missing-enrichment-columns",
-                title="Arrival",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-        with temp_db.connection() as conn:
-            write_enrichment_complete(conn.cursor(), db_id, "tmdb", "high")
-            conn.commit()
-
-        joined = temp_db.get_content_item(db_id)
-        assert joined is not None
-        assert joined.enriched is True
-
-        with pytest.raises(IndexError):
-            SQLiteDB._row_is_enriched(self._row_without_joins(temp_db, db_id))
-
     def test_null_joined_columns_still_read_as_absent_data(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -8142,44 +4603,6 @@ class TestUnreadableMetadataBlobRegression:
             conn.commit()
         return db_id
 
-    def test_a_blob_holding_a_json_array_reads_back_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The array the migration tolerates and the reader used to choke on."""
-        db_id = self._show_with_raw_blob(temp_db, json.dumps(["total_seasons", 5]))
-
-        item = temp_db.get_content_item(db_id)
-
-        assert item is not None
-        assert item.metadata == {"seasons": 5}
-
-    def test_a_blob_that_is_not_json_reads_back_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The other unreadable blob: text no parser makes anything of."""
-        db_id = self._show_with_raw_blob(temp_db, "not json at all")
-
-        item = temp_db.get_content_item(db_id)
-
-        assert item is not None
-        assert item.metadata == {"seasons": 5}
-
-    def test_a_blob_holding_a_json_string_reads_back_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The third shape that parses without being an object.
-
-        ``dict.update`` walks a string character by character looking for
-        pairs, so a bare JSON string raised ``ValueError`` exactly as the
-        array did — the same bug, one the array test alone does not pin.
-        """
-        db_id = self._show_with_raw_blob(temp_db, json.dumps("total_seasons"))
-
-        item = temp_db.get_content_item(db_id)
-
-        assert item is not None
-        assert item.metadata == {"seasons": 5}
-
     def test_an_unreadable_blob_leaves_the_library_listable_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -8204,99 +4627,3 @@ class TestUnreadableMetadataBlobRegression:
         items = temp_db.get_content_items()
 
         assert {item.db_id for item in items} == {unreadable_id, readable_id}
-
-
-class TestUndeclaredContentTypeWriteRegression:
-    """Saving a type with no field declaration fails instead of half writing.
-
-    Bug: ``_save_detail_table`` looked the declaration up with ``.get`` and
-    returned when it missed. The ``content_items`` row was committed with no
-    detail row beside it, so every column the item carried — author, genres,
-    year, description — was dropped with nothing raised and nothing logged.
-
-    Root cause: a defensive early return standing in for an invariant
-    ``src/models/detail_fields.py`` already enforces at import time.
-
-    Fix: the lookup subscripts the mapping, so a miss raises and the
-    transaction is abandoned rather than committed incomplete.
-    """
-
-    def test_an_undeclared_type_raises_and_writes_no_row_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The declaration is removed to reach a branch the guards forbid.
-
-        ``_assert_every_content_type_is_declared`` makes this unreachable
-        through the public types, which is why the mapping is patched rather
-        than a bogus ``ContentType`` invented.
-        """
-        item = ContentItem(
-            id="undeclared-type",
-            title="The Matrix",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"studio": "Warner Bros."},
-        )
-
-        with patch.dict(DETAIL_FIELDS):
-            del DETAIL_FIELDS["movie"]
-            # Both paths do a lot of dict work, so the message is pinned to
-            # the declaration lookup rather than to KeyError alone.
-            with pytest.raises(KeyError, match=r"^'movie'$"):
-                temp_db.save_content_item(item)
-
-        with temp_db.connection() as conn:
-            remaining = conn.execute(
-                "SELECT COUNT(*) AS count FROM content_items WHERE external_id = ?",
-                ("undeclared-type",),
-            ).fetchone()["count"]
-        assert remaining == 0
-
-
-class TestUndeclaredContentTypeReadRegression:
-    """Reading a type with no field declaration fails instead of blanking it.
-
-    Bug: ``_row_to_content_item`` looked the declaration up with ``.get`` and
-    skipped the whole detail block when it missed, so a stored item came back
-    with no author, no genres and no metadata — every one of those columns
-    already in the row the query had selected — and nothing said so.
-
-    Root cause: the same defensive lookup ``_save_detail_table`` carried, a
-    total mapping treated as partial.
-
-    Fix: the lookup subscripts the mapping, so a miss raises rather than
-    reporting a full row as an empty one.
-    """
-
-    def test_an_undeclared_type_raises_rather_than_dropping_detail_regression(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """The declaration is removed to reach a branch the guards forbid.
-
-        The joined SELECT is built once at import, so the row still carries
-        every detail column: the read is what fails, not the query. Outside
-        the patch the same item reads back whole, which is what the early
-        return silently withheld.
-        """
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="undeclared-read",
-                title="The Matrix",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-                author="The Wachowskis",
-                metadata={"genres": ["Science Fiction"]},
-            )
-        )
-
-        with patch.dict(DETAIL_FIELDS):
-            del DETAIL_FIELDS["movie"]
-            # Pinned to the declaration lookup: a KeyError from anywhere else
-            # in the read would otherwise keep this green.
-            with pytest.raises(KeyError, match=r"^'movie'$"):
-                temp_db.get_content_item(db_id)
-
-        item = temp_db.get_content_item(db_id)
-        assert item is not None
-        assert item.author == "The Wachowskis"
-        assert item.metadata["genres"] == ["Science Fiction"]

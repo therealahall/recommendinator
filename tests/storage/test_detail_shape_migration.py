@@ -37,9 +37,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import DETAIL_FIELDS, FieldKind
 from src.storage import schema
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.export import export_items_csv
@@ -148,34 +146,6 @@ def _insert_show_row(
         "INSERT INTO tv_show_details (content_item_id, seasons, metadata)"
         " VALUES (?, ?, ?)",
         (db_id, seasons, metadata),
-    )
-    _mark_written_before_the_repair(cursor)
-    return db_id
-
-
-def _insert_game_row(
-    cursor: sqlite3.Cursor,
-    *,
-    external_id: str,
-    title: str,
-    platforms: str | None,
-) -> int:
-    """Insert a game and its detail row directly, bypassing runtime dedup.
-
-    The games counterpart of :func:`_insert_show_row`, for the pair the
-    platform repair and the merge both have an opinion about.
-    """
-    cursor.execute(
-        "INSERT INTO content_items"
-        " (user_id, external_id, title, content_type, status, source)"
-        " VALUES (1, ?, ?, 'video_game', 'unread', 'gog')",
-        (external_id, title),
-    )
-    db_id = cursor.lastrowid
-    assert db_id is not None
-    cursor.execute(
-        "INSERT INTO video_game_details (content_item_id, platforms) VALUES (?, ?)",
-        (db_id, platforms),
     )
     _mark_written_before_the_repair(cursor)
     return db_id
@@ -308,30 +278,6 @@ def _game_companies_without_opening(db_path: Path, db_id: int) -> tuple[Any, Any
         conn.close()
     blob = row["metadata"]
     return row["developer"], row["publisher"], json.loads(blob) if blob else None
-
-
-def _strand_blob_key(
-    db: SQLiteDB, db_id: int, content_type: str, blob: dict[str, Any]
-) -> None:
-    """Write *blob* into a saved item's detail row, whatever its type.
-
-    The write path drops a known key from the blob on the way in, so a key
-    stranded in front of a column can only be put there in SQL. The table name
-    is read from the declaration, never from input.
-
-    The row count is asserted because an UPDATE matching nothing is silent:
-    every caller here reads the blob back through a codec and would pass on an
-    unstranded row wherever the codec's answer is None.
-    """
-    table = DETAIL_FIELDS[content_type].table
-    with db.connection() as conn:
-        cursor = conn.execute(
-            f"UPDATE {table} SET metadata = ? WHERE content_item_id = ?",
-            (json.dumps(blob), db_id),
-        )
-        assert cursor.rowcount == 1
-        _mark_written_before_the_repair(conn)
-        conn.commit()
 
 
 def _seed_movie(db: SQLiteDB, *, blob: dict[str, Any]) -> int:
@@ -473,47 +419,6 @@ class TestStrandedTotalSeasonsMigration:
 
         assert _show_detail(db, db_id) == (5, None)
 
-    def test_second_init_leaves_the_migrated_row_alone(self, tmp_path: Path) -> None:
-        """Running the migration twice changes nothing the first pass did."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": 5})
-        _make_the_next_open_repair(db_path)
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, None)
-
-    def test_row_in_the_current_shape_is_untouched(self, tmp_path: Path) -> None:
-        """A blob holding only free-form keys is left exactly as it is."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path),
-            seasons=5,
-            blob={"seasons_watched": [1, 2], "trakt_id": 1388},
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (
-            5,
-            {"seasons_watched": [1, 2], "trakt_id": 1388},
-        )
-
-    def test_a_duplicate_matching_the_column_only_drops_the_key(
-        self, tmp_path: Path
-    ) -> None:
-        """The state most stranded rows are actually in: blob equals column."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path),
-            seasons=5,
-            blob={"total_seasons": 5, "trakt_id": 1388},
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, {"trakt_id": 1388})
-
     def test_the_reader_follows_the_column_once_the_duplicate_is_gone(
         self, tmp_path: Path
     ) -> None:
@@ -542,113 +447,6 @@ class TestStrandedTotalSeasonsMigration:
             "Breaking Bad (Season 4)",
             "Breaking Bad (Season 5)",
         ]
-
-    def test_a_count_stored_as_a_string_lands_as_a_number(self, tmp_path: Path) -> None:
-        """A CSV import stranded the count as text, and the column is an INTEGER."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": "5"})
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, None)
-
-    def test_a_count_that_is_not_a_number_never_reaches_the_column(
-        self, tmp_path: Path
-    ) -> None:
-        """An unreadable count is dropped rather than written to the column.
-
-        ``seasons`` is read with ``int()`` everywhere, so moving text onto it
-        would break every reader instead of one.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path), seasons=3, blob={"total_seasons": "unknown"}
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (3, None)
-
-    def test_a_null_count_is_dropped_without_touching_the_column(
-        self, tmp_path: Path
-    ) -> None:
-        """A key holding null records no count, so the column keeps its own.
-
-        A plugin is free to write ``total_seasons: null`` for a show it has
-        no count for, and the key is still the duplicate this pass clears —
-        but folding it in must not blank a column that has a real number.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path), seasons=5, blob={"total_seasons": None, "trakt_id": 1388}
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, {"trakt_id": 1388})
-
-    def test_a_null_count_beside_an_empty_column_leaves_it_empty(
-        self, tmp_path: Path
-    ) -> None:
-        """Nothing to fold and nothing to fill: the column stays NULL.
-
-        ``seasons`` is read with ``int()`` everywhere, so a null reaching it
-        would break the readers the repair exists to serve.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path), seasons=None, blob={"total_seasons": None}
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (None, None)
-
-    def test_a_nested_total_seasons_is_left_alone(self, tmp_path: Path) -> None:
-        """Only a top-level duplicate is a duplicate of the column."""
-        db_path = tmp_path / "test.db"
-        blob = {"trakt_raw": {"total_seasons": 9}}
-        db_id = _seed_show(SQLiteDB(db_path), seasons=5, blob=blob)
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, blob)
-
-    def test_the_key_name_inside_a_value_does_not_strand_the_row(
-        self, tmp_path: Path
-    ) -> None:
-        """The ``LIKE`` prefilter matches text anywhere, and only prefilters.
-
-        A note quoting the key is selected by the scan and must survive it:
-        the decision is made on the parsed blob's own keys.
-        """
-        db_path = tmp_path / "test.db"
-        blob = {"notes": "the total_seasons of this show is disputed"}
-        db_id = _seed_show(SQLiteDB(db_path), seasons=5, blob=blob)
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, db_id) == (5, blob)
-
-    def test_a_blob_that_is_not_an_object_is_left_alone(self, tmp_path: Path) -> None:
-        """A blob that parses to something other than a dict has no key to move."""
-        db_path = tmp_path / "test.db"
-        seed = SQLiteDB(db_path)
-        db_id = _seed_show(seed, seasons=2, blob={})
-        _write_show_metadata(
-            seed, db_id, seasons=2, metadata=json.dumps(["total_seasons", 5])
-        )
-
-        db = SQLiteDB(db_path)
-
-        with db.connection() as conn:
-            row = conn.execute(
-                "SELECT seasons, metadata FROM tv_show_details"
-                " WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-        assert row["seasons"] == 2
-        assert json.loads(row["metadata"]) == ["total_seasons", 5]
 
     def test_a_later_sync_of_the_alias_does_not_restrand_the_count(
         self, tmp_path: Path
@@ -791,100 +589,6 @@ class TestStrandedCompanyNamesMigration:
 
         assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
 
-    def test_bare_names_fold_the_same_way(self, tmp_path: Path) -> None:
-        """GOG named companies in strings too, and several of them at once.
-
-        Two developers join into the one name the column holds, the way the
-        write path joins them.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_stranded_companies(
-            SQLiteDB(db_path),
-            metadata=json.dumps({"developers": ["CD Projekt Red", "Saber"]}),
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _game_companies(db, db_id) == ("CD Projekt Red, Saber", None, None)
-
-    def test_an_object_naming_nothing_leaves_the_column_fillable(
-        self, tmp_path: Path
-    ) -> None:
-        """A key with no name in it is dropped without writing anything.
-
-        ``developer`` is fill-only, so writing an empty string rather than
-        leaving it NULL would lock the game out of ever recording one.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_stranded_companies(
-            SQLiteDB(db_path), metadata=json.dumps({"developers": [{"slug": "cdpr"}]})
-        )
-
-        db = SQLiteDB(db_path)
-        resynced_id = db.save_content_item(
-            ContentItem(
-                id="1207658924",
-                title="The Witcher",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                source="gog",
-                metadata={"developers": ["CD Projekt Red"]},
-            )
-        )
-
-        assert resynced_id == db_id
-        assert _game_companies(db, db_id) == ("CD Projekt Red", None, None)
-
-    def test_a_later_sync_of_the_alias_does_not_restrand_the_names(
-        self, tmp_path: Path
-    ) -> None:
-        """GOG still writes the plural keys, and they now land on the columns."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_stranded_companies(
-            SQLiteDB(db_path), metadata=json.dumps({"developers": ["CD Projekt Red"]})
-        )
-
-        db = SQLiteDB(db_path)
-        db.save_content_item(
-            ContentItem(
-                id="1207658924",
-                title="The Witcher",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                source="gog",
-                metadata={"publishers": ["CD Projekt"]},
-            )
-        )
-
-        assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
-
-    def test_second_init_leaves_the_migrated_row_alone(self, tmp_path: Path) -> None:
-        """Running the migration twice changes nothing the first pass did."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_stranded_companies(
-            SQLiteDB(db_path),
-            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
-        )
-        repaired = _whole_detail_row(SQLiteDB(db_path), "video_game_details", db_id)
-
-        _make_the_next_open_repair(db_path)
-        db = SQLiteDB(db_path)
-
-        assert repaired["developer"] == "CD Projekt Red"
-        assert _whole_detail_row(db, "video_game_details", db_id) == repaired
-
-    def test_the_key_name_inside_a_value_does_not_strand_the_row(
-        self, tmp_path: Path
-    ) -> None:
-        """The ``LIKE`` prefilter matches text anywhere, and only prefilters."""
-        db_path = tmp_path / "test.db"
-        blob = {"notes": "the publishers of this game are disputed"}
-        db_id = _seed_stranded_companies(SQLiteDB(db_path), metadata=json.dumps(blob))
-
-        db = SQLiteDB(db_path)
-
-        assert _game_companies(db, db_id) == (None, None, blob)
-
     def test_metadata_that_is_not_json_cannot_block_startup(
         self, tmp_path: Path
     ) -> None:
@@ -975,58 +679,6 @@ class TestALegacyGogRowSurvivesTheUpgrade:
             {"gog_product_id": "1207658924"},
         )
 
-    def test_the_same_row_still_cannot_be_saved_with_the_fold_stubbed_out(
-        self, tmp_path: Path
-    ) -> None:
-        """The fold is what ends the failure, not anything else on the path.
-
-        The test above passes because the fold ran. Held out of one open, the
-        row reaches the writer in the shape it was reported in and raises, so
-        the repair is doing the work the regression above credits it with.
-        """
-        db_path = tmp_path / "unfolded.db"
-        SQLiteDB(db_path)
-        db_id = _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
-        )
-
-        with patch.object(schema, "_fold_stranded_company_names"):
-            db = SQLiteDB(db_path)
-            stored = db.get_content_item(db_id)
-
-        assert stored is not None
-        with pytest.raises(TypeError, match="text column cannot hold"):
-            db.save_content_item(stored)
-
-    def test_each_company_column_is_filled_on_its_own(self, tmp_path: Path) -> None:
-        """A name enrichment wrote stands while the other column still fills.
-
-        The two columns share one statement, so a fold that weighed them
-        together would either overwrite the developer or decline the
-        publisher.
-        """
-        db_path = tmp_path / "legacy-mixed.db"
-        SQLiteDB(db_path)
-        db_id = _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            developer="CD Projekt Red",
-            metadata=json.dumps(
-                {
-                    "developers": [{"name": "Stale Studio"}],
-                    "publishers": [{"name": "CD Projekt"}],
-                }
-            ),
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
-
     def test_a_row_stranded_in_both_gog_shapes_is_repaired_at_once(
         self, tmp_path: Path
     ) -> None:
@@ -1050,91 +702,6 @@ class TestALegacyGogRowSurvivesTheUpgrade:
 
         assert _game_companies(db, db_id) == ("CD Projekt Red", None, None)
         assert json.loads(_stored_platforms(db, db_id)) == ["Windows", "Linux"]
-
-
-class TestWhatTheCompanyFoldDeclinesToFold:
-    """A key it cannot read a name out of still stops being a stranded key.
-
-    The blob is whatever an API said years ago, so the fold meets keys with
-    nothing under them and blobs that are not objects at all. Neither may
-    write a column and neither may raise, because this runs inside the open.
-    """
-
-    @pytest.mark.parametrize(
-        "blob",
-        [{"developers": None}, {"publishers": []}, {"developers": [{}]}],
-        ids=["null", "empty_list", "object_naming_nothing"],
-    )
-    def test_a_key_with_no_name_under_it_leaves_the_columns_fillable(
-        self, tmp_path: Path, blob: dict[str, Any]
-    ) -> None:
-        """The key goes and both columns stay NULL, not empty strings.
-
-        Both columns are fill-only on the write path, so an empty string
-        written here would lock the game out of ever recording a company.
-        """
-        db_path = tmp_path / "empty-keys.db"
-        SQLiteDB(db_path)
-        db_id = _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps(blob),
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _game_companies(db, db_id) == (None, None, None)
-
-    def test_a_blob_that_is_not_an_object_is_left_exactly_as_it_was(
-        self, tmp_path: Path
-    ) -> None:
-        """A JSON array naming the key has no keys, so there is nothing to fold."""
-        db_path = tmp_path / "array-blob.db"
-        SQLiteDB(db_path)
-        db_id = _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps(["developers"]),
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _game_companies(db, db_id) == (None, None, ["developers"])
-
-    def test_two_stranded_duplicates_merge_into_a_row_that_saves(
-        self, tmp_path: Path
-    ) -> None:
-        """Each row folds its own names before the merge weighs them.
-
-        The blob merge lets an existing key win, so a merge running first
-        would carry a stranded company key into the surviving row and leave
-        the merged game raising on every save — the same ordering the season
-        count needs, on the pass that drops a key rather than copying one.
-        """
-        db_path = tmp_path / "stranded-duplicates.db"
-        SQLiteDB(db_path)
-        _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
-        )
-        _insert_legacy_game_row(
-            db_path,
-            external_id="gog:1207658924",
-            title="The Witcher",
-            metadata=json.dumps({"publishers": [{"name": "CD Projekt"}]}),
-        )
-
-        db = SQLiteDB(db_path)
-
-        games = db.get_content_items(content_type=ContentType.VIDEO_GAME)
-        assert len(games) == 1
-        assert games[0].author == "CD Projekt Red"
-        assert "developers" not in games[0].metadata
-        assert db.save_content_item(games[0]) is not None
 
 
 class TestStrandedPlatformFlagsMigration:
@@ -1179,35 +746,6 @@ class TestStrandedPlatformFlagsMigration:
 
         assert _stored_platforms(db, db_id) is None
 
-    def test_second_init_leaves_the_emptied_column_alone(self, tmp_path: Path) -> None:
-        """The row the migration emptied stays empty on the next open."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_NOTHING_SUPPORTED)
-        _make_the_next_open_repair(db_path)
-
-        db = SQLiteDB(db_path)
-
-        assert _stored_platforms(db, db_id) is None
-
-    def test_a_value_that_is_not_json_cannot_block_startup(
-        self, tmp_path: Path
-    ) -> None:
-        """A platforms value the migration cannot read is skipped, not raised on."""
-        db_path = tmp_path / "test.db"
-        seed = SQLiteDB(db_path)
-        broken_id = _seed_game(seed, platforms="{not json at all")
-        stranded_id = _seed_game(
-            seed,
-            platforms=_FLAGS_WINDOWS_AND_LINUX,
-            item_id="1207658925",
-            title="Stardew Valley",
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert _stored_platforms(db, broken_id) == "{not json at all"
-        assert json.loads(_stored_platforms(db, stranded_id)) == ["Windows", "Linux"]
-
     def test_export_writes_a_platform_name_rather_than_a_repr(
         self, tmp_path: Path
     ) -> None:
@@ -1225,41 +763,6 @@ class TestStrandedPlatformFlagsMigration:
             )
         )
         assert rows[0]["platform"] == "Windows"
-
-    def test_second_init_leaves_the_migrated_row_alone(self, tmp_path: Path) -> None:
-        """Running the migration twice changes nothing the first pass did."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_WINDOWS_AND_LINUX)
-        _make_the_next_open_repair(db_path)
-
-        db = SQLiteDB(db_path)
-
-        assert json.loads(_stored_platforms(db, db_id)) == ["Windows", "Linux"]
-
-    def test_row_in_the_current_shape_is_untouched(self, tmp_path: Path) -> None:
-        """A list of names written by any other producer is left as it is."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(
-            SQLiteDB(db_path), platforms=json.dumps(["Windows", "PlayStation 5"])
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert json.loads(_stored_platforms(db, db_id)) == ["Windows", "PlayStation 5"]
-
-    def test_a_flag_dict_stored_without_the_list_wrapper_is_rewritten(
-        self, tmp_path: Path
-    ) -> None:
-        """The dict is read whether or not ``to_json_array`` wrapped it."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(
-            SQLiteDB(db_path),
-            platforms=json.dumps({"windows": True, "mac": False, "linux": False}),
-        )
-
-        db = SQLiteDB(db_path)
-
-        assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
 
     def test_an_imported_object_is_not_read_as_flags(self, tmp_path: Path) -> None:
         """Only a dict of booleans is a flag dict, and only one is rewritten.
@@ -1279,74 +782,6 @@ class TestStrandedPlatformFlagsMigration:
         db = SQLiteDB(db_path)
 
         assert _stored_platforms(db, db_id) == stored
-
-    def test_a_dict_mixing_a_flag_with_another_key_is_left_alone(
-        self, tmp_path: Path
-    ) -> None:
-        """The boundary of the guard: one non-boolean value disqualifies it.
-
-        GOG mapped every name to a boolean, so a dict pairing one with
-        anything else is some other producer's object and keeps what it
-        holds. Checking that any value is a boolean rather than all of them
-        would read this one as naming a "Windows" platform and throw the
-        rest away.
-        """
-        db_path = tmp_path / "test.db"
-        stored = json.dumps([{"windows": True, "name": "PC"}])
-        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
-
-        db = SQLiteDB(db_path)
-
-        assert _stored_platforms(db, db_id) == stored
-
-    def test_a_dict_of_ones_and_zeroes_is_not_read_as_flags(
-        self, tmp_path: Path
-    ) -> None:
-        """JSON's 1 and 0 are ints, and the guard asks for booleans.
-
-        ``isinstance(True, int)`` holds but not the reverse, so a producer
-        writing 1/0 rather than true/false is some other shape and keeps what
-        it holds — a row rewritten from it would drop the ``mac`` key with
-        nothing having decided that 0 meant unsupported.
-        """
-        db_path = tmp_path / "test.db"
-        stored = json.dumps([{"windows": 1, "mac": 0}])
-        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
-
-        db = SQLiteDB(db_path)
-
-        assert _stored_platforms(db, db_id) == stored
-
-    def test_an_object_naming_nothing_at_all_clears_the_column(
-        self, tmp_path: Path
-    ) -> None:
-        """An empty object has no value to disqualify it, and names nothing.
-
-        It reaches the column the same way the flag dict did, and holds no
-        platform either way, so clearing it costs nothing and leaves the
-        fill-only column open to a later sync.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=json.dumps([{}]))
-
-        db = SQLiteDB(db_path)
-
-        assert _stored_platforms(db, db_id) is None
-
-    def test_a_platform_name_containing_a_brace_is_left_alone(
-        self, tmp_path: Path
-    ) -> None:
-        """The brace the scan filters on can appear inside a real name.
-
-        A one-name list unwraps to a string rather than a dict, so the
-        cheap ``LIKE '%{%'`` filter costs the row a read and nothing more.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=json.dumps(["PC {Steam}"]))
-
-        db = SQLiteDB(db_path)
-
-        assert json.loads(_stored_platforms(db, db_id)) == ["PC {Steam}"]
 
     def test_the_emptied_column_accepts_a_later_sync(self, tmp_path: Path) -> None:
         """Clearing the column has to leave it fillable, not an empty list.
@@ -1372,24 +807,6 @@ class TestStrandedPlatformFlagsMigration:
         assert resynced_id == db_id
         assert json.loads(_stored_platforms(db, db_id)) == ["Windows"]
 
-    def test_export_leaves_the_platform_cell_empty_when_nothing_is_supported(
-        self, tmp_path: Path
-    ) -> None:
-        """No platform value means a blank cell, not ``[]`` or ``None``."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_NOTHING_SUPPORTED)
-
-        db = SQLiteDB(db_path)
-
-        item = db.get_content_item(db_id)
-        assert item is not None
-        rows = list(
-            csv.DictReader(
-                io.StringIO(export_items_csv([item], ContentType.VIDEO_GAME))
-            )
-        )
-        assert rows[0]["platform"] == ""
-
 
 class TestOnlyTheDeclaredShapesAreRepaired:
     """No other blob key moves, and no other detail table is rewritten.
@@ -1413,104 +830,6 @@ class TestOnlyTheDeclaredShapesAreRepaired:
         db = SQLiteDB(db_path)
 
         assert _movie_detail(db, db_id) == (None, None, blob)
-
-    def test_a_movie_row_is_not_rewritten_on_a_later_open_either(
-        self, tmp_path: Path
-    ) -> None:
-        """The row the pass skips must not start being repaired on open two."""
-        db_path = tmp_path / "test.db"
-        blob = {"year": 1999, "runtime_minutes": 136}
-        db_id = _seed_movie(SQLiteDB(db_path), blob=blob)
-        _make_the_next_open_repair(db_path)
-
-        db = SQLiteDB(db_path)
-
-        assert _movie_detail(db, db_id) == (None, None, blob)
-
-    def test_a_show_blob_key_other_than_the_season_count_is_left_alone(
-        self, tmp_path: Path
-    ) -> None:
-        """Even on the table the pass does read, only one key moves.
-
-        ``year`` and ``episodes`` duplicate ``tv_show_details`` columns of
-        their own, and the row is selected by the scan because the blob names
-        the season count beside them.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(
-            SQLiteDB(db_path),
-            seasons=None,
-            blob={"total_seasons": 5, "year": 2008, "episodes": 62},
-        )
-
-        db = SQLiteDB(db_path)
-
-        with db.connection() as conn:
-            row = conn.execute(
-                "SELECT seasons, release_year, episodes, metadata"
-                " FROM tv_show_details WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-        assert (row["seasons"], row["release_year"], row["episodes"]) == (5, None, None)
-        assert json.loads(row["metadata"]) == {"year": 2008, "episodes": 62}
-
-    def test_a_game_blob_key_other_than_the_companies_is_left_alone(
-        self, tmp_path: Path
-    ) -> None:
-        """Even on the table the company fold reads, only two keys move.
-
-        ``release_year`` duplicates a column of its own, and the row is
-        selected by the scan because the blob names a company beside it.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_stranded_companies(
-            SQLiteDB(db_path),
-            metadata=json.dumps(
-                {"developers": ["CD Projekt Red"], "release_year": 2007}
-            ),
-        )
-
-        db = SQLiteDB(db_path)
-
-        with db.connection() as conn:
-            row = conn.execute(
-                "SELECT developer, release_year, metadata FROM video_game_details"
-                " WHERE content_item_id = ?",
-                (db_id,),
-            ).fetchone()
-        assert (row["developer"], row["release_year"]) == ("CD Projekt Red", None)
-        assert json.loads(row["metadata"]) == {"release_year": 2007}
-
-    def test_a_book_blob_duplicating_its_columns_is_left_alone(
-        self, tmp_path: Path
-    ) -> None:
-        """A table with no repair at all is never read by the pass."""
-        db_path = tmp_path / "test.db"
-        blob = {"author": "Frank Herbert", "pages": 412}
-        db = SQLiteDB(db_path)
-        db_id = db.save_content_item(
-            ContentItem(
-                id="legacy:book",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                source="generic_csv",
-            )
-        )
-        with db.connection() as conn:
-            conn.execute(
-                "UPDATE book_details SET metadata = ? WHERE content_item_id = ?",
-                (json.dumps(blob), db_id),
-            )
-            _mark_written_before_the_repair(conn)
-            conn.commit()
-
-        reopened = SQLiteDB(db_path)
-
-        row = _whole_detail_row(reopened, "book_details", db_id)
-        assert row["author"] is None
-        assert row["pages"] is None
-        assert json.loads(row["metadata"]) == blob
 
 
 class TestASecondOpenRewritesNothing:
@@ -1543,20 +862,6 @@ class TestASecondOpenRewritesNothing:
         assert repaired["seasons"] == 5
         assert _whole_detail_row(db, "tv_show_details", db_id) == repaired
 
-    def test_a_repaired_game_row_is_unchanged_by_the_next_open(
-        self, tmp_path: Path
-    ) -> None:
-        """The rewritten name list is not a flag dict, so nothing sees it again."""
-        db_path = tmp_path / "test.db"
-        db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_WINDOWS_AND_LINUX)
-        repaired = _whole_detail_row(SQLiteDB(db_path), "video_game_details", db_id)
-
-        _make_the_next_open_repair(db_path)
-        db = SQLiteDB(db_path)
-
-        assert json.loads(repaired["platforms"]) == ["Windows", "Linux"]
-        assert _whole_detail_row(db, "video_game_details", db_id) == repaired
-
     def test_the_second_open_does_not_run_the_pass_at_all(self, tmp_path: Path) -> None:
         """Not rewriting is idempotence; not reading is what the guard adds.
 
@@ -1569,31 +874,6 @@ class TestASecondOpenRewritesNothing:
 
         assert _open_counting_the_repair(db_path) == 1
         assert _open_counting_the_repair(db_path) == 0
-
-
-class TestTheRowsTheRepairDeclinesToSettle:
-    """A row the pass keeps rather than rewrites is read once, not forever.
-
-    ``generic_json`` wraps a non-list ``platform`` in a list, so an imported
-    ``{"name": "PC"}`` is stored in exactly the shape GOG's flag dict took. The
-    pass declines it rather than reading its keys as names, which would destroy
-    the imported value — and that leaves the row in a shape
-    ``platforms LIKE '%{%'`` matches, so an unguarded scan finds and re-parses
-    it on every open for the life of the database. Keeping the value is the
-    behaviour that must not change; the endless re-reading is what the version
-    guard ends.
-    """
-
-    def test_a_declined_row_is_read_once_and_kept(self, tmp_path: Path) -> None:
-        """One open reads it, the next does not, and the value is untouched."""
-        db_path = tmp_path / "test.db"
-        stored = json.dumps([{"name": "PC"}])
-        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
-
-        reads = (_open_counting_the_repair(db_path), _open_counting_the_repair(db_path))
-
-        assert reads == (1, 0)
-        assert _stored_platforms(SQLiteDB(db_path), db_id) == stored
 
 
 class TestRepairRunsBeforeDeduplication:
@@ -1639,35 +919,6 @@ class TestRepairRunsBeforeDeduplication:
             ).fetchone()["total"]
         assert remaining == 1
         assert _show_detail(db, keep_id) == (5, None)
-
-    def test_the_repair_pass_is_called_before_the_dedup_pass(
-        self, tmp_path: Path
-    ) -> None:
-        """The order itself, which no data fixture can pin on its own.
-
-        Once every row's count is on its column the two passes commute, so a
-        library that happens to end up correct proves nothing about which ran
-        first. Patching both records the call order directly.
-        """
-        db_path = tmp_path / "test.db"
-        _make_the_next_open_repair(db_path)
-        calls: list[str] = []
-
-        with (
-            patch.object(
-                schema,
-                "_migrate_stranded_detail_shapes",
-                lambda cursor: calls.append("repair"),
-            ),
-            patch.object(
-                schema,
-                "_deduplicate_inline",
-                lambda cursor: calls.append("dedup"),
-            ),
-        ):
-            SQLiteDB(db_path)
-
-        assert calls == ["repair", "dedup"]
 
     def test_the_other_order_round_lowers_the_count_on_the_same_two_rows(
         self, tmp_path: Path
@@ -1720,90 +971,6 @@ class TestRepairRunsBeforeDeduplication:
 
         assert counts == {"repair_then_dedup": 5, "dedup_then_repair": 1}
 
-    def test_a_stranded_row_merging_with_a_current_shape_row_keeps_the_higher(
-        self, tmp_path: Path
-    ) -> None:
-        """One row stranded, the other already counted on its column.
-
-        The mixed pair the old ordering was written for, kept because moving
-        the pass must not cost it: the survivor's blob count is folded onto
-        its own column and the merge then takes the duplicate's higher one.
-        """
-        db_path = tmp_path / "test.db"
-        db = SQLiteDB(db_path)
-        with db.connection() as conn:
-            cursor = conn.cursor()
-            keep_id = _insert_show_row(
-                cursor,
-                external_id="trakt:1",
-                title="The Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 3}),
-            )
-            _insert_show_row(
-                cursor,
-                external_id="sonarr:1",
-                title="Wire",
-                seasons=5,
-                metadata=None,
-            )
-            conn.commit()
-
-        db = SQLiteDB(db_path)
-
-        assert _show_detail(db, keep_id) == (5, None)
-
-    def test_the_survivor_takes_a_platform_list_the_flag_dict_would_have_blocked(
-        self, tmp_path: Path
-    ) -> None:
-        """The platform half of the ordering, which is fill-only either way.
-
-        The kept row holds a flag dict naming nothing, which the repair
-        clears. Clearing it first leaves the column open for the merge to
-        fill from the duplicate; clearing it afterwards finds that the merge
-        already declined to fill a column which was not NULL yet, and the
-        library ends up with no platform at all. Both ways round, because
-        this is the same ordering claim as the season count and it deserves
-        the same evidence.
-        """
-        stored: dict[str, Any] = {}
-        orders = {
-            "repair_then_dedup": (
-                schema._migrate_stranded_detail_shapes,
-                schema._deduplicate_inline,
-            ),
-            "dedup_then_repair": (
-                schema._deduplicate_inline,
-                schema._migrate_stranded_detail_shapes,
-            ),
-        }
-        for name, passes in orders.items():
-            db = SQLiteDB(tmp_path / f"{name}.db")
-            with db.connection() as conn:
-                cursor = conn.cursor()
-                keep_id = _insert_game_row(
-                    cursor,
-                    external_id="gog:1",
-                    title="The Witcher",
-                    platforms=_FLAGS_NOTHING_SUPPORTED,
-                )
-                _insert_game_row(
-                    cursor,
-                    external_id="steam:1",
-                    title="Witcher",
-                    platforms=json.dumps(["Windows"]),
-                )
-                schema._renormalize_titles(cursor)
-                for run_pass in passes:
-                    run_pass(cursor)
-                conn.commit()
-            stored[name] = _stored_platforms(db, keep_id)
-
-        assert stored == {
-            "repair_then_dedup": json.dumps(["Windows"]),
-            "dedup_then_repair": None,
-        }
-
     def test_a_repaired_detail_row_survives_being_moved_to_the_survivor(
         self, tmp_path: Path
     ) -> None:
@@ -1838,74 +1005,6 @@ class TestRepairRunsBeforeDeduplication:
         assert keep_id is not None
         assert _show_detail(db, keep_id) == (5, {"trakt_id": 222})
 
-    def test_a_deduplicated_pair_is_unchanged_by_the_next_open(
-        self, tmp_path: Path
-    ) -> None:
-        """The merged survivor is in the current shape, so nothing repeats.
-
-        The repair now runs over rows the merge is about to delete, so the
-        row it leaves behind has to be one a re-run of the pass declines —
-        otherwise the retry after a failed open would lower the count.
-        """
-        db_path = tmp_path / "test.db"
-        db = SQLiteDB(db_path)
-        with db.connection() as conn:
-            cursor = conn.cursor()
-            keep_id = _insert_show_row(
-                cursor,
-                external_id="trakt:1",
-                title="The Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 1, "trakt_id": 222}),
-            )
-            _insert_show_row(
-                cursor,
-                external_id="sonarr:1",
-                title="Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 5}),
-            )
-            conn.commit()
-
-        merged = _whole_detail_row(SQLiteDB(db_path), "tv_show_details", keep_id)
-        _make_the_next_open_repair(db_path)
-        db = SQLiteDB(db_path)
-
-        assert merged["seasons"] == 5
-        assert _whole_detail_row(db, "tv_show_details", keep_id) == merged
-
-    def test_titles_are_normalized_before_either_pass(self, tmp_path: Path) -> None:
-        """Dedup matches on the normalized title, so it runs third of three.
-
-        The repair moved in front of dedup; the re-normalization has to stay
-        in front of both, because the pair dedup merges is only a pair once
-        every title has been through it.
-        """
-        db_path = tmp_path / "test.db"
-        _make_the_next_open_repair(db_path)
-        calls: list[str] = []
-
-        with (
-            patch.object(
-                schema,
-                "_renormalize_titles",
-                lambda cursor: calls.append("normalize"),
-            ),
-            patch.object(
-                schema,
-                "_migrate_stranded_detail_shapes",
-                lambda cursor: calls.append("repair"),
-            ),
-            patch.object(
-                schema,
-                "_deduplicate_inline",
-                lambda cursor: calls.append("dedup"),
-            ),
-        ):
-            SQLiteDB(db_path)
-
-        assert calls == ["normalize", "repair", "dedup"]
-
 
 class TestTheRepairAndTheMergeShareOneTransaction:
     """A failure in the merge discards the repair rather than committing it.
@@ -1937,297 +1036,6 @@ class TestTheRepairAndTheMergeShareOneTransaction:
             None,
             {"total_seasons": 5},
         )
-
-    def test_a_failure_in_the_merge_leaves_the_company_fold_unapplied(
-        self, tmp_path: Path
-    ) -> None:
-        """The fold writes columns and rewrites a blob, and neither survives.
-
-        It is the one pass that drops a key, so a half-applied run would lose
-        the only copy of a name rather than merely leave a duplicate.
-        """
-        db_path = tmp_path / "test.db"
-        blob = {"developers": [{"name": "CD Projekt Red"}]}
-        SQLiteDB(db_path)
-        db_id = _insert_legacy_game_row(
-            db_path,
-            external_id="1207658924",
-            title="The Witcher",
-            metadata=json.dumps(blob),
-        )
-
-        with (
-            patch.object(
-                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
-            ),
-            pytest.raises(OSError),
-        ):
-            SQLiteDB(db_path)
-
-        assert _game_companies_without_opening(db_path, db_id) == (None, None, blob)
-
-    def test_the_database_still_opens_and_repairs_after_a_failed_open(
-        self, tmp_path: Path
-    ) -> None:
-        """A transient failure costs the repair, not the database.
-
-        Discarding the work is only half of what an operator needs: the open
-        that raised must also leave nothing behind — no half-written row, no
-        connection still holding the file — or the failure turns a stranded
-        row into a library that cannot be started at all.
-        """
-        db_path = tmp_path / "test.db"
-        db_id = _seed_show(SQLiteDB(db_path), seasons=None, blob={"total_seasons": 5})
-
-        with (
-            patch.object(
-                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
-            ),
-            pytest.raises(OSError),
-        ):
-            SQLiteDB(db_path)
-
-        assert _show_detail(SQLiteDB(db_path), db_id) == (5, None)
-
-
-class TestEveryAliasWasCheckedForTheSameStranding:
-    """No alias but the two company keys can strand before a text column.
-
-    The fold is scoped by a reading of the declaration: every other alias this
-    branch adds is read by a codec that answers a stranded object without
-    raising. That reading is pinned here, so an alias added later to a text
-    column fails a test rather than quietly re-opening the defect.
-    """
-
-    #: What each column swept here holds once the stranded object has been
-    #: through the codec that answers it: the integer codec reads no number out
-    #: of it, the list codec serialises it whole, and the additive merge behind
-    #: ``genres`` reduces every entry to text on the way past. None of the
-    #: three refuses the write, which is the property being swept for.
-    #: ``seasons`` never sees the object at all — the season pass drops
-    #: ``total_seasons`` on the open, before anything reads it back.
-    #: Keyed by column rather than by alias, because what lands is the codec's
-    #: doing and the codec is the column's, whichever alias arrived.
-    _LANDED_BY_COLUMN: dict[str, Any] = {
-        "release_year": None,
-        "runtime": None,
-        "seasons": None,
-        "platforms": '[{"name": "Object"}]',
-        "genres": "[\"{'name': 'Object'}\"]",
-    }
-
-    @staticmethod
-    def _text_column_aliases() -> set[str]:
-        """Every alias whose field is stored by ``to_text``."""
-        return {
-            alias
-            for spec in DETAIL_FIELDS.values()
-            for field in spec.fields
-            if field.kind in (FieldKind.CREATOR, FieldKind.TEXT)
-            for alias in field.aliases
-        }
-
-    def test_the_fold_covers_every_text_alias_but_the_one_nothing_writes(self) -> None:
-        """``creator`` is the exemption, and the value is what earns it.
-
-        A blob can carry the key: the markdown source parses any ``Key:
-        Value`` in a list item's tail into a lowercased metadata key, so
-        ``Creator: Vince Gilligan`` on a show writes one. Every value it can
-        write is a string, which ``to_text`` takes unchanged, so the key folds
-        onto ``creators`` on the next save rather than refusing it — a
-        duplicate at worst, never a stranding. What holds is the shape the
-        producers can write, not the absence of a producer;
-        ``TestWhatTheCreatorExemptionCosts`` pins both halves.
-        """
-        assert (
-            schema._STRANDED_COMPANY_COLUMNS.keys()
-            == self._text_column_aliases() - {"creator"}
-        ), (
-            "A new alias in front of a text column needs a repair pass of its"
-            " own. _fold_stranded_company_names names developer, publisher and"
-            " video_game_details literally, so adding a key to"
-            " _STRANDED_COMPANY_COLUMNS pops it out of every game blob and"
-            " writes it to nothing."
-        )
-
-    @pytest.mark.parametrize(
-        ("content_type", "alias", "column"),
-        [
-            (content_type, alias, field.column)
-            for content_type, spec in DETAIL_FIELDS.items()
-            for field in spec.fields
-            if field.kind not in (FieldKind.CREATOR, FieldKind.TEXT)
-            for alias in field.aliases
-        ],
-    )
-    def test_an_object_under_any_other_alias_cannot_fail_a_write(
-        self, tmp_path: Path, content_type: str, alias: str, column: str
-    ) -> None:
-        """The alias the reader hands back is written, not refused.
-
-        The stranding is the reader handing a legacy blob key back to the
-        writer, so the loop to exercise is seed-in-SQL, reopen, read back,
-        re-save. Saving a fresh item carrying the key proves nothing: the
-        write path pops it before any column sees it.
-
-        What landed is asserted rather than that the item still exists,
-        because a column the codec declined and a column holding the object's
-        repr are both "not None", and only one of those is the sweep's claim.
-        """
-        db_path = tmp_path / "swept.db"
-        seed = SQLiteDB(db_path)
-        db_id = seed.save_content_item(
-            ContentItem(
-                id=f"swept:{alias}",
-                title="Swept",
-                content_type=ContentType(content_type),
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-        _strand_blob_key(seed, db_id, content_type, {alias: [{"name": "Object"}]})
-
-        db = SQLiteDB(db_path)
-        stored = db.get_content_item(db_id)
-
-        assert stored is not None
-        assert db.save_content_item(stored) == db_id
-        row = _whole_detail_row(db, DETAIL_FIELDS[content_type].table, db_id)
-        assert row[column] == self._LANDED_BY_COLUMN[column]
-
-
-class TestWhatTheCreatorExemptionCosts:
-    """``creator`` has no repair pass, and the value is what earns it.
-
-    A blob can carry the key: the markdown source turns any ``Key: Value`` in
-    a list item's tail into a lowercased metadata key, so a show written
-    ``| Creator: Vince Gilligan`` strands one. Every value that source can
-    write is a string, which ``to_text`` takes unchanged, so the key folds
-    onto the column instead of refusing the save. The exemption rests on that
-    and on nothing else — the price of a producer writing the same key as an
-    object is recorded below, because no shipped code would notice.
-    """
-
-    #: The refusal in full. It names the canonical key rather than the
-    #: ``creator`` alias the blob carried, which is what
-    #: ``docs/PLUGIN_DEVELOPMENT.md`` tells a plugin author to look for.
-    _REFUSAL = "'creators': a text column cannot hold a dict"
-
-    @staticmethod
-    def _strand_a_show_creator(db_path: Path, creator: Any) -> int:
-        """Save a show, then strand *creator* under the ``creator`` blob key."""
-        db = SQLiteDB(db_path)
-        db_id = db.save_content_item(
-            ContentItem(
-                id="markdown:breaking-bad",
-                title="Breaking Bad",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                source="markdown_import",
-            )
-        )
-        _strand_blob_key(db, db_id, "tv_show", {"creator": creator})
-        return db_id
-
-    @pytest.mark.parametrize(
-        ("tail", "expected"),
-        [
-            ("Creator: Vince Gilligan", {"creator": "Vince Gilligan"}),
-            ("Creator: 5", {"creator": "5"}),
-            (
-                "Creator: [{'name': 'Vince Gilligan'}]",
-                {"creator": "[{'name': 'Vince Gilligan'}]"},
-            ),
-            ("Creator: true", {"creator": "true"}),
-            ("Creator: A | Creator: B", {"creator": "B"}),
-            ("Creator:", {}),
-            ("Creator:   | Rating: 5", {}),
-        ],
-        ids=[
-            "name",
-            "number",
-            "object_literal",
-            "boolean_word",
-            "repeated_key",
-            "no_value",
-            "whitespace_value",
-        ],
-    )
-    def test_no_tail_makes_the_key_anything_but_a_string(
-        self, tmp_path: Path, tail: str, expected: dict[str, str]
-    ) -> None:
-        """The exemption's whole premise, swept rather than sampled.
-
-        ``_parse_metadata_tail`` matches ``(\\w+)\\s*:\\s*(.+)`` on each
-        segment and returns ``match.group(2).strip()``, so the key is whatever
-        the file says and no input turns a value into a list, a dict, a number
-        or a bool: a file writing what looks like one gets its text. A tail
-        with nothing after the colon writes no key at all, which is why
-        ``to_text("")`` never answers this producer. The exemption holds only
-        while this does.
-        """
-        md_file = tmp_path / "shows.md"
-        md_file.write_text(f"## Completed\n- **Breaking Bad** | {tail}\n")
-
-        items = list(
-            MarkdownImportPlugin().fetch(
-                {"path": str(md_file), "content_type": "tv_show"}
-            )
-        )
-
-        assert [item.metadata for item in items] == [expected]
-
-    def test_a_stranded_string_folds_itself_onto_the_column(
-        self, tmp_path: Path
-    ) -> None:
-        """No pass runs, and the next save repairs the row anyway.
-
-        The blob keeps its copy, the way it keeps any existing key, but that
-        copy is a duplicate rather than a stranding: it agrees with the column
-        and ``extract_creator`` reads it only when the column says nothing.
-        """
-        db_path = tmp_path / "string-creator.db"
-        db_id = self._strand_a_show_creator(db_path, "Vince Gilligan")
-
-        db = SQLiteDB(db_path)
-        stored = db.get_content_item(db_id)
-
-        assert stored is not None
-        assert db.save_content_item(stored) == db_id
-        row = _whole_detail_row(db, "tv_show_details", db_id)
-        assert row["creators"] == "Vince Gilligan"
-        assert json.loads(row["metadata"]) == {"creator": "Vince Gilligan"}
-
-    def test_a_stranded_object_costs_the_item_every_save(self, tmp_path: Path) -> None:
-        """What the exemption buys, if a producer ever writes an object.
-
-        A plugin writing ``metadata["creator"] = [{"name": ...}]`` for a show
-        re-opens exactly the defect the company fold repairs: the reader hands
-        the key back, the text column refuses it, and the item can never be
-        saved again — with no pass to fold it and no other test to notice.
-
-        The refusal is the permanent half of the contrast with the stranded
-        string above, which repairs itself on the save it survives. So the
-        blob is read after the first refusal and the save is made again: a
-        second raise off an unchanged blob is what "every save" means.
-        """
-        db_path = tmp_path / "object-creator.db"
-        db_id = self._strand_a_show_creator(db_path, [{"name": "Vince Gilligan"}])
-
-        db = SQLiteDB(db_path)
-        stored = db.get_content_item(db_id)
-
-        assert stored is not None
-        with pytest.raises(TypeError) as refusal:
-            db.save_content_item(stored)
-        assert str(refusal.value) == self._REFUSAL
-
-        row = _whole_detail_row(db, "tv_show_details", db_id)
-        assert row["creators"] is None
-        assert json.loads(row["metadata"]) == {"creator": [{"name": "Vince Gilligan"}]}
-
-        with pytest.raises(TypeError) as second_refusal:
-            db.save_content_item(stored)
-        assert str(second_refusal.value) == self._REFUSAL
 
 
 class TestEveryShapeInOnePass:

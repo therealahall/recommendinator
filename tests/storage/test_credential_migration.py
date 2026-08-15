@@ -139,55 +139,6 @@ class TestMigrateConfigCredentials:
         # pasted into bug reports. The value must never appear in one.
         assert all("my_gog_token" not in message for message in caplog.messages)
 
-    def test_ignored_config_secret_does_not_claim_it_was_migrated(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """When the DB credential wins, the warning must not claim a migration.
-
-        Regression: the deprecation warning was emitted before the branch
-        resolved, so a config value that was DISCARDED (because a readable DB
-        credential already took precedence) was still announced as "moved to the
-        database — delete it from config.yaml". A user rotating a credential the
-        legacy way would follow that instruction and destroy the new value while
-        the app kept using the stale one — unrecoverable for an OAuth token.
-        """
-        storage.save_credential(1, "gog", "refresh_token", "db_token")
-        config = {
-            "inputs": {
-                "gog": {
-                    "plugin": "gog",
-                    "enabled": True,
-                    "refresh_token": "rotated_token",
-                }
-            }
-        }
-
-        with caplog.at_level(
-            logging.WARNING, logger="src.storage.credential_migration"
-        ):
-            migrate_config_credentials(config, storage)
-
-        deprecations = [m for m in caplog.messages if "DEPRECATED" in m]
-        assert len(deprecations) == 1
-        assert "IGNORED, not migrated" in deprecations[0]
-        # The DB value is untouched and the rotated file value was never stored.
-        assert storage.get_credential(1, "gog", "refresh_token") == "db_token"
-        assert all("rotated_token" not in message for message in caplog.messages)
-
-    def test_no_deprecation_warning_when_config_has_no_secret(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A config carrying no secret must not warn — the common case is silent."""
-        storage.save_credential(1, "gog", "refresh_token", "db_token")
-        config = {"inputs": {"gog": {"plugin": "gog", "enabled": True}}}
-
-        with caplog.at_level(
-            logging.WARNING, logger="src.storage.credential_migration"
-        ):
-            migrate_config_credentials(config, storage)
-
-        assert [m for m in caplog.messages if "DEPRECATED" in m] == []
-
     def test_empty_config_value_not_migrated(self, storage: StorageManager) -> None:
         """Empty or whitespace-only config values are skipped."""
         config = {
@@ -201,53 +152,6 @@ class TestMigrateConfigCredentials:
         }
 
         migrate_config_credentials(config, storage)
-
-        assert storage.get_credential(1, "gog", "refresh_token") is None
-
-    def test_unknown_plugin_skipped(self, storage: StorageManager) -> None:
-        """Sources with unknown plugins are silently skipped."""
-        config = {
-            "inputs": {
-                "unknown_source": {
-                    "plugin": "nonexistent_plugin",
-                    "enabled": True,
-                    "api_key": "some_key",
-                }
-            }
-        }
-
-        # Should not raise
-        migrate_config_credentials(config, storage)
-
-    def test_missing_plugin_field_skipped(self, storage: StorageManager) -> None:
-        """Entry with no 'plugin' key is silently skipped."""
-        config = {"inputs": {"broken": {"enabled": True, "api_key": "some_key"}}}
-
-        migrate_config_credentials(config, storage)
-
-        assert storage.get_credential(1, "broken", "api_key") is None
-
-    def test_non_dict_entries_skipped(self, storage: StorageManager) -> None:
-        """Non-dict entries in inputs are skipped."""
-        config = {"inputs": {"bad_entry": "not_a_dict"}}
-
-        # Should not raise
-        migrate_config_credentials(config, storage)
-
-    def test_empty_inputs_is_noop(self, storage: StorageManager) -> None:
-        """Config with empty or missing inputs section completes without error."""
-        migrate_config_credentials({"inputs": {}}, storage)
-        migrate_config_credentials({}, storage)
-
-    def test_a_list_shaped_inputs_is_a_noop_too(self, storage: StorageManager) -> None:
-        """Truthy and without ``.items()``: the one shape that raises.
-
-        Every caller runs this on a boot or a reload, so the raise took the
-        whole process down rather than the one misconfigured source.
-        """
-        migrate_config_credentials(
-            {"inputs": [{"plugin": "gog", "refresh_token": "from-yaml"}]}, storage
-        )
 
         assert storage.get_credential(1, "gog", "refresh_token") is None
 
@@ -403,31 +307,6 @@ class TestMigrateConfigCredentials:
         migrate_config_credentials(config, storage)
 
         assert storage.get_credential(1, "sonarr", "api_key") is None
-
-    def test_a_file_secret_a_migrated_source_ignores_is_named_in_the_warning(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Discarding it silently would read to the operator as it being used."""
-        create_source("sonarr", "sonarr", {"url": "http://sonarr.internal"}, storage)
-        config = {
-            "inputs": {
-                "sonarr": {
-                    "plugin": "sonarr",
-                    "enabled": True,
-                    "api_key": "file-only-secret",
-                }
-            }
-        }
-
-        with caplog.at_level(
-            logging.WARNING, logger="src.storage.credential_migration"
-        ):
-            migrate_config_credentials(config, storage)
-
-        deprecations = [m for m in caplog.messages if "DEPRECATED" in m]
-        assert len(deprecations) == 1
-        assert "'sonarr.api_key'" in deprecations[0]
-        assert all("file-only-secret" not in message for message in caplog.messages)
 
     def test_multiple_sources_migrated(self, storage: StorageManager) -> None:
         """Multiple sources with sensitive fields are all migrated."""

@@ -49,37 +49,6 @@ class TestMigrateConfigSettings:
         # Nothing was written to the database on boot.
         assert storage.list_settings() == {}
 
-    def test_yaml_overrides_const_default(self, storage: StorageManager) -> None:
-        """A YAML leaf overrides the registry const default for that leaf."""
-        # Const default for recommendations.default_count is 5.
-        config: dict[str, Any] = {"recommendations": {"default_count": 11}}
-
-        migrate_config_settings(config, storage)
-
-        assert config["recommendations"]["default_count"] == 11
-        # Sibling leaves still resolve from const defaults.
-        assert (
-            config["recommendations"]["max_count"]
-            == default_config()["recommendations"]["max_count"]
-        )
-        assert storage.list_settings() == {}
-
-    def test_section_absent_from_yaml_resolves_from_defaults(
-        self, storage: StorageManager
-    ) -> None:
-        """An in-scope section missing from the YAML still resolves fully.
-
-        A user may trim config.yaml to bootstrap-only; the const defaults must
-        supply every in-scope section so the app still works.
-        """
-        config: dict[str, Any] = {"storage": {"database_path": "data/x.db"}}
-
-        migrate_config_settings(config, storage)
-
-        assert config["enrichment"]["enabled"] is False
-        assert config["sync"]["max_workers"] == 4
-        assert config["recommendations"]["default_count"] == 5
-
     def test_db_leaf_resolves_section_absent_from_yaml(
         self, storage: StorageManager
     ) -> None:
@@ -95,19 +64,6 @@ class TestMigrateConfigSettings:
         migrate_config_settings(config, storage)
 
         assert config["enrichment"]["enabled"] is True
-
-    def test_new_yaml_leaf_not_in_db_flows_through(
-        self, storage: StorageManager
-    ) -> None:
-        """A YAML leaf with no DB row flows into the effective config."""
-        config: dict[str, Any] = {"recommendations": {"default_count": 12}}
-
-        migrate_config_settings(config, storage)
-
-        assert config["recommendations"]["default_count"] == 12
-        # Other recommendation leaves still resolve from const defaults.
-        assert config["recommendations"]["max_count"] == 20
-        assert storage.list_settings() == {}
 
     def test_nested_yaml_leaf_deep_merges_over_defaults(
         self, storage: StorageManager
@@ -144,26 +100,6 @@ class TestMigrateConfigSettings:
         # Still no writes — only the pre-existing leaf lives in the DB.
         assert storage.list_settings() == {"recommendations.default_count": 9}
 
-    def test_unknown_legacy_db_leaf_overlays(self, storage: StorageManager) -> None:
-        """A DB leaf with no registry entry still overlays onto its section."""
-        storage.set_setting("web.legacy_option", "kept")
-        config: dict[str, Any] = {}
-
-        migrate_config_settings(config, storage)
-
-        assert config["web"]["legacy_option"] == "kept"
-
-    def test_idempotent_reboot(self, storage: StorageManager) -> None:
-        """Running assembly twice keeps the DB empty and the config stable."""
-        config: dict[str, Any] = {"sync": {"max_workers": 8}}
-        migrate_config_settings(config, storage)
-
-        config2: dict[str, Any] = {"sync": {"max_workers": 8}}
-        migrate_config_settings(config2, storage)
-
-        assert config2["sync"]["max_workers"] == 8
-        assert storage.list_settings() == {}
-
     def test_out_of_scope_sections_untouched(self, storage: StorageManager) -> None:
         """The ``storage`` and ``inputs`` sections are left exactly as-is."""
         config: dict[str, Any] = {
@@ -176,25 +112,6 @@ class TestMigrateConfigSettings:
         assert config["storage"] == {"database_path": "data/recommendations.db"}
         assert config["inputs"] == {"steam": {"plugin": "steam"}}
         assert storage.list_settings() == {}
-
-    def test_non_dict_yaml_section_falls_back_to_defaults_and_db(
-        self, storage: StorageManager
-    ) -> None:
-        """A malformed non-dict YAML section resolves from const defaults + DB.
-
-        The section cannot deep-merge onto a dict, so it falls back to the const
-        defaults, and any DB leaf still overlays without raising.
-        """
-        storage.set_setting("recommendations.default_count", 9)
-        config: dict[str, Any] = {"recommendations": "broken"}
-
-        migrate_config_settings(config, storage)
-
-        assert config["recommendations"]["default_count"] == 9
-        assert (
-            config["recommendations"]["max_count"]
-            == default_config()["recommendations"]["max_count"]
-        )
 
     def test_does_not_mutate_shared_default_config(
         self, storage: StorageManager

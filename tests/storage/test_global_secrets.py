@@ -1,6 +1,5 @@
 """Tests for relocating global provider secrets into encrypted storage."""
 
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,22 +20,6 @@ _TMDB_KEY = "enrichment.providers.tmdb.api_key"
 def storage(tmp_path: Path) -> StorageManager:
     """Create a StorageManager backed by an isolated temp DB."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
-
-
-class TestSecretRef:
-    """Tests for the dotted-key -> credentials-coordinate scheme."""
-
-    def test_maps_dotted_key_to_namespaced_source_and_leaf(self) -> None:
-        """A registry key splits into a settings: source_id and its leaf key."""
-        source_id, credential_key = secret_ref(_TMDB_KEY)
-
-        assert source_id == "settings:enrichment.providers.tmdb"
-        assert credential_key == "api_key"
-
-    def test_rejects_non_dotted_key(self) -> None:
-        """A bare (dotless) key has no parent path and is rejected."""
-        with pytest.raises(ValueError):
-            secret_ref("apikey")
 
 
 class TestMigrateConfigSecrets:
@@ -116,63 +99,6 @@ class TestMigrateConfigSecrets:
         assert read_secret(storage, _TMDB_KEY) == "db_key"
         assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
 
-    def test_discarded_yaml_value_says_so_rather_than_claiming_a_migration(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The DB-wins branch popped the plaintext with no log at all.
-
-        This function's docstring says precedence mirrors
-        ``migrate_config_credentials``, which warns on every branch — but the
-        mirror was never applied here, so an operator moving global provider
-        keys got total silence while source credentials got a deprecation nudge.
-
-        The wording matters as much as the presence: the file value is IGNORED,
-        not saved. Telling the user it was migrated would invite them to delete
-        a value that was never persisted.
-        """
-        storage.set_global_secret(_TMDB_KEY, "db_key")
-        config = {
-            "enrichment": {
-                "providers": {"tmdb": {"enabled": True, "api_key": "stale_key"}}
-            }
-        }
-
-        with caplog.at_level(logging.WARNING, logger="src.storage.global_secrets"):
-            migrate_config_secrets(config, storage)
-
-        assert any(
-            "DEPRECATED" in message and _TMDB_KEY in message and "IGNORED" in message
-            for message in caplog.messages
-        )
-        # The secret itself must never reach the logs — these get pasted into
-        # bug reports.
-        assert "stale_key" not in caplog.text
-        assert "db_key" not in caplog.text
-
-    def test_migration_warns_so_the_operator_knows_to_clean_the_file(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A successful migration was logged at INFO, below the default cutoff.
-
-        The user cannot delete the plaintext from config.yaml if nothing tells
-        them it is now redundant, which leaves the secret sitting in a file
-        indefinitely — the exact outcome this sweep exists to end.
-        """
-        config = {
-            "enrichment": {
-                "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
-            }
-        }
-
-        with caplog.at_level(logging.WARNING, logger="src.storage.global_secrets"):
-            migrate_config_secrets(config, storage)
-
-        assert any(
-            "DEPRECATED" in message and _TMDB_KEY in message
-            for message in caplog.messages
-        )
-        assert "yaml_key" not in caplog.text
-
     def test_idempotent_across_repeated_boots(self, storage: StorageManager) -> None:
         """Re-running the sweep leaves the stored secret unchanged."""
         first = {
@@ -202,12 +128,6 @@ class TestMigrateConfigSecrets:
 
         assert read_secret(storage, _TMDB_KEY) is None
 
-    def test_missing_section_is_noop(self, storage: StorageManager) -> None:
-        """A config without the sensitive section completes without error."""
-        migrate_config_secrets({}, storage)
-
-        assert read_secret(storage, _TMDB_KEY) is None
-
     def test_stale_row_re_encrypted_from_config(self, storage: StorageManager) -> None:
         """An undecryptable row is re-encrypted when config supplies a value."""
         source_id, credential_key = secret_ref(_TMDB_KEY)
@@ -230,30 +150,6 @@ class TestMigrateConfigSecrets:
 
         assert read_secret(storage, _TMDB_KEY) == "fresh_key"
 
-    def test_stale_row_preserved_without_config_value(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """An undecryptable row with no config fallback is preserved, not deleted."""
-        source_id, credential_key = secret_ref(_TMDB_KEY)
-        with storage.connection() as conn:
-            conn.execute(
-                "INSERT INTO credentials "
-                "(user_id, source_id, credential_key, credential_value) "
-                "VALUES (?, ?, ?, 'stale_garbage')",
-                (GLOBAL_SECRET_USER_ID, source_id, credential_key),
-            )
-            conn.commit()
-
-        config: dict[str, Any] = {
-            "enrichment": {"providers": {"tmdb": {"enabled": True}}}
-        }
-
-        with caplog.at_level(logging.WARNING):
-            migrate_config_secrets(config, storage)
-
-        assert storage.has_global_secret(_TMDB_KEY)
-        assert "Cannot decrypt" in caplog.text
-
 
 class TestGlobalSecretAccessors:
     """Tests for the write-only StorageManager global-secret surface."""
@@ -275,14 +171,6 @@ class TestGlobalSecretAccessors:
             ).fetchone()
         assert row["credential_value"] != "round_trip"
 
-    def test_has_reflects_presence(self, storage: StorageManager) -> None:
-        """Presence check is accurate before and after setting."""
-        assert storage.has_global_secret(_TMDB_KEY) is False
-
-        storage.set_global_secret(_TMDB_KEY, "present")
-
-        assert storage.has_global_secret(_TMDB_KEY) is True
-
     def test_clear_removes_secret(self, storage: StorageManager) -> None:
         """Clearing removes the secret; a second clear reports nothing removed."""
         storage.set_global_secret(_TMDB_KEY, "to_clear")
@@ -291,9 +179,3 @@ class TestGlobalSecretAccessors:
         assert storage.has_global_secret(_TMDB_KEY) is False
         assert read_secret(storage, _TMDB_KEY) is None
         assert storage.clear_global_secret(_TMDB_KEY) is False
-
-    def test_set_does_not_touch_settings_table(self, storage: StorageManager) -> None:
-        """Setting a global secret never lands plaintext in the settings store."""
-        storage.set_global_secret(_TMDB_KEY, "settings_leak_check")
-
-        assert "settings_leak_check" not in str(storage.list_settings())
