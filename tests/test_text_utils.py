@@ -10,6 +10,7 @@ import requests
 
 from src.utils.text import (
     LINE_BREAKS,
+    escape_lone_surrogates,
     exception_for_log,
     humanize_source_id,
     sanitize_for_log,
@@ -250,6 +251,35 @@ class TestStripLoneSurrogates:
     @pytest.mark.parametrize("kept", ["a\nb", "a\tb", "a\x07b", '"quoted" {braced}'])
     def test_what_encodes_is_left_alone(self, kept: str) -> None:
         assert strip_lone_surrogates(kept) == kept
+
+
+class TestEscapeLoneSurrogates:
+    """The storage door's half: a value nobody typed, identifying a row."""
+
+    @pytest.mark.parametrize("code", [0xD800, 0xDCFF, 0xDFFF])
+    def test_every_surrogate_half_is_spelled_out(self, code: int) -> None:
+        assert escape_lone_surrogates(f"Zelda{chr(code)}") == f"Zelda\\u{code:04x}"
+
+    def test_a_name_of_nothing_else_still_has_text(self) -> None:
+        """Stripping these five bytes leaves a blank, unfindable title."""
+        assert escape_lone_surrogates("\udcb1\udcb2\udcb3\udcb4\udcb5") == (
+            "\\udcb1\\udcb2\\udcb3\\udcb4\\udcb5"
+        )
+
+    def test_two_names_differing_only_there_stay_apart(self) -> None:
+        assert escape_lone_surrogates("Zelda\udcfe") != escape_lone_surrogates(
+            "Zelda\udcff"
+        )
+
+    def test_no_codepoint_survives_unencodable(self) -> None:
+        """The whole invariant: whatever comes out, SQLite stores."""
+        every_codepoint = "".join(chr(code) for code in range(sys.maxunicode + 1))
+
+        assert escape_lone_surrogates(every_codepoint).encode("utf-8")
+
+    @pytest.mark.parametrize("kept", ["a\nb", "a\tb", "a\x07b", '"quoted" {braced}'])
+    def test_what_encodes_is_left_alone(self, kept: str) -> None:
+        assert escape_lone_surrogates(kept) == kept
 
 
 class TestSanitizeForLog:

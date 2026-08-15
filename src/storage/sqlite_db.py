@@ -113,6 +113,7 @@ from src.utils.series import (
     status_for_seasons_watched,
 )
 from src.utils.sorting import normalize_for_search, search_text_matches
+from src.utils.text import escape_lone_surrogates
 
 
 class Unset(Enum):
@@ -165,6 +166,33 @@ def unset_if_none(value: _T | None) -> _T | Unset:
         The value, or UNSET when it was None.
     """
     return UNSET if value is None else value
+
+
+def _without_surrogates(value: Any) -> Any:
+    """Copy *value*, escaping the lone surrogates in every string in it.
+
+    Recurses because ``metadata`` is free-form and reaches a text column whole.
+    """
+    if isinstance(value, str):
+        return escape_lone_surrogates(value)
+    if isinstance(value, dict):
+        return {
+            _without_surrogates(key): _without_surrogates(inner)
+            for key, inner in value.items()
+        }
+    if isinstance(value, list):
+        return [_without_surrogates(inner) for inner in value]
+    return value
+
+
+def _surrogate_free(item: ContentItem) -> ContentItem:
+    """Return *item* with every lone surrogate spelled out instead.
+
+    SQLite refuses to bind the surrogate ``surrogateescape`` returns for an
+    undecodable byte. Whole-item, not per column: nobody guards the column
+    added next week.
+    """
+    return item.model_copy(update=_without_surrogates(item.model_dump()))
 
 
 # Chunk size for IN clauses, staying well within SQLite's
@@ -484,6 +512,10 @@ class SQLiteDB:
         Returns:
             Database ID of the saved item.
         """
+        # The one door every plugin's items pass, so the SQLite text guarantee
+        # is taken here rather than in each of them.
+        item = _surrogate_free(item)
+
         # Use provided user_id, fall back to item's user_id, then default
         effective_user_id = (
             user_id

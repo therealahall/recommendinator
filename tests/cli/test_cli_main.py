@@ -1,5 +1,6 @@
 """Tests for CLI __main__ entry point."""
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,105 @@ class TestUpdateDbOnlySourceRegression:
         assert result.exit_code == 0, result.output
         assert "calibre-web" in result.output
         assert "enabled" in result.output
+
+
+class TestUndecodableRomNameDoesNotAbortUpdateRegression:
+    """Reported: one ROM named in invalid UTF-8 lost the whole sync.
+
+    Symptom: UnicodeEncodeError, nothing stored. Cause: a strict encode of the
+    lone surrogate ``iterdir`` returns. Fix: ``backslashreplace`` in the id
+    hash, one escape at the storage door.
+    """
+
+    @staticmethod
+    def _run(storage: StorageManager, root: Path) -> Any:
+        config: dict[str, Any] = {
+            "inputs": {
+                "roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}
+            }
+        }
+        with (
+            patch("src.cli.main.load_config", return_value=config),
+            patch("src.cli.main.create_storage_manager", return_value=storage),
+            patch(
+                "src.cli.main.create_recommendation_engine",
+                return_value=MagicMock(spec=RecommendationEngine),
+            ),
+        ):
+            return CliRunner().invoke(cli, ["update", "--source", "roms"])
+
+    def test_the_odd_rom_and_its_neighbours_all_land(self, tmp_path: Path) -> None:
+        """Catches a revert of either half.
+
+        A strict encode in ``_entry_id`` kills the scan; a missing escape at
+        the door kills the save.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = tmp_path / "roms"
+        root.mkdir()
+        (root / os.fsdecode(b"Metr\xffoid (USA).zip")).write_bytes(b"rom")
+        (root / "Chrono Trigger.zip").write_bytes(b"rom")
+        (root / "Super Mario World.zip").write_bytes(b"rom")
+        assert b"Metr\xffoid (USA).zip" in os.listdir(os.fsencode(root))
+
+        result = self._run(storage, root)
+
+        assert result.exit_code == 0, result.output
+        assert "Total: 3 items updated." in result.output
+        with storage.connection() as conn:
+            rows = conn.execute(
+                "SELECT title, external_id FROM content_items"
+            ).fetchall()
+        assert {row["title"] for row in rows} == {
+            "Metr\\udcffoid",
+            "Chrono Trigger",
+            "Super Mario World",
+        }
+        assert len({row["external_id"] for row in rows}) == 3
+
+    def test_two_roms_differing_only_in_that_byte_keep_their_own_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """Distinct ids are only worth having if both rows survive the sync."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = tmp_path / "roms"
+        root.mkdir()
+        (root / os.fsdecode(b"Zelda\xfe.zip")).write_bytes(b"rom")
+        (root / os.fsdecode(b"Zelda\xff.zip")).write_bytes(b"rom")
+
+        result = self._run(storage, root)
+
+        assert result.exit_code == 0, result.output
+        with storage.connection() as conn:
+            rows = conn.execute(
+                "SELECT external_id, title FROM content_items ORDER BY id"
+            ).fetchall()
+        assert len(rows) == 2, [dict(row) for row in rows]
+        assert len({row["external_id"] for row in rows}) == 2
+
+    def test_a_katakana_named_rom_lands_with_a_readable_title(
+        self, tmp_path: Path
+    ) -> None:
+        """``ｱｲｳｴｵ`` is five bare continuation bytes, none of which decodes.
+
+        A strip at the storage door would take the whole title, landing a
+        blank, unfindable row past the plugin's empty-title skip upstream.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = tmp_path / "roms"
+        root.mkdir()
+        (root / os.fsdecode(b"\xb1\xb2\xb3\xb4\xb5.zip")).write_bytes(b"rom")
+
+        result = self._run(storage, root)
+
+        assert result.exit_code == 0, result.output
+        with storage.connection() as conn:
+            titles = [
+                row["title"]
+                for row in conn.execute("SELECT title FROM content_items").fetchall()
+            ]
+        assert titles != [""], "the ROM landed with no title at all"
+        assert len(titles) == 1, titles
 
 
 def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
