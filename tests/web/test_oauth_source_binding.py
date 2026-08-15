@@ -541,14 +541,6 @@ CONNECT_EXCHANGES = [
     ),
 ]
 
-DEVICE_FLOW = {
-    "user_code": "USER1234",
-    "verification_url": "https://trakt.tv/activate",
-    "device_code": "dev1234567",
-    "expires_in": 600,
-    "interval": 5,
-}
-
 
 class TestConnectingADisabledSourceIsRefused:
     """Deliberate: a disabled source takes on no new credential.

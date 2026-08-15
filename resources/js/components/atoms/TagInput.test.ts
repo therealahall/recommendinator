@@ -44,7 +44,7 @@ describe('TagInput', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
-  it('does not remove or move focus while disabled', async () => {
+  it('does not remove a chip while disabled', async () => {
     const wrapper = mountInput({ modelValue: ['a', 'b'], disabled: true })
 
     await wrapper.findAll('.tag-input-remove')[0].trigger('click')

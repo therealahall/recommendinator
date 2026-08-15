@@ -146,9 +146,9 @@ def booted_web_app(
     The one supported way for a test to obtain the web app. An unpatched boot
     resolves whatever config file the process finds, opens the database that
     file names and runs the credential migration against it — re-encrypting
-    real rows under the throwaway key the root conftest installs. Importing
-    ``src.web.app:app`` does the same at collection time, before any fixture
-    runs at all, which is why ``tests/test_web_app_import.py`` forbids it.
+    real rows under the throwaway key the root conftest installs. A
+    module-level ``src.web.app:app`` import does the same at collection time,
+    before any fixture runs at all, so no test may take one.
 
     A real temp-DB ``StorageManager`` is as welcome as a mock:
     ``back_mock_settings_store`` lets the settings and secret boot hooks run

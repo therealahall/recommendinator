@@ -451,82 +451,66 @@ class TestCreatorExportEdges:
 
         assert reimported.author == "Joel Coen, Ethan Coen"
 
-    @pytest.mark.parametrize(
-        ("content_type", "creator_column", "creator"),
-        [
-            (ContentType.MOVIE, "director", "宮崎駿"),
-        ],
-        ids=["movie"],
-    )
     def test_a_non_latin_creator_exports_and_re_imports_unchanged(
-        self,
-        tmp_path: Path,
-        content_type: ContentType,
-        creator_column: str,
-        creator: str,
+        self, tmp_path: Path
     ) -> None:
         """A creator outside ASCII survives storage, export and re-import."""
         stored = _store_and_read_back(
             tmp_path,
             ContentItem(
-                id=f"unicode-{content_type.value}",
+                id="unicode-movie",
                 title="Untitled",
-                content_type=content_type,
+                content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.UNREAD,
-                author=creator,
+                author="宮崎駿",
             ),
         )
 
-        exported = tmp_path / f"{content_type.value}.csv"
-        exported.write_text(export_items_csv([stored], content_type), encoding="utf-8")
+        exported = tmp_path / "movie.csv"
+        exported.write_text(
+            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
+        )
         reimported = next(
-            CsvImportPlugin().fetch(
-                {"path": str(exported), "content_type": content_type.value}
-            )
+            CsvImportPlugin().fetch({"path": str(exported), "content_type": "movie"})
         )
 
-        entries = json.loads(export_items_json([stored], content_type))
+        entries = json.loads(export_items_json([stored], ContentType.MOVIE))
 
-        assert entries[0][creator_column] == creator
-        assert reimported.author == creator
+        assert entries[0]["director"] == "宮崎駿"
+        assert reimported.author == "宮崎駿"
 
-    @pytest.mark.parametrize(
-        ("content_type", "creator_column", "creator"),
-        [
-            (ContentType.TV_SHOW, "creator", "Vince Gilligan"),
-        ],
-        ids=["tv_show"],
-    )
     def test_a_json_template_row_keeps_its_creator_through_storage(
-        self,
-        tmp_path: Path,
-        content_type: ContentType,
-        creator_column: str,
-        creator: str,
+        self, tmp_path: Path
     ) -> None:
         """The JSON importer's creator field reaches the column too.
 
         The JSON door reads the same declaration as the CSV one, so a type
         whose creator only worked on one of them would be half-fixed.
         """
-        json_path = tmp_path / f"{content_type.value}.json"
+        json_path = tmp_path / "tv_show.json"
         json_path.write_text(
             json.dumps(
-                [{"title": "Round Trip", creator_column: creator, "status": "unread"}]
+                [
+                    {
+                        "title": "Round Trip",
+                        "creator": "Vince Gilligan",
+                        "status": "unread",
+                    }
+                ]
             ),
             encoding="utf-8",
         )
         imported = next(
             JsonImportPlugin().fetch(
-                {"path": str(json_path), "content_type": content_type.value}
+                {"path": str(json_path), "content_type": "tv_show"}
             )
         )
 
         stored = _store_and_read_back(tmp_path, imported)
 
-        entries = json.loads(export_items_json([stored], content_type))
-        assert stored.author == creator
-        assert entries[0][creator_column] == creator
+        entries = json.loads(export_items_json([stored], ContentType.TV_SHOW))
+        assert stored.author == "Vince Gilligan"
+        assert entries[0]["creator"] == "Vince Gilligan"
 
 
 def _exported_header(content_type: ContentType) -> list[str]:

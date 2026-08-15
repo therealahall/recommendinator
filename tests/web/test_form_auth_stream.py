@@ -1,7 +1,6 @@
 """The form-auth stream assembled: upgraded database, booted app, CLI reset.
 
-Each piece was verified alone. The retired config key is spliced everywhere,
-because ``tests/test_bearer_token_is_retired.py`` sweeps this tree for it.
+Each piece was verified alone.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ _REPLACEMENT = "a replacement passphrase"
 
 #: The shape the retired bootstrap credential took, as an upgrading operator
 #: still has it sitting in ``config.yaml``.
-_RETIRED_KEY = "api" + "_token"
+_RETIRED_KEY = "api_token"
 _RETIRED_VALUE = "9f" * 32
 
 #: An 0.32.0 library: rows keyed to user 1, the id everything hangs off.
