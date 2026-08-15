@@ -1515,11 +1515,16 @@ class SQLiteDB:
         For a TV show, status and the season list are two views of one fact, so
         whichever the caller supplied fills in the one it did not. A supplied
         ``seasons_watched`` with no status derives the status (0 watched =
-        unread, all watched = completed, partial = currently_consuming); a
-        supplied ``completed`` with no season list ticks every season, unless
-        the show's season total is unknown, in which case the stored list
-        stands. A caller supplying both is taken at its word: the edit dialog
-        derives the pair itself and sends a consistent one.
+        unread, all watched = completed, partial = currently_consuming).
+
+        A supplied status with no season list writes the list it implies:
+        ``completed`` ticks every season, unless the show's season total is
+        unknown, in which case the stored list stands, and ``unread`` empties
+        it, since a show nobody has started has no season watched. Only
+        ``currently_consuming`` leaves the stored list alone — being part-way
+        through says nothing about which seasons. A caller supplying both is
+        taken at its word: the edit dialog derives the pair itself and sends a
+        consistent one.
 
         Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
         detail-table metadata: a season newly checked off in this edit (not
@@ -1554,7 +1559,7 @@ class SQLiteDB:
             review: New review text, None or blank to clear, UNSET to leave
                 unchanged.
             seasons_watched: List of watched season numbers (TV shows only).
-                None leaves them as-is, ``[]`` clears them.
+                None leaves them to *status* (see above), ``[]`` clears them.
             genres: Manual genres to set (overwrite). None leaves them as-is,
                 ``[]`` clears them.
             tags: Manual tags to set (overwrite). None leaves them as-is,
@@ -1605,6 +1610,8 @@ class SQLiteDB:
                             seasons_watched = seasons_watched_for_completed(
                                 total_seasons
                             )
+                        elif status == "unread":
+                            seasons_watched = []
                     elif status is UNSET:
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons

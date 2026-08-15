@@ -48,8 +48,13 @@ function onSeasonsChange(watched: number[]) {
 
 function onStatusChange(event: Event) {
   status.value = (event.target as HTMLSelectElement).value
-  if (isTvShow.value && status.value === 'completed') {
+  if (!isTvShow.value) return
+  // Only the two ends imply a checklist; "in progress" says nothing about
+  // which seasons, so it leaves them alone.
+  if (status.value === 'completed') {
     seasonsWatched.value = Array.from({ length: props.item.total_seasons! }, (_, i) => i + 1)
+  } else if (status.value === 'unread') {
+    seasonsWatched.value = []
   }
 }
 

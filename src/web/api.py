@@ -112,6 +112,7 @@ from src.storage.manager import (
     VALID_SORT_OPTIONS,
     StorageManager,
     UnknownUserError,
+    Unset,
 )
 from src.storage.schema import UserDict
 from src.utils.export import export_items_csv, export_items_json
@@ -558,12 +559,12 @@ class IgnoreItemRequest(BaseModel):
 class ItemEditRequest(BaseModel):
     """Request model for editing a content item from the UI.
 
-    ``rating`` and ``review`` distinguish omitted from null: a field absent
-    from the request body leaves the stored value alone, an explicit ``null``
-    clears it. See ``edit_item``.
+    Every field distinguishes omitted from supplied: an absent one leaves the
+    stored value alone, and a null clears ``rating`` or ``review``. A null
+    ``status`` is refused instead. See ``edit_item``.
     """
 
-    status: str = Field(..., description="Status value")
+    status: str | None = Field(None, description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
     review: EditReviewText | None = None
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
@@ -1262,7 +1263,9 @@ def edit_item(
     ``rating`` or ``review`` leaves the stored value untouched, while sending
     an explicit ``null`` clears it. A blank ``review`` is rejected rather than
     stored, so clearing one is always the null — the same two instructions
-    ``library edit`` spells ``--review`` and ``--clear-review``.
+    ``library edit`` spells ``--review`` and ``--clear-review``. Omitting
+    ``status`` leaves it to storage, which derives it from a supplied
+    ``seasons_watched``, as ``library edit`` does without ``--status``.
 
     Args:
         db_id: Database ID of the item.
@@ -1272,18 +1275,19 @@ def edit_item(
     Returns:
         Updated content item.
     """
-    # Validate status
-    valid_statuses = {"unread", "currently_consuming", "completed"}
-    if request.status not in valid_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid status. Valid options: completed, currently_consuming, unread",
-        )
-
     supplied = request.model_fields_set
+    status: str | Unset = UNSET
+    if "status" in supplied:
+        if request.status not in {"unread", "currently_consuming", "completed"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid status. Valid options: completed, currently_consuming, unread",
+            )
+        status = request.status
+
     success = storage.update_item_from_ui(
         db_id=db_id,
-        status=request.status,
+        status=status,
         rating=request.rating if "rating" in supplied else UNSET,
         review=request.review if "review" in supplied else UNSET,
         seasons_watched=request.seasons_watched,
