@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from src.ingestion import sync as sync_module
 from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
@@ -392,11 +393,16 @@ class TestExecuteMultiSourceSync:
         assert storage.save_content_item.call_count == 3
 
     def test_source_error_continues(self) -> None:
-        """A failing source doesn't block subsequent sources."""
+        """A failing source doesn't block subsequent sources.
+
+        Its message is ours and names the setting to change, so it reaches the
+        operator rather than the container log alone.
+        """
+        remedy = "Set verify_ssl to false if the certificate is self-signed."
         plugin_a = MagicMock(spec=SourcePlugin)
         plugin_a.name = "failing"
         plugin_a.display_name = "Failing"
-        plugin_a.fetch.side_effect = SourceError("failing", "boom")
+        plugin_a.fetch.side_effect = SourceError("failing", remedy)
 
         plugin_b = MagicMock(spec=SourcePlugin)
         plugin_b.name = "working"
@@ -414,16 +420,29 @@ class TestExecuteMultiSourceSync:
 
         assert len(results) == 2
         assert results[0].items_synced == 0
-        assert len(results[0].errors) == 1
-        # The error mentions the plugin name but NOT the raw exception
-        # message — that text might carry credentials when plugins fail.
-        assert "failing" in results[0].errors[0]
-        assert "boom" not in results[0].errors[0]
+        assert results[0].errors == [remedy]
         assert results[1].items_synced == 1
-        error_callback.assert_called_once()
-        (callback_message,), _ = error_callback.call_args
-        assert "failing" in callback_message
-        assert "boom" not in callback_message
+        error_callback.assert_called_once_with(remedy)
+
+    def test_a_request_fault_quoting_a_key_is_still_swallowed(self) -> None:
+        """The substitution exists for this: ``requests`` quotes the url.
+
+        Steam's carries ``?key=``, so anything that is not our own wording
+        stays in the log.
+        """
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "steam"
+        plugin.display_name = "Steam"
+        plugin.fetch.side_effect = requests.ConnectionError(
+            "HTTPSConnectionPool: /IPlayerService/GetOwnedGames?key=secret-key"
+        )
+
+        results = execute_multi_source_sync(
+            sources=[(plugin, {})],
+            storage_manager=MagicMock(spec=StorageManager),
+        )
+
+        assert results[0].errors == ["Sync failed for steam"]
 
     def test_empty_sources(self) -> None:
         """Empty source list returns empty results."""
@@ -564,17 +583,9 @@ class TestExecuteMultiSourceSync:
         assert results[0].source_name == "Failing"
         assert results[1].source_name == "Working"
         assert results[0].items_synced == 0
-        assert len(results[0].errors) == 1
-        # The error names the plugin but does NOT carry the raw exception
-        # message — credentials in plugin exceptions must not leak into
-        # /api/sync/status.
-        assert "failing" in results[0].errors[0]
-        assert "boom" not in results[0].errors[0]
+        assert results[0].errors == ["boom"]
         assert results[1].items_synced == 1
-        error_callback.assert_called_once()
-        (callback_message,), _ = error_callback.call_args
-        assert "failing" in callback_message
-        assert "boom" not in callback_message
+        error_callback.assert_called_once_with("boom")
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""

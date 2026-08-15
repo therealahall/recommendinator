@@ -198,6 +198,21 @@ class TestRadarrUrlValidation:
 
         assert errors == [f"'url' is not a valid URL: {url}"]
 
+    @pytest.mark.parametrize(
+        "url", ["http://radarr.lan:99999", "http://radarr.lan:notaport"]
+    )
+    def test_a_port_that_does_not_parse_is_refused(
+        self, plugin: RadarrPlugin, url: str
+    ) -> None:
+        """Stored, this url reads as addressing nobody.
+
+        The next url edit then looks like a move to nowhere, and the api key
+        follows the source to whatever host it names.
+        """
+        errors = plugin.validate_config({"url": url, "api_key": "abc123"})
+
+        assert errors == [f"'url' is not a valid URL: {url}"]
+
     def test_fetch_refuses_before_any_request(self, plugin: RadarrPlugin) -> None:
         """A sync of every source never calls validate_config."""
         with patch("src.ingestion.sources.arr_base.requests.get") as get:
@@ -206,7 +221,7 @@ class TestRadarrUrlValidation:
         get.assert_not_called()
 
     def test_the_url_field_is_credential_bound(self, plugin: RadarrPlugin) -> None:
-        """Repointing it must clear the api key, not carry it to a new host."""
+        """Repointing it is refused, so the api key cannot follow it."""
         url_field = next(
             field for field in plugin.get_config_schema() if field.name == "url"
         )
@@ -550,6 +565,22 @@ class TestRadarrTls:
         requested = [call[0][0] for call in self.mock_get.call_args_list]
         assert "https://radarr.lan/api/v3/collection" in requested
         assert all(call[1]["verify"] is False for call in self.mock_get.call_args_list)
+
+    def test_neither_request_site_follows_redirects_itself(
+        self,
+        plugin: RadarrPlugin,
+        sample_movies: list[dict],
+    ) -> None:
+        """The collections fetch is the second site, easily missed."""
+        self._serve(sample_movies, [])
+
+        list(plugin.fetch({"url": "https://radarr.lan", "api_key": "key"}))
+
+        requested = [call[0][0] for call in self.mock_get.call_args_list]
+        assert "https://radarr.lan/api/v3/collection" in requested
+        assert all(
+            call[1]["allow_redirects"] is False for call in self.mock_get.call_args_list
+        )
 
     def test_a_redirect_to_another_host_is_refused_regression(
         self,

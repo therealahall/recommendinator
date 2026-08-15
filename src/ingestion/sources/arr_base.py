@@ -16,7 +16,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.urls import source_url_error
+from src.ingestion.urls import UnreadableUrl, source_url_error, url_origin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
 from src.utils.text import sanitize_for_log
@@ -33,6 +33,18 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # Only same-origin hops are followed at all, so this caps a redirect loop
 # rather than a chain any real *arr install produces.
 _MAX_REDIRECTS = 5
+
+
+def _same_origin(url: str, target: str) -> bool:
+    """Whether *target* addresses the party *url* does, scheme included.
+
+    A url neither side can read is nobody's origin, so it matches nothing —
+    including another unreadable one.
+    """
+    try:
+        return url_origin(target) == url_origin(url)
+    except UnreadableUrl:
+        return False
 
 
 class ArrPlugin(SourcePlugin):
@@ -277,8 +289,10 @@ class ArrPlugin(SourcePlugin):
         ``requests`` replays ``X-Api-Key`` onto any host a redirect names, and
         follows an http->https bounce silently, so a proxy reported an
         unverifiable certificate for a scheme nobody configured.
+
+        The origin is read the way a stored credential's is, so a proxy naming
+        the scheme's default port explicitly is the same hop, not a move.
         """
-        origin = urlsplit(url)
         current = url
         for _ in range(_MAX_REDIRECTS):
             response = requests.get(
@@ -295,11 +309,7 @@ class ArrPlugin(SourcePlugin):
                 return response
 
             target = urljoin(current, location)
-            target_parts = urlsplit(target)
-            if (target_parts.scheme, target_parts.netloc) != (
-                origin.scheme,
-                origin.netloc,
-            ):
+            if not _same_origin(url, target):
                 raise SourceError(self.name, self._redirect_refusal(current, target))
             current = target
 

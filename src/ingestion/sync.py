@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
 from src.storage.credential_orphans import warn_about_orphaned_credentials
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
@@ -260,6 +260,12 @@ def execute_sync(
     return result
 
 
+def _error_source_name(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> str:
+    """What a failed source is called, when no ``SyncResult`` got that far."""
+    source_id = plugin_config.get("_source_id")
+    return humanize_source_id(source_id) if source_id else plugin.display_name
+
+
 def execute_multi_source_sync(
     sources: list[tuple[SourcePlugin, dict[str, Any]]],
     storage_manager: StorageManager,
@@ -320,6 +326,19 @@ def execute_multi_source_sync(
                 user_id=user_id,
                 config=config,
             )
+        except SourceError as error:
+            # Ours, and written for the operator: it names the setting to
+            # change. Every plugin whose credential rides in the url scrubs
+            # the request fault before wording one of these.
+            logger.error(
+                "[SYNC] Sync failed for %s: %s",
+                safe_plugin_name,
+                exception_for_log(error),
+            )
+            return SyncResult(
+                source_name=_error_source_name(plugin, plugin_config),
+                errors=[error.message],
+            )
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text
             # out of result.errors. Plugin failures can include
@@ -329,12 +348,8 @@ def execute_multi_source_sync(
                 safe_plugin_name,
                 exception_for_log(error),
             )
-            source_id = plugin_config.get("_source_id")
-            error_source_name = (
-                humanize_source_id(source_id) if source_id else plugin.display_name
-            )
             return SyncResult(
-                source_name=error_source_name,
+                source_name=_error_source_name(plugin, plugin_config),
                 errors=[f"Sync failed for {plugin.name}"],
             )
 

@@ -963,6 +963,21 @@ class TestCredentialBoundUpdates:
         with pytest.raises(SourceConfigError, match="different host"):
             self._update(migrated, {"url": url})
 
+    @pytest.mark.parametrize(
+        "url", ["http://attacker.example:99999", "http://attacker.example:notaport"]
+    )
+    def test_a_url_whose_port_does_not_parse_is_a_move(
+        self, migrated: StorageManager, url: str
+    ) -> None:
+        """It addresses a party nobody can read, which is not this one."""
+        with pytest.raises(SourceConfigError) as refusal:
+            self._update(migrated, {"url": url})
+
+        assert refusal.value.kind == "credential_move"
+        assert migrated.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
+
     def test_the_move_is_allowed_once_the_secret_is_gone(
         self, migrated: StorageManager
     ) -> None:
@@ -1023,6 +1038,53 @@ class TestCredentialBoundUpdates:
         )
 
         assert storage.get_credential(1, "my_games", "api_key") is None
+
+
+@pytest.mark.usefixtures("_registry_with_fakes")
+class TestUnreadableUrlWalksTheCredentialRegression:
+    """Regression: two accepted writes walked the api key to another host.
+
+    An unparseable port read as "addresses nobody", so neither the write onto
+    it nor the write off it was a move. Unreadable is its own answer now.
+    """
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _update(storage: StorageManager, values: dict[str, Any]) -> None:
+        update_source_config_values("my_games", FakeGamePlugin(), storage, values)
+
+    def test_neither_step_of_the_walk_is_accepted(
+        self, storage: StorageManager
+    ) -> None:
+        storage.upsert_source_config(
+            1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
+        )
+        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+
+        with pytest.raises(SourceConfigError) as onto:
+            self._update(storage, {"url": "http://attacker.example:99999"})
+
+        # A config.yaml entry reaches the same state without a write: migration
+        # copies the url in unvalidated.
+        storage.upsert_source_config(
+            1,
+            "my_games",
+            "fake_games",
+            {"url": "http://attacker.example:99999"},
+            enabled=True,
+        )
+
+        with pytest.raises(SourceConfigError) as off:
+            self._update(storage, {"url": "http://attacker.example"})
+
+        assert onto.value.kind == "credential_move"
+        assert off.value.kind == "credential_move"
+        assert storage.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
