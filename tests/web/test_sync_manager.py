@@ -60,8 +60,9 @@ class TestSyncJobToDict:
         assert result["current_source"] is None
         assert result["error_message"] is None
         assert result["progress_percent"] is None
-        assert result["error_count"] == 0
         assert result["errors"] == []
+        # ``len(errors)`` said the same thing and nothing read it.
+        assert "error_count" not in result
         assert result["sources"] == []
 
     def test_to_dict_with_all_fields_populated(self) -> None:
@@ -95,7 +96,6 @@ class TestSyncJobToDict:
         assert result["current_source"] == "goodreads"
         assert result["error_message"] == "Some warning"
         assert result["progress_percent"] == 50
-        assert result["error_count"] == 2
         assert result["errors"] == [
             {"source": "goodreads", "message": "Error 1"},
             {"source": "goodreads", "message": "Error 2"},
@@ -186,7 +186,7 @@ class TestSyncManagerStateMachine:
         job = manager.get_status()["jobs"][0]
         assert job["status"] == "completed"
         assert job["items_processed"] == 0
-        assert job["error_count"] == 0
+        assert job["errors"] == []
         assert job["error_message"] is None
 
     @patch("src.web.sync_manager.threading.Thread")
@@ -559,7 +559,6 @@ class TestSyncManagerAddError:
         manager.add_error("steam", "Steam", "Failed to fetch game: Portal 2")
 
         job = manager.get_status()["jobs"][0]
-        assert job["error_count"] == 1
         assert job["errors"] == [
             {"source": "Steam", "message": "Failed to fetch game: Portal 2"}
         ]
@@ -573,7 +572,7 @@ class TestSyncManagerAddError:
         manager.add_error("steam", "Steam", "Invalid response for game: Half-Life")
 
         job = manager.get_status()["jobs"][0]
-        assert job["error_count"] == 3
+        assert len(job["errors"]) == 3
         assert {"source": "Steam", "message": "Rate limit exceeded"} in job["errors"]
 
     def test_add_error_when_no_job(self) -> None:
@@ -964,7 +963,7 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         job = manager.get_status()["jobs"][0]
         assert job["status"] == "failed"
         assert job["items_processed"] == 0
-        assert job["error_count"] == 1
+        assert len(job["errors"]) == 1
         assert job["error_message"] == "Epic Games API returned 401"
 
     @patch("src.web.sync_manager.threading.Thread")
@@ -984,7 +983,6 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         job = manager.get_status()["jobs"][0]
         assert job["status"] == "completed"
         assert job["items_processed"] == 5
-        assert job["error_count"] == 1
         # A partial failure sets no ``error_message`` — the UI reads the text
         # off ``errors`` instead, which is the only place it survives.
         assert job["errors"] == [

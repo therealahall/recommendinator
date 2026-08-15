@@ -99,7 +99,6 @@ class SyncJob:
                 if self.total_items and self.total_items > 0
                 else None
             ),
-            "error_count": len(self.errors),
             "errors": [
                 {"source": error.source, "message": error.message}
                 for error in self.errors

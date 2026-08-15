@@ -202,7 +202,6 @@ export interface SyncJobResponse {
   current_source: string | null
   error_message: string | null
   progress_percent: number | null
-  error_count: number
   errors: SyncErrorResponse[]
   sources: SyncSourceProgressResponse[]
 }

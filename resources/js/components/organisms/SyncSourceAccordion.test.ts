@@ -1377,7 +1377,6 @@ describe('SyncSourceAccordion', () => {
         current_source: 'Steam',
         error_message: null,
         progress_percent: 40,
-        error_count: 0,
         errors: [] as SyncErrorResponse[],
         sources: [] as never[],
         ...overrides,
@@ -1444,7 +1443,6 @@ describe('SyncSourceAccordion', () => {
     it('renders each error message for a completed job', () => {
       const job = makeJob({
         status: 'completed',
-        error_count: 2,
         errors: [
           { source: 'Steam', message: 'Set verify_ssl to false' },
           { source: 'Steam', message: "Failed to process 'Portal 2'" },
@@ -1455,17 +1453,66 @@ describe('SyncSourceAccordion', () => {
       })
 
       const errors = wrapper.get('[data-testid="source-sync-errors"]')
-      expect(errors.attributes('aria-label')).toBe('Last sync errors for Steam')
       expect(errors.findAll('li').map((li) => li.text())).toEqual([
         'Set verify_ssl to false',
         "Failed to process 'Portal 2'",
       ])
     })
 
+    it('says in text that the list is a list of errors', () => {
+      const job = makeJob({
+        status: 'completed',
+        errors: [{ source: 'Steam', message: 'Set verify_ssl to false' }],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      // A red tint was the only thing saying these were failures, at 1.16:1
+      // against the card — and remedy text ("Set verify_ssl to false") reads as
+      // a suggestion on its own (WCAG 1.4.1).
+      const title = wrapper.get('[data-testid="source-sync-errors-title"]')
+      expect(title.text()).toBe('Last sync errors for Steam')
+      expect(title.classes()).not.toContain('sr-only')
+      const errors = wrapper.get('[data-testid="source-sync-errors"]')
+      // Named by the visible title, not a parallel aria-label: list names are
+      // announced inconsistently in linear reading, which left the source
+      // attribution resting on DOM position alone.
+      expect(errors.attributes('aria-labelledby')).toBe(title.attributes('id'))
+      expect(errors.attributes('aria-label')).toBeUndefined()
+    })
+
+    it('caps the rendered messages and counts the rest', () => {
+      // One entry per failed item, so a Calibre library failing per-item
+      // rendered thousands of rows and pushed the tab off screen.
+      const job = makeJob({
+        status: 'completed',
+        errors: Array.from({ length: 7 }, (_, i) => ({
+          source: 'Steam',
+          message: `Item ${i} failed`,
+        })),
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      const items = wrapper
+        .get('[data-testid="source-sync-errors"]')
+        .findAll('li')
+        .map((li) => li.text())
+      expect(items).toEqual([
+        'Item 0 failed',
+        'Item 1 failed',
+        'Item 2 failed',
+        'Item 3 failed',
+        'Item 4 failed',
+        '… and 2 more',
+      ])
+    })
+
     it('shows the messages without expanding the accordion', () => {
       const job = makeJob({
         status: 'completed',
-        error_count: 1,
         errors: [{ source: 'Steam', message: 'Set verify_ssl to false' }],
       })
       const wrapper = mount(SyncSourceAccordion, {
@@ -1486,7 +1533,6 @@ describe('SyncSourceAccordion', () => {
       const job = makeJob({
         source: 'All Sources',
         status: 'completed',
-        error_count: 2,
         errors: [
           { source: 'Sonarr', message: 'TLS verification failed' },
           { source: 'Steam', message: 'Rate limit exceeded' },
@@ -1506,7 +1552,6 @@ describe('SyncSourceAccordion', () => {
     it('hides the errors while a sync is in progress', () => {
       const job = makeJob({
         status: 'running',
-        error_count: 1,
         errors: [{ source: 'Steam', message: 'Rate limit exceeded' }],
       })
       const wrapper = mount(SyncSourceAccordion, {

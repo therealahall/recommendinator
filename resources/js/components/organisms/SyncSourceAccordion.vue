@@ -5,6 +5,7 @@ import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
+import { domId } from '@/utils/format'
 import type {
   SyncJobResponse,
   SyncSourceProgressResponse,
@@ -375,8 +376,21 @@ const sourceErrors = computed<string[]>(() => {
     .map((entry) => entry.message)
 })
 
-const errorsLabel = computed<string>(
+// One entry per failed item, so a large library failing item by item would
+// otherwise push the rest of the page off screen.
+const MAX_SHOWN_ERRORS = 5
+const shownErrors = computed<string[]>(() =>
+  sourceErrors.value.slice(0, MAX_SHOWN_ERRORS),
+)
+const unshownErrorCount = computed<number>(() =>
+  Math.max(0, sourceErrors.value.length - MAX_SHOWN_ERRORS),
+)
+
+const errorsTitle = computed<string>(
   () => `Last sync errors for ${props.source.display_name}`,
+)
+const errorsTitleId = computed<string>(() =>
+  domId('sync-errors-title', props.source.id),
 )
 </script>
 
@@ -453,14 +467,26 @@ const errorsLabel = computed<string>(
       (WCAG 4.1.3).
     -->
     <template #notice>
-      <ul
-        v-if="sourceErrors.length"
-        class="source-accordion-errors"
-        data-testid="source-sync-errors"
-        :aria-label="errorsLabel"
-      >
-        <li v-for="(message, index) in sourceErrors" :key="index">{{ message }}</li>
-      </ul>
+      <!--
+        Titled in text, not tinted alone: the 18% error wash sits at 1.16:1
+        against the card, and a remedy on its own ("Set verify_ssl to false")
+        reads as a suggestion rather than a failure (WCAG 1.4.1).
+      -->
+      <div v-if="sourceErrors.length" class="source-accordion-errors">
+        <p
+          :id="errorsTitleId"
+          class="source-accordion-errors-title"
+          data-testid="source-sync-errors-title"
+        >{{ errorsTitle }}</p>
+        <ul
+          class="source-accordion-errors-list"
+          data-testid="source-sync-errors"
+          :aria-labelledby="errorsTitleId"
+        >
+          <li v-for="(message, index) in shownErrors" :key="index">{{ message }}</li>
+          <li v-if="unshownErrorCount">… and {{ unshownErrorCount }} more</li>
+        </ul>
+      </div>
     </template>
 
     <div v-if="detailsLoading && !detailsLoaded" class="empty-state">
@@ -757,15 +783,24 @@ const errorsLabel = computed<string>(
 }
 
 .source-accordion-errors {
-  margin: 0;
   padding: var(--space-2) var(--space-4);
-  list-style: none;
   font-size: var(--text-sm);
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 
-.source-accordion-errors li + li {
+.source-accordion-errors-title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+
+.source-accordion-errors-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.source-accordion-errors-list li + li {
   margin-top: var(--space-1);
 }
 </style>
