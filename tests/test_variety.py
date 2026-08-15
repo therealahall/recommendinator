@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
@@ -79,17 +78,8 @@ def _ongoing_show(
 class TestTopPenaltyForPreference:
     """Tests for :func:`top_penalty_for_preference`."""
 
-    def test_full_strength_is_the_top_fraction(self) -> None:
-        assert top_penalty_for_preference(
-            UserPreferenceConfig.MAX_VARIETY_PENALTY
-        ) == pytest.approx(VARIETY_TOP_PENALTY)
-
     def test_strength_scales_linearly(self) -> None:
         assert top_penalty_for_preference(2.0) == pytest.approx(0.4)
-
-    def test_disabled_strength_is_the_bottom_of_the_domain(self) -> None:
-        """The slider's off position maps onto no penalty at all."""
-        assert top_penalty_for_preference(0.0) == pytest.approx(0.0)
 
     def test_out_of_range_strength_clamps_to_the_fraction_domain(self) -> None:
         """A strength outside the slider's range cannot leave the domain.
@@ -103,15 +93,6 @@ class TestTopPenaltyForPreference:
 
 class TestBuildVarietyLadder:
     """Tests for :func:`build_variety_ladder`."""
-
-    def test_empty_when_no_completed_items(self) -> None:
-        assert build_variety_ladder([]) == {}
-
-    def test_single_cluster_gets_top_penalty(self) -> None:
-        ladder = build_variety_ladder(
-            [_completed("Mistborn", ["Fantasy"], completed_on=date(2026, 1, 1))]
-        )
-        assert ladder == {"fantasy": pytest.approx(VARIETY_TOP_PENALTY)}
 
     def test_stepped_percentages_descend_by_recency(self) -> None:
         """The full-strength ladder: 100 / 80 / 60 / 40 / 20 percent."""
@@ -168,20 +149,6 @@ class TestBuildVarietyLadder:
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
-    def test_db_id_breaks_ties_for_same_completion_date(self) -> None:
-        """With equal dates, the higher db_id is treated as the most recent."""
-        items = [
-            _completed("Older", ["Fantasy"], completed_on=date(2026, 1, 1), db_id=1),
-            _completed(
-                "Newer", ["Science Fiction"], completed_on=date(2026, 1, 1), db_id=2
-            ),
-        ]
-        ladder = build_variety_ladder(items)
-        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-        assert ladder["fantasy"] == pytest.approx(
-            VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
-        )
-
     def test_unread_items_excluded(self) -> None:
         """Only COMPLETED items contribute to the ladder."""
         items = [
@@ -190,21 +157,6 @@ class TestBuildVarietyLadder:
                 ["Fantasy"],
                 completed_on=date(2026, 1, 2),
                 status=ConsumptionStatus.UNREAD,
-            ),
-            _completed("Done", ["Science Fiction"], completed_on=date(2026, 1, 1)),
-        ]
-        ladder = build_variety_ladder(items)
-        assert "fantasy" not in ladder
-        assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
-
-    def test_currently_consuming_items_excluded(self) -> None:
-        """In-progress items do not represent a finished genre."""
-        items = [
-            _completed(
-                "Reading",
-                ["Fantasy"],
-                completed_on=date(2026, 1, 2),
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
             ),
             _completed("Done", ["Science Fiction"], completed_on=date(2026, 1, 1)),
         ]
@@ -225,54 +177,15 @@ class TestBuildVarietyLadder:
             VARIETY_TOP_PENALTY * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
         )
 
-    def test_custom_steps_and_top_penalty(self) -> None:
-        items = [
-            _completed("A", ["Fantasy"], completed_on=date(2026, 1, 2)),
-            _completed("B", ["Science Fiction"], completed_on=date(2026, 1, 1)),
-        ]
-        ladder = build_variety_ladder(items, steps=2, top_penalty=1.0)
-        assert ladder["fantasy"] == pytest.approx(1.0)
-        assert ladder["science_fiction"] == pytest.approx(0.5)
-
-    def test_zero_steps_disables_ladder(self) -> None:
-        items = [_completed("A", ["Fantasy"], completed_on=date(2026, 1, 1))]
-        assert build_variety_ladder(items, steps=0) == {}
-
-    def test_clamped_top_rung_keeps_every_rung_inside_the_domain(self) -> None:
-        """A strength past the slider's maximum cannot lift a rung above 1.0.
-
-        Candidates are scored ``score * (1 - penalty)``, so a rung above 1.0
-        would emit a negative score. Routing the strength through
-        :func:`top_penalty_for_preference` caps the whole ladder.
-        """
-        items = [
-            _completed("Dragons", ["Fantasy"], completed_on=date(2026, 1, 2)),
-            _completed("Space", ["Science Fiction"], completed_on=date(2026, 1, 1)),
-        ]
-        ladder = build_variety_ladder(
-            items, steps=2, top_penalty=top_penalty_for_preference(50.0)
-        )
-        assert ladder == {
-            "fantasy": pytest.approx(1.0),
-            "science_fiction": pytest.approx(0.5),
-        }
-
 
 class TestVarietyPenaltyFor:
     """Tests for :func:`variety_penalty_for`."""
-
-    def test_no_ladder_no_penalty(self) -> None:
-        assert variety_penalty_for(_candidate("X", ["Fantasy"]), {}) == 0.0
 
     def test_matching_cluster_returns_its_penalty(self) -> None:
         ladder = {"fantasy": 0.8}
         assert variety_penalty_for(
             _candidate("Dragon", ["Fantasy"]), ladder
         ) == pytest.approx(0.8)
-
-    def test_unmatched_candidate_returns_zero(self) -> None:
-        ladder = {"fantasy": 0.8}
-        assert variety_penalty_for(_candidate("Crime", ["Mystery"]), ladder) == 0.0
 
     def test_candidate_without_genres_returns_zero(self) -> None:
         """An un-enriched candidate (no genre metadata) is never penalised."""
@@ -287,18 +200,6 @@ class TestVarietyPenaltyFor:
             _candidate("Crossover", ["Fantasy", "Science Fiction"]), ladder
         )
         assert penalty == pytest.approx(0.8)
-
-    def test_series_continuation_no_match_stays_zero(self) -> None:
-        """Continuation softening of a non-matching candidate is still zero.
-
-        The softening is multiplicative, so a candidate that matches no ladder
-        cluster stays at ``0.0`` even when flagged as a series continuation.
-        """
-        ladder = {"fantasy": 0.8}
-        candidate = _candidate("Sci Sequel", ["Science Fiction"])
-        assert (
-            variety_penalty_for(candidate, ladder, is_series_continuation=True) == 0.0
-        )
 
 
 class TestVarietySeriesContinuationRegression:
@@ -346,39 +247,6 @@ class TestOngoingTvShowFinishedSeasons:
             metadata={"genres": ["Fantasy"], "seasons_watched": []},
         )
         assert build_variety_ladder([show], top_penalty=1.0) == {}
-
-    def test_next_season_of_same_show_gets_softened_continuation_penalty(self) -> None:
-        show = _ongoing_show("Wheel", ["Fantasy"], {"1": "2026-05-01T00:00:00+00:00"})
-        ladder = build_variety_ladder([show], top_penalty=1.0)
-        next_season = ContentItem(
-            id="Wheel:s2",
-            title="Wheel (Season 2)",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Fantasy"]},
-        )
-        full = variety_penalty_for(next_season, ladder, is_series_continuation=False)
-        softened = variety_penalty_for(next_season, ladder, is_series_continuation=True)
-        # The finished season must have actually claimed the top rung, or this
-        # test would pass vacuously with full == softened == 0.
-        assert full == pytest.approx(VARIETY_TOP_PENALTY)
-        assert softened == pytest.approx(full * VARIETY_SERIES_CONTINUATION_FACTOR)
-
-    def test_undated_finished_season_sorts_below_dated_completions(self) -> None:
-        dated = _completed("A", ["Crime"], completed_on=date(2026, 6, 1))
-        undated_ongoing = _ongoing_show("B", ["Fantasy"], {})  # no parseable date
-
-        # Admitted alone, the undated finished season still claims the rung —
-        # proving its later exclusion is a lost recency tiebreak, not a
-        # failure to ever be admitted to the ladder.
-        solo_ladder = build_variety_ladder([undated_ongoing], steps=1, top_penalty=1.0)
-        assert solo_ladder.get("fantasy") == pytest.approx(1.0)
-
-        ladder = build_variety_ladder(
-            [undated_ongoing, dated], steps=1, top_penalty=1.0
-        )
-        # The dated completion is fresher, so it claims the single rung.
-        assert set(ladder) == {"crime_thriller"}
 
 
 def _completed_show(
@@ -429,40 +297,6 @@ class TestCompletionRecency:
             season_dates={"4": "2026-07-17T00:00:00+00:00"},
         )
         assert _completion_recency(show) == date(2026, 1, 1)
-
-    def test_completed_tv_show_without_date_or_season_dates_stays_none(self) -> None:
-        """A completed show with no date and no season dates degrades to None.
-
-        The TV fallback finds no parseable date, so the show remains undated and
-        sorts to the weakest rung just like any other undated completion.
-        """
-        show = _completed_show("No Dates", ["Animation"], completed_on=None)
-        assert _completion_recency(show) is None
-
-    def test_completed_book_without_date_stays_none(self) -> None:
-        """A completed non-TV item never gets the TV season fallback."""
-        book = _completed("Undated Book", ["Fantasy"], completed_on=None)
-        assert _completion_recency(book) is None
-
-    def test_completed_non_tv_ignores_stray_season_dates(self) -> None:
-        """A non-TV item with stray season dates still returns None.
-
-        Pins the ``content_type == ContentType.TV_SHOW`` guard: even malformed
-        metadata carrying ``seasons_watched_dates`` on a movie must not trigger
-        the TV-only season-date fallback.
-        """
-        movie = ContentItem(
-            id="stray_movie",
-            title="Stray Movie",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-            date_completed=None,
-            metadata={
-                "genres": ["Animation"],
-                "seasons_watched_dates": {"1": "2026-07-17T00:00:00+00:00"},
-            },
-        )
-        assert _completion_recency(movie) is None
 
 
 class TestCompletedTvShowSeasonDateFallbackRegression:

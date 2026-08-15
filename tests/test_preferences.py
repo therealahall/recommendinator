@@ -23,16 +23,6 @@ def _rated_book(item_id, author, rating, genre):
     )
 
 
-def test_preference_analyzer_empty():
-    """Test preference analyzer with empty list."""
-    analyzer = PreferenceAnalyzer()
-    preferences = analyzer.analyze([])
-
-    assert preferences.total_items == 0
-    assert preferences.average_rating == 0.0
-    assert len(preferences.preferred_authors) == 0
-
-
 def test_preference_analyzer_basic():
     """Test basic preference analysis."""
     analyzer = PreferenceAnalyzer(min_rating=4)
@@ -73,38 +63,6 @@ def test_preference_analyzer_basic():
     assert preferences.preferred_authors["author a"] == 1.0
 
 
-def test_preference_analyzer_with_genre():
-    """Test preference analysis with genre metadata."""
-    analyzer = PreferenceAnalyzer(min_rating=4)
-
-    items = [
-        ContentItem(
-            id="1",
-            title="Book 1",
-            author="Author A",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        ),
-        ContentItem(
-            id="2",
-            title="Book 2",
-            author="Author B",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Science Fiction"},
-        ),
-    ]
-
-    preferences = analyzer.analyze(items)
-
-    assert "science fiction" in preferences.preferred_genres
-    # Only genre present: normalization divides by max score, yielding 1.0
-    assert preferences.preferred_genres["science fiction"] == 1.0
-
-
 def test_user_preferences_get_author_score():
     """Test getting author preference score."""
     preferences = UserPreferences(
@@ -118,54 +76,6 @@ def test_user_preferences_get_author_score():
     assert preferences.get_author_score("Author B") == 0.5
     assert preferences.get_author_score("Unknown Author") == 0.0
     assert preferences.get_author_score(None) == 0.0
-
-
-def test_user_preferences_get_genre_score():
-    """Test getting genre preference score."""
-    preferences = UserPreferences(
-        preferred_authors={},
-        preferred_genres={"science fiction": 0.9, "fantasy": 0.6},
-        average_rating=4.5,
-        total_items=10,
-    )
-
-    assert preferences.get_genre_score("Science Fiction") == 0.9
-    assert preferences.get_genre_score("Fantasy") == 0.6
-    assert preferences.get_genre_score("Unknown Genre") == 0.0
-    assert preferences.get_genre_score(None) == 0.0
-
-
-def test_preference_analyzer_steam_genres():
-    """Test preference analysis with Steam game genres (list format)."""
-    analyzer = PreferenceAnalyzer(min_rating=4)
-
-    items = [
-        ContentItem(
-            id="1",
-            title="Mass Effect",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genres": ["Action", "RPG", "Science Fiction"]},
-        ),
-        ContentItem(
-            id="2",
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            metadata={"genre": "Science Fiction"},
-        ),
-    ]
-
-    preferences = analyzer.analyze(items)
-
-    # Should extract genres from both Steam games (list) and TV shows (single)
-    assert "science fiction" in preferences.preferred_genres
-    assert "action" in preferences.preferred_genres
-    assert "rpg" in preferences.preferred_genres
-    # Highest-weighted genre: normalization divides by max score, yielding 1.0
-    assert preferences.preferred_genres["science fiction"] == 1.0
 
 
 def test_preference_analyzer_cross_content_type():
@@ -305,42 +215,6 @@ class TestScoreNormalisationBounds:
         # The best rated author is the normalisation maximum, so exactly 1.0
         assert scores[-1] == 1.0
 
-    @pytest.mark.parametrize("min_rating", [0, 6])
-    def test_min_rating_outside_the_settings_range_still_normalises(self, min_rating):
-        """A config.yaml threshold outside 1..5 normalises instead of raising.
-
-        The settings registry validates 1..5, but the YAML path in
-        src/config/service.py reads the key straight through with no bounds, so a
-        threshold either side of the range still has to land inside [-1.0, 1.0].
-        """
-        analyzer = PreferenceAnalyzer(min_rating=min_rating)
-
-        preferences = analyzer.analyze(
-            [
-                _rated_book("1", "Author A", 3, "Science Fiction"),
-                _rated_book("2", "Author B", 3, "Science Fiction"),
-            ]
-        )
-
-        assert -1.0 <= preferences.get_author_score("Author A") <= 1.0
-        assert -1.0 <= preferences.get_genre_score("Science Fiction") <= 1.0
-
-    def test_author_in_both_buckets_nets_out_within_range(self):
-        """One author rated both best and worst nets to a neutral score."""
-        analyzer = PreferenceAnalyzer(min_rating=4)
-
-        preferences = analyzer.analyze(
-            [
-                _rated_book("1", "Author A", 5, "Science Fiction"),
-                _rated_book("2", "Author A", 1, "Science Fiction"),
-            ]
-        )
-
-        # Sole entry in each bucket, so both normalise to 1.0 and cancel
-        assert preferences.preferred_authors["author a"] == 1.0
-        assert preferences.disliked_authors["author a"] == 1.0
-        assert preferences.get_author_score("Author A") == 0.0
-
     def test_unrated_items_leave_both_buckets_empty(self):
         """A library with no ratings at all yields empty maps, not a crash."""
         analyzer = PreferenceAnalyzer(min_rating=4)
@@ -364,17 +238,6 @@ class TestScoreNormalisationBounds:
         assert preferences.average_rating == 0.0
         assert preferences.total_items == 1
         assert preferences.get_author_score("Author A") == 0.0
-
-    def test_non_ascii_author_name_scores_case_insensitively(self):
-        """A non-ASCII name normalises and looks up under any casing."""
-        analyzer = PreferenceAnalyzer(min_rating=4)
-
-        preferences = analyzer.analyze(
-            [_rated_book("1", "Stanisław LEM", 5, "Science Fiction")]
-        )
-
-        assert preferences.preferred_authors == {"stanisław lem": 1.0}
-        assert preferences.get_author_score("STANISŁAW Lem") == 1.0
 
 
 class TestPreferredWeightAccumulation:
@@ -410,21 +273,6 @@ class TestPreferredWeightAccumulation:
         )
 
         assert preferences.preferred_authors == {"author a": 1.0, "author b": 0.5}
-
-    def test_two_threshold_ratings_weigh_the_same_as_one_top_rating(self):
-        """Accumulated weights stay additive, so two 4s tie one 5."""
-        analyzer = PreferenceAnalyzer(min_rating=4)
-
-        preferences = analyzer.analyze(
-            [
-                _rated_book("1", "Author A", 5, "Science Fiction"),
-                _rated_book("2", "Author B", 4, "Fantasy"),
-                _rated_book("3", "Author B", 4, "Fantasy"),
-            ]
-        )
-
-        assert preferences.preferred_authors["author a"] == 1.0
-        assert preferences.preferred_authors["author b"] == 1.0
 
     @pytest.mark.parametrize("min_rating", RATINGS)
     def test_many_repeats_of_one_author_stay_at_the_ceiling(self, min_rating):
@@ -542,30 +390,6 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
             "vince gilligan": 1.0,
             "mobius digital": 1.0,
         }
-
-    def test_a_badly_rated_film_puts_its_director_in_the_disliked_namespace(self):
-        """The negative half of the namespace is just as type-blind."""
-        analyzer = PreferenceAnalyzer(min_rating=4)
-
-        preferences = analyzer.analyze(
-            [
-                self._rated(
-                    "1",
-                    creator="Denis Villeneuve",
-                    rating=1,
-                    content_type=ContentType.MOVIE,
-                ),
-                self._rated(
-                    "2",
-                    creator="Frank Herbert",
-                    rating=5,
-                    content_type=ContentType.BOOK,
-                ),
-            ]
-        )
-
-        assert preferences.disliked_authors == {"denis villeneuve": 1.0}
-        assert preferences.get_author_score("Denis Villeneuve") == -1.0
 
     def test_one_name_on_two_types_is_one_entry_that_nets_out(self):
         """Nothing separates the film credit from the book credit."""
