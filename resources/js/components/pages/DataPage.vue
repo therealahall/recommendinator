@@ -77,7 +77,7 @@ const orderedSources = computed(() => {
           v-for="source in orderedSources"
           :key="source.id"
           :source="source"
-          :syncing="data.isSourceIdSyncing(source.id) || data.isSourceIdSyncing('all')"
+          :syncing="data.isSourceIdSyncing(source.id)"
           :job="data.jobForSourceId(source.id)"
           @sync="data.triggerSync($event)"
         />

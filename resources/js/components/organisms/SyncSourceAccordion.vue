@@ -333,7 +333,11 @@ onBeforeUnmount(() => {
 })
 
 const syncDisabled = computed(() => props.syncing || !props.source.enabled)
-const syncLabel = computed(() => (props.syncing ? 'Syncing…' : 'Sync'))
+// A disabled source never runs, and the accessible name below says so: letting
+// the visible label read "Syncing…" would leave the two disagreeing (WCAG 2.5.3).
+const syncLabel = computed(() =>
+  props.syncing && props.source.enabled ? 'Syncing…' : 'Sync',
+)
 
 // Progress for THIS source. When the running job is single-source (the
 // user clicked Sync on this row), use the job's top-level counters. When
