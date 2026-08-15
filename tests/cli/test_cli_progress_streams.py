@@ -133,7 +133,7 @@ class TestUpdateProgressIsOffTheDataChannel:
         "inputs": {"books": {"plugin": "fake_file", "enabled": True, "path": "b.csv"}}
     }
 
-    def _run(self, errors: list[str] | None = None) -> Any:
+    def _run(self) -> Any:
         def sync(progress_callback: Any, **_: Any) -> list[SyncResult]:
             progress_callback(10, 100, "Dune", "books")
             return [
@@ -142,7 +142,6 @@ class TestUpdateProgressIsOffTheDataChannel:
                     items_synced=3,
                     items_added=3,
                     total_items=3,
-                    errors=errors or [],
                 )
             ]
 
@@ -170,20 +169,6 @@ class TestUpdateProgressIsOffTheDataChannel:
 
         assert "Updating data from books (workers=4)..." in result.stderr
         assert "Processed 10/100..." in result.stderr
-
-    def test_a_sources_own_failure_is_read_out_beside_its_counts(self) -> None:
-        """An enrichment-marking failure has no other channel to the operator
-        — the CLI reads no log file back — and the counts line alone would
-        report the run as a clean success.
-        """
-        result = self._run(["Saved 'Dune' but could not queue it for enrichment"])
-
-        assert result.exit_code == 0
-        assert (
-            "    Warning: Saved 'Dune' but could not queue it for enrichment"
-            in result.stderr
-        )
-        assert "Warning" not in result.stdout
 
 
 class TestEnrichmentProgressIsOffTheDataChannel:

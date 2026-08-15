@@ -69,10 +69,8 @@ Four methods on `SQLiteDB` write them.
 | `date_completed` | Later date wins |
 | `ignored` | Only a stated `True` or `False` wins, in either direction. `None` leaves the stored flag alone |
 
-A TV show's `seasons_watched` is the one metadata key the sync door merges as a
-union: a sync adds a season it has seen finished and can never drop one the user
-ticked by hand. Existing-wins would freeze the empty list an in-progress show's
-first sync writes.
+`seasons_watched` is the one metadata key the sync door unions: a sync adds a
+season, never removes one.
 
 One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
@@ -110,13 +108,10 @@ supplied:
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
 
-For a TV show, status and the season list are one fact. A supplied
-`seasons_watched` derives the status; a supplied status with no list writes one:
-`completed` ticks every season unless the total is unknown, `unread` empties it,
-and `currently_consuming` leaves the stored list alone, since "in progress" names
-no seasons. A caller supplying both, like the edit dialog, is taken at its word.
-`src/utils/series.py` owns that arithmetic for every caller: the edit door, the
-Trakt plugin and `_handle_tv_season_change`.
+For a TV show, whichever of status and `seasons_watched` the caller omits is
+derived from the other, in `src/utils/series.py`: `completed` ticks every season
+unless the total is unknown, `unread` empties the list, `currently_consuming`
+leaves it. Both supplied are written as given.
 
 **No door stores a blank review.** A stored `""` reads as a review the user wrote
 and blocks every later import from filling the field. The sync door declines to

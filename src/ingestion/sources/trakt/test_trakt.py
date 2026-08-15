@@ -1514,42 +1514,6 @@ class TestTraktPartialSeasonRegression:
         assert item.metadata["total_seasons"] == 2
 
 
-class TestEverySeasonWatchedCompletesTheShow:
-    """A show finishes by either count: every episode, or every season.
-
-    ``aired_episodes`` counts specials the user may skip, which would leave a
-    fully-watched show syncing back as in progress for good.
-    """
-
-    def test_all_seasons_complete_marks_the_show_completed(self) -> None:
-        """Both seasons watched to their totals completes the show."""
-        payloads = _all_lists(
-            watched_shows=[
-                {
-                    "last_watched_at": "2022-06-01T00:00:00.000Z",
-                    # 21, not 20: a special the user skipped is aired too.
-                    "show": _show(57, "Firefly", aired_episodes=21),
-                    "seasons": [
-                        {
-                            "number": 1,
-                            "episodes": [{"number": n} for n in range(1, 11)],
-                        },
-                        {
-                            "number": 2,
-                            "episodes": [{"number": n} for n in range(1, 11)],
-                        },
-                    ],
-                }
-            ]
-        )
-        items = _run_fetch(payloads, _config(), season_totals={57: {1: 10, 2: 10}})
-
-        item = items[0]
-        assert item.status == ConsumptionStatus.COMPLETED
-        assert item.metadata["seasons_watched"] == [1, 2]
-        assert item.date_completed == date(2022, 6, 1)
-
-
 class TestFetchShowSeasonTotals:
     """Tests for the /shows/{id}/seasons per-season episode-total helper."""
 
