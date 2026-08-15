@@ -13,7 +13,9 @@ import type {
   SourceSchemaResponse,
   SourceConfigResponse,
   SourceMigrationResponse,
+  PluginImportErrorResponse,
   PluginInfoResponse,
+  PluginListResponse,
   SourceCreateRequest,
   OAuthStatusResponse,
   TraktDeviceFlowResponse,
@@ -540,6 +542,7 @@ export const useDataStore = defineStore('data', () => {
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
   const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
   const availablePlugins = ref<PluginInfoResponse[]>([])
+  const pluginImportErrors = ref<PluginImportErrorResponse[]>([])
 
   async function loadSourceSchema(sourceId: string): Promise<SourceSchemaResponse> {
     const schema = await api.get<SourceSchemaResponse>(
@@ -613,9 +616,10 @@ export const useDataStore = defineStore('data', () => {
   }
 
   async function loadAvailablePlugins(): Promise<PluginInfoResponse[]> {
-    const plugins = await api.get<PluginInfoResponse[]>('/plugins')
-    availablePlugins.value = plugins
-    return plugins
+    const view = await api.get<PluginListResponse>('/plugins')
+    availablePlugins.value = view.plugins
+    pluginImportErrors.value = view.import_errors
+    return view.plugins
   }
 
   async function createSource(
@@ -674,6 +678,7 @@ export const useDataStore = defineStore('data', () => {
     sourceSchemas,
     sourceConfigs,
     availablePlugins,
+    pluginImportErrors,
     // Actions
     loadSyncSources,
     triggerSync,

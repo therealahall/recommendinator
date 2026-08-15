@@ -321,7 +321,9 @@ class TestConcurrentDiscoveryRegression:
                 self.register(MockBookProvider())
                 first_pass_done.set()
                 return
-            self._register_providers_from_module(stalling_module, "test")
+            self._register_providers_from_module(
+                stalling_module, "stalling_module", "test"
+            )
 
         with (
             patch.object(
@@ -422,7 +424,7 @@ class TestProviderModuleScan:
 
         registry = EnrichmentRegistry()
         with caplog.at_level(logging.WARNING, logger="src.enrichment.registry"):
-            registry._register_providers_from_module(module, "test")
+            registry._register_providers_from_module(module, "fake_module", "test")
 
         assert set(registry._providers) == {"mock_book"}
         assert [record.message for record in caplog.records] == []

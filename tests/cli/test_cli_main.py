@@ -16,6 +16,7 @@ from src.recommendations.engine import RecommendationEngine
 from src.storage.global_secrets import GLOBAL_SECRET_USER_ID
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
+from tests.fakes.source_plugins import UNLOADED_PLUGIN, UNLOADED_PLUGIN_DETAIL
 
 
 def test_cli_main_module_exposes_cli_entry_point() -> None:
@@ -69,6 +70,49 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
     with storage.connection() as conn:
         rows = conn.execute("SELECT source FROM content_items").fetchall()
     assert [row[0] for row in rows] == ["goodreads"]
+
+
+@pytest.mark.usefixtures("registry_with_a_failed_import")
+class TestUpdateReportsAFailedPluginImportRegression:
+    """Symptom: the owner's private plugin stopped compiling and its source
+    answered "Unknown or disabled", blaming a config that was correct.
+
+    Cause: the registry dropped the module silently. Fix: name it and why.
+    """
+
+    CONFIG: dict[str, Any] = {
+        "inputs": {
+            "my_site": {"plugin": UNLOADED_PLUGIN, "enabled": True},
+        },
+    }
+
+    def _run(self, tmp_path: Path, args: list[str]) -> Any:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        with (
+            patch("src.cli.main.load_config", return_value=self.CONFIG),
+            patch("src.cli.main.create_storage_manager", return_value=storage),
+            patch(
+                "src.cli.main.create_recommendation_engine",
+                return_value=MagicMock(spec=RecommendationEngine),
+            ),
+        ):
+            return CliRunner().invoke(cli, args)
+
+    def test_the_listing_names_the_module_and_the_reason(self, tmp_path: Path) -> None:
+        """``--source list`` is where the user is sent, so it must say it."""
+        result = self._run(tmp_path, ["update", "--source", "list"])
+
+        assert result.exit_code == 0, result.output
+        assert "my_site" in result.output
+        assert f"unusable: {UNLOADED_PLUGIN_DETAIL}" in result.output
+
+    def test_syncing_it_aborts_naming_the_import_failure(self, tmp_path: Path) -> None:
+        """Not "Unknown or disabled", which sends the user to fix config.yaml."""
+        result = self._run(tmp_path, ["update", "--source", "my_site"])
+
+        assert result.exit_code != 0
+        assert "Unknown or disabled source" not in result.output
+        assert f"Error: {UNLOADED_PLUGIN_DETAIL}" in result.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

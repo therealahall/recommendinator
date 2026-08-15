@@ -110,11 +110,25 @@ export interface UserPreferenceUpdateRequest {
 
 // --- Sync ---
 
+export interface PluginImportErrorResponse {
+  module: string
+  reason: string
+}
+
+export interface PluginNotLoadedResponse {
+  plugin: string
+  // The whole discovery pass: no failure can be tied to the plugin above.
+  failures: PluginImportErrorResponse[]
+}
+
 export interface SyncSourceResponse {
   id: string
   display_name: string
   plugin_display_name: string
   enabled: boolean
+  // Set when the source's plugin is missing. Such a source is listed so the
+  // failure is visible, and can never sync.
+  plugin_not_loaded: PluginNotLoadedResponse | null
 }
 
 export type SourceFieldType = 'str' | 'int' | 'float' | 'bool' | 'list'
@@ -161,6 +175,11 @@ export interface PluginInfoResponse {
   requires_api_key: boolean
   requires_network: boolean
   fields: SourceFieldSchema[]
+}
+
+export interface PluginListResponse {
+  plugins: PluginInfoResponse[]
+  import_errors: PluginImportErrorResponse[]
 }
 
 export interface SourceCreateRequest {

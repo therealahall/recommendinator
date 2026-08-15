@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from src.enrichment.provider_base import EnrichmentProvider
+from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -98,17 +99,18 @@ class EnrichmentRegistry:
                     module = importlib.import_module(
                         f"src.enrichment.providers.{module_name}"
                     )
-                    self._register_providers_from_module(
-                        module, f"builtin:{module_name}"
-                    )
+                    self._register_providers_from_module(module, module_name, "builtin")
                 except Exception as error:
                     logger.warning(
                         "Failed to load built-in provider module %s: %s",
-                        module_name,
-                        error,
+                        sanitize_for_log(module_name),
+                        exception_for_log(error),
                     )
         except ImportError as error:
-            logger.warning("Failed to import enrichment providers package: %s", error)
+            logger.warning(
+                "Failed to import enrichment providers package: %s",
+                exception_for_log(error),
+            )
 
     def _discover_private_providers(self) -> None:
         """Discover private providers from private/plugins/.
@@ -157,21 +159,24 @@ class EnrichmentRegistry:
             module_name = py_file.stem
             try:
                 module = importlib.import_module(f"private.plugins.{module_name}")
-                self._register_providers_from_module(module, f"private:{module_name}")
+                self._register_providers_from_module(module, module_name, "private")
             except Exception as error:
                 logger.warning(
                     "Failed to import private module %s while scanning for "
                     "enrichment providers: %s",
-                    module_name,
-                    error,
+                    sanitize_for_log(module_name),
+                    exception_for_log(error),
                 )
 
-    def _register_providers_from_module(self, module: Any, source: str) -> None:
+    def _register_providers_from_module(
+        self, module: Any, module_name: str, origin: str
+    ) -> None:
         """Register all EnrichmentProvider subclasses from a module.
 
         Args:
             module: Imported module to scan
-            source: Description of source for logging (e.g., "builtin:tmdb")
+            module_name: The module's own name, as the log names it
+            origin: Where it was found ("builtin" or "private")
         """
         for attr_name in dir(module):
             if attr_name.startswith("_"):
@@ -188,16 +193,18 @@ class EnrichmentRegistry:
                     provider_instance = attr()
                     self.register(provider_instance)
                     logger.debug(
-                        "Registered enrichment provider %s from %s",
+                        "Registered enrichment provider %s from %s:%s",
                         provider_instance.name,
-                        source,
+                        origin,
+                        module_name,
                     )
                 except Exception as error:
                     logger.warning(
-                        "Failed to instantiate enrichment provider %s from %s: %s",
+                        "Failed to instantiate enrichment provider %s from %s:%s: %s",
                         attr_name,
-                        source,
-                        error,
+                        origin,
+                        sanitize_for_log(module_name),
+                        exception_for_log(error),
                     )
 
     def register(self, provider: EnrichmentProvider) -> None:
