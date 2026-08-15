@@ -462,15 +462,6 @@ const errorsTitleId = computed<string>(() =>
             class="source-accordion-progress-item"
           >{{ progress.current_item }}</span>
         </span>
-        <!--
-          Plain content, not a live region: it renders on the poll that ends
-          the sync, and the page-level banner is what announces (WCAG 4.1.3).
-        -->
-        <span
-          v-if="resultLabel"
-          class="source-accordion-result"
-          data-testid="source-sync-result"
-        >{{ resultLabel }}</span>
       </span>
     </template>
 
@@ -498,6 +489,14 @@ const errorsTitleId = computed<string>(() =>
       (WCAG 4.1.3).
     -->
     <template #notice>
+      <!-- Beside the errors rather than in the header: the header slot is the
+           trigger button's content, so this would run into the source name in
+           its accessible name and in the heading (WCAG 2.4.6). -->
+      <p
+        v-if="resultLabel"
+        class="source-accordion-result"
+        data-testid="source-sync-result"
+      >{{ resultLabel }}</p>
       <div v-if="sourceErrors.length" class="source-accordion-errors">
         <p
           :id="errorsTitleId"
@@ -801,7 +800,8 @@ const errorsTitleId = computed<string>(() =>
 }
 
 .source-accordion-result {
-  margin-left: var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;

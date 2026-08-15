@@ -159,9 +159,23 @@ describe('AddSourceModal', () => {
     ]
     await wrapper.vm.$nextTick()
 
-    const notice = wrapper.get('[data-testid="add-source-import-errors"]').text()
-    expect(notice).toContain('goodreads_rss')
-    expect(notice).toContain("No module named 'defusedxml'")
+    const list = wrapper.get('[data-testid="add-source-import-errors"]')
+    expect(list.text()).toContain('goodreads_rss')
+    expect(list.text()).toContain("No module named 'defusedxml'")
+    // Unassociated, the reason is never reached from the picker and a missing
+    // plugin reads as unsupported; list-style: none costs the count with it.
+    expect(list.attributes('role')).toBe('list')
+    expect(wrapper.get('#add-source-plugin').attributes('aria-describedby')).toBe(
+      'add-source-import-errors',
+    )
+  })
+
+  it('describes the picker by nothing when every plugin loaded', async () => {
+    const { wrapper } = await mountWithPlugins()
+
+    expect(
+      wrapper.get('#add-source-plugin').attributes('aria-describedby'),
+    ).toBeUndefined()
   })
 
   it('prefills the Source id from the selected plugin name', async () => {

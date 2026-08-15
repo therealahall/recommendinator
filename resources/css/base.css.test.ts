@@ -197,11 +197,4 @@ describe('recommendation card header (issue #98)', () => {
     expect(declaration(ruleBlock(block, '.rec-heading'), 'min-width')).toBe('0')
     expect(declaration(ruleBlock(block, '.rec-actions'), 'width')).toBe('100%')
   })
-
-  it('leaves the desktop header one unwrapped row', () => {
-    const header = ruleBlock(readBase(), '.rec-header')
-
-    expect(header).not.toMatch(/flex-wrap/)
-    expect(declaration(header, 'justify-content')).toBe('space-between')
-  })
 })

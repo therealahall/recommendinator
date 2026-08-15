@@ -1490,9 +1490,19 @@ describe('SyncSourceAccordion', () => {
         props: { source: baseSource, syncing: false, job },
       })
 
-      expect(wrapper.get('[data-testid="source-sync-result"]').text()).toBe(
-        '0 added, 0 updated, 40 unchanged',
-      )
+      const result = wrapper.get('[data-testid="source-sync-result"]')
+      expect(result.text()).toBe('0 added, 0 updated, 40 unchanged')
+      // Inside the trigger, the counts run into the source's accessible name
+      // and into the heading text with it (WCAG 2.4.6).
+      const trigger = wrapper.get('button.accordion-trigger')
+      expect(trigger.text()).not.toContain('unchanged')
+      expect(trigger.element.contains(result.element)).toBe(false)
+      // Out of the trigger is not out of sight: the collapsed panel is
+      // `hidden`, so parking the counts in there hides what the run did until
+      // the row is expanded.
+      const panel = wrapper.get('[role="region"]')
+      expect(panel.attributes('hidden')).toBeDefined()
+      expect(panel.element.contains(result.element)).toBe(false)
     })
 
     it('shows no result line while the source is still syncing', () => {

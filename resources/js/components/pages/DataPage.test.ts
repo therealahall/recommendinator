@@ -255,9 +255,8 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  // FAILING: the run started without this source, so the enable that unlocking
-  // the form allows cannot have joined it — but `isSourceIdSyncing('all')` is
-  // still true, so the row claims a sync nobody is running until the run ends.
+  // The run started without this source, so the enable the unlocked form
+  // allows cannot have joined it.
   it('does not claim a sync for a source enabled mid-run', async () => {
     const wrapper = await mountPage([allSourcesRunning()])
     mockPut.mockResolvedValue({ ...romsConfig, enabled: true })
@@ -271,6 +270,103 @@ describe('DataPage rows during a Sync All', () => {
     expect(wrapper.get('[data-testid="sync-btn-roms"]').text()).toBe('Sync')
     expect(roms.get('[data-testid="form-toggle-enabled"]').attributes('disabled'))
       .toBeUndefined()
+    wrapper.unmount()
+  })
+
+  /**
+   * Symptom: a second Sync click duplicated a source the run had not reached,
+   * saving it twice at once. Root cause: membership came from progress slots,
+   * which appear only once a source starts. Fix: record what /update resolved.
+   */
+  it('locks the Sync button of a source the run has not reached yet', async () => {
+    const goodreads = {
+      id: 'goodreads',
+      display_name: 'Goodreads',
+      plugin_display_name: 'Goodreads',
+      enabled: true,
+      plugin_not_loaded: null,
+    }
+    mockPost.mockResolvedValue({
+      message: 'Sync started for All Sources',
+      sources: ['steam', 'goodreads'],
+    })
+    let jobs: SyncJobResponse[] = []
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') {
+        return Promise.resolve([enabledSource, goodreads])
+      }
+      if (path === '/sync/status') return Promise.resolve({ status: 'running', jobs })
+      if (path === '/enrichment/status') {
+        return Promise.resolve({ running: false, completed: false })
+      }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+    })
+    await flushPromises()
+
+    await wrapper.get('.sync-all-card button').trigger('click')
+    await flushPromises()
+    // The run reaches Steam first, and the poll that reports it drops the
+    // optimistic flag — leaving the resolved list as the only thing that
+    // knows Goodreads is spoken for.
+    jobs = [allSourcesRunning()]
+    await useDataStore().checkSyncStatus()
+    await wrapper.vm.$nextTick()
+
+    const button = wrapper.get('[data-testid="sync-btn-goodreads"]')
+    expect(button.text()).toBe('Syncing…')
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([
+      ['/update', { source: 'all' }],
+    ])
+    wrapper.unmount()
+  })
+
+  // Regression: clicking Retry swapped the error branch for the spinner, so
+  // the button holding focus was unmounted and the keyboard user landed on
+  // <body> (WCAG 2.4.3).
+  it('keeps focus on Retry while the reload it started is in flight', async () => {
+    mockPost.mockResolvedValue({})
+    let releaseSources: (value: unknown[]) => void = () => {}
+    let sourcesFail = true
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') {
+        return sourcesFail
+          ? Promise.reject(new Error('boom'))
+          : new Promise((resolve) => {
+              releaseSources = resolve
+            })
+      }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    sourcesFail = false
+    const retry = wrapper.get('[data-testid="sync-sources-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(retry.text()).toBe('Retrying…')
+    expect(retry.attributes('aria-disabled')).toBe('true')
+    expect(document.activeElement).toBe(retry.element)
+
+    releaseSources([enabledSource])
+    await flushPromises()
+
+    // The retry state has to end with the request, or the page holds the
+    // failure branch open over a list it has already loaded.
+    expect(wrapper.find('[data-testid="sync-sources-retry"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Sync')
     wrapper.unmount()
   })
 
@@ -335,6 +431,12 @@ describe('DataPage rows during a Sync All', () => {
     })
     await flushPromises()
 
+    // list-style: none strips list semantics in WebKit/VoiceOver, and how many
+    // modules failed is the point of the notice.
+    const list = wrapper.get('.unusable-sources-list')
+    expect(list.attributes('role')).toBe('list')
+    expect(list.get('li ul').attributes('role')).toBe('list')
+
     const notice = wrapper.get('[data-testid="unusable-sources"]').text()
     expect(notice).toContain('personal_site')
     expect(notice).toContain('personal_site_games')
@@ -374,9 +476,8 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  // FAILING: the store's `currentJobForLabel` hands every row the umbrella job
-  // once it is the newer of the two, and that job carries no errors for a
-  // source it never ran. Dropping the `syncing` gate was half the fix.
+  // The newer umbrella job carries no errors for a source it never ran, so
+  // handing the row that job would blank the failure it still has.
   it('keeps the disabled row showing the errors of its own last run', async () => {
     const wrapper = await mountPage([romsFailedEarlier(), allSourcesRunning()])
 
