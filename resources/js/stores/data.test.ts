@@ -500,7 +500,7 @@ describe('useDataStore', () => {
     // The whole point of the counts: 42 saved reads the same on a first
     // import and on a re-run that changed nothing.
     expect(store.syncMessage).toBe(
-      'Completed: 42 of 42 items saved (2 added, 0 updated, 40 unchanged)',
+      'Completed (Steam): 42 of 42 items saved (2 added, 0 updated, 40 unchanged)',
     )
     expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
@@ -544,7 +544,7 @@ describe('useDataStore', () => {
 
     expect(store.syncStatus).toBe('completed')
     expect(store.syncMessage).toBe(
-      'Completed: 7 of 7 items saved (1 added, 3 updated, 3 unchanged)',
+      'Completed (Roms): 7 of 7 items saved (1 added, 3 updated, 3 unchanged)',
     )
   })
 
