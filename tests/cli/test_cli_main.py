@@ -386,12 +386,12 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
         assert len(titles) == 1, titles
 
 
-class TestAWarningNamingAnUndecodableRomRegression:
+class TestAWarningAboutAnUndecodableRomRegression:
     """Reported: the run died reporting the ROM it had just saved.
 
-    Symptom: UnicodeEncodeError from ``click.echo``. Cause: the sync reported
-    the raw title, lone surrogate and all. Fix: it escapes what it reports,
-    as its log sinks already did.
+    Symptom: UnicodeEncodeError from ``click.echo``. Cause: the sync named the
+    raw title, lone surrogate and all. Fix: the summary counts what it could
+    not queue instead.
     """
 
     def test_the_warning_prints_and_the_sync_still_finishes(
@@ -411,7 +411,7 @@ class TestAWarningNamingAnUndecodableRomRegression:
 
         assert result.exit_code == 0, result.output
         assert (
-            "Warning: Saved 'Metr\\udcffoid' but could not queue it for enrichment"
+            "Warning: Saved 1 item(s) but could not queue them for enrichment"
             in result.output
         )
         assert "Total: 1 of 1 items saved (1 added, 0 updated, 0 unchanged)." in (
