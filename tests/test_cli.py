@@ -756,10 +756,9 @@ def test_update_command_steam_api_error(mock_components):
         result = runner.invoke(cli, ["update", "--source", "steam"])
 
         assert result.exit_code == 0
-        # The plugin error surfaces via the per-source warning. The raw
-        # exception message is intentionally omitted (it can carry
-        # credential bytes — see src/ingestion/sync.py).
-        assert "Sync failed for steam" in result.output
+        # A SourceError is our own wording, and it names what to fix, so the
+        # per-source warning carries it (see src/ingestion/sync.py).
+        assert "Warning: API error" in result.output
         assert "No items were updated" in result.output
 
 

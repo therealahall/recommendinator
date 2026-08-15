@@ -82,11 +82,15 @@ since no source can read it any more. Another source on the same plugin, in
 `config.yaml` or the database and enabled or not, keeps it.
 
 **Pointing a `credential_bound` field at a different host is refused** — `url`
-on Sonarr, Radarr and Calibre-Web. Host and port decide, so an `http` → `https`
-upgrade of the same endpoint goes through untouched. To move a source, clear its
-secret (`source clear-secret` or the **Data** tab), save the new URL, then enter
-the credential the new host expects. Creating a source clears anything left
-under that id.
+on Sonarr, Radarr and Calibre-Web. Host and port decide, so the same endpoint
+switching between `http` and `https` goes through untouched in either
+direction: a downgrade to `http` is not refused either, and the credential then
+crosses the network in cleartext.
+
+To move a source, clear its secret (`source clear-secret` or the **Data** tab),
+save the new URL, then enter the credential the new host expects. Creating a
+source clears anything left under that id. A `url` whose port cannot be read is
+refused outright, since nothing can say who it addresses.
 
 A source `url` must be `http` or `https`, must name a host, and must not embed
 `user:password@`. Source config is validated when it is written and again at

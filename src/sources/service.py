@@ -12,11 +12,11 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
-from urllib.parse import urlsplit
 
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.ingestion.urls import UnreadableUrl, url_origin
 from src.models.config_field import ConfigField
 from src.storage.credential_orphans import delete_orphaned_credentials
 from src.utils.text import humanize_source_id, sanitize_for_log
@@ -641,32 +641,25 @@ def migrate_source(
     }
 
 
-#: The port a scheme implies, so ``http://host`` and ``https://host`` read as
-#: the same endpoint rather than as a move from port 80 to port 443.
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-
 def _credential_host(value: Any) -> tuple[str, int | None] | None:
     """The party *value* points a credential at, ``None`` when it names none.
 
-    Host and port say who receives the secret; the scheme does not, so an
-    https upgrade is not a move.
+    Host and port say who receives the secret; the scheme does not, so
+    switching between http and https is not a move.
     """
-    if not isinstance(value, str):
-        return None
-    try:
-        parts = urlsplit(value)
-        hostname, port = parts.hostname, parts.port
-    except ValueError:
-        return None
-    if not hostname:
-        return None
-    return hostname, None if port == _DEFAULT_PORTS.get(parts.scheme) else port
+    origin = url_origin(value) if isinstance(value, str) else None
+    return None if origin is None else (origin.host, origin.port)
 
 
 def _moves_the_credentials_elsewhere(before: Any, after: Any) -> bool:
     """Whether rewriting *before* to *after* hands the secrets to a new party."""
-    before_host, after_host = _credential_host(before), _credential_host(after)
+    try:
+        before_host, after_host = _credential_host(before), _credential_host(after)
+    except UnreadableUrl:
+        # Reading it as "names nobody" would let two writes walk the secret to
+        # any host: the first hides behind an unparseable port, the second
+        # moves off it.
+        return True
     # Neither side is a URL, so there is no host to read and any change counts:
     # a future ``credential_bound`` field of another shape stays guarded.
     if before_host is None and after_host is None:

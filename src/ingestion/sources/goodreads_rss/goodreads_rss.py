@@ -31,6 +31,7 @@ import defusedxml.ElementTree as ET
 import requests
 from defusedxml.common import DefusedXmlException
 
+from src import __version__ as APP_VERSION
 from src.ingestion.plugin_base import (
     ConfigField,
     ProgressCallback,
@@ -63,6 +64,19 @@ MAX_PAGES = 500
 
 # Per-request timeout in seconds.
 REQUEST_TIMEOUT = 30
+
+# Goodreads sits behind Amazon's edge, which answers the ``requests`` default
+# ``python-requests/x.y`` with 403. Say who is calling rather than impersonate
+# a browser: a block should be a decision about this app.
+USER_AGENT = (
+    f"Recommendinator/{APP_VERSION} "
+    "(+https://github.com/therealahall/recommendinator)"
+)
+
+REQUEST_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/rss+xml, application/xml;q=0.9",
+}
 
 # Consumption-status precedence for cross-shelf deduplication. A book that
 # appears on several requested shelves is yielded once with the strongest
@@ -348,7 +362,9 @@ class GoodreadsRssPlugin(SourcePlugin):
             "page": page,
         }
         try:
-            response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            response = requests.get(
+                url, params=params, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT
+            )
             response.raise_for_status()
         except requests.RequestException as error:
             scrubbed = scrub_request_error(error)

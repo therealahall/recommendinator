@@ -476,17 +476,75 @@ class TestSonarrTls:
 
         assert "\x1b" not in str(raised.value)
 
+    def test_requests_is_told_not_to_follow_redirects_itself(
+        self,
+        plugin: SonarrPlugin,
+        sample_series: list[dict],
+    ) -> None:
+        """Nothing else here fails if ``allow_redirects=False`` is dropped.
+
+        Every test patches ``requests.get``, so only the real one would follow
+        the 301 and replay ``X-Api-Key`` at the host the proxy named.
+        """
+        self.mock_get.return_value = _api_response(sample_series)
+
+        list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert self.mock_get.call_args[1]["allow_redirects"] is False
+
     def test_a_same_origin_redirect_is_still_followed(
         self,
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
+        """A relative ``Location`` is what nginx and Sonarr itself send."""
         self.mock_get.side_effect = [
-            _redirect_response("https://sonarr.lan/api/v3/series/"),
+            _redirect_response("/api/v3/series/"),
             _api_response(sample_series),
         ]
 
         items = list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
 
         assert len(items) == 3
-        assert self.mock_get.call_count == 2
+        assert [call[0][0] for call in self.mock_get.call_args_list] == [
+            "https://sonarr.lan/api/v3/series",
+            "https://sonarr.lan/api/v3/series/",
+        ]
+
+    def test_a_location_whose_port_cannot_be_read_is_refused(
+        self,
+        plugin: SonarrPlugin,
+    ) -> None:
+        """A url nobody can read is nobody's origin, so it matches nothing."""
+        self.mock_get.return_value = _redirect_response(
+            "https://sonarr.lan:99999/api/v3/series"
+        )
+
+        with pytest.raises(SourceError, match="Refused a redirect"):
+            list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        self.mock_get.assert_called_once()
+
+    def test_a_default_port_in_the_location_is_the_same_origin_regression(
+        self,
+        plugin: SonarrPlugin,
+        sample_series: list[dict],
+    ) -> None:
+        """Bug: a proxy naming ``:443`` explicitly had its redirect refused.
+
+        The origin was a raw netloc, so ``sonarr.lan:443`` read as a different
+        party than ``sonarr.lan`` — stricter than the check guarding the
+        stored API key.
+        """
+        self.mock_get.side_effect = [
+            _redirect_response("https://sonarr.lan:443/api/v3/series/"),
+            _api_response(sample_series),
+        ]
+
+        items = list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert len(items) == 3
+        assert [call[0][0] for call in self.mock_get.call_args_list] == [
+            "https://sonarr.lan/api/v3/series",
+            "https://sonarr.lan:443/api/v3/series/",
+        ]

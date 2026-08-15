@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import requests
 
+from src import __version__ as APP_VERSION
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.sources.goodreads_rss import goodreads_rss
 from src.ingestion.sources.goodreads_rss.goodreads_rss import (
@@ -93,7 +94,12 @@ def _make_get(pages_by_shelf: dict[str, list[str]]) -> Any:
     the plugin's pagination loop.
     """
 
-    def _get(url: str, params: dict[str, Any] | None = None, timeout: int = 0) -> Any:
+    def _get(
+        url: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> Any:
         assert params is not None
         shelf = params["shelf"]
         page = params["page"]
@@ -123,7 +129,12 @@ def _make_paginating_get(shelf: str, count: int) -> tuple[Any, list[dict[str, An
     ]
     calls: list[dict[str, Any]] = []
 
-    def _get(url: str, params: dict[str, Any] | None = None, timeout: int = 0) -> Any:
+    def _get(
+        url: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> Any:
         assert params is not None
         assert params["shelf"] == shelf
         calls.append(dict(params))
@@ -566,7 +577,10 @@ class TestGoodreadsRssPluginFetch:
         requested: list[str] = []
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             assert params is not None
             requested.append(params["shelf"])
@@ -659,7 +673,10 @@ class TestGoodreadsRssPluginFetch:
         requested: list[str] = []
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             assert params is not None
             requested.append(params["shelf"])
@@ -681,7 +698,10 @@ class TestGoodreadsRssPluginFetch:
         """
 
         def _fail_get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             raise AssertionError("no request should be made for empty shelves")
 
@@ -790,6 +810,27 @@ class TestGoodreadsRssPluginFetch:
 
         assert [item.title for item in items] == ["Real"]
 
+    def test_requests_the_shelf_rss_endpoint(
+        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The user id rides in the feed path; the shelf rides in the query."""
+        requested: list[str] = []
+
+        def _get(
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
+        ) -> Any:
+            requested.append(url)
+            return _FakeResponse(_feed(""))
+
+        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
+
+        list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
+
+        assert requested == ["https://www.goodreads.com/review/list/12345.rss"]
+
     def test_empty_shelf_is_clean_no_op(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -832,7 +873,10 @@ class TestGoodreadsRssRegression:
         requested: list[str] = []
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             assert params is not None
             requested.append(params["shelf"])
@@ -845,6 +889,41 @@ class TestGoodreadsRssRegression:
         assert requested == ["read", "currently-reading", "to-read"]
 
 
+class TestGoodreadsRssUserAgentRegression:
+    """Regression: a real sync 403'd on every shelf.
+
+    The request carried no ``User-Agent``, so it went out as
+    ``python-requests/x.y`` — which Amazon's edge, in front of Goodreads,
+    refuses. It names this app now.
+    """
+
+    def test_the_request_identifies_the_app_and_asks_for_rss(
+        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[dict[str, str] | None] = []
+
+        def _get(
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
+        ) -> Any:
+            sent.append(headers)
+            return _FakeResponse(_feed(""))
+
+        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
+
+        list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
+
+        headers = sent[0]
+        assert headers is not None
+        # Honest, not a browser: a block must be a decision about this app.
+        assert headers["User-Agent"].startswith(f"Recommendinator/{APP_VERSION}")
+        assert "python-requests" not in headers["User-Agent"]
+        assert "Mozilla" not in headers["User-Agent"]
+        assert "rss" in headers["Accept"]
+
+
 class TestGoodreadsRssPluginErrors:
     """Tests for GoodreadsRssPlugin error handling."""
 
@@ -854,7 +933,10 @@ class TestGoodreadsRssPluginErrors:
         """Test an HTTP error raises GoodreadsRssError with no URL leaked."""
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             return _FakeResponse("", status_code=500)
 
@@ -879,7 +961,10 @@ class TestGoodreadsRssPluginErrors:
         """
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             return _FakeResponse("", status_code=404)
 
@@ -893,13 +978,39 @@ class TestGoodreadsRssPluginErrors:
         assert "goodreads.com" not in message
         assert "98765" not in message
 
+    def test_forbidden_raises_clean_error(
+        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 403 is what an edge refusing the client looks like, not a 404."""
+
+        def _get(
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
+        ) -> Any:
+            return _FakeResponse("", status_code=403)
+
+        monkeypatch.setattr(goodreads_rss.requests, "get", _get)
+
+        with pytest.raises(GoodreadsRssError) as exc_info:
+            list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
+
+        message = str(exc_info.value)
+        assert "HTTP 403" in message
+        assert "goodreads.com" not in message
+        assert "12345" not in message
+
     def test_connection_error_raises(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test a transport error raises GoodreadsRssError."""
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             raise requests.ConnectionError("connection refused to www.goodreads.com")
 
@@ -918,7 +1029,10 @@ class TestGoodreadsRssPluginErrors:
         """Test malformed RSS raises GoodreadsRssError."""
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             return _FakeResponse("<rss><channel><item></broken>")
 
@@ -938,7 +1052,10 @@ class TestGoodreadsRssPluginErrors:
         """
 
         def _fail_get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             raise AssertionError("requests.get must not be called for a bad user_id")
 
@@ -958,7 +1075,10 @@ class TestGoodreadsRssPluginErrors:
         """
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             assert params is not None
             if params["shelf"] == "read":
@@ -988,7 +1108,10 @@ class TestGoodreadsRssPluginErrors:
         """
 
         def _get(
-            url: str, params: dict[str, Any] | None = None, timeout: int = 0
+            url: str,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: int = 0,
         ) -> Any:
             assert params is not None
             page = params["page"]
