@@ -1866,8 +1866,8 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
 
 # Fixed user-facing strings keyed by error kind so HTTP responses never
 # echo back caller-controlled identifiers (path params would otherwise
-# end up in JSON `detail` fields). ``invalid_values`` is deliberately absent
-# from both maps — see ``_config_error_to_http``.
+# end up in JSON `detail` fields). The two kinds in
+# ``_KINDS_ANSWERED_WITH_THEIR_MESSAGE`` are deliberately absent from both maps.
 _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "not_found": "Field or source not found.",
     "not_migrated": "Source has not been migrated to the database.",
@@ -1906,13 +1906,16 @@ def require_plugin(
 ResolvedPlugin = Annotated[SourcePlugin, Depends(require_plugin)]
 
 
+# The kinds whose message is returned, because nothing else can say which field
+# to fix. The source service builds both from schema field names and the
+# containment guard alone — never from a plugin's own words or caller input.
+_KINDS_ANSWERED_WITH_THEIR_MESSAGE = {"invalid_values", "credential_move"}
+
+
 def _config_error_to_http(error: SourceConfigError) -> HTTPException:
     # error.message embeds caller-supplied values, so only the kind is logged.
     logger.info("Source config error kind=%s", sanitize_for_log(error.kind))
-    if error.kind == "invalid_values":
-        # The one kind whose message is returned, because nothing else can say
-        # which field to fix. The source service builds it from the field name
-        # and the containment guard alone — never from a plugin's own words.
+    if error.kind in _KINDS_ANSWERED_WITH_THEIR_MESSAGE:
         return HTTPException(status_code=400, detail=error.message)
     return HTTPException(
         status_code=_ERROR_KIND_TO_STATUS.get(error.kind, 400),

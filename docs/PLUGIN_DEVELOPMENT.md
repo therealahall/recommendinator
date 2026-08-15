@@ -114,10 +114,12 @@ except PathNotAllowed as error:
     errors.append(str(error))     # and re-raise as SourceError from fetch
 ```
 
-**A field the stored credentials are bound to** — a base `url`, or a switch like
-Calibre-Web's `verify_ssl` that decides how the credential travels — takes
-`credential_bound=True`, which clears the source's stored secrets when it
-changes. Validate the URL's shape with `src.ingestion.urls.source_url_error` in
+**A field naming the host the stored credentials are sent to** — a base `url` —
+takes `credential_bound=True`. Pointing it at a different hostname or port is
+then refused while the source holds a secret; the operator clears the secret to
+carry the move out. Rewriting the same endpoint (an `https` upgrade, a path, a
+trailing slash) is not a move.
+Validate the URL's shape with `src.ingestion.urls.source_url_error` in
 both `validate_config` and `fetch`: a sync of *every* source never calls
 `validate_config`.
 

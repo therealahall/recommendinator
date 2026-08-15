@@ -13,7 +13,11 @@ from src.ingestion.sources.calibre_web.calibre_web import (
     _parse_opds_xml,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.sources.service import resolve_inputs, update_source_config_values
+from src.sources.service import (
+    SourceConfigError,
+    resolve_inputs,
+    update_source_config_values,
+)
 from src.storage.manager import StorageManager
 from src.storage.sqlite_db import SQLiteDB
 
@@ -1095,12 +1099,12 @@ class TestCalibreWebRegression:
         assert "'password' is required" in errors
 
 
-class TestCalibreWebCredentialExfiltrationRegression:
-    """Regression: rewriting ``url`` sent the stored password to the new host.
+class TestCalibreWebCredentialMoveRegression:
+    """Regression: editing this source's settings deleted its password.
 
-    Bug: one PUT repointed the source and disabled TLS checks, both being
-    non-sensitive. Fix: both are ``credential_bound``, so changing either
-    clears the secret.
+    Repointing ``url`` once sent the password to the new host; the clear that
+    fixed that then fired on any edit. Fix: only a change of host counts, and
+    it is refused.
     """
 
     @pytest.fixture()
@@ -1130,37 +1134,44 @@ class TestCalibreWebCredentialExfiltrationRegression:
         """The arrange half: without it the exfiltration test proves nothing."""
         assert self._resolved(migrated)["password"] == "hunter2"
 
-    def test_repointing_the_url_and_disabling_tls_drops_the_password(
+    def test_repointing_the_url_is_refused_and_the_source_stands_still(
         self, plugin: CalibreWebPlugin, migrated: StorageManager
     ) -> None:
+        with pytest.raises(SourceConfigError, match="different host"):
+            update_source_config_values(
+                "calibre_web", plugin, migrated, {"url": "https://attacker.example"}
+            )
+
+        resolved = self._resolved(migrated)
+        assert resolved["url"] == "http://localhost:8083"
+        assert resolved["password"] == "hunter2"
+        assert plugin.validate_config(resolved, storage=migrated) == []
+
+    def test_upgrading_to_https_keeps_the_password(
+        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    ) -> None:
+        """The reported edit: same Calibre-Web, now behind TLS."""
         update_source_config_values(
-            "calibre_web",
-            plugin,
-            migrated,
-            {"url": "https://attacker.example", "verify_ssl": False},
+            "calibre_web", plugin, migrated, {"url": "https://localhost:8083"}
         )
 
         resolved = self._resolved(migrated)
-        assert resolved["password"] == ""
-        assert migrated.get_credential(1, "calibre_web", "password") is None
-        assert resolved["url"] == "https://attacker.example"
-        assert plugin.validate_config(resolved, storage=migrated) == [
-            "'password' is required"
-        ]
+        assert resolved["url"] == "https://localhost:8083"
+        assert resolved["password"] == "hunter2"
 
-    def test_disabling_tls_verification_alone_drops_the_password(
+    def test_disabling_tls_verification_keeps_the_password(
         self, plugin: CalibreWebPlugin, migrated: StorageManager
     ) -> None:
-        """The password was entrusted under a verified connection.
+        """Self-signed certificates are what the flag is for.
 
-        Leaving it would let an attacker with API access and a network position
-        intercept it without touching the url at all.
+        The password still goes to the same host, and an attacker who could
+        flip this flag is already authenticated to the only account there is.
         """
         update_source_config_values(
             "calibre_web", plugin, migrated, {"verify_ssl": False}
         )
 
-        assert migrated.get_credential(1, "calibre_web", "password") is None
+        assert migrated.get_credential(1, "calibre_web", "password") == "hunter2"
 
     def test_an_unrelated_field_leaves_the_password_alone(
         self, plugin: CalibreWebPlugin, migrated: StorageManager
@@ -1171,14 +1182,20 @@ class TestCalibreWebCredentialExfiltrationRegression:
 
         assert self._resolved(migrated)["password"] == "hunter2"
 
-    def test_rewriting_the_url_to_the_same_value_leaves_the_password_alone(
-        self, plugin: CalibreWebPlugin, migrated: StorageManager
+    def test_naming_a_host_for_the_first_time_is_not_a_move(
+        self, plugin: CalibreWebPlugin, storage: StorageManager
     ) -> None:
+        """This schema has no ``url`` default, so nothing has been sent anywhere."""
+        storage.upsert_source_config(
+            1, "calibre_web", "calibre_web", {"username": "reader"}, enabled=True
+        )
+        storage.save_credential(1, "calibre_web", "password", "hunter2")
+
         update_source_config_values(
-            "calibre_web", plugin, migrated, {"url": "http://localhost:8083"}
+            "calibre_web", plugin, storage, {"url": "http://localhost:8083"}
         )
 
-        assert self._resolved(migrated)["password"] == "hunter2"
+        assert self._resolved(storage)["password"] == "hunter2"
 
 
 class TestCalibreWebUrlValidation:

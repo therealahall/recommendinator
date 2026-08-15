@@ -36,8 +36,8 @@ Parses and normalizes data from external sources.
   than trusted. `paths.py` contains a file plugin's path inside
   `security.allowed_source_roots`, a config.yaml key the settings API cannot
   reach; `urls.py` checks a base URL's shape. A `credential_bound` `ConfigField`
-  (a plugin's `url`, Calibre-Web's `verify_ssl`) clears the source's stored
-  secrets when it changes.
+  (a plugin's `url`) names the host its secrets are sent to, so a write pointing
+  it at a different one is refused while a secret is stored.
 
 ### 2. Storage (`src/storage/`)
 
