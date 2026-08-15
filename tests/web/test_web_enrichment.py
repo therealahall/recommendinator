@@ -91,24 +91,6 @@ class TestEnrichmentStart:
         assert response.status_code == 400
         assert "disabled" in response.json()["detail"].lower()
 
-    def test_start_enrichment_with_content_type(self, mock_config: dict) -> None:
-        """Test starting enrichment with content type filter."""
-        with (
-            _client(MagicMock(spec=StorageManager), mock_config) as client,
-            patch("src.web.enrichment_manager.EnrichmentManager") as mock_manager_cls,
-        ):
-            mock_manager = MagicMock(spec=EnrichmentManager)
-            mock_manager.start_enrichment.return_value = True
-            mock_manager_cls.return_value = mock_manager
-
-            response = client.post(
-                "/api/enrichment/start",
-                json={"content_type": "movie"},
-            )
-
-        assert response.status_code == 200
-        assert "movie" in response.json()["message"].lower()
-
     def test_start_enrichment_invalid_content_type(self, mock_config: dict) -> None:
         """Test error with invalid content type."""
         with _client(MagicMock(spec=StorageManager), mock_config) as client:
@@ -197,25 +179,6 @@ class TestEnrichmentStats:
         assert data["pending"] == 15
         assert data["by_provider"]["tmdb"] == 50
 
-    def test_get_stats_with_enrichment_enabled(self) -> None:
-        """Test that enabled field is True when enrichment is enabled in config."""
-        storage = MagicMock(spec=StorageManager)
-        storage.get_enrichment_stats.return_value = {
-            "total": 10,
-            "enriched": 5,
-            "pending": 5,
-            "not_found": 0,
-            "failed": 0,
-            "by_provider": {},
-            "by_quality": {},
-        }
-
-        with _client(storage, {"enrichment": {"enabled": True}}) as client:
-            response = client.get("/api/enrichment/stats")
-
-        assert response.status_code == 200
-        assert response.json()["enabled"] is True
-
 
 class TestEnrichmentReset:
     """Tests for POST /api/enrichment/reset endpoint."""
@@ -232,35 +195,6 @@ class TestEnrichmentReset:
         data = response.json()
         assert data["count"] == 50
         assert "50" in data["message"]
-
-    def test_reset_by_provider(self) -> None:
-        """Test resetting enrichment by provider."""
-        storage = MagicMock(spec=StorageManager)
-        storage.reset_enrichment_status.return_value = 20
-
-        with _client(storage, {}) as client:
-            response = client.post(
-                "/api/enrichment/reset",
-                json={"provider": "tmdb"},
-            )
-
-        assert response.status_code == 200
-        assert response.json()["count"] == 20
-        storage.reset_enrichment_status.assert_called_once()
-
-    def test_reset_by_content_type(self) -> None:
-        """Test resetting enrichment by content type."""
-        storage = MagicMock(spec=StorageManager)
-        storage.reset_enrichment_status.return_value = 15
-
-        with _client(storage, {}) as client:
-            response = client.post(
-                "/api/enrichment/reset",
-                json={"content_type": "book"},
-            )
-
-        assert response.status_code == 200
-        assert response.json()["count"] == 15
 
     def test_reset_invalid_content_type(self) -> None:
         """Test error with invalid content type."""

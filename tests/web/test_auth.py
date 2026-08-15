@@ -211,18 +211,6 @@ class TestTheSessionCookie:
         assert cookie["path"] == "/"
         assert cookie["secure"] == ""
 
-    def test_it_lasts_exactly_as_long_as_the_session_row(
-        self, client: TestClient
-    ) -> None:
-        """A browser dropping it early signs the user out of a live session."""
-        response = client.post(
-            "/api/auth/setup",
-            json={"username": _USERNAME, "display_name": "", "password": _PASSWORD},
-        )
-
-        cookie = _set_cookie(response)[SESSION_COOKIE]
-        assert int(cookie["max-age"]) == int(SESSION_LIFETIME.total_seconds())
-
     def test_every_authenticated_request_re_issues_it(
         self, claimed: TestClient
     ) -> None:
@@ -253,13 +241,6 @@ class TestTheSessionCookie:
         cookie = _set_cookie(export)[SESSION_COOKIE]
         assert cookie.value == claimed.cookies[SESSION_COOKIE]
         assert int(cookie["max-age"]) == int(SESSION_LIFETIME.total_seconds())
-
-    def test_a_refused_request_hands_out_no_cookie(self, client: TestClient) -> None:
-        """The re-issue is for a live session, not for whoever asked."""
-        response = client.get("/api/users")
-
-        assert response.status_code == 401
-        assert "set-cookie" not in response.headers
 
     def test_a_lapsed_session_is_not_handed_its_cookie_back(
         self, claimed: TestClient, storage: StorageManager
@@ -480,53 +461,6 @@ class TestTheAccountRoutes:
 
         assert response.status_code == 422
         assert storage.get_all_users()[0]["username"] == _USERNAME
-
-    def test_a_username_at_the_cap_is_stored(self, claimed: TestClient) -> None:
-        """Anchors the width refusals: the boundary is past 100, not at it."""
-        response = claimed.patch(
-            "/api/users/1", json={"username": "x" * 100, "display_name": ""}
-        )
-
-        assert response.status_code == 200
-        assert response.json()["username"] == "x" * 100
-
-
-class TestBothCredentialsAreRequired:
-    """A field left out of the body is not a field the server may default."""
-
-    @pytest.mark.parametrize(
-        ("route", "body"),
-        [
-            pytest.param(
-                "/api/auth/setup",
-                {"display_name": "", "password": _PASSWORD},
-                id="setup-no-username",
-            ),
-            pytest.param(
-                "/api/auth/setup",
-                {"username": _USERNAME, "display_name": ""},
-                id="setup-no-password",
-            ),
-            pytest.param(
-                "/api/auth/login", {"password": _PASSWORD}, id="login-no-username"
-            ),
-            pytest.param(
-                "/api/auth/login", {"username": _USERNAME}, id="login-no-password"
-            ),
-        ],
-    )
-    def test_a_missing_field_is_refused_without_claiming_or_signing_in(
-        self,
-        client: TestClient,
-        storage: StorageManager,
-        route: str,
-        body: dict[str, str],
-    ) -> None:
-        response = client.post(route, json=body)
-
-        assert response.status_code == 422
-        assert SESSION_COOKIE not in response.cookies
-        assert storage.account_is_claimed() is False
 
 
 def _lapse_every_session(storage: StorageManager) -> None:

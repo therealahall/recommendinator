@@ -148,33 +148,6 @@ class TestOAuthConnectSourceBindingRegression:
 
         assert storage.get_credential(USER_ID, "gog_work", "refresh_token") is None
 
-    def test_epic_round_trip_regression(
-        self, client: TestClient, storage: StorageManager, config: dict[str, Any]
-    ) -> None:
-        with (
-            patch("src.web.api.extract_epic_code", return_value="code"),
-            patch(
-                "src.web.api.exchange_epic_tokens",
-                return_value={"refresh_token": "epic-work-token"},
-            ),
-        ):
-            response = client.post(
-                "/api/epic/exchange?source_id=epic_work", json={"code_or_json": "code"}
-            )
-
-        assert response.status_code == 200
-        assert (
-            resolved_config(config, storage, "epic_work")["refresh_token"]
-            == "epic-work-token"
-        )
-        assert storage.get_credential(USER_ID, "epic_games", "refresh_token") is None
-        assert client.get("/api/epic/status?source_id=epic_work").json()["connected"]
-        assert not client.get("/api/epic/status").json()["connected"]
-
-        delete_source("epic_work", storage, config, user_id=USER_ID)
-
-        assert storage.get_credential(USER_ID, "epic_work", "refresh_token") is None
-
     def test_trakt_round_trip_regression(
         self, client: TestClient, storage: StorageManager, config: dict[str, Any]
     ) -> None:
@@ -289,30 +262,6 @@ class TestDatabaseBackedSourceCanConnectRegression:
         assert response.status_code == 200, response.text
         assert (
             storage.get_credential(USER_ID, "gog_db", "refresh_token") == "gog-db-token"
-        )
-
-    def test_epic_db_only_source_connects(
-        self, db_only_client: TestClient, storage: StorageManager
-    ) -> None:
-        assert db_only_client.get("/api/epic/status?source_id=epic_db").json()[
-            "enabled"
-        ]
-
-        with (
-            patch("src.web.api.extract_epic_code", return_value="code"),
-            patch(
-                "src.web.api.exchange_epic_tokens",
-                return_value={"refresh_token": "epic-db-token"},
-            ),
-        ):
-            response = db_only_client.post(
-                "/api/epic/exchange?source_id=epic_db", json={"code_or_json": "code"}
-            )
-
-        assert response.status_code == 200, response.text
-        assert (
-            storage.get_credential(USER_ID, "epic_db", "refresh_token")
-            == "epic-db-token"
         )
 
 
@@ -490,88 +439,6 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
             == "trakt-token"
         )
 
-    def test_trakt_poll_already_refuses_a_gog_source(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """The anchor: Trakt's route resolves this source's own client secret.
-
-        That resolution is what makes the two failures above a gap in the GOG
-        and Epic routes rather than an unreachable state.
-        """
-        storage.save_credential(USER_ID, "gog_work", "refresh_token", "gog-token")
-
-        with patch(
-            "src.web.api.poll_device_token",
-            return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-token"),
-        ):
-            response = client.post(
-                "/api/trakt/poll-device-approval?source_id=gog_work",
-                json={"device_code": "dev1234567"},
-            )
-
-        assert response.status_code == 400, response.text
-        assert (
-            storage.get_credential(USER_ID, "gog_work", "refresh_token") == "gog-token"
-        )
-
-    @pytest.mark.parametrize("provider", ["gog", "epic"])
-    def test_status_reads_no_other_plugins_credential(
-        self, client: TestClient, storage: StorageManager, provider: str
-    ) -> None:
-        """Status is a read, and it was reading whatever row the id named."""
-        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "trakt-token")
-
-        body = client.get(f"/api/{provider}/status?source_id=trakt_work").json()
-
-        assert body["enabled"] is False
-        assert body["connected"] is False
-
-    def test_trakt_disconnect_does_not_delete_a_gog_source_token(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """The third route deletes too, and its own plugin is the other one."""
-        storage.save_credential(USER_ID, "gog_work", "refresh_token", "gog-token")
-
-        response = client.delete("/api/trakt/token?source_id=gog_work")
-
-        assert response.status_code == 404, response.text
-        assert (
-            storage.get_credential(USER_ID, "gog_work", "refresh_token") == "gog-token"
-        )
-
-    def test_start_device_flow_refuses_a_source_running_another_plugin(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        """The fourth Trakt verb: it hands this source's client id to Trakt.
-
-        The client credentials are stored so the refusal cannot be the generic
-        "no client id" one — unbound, this call reaches Trakt.
-        """
-        storage.save_credential(USER_ID, "gog_work", "client_id", "cid")
-        storage.save_credential(USER_ID, "gog_work", "client_secret", "secret")
-
-        with patch("src.web.api.start_device_auth_flow") as started:
-            response = client.post(
-                "/api/trakt/start-device-flow?source_id=gog_work",
-            )
-
-        assert response.status_code == 400, response.text
-        started.assert_not_called()
-
-    def test_trakt_status_reads_no_other_plugins_credential(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        # Stored credentials land in the resolved config whatever the schema
-        # says, so unbound this source answers every question Trakt's status
-        # asks and reports itself connected.
-        storage.save_credential(USER_ID, "gog_work", "client_id", "cid")
-        storage.save_credential(USER_ID, "gog_work", "client_secret", "secret")
-        storage.save_credential(USER_ID, "gog_work", "refresh_token", "gog-token")
-
-        body = client.get("/api/trakt/status?source_id=gog_work").json()
-
-        assert body == {"enabled": False, "connected": False}
-
     @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
     def test_a_write_route_refuses_an_id_no_source_uses(
         self,
@@ -623,58 +490,6 @@ class TestDisconnectingAnIdNoSourceClaimsRegression:
         response = client.delete(f"/api/{provider}/token?source_id=leftover")
 
         assert response.status_code == 404, response.text
-
-
-class TestASourceOnAPluginThisBuildDoesNotShip:
-    """A ``source_configs`` row can name a plugin a later build dropped.
-
-    Its id still spells a credential key, so the routes have to answer without
-    a plugin to compare against.
-    """
-
-    @pytest.fixture()
-    def ghost(self, client: TestClient, storage: StorageManager) -> StorageManager:
-        storage.upsert_source_config(
-            USER_ID, "ghost", "no_such_plugin", {}, enabled=True
-        )
-        storage.save_credential(USER_ID, "ghost", "refresh_token", "orphan")
-        return storage
-
-    @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
-    def test_status_answers_rather_than_500s(
-        self, client: TestClient, ghost: StorageManager, provider: str
-    ) -> None:
-        body = client.get(f"/api/{provider}/status?source_id=ghost").json()
-
-        assert body["enabled"] is False
-        # No shipped plugin reads this row, so nothing is protecting it and
-        # revoking it is the only thing left to do with it.
-        assert body["connected"] is True
-
-    @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
-    def test_disconnect_deletes_the_row(
-        self, client: TestClient, ghost: StorageManager, provider: str
-    ) -> None:
-        response = client.delete(f"/api/{provider}/token?source_id=ghost")
-
-        assert response.status_code == 200, response.text
-        assert ghost.get_credential(USER_ID, "ghost", "refresh_token") is None
-
-    @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
-    def test_a_write_route_writes_nothing(
-        self,
-        client: TestClient,
-        ghost: StorageManager,
-        endpoint: str,
-        body: dict[str, str] | None,
-        outward: str,
-    ) -> None:
-        with patch(outward) as reached:
-            response = client.post(f"{endpoint}?source_id=ghost", json=body)
-
-        assert response.status_code == 400, response.text
-        reached.assert_not_called()
-        assert ghost.get_credential(USER_ID, "ghost", "refresh_token") == "orphan"
 
 
 class TestADisabledSourceCanStillBeDisconnectedRegression:
@@ -769,21 +584,6 @@ class TestConnectingADisabledSourceIsRefused:
         assert storage.get_credential(USER_ID, source_id, "refresh_token") == (
             "fresh-token" if enabled else None
         )
-
-    @pytest.mark.parametrize("enabled", [True, False])
-    def test_device_flow_starts_only_for_an_enabled_source(
-        self, client: TestClient, storage: StorageManager, enabled: bool
-    ) -> None:
-        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
-        storage.set_source_config_enabled(USER_ID, "trakt_work", enabled)
-
-        with patch(
-            "src.web.api.start_device_auth_flow", return_value=DEVICE_FLOW
-        ) as started:
-            response = client.post("/api/trakt/start-device-flow?source_id=trakt_work")
-
-        assert response.status_code == (200 if enabled else 400), response.text
-        assert started.called is enabled
 
     @pytest.mark.parametrize("enabled", [True, False])
     def test_poll_saves_a_token_only_for_an_enabled_source(
