@@ -483,7 +483,6 @@ class SyncJobResponse(BaseModel):
     current_source: str | None
     error_message: str | None
     progress_percent: int | None
-    error_count: int
     errors: list[SyncErrorResponse] = []
     sources: list[SyncSourceProgressResponse] = []
 

@@ -165,9 +165,7 @@ describe('useDataStore', () => {
           source: 'Steam',
           status: 'running',
           items_processed: 0,
-          total_items: null,
-          error_count: 0,
-          errors: [],
+          total_items: null,          errors: [],
           sources: [],
         },
       ],
@@ -205,9 +203,7 @@ describe('useDataStore', () => {
           source: 'Steam',
           status: 'running',
           items_processed: 5,
-          total_items: 0,
-          error_count: 0,
-          errors: [],
+          total_items: 0,          errors: [],
           sources: [],
         },
       ],
@@ -231,9 +227,7 @@ describe('useDataStore', () => {
           total_items: 10,
           progress_percent: 40,
           current_source: 'Steam',
-          current_item: 'Half-Life 2',
-          error_count: 0,
-          errors: [],
+          current_item: 'Half-Life 2',          errors: [],
           sources: [],
         },
       ],
@@ -256,9 +250,7 @@ describe('useDataStore', () => {
           source: 'Steam',
           status: 'completed',
           items_processed: 42,
-          total_items: 42,
-          error_count: 0,
-          errors: [],
+          total_items: 42,          errors: [],
           sources: [],
         },
       ],
@@ -315,9 +307,7 @@ describe('useDataStore', () => {
             source: 'Steam',
             status: 'completed',
             items_processed: 50,
-            total_items: 50,
-            error_count: 0,
-            errors: [],
+            total_items: 50,            errors: [],
             sources: [],
           },
         ],
@@ -378,9 +368,7 @@ describe('useDataStore', () => {
             source: 'Steam',
             status: 'completed',
             items_processed: 50,
-            total_items: 50,
-            error_count: 0,
-            errors: [],
+            total_items: 50,            errors: [],
             sources: [],
           },
         ],
@@ -412,9 +400,7 @@ describe('useDataStore', () => {
         {
           source: 'All Sources',
           status: 'completed',
-          items_processed: 90,
-          error_count: 2,
-          errors: [
+          items_processed: 90,          errors: [
             { source: 'Sonarr', message: 'Set verify_ssl to false' },
             { source: 'Steam', message: 'Rate limit exceeded' },
           ],
@@ -423,9 +409,7 @@ describe('useDataStore', () => {
         {
           source: 'Goodreads',
           status: 'completed',
-          items_processed: 10,
-          error_count: 1,
-          errors: [{ source: 'Goodreads', message: 'Row 4 has no title' }],
+          items_processed: 10,          errors: [{ source: 'Goodreads', message: 'Row 4 has no title' }],
           sources: [],
         },
       ],
@@ -439,6 +423,93 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('(+2 more)')
   })
 
+  // A retained per-source job outlives the run that made it, so the row and
+  // the banner could read different jobs — and a message the banner counted
+  // was then shown on no row at all.
+  describe('the banner and the rows read the same jobs', () => {
+    function sonarrSource() {
+      return {
+        id: 'sonarr',
+        display_name: 'Sonarr',
+        plugin_display_name: 'Sonarr',
+        enabled: true,
+      }
+    }
+
+    it('drops a stale per-source job for the umbrella run that followed it', async () => {
+      mockGet.mockResolvedValue({
+        status: 'idle',
+        jobs: [
+          {
+            source: 'All Sources',
+            status: 'completed',
+            started_at: '2026-08-13T10:05:00',
+            items_processed: 20,
+            errors: [
+              { source: 'Sonarr', message: 'TLS verification failed' },
+              { source: 'Steam', message: 'Rate limit exceeded' },
+            ],
+            sources: [],
+          },
+          {
+            source: 'Steam',
+            status: 'completed',
+            started_at: '2026-08-13T10:00:00',
+            items_processed: 30,
+            errors: [],
+            sources: [],
+          },
+        ],
+      })
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), sonarrSource()] })
+      await store.checkSyncStatus()
+
+      // The clean earlier Steam run kept the row, so Steam's message from the
+      // umbrella run appeared nowhere while the banner counted it.
+      expect(store.jobForSourceId('steam')?.source).toBe('All Sources')
+      expect(store.jobForSourceId('sonarr')?.source).toBe('All Sources')
+      expect(store.syncMessage).toContain('Sonarr: TLS verification failed')
+      expect(store.syncMessage).toContain('(+1 more)')
+    })
+
+    it('leaves out an error the source has since re-synced past', async () => {
+      mockGet.mockResolvedValue({
+        status: 'idle',
+        jobs: [
+          {
+            source: 'All Sources',
+            status: 'completed',
+            started_at: '2026-08-13T10:00:00',
+            items_processed: 20,
+            errors: [
+              { source: 'Sonarr', message: 'TLS verification failed' },
+              { source: 'Steam', message: 'Rate limit exceeded' },
+            ],
+            sources: [],
+          },
+          {
+            source: 'Steam',
+            status: 'completed',
+            started_at: '2026-08-13T10:05:00',
+            items_processed: 30,
+            errors: [],
+            sources: [],
+          },
+        ],
+      })
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), sonarrSource()] })
+      await store.checkSyncStatus()
+
+      expect(store.jobForSourceId('steam')?.source).toBe('Steam')
+      expect(store.syncMessage).toContain('Sonarr: TLS verification failed')
+      expect(store.syncMessage).not.toContain('more')
+    })
+  })
+
   it('checkSyncStatus surfaces a failed job before completed jobs', async () => {
     mockGet.mockResolvedValue({
       status: 'idle',
@@ -447,9 +518,7 @@ describe('useDataStore', () => {
           source: 'Steam',
           status: 'failed',
           items_processed: 0,
-          error_message: 'timeout',
-          error_count: 1,
-          errors: [{ source: 'Steam', message: 'timeout' }],
+          error_message: 'timeout',          errors: [{ source: 'Steam', message: 'timeout' }],
           sources: [],
         },
       ],
@@ -480,9 +549,7 @@ describe('useDataStore', () => {
         {
           source: 'Goodreads',
           status: 'running',
-          items_processed: 5,
-          error_count: 0,
-          errors: [],
+          items_processed: 5,          errors: [],
           sources: [],
         },
       ],
@@ -508,9 +575,7 @@ describe('useDataStore', () => {
           total_items: 100,
           progress_percent: 10,
           current_source: 'Steam',
-          current_item: 'Half-Life 2',
-          error_count: 0,
-          errors: [],
+          current_item: 'Half-Life 2',          errors: [],
           sources: [],
         },
       ],
@@ -532,9 +597,7 @@ describe('useDataStore', () => {
           source: 'Steam',
           status: 'running',
           items_processed: 7,
-          total_items: null,
-          error_count: 0,
-          errors: [],
+          total_items: null,          errors: [],
           sources: [],
         },
       ],
@@ -554,18 +617,14 @@ describe('useDataStore', () => {
           source: 'Goodreads',
           status: 'running',
           items_processed: 5,
-          total_items: 10,
-          error_count: 0,
-          errors: [],
+          total_items: 10,          errors: [],
           sources: [],
         },
         {
           source: 'Steam',
           status: 'running',
           items_processed: 3,
-          total_items: 20,
-          error_count: 0,
-          errors: [],
+          total_items: 20,          errors: [],
           sources: [],
         },
       ],
@@ -595,9 +654,7 @@ describe('useDataStore', () => {
       status: 'running' as const,
       items_processed: 9,
       total_items: 10,
-      current_item: 'Half-Life 2',
-      error_count: 0,
-      errors: [] as string[],
+      current_item: 'Half-Life 2',      errors: [] as string[],
       sources: [] as never[],
     }
     mockGet.mockResolvedValue({ status: 'running', jobs: [job] })

@@ -78,7 +78,7 @@ const orderedSources = computed(() => {
           :key="source.id"
           :source="source"
           :syncing="data.isSourceIdSyncing(source.id) || data.isSourceIdSyncing('all')"
-          :job="data.jobForSourceId(source.id) || data.jobForSourceId('all')"
+          :job="data.jobForSourceId(source.id)"
           @sync="data.triggerSync($event)"
         />
         <div v-if="data.syncSources.length > 1" class="sync-all-card">

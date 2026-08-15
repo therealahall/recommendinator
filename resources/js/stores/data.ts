@@ -74,10 +74,23 @@ export const useDataStore = defineStore('data', () => {
     return jobsByLabel.value[label] || null
   }
 
+  /** The job a source's row shows: its own run or the umbrella one, whichever
+   *  started last. Terminal jobs are retained, so rendering the older of the
+   *  two is how a message from the newer run ends up displayed nowhere. */
+  function currentJobForLabel(label: string): SyncJobResponse | null {
+    const own = jobForLabel(label)
+    if (label === ALL_SOURCES_LABEL) return own
+    const umbrella = jobForLabel(ALL_SOURCES_LABEL)
+    if (!own || !umbrella) return own || umbrella
+    // Both are ISO-8601 off the same clock, so ordering them as text orders
+    // them in time — and no parse can trip over Python's microseconds.
+    return (umbrella.started_at ?? '') > (own.started_at ?? '') ? umbrella : own
+  }
+
   function jobForSourceId(sourceId: string): SyncJobResponse | null {
     if (sourceId === 'all') return jobForLabel(ALL_SOURCES_LABEL)
     const display = syncSources.value.find((s) => s.id === sourceId)?.display_name
-    return display ? jobForLabel(display) : null
+    return display ? currentJobForLabel(display) : null
   }
 
   function isSourceIdSyncing(sourceId: string): boolean {
@@ -198,7 +211,7 @@ export const useDataStore = defineStore('data', () => {
             (sum, j) => sum + j.items_processed,
             0,
           )
-          const errors = syncJobs.value.flatMap((j) => j.errors)
+          const errors = visibleErrors()
           let msg = `Completed: ${totalItems} items synced`
           if (errors.length > 0) msg += ` — ${describeErrors(errors)}`
           syncMessage.value = msg
@@ -230,6 +243,15 @@ export const useDataStore = defineStore('data', () => {
       clearInterval(syncPollTimer)
       syncPollTimer = null
     }
+  }
+
+  /** The errors the accordion rows are showing, which is where the banner
+   *  sends the operator: one from a job no row renders any more names a
+   *  message they will not find. */
+  function visibleErrors(): SyncErrorResponse[] {
+    return syncJobs.value.flatMap((job) =>
+      job.errors.filter((error) => currentJobForLabel(error.source) === job),
+    )
   }
 
   // The first message in full, not a count of them: the text is what names
