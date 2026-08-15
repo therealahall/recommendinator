@@ -101,11 +101,11 @@ supplied:
   stored one.
 - **`update_item_from_ui`** backs the web edit modal and `library edit`.
   "Not supplied" is spelled two ways. `status`, `rating` and `review` use the
-  `UNSET` sentinel, because for the last two `None` has to mean
-  clear. `seasons_watched`, `genres`, `tags` and `description` use `None`, so for
-  those the *empty* value is the clear: `[]` or `""`. `PATCH /api/items/{id}` can
-  clear all four. The web dialog sends `null` for an emptied description, and the
-  CLI cannot spell an empty list, so each surface reaches a different subset.
+  `UNSET` sentinel, because for the last two `None` has to mean clear.
+  `seasons_watched`, `genres`, `tags` and `description` use `None`, so there the
+  *empty* value clears: `[]` or `""`. `PATCH /api/items/{id}` can clear all four.
+  The web dialog sends `null` for an emptied description and the CLI cannot spell
+  an empty list, so each surface reaches a different subset.
 - **`set_item_ignored`** backs the Ignore buttons
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
