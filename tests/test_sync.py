@@ -1043,7 +1043,77 @@ class TestAutoEnrichmentHook:
         assert storage.mark_item_needs_enrichment.call_count == 2
         # The failure is reported, not just logged: nothing else shows the
         # operator that one item will never be enriched.
-        assert result.errors == ["Saved 'Book 1' but could not queue it for enrichment"]
+        assert result.errors == [
+            "Saved 1 item(s) but could not queue them for enrichment"
+        ]
+
+
+class TestEnrichmentQueueErrorSpamRegression:
+    """One enrichment-queue fault reported one error per item.
+
+    Reported: a 5000-item sync returned 5000 identical strings, re-served by
+    every /api/sync/status poll. Cause: the same single-row write fails for
+    every item. Fix: count them and report once per source.
+    """
+
+    def test_a_systemic_queue_fault_reports_one_error_naming_the_count(self) -> None:
+        item_count = 200
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(
+            [make_item(f"Book {number}") for number in range(item_count)]
+        )
+
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item_outcome.return_value = SavedItem(
+            db_id=1, outcome=SaveOutcome.ADDED
+        )
+        storage.mark_item_needs_enrichment.side_effect = RuntimeError("queue is down")
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert result.items_synced == item_count
+        assert result.errors == [
+            f"Saved {item_count} item(s) but could not queue them for enrichment"
+        ]
+
+    def test_the_count_names_the_items_that_saved_not_every_item(self) -> None:
+        """Would catch counting the loop rather than the queue failures.
+
+        An item whose save raised never reached the queue, so naming it here
+        would tell the operator to expect enrichment that was never skipped.
+        """
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(
+            [make_item("Saved 1"), make_item("Doomed"), make_item("Saved 2")]
+        )
+
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item_outcome.side_effect = [
+            SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
+            ValueError("db error"),
+            SavedItem(db_id=3, outcome=SaveOutcome.ADDED),
+        ]
+        storage.mark_item_needs_enrichment.side_effect = RuntimeError("queue is down")
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert result.items_synced == 2
+        assert result.errors == [
+            "Failed to process 'Doomed'",
+            "Saved 2 item(s) but could not queue them for enrichment",
+        ]
 
 
 _FORGED_TITLE = "Dune\nERROR    | src.ingestion.sync | forged"
@@ -1262,32 +1332,27 @@ class TestAnUndecodableTitleCannotAbortTheRunRegression:
     """Reported: a ROM named in invalid UTF-8 killed ``update``.
 
     Symptom: ``click.echo`` raised UnicodeEncodeError printing the warning.
-    Cause: both reported errors interpolated the raw title, lone surrogate and
-    all. Fix: they escape it, as the log sinks already did.
+    Cause: the reported error interpolated the raw title, lone surrogate and
+    all. Fix: it escapes it, as the log sinks already did.
     """
 
-    @pytest.mark.parametrize(
-        ("options", "expected"),
-        [
-            pytest.param(
-                {"enrich_error": RuntimeError("enrichment queue is down")},
-                f"Saved '{_ESCAPED_SURROGATE_TITLE}' but could not queue it"
-                " for enrichment",
-                id="the-enrichment-warning",
-            ),
-            pytest.param(
-                {"save_error": ValueError("db error")},
-                f"Failed to process '{_ESCAPED_SURROGATE_TITLE}'",
-                id="the-save-failure",
-            ),
-        ],
-    )
-    def test_the_reported_error_is_printable(
-        self, options: dict[str, Any], expected: str
-    ) -> None:
-        result = _sync_one_forged_title(title=_SURROGATE_TITLE, **options)
+    def test_the_reported_error_is_printable(self) -> None:
+        result = _sync_one_forged_title(
+            title=_SURROGATE_TITLE, save_error=ValueError("db error")
+        )
 
-        assert result.errors == [expected]
+        assert result.errors == [f"Failed to process '{_ESCAPED_SURROGATE_TITLE}'"]
+
+    def test_the_enrichment_summary_names_no_title_at_all(self) -> None:
+        """Naming one specimen title here would re-open the same crash."""
+        result = _sync_one_forged_title(
+            title=_SURROGATE_TITLE,
+            enrich_error=RuntimeError("enrichment queue is down"),
+        )
+
+        assert result.errors == [
+            "Saved 1 item(s) but could not queue them for enrichment"
+        ]
 
 
 class TestARefusedTextValueCostsOneRow:

@@ -177,12 +177,13 @@ def execute_sync(
     )
 
     # Save each item
+    enrichment_queue_failures = 0
     for index, item in enumerate(items):
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
         # Titles come from imported files and POST /api/complete, neither of
         # which restricts characters. The log sinks share one escaped copy; the
-        # reported errors escape only the surrogate ``click.echo`` dies on.
+        # reported error escapes only the surrogate ``click.echo`` dies on.
         safe_title = sanitize_for_log(item.title)
         reportable_title = escape_lone_surrogates(item.title)
         try:
@@ -215,16 +216,11 @@ def execute_sync(
                 try:
                     storage_manager.mark_item_needs_enrichment(saved.db_id)
                 except Exception as enrich_error:
+                    enrichment_queue_failures += 1
                     logger.warning(
                         "[SYNC] Failed to mark '%s' for enrichment: %s",
                         safe_title,
                         exception_for_log(enrich_error),
-                    )
-                    # Reported, not merely logged: the web reads no log file,
-                    # so the errors list is the only channel that reaches it.
-                    result.errors.append(
-                        f"Saved '{reportable_title}' but could not queue it"
-                        " for enrichment"
                     )
 
         except Exception as error:
@@ -240,6 +236,15 @@ def execute_sync(
                 exception_for_log(error),
             )
             result.errors.append(f"Failed to process '{reportable_title}'")
+
+    # Reported because the web reads no log file, and once per source because
+    # the queue write is the same row for every item: a fault that hits one
+    # hits all, and per-item errors made one sync report thousands of them.
+    if enrichment_queue_failures:
+        result.errors.append(
+            f"Saved {enrichment_queue_failures} item(s) but could not queue them"
+            " for enrichment"
+        )
 
     logger.info(
         "[SYNC] %s: Completed. %d/%d items saved (%d added, %d updated, %d unchanged).",
