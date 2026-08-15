@@ -429,8 +429,7 @@ surface is all of `src/` and `resources/`.
 
 Neither interface package imports the other, and each
 framework stays in the package it serves: `fastapi` and `starlette` only under
-`src/web/`, `click` only under `src/cli/`. `tests/test_interface_boundaries.py`
-fails on the next module that crosses either rule.
+`src/web/`, `click` only under `src/cli/`.
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `account`,

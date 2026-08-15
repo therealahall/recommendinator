@@ -139,8 +139,7 @@ for the patterns it names.
 - **No outside-the-repository paths in docs, tooling, CI, compose and build
   files, `tests/` or `.claude/`.** Not in prose, comments, docstrings, report
   strings or tests. Neither a reader nor CI can verify a path they cannot see.
-  `tests/test_repository_self_contained.py` fails with the file and line. `src/`
-  is exempt, because application code addresses the machine it runs on.
+  `src/` is exempt, because application code addresses the machine it runs on.
 - **The same guard bans the APIs that build a home-relative path**, so a
   hostile-input test can trip on its own payload. Mark that line rather than
   changing the payload. The reason is required, and the marker counts only when
