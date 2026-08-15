@@ -209,10 +209,15 @@ async function submit(): Promise<void> {
 
       <div class="add-source-field">
         <label for="add-source-plugin">Plugin</label>
+        <!-- Described by the failure list: without it the picker reads as the
+             complete set of plugins, and a missing one as unsupported. -->
         <select
           id="add-source-plugin"
           v-model="pluginName"
           :disabled="submitting"
+          :aria-describedby="
+            data.pluginImportErrors.length ? 'add-source-import-errors' : undefined
+          "
           @change="applyPluginDefaultId"
         >
           <option
@@ -231,8 +236,10 @@ async function submit(): Promise<void> {
         -->
         <ul
           v-if="data.pluginImportErrors.length"
+          id="add-source-import-errors"
           class="add-source-import-errors"
           data-testid="add-source-import-errors"
+          role="list"
         >
           <li v-for="failure in data.pluginImportErrors" :key="failure.module">
             Plugin module "{{ failure.module }}" is missing from this list

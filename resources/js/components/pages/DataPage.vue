@@ -7,6 +7,14 @@ import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
 
 const data = useDataStore()
 const showAddSourceModal = ref(false)
+const retryingSources = ref(false)
+
+async function onRetrySources(): Promise<void> {
+  if (retryingSources.value) return
+  retryingSources.value = true
+  await data.loadSyncSources()
+  retryingSources.value = false
+}
 
 onMounted(() => {
   data.loadSyncSources()
@@ -76,8 +84,14 @@ const orderedSources = computed(() => {
         parallel.
       </p>
 
-      <div v-if="data.syncLoading" class="empty-state"><span class="spinner" /> Loading sync sources...</div>
-      <div v-else-if="data.syncSourcesError" class="empty-state">
+      <div
+        v-if="data.syncLoading && !retryingSources"
+        class="empty-state"
+      ><span class="spinner" /> Loading sync sources...</div>
+      <!-- The failure branch outlives the retry it started: replacing it would
+           unmount the button holding focus and drop the user to <body>
+           (WCAG 2.4.3). -->
+      <div v-else-if="data.syncSourcesError || retryingSources" class="empty-state">
         <!-- The Retry button sits OUTSIDE the alert: alert content is announced
              as one chunk, which buries the control's affordance. -->
         <span role="alert">Couldn't load sync sources.</span>
@@ -85,8 +99,9 @@ const orderedSources = computed(() => {
           type="button"
           class="btn btn-secondary"
           data-testid="sync-sources-retry"
-          @click="data.loadSyncSources()"
-        >Retry</button>
+          :aria-disabled="retryingSources || undefined"
+          @click="onRetrySources"
+        >{{ retryingSources ? 'Retrying…' : 'Retry' }}</button>
       </div>
       <template v-else>
         <!--
@@ -102,12 +117,12 @@ const orderedSources = computed(() => {
           <p class="unusable-sources-title">
             These sources cannot run until their plugin loads:
           </p>
-          <ul class="unusable-sources-list">
+          <ul class="unusable-sources-list" role="list">
             <li v-for="source in unusableSources" :key="source.id">
               {{ source.display_name }}: plugin
               "{{ source.plugin_not_loaded?.plugin }}" is not loaded. These
               modules failed to import:
-              <ul>
+              <ul role="list">
                 <li
                   v-for="failure in source.plugin_not_loaded?.failures"
                   :key="failure.module"

@@ -134,6 +134,34 @@ describe('PreferencesPage load failure', () => {
     )
   })
 
+  // Regression: clicking Retry cleared loadError, the error branch gave way to
+  // "Loading preferences…", and the button holding focus was unmounted —
+  // dropping the keyboard user to <body> (WCAG 2.4.3).
+  it('keeps focus on Retry while the reload it started is in flight', async () => {
+    mockPreferencesGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(PreferencesPage, { attachTo: document.body })
+    await flushPromises()
+
+    let settleGet: (value: unknown) => void = () => {}
+    mockPreferencesGet.mockReturnValue(
+      new Promise((resolve) => {
+        settleGet = resolve
+      }),
+    )
+    const retry = wrapper.get('[data-testid="preferences-retry"]')
+    ;(retry.element as HTMLButtonElement).focus()
+    await retry.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(retry.text()).toBe('Retrying…')
+    expect(retry.attributes('aria-disabled')).toBe('true')
+    expect(document.activeElement).toBe(retry.element)
+
+    settleGet(PREFERENCES)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
   it('keeps the Retry button out of the alert region', async () => {
     // Alert content is announced as one chunk, so a button inside it has its
     // affordance buried in the error prose.

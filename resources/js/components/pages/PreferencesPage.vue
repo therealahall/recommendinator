@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import ThemeSelector from '@/components/organisms/ThemeSelector.vue'
 import ScoringPrefs from '@/components/organisms/ScoringPrefs.vue'
@@ -7,10 +7,18 @@ import RulesPrefs from '@/components/organisms/RulesPrefs.vue'
 import ProfilePanel from '@/components/organisms/ProfilePanel.vue'
 
 const prefs = usePreferencesStore()
+const retrying = ref(false)
 
 onMounted(() => {
   prefs.load()
 })
+
+async function onRetry(): Promise<void> {
+  if (retrying.value) return
+  retrying.value = true
+  await prefs.load()
+  retrying.value = false
+}
 </script>
 
 <template>
@@ -28,7 +36,10 @@ onMounted(() => {
     <!-- The form renders only off server values. Save PUTs every field, so a
          form built on this store's empty defaults would blank what is stored. -->
     <div v-if="!prefs.hasLoaded" class="card">
-      <div v-if="prefs.loadError" class="empty-state">
+      <!-- The failure branch outlives the retry it started: replacing it would
+           unmount the button holding focus and drop the user to <body>
+           (WCAG 2.4.3). -->
+      <div v-if="prefs.loadError || retrying" class="empty-state">
         <!-- The Retry button sits OUTSIDE the alert: alert content is announced
              as one chunk, which buries the control's affordance. -->
         <span role="alert">Couldn't load preferences.</span>
@@ -36,8 +47,9 @@ onMounted(() => {
           type="button"
           class="btn btn-secondary"
           data-testid="preferences-retry"
-          @click="prefs.load()"
-        >Retry</button>
+          :aria-disabled="retrying || undefined"
+          @click="onRetry"
+        >{{ retrying ? 'Retrying…' : 'Retry' }}</button>
       </div>
       <div v-else class="empty-state">Loading preferences...</div>
     </div>

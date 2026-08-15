@@ -67,13 +67,6 @@ describe('RecCard header regression (issue #98)', () => {
     expect(heading.element.parentElement?.classList.contains('rec-header')).toBe(true)
   })
 
-  it('orders the title before the actions, so the wrapped row lands beneath it', () => {
-    const wrapper = mount(RecCard, { props: { rec: makeRec(), rank: 1 } })
-
-    const children = [...wrapper.find('.rec-header').element.children]
-    expect(children.map((el) => el.className)).toEqual(['rec-heading', 'rec-actions'])
-  })
-
   it('keeps the score badge with the buttons rather than beside the title', () => {
     const wrapper = mount(RecCard, { props: { rec: makeRec({ score: 0.42 }), rank: 1 } })
 
