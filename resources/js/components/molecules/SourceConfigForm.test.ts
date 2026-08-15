@@ -370,6 +370,91 @@ describe('SourceConfigForm', () => {
     expect(saved![0][0]).toEqual({ tags: ['rpg', 'indie'] })
   })
 
+  describe('fields the source never stored', () => {
+    // Regression: every absent value was filled with the type's zero value, so
+    // verify_ssl read false on a source that was verifying TLS — and onSave
+    // wrote that fabrication back, storing it on the next unrelated save.
+    const verifySsl = field({
+      name: 'verify_ssl',
+      field_type: 'bool',
+      default: true,
+    })
+    const shelves = field({
+      name: 'shelves',
+      field_type: 'list',
+      default: ['read'],
+    })
+
+    it('renders an unset bool as its schema default, not as unchecked', () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: { schema: [verifySsl], values: {}, secretStatus: {} },
+      })
+
+      const input = wrapper.find('input[name="verify_ssl"]')
+      expect((input.element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('renders an unset list as its schema default chips', () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: { schema: [shelves], values: {}, secretStatus: {} },
+      })
+
+      const chips = wrapper.findAll('[data-testid="chip"]')
+      expect(chips).toHaveLength(1)
+      expect(chips[0].text()).toContain('read')
+    })
+
+    it('omits an untouched bool default when another field is saved', async () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: {
+          schema: [verifySsl, field({ name: 'url' })],
+          values: { url: 'https://old' },
+          secretStatus: {},
+        },
+      })
+
+      await wrapper.find('input[name="url"]').setValue('https://new')
+      await wrapper.find('[data-testid="form-save"]').trigger('click')
+
+      expect(wrapper.emitted('save')![0][0]).toEqual({ url: 'https://new' })
+    })
+
+    it('omits an untouched list default rather than saving it as empty', async () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: { schema: [shelves], values: {}, secretStatus: {} },
+      })
+
+      await wrapper.find('[data-testid="form-save"]').trigger('click')
+
+      expect(wrapper.emitted('save')![0][0]).toEqual({})
+    })
+
+    it('saves a stored value that happens to equal the schema default', async () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: {
+          schema: [verifySsl],
+          values: { verify_ssl: true },
+          secretStatus: {},
+        },
+      })
+
+      await wrapper.find('[data-testid="form-save"]').trigger('click')
+
+      expect(wrapper.emitted('save')![0][0]).toEqual({ verify_ssl: true })
+    })
+
+    it('saves a bool the user turned off against its default', async () => {
+      const wrapper = mount(SourceConfigForm, {
+        props: { schema: [verifySsl], values: {}, secretStatus: {} },
+      })
+
+      await wrapper.find('input[name="verify_ssl"]').setValue(false)
+      await wrapper.find('[data-testid="form-save"]').trigger('click')
+
+      expect(wrapper.emitted('save')![0][0]).toEqual({ verify_ssl: false })
+    })
+  })
+
   it('does not render the enable/disable button when enabled prop is null', () => {
     const wrapper = mount(SourceConfigForm, {
       props: {
