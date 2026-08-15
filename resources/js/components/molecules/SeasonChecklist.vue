@@ -76,6 +76,7 @@ function deselectAll() {
 <style scoped>
 .season-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
