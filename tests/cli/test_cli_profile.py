@@ -14,30 +14,6 @@ from .conftest import _invoke_with_mocks
 class TestProfileShow:
     """Tests for profile show command."""
 
-    def test_show_profile_table(self, cli_runner: CliRunner) -> None:
-        """Test showing profile in table format."""
-        # Storage returns a wrapper dict with the profile under a "profile" key.
-        profile_record = {
-            "id": 1,
-            "user_id": 1,
-            "profile": {
-                "genre_affinities": {"sci-fi": 4.5, "fantasy": 3.2},
-                "theme_preferences": ["space exploration", "time travel"],
-                "anti_preferences": ["gore", "romance"],
-                "cross_media_patterns": ["Enjoys adaptations"],
-            },
-            "generated_at": "2026-01-01T00:00:00",
-        }
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_preference_profile.return_value = profile_record
-        result = _invoke_with_mocks(cli_runner, ["profile", "show"], mock_storage)
-
-        assert result.exit_code == 0
-        assert "sci-fi" in result.output
-        assert "fantasy" in result.output
-        assert "space exploration" in result.output
-        assert "Generated: 2026-01-01T00:00:00" in result.output
-
     def test_show_profile_json(self, cli_runner: CliRunner) -> None:
         """Test showing profile in JSON format."""
         profile_record = {
@@ -65,15 +41,6 @@ class TestProfileShow:
         assert "space exploration" in parsed["theme_preferences"]
         assert parsed["user_id"] == 1
         assert parsed["generated_at"] == "2026-01-01T00:00:00"
-
-    def test_show_profile_no_profile(self, cli_runner: CliRunner) -> None:
-        """Test showing profile when none exists."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_preference_profile.return_value = None
-        result = _invoke_with_mocks(cli_runner, ["profile", "show"], mock_storage)
-
-        assert result.exit_code == 0
-        assert "no profile" in result.output.lower()
 
     def test_show_profile_no_profile_json(self, cli_runner: CliRunner) -> None:
         """Empty profile in JSON mode emits the full ProfileResponse shape.

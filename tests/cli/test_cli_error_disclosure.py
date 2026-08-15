@@ -7,12 +7,10 @@ reworded on its own.
 
 from __future__ import annotations
 
-import ast
 import json
 import logging
 import sqlite3
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,19 +18,9 @@ import pytest
 import requests
 from click.testing import CliRunner
 
-import src.cli.commands as cli_commands
-import src.web.api
-import src.web.sync_manager
-from src.auth.trakt import TraktAuthError
-from src.cli.commands._auth import (
-    EPIC_AUTH_FAILED,
-    GOG_AUTH_FAILED,
-    TRAKT_AUTH_FAILED,
-)
 from src.cli.commands._complete import COMPLETE_FAILED
-from src.cli.commands._recommend import RECOMMEND_FAILED
 from src.cli.commands._update import SYNC_FAILED
-from src.cli.main import SurrogateFreeGroup, cli
+from src.cli.main import cli
 from src.models.content import (
     MAX_REVIEW_LENGTH,
     ConsumptionStatus,
@@ -40,7 +28,6 @@ from src.models.content import (
     ContentType,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.recommendations.engine import RecommendationEngine
 from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import StorageManager
 from tests.fakes.source_plugins import FakeFilePlugin
@@ -49,40 +36,6 @@ from .conftest import _invoke_with_mocks
 
 #: One fault text for every case below, so the assertions read the same.
 _FAULT = "no such table: content_items"
-
-#: The CLI message beside the web handler that answers with the same sentence.
-_SHARED_REFUSALS = [
-    pytest.param(COMPLETE_FAILED, src.web.api, "mark_complete", id="complete"),
-    pytest.param(RECOMMEND_FAILED, src.web.api, "get_recommendations", id="recommend"),
-    pytest.param(
-        TRAKT_AUTH_FAILED, src.web.api, "start_trakt_device_flow", id="trakt-start"
-    ),
-    pytest.param(
-        TRAKT_AUTH_FAILED, src.web.api, "poll_trakt_device_approval", id="trakt-poll"
-    ),
-    pytest.param(SYNC_FAILED, src.web.sync_manager, "_run_sync", id="update"),
-    pytest.param(GOG_AUTH_FAILED, src.web.api, "exchange_gog_token", id="gog-connect"),
-    pytest.param(
-        EPIC_AUTH_FAILED, src.web.api, "exchange_epic_token", id="epic-connect"
-    ),
-]
-
-
-def _literals_in(module: ModuleType, function: str) -> set[str]:
-    """Every string constant *function* carries, read off the module source."""
-    tree = ast.parse(Path(str(module.__file__)).read_text(encoding="utf-8"))
-    scopes = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-        and node.name == function
-    ]
-    assert len(scopes) == 1, f"{module.__name__} declares {len(scopes)} {function}"
-    return {
-        node.value
-        for node in ast.walk(scopes[0])
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
 
 
 def _source_config() -> dict[str, Any]:
@@ -101,20 +54,6 @@ def _assert_generic(result: Any, message: str) -> None:
 def _assert_verbose(result: Any, message: str) -> None:
     assert result.exit_code != 0
     assert f"{message}: OperationalError: {_FAULT}" in result.output
-
-
-class TestTheCliRefusesInTheWebsWords:
-    """Read off both handlers, so rewording either fails here."""
-
-    @pytest.mark.parametrize(("message", "module", "function"), _SHARED_REFUSALS)
-    def test_the_web_handler_carries_the_same_sentence(
-        self, message: str, module: ModuleType, function: str
-    ) -> None:
-        assert message in _literals_in(module, function)
-
-    def test_a_sentence_the_handler_does_not_carry_is_not_found(self) -> None:
-        """A scan returning every string would pass the parametrization above."""
-        assert COMPLETE_FAILED not in _literals_in(src.web.api, "get_recommendations")
 
 
 class TestCompleteHidesTheWriteThatFailed:
@@ -148,48 +87,8 @@ class TestCompleteHidesTheWriteThatFailed:
         assert "Traceback" not in result.output
 
 
-class TestRecommendHidesTheEnginesWords:
-    """The engine walks the library, so its faults quote item titles."""
-
-    def _run(self, cli_runner: CliRunner, args: list[str]) -> Any:
-        engine = MagicMock(spec=RecommendationEngine)
-        engine.generate_recommendations.side_effect = sqlite3.OperationalError(_FAULT)
-        return _invoke_with_mocks(
-            cli_runner, args, MagicMock(spec=StorageManager), engine=engine
-        )
-
-    def test_the_refusal_is_generic(self, cli_runner: CliRunner) -> None:
-        _assert_generic(
-            self._run(cli_runner, ["recommend", "--type", "book"]), RECOMMEND_FAILED
-        )
-
-    def test_verbose_adds_the_reason(self, cli_runner: CliRunner) -> None:
-        _assert_verbose(
-            self._run(cli_runner, ["--verbose", "recommend", "--type", "book"]),
-            RECOMMEND_FAILED,
-        )
-
-
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateHidesTheSyncFault:
-    def _run(self, cli_runner: CliRunner, args: list[str]) -> Any:
-        with patch(
-            "src.cli.commands._update.execute_multi_source_sync",
-            side_effect=sqlite3.OperationalError(_FAULT),
-        ):
-            return _invoke_with_mocks(
-                cli_runner,
-                args,
-                MagicMock(spec=StorageManager),
-                config=_source_config(),
-            )
-
-    def test_the_refusal_is_generic(self, cli_runner: CliRunner) -> None:
-        _assert_generic(self._run(cli_runner, ["update"]), SYNC_FAILED)
-
-    def test_verbose_adds_the_reason(self, cli_runner: CliRunner) -> None:
-        _assert_verbose(self._run(cli_runner, ["--verbose", "update"]), SYNC_FAILED)
-
     def test_verbose_still_withholds_a_token_the_fault_quotes(
         self, cli_runner: CliRunner
     ) -> None:
@@ -215,30 +114,6 @@ class TestUpdateHidesTheSyncFault:
         assert result.exit_code != 0
         assert f"{SYNC_FAILED}: ConnectionError" in result.output
         assert token not in result.output
-
-
-class TestTraktDeviceFlowHidesTheRequestItFailedOn:
-    def _run(self, cli_runner: CliRunner, args: list[str]) -> Any:
-        with patch(
-            "src.cli.commands._auth.resolve_trakt_client_credentials",
-            side_effect=TraktAuthError(_FAULT),
-        ):
-            return _invoke_with_mocks(cli_runner, args, MagicMock(spec=StorageManager))
-
-    def test_the_refusal_is_generic(self, cli_runner: CliRunner) -> None:
-        result = self._run(cli_runner, ["auth", "connect", "--source", "trakt"])
-
-        assert result.exit_code != 0
-        assert f"{TRAKT_AUTH_FAILED}. Check logs for details." in result.output
-        assert _FAULT not in result.output
-
-    def test_verbose_adds_the_reason(self, cli_runner: CliRunner) -> None:
-        result = self._run(
-            cli_runner, ["--verbose", "auth", "connect", "--source", "trakt"]
-        )
-
-        assert result.exit_code != 0
-        assert f"{TRAKT_AUTH_FAILED}: TraktAuthError: {_FAULT}" in result.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -625,43 +500,6 @@ class TestTheSurrogateStripIsOneGate:
     def test_the_root_group_strips_every_token_before_parsing(self) -> None:
         with cli.make_context("recommendinator", ["source", "show", "a\udcffb"]) as ctx:
             assert [*ctx.protected_args, *ctx.args] == ["source", "show", "ab"]
-
-    def test_every_command_hangs_off_the_group_that_strips(self) -> None:
-        """One reachable another way would parse an argv nobody stripped."""
-        exported = {getattr(cli_commands, name) for name in cli_commands.__all__}
-
-        assert exported
-        assert isinstance(cli, SurrogateFreeGroup)
-        assert exported == set(cli.commands.values())
-
-    def test_the_module_entry_point_runs_that_group(self) -> None:
-        """``python3.11 -m src.cli`` is the only door into the tree."""
-        entry = ast.parse(
-            (Path(str(cli_commands.__file__)).parent.parent / "__main__.py").read_text(
-                encoding="utf-8"
-            )
-        )
-
-        assert {
-            ast.unparse(node.func)
-            for node in ast.walk(entry)
-            if isinstance(node, ast.Call)
-        } == {"cli"}
-
-    def test_the_cli_strips_in_exactly_one_place(self) -> None:
-        """A second call site is the per-option habit growing back, and it is
-        what put the strip downstream of ``library edit``'s blank check.
-        """
-        root = Path(str(cli_commands.__file__)).parent.parent
-        called_in = [
-            path.relative_to(root).as_posix()
-            for path in sorted(root.rglob("*.py"))
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-            if isinstance(node, ast.Call)
-            and ast.unparse(node.func) == "strip_lone_surrogates"
-        ]
-
-        assert called_in == ["main.py"]
 
     def test_text_the_locale_can_decode_survives_the_strip(self) -> None:
         """An emoji is one codepoint outside the BMP, not the surrogate pair

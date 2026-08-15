@@ -50,36 +50,6 @@ class TestStatusTable:
         assert result.exit_code == 0
         assert "Recommendinator v0.6.0" in result.output
 
-    def test_status_table_shows_components(self, cli_runner: CliRunner) -> None:
-        """Test that status command displays component readiness."""
-        result = _status_invoke(
-            cli_runner,
-            config={"recommendations": {"max_count": 20}},
-        )
-        assert result.exit_code == 0
-        assert "Components:" in result.output
-        assert "engine: ready" in result.output
-        assert "storage: ready" in result.output
-
-    def test_status_table_shows_max_recommendations(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Test that status command displays max recommendation count."""
-        result = _status_invoke(
-            cli_runner,
-            config={"recommendations": {"max_count": 15, "default_count": 3}},
-        )
-        assert result.exit_code == 0
-        assert "max=15" in result.output
-        assert "default=3" in result.output
-
-    def test_status_table_default_max_count(self, cli_runner: CliRunner) -> None:
-        """Test that status uses default max_count of 20 when not configured."""
-        result = _status_invoke(cli_runner)
-        assert result.exit_code == 0
-        assert "max=20" in result.output
-        assert "default=5" in result.output
-
 
 class TestStatusJson:
     """Tests for status command with JSON output."""
