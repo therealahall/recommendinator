@@ -974,7 +974,9 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item_outcome.return_value = 1
+        storage.save_content_item_outcome.return_value = SavedItem(
+            db_id=1, outcome=SaveOutcome.ADDED
+        )
 
         result = execute_sync(
             plugin=plugin,
@@ -984,6 +986,9 @@ class TestAutoEnrichmentHook:
         )
 
         assert result.items_synced == 1
+        # Anchored: a mock the save loop chokes on would satisfy the check
+        # below by crashing, since the broad handler swallows what it raised.
+        assert result.errors == []
         storage.mark_item_needs_enrichment.assert_not_called()
 
     def test_mark_for_enrichment_default_disabled(self) -> None:
@@ -994,7 +999,9 @@ class TestAutoEnrichmentHook:
         plugin.fetch.return_value = iter(items)
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_content_item_outcome.return_value = 1
+        storage.save_content_item_outcome.return_value = SavedItem(
+            db_id=1, outcome=SaveOutcome.ADDED
+        )
 
         # Don't pass mark_for_enrichment - should default to False
         result = execute_sync(
@@ -1004,6 +1011,7 @@ class TestAutoEnrichmentHook:
         )
 
         assert result.items_synced == 1
+        assert result.errors == []
         storage.mark_item_needs_enrichment.assert_not_called()
 
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
@@ -1054,6 +1062,9 @@ def _sync_one_forged_title(
     plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
 
     storage = MagicMock(spec=StorageManager)
+    storage.save_content_item_outcome.return_value = SavedItem(
+        db_id=1, outcome=SaveOutcome.ADDED
+    )
     storage.save_content_item_outcome.side_effect = save_error
     storage.mark_item_needs_enrichment.side_effect = enrich_error
 
@@ -1240,6 +1251,43 @@ class TestEveryCharacterThatEndsAnEntryIsEscapedByTheSinks:
         assert all(
             "Dune" in message for message in caplog.messages if "forged" in message
         )
+
+
+#: What ``os.fsdecode`` leaves of a ROM filename holding an undecodable byte.
+_SURROGATE_TITLE = "Metr\udcffoid"
+_ESCAPED_SURROGATE_TITLE = "Metr\\udcffoid"
+
+
+class TestAnUndecodableTitleCannotAbortTheRunRegression:
+    """Reported: a ROM named in invalid UTF-8 killed ``update``.
+
+    Symptom: ``click.echo`` raised UnicodeEncodeError printing the warning.
+    Cause: both reported errors interpolated the raw title, lone surrogate and
+    all. Fix: they escape it, as the log sinks already did.
+    """
+
+    @pytest.mark.parametrize(
+        ("options", "expected"),
+        [
+            pytest.param(
+                {"enrich_error": RuntimeError("enrichment queue is down")},
+                f"Saved '{_ESCAPED_SURROGATE_TITLE}' but could not queue it"
+                " for enrichment",
+                id="the-enrichment-warning",
+            ),
+            pytest.param(
+                {"save_error": ValueError("db error")},
+                f"Failed to process '{_ESCAPED_SURROGATE_TITLE}'",
+                id="the-save-failure",
+            ),
+        ],
+    )
+    def test_the_reported_error_is_printable(
+        self, options: dict[str, Any], expected: str
+    ) -> None:
+        result = _sync_one_forged_title(title=_SURROGATE_TITLE, **options)
+
+        assert result.errors == [expected]
 
 
 class TestARefusedTextValueCostsOneRow:

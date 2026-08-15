@@ -181,6 +181,179 @@ describe('useDataStore', () => {
     expect(store.isSourceIdSyncing('all')).toBe(true)
   })
 
+  describe('umbrella run membership', () => {
+    /**
+     * Symptom: a second Sync click duplicated a source the umbrella run had
+     * not reached. Root cause: membership came from progress slots, created
+     * only once a source starts, and one worker runs them in sequence.
+     * Fix: record what /update resolved.
+     */
+    function umbrellaRunning(slots: string[]) {
+      return {
+        status: 'running',
+        jobs: [
+          {
+            source: 'All Sources',
+            status: 'running',
+            items_processed: 3,
+            total_items: null,
+            errors: [],
+            sources: ranSources(...slots),
+          },
+        ],
+      }
+    }
+
+    it('marks a resolved source syncing before the run reaches it', async () => {
+      mockPost.mockResolvedValue({
+        message: 'Sync started for All Sources',
+        sources: ['steam', 'goodreads'],
+      })
+      mockGet.mockResolvedValue(umbrellaRunning(['Steam']))
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), goodreadsSource()] })
+      await store.triggerSync('all')
+      await store.checkSyncStatus()
+
+      expect(store.isSourceIdSyncing('steam')).toBe(true)
+      expect(store.isSourceIdSyncing('goodreads')).toBe(true)
+
+      store.cleanup()
+    })
+
+    it('leaves out a source the run resolved without', async () => {
+      mockPost.mockResolvedValue({
+        message: 'Sync started for All Sources',
+        sources: ['steam'],
+      })
+      mockGet.mockResolvedValue(umbrellaRunning(['Steam']))
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), goodreadsSource()] })
+      await store.triggerSync('all')
+      await store.checkSyncStatus()
+
+      // Enabling Goodreads mid-run cannot join a run that started without it.
+      expect(store.isSourceIdSyncing('goodreads')).toBe(false)
+
+      store.cleanup()
+    })
+
+    it('holds every enabled row while the trigger is still in flight', async () => {
+      // Before the response there is nothing to tell an enabled source apart
+      // from one the run will include. A disabled one it will never include.
+      mockPost.mockResolvedValue({ message: 'Sync started for All Sources' })
+
+      const store = useDataStore()
+      store.$patch({
+        syncSources: [steamSource(), { ...goodreadsSource(), enabled: false }],
+      })
+      await store.triggerSync('all')
+
+      expect(store.isSourceIdSyncing('steam')).toBe(true)
+      expect(store.isSourceIdSyncing('goodreads')).toBe(false)
+
+      store.cleanup()
+    })
+
+    it('reads membership off the progress slots for a run it did not start', async () => {
+      // A reload mid-run leaves the store with no resolved list at all.
+      mockGet.mockResolvedValue(umbrellaRunning(['Steam']))
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), goodreadsSource()] })
+      await store.checkSyncStatus()
+
+      expect(store.isSourceIdSyncing('steam')).toBe(true)
+      expect(store.isSourceIdSyncing('goodreads')).toBe(false)
+
+      store.cleanup()
+    })
+
+    function umbrellaFinished(slots: string[]) {
+      return {
+        status: 'completed',
+        jobs: [
+          {
+            source: 'All Sources',
+            status: 'completed',
+            items_processed: 3,
+            total_items: 3,
+            items_added: 3,
+            items_updated: 0,
+            items_unchanged: 0,
+            errors: [],
+            sources: ranSources(...slots),
+          },
+        ],
+      }
+    }
+
+    function answerPaths(status: unknown) {
+      mockGet.mockImplementation((path: string) => {
+        if (path === '/sync/status') return Promise.resolve(status)
+        return Promise.resolve({ running: false, completed: false })
+      })
+    }
+
+    it('releases every row once the run it recorded has finished', async () => {
+      // The resolved list is never emptied, so the running check is the only
+      // thing standing between it and a Sync button dead until a reload.
+      mockPost.mockResolvedValue({
+        message: 'Sync started for All Sources',
+        sources: ['steam', 'goodreads'],
+      })
+      answerPaths(umbrellaRunning(['Steam']))
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), goodreadsSource()] })
+      await store.triggerSync('all')
+      await store.checkSyncStatus()
+      expect(store.isSourceIdSyncing('goodreads')).toBe(true)
+
+      answerPaths(umbrellaFinished(['Steam', 'Goodreads']))
+      await store.checkSyncStatus()
+
+      expect(store.syncStatus).toBe('completed')
+      expect(store.isSourceIdSyncing('steam')).toBe(false)
+      expect(store.isSourceIdSyncing('goodreads')).toBe(false)
+
+      store.cleanup()
+    })
+
+    it('replaces the previous run\'s membership rather than adding to it', async () => {
+      // Goodreads was disabled between the two runs, so run two resolved
+      // without it — unioning the lists would lock a row nothing is syncing.
+      mockPost.mockResolvedValue({
+        message: 'Sync started for All Sources',
+        sources: ['steam', 'goodreads'],
+      })
+      answerPaths(umbrellaFinished(['Steam', 'Goodreads']))
+
+      const store = useDataStore()
+      store.$patch({ syncSources: [steamSource(), goodreadsSource()] })
+      await store.triggerSync('all')
+      await store.checkSyncStatus()
+
+      mockPost.mockResolvedValue({
+        message: 'Sync started for All Sources',
+        sources: ['steam'],
+      })
+      answerPaths(umbrellaRunning([]))
+      store.$patch({
+        syncSources: [steamSource(), { ...goodreadsSource(), enabled: false }],
+      })
+      await store.triggerSync('all')
+      await store.checkSyncStatus()
+
+      expect(store.isSourceIdSyncing('steam')).toBe(true)
+      expect(store.isSourceIdSyncing('goodreads')).toBe(false)
+
+      store.cleanup()
+    })
+  })
+
   it('checkSyncStatus drops the optimistic trigger once the server ack\'s the job', async () => {
     // Plant an optimistic trigger via triggerSync, then poll status and
     // observe the trigger is cleared because the server now reports the

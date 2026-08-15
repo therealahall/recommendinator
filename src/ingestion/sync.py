@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING, Any
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
 from src.storage.manager import SaveOutcome
-from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
+from src.utils.text import (
+    escape_lone_surrogates,
+    exception_for_log,
+    humanize_source_id,
+    sanitize_for_log,
+)
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -176,9 +181,10 @@ def execute_sync(
         item_num = index + 1
         content_type = get_enum_value(item.content_type)
         # Titles come from imported files and POST /api/complete, neither of
-        # which restricts characters, so all five sinks below share one
-        # escaped copy.
+        # which restricts characters. The log sinks share one escaped copy; the
+        # reported errors escape only the surrogate ``click.echo`` dies on.
         safe_title = sanitize_for_log(item.title)
+        reportable_title = escape_lone_surrogates(item.title)
         try:
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
@@ -217,7 +223,8 @@ def execute_sync(
                     # Reported, not merely logged: the web reads no log file,
                     # so the errors list is the only channel that reaches it.
                     result.errors.append(
-                        f"Saved '{item.title}' but could not queue it for enrichment"
+                        f"Saved '{reportable_title}' but could not queue it"
+                        " for enrichment"
                     )
 
         except Exception as error:
@@ -232,7 +239,7 @@ def execute_sync(
                 safe_title,
                 exception_for_log(error),
             )
-            result.errors.append(f"Failed to process '{item.title}'")
+            result.errors.append(f"Failed to process '{reportable_title}'")
 
     logger.info(
         "[SYNC] %s: Completed. %d/%d items saved (%d added, %d updated, %d unchanged).",

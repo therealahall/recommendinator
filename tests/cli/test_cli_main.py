@@ -279,10 +279,13 @@ class TestUpdateDbOnlySourceRegression:
         assert "enabled" in result.output
 
 
-def _run_rom_update(storage: StorageManager, root: Path) -> Any:
+def _run_rom_update(
+    storage: StorageManager, root: Path, auto_enrich: bool = False
+) -> Any:
     """``update --source roms`` over *root*, against a real storage manager."""
     config: dict[str, Any] = {
-        "inputs": {"roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}}
+        "inputs": {"roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}},
+        "enrichment": {"enabled": auto_enrich, "auto_enrich_on_sync": auto_enrich},
     }
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -381,6 +384,39 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
             ]
         assert titles != [""], "the ROM landed with no title at all"
         assert len(titles) == 1, titles
+
+
+class TestAWarningNamingAnUndecodableRomRegression:
+    """Reported: the run died reporting the ROM it had just saved.
+
+    Symptom: UnicodeEncodeError from ``click.echo``. Cause: the sync reported
+    the raw title, lone surrogate and all. Fix: it escapes what it reports,
+    as its log sinks already did.
+    """
+
+    def test_the_warning_prints_and_the_sync_still_finishes(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        root = tmp_path / "roms"
+        root.mkdir()
+        (root / os.fsdecode(b"Metr\xffoid (USA).zip")).write_bytes(b"rom")
+
+        with patch.object(
+            storage,
+            "mark_item_needs_enrichment",
+            side_effect=RuntimeError("enrichment queue is down"),
+        ):
+            result = _run_rom_update(storage, root, auto_enrich=True)
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Warning: Saved 'Metr\\udcffoid' but could not queue it for enrichment"
+            in result.output
+        )
+        assert "Total: 1 of 1 items saved (1 added, 0 updated, 0 unchanged)." in (
+            result.output
+        )
 
 
 class TestASecondRomScanReportsNothingChangedRegression:
