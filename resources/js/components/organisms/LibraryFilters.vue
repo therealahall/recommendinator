@@ -187,7 +187,16 @@ onUnmounted(() => {
   .lib-filter-row,
   .lib-actions-row {
     width: 100%;
+    flex-wrap: wrap;
     gap: var(--space-2);
+  }
+
+  /* A select cannot shrink past its widest option ("All Statuses") plus
+     .toolbar-select's arrow padding, so three of them widened the page itself.
+     An explicit basis puts two on a row and lets the third fill the next. */
+  .lib-filter-row .toolbar-select {
+    flex: 1 1 calc(50% - var(--space-2));
+    min-width: 0;
   }
 
   .lib-type-select {

@@ -1378,6 +1378,10 @@ input[type="checkbox"] {
   align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-2);
+  /* Clears the .library-item-actions divider, whose own margin-top:auto
+     resolves to zero on a content-height card. Equal to
+     .library-meta-secondary's, which supplied that gap only when rated. */
+  margin-bottom: var(--space-1);
 }
 
 .library-meta .badge {
@@ -1393,7 +1397,6 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-1);
   margin-bottom: var(--space-1);
 }
 
@@ -1715,6 +1718,24 @@ input[type="checkbox"] {
 
   .slider-row input[type="range"] {
     flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
+/* 640px, not 768px: the controls above these cards (RecControls) already
+   restack there, so the whole recommendations page turns over at one width. */
+@media (max-width: 640px) {
+  .rec-header {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .rec-heading {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .rec-actions {
     width: 100%;
   }
 }

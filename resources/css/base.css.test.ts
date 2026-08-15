@@ -19,6 +19,30 @@ function readBase(): string {
   return readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
 }
 
+// Requiring `{` immediately after the selector keeps a lookup for
+// `.library-meta` off `.library-meta-secondary` and off `.library-meta .badge`.
+function ruleBlock(source: string, selector: string): string {
+  const escaped = selector.replace(/\./g, '\\.')
+  const match = source.match(new RegExp(`(?:^|[\\s}])${escaped}\\s*\\{([^}]*)\\}`))
+  if (!match) throw new Error(`${selector} rule not found`)
+  return match[1]
+}
+
+function declaration(block: string, property: string): string {
+  // Strip comments first: prose in this file names the properties it explains.
+  const match = block
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .match(new RegExp(`(?<![-\\w])${property}:\\s*([^;]+);`))
+  if (!match) throw new Error(`${property} not declared`)
+  return match[1].trim()
+}
+
+function mediaBlock(source: string, maxWidth: string): string {
+  const match = source.match(new RegExp(`@media \\(max-width: ${maxWidth}\\) \\{([\\s\\S]*?)\\n\\}`))
+  if (!match) throw new Error(`${maxWidth} media block not found in base.css`)
+  return match[1]
+}
+
 describe('inactive button styling', () => {
   // Regression: the project had NO `.btn:disabled` rule at all. `.btn` sets a
   // solid background and `cursor: pointer`, so every button locked during a
@@ -128,5 +152,56 @@ describe('.sr-only utility', () => {
     const block = srOnlyBlock(source)
     expect(block).toMatch(/-webkit-user-select:\s*none/)
     expect(block).toMatch(/(?<!-)user-select:\s*none/)
+  })
+})
+
+describe('library card divider (issue #108)', () => {
+  /**
+   * Bug: on a one-column mobile grid the divider above the buttons touched the
+   * badges, but looked right whenever the card was rated. Root cause:
+   * margin-top:auto is zero on a content-height card. Fix: margin on the pills.
+   */
+  it('spaces the badges off the divider whether or not the card is rated', () => {
+    const source = readBase()
+    const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
+
+    expect(gap).not.toBe('0')
+    expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
+  })
+
+  it('leaves the rated card one margin between the two meta rows', () => {
+    // Flex-item margins do not collapse. Restoring the secondary row's
+    // margin-top — it reads as an accidental deletion — doubles the gap on
+    // every rated card, at every width.
+    expect(ruleBlock(readBase(), '.library-meta-secondary')).not.toMatch(/margin-top:/)
+  })
+
+  it('still pins the divider to the bottom of a stretched desktop card', () => {
+    const actions = ruleBlock(readBase(), '.library-item-actions')
+
+    expect(declaration(actions, 'margin-top')).toBe('auto')
+  })
+})
+
+describe('recommendation card header (issue #98)', () => {
+  /**
+   * Bug: at 375px the score badge and buttons squeezed the title. Root cause:
+   * .rec-header is a no-wrap row and the title wrapper had no class to hang a
+   * basis on. Fix: wrap the header below 640px.
+   */
+  it('gives the title the whole row and drops the actions beneath it', () => {
+    const block = mediaBlock(readBase(), '640px')
+
+    expect(declaration(ruleBlock(block, '.rec-header'), 'flex-wrap')).toBe('wrap')
+    expect(declaration(ruleBlock(block, '.rec-heading'), 'flex')).toBe('1 1 100%')
+    expect(declaration(ruleBlock(block, '.rec-heading'), 'min-width')).toBe('0')
+    expect(declaration(ruleBlock(block, '.rec-actions'), 'width')).toBe('100%')
+  })
+
+  it('leaves the desktop header one unwrapped row', () => {
+    const header = ruleBlock(readBase(), '.rec-header')
+
+    expect(header).not.toMatch(/flex-wrap/)
+    expect(declaration(header, 'justify-content')).toBe('space-between')
   })
 })
