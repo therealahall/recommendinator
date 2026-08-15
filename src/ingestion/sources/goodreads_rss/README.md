@@ -8,8 +8,8 @@ network.
 - `book`
 
 ## Requirements
-- A **public** Goodreads profile. If your profile is private, Goodreads returns
-  an empty feed and nothing is imported.
+- A **public** Goodreads profile. If Goodreads answers with its sign-in page
+  instead of the feed, the sync fails saying the shelves are not public.
 - Your Goodreads numeric user ID (see below). No API key or login is needed.
 
 ## Configuration
@@ -57,6 +57,9 @@ your user ID. You can paste either the bare number or the whole URL into
 - Requests identify themselves as `Recommendinator/<version>`. Goodreads sits
   behind Amazon's edge, which answers the default `python-requests` user agent
   with `HTTP 403` on every shelf.
+- The feed comes from `/review/list_rss/<id>`, the only shelf feed Goodreads
+  still serves to a signed-out client. The `/review/list/<id>.rss` path
+  redirects to the sign-in page even for a public profile.
 
 ## Development
 - Implementation: [`goodreads_rss.py`](goodreads_rss.py)
