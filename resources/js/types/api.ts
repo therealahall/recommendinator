@@ -228,6 +228,12 @@ export interface SyncStatusResponse {
   jobs: SyncJobResponse[]
 }
 
+export interface UpdateResponse {
+  message: string
+  /** The source ids the run resolved to. Absent when none were enabled. */
+  sources?: string[]
+}
+
 // --- Enrichment ---
 
 export interface EnrichmentJobStatusResponse {

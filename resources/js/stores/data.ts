@@ -20,6 +20,7 @@ import type {
   OAuthStatusResponse,
   TraktDeviceFlowResponse,
   TraktPollResponse,
+  UpdateResponse,
 } from '@/types/api'
 
 const ALL_SOURCES_LABEL = 'All Sources'
@@ -59,6 +60,10 @@ export const useDataStore = defineStore('data', () => {
   // triggerSync so the per-accordion Sync button switches to "Syncing…"
   // without waiting for the next /sync/status poll.
   const optimisticTriggers = ref<Set<string>>(new Set())
+  // Source ids POST /update resolved for the umbrella run. With one worker the
+  // run is sequential, so a source it has not reached yet carries no progress
+  // slot and nothing else would know it is spoken for.
+  const umbrellaSourceIds = ref<Set<string>>(new Set())
 
   // Map of currently RUNNING jobs by source label, derived from /sync/status.
   const jobsByLabel = computed<Record<string, SyncJobResponse>>(() => {
@@ -107,9 +112,19 @@ export const useDataStore = defineStore('data', () => {
 
   function isSourceIdSyncing(sourceId: string): boolean {
     if (sourceId === 'all') return isLabelRunning(ALL_SOURCES_LABEL)
-    const display = syncSources.value.find((s) => s.id === sourceId)?.display_name
-    if (!display) return false
-    return isLabelRunning(display) || umbrellaJobFor(display)?.status === 'running'
+    const source = syncSources.value.find((s) => s.id === sourceId)
+    if (!source) return false
+    const display = source.display_name
+    if (isLabelRunning(display)) return true
+    // Until the trigger resolves the run's members are unknown, and every
+    // source it can resolve to is an enabled one.
+    if (optimisticTriggers.value.has(ALL_SOURCES_LABEL)) return source.enabled
+    if (jobForLabel(ALL_SOURCES_LABEL)?.status !== 'running') return false
+    // The progress slot is the fallback for a store that did not start the run
+    // — a reload mid-run has no resolved list to answer from.
+    return (
+      umbrellaSourceIds.value.has(sourceId) || umbrellaJobFor(display) !== null
+    )
   }
 
   // Auth state, per source id — a token belongs to the source it was obtained
@@ -172,9 +187,12 @@ export const useDataStore = defineStore('data', () => {
     syncStatus.value = 'running'
     optimisticTriggers.value = new Set([...optimisticTriggers.value, label])
     try {
-      const data = await api.post<{ message: string }>('/update', {
+      const data = await api.post<UpdateResponse>('/update', {
         source: sourceId,
       })
+      if (sourceId === 'all') {
+        umbrellaSourceIds.value = new Set(data.sources ?? [])
+      }
       syncMessage.value = data.message
       startSyncPolling()
     } catch (err) {
