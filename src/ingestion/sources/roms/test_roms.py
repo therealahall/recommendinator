@@ -916,3 +916,49 @@ class TestRomScannerLogInjectionRegression:
             "Skipping duplicate title" in message for message in messages
         ), messages
         assert all("\n" not in message for message in messages), messages
+
+
+class TestRomScannerUndecodableNameRegression:
+    """Regression: one undecodable ROM name failed the whole scan.
+
+    Symptom: UnicodeEncodeError, nothing imported. Cause: ``_entry_id`` encoded
+    the lone surrogate ``iterdir`` returns strictly. Fix: ``backslashreplace``,
+    which also keeps two such names distinct.
+    """
+
+    def test_an_undecodable_name_is_imported_beside_its_neighbours(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """The byte is written to disk, not spelled as a surrogate in the item.
+
+        A scan that decoded names any other way would never see one.
+        """
+        root = tmp_path / "snes"
+        root.mkdir()
+        (root / os.fsdecode(b"Metr\xffoid (USA).zip")).write_bytes(b"rom")
+        (root / "Chrono Trigger.zip").write_bytes(b"rom")
+        (root / "Super Mario World.zip").write_bytes(b"rom")
+        assert b"Metr\xffoid (USA).zip" in os.listdir(os.fsencode(root))
+
+        items = list(plugin.fetch({"paths": [str(root)]}))
+
+        assert {item.title for item in items} == {
+            os.fsdecode(b"Metr\xffoid"),
+            "Chrono Trigger",
+            "Super Mario World",
+        }
+
+    def test_two_names_differing_only_in_that_byte_keep_distinct_ids(
+        self, plugin: RomScannerPlugin, tmp_path: Path
+    ) -> None:
+        """Stripping the surrogate instead of escaping it would give both one
+        id, and the second ROM would then upsert onto the first."""
+        root = tmp_path / "snes"
+        root.mkdir()
+        (root / os.fsdecode(b"Zelda\xfe.zip")).write_bytes(b"rom")
+        (root / os.fsdecode(b"Zelda\xff.zip")).write_bytes(b"rom")
+
+        items = list(plugin.fetch({"paths": [str(root)]}))
+
+        assert len(items) == 2
+        assert len({item.id for item in items}) == 2

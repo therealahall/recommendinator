@@ -8366,3 +8366,50 @@ class TestUndeclaredContentTypeReadRegression:
         assert item is not None
         assert item.author == "The Wachowskis"
         assert item.metadata["genres"] == ["Science Fiction"]
+
+
+class TestSurrogateBoundToSqliteRegression:
+    """A lone surrogate in an item failed its save at the bind.
+
+    Symptom: an undecodable ROM filename raised UnicodeEncodeError on save.
+    Cause: the sync door bound the item's text as handed over. Fix:
+    ``_surrogate_free`` at that door.
+    """
+
+    def test_no_column_the_sync_door_writes_keeps_a_lone_surrogate(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A book, so a strip added to the roms plugin would leave this red.
+
+        ``\\udcff`` is what ``surrogateescape`` returns for the byte 0xFF.
+        """
+        item = ContentItem(
+            id="book:\udcff",
+            title="Cand\udcffide",
+            author="Volt\udcffaire",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={
+                "publisher": "Cram\udcffer",
+                "path": "/books/Cand\udcffide.epub",
+            },
+        )
+
+        db_id = temp_db.save_content_item(item)
+
+        with temp_db.connection() as conn:
+            row = conn.execute(
+                "SELECT external_id, title FROM content_items WHERE id = ?",
+                (db_id,),
+            ).fetchone()
+            detail = conn.execute(
+                "SELECT author, publisher, metadata FROM book_details"
+                " WHERE content_item_id = ?",
+                (db_id,),
+            ).fetchone()
+
+        assert row["external_id"] == "book:\\udcff"
+        assert row["title"] == "Cand\\udcffide"
+        assert detail["author"] == "Volt\\udcffaire"
+        assert detail["publisher"] == "Cram\\udcffer"
+        assert json.loads(detail["metadata"])["path"] == "/books/Cand\\udcffide.epub"

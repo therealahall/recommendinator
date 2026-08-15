@@ -189,8 +189,15 @@ def _matches_any_glob(name: str, patterns: list[str]) -> bool:
 
 
 def _entry_id(absolute_path: Path) -> str:
-    """Build a stable, unique ContentItem ID from an absolute path."""
-    digest = hashlib.sha256(str(absolute_path).encode("utf-8")).hexdigest()
+    """Build a stable, unique ContentItem ID from an absolute path.
+
+    ``backslashreplace`` because a strict encode raises on the lone surrogate
+    ``iterdir`` returns for an undecodable name, and a strip would give two
+    ROMs differing only in those bytes one id.
+    """
+    digest = hashlib.sha256(
+        str(absolute_path).encode("utf-8", errors="backslashreplace")
+    ).hexdigest()
     return f"rom:{digest[:16]}"
 
 

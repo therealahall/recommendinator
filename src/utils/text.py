@@ -112,3 +112,13 @@ def strip_lone_surrogates(raw: str) -> str:
     SQLite and ``click.echo`` both raise on one. Line breaks stay: they encode.
     """
     return _LONE_SURROGATE_RE.sub("", raw)
+
+
+def escape_lone_surrogates(raw: str) -> str:
+    """Spell out the same bytes instead of dropping them.
+
+    A filename of nothing but undecodable bytes strips to an empty, unfindable
+    title, and two differing only in those bytes strip to one row. Same escape
+    as :func:`sanitize_for_log`.
+    """
+    return _LONE_SURROGATE_RE.sub(_log_escape, raw)

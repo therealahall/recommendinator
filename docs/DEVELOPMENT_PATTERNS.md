@@ -131,7 +131,11 @@ for the patterns it names.
 - **Never sanitize an argv value at a call site.** `SurrogateFreeGroup` in
   `src/cli/main.py` strips lone surrogates from every token before Click binds
   it, so a per-option `strip_lone_surrogates` is dead weight — and the option
-  added next week would be the one nobody remembered to guard.
+  added next week would be the one nobody remembered to guard. Same for a
+  plugin's items: `_upsert_content_item` escapes them before any bind, so a
+  per-plugin guard is dead weight for the same reason. It escapes rather than
+  strips because a name made only of undecodable bytes would otherwise store a
+  blank, unfindable title.
 - **No outside-the-repository paths in docs, tooling, CI, compose and build
   files, `tests/` or `.claude/`.** Not in prose, comments, docstrings, report
   strings or tests. Neither a reader nor CI can verify a path they cannot see.
