@@ -505,6 +505,49 @@ describe('useDataStore', () => {
     expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
+  // Regression: the summary summed every job the store held, and SyncManager
+  // retains terminal jobs across runs — so syncing Steam and then Roms showed
+  // both runs' counts added together, hiding which one the banner reported.
+  it('checkSyncStatus counts the newest run alone, not the retained history', async () => {
+    mockGet.mockResolvedValue({
+      status: 'idle',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'completed',
+          started_at: '2026-08-13T10:00:00',
+          items_processed: 42,
+          total_items: 42,
+          items_added: 2,
+          items_updated: 0,
+          items_unchanged: 40,
+          errors: [],
+          sources: [],
+        },
+        {
+          source: 'Roms',
+          status: 'completed',
+          started_at: '2026-08-13T10:05:00',
+          items_processed: 7,
+          total_items: 7,
+          items_added: 1,
+          items_updated: 3,
+          items_unchanged: 3,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncStatus).toBe('completed')
+    expect(store.syncMessage).toBe(
+      'Completed: 7 of 7 items saved (1 added, 3 updated, 3 unchanged)',
+    )
+  })
+
   it('checkSyncStatus starts enrichment polling when a completed sync auto-triggered enrichment', async () => {
     // Reported in #59: after a sync that auto-triggers enrichment
     // (enrichment.auto_enrich_on_sync), the data view did not reflect that
@@ -641,6 +684,7 @@ describe('useDataStore', () => {
         {
           source: 'All Sources',
           status: 'completed',
+          started_at: '2026-08-13T10:05:00',
           items_processed: 90,
           total_items: 90,
           items_added: 90,
@@ -655,6 +699,7 @@ describe('useDataStore', () => {
         {
           source: 'Goodreads',
           status: 'completed',
+          started_at: '2026-08-13T10:00:00',
           items_processed: 10,
           total_items: 10,
           items_added: 10,
@@ -669,7 +714,9 @@ describe('useDataStore', () => {
     const store = useDataStore()
     await store.checkSyncStatus()
 
-    expect(store.syncMessage).toContain('100 of 100 items saved')
+    // The counts are the umbrella run's own; the errors outlive it, until the
+    // source they name is re-synced past.
+    expect(store.syncMessage).toContain('90 of 90 items saved')
     expect(store.syncMessage).toContain('Sonarr: Set verify_ssl to false')
     expect(store.syncMessage).toContain('(+2 more)')
   })
