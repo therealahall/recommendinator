@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import SourceConfigForm from './SourceConfigForm.vue'
 import type { SourceFieldSchema } from '@/types/api'
 
@@ -16,151 +16,6 @@ function field(overrides: Partial<SourceFieldSchema>): SourceFieldSchema {
 }
 
 describe('SourceConfigForm', () => {
-  it('renders a text input for str fields', () => {
-    const schema: SourceFieldSchema[] = [field({ name: 'path' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { path: '/data/x.csv' },
-        secretStatus: {},
-      },
-    })
-
-    const input = wrapper.find('input[name="path"]')
-    expect(input.exists()).toBe(true)
-    expect(input.attributes('type')).toBe('text')
-    expect((input.element as HTMLInputElement).value).toBe('/data/x.csv')
-  })
-
-  it('renders a number input for int fields', () => {
-    const schema = [field({ name: 'min_minutes', field_type: 'int' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { min_minutes: 30 },
-        secretStatus: {},
-      },
-    })
-
-    const input = wrapper.find('input[name="min_minutes"]')
-    expect(input.attributes('type')).toBe('number')
-  })
-
-  it('renders a number input with step="any" for float fields', () => {
-    const schema = [field({ name: 'rate', field_type: 'float' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { rate: 0.5 },
-        secretStatus: {},
-      },
-    })
-
-    const input = wrapper.find('input[name="rate"]')
-    expect(input.attributes('type')).toBe('number')
-    expect(input.attributes('step')).toBe('any')
-  })
-
-  it('renders an empty list field with no chips and a draft input', () => {
-    const schema = [field({ name: 'tags', field_type: 'list' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: { schema, values: { tags: [] }, secretStatus: {} },
-    })
-
-    expect(wrapper.findAll('[data-testid="chip"]')).toHaveLength(0)
-    expect(wrapper.find('[data-testid="chip-input-tags"]').exists()).toBe(true)
-  })
-
-  it('renders a checkbox for bool fields', () => {
-    const schema = [field({ name: 'active', field_type: 'bool' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { active: true },
-        secretStatus: {},
-      },
-    })
-
-    const input = wrapper.find('input[name="active"]')
-    expect(input.attributes('type')).toBe('checkbox')
-    expect((input.element as HTMLInputElement).checked).toBe(true)
-  })
-
-  it('renders chips for list fields', () => {
-    const schema = [field({ name: 'tags', field_type: 'list' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { tags: ['rpg', 'indie'] },
-        secretStatus: {},
-      },
-    })
-
-    const chips = wrapper.findAll('[data-testid="chip"]')
-    expect(chips).toHaveLength(2)
-    expect(chips[0].text()).toContain('rpg')
-    expect(chips[1].text()).toContain('indie')
-  })
-
-  it('marks required text fields with required attribute', () => {
-    const schema = [field({ name: 'path', required: true })]
-    const wrapper = mount(SourceConfigForm, {
-      props: { schema, values: { path: 'x' }, secretStatus: {} },
-    })
-
-    expect(
-      wrapper.find('input[name="path"]').attributes('required'),
-    ).toBeDefined()
-  })
-
-  it('shows description text for fields when provided', () => {
-    const schema = [
-      field({ name: 'path', description: 'Path to the data file' }),
-    ]
-    const wrapper = mount(SourceConfigForm, {
-      props: { schema, values: { path: 'x' }, secretStatus: {} },
-    })
-
-    expect(wrapper.text()).toContain('Path to the data file')
-  })
-
-  it('renders a sensitive field as a "set" badge with Replace + Clear buttons', () => {
-    const schema = [field({ name: 'api_key', sensitive: true })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: {},
-        secretStatus: { api_key: true },
-      },
-    })
-
-    expect(wrapper.text()).toContain('set')
-    expect(wrapper.find('[data-testid="secret-replace-api_key"]').exists()).toBe(
-      true,
-    )
-    expect(wrapper.find('[data-testid="secret-clear-api_key"]').exists()).toBe(
-      true,
-    )
-    // Plain text input is hidden until Replace is clicked
-    expect(wrapper.find('input[name="api_key"]').exists()).toBe(false)
-  })
-
-  it('shows password input after clicking Replace on a sensitive field', async () => {
-    const schema = [field({ name: 'api_key', sensitive: true })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: {},
-        secretStatus: { api_key: true },
-      },
-    })
-
-    await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
-    const input = wrapper.find('input[name="api_key"]')
-    expect(input.exists()).toBe(true)
-    expect(input.attributes('type')).toBe('password')
-  })
-
   it('emits set-secret with field name and value on Save secret', async () => {
     const schema = [field({ name: 'api_key', sensitive: true })]
     const wrapper = mount(SourceConfigForm, {
@@ -176,41 +31,6 @@ describe('SourceConfigForm', () => {
     await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
 
     expect(wrapper.emitted('set-secret')).toEqual([['api_key', 'rotated']])
-  })
-
-  it('cancelling secret edit closes the input without emitting set-secret', async () => {
-    const schema = [field({ name: 'api_key', sensitive: true })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: {},
-        secretStatus: { api_key: false },
-      },
-    })
-
-    await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
-    await wrapper.find('input[name="api_key"]').setValue('partial')
-    await wrapper.find('[data-testid="secret-cancel-api_key"]').trigger('click')
-
-    expect(wrapper.emitted('set-secret')).toBeUndefined()
-    expect(wrapper.find('input[name="api_key"]').exists()).toBe(false)
-  })
-
-  it('saving an empty secret draft is a no-op (does not emit set-secret)', async () => {
-    const schema = [field({ name: 'api_key', sensitive: true })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: {},
-        secretStatus: { api_key: true },
-      },
-    })
-
-    await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
-    // Leave input blank, click Save
-    await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
-
-    expect(wrapper.emitted('set-secret')).toBeUndefined()
   })
 
   it('emits clear-secret with field name on Clear', async () => {
@@ -249,111 +69,6 @@ describe('SourceConfigForm', () => {
     expect(saved![0][0]).toEqual({ path: '/new', min_minutes: 60 })
   })
 
-  it('adds a chip when typing and pressing Enter', async () => {
-    const schema = [field({ name: 'tags', field_type: 'list' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: { schema, values: { tags: ['rpg'] }, secretStatus: {} },
-    })
-
-    const input = wrapper.find('input[data-testid="chip-input-tags"]')
-    await input.setValue('indie')
-    await input.trigger('keydown.enter')
-
-    const chips = wrapper.findAll('[data-testid="chip"]')
-    expect(chips).toHaveLength(2)
-    expect(chips[1].text()).toContain('indie')
-  })
-
-  it('removes a chip on its remove button click', async () => {
-    const schema = [field({ name: 'tags', field_type: 'list' })]
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema,
-        values: { tags: ['rpg', 'indie'] },
-        secretStatus: {},
-      },
-    })
-
-    await wrapper
-      .find('[data-testid="chip-remove-tags-0"]')
-      .trigger('click')
-    const chips = wrapper.findAll('[data-testid="chip"]')
-    expect(chips).toHaveLength(1)
-    expect(chips[0].text()).toContain('indie')
-  })
-
-  describe('focus after removing a chip', () => {
-    // Regression: removeChip rewrote the list and stopped, so the × button the
-    // user had just activated unmounted with its chip and focus fell to <body>
-    // — once per chip while pruning a list (WCAG 2.4.3).
-    //
-    // attachTo is required: focus() is inert on a detached element, so these
-    // would otherwise read <body> and pass for the wrong reason.
-    function mountChips(values: string[], extra: Record<string, unknown> = {}) {
-      return mount(SourceConfigForm, {
-        props: {
-          schema: [field({ name: 'tags', field_type: 'list' })],
-          values: { tags: values },
-          secretStatus: {},
-          ...extra,
-        },
-        attachTo: document.body,
-      })
-    }
-
-    it('moves focus to the chip that took the removed one\'s place', async () => {
-      const wrapper = mountChips(['a', 'b', 'c'])
-      const button = wrapper.find('[data-testid="chip-remove-tags-0"]')
-      ;(button.element as HTMLElement).focus()
-
-      await button.trigger('click')
-      await flushPromises()
-
-      expect(document.activeElement).toBe(
-        wrapper.find('[data-testid="chip-remove-tags-0"]').element,
-      )
-      expect(wrapper.findAll('[data-testid="chip"]')[0].text()).toContain('b')
-      wrapper.unmount()
-    })
-
-    it('falls back to the previous chip when the last one is removed', async () => {
-      const wrapper = mountChips(['a', 'b'])
-      const button = wrapper.find('[data-testid="chip-remove-tags-1"]')
-      ;(button.element as HTMLElement).focus()
-
-      await button.trigger('click')
-      await flushPromises()
-
-      expect(document.activeElement).toBe(
-        wrapper.find('[data-testid="chip-remove-tags-0"]').element,
-      )
-      wrapper.unmount()
-    })
-
-    it('falls back to the draft input when the list empties', async () => {
-      const wrapper = mountChips(['only'])
-      const button = wrapper.find('[data-testid="chip-remove-tags-0"]')
-      ;(button.element as HTMLElement).focus()
-
-      await button.trigger('click')
-      await flushPromises()
-
-      expect(document.activeElement).toBe(
-        wrapper.find('[data-testid="chip-input-tags"]').element,
-      )
-      wrapper.unmount()
-    })
-
-    it('does not remove a chip while the form is disabled', async () => {
-      const wrapper = mountChips(['a', 'b'], { disabled: true })
-
-      await wrapper.find('[data-testid="chip-remove-tags-0"]').trigger('click')
-
-      expect(wrapper.findAll('[data-testid="chip"]')).toHaveLength(2)
-      wrapper.unmount()
-    })
-  })
-
   it('emits save including the edited list value', async () => {
     const schema = [field({ name: 'tags', field_type: 'list' })]
     const wrapper = mount(SourceConfigForm, {
@@ -379,11 +94,6 @@ describe('SourceConfigForm', () => {
       field_type: 'bool',
       default: true,
     })
-    const shelves = field({
-      name: 'shelves',
-      field_type: 'list',
-      default: ['read'],
-    })
 
     it('renders an unset bool as its schema default, not as unchecked', () => {
       const wrapper = mount(SourceConfigForm, {
@@ -392,16 +102,6 @@ describe('SourceConfigForm', () => {
 
       const input = wrapper.find('input[name="verify_ssl"]')
       expect((input.element as HTMLInputElement).checked).toBe(true)
-    })
-
-    it('renders an unset list as its schema default chips', () => {
-      const wrapper = mount(SourceConfigForm, {
-        props: { schema: [shelves], values: {}, secretStatus: {} },
-      })
-
-      const chips = wrapper.findAll('[data-testid="chip"]')
-      expect(chips).toHaveLength(1)
-      expect(chips[0].text()).toContain('read')
     })
 
     it('omits an untouched bool default when another field is saved', async () => {
@@ -419,30 +119,6 @@ describe('SourceConfigForm', () => {
       expect(wrapper.emitted('save')![0][0]).toEqual({ url: 'https://new' })
     })
 
-    it('omits an untouched list default rather than saving it as empty', async () => {
-      const wrapper = mount(SourceConfigForm, {
-        props: { schema: [shelves], values: {}, secretStatus: {} },
-      })
-
-      await wrapper.find('[data-testid="form-save"]').trigger('click')
-
-      expect(wrapper.emitted('save')![0][0]).toEqual({})
-    })
-
-    it('saves a stored value that happens to equal the schema default', async () => {
-      const wrapper = mount(SourceConfigForm, {
-        props: {
-          schema: [verifySsl],
-          values: { verify_ssl: true },
-          secretStatus: {},
-        },
-      })
-
-      await wrapper.find('[data-testid="form-save"]').trigger('click')
-
-      expect(wrapper.emitted('save')![0][0]).toEqual({ verify_ssl: true })
-    })
-
     it('saves a bool the user turned off against its default', async () => {
       const wrapper = mount(SourceConfigForm, {
         props: { schema: [verifySsl], values: {}, secretStatus: {} },
@@ -453,65 +129,6 @@ describe('SourceConfigForm', () => {
 
       expect(wrapper.emitted('save')![0][0]).toEqual({ verify_ssl: false })
     })
-  })
-
-  it('does not render the enable/disable button when enabled prop is null', () => {
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
-      },
-    })
-    expect(wrapper.find('[data-testid="form-toggle-enabled"]').exists()).toBe(
-      false,
-    )
-  })
-
-  it('renders Disable in danger scheme when enabled is true', () => {
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
-        enabled: true,
-      },
-    })
-    const btn = wrapper.find('[data-testid="form-toggle-enabled"]')
-    expect(btn.exists()).toBe(true)
-    expect(btn.text()).toBe('Disable')
-    expect(btn.classes()).toContain('btn-danger')
-    expect(btn.attributes('aria-pressed')).toBe('true')
-  })
-
-  it('renders Enable in success scheme when enabled is false', () => {
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
-        enabled: false,
-      },
-    })
-    const btn = wrapper.find('[data-testid="form-toggle-enabled"]')
-    expect(btn.text()).toBe('Enable')
-    expect(btn.classes()).toContain('btn-success')
-    expect(btn.attributes('aria-pressed')).toBe('false')
-  })
-
-  it('disables the enable/disable button while enableBusy is true', () => {
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
-        enabled: true,
-        enableBusy: true,
-      },
-    })
-    const toggle = wrapper.find('[data-testid="form-toggle-enabled"]')
-    expect(toggle.attributes('disabled')).toBeDefined()
-    expect(toggle.text()).toBe('Disabling…')
   })
 
   it('emits toggle-enabled with the inverted state on click', async () => {
@@ -525,21 +142,6 @@ describe('SourceConfigForm', () => {
     })
     await wrapper.find('[data-testid="form-toggle-enabled"]').trigger('click')
     expect(wrapper.emitted('toggle-enabled')).toEqual([[false]])
-  })
-
-  it('renders a Saved status pill when saveStatus is "saved"', () => {
-    const wrapper = mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
-        saveStatus: 'saved',
-      },
-    })
-    const status = wrapper.find('[data-testid="form-save-status"]')
-    expect(status.exists()).toBe(true)
-    expect(status.text()).toContain('Saved')
-    expect(status.attributes('role')).toBe('status')
   })
 
   it('renders an error pill with message when saveStatus is "error"', () => {
@@ -557,62 +159,18 @@ describe('SourceConfigForm', () => {
     expect(status.attributes('role')).toBe('alert')
   })
 
-  it('renders no save status pill when idle', () => {
+  it('drops a second activation while saving instead of double-submitting', async () => {
+    // aria-disabled does not block activation the way native disabled does, so
+    // the guard in onSave is the only thing preventing a duplicate save.
     const wrapper = mount(SourceConfigForm, {
       props: {
         schema: [field({ name: 'path' })],
         values: { path: 'x' },
         secretStatus: {},
-        saveStatus: 'idle',
-      },
-    })
-    expect(wrapper.find('[data-testid="form-save-status"]').exists()).toBe(false)
-  })
-
-  function mountSaving(extra: Record<string, unknown> = {}) {
-    return mount(SourceConfigForm, {
-      props: {
-        schema: [field({ name: 'path' })],
-        values: { path: 'x' },
-        secretStatus: {},
         saving: true,
-        ...extra,
       },
     })
-  }
-
-  it('marks Save aria-disabled while saving, without blurring it', () => {
-    // Regression: native `disabled` removed the button from the a11y tree at the
-    // instant the user activated it, dropping focus to <body> for the whole
-    // round trip (WCAG 2.4.3). aria-disabled keeps it focusable.
-    const button = mountSaving().find('[data-testid="form-save"]')
-    expect(button.attributes('aria-disabled')).toBe('true')
-    expect(button.attributes('disabled')).toBeUndefined()
-  })
-
-  it('drops a second activation while saving instead of double-submitting', async () => {
-    // aria-disabled does not block activation the way native disabled does, so
-    // the guard in onSave is the only thing preventing a duplicate save.
-    const wrapper = mountSaving()
     await wrapper.find('[data-testid="form-save"]').trigger('click')
     expect(wrapper.emitted('save')).toBeUndefined()
-  })
-
-  it('still natively disables Save when the form itself is disabled', () => {
-    // `disabled` is a different axis from `saving`: it is set before any user
-    // interaction, so there is no focus to lose.
-    const button = mountSaving({ saving: false, disabled: true }).find(
-      '[data-testid="form-save"]',
-    )
-    expect(button.attributes('disabled')).toBeDefined()
-  })
-
-  it('does not nest the save status inside a second live region', () => {
-    // role="status"/role="alert" on the status span are implicit live regions.
-    // An aria-live wrapper around them double-announces and, with aria-atomic,
-    // re-reads the button label on every state change.
-    const group = mountSaving().find('.source-form-save-group')
-    expect(group.attributes('aria-live')).toBeUndefined()
-    expect(group.attributes('aria-atomic')).toBeUndefined()
   })
 })

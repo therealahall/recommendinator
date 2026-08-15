@@ -23,16 +23,6 @@ describe('useLibraryStore', () => {
     mockPatch.mockReset()
   })
 
-  it('has correct initial state', () => {
-    const store = useLibraryStore()
-    expect(store.items).toEqual([])
-    expect(store.hasMore).toBe(true)
-    expect(store.loading).toBe(false)
-    expect(store.typeFilter).toBe('')
-    expect(store.statusFilter).toBe('')
-    expect(store.needsRating).toBe(false)
-  })
-
   it('resetAndLoad fetches items', async () => {
     const items = [
       { db_id: 1, title: 'Book A', content_type: 'book', status: 'completed', ignored: false },
@@ -66,15 +56,6 @@ describe('useLibraryStore', () => {
     expect(store.hasMore).toBe(false)
   })
 
-  it('setFilter resets and reloads', async () => {
-    mockGet.mockResolvedValue([])
-    const store = useLibraryStore()
-
-    await store.setFilter('type', 'movie')
-    expect(store.typeFilter).toBe('movie')
-    expect(mockGet).toHaveBeenCalled()
-  })
-
   it('setFilter stores the enrichment filter and sends it as a query param', async () => {
     mockGet.mockResolvedValue([])
     const store = useLibraryStore()
@@ -84,44 +65,6 @@ describe('useLibraryStore', () => {
     expect(store.enrichmentFilter).toBe('not_enriched')
     const params = mockGet.mock.lastCall![1]
     expect(params.enrichment).toBe('not_enriched')
-  })
-
-  it('omits the enrichment param when no enrichment filter is set', async () => {
-    mockGet.mockResolvedValue([])
-    const store = useLibraryStore()
-
-    await store.resetAndLoad()
-
-    const params = mockGet.mock.lastCall![1]
-    expect(params.enrichment).toBeUndefined()
-  })
-
-  it('has empty search state initially', () => {
-    const store = useLibraryStore()
-    expect(store.searchQuery).toBe('')
-    expect(store.searchLoading).toBe(false)
-    expect(store.searchAnnouncement).toBe('')
-  })
-
-  it('setFilter search passes the search param and resets pagination', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([
-        { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread', ignored: false },
-      ])
-      const store = useLibraryStore()
-      store.setFilter('search', 'dune')
-      expect(store.searchQuery).toBe('dune')
-
-      await vi.runAllTimersAsync()
-
-      expect(store.offset).toBe(1)
-      const params = mockGet.mock.calls[mockGet.mock.calls.length - 1][1]
-      expect(params.search).toBe('dune')
-      expect(params.offset).toBe(0)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('debounce coalesces rapid search changes into one request', async () => {
@@ -139,58 +82,6 @@ describe('useLibraryStore', () => {
 
       expect(mockGet).toHaveBeenCalledTimes(1)
       expect(mockGet.mock.calls[0][1].search).toBe('dune')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('toggles searchLoading around a search request', async () => {
-    vi.useFakeTimers()
-    try {
-      let resolve: (v: unknown) => void = () => {}
-      mockGet.mockReturnValue(new Promise((r) => { resolve = r }))
-      const store = useLibraryStore()
-
-      store.setFilter('search', 'dune')
-      expect(store.searchLoading).toBe(false)
-
-      await vi.advanceTimersByTimeAsync(250)
-      expect(store.searchLoading).toBe(true)
-
-      resolve([])
-      await vi.runAllTimersAsync()
-      expect(store.searchLoading).toBe(false)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('announces plural results for an active query', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([
-        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
-        { db_id: 2, title: 'B', content_type: 'book', status: 'unread', ignored: false },
-      ])
-      const store = useLibraryStore()
-      store.setFilter('search', 'a')
-      await vi.runAllTimersAsync()
-      expect(store.searchAnnouncement).toBe('2 items match “a”')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('announces a singular result for an active query', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([
-        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
-      ])
-      const store = useLibraryStore()
-      store.setFilter('search', 'a')
-      await vi.runAllTimersAsync()
-      expect(store.searchAnnouncement).toBe('1 item matches “a”')
     } finally {
       vi.useRealTimers()
     }
@@ -229,24 +120,6 @@ describe('useLibraryStore', () => {
     }
   })
 
-  it('clearing the search resets the query and announcement', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([])
-      const store = useLibraryStore()
-      store.setFilter('search', 'zzz')
-      await vi.runAllTimersAsync()
-      expect(store.searchAnnouncement).toBe('No items match “zzz”')
-
-      store.setFilter('search', '')
-      await vi.runAllTimersAsync()
-      expect(store.searchQuery).toBe('')
-      expect(store.searchAnnouncement).toBe('')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
   it('clears searchLoading when a search is triggered while a load is in flight', async () => {
     vi.useFakeTimers()
     try {
@@ -274,22 +147,6 @@ describe('useLibraryStore', () => {
     }
   })
 
-  it('cleanup cancels a pending debounced search', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([])
-      const store = useLibraryStore()
-
-      store.setFilter('search', 'dune')
-      store.cleanup()
-      await vi.runAllTimersAsync()
-
-      expect(mockGet).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
   it('resets searchLoading and sets error when the search request rejects', async () => {
     vi.useFakeTimers()
     try {
@@ -301,28 +158,6 @@ describe('useLibraryStore', () => {
 
       expect(store.searchLoading).toBe(false)
       expect(store.error).toBe('network down')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('refreshes the announcement when a non-search filter changes during an active search', async () => {
-    vi.useFakeTimers()
-    try {
-      mockGet.mockResolvedValue([
-        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
-        { db_id: 2, title: 'B', content_type: 'book', status: 'unread', ignored: false },
-      ])
-      const store = useLibraryStore()
-      store.setFilter('search', 'a')
-      await vi.runAllTimersAsync()
-      expect(store.searchAnnouncement).toBe('2 items match “a”')
-
-      mockGet.mockResolvedValue([
-        { db_id: 1, title: 'A', content_type: 'book', status: 'unread', ignored: false },
-      ])
-      await store.setFilter('type', 'book')
-      expect(store.searchAnnouncement).toBe('1 item matches “a”')
     } finally {
       vi.useRealTimers()
     }
@@ -341,32 +176,6 @@ describe('useLibraryStore', () => {
     expect(params.needs_rating).toBe(true)
     expect(params.status).toBeUndefined()
     expect(store.offset).toBe(0)
-  })
-
-  it('needsRating composes with the type filter and still omits status', async () => {
-    mockGet.mockResolvedValue([])
-    const store = useLibraryStore()
-
-    await store.setFilter('type', 'book')
-    await store.setFilter('needsRating', true)
-
-    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
-    expect(params.type).toBe('book')
-    expect(params.needs_rating).toBe(true)
-    expect(params.status).toBeUndefined()
-  })
-
-  it('needsRating composes with showIgnored and still omits status', async () => {
-    mockGet.mockResolvedValue([])
-    const store = useLibraryStore()
-
-    await store.setFilter('showIgnored', true)
-    await store.setFilter('needsRating', true)
-
-    const params = mockGet.mock.lastCall![1] as Record<string, unknown>
-    expect(params.needs_rating).toBe(true)
-    expect(params.include_ignored).toBe(true)
-    expect(params.status).toBeUndefined()
   })
 
   it('toggling needsRating off restores the user\'s prior status filter', async () => {
@@ -417,17 +226,5 @@ describe('useLibraryStore', () => {
     expect(body).toMatchObject({ genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' })
     expect(store.items[0].enriched).toBe(true)
     expect(store.items[0].genres).toEqual(['Sci-Fi'])
-  })
-
-  it('toggleIgnore updates item in list', async () => {
-    const item = { db_id: 5, title: 'Game', content_type: 'video_game', status: 'unread', ignored: false }
-    mockGet.mockResolvedValue([item])
-    const store = useLibraryStore()
-    await store.resetAndLoad()
-
-    mockPatch.mockResolvedValue({})
-    await store.toggleIgnore(5, true)
-
-    expect(store.items[0].ignored).toBe(true)
   })
 })

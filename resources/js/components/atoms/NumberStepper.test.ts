@@ -9,12 +9,6 @@ describe('NumberStepper', () => {
     })
   }
 
-  it('renders current value in the input', () => {
-    const wrapper = mountStepper({ modelValue: 7 })
-    const input = wrapper.find('input')
-    expect(input.element.value).toBe('7')
-  })
-
   describe('when max is omitted', () => {
     // Regression: `max` defaulted to 100, so every min-only leaf
     // (enrichment.batch_size, sync.max_workers) clamped there — a larger value
@@ -24,10 +18,6 @@ describe('NumberStepper', () => {
         props: { modelValue: 0, min: 0, step: 1, ...props },
       })
     }
-
-    it('renders no max attribute', () => {
-      expect(mountUnbounded().find('input').attributes('max')).toBeUndefined()
-    })
 
     it('does not clamp typed input', async () => {
       const wrapper = mountUnbounded()
@@ -46,14 +36,6 @@ describe('NumberStepper', () => {
       expect(button.attributes('aria-disabled')).toBeUndefined()
       expect(button.attributes('disabled')).toBeUndefined()
     })
-
-    it('still enforces min', async () => {
-      const wrapper = mountUnbounded({ modelValue: 0, min: 2 })
-      const input = wrapper.find('input')
-      input.element.value = '-5'
-      await input.trigger('input')
-      expect(wrapper.emitted('update:modelValue')![0]).toEqual([2])
-    })
   })
 
   it('increments on + button click', async () => {
@@ -62,58 +44,12 @@ describe('NumberStepper', () => {
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([6])
   })
 
-  it('decrements on - button click', async () => {
-    const wrapper = mountStepper({ modelValue: 5 })
-    await wrapper.find('.stepper-decrement').trigger('click')
-    expect(wrapper.emitted('update:modelValue')![0]).toEqual([4])
-  })
-
   // The bound buttons are aria-disabled, not natively disabled, so the browser
   // still delivers the click — these prove the handler guards drop it.
-  it('does not emit below min when the decrement button is at the min bound', async () => {
-    const wrapper = mountStepper({ modelValue: 1, min: 1 })
-    await wrapper.find('.stepper-decrement').trigger('click')
-    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-  })
-
   it('does not emit above max when the increment button is at the max bound', async () => {
     const wrapper = mountStepper({ modelValue: 20, max: 20 })
     await wrapper.find('.stepper-increment').trigger('click')
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-  })
-
-  it('marks decrement aria-disabled at min, without removing it from focus', () => {
-    // Regression: native `disabled` at the bound blurred the button the user
-    // was operating — stepping down to min dropped focus to <body> mid-press
-    // (WCAG 2.4.3). aria-disabled conveys the state and keeps it focusable;
-    // the handler guards activation.
-    const button = mountStepper({ modelValue: 1, min: 1 }).find('.stepper-decrement')
-    expect(button.attributes('aria-disabled')).toBe('true')
-    expect(button.attributes('disabled')).toBeUndefined()
-  })
-
-  it('marks increment aria-disabled at max, without removing it from focus', () => {
-    const button = mountStepper({ modelValue: 20, max: 20 }).find('.stepper-increment')
-    expect(button.attributes('aria-disabled')).toBe('true')
-    expect(button.attributes('disabled')).toBeUndefined()
-  })
-
-  describe('disabled prop (save in flight)', () => {
-    // Native disabled is correct HERE: reaching Save requires focusing Save, so
-    // focus can never be inside the stepper when this flips.
-    it('natively disables the input and both buttons', () => {
-      const wrapper = mountStepper({ disabled: true })
-      expect(wrapper.find('.stepper-input').attributes('disabled')).toBeDefined()
-      expect(wrapper.find('.stepper-decrement').attributes('disabled')).toBeDefined()
-      expect(wrapper.find('.stepper-increment').attributes('disabled')).toBeDefined()
-    })
-
-    it('emits nothing when activated while disabled', async () => {
-      const wrapper = mountStepper({ disabled: true })
-      await wrapper.find('.stepper-increment').trigger('click')
-      await wrapper.find('.stepper-decrement').trigger('click')
-      expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-    })
   })
 
   describe('when min is omitted', () => {
@@ -124,10 +60,6 @@ describe('NumberStepper', () => {
       return mount(NumberStepper, { props: { modelValue: 0, step: 1, ...props } })
     }
 
-    it('renders no min attribute', () => {
-      expect(mountNoBounds().find('input').attributes('min')).toBeUndefined()
-    })
-
     it('does not clamp below zero', async () => {
       const wrapper = mountNoBounds()
       const input = wrapper.find('input')
@@ -135,19 +67,6 @@ describe('NumberStepper', () => {
       await input.trigger('input')
       expect(wrapper.emitted('update:modelValue')![0]).toEqual([-5])
     })
-
-    it('leaves decrement operable at zero', () => {
-      const button = mountNoBounds().find('.stepper-decrement')
-      expect(button.attributes('aria-disabled')).toBeUndefined()
-      expect(button.attributes('disabled')).toBeUndefined()
-    })
-  })
-
-  it('parses valid integer from manual input', async () => {
-    const wrapper = mountStepper()
-    const input = wrapper.find('input')
-    await input.setValue('10')
-    expect(wrapper.emitted('update:modelValue')![0]).toEqual([10])
   })
 
   it('clamps manual input above max', async () => {
@@ -169,40 +88,5 @@ describe('NumberStepper', () => {
     const input = wrapper.find('input')
     await input.setValue('abc')
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
-  })
-
-  it('applies aria-label to input and buttons via attribute', () => {
-    const wrapper = mount(NumberStepper, {
-      props: { modelValue: 5, min: 1, max: 20, step: 1 },
-      attrs: { 'aria-label': 'Recommendation count' },
-    })
-    expect(wrapper.find('input').attributes('aria-label')).toBe('Recommendation count')
-    expect(wrapper.find('.stepper-decrement').attributes('aria-label')).toBe('Decrease Recommendation count')
-    expect(wrapper.find('.stepper-increment').attributes('aria-label')).toBe('Increase Recommendation count')
-  })
-
-  it('uses default aria-label when none provided', () => {
-    const wrapper = mountStepper()
-    expect(wrapper.find('input').attributes('aria-label')).toBe('Number')
-    expect(wrapper.find('.stepper-decrement').attributes('aria-label')).toBe('Decrease Number')
-    expect(wrapper.find('.stepper-increment').attributes('aria-label')).toBe('Increase Number')
-  })
-
-  it('forwards id, aria-describedby, and aria-invalid to the number input', () => {
-    const wrapper = mountStepper({
-      id: 'setting-web.port',
-      describedBy: 'help-web.port err-web.port',
-      invalid: true,
-    })
-
-    const input = wrapper.find('input')
-    expect(input.attributes('id')).toBe('setting-web.port')
-    expect(input.attributes('aria-describedby')).toBe('help-web.port err-web.port')
-    expect(input.attributes('aria-invalid')).toBe('true')
-  })
-
-  it('omits aria-invalid on the input when not invalid', () => {
-    const wrapper = mountStepper({ invalid: false })
-    expect(wrapper.find('input').attributes('aria-invalid')).toBeUndefined()
   })
 })

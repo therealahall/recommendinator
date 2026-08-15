@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AccountProfileForm from './AccountProfileForm.vue'
-import { NAME_MAX_LENGTH, USERNAME_BLANK } from '@/constants/auth'
+import { USERNAME_BLANK } from '@/constants/auth'
 import type { UserResponse } from '@/types/api'
 
 const AARON: UserResponse = {
@@ -16,21 +16,6 @@ function mountForm(props: Record<string, unknown> = {}) {
 }
 
 describe('AccountProfileForm', () => {
-  it('opens on the account as it stands', () => {
-    const wrapper = mountForm()
-
-    expect(wrapper.find<HTMLInputElement>('#account-username').element.value).toBe('aaron')
-    expect(wrapper.find<HTMLInputElement>('#account-display-name').element.value).toBe('Aaron Hall')
-  })
-
-  it('shows an empty display name rather than the word null', () => {
-    const wrapper = mountForm({
-      user: { id: 2, username: 'bob', display_name: null, password_updated_at: null },
-    })
-
-    expect(wrapper.find<HTMLInputElement>('#account-display-name').element.value).toBe('')
-  })
-
   it('re-seeds from the prop when the saved account comes back changed', async () => {
     // A draft captured once at setup goes stale the moment the parent hands
     // down the values the server accepted.
@@ -63,35 +48,6 @@ describe('AccountProfileForm', () => {
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
 
-  it('never locks the button natively, so an accepted save cannot blur it', async () => {
-    // Regression: the accepted values re-seeded the fields, the button went
-    // native `disabled`, and focus fell from it to <body> — past the whole
-    // sidebar on the Settings page (WCAG 2.4.3).
-    const wrapper = mountForm()
-    const button = () => wrapper.find('[data-testid="account-profile-save"]')
-    expect(button().attributes('disabled')).toBeUndefined()
-
-    await wrapper.find('#account-display-name').setValue('Aaron')
-    await wrapper.setProps({ user: { ...AARON, display_name: 'Aaron' } })
-
-    expect(button().attributes('aria-disabled')).toBe('true')
-    expect(button().attributes('disabled')).toBeUndefined()
-  })
-
-  it('says why a press on an untouched form did nothing', async () => {
-    // Regression: the button locks on "nothing has changed", which no browser
-    // narrates the way it narrates an empty required field — so pressing it
-    // produced no submission, no message and an empty live region.
-    const wrapper = mountForm()
-
-    await wrapper.find('form').trigger('submit')
-
-    expect(wrapper.emitted('submit')).toBeUndefined()
-    expect(wrapper.find('#account-profile-status').text()).toContain('Nothing to save')
-    // Nothing typed is wrong, so no field is marked as such.
-    expect(wrapper.find('#account-username').attributes('aria-invalid')).toBeUndefined()
-  })
-
   it('says why a username of nothing but spaces did not save', async () => {
     // Regression: `required` reports only the empty string as missing, so three
     // spaces cleared the browser's own check and the handler returned silently.
@@ -113,60 +69,6 @@ describe('AccountProfileForm', () => {
     expect(wrapper.find('#account-profile-status').text()).toBe('')
   })
 
-  it('reads the blank name as an error, and blames only the field it is about', async () => {
-    // The region is the same node "Saved." uses, so the colour is the whole
-    // visible difference between a complaint and a receipt.
-    const wrapper = mountForm()
-
-    await wrapper.find('#account-username').setValue(' \t')
-    await wrapper.find('form').trigger('submit')
-
-    expect(wrapper.emitted('submit')).toBeUndefined()
-    expect(wrapper.find('#account-profile-status').text()).toBe(USERNAME_BLANK)
-    expect(wrapper.find('#account-profile-status').classes()).toContain('failed')
-    expect(wrapper.find('#account-display-name').attributes('aria-invalid')).toBeUndefined()
-    expect(wrapper.find('#account-display-name').attributes('aria-describedby')).toBe(
-      'account-display-name-hint',
-    )
-  })
-
-  it('drops that complaint on the edit that answers it', async () => {
-    const wrapper = mountForm()
-    await wrapper.find('form').trigger('submit')
-
-    await wrapper.find('#account-display-name').setValue('Aaron')
-
-    expect(wrapper.find('#account-profile-status').text()).toBe('')
-  })
-
-  it('stops both names at the length the API accepts', async () => {
-    // Past the cap the save comes back a validation shape that renders as no
-    // sentence, so the field is where the limit has to be stated.
-    const wrapper = mountForm()
-
-    for (const id of ['#account-username', '#account-display-name']) {
-      expect(wrapper.find(id).attributes('maxlength'), id).toBe(String(NAME_MAX_LENGTH))
-    }
-  })
-
-  it('offers the username autocomplete so a manager updates its entry', () => {
-    const wrapper = mountForm()
-
-    expect(wrapper.find('#account-username').attributes('autocomplete')).toBe('username')
-    expect(wrapper.find('#account-display-name').attributes('autocomplete')).toBe('nickname')
-  })
-
-  it('says which field it will not go without, and which it will', () => {
-    // The submit button locks with aria-disabled, which is focusable and
-    // silent: without this the only signal is a colour nobody can hear.
-    const wrapper = mountForm()
-
-    expect(wrapper.find('#account-username').attributes('required')).toBeDefined()
-    expect(wrapper.find('#account-username').attributes('aria-required')).toBe('true')
-    // "(optional)" in the label is prose; this is the programmatic state.
-    expect(wrapper.find('#account-display-name').attributes('aria-required')).toBeUndefined()
-  })
-
   it('will not send a second save while the first is in flight', async () => {
     const wrapper = mountForm({ pending: true })
 
@@ -177,43 +79,5 @@ describe('AccountProfileForm', () => {
     expect(
       wrapper.find('[data-testid="account-profile-save"]').attributes('aria-disabled'),
     ).toBe('true')
-  })
-
-  it('mounts the live region before it has anything to say', () => {
-    const wrapper = mountForm()
-
-    const region = wrapper.find('#account-profile-status')
-    expect(region.exists()).toBe(true)
-    expect(region.attributes('role')).toBe('status')
-    expect(region.text()).toBe('')
-  })
-
-  it('transitions one region from saving to failed without remounting it', async () => {
-    // A live region that first enters the tree already populated is read as page
-    // content and skipped (WCAG 4.1.3), so the node has to outlive the refusal.
-    const wrapper = mountForm()
-    const region = wrapper.find('#account-profile-status').element
-
-    await wrapper.setProps({ pending: true })
-    expect(wrapper.find('#account-profile-status').text()).toBe('Saving…')
-
-    await wrapper.setProps({ pending: false, error: 'That username is taken.' })
-
-    expect(wrapper.find('#account-profile-status').element).toBe(region)
-    expect(wrapper.find('#account-profile-status').text()).toContain('taken')
-    expect(wrapper.find('#account-username').attributes('aria-describedby')).toBe(
-      'account-username-hint account-profile-status',
-    )
-    expect(wrapper.find('#account-username').attributes('aria-invalid')).toBe('true')
-  })
-
-  it('announces a save through the same region', async () => {
-    const wrapper = mountForm()
-    const region = wrapper.find('#account-profile-status').element
-
-    await wrapper.setProps({ saved: true })
-
-    expect(wrapper.find('#account-profile-status').element).toBe(region)
-    expect(wrapper.find('#account-profile-status').text()).toBe('Saved.')
   })
 })

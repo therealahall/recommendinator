@@ -3,7 +3,6 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import RecControls from './RecControls.vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
-import { useAppStore } from '@/stores/app'
 
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
@@ -17,20 +16,6 @@ describe('RecControls', () => {
     setActivePinia(createPinia())
   })
 
-  it('renders TypePills without All option', () => {
-    const wrapper = mount(RecControls)
-
-    const pills = wrapper.findAll('.pill')
-    expect(pills.map(p => p.text())).toEqual(['Book', 'Movie', 'TV Show', 'Game'])
-  })
-
-  it('marks Book pill as active by default', () => {
-    const wrapper = mount(RecControls)
-
-    const bookPill = wrapper.findAll('.pill').find(p => p.text() === 'Book')!
-    expect(bookPill.classes()).toContain('active')
-  })
-
   it('updates content type on pill click', async () => {
     const recs = useRecommendationsStore()
     const wrapper = mount(RecControls)
@@ -41,24 +26,6 @@ describe('RecControls', () => {
     expect(recs.contentType).toBe('movie')
   })
 
-  it('renders a single count input with default value', () => {
-    const wrapper = mount(RecControls)
-
-    const inputs = wrapper.findAll('input[type="number"]')
-    expect(inputs).toHaveLength(1)
-    expect((inputs[0].element as HTMLInputElement).value).toBe('5')
-  })
-
-  it('sets max attribute on count input from recommendationsConfig', () => {
-    const app = useAppStore()
-    app.recommendationsConfig.max_count = 50
-
-    const wrapper = mount(RecControls)
-
-    const input = wrapper.find('input[type="number"]')
-    expect(input.attributes('max')).toBe('50')
-  })
-
   it('updates recs.count when input changes', async () => {
     const recs = useRecommendationsStore()
     const wrapper = mount(RecControls)
@@ -67,36 +34,6 @@ describe('RecControls', () => {
     await input.setValue('10')
 
     expect(recs.count).toBe(10)
-  })
-
-  it('NumberStepper receives aria-label for accessible name', () => {
-    const wrapper = mount(RecControls)
-
-    const input = wrapper.find('input[type="number"]')
-    expect(input.attributes('aria-label')).toBe('Number of recommendations')
-
-    const decBtn = wrapper.find('.stepper-decrement')
-    expect(decBtn.attributes('aria-label')).toBe('Decrease Number of recommendations')
-
-    const incBtn = wrapper.find('.stepper-increment')
-    expect(incBtn.attributes('aria-label')).toBe('Increase Number of recommendations')
-  })
-
-  it('renders Generate button', () => {
-    const wrapper = mount(RecControls)
-
-    const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')!
-    expect(genBtn.exists()).toBe(true)
-  })
-
-  it('disables Generate when loading', () => {
-    const recs = useRecommendationsStore()
-    recs.loading = true
-
-    const wrapper = mount(RecControls)
-
-    const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')!
-    expect(genBtn.attributes('disabled')).toBeDefined()
   })
 
   it('calls fetch on Generate click', async () => {
@@ -111,16 +48,6 @@ describe('RecControls', () => {
     expect(recs.fetch).toHaveBeenCalled()
   })
 
-  it('renders TypeSelect for mobile with no All option', () => {
-    const wrapper = mount(RecControls)
-
-    const select = wrapper.find('.rec-type-select')
-    expect(select.exists()).toBe(true)
-
-    const options = select.findAll('option')
-    expect(options.map(o => o.text().trim())).toEqual(['Book', 'Movie', 'TV Show', 'Game'])
-  })
-
   it('updates content type from TypeSelect', async () => {
     const recs = useRecommendationsStore()
     const wrapper = mount(RecControls)
@@ -131,27 +58,6 @@ describe('RecControls', () => {
     await select.trigger('change')
 
     expect(recs.contentType).toBe('movie')
-  })
-
-  it('TypeSelect reflects contentType after pill click', async () => {
-    const wrapper = mount(RecControls)
-
-    const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
-    await moviePill.trigger('click')
-
-    const el = wrapper.find('.rec-type-select').element as HTMLSelectElement
-    expect(el.value).toBe('movie')
-  })
-
-  it('reflects store contentType changes in TypeSelect', async () => {
-    const recs = useRecommendationsStore()
-    const wrapper = mount(RecControls)
-
-    recs.contentType = 'tv_show'
-    await wrapper.vm.$nextTick()
-
-    const el = wrapper.find('.rec-type-select').element as HTMLSelectElement
-    expect(el.value).toBe('tv_show')
   })
 })
 

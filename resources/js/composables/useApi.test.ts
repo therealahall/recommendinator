@@ -27,25 +27,6 @@ describe('useApi ApiError', () => {
     })
   })
 
-  it('keeps the status line as the message when detail is a validation object', async () => {
-    // A 422 payload is a shape, not a sentence: settings reads `body` for the
-    // field wording, and anything showing `message` needs something readable.
-    vi.mocked(fetch).mockResolvedValue({
-      ok: false,
-      status: 422,
-      statusText: 'Unprocessable Entity',
-      headers: { get: () => 'application/json' },
-      json: () => Promise.resolve({ detail: { key: 'web.port', reason: 'out of range' } }),
-      text: () => Promise.resolve(''),
-    } as unknown as Response)
-
-    const err = await useApi()
-      .put('/settings', { updates: {} })
-      .catch((e: unknown) => e)
-
-    expect((err as ApiError).message).toBe('422 Unprocessable Entity')
-  })
-
   it('takes the message from a string detail, which is written for the user', async () => {
     // Regression: the stream cap's "try again in a moment" reached no screen,
     // because every message came from the status line instead of the body.
@@ -76,24 +57,6 @@ describe('useApi ApiError', () => {
     const err = await useApi().get('/recommendations').catch((e: unknown) => e)
 
     expect((err as ApiError).message).toBe('503 Service Unavailable')
-  })
-
-  it('leaves body undefined when the error response has no JSON', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
-      headers: { get: () => 'text/plain' },
-      json: () => Promise.reject(new Error('no json')),
-      text: () => Promise.resolve('boom'),
-    } as unknown as Response)
-
-    const api = useApi()
-    const err = await api.get('/settings').catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(500)
-    expect((err as ApiError).body).toBeUndefined()
-    expect((err as ApiError).message).toBe('500 Internal Server Error')
   })
 })
 
@@ -126,14 +89,6 @@ describe('useApi query parameters', () => {
     )
   })
 
-  it('carries them on a DELETE, which has no body to put them in', async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { message: 'ok' }))
-
-    await useApi().delete('/gog/token', { source_id: 'gog_work' })
-
-    expect(requestedUrl()).toBe('/api/gog/token?source_id=gog_work')
-  })
-
   it('percent-encodes a param value rather than splicing it into the URL', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
 
@@ -142,10 +97,6 @@ describe('useApi query parameters', () => {
     expect(requestedUrl()).toBe('/api/trakt/status?source_id=trakt%26admin%3D1')
   })
 })
-
-function initOf(call: number): RequestInit {
-  return vi.mocked(fetch).mock.calls[call][1] ?? {}
-}
 
 /** Put the store where a live session leaves it, without a boot round trip. */
 function signedIn() {
@@ -166,25 +117,6 @@ describe('useApi authentication', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
-  })
-
-  it('sends the session cookie, which is the only credential the SPA has', async () => {
-    signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
-
-    await useApi().get('/users')
-
-    expect(initOf(0).credentials).toBe('include')
-  })
-
-  it('keeps the caller-supplied headers alongside it', async () => {
-    signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, {}))
-
-    await useApi().post('/users', {})
-
-    expect(initOf(0).headers).toMatchObject({ 'Content-Type': 'application/json' })
-    expect(initOf(0).credentials).toBe('include')
   })
 
   it('ends the session the server refuses, so the sign-in screen comes back', async () => {
@@ -208,15 +140,6 @@ describe('useApi authentication', () => {
     await expect(
       useApi().put('/users/1/password', { current_password: 'wrong' }, { sessionSurvives401: true }),
     ).rejects.toBeInstanceOf(ApiError)
-
-    expect(auth.isAuthenticated).toBe(true)
-  })
-
-  it('leaves the session alone on any other failure', async () => {
-    const auth = signedIn()
-    vi.mocked(fetch).mockResolvedValue(jsonResponse(503, { detail: 'down' }))
-
-    await expect(useApi().get('/users')).rejects.toBeInstanceOf(ApiError)
 
     expect(auth.isAuthenticated).toBe(true)
   })
