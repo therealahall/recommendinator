@@ -41,15 +41,19 @@ const nonSensitiveFields = computed(() =>
 
 const sensitiveFields = computed(() => props.schema.filter((f) => f.sensitive))
 
-function defaultFor(field: SourceFieldSchema): FormValue {
+function zeroFor(field: SourceFieldSchema): FormValue {
   if (field.field_type === 'bool') return false
   if (field.field_type === 'int' || field.field_type === 'float') return 0
   if (field.field_type === 'list') return []
   return ''
 }
 
-function coerce(field: SourceFieldSchema, raw: unknown): FormValue {
-  if (raw === undefined || raw === null) return defaultFor(field)
+function coerce(field: SourceFieldSchema, stored: unknown): FormValue {
+  // A field the source never stored arrives absent, and every plugin falls
+  // back to the schema default when it reads one — so showing the type's zero
+  // value here puts a value on screen the source has never used.
+  const raw = stored ?? field.default
+  if (raw === undefined || raw === null) return zeroFor(field)
   if (field.field_type === 'bool') return Boolean(raw)
   if (field.field_type === 'int') {
     const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10)
@@ -63,6 +67,22 @@ function coerce(field: SourceFieldSchema, raw: unknown): FormValue {
     return Array.isArray(raw) ? raw.map(String) : []
   }
   return String(raw)
+}
+
+function sameValue(a: FormValue, b: FormValue): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => item === b[index])
+  }
+  return a === b
+}
+
+/** Whether the form is only showing this field's default back to the operator. */
+function isUnstoredDefault(field: SourceFieldSchema): boolean {
+  const stored = props.values[field.name]
+  return (
+    (stored === undefined || stored === null) &&
+    sameValue(formValues[field.name], coerce(field, undefined))
+  )
 }
 
 const formValues = reactive<Record<string, FormValue>>({})
@@ -132,6 +152,10 @@ function onSave(): void {
   if (props.saving) return
   const out: Record<string, unknown> = {}
   for (const field of nonSensitiveFields.value) {
+    // The API merges, so an omitted field stays unset — which is what an
+    // untouched default means. Writing it back freezes today's default as a
+    // stored value, and for a list that value reads as "none".
+    if (isUnstoredDefault(field)) continue
     out[field.name] = formValues[field.name]
   }
   emit('save', out)
