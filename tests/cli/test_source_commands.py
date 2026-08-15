@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
@@ -1112,8 +1112,8 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
         )
 
 
-class TestSourceSetClearsBoundCredentials:
-    """The CLI repoints a source too, so it must drop the same secrets.
+class TestSourceSetGuardsBoundCredentials:
+    """The CLI repoints a source too, so it must answer the PUT's way.
 
     Runs against the real registry: the shared fakes carry no
     ``credential_bound`` field, and one that did would prove only that this
@@ -1132,43 +1132,52 @@ class TestSourceSetClearsBoundCredentials:
         storage.save_credential(1, "calibre", "password", "hunter2")
         return storage
 
-    def test_repointing_the_url_clears_the_password(
-        self, cli_runner: CliRunner, migrated: StorageManager
-    ) -> None:
-        result = _invoke_with_mocks(
+    def _set(
+        self, cli_runner: CliRunner, storage: StorageManager, field: str, value: str
+    ) -> Result:
+        return _invoke_with_mocks(
             cli_runner,
-            ["source", "set", "calibre", "url", "https://attacker.example"],
-            mock_storage=migrated,
+            ["source", "set", "calibre", field, value],
+            mock_storage=storage,
             config={"inputs": {}},
         )
+
+    def test_repointing_the_url_is_refused_in_the_same_words_as_the_api(
+        self, cli_runner: CliRunner, migrated: StorageManager
+    ) -> None:
+        result = self._set(cli_runner, migrated, "url", "https://attacker.example")
+
+        assert result.exit_code != 0
+        assert "Changing 'url' points this source at a different host." in result.output
+        assert "Clear its stored 'password' first" in result.output
+        row = migrated.get_source_config(1, "calibre")
+        assert row is not None and row["config"]["url"] == "http://localhost:8083"
+        assert migrated.get_credential(1, "calibre", "password") == "hunter2"
+
+    def test_upgrading_to_https_keeps_the_password(
+        self, cli_runner: CliRunner, migrated: StorageManager
+    ) -> None:
+        result = self._set(cli_runner, migrated, "url", "https://localhost:8083")
 
         assert result.exit_code == 0
-        assert migrated.get_credential(1, "calibre", "password") is None
+        row = migrated.get_source_config(1, "calibre")
+        assert row is not None and row["config"]["url"] == "https://localhost:8083"
+        assert migrated.get_credential(1, "calibre", "password") == "hunter2"
 
-    def test_disabling_tls_verification_clears_the_password(
+    def test_disabling_tls_verification_keeps_the_password(
         self, cli_runner: CliRunner, migrated: StorageManager
     ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "set", "calibre", "verify_ssl", "false"],
-            mock_storage=migrated,
-            config={"inputs": {}},
-        )
+        result = self._set(cli_runner, migrated, "verify_ssl", "false")
 
         assert result.exit_code == 0
         row = migrated.get_source_config(1, "calibre")
         assert row is not None and row["config"]["verify_ssl"] is False
-        assert migrated.get_credential(1, "calibre", "password") is None
+        assert migrated.get_credential(1, "calibre", "password") == "hunter2"
 
     def test_an_unrelated_field_keeps_the_password(
         self, cli_runner: CliRunner, migrated: StorageManager
     ) -> None:
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["source", "set", "calibre", "username", "someone-else"],
-            mock_storage=migrated,
-            config={"inputs": {}},
-        )
+        result = self._set(cli_runner, migrated, "username", "someone-else")
 
         assert result.exit_code == 0
         assert migrated.get_credential(1, "calibre", "password") == "hunter2"

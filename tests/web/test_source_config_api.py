@@ -1349,11 +1349,12 @@ class TestUpdateEndpointDbOnlySourcesRegression:
         assert "disabled or not configured" in response.json()["detail"]
 
 
-class TestSourceCredentialExfiltrationRegression:
-    """Regression: one PUT repointed a source and the next sync sent its secret.
+class TestSourceCredentialMoveRegression:
+    """Regression: an https edit wiped the source's password.
 
-    Bug: ``url`` and ``verify_ssl`` were freely writable. Fix: both are
-    ``credential_bound``, so the write clears the stored password first.
+    Any change to a ``credential_bound`` field cleared the secret, so the next
+    sync blamed 'password'. Fix: only a change of host does, and that is
+    refused rather than applied.
     """
 
     @pytest.fixture()
@@ -1372,50 +1373,157 @@ class TestSourceCredentialExfiltrationRegression:
         ):
             yield authenticated_client(app)
 
-    def test_the_reported_sequence_leaves_the_password_behind(
-        self,
-        real_plugin_client: TestClient,
-        storage: StorageManager,
-        caplog: pytest.LogCaptureFixture,
+    @staticmethod
+    def _source_with_a_secret(
+        client: TestClient,
+        source_id: str,
+        plugin: str,
+        values: dict[str, Any],
+        secret: tuple[str, str],
     ) -> None:
-        client = real_plugin_client
+        """The state before the edit: migrated, enabled, credential entered."""
         create = client.post(
             "/api/sync/sources",
             json={
-                "id": "calibre",
-                "plugin": "calibre_web",
-                "values": {
-                    "url": "http://localhost:8083",
-                    "username": "reader",
-                    "verify_ssl": True,
-                },
+                "id": source_id,
+                "plugin": plugin,
+                "values": values,
                 "enabled": True,
             },
         )
         assert create.status_code == 201
+        key, value = secret
         stored = client.put(
-            "/api/sync/sources/calibre/secret/password", json={"value": "hunter2"}
+            f"/api/sync/sources/{source_id}/secret/{key}", json={"value": value}
         )
         assert stored.status_code == 204
+
+    def test_the_reported_https_edit_keeps_the_password_and_the_sync(
+        self, real_plugin_client: TestClient, storage: StorageManager
+    ) -> None:
+        """The reported sequence: same host over https, and no 400 after it."""
+        client = real_plugin_client
+        self._source_with_a_secret(
+            client,
+            "calibre",
+            "calibre_web",
+            {"url": "http://books.lan:8083", "username": "reader", "verify_ssl": True},
+            ("password", "hunter2"),
+        )
+
+        saved = client.put(
+            "/api/sync/sources/calibre/config",
+            json={"values": {"url": "https://books.lan:8083"}},
+        )
+
+        assert saved.status_code == 200
+        assert saved.json()["secret_status"]["password"] is True
         assert storage.get_credential(1, "calibre", "password") == "hunter2"
 
-        repointed = client.put(
-            "/api/sync/sources/calibre/config",
-            json={"values": {"url": "https://attacker.example", "verify_ssl": False}},
-        )
+        started = threading.Event()
 
-        assert repointed.status_code == 200
-        body = repointed.json()
-        assert body["secret_status"]["password"] is False
-        assert body["field_values"]["url"] == "https://attacker.example"
-        assert storage.get_credential(1, "calibre", "password") is None
+        def fake_execute(*, sources: list[Any], **_: Any) -> list[SyncResult]:
+            started.set()
+            return [SyncResult(source_name=plugin.name) for plugin, _cfg in sources]
 
-        with patch("requests.get") as requested, caplog.at_level(logging.WARNING):
+        with patch("src.web.api.execute_multi_source_sync", fake_execute):
             sync = client.post("/api/update", json={"source": "calibre"})
 
-        assert sync.status_code == 400
-        assert sync.json()["detail"] == (
-            "Source is not properly configured — check its 'password' setting."
+        assert sync.status_code == 200
+        assert started.wait(timeout=5)
+
+    def test_the_reported_https_edit_keeps_an_arr_api_key(
+        self, real_plugin_client: TestClient, storage: StorageManager
+    ) -> None:
+        """The same edit on Radarr, whose ``url`` carries an explicit port."""
+        client = real_plugin_client
+        self._source_with_a_secret(
+            client,
+            "radarr",
+            "radarr",
+            {"url": "http://media.lan:8080"},
+            ("api_key", "issued-for-media-lan"),
         )
-        assert "'password' is required" in caplog.text
-        requested.assert_not_called()
+
+        saved = client.put(
+            "/api/sync/sources/radarr/config",
+            json={"values": {"url": "https://media.lan:8080"}},
+        )
+
+        assert saved.status_code == 200
+        assert saved.json()["field_values"]["url"] == "https://media.lan:8080"
+        assert saved.json()["secret_status"]["api_key"] is True
+        assert storage.get_credential(1, "radarr", "api_key") == "issued-for-media-lan"
+
+    def test_toggling_verify_ssl_keeps_the_password(
+        self, real_plugin_client: TestClient, storage: StorageManager
+    ) -> None:
+        """The flag exists for self-signed certs — using it cost a password."""
+        client = real_plugin_client
+        self._source_with_a_secret(
+            client,
+            "calibre",
+            "calibre_web",
+            {"url": "https://books.lan:8083", "username": "reader", "verify_ssl": True},
+            ("password", "hunter2"),
+        )
+
+        saved = client.put(
+            "/api/sync/sources/calibre/config", json={"values": {"verify_ssl": False}}
+        )
+
+        assert saved.status_code == 200
+        assert saved.json()["field_values"]["verify_ssl"] is False
+        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+
+    def test_repointing_at_another_host_is_refused_with_the_secret_intact(
+        self, real_plugin_client: TestClient, storage: StorageManager
+    ) -> None:
+        """The original exfiltration, now closed without destroying anything."""
+        client = real_plugin_client
+        self._source_with_a_secret(
+            client,
+            "calibre",
+            "calibre_web",
+            {"url": "http://books.lan:8083", "username": "reader", "verify_ssl": True},
+            ("password", "hunter2"),
+        )
+
+        refused = client.put(
+            "/api/sync/sources/calibre/config",
+            json={"values": {"url": "https://attacker.example"}},
+        )
+
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == (
+            "Changing 'url' points this source at a different host. Clear its "
+            "stored 'password' first, then save this change and enter the "
+            "credential the new host expects."
+        )
+        current = client.get("/api/sync/sources/calibre/config").json()
+        assert current["field_values"]["url"] == "http://books.lan:8083"
+        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+
+    def test_clearing_the_secret_first_lets_the_move_through(
+        self, real_plugin_client: TestClient, storage: StorageManager
+    ) -> None:
+        """The remedy the refusal names has to actually work."""
+        client = real_plugin_client
+        self._source_with_a_secret(
+            client,
+            "calibre",
+            "calibre_web",
+            {"url": "http://books.lan:8083", "username": "reader", "verify_ssl": True},
+            ("password", "hunter2"),
+        )
+
+        cleared = client.delete("/api/sync/sources/calibre/secret/password")
+        moved = client.put(
+            "/api/sync/sources/calibre/config",
+            json={"values": {"url": "https://books.example:8083"}},
+        )
+
+        assert cleared.status_code == 204
+        assert moved.status_code == 200
+        assert moved.json()["field_values"]["url"] == "https://books.example:8083"
+        assert storage.get_credential(1, "calibre", "password") is None

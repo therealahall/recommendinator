@@ -519,9 +519,12 @@ function isSecretSet(name: string): boolean {
   background: color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
+/* Wraps where the "Saved ✓" pill does not: a refusal names the remedy, which
+   runs to a sentence or three, and nowrap would run it off the form. */
 .source-form-save-status--err {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 35%, transparent);
+  white-space: normal;
 }
 
 @keyframes source-form-save-status-fade {

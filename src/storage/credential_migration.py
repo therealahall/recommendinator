@@ -49,11 +49,10 @@ def migrate_config_credentials(
     from the config value if available.
 
     **A source with a ``source_configs`` row is skipped**, its file-held
-    secrets discarded rather than read. Otherwise repointing a
-    ``credential_bound`` field — which clears the source's credentials — would
-    be undone by the next reload re-seeding them from the file, handing the
-    secret to whatever host the caller named. Deleting one through
-    ``DELETE /api/sync/sources/{id}/secret/{key}`` was as short-lived.
+    secrets discarded rather than read. Otherwise clearing a secret through
+    ``DELETE /api/sync/sources/{id}/secret/{key}`` — what an operator does
+    before repointing a source at a new host — would be undone by the next
+    reload re-seeding it from the file, handing the secret to that host.
 
     Reading secrets from ``config.yaml`` is a **deprecated** legacy path kept so
     existing installs keep working: a ``sensitive=True`` field found in the file

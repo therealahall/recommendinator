@@ -88,7 +88,11 @@ class FakeGamePlugin(SourcePlugin):
         return [
             ConfigField(name="api_key", field_type=str, required=True, sensitive=True),
             ConfigField(
-                name="url", field_type=str, required=False, credential_bound=True
+                name="url",
+                field_type=str,
+                required=False,
+                default="http://localhost:7878",
+                credential_bound=True,
             ),
             ConfigField(name="label", field_type=str, required=False),
         ]
@@ -893,7 +897,7 @@ class TestResolveInputsWithDbSourceConfig:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestCredentialBoundUpdates:
-    """Moving a ``credential_bound`` field invalidates the source's secrets."""
+    """Where the line falls between an edit and a move to another host."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -907,42 +911,90 @@ class TestCredentialBoundUpdates:
         storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
         return storage
 
-    def test_repointing_the_url_clears_the_stored_secret(
+    @staticmethod
+    def _update(storage: StorageManager, values: dict[str, Any]) -> None:
+        update_source_config_values("my_games", FakeGamePlugin(), storage, values)
+
+    def test_repointing_the_url_is_refused_and_changes_nothing(
         self, migrated: StorageManager
     ) -> None:
-        update_source_config_values(
-            "my_games",
-            FakeGamePlugin(),
-            migrated,
-            {"url": "http://attacker.example"},
-        )
+        with pytest.raises(SourceConfigError) as refusal:
+            self._update(migrated, {"url": "http://attacker.example"})
 
-        assert migrated.get_credential(1, "my_games", "api_key") is None
+        assert refusal.value.kind == "credential_move"
+        assert refusal.value.message == (
+            "Changing 'url' points this source at a different host. Clear its "
+            "stored 'api_key' first, then save this change and enter the "
+            "credential the new host expects."
+        )
+        assert migrated.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
+        row = migrated.get_source_config(1, "my_games")
+        assert row is not None
+        assert row["config"]["url"] == "http://localhost:7878"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://localhost:7878",
+            "http://localhost:7878/",
+            "http://localhost:7878/radarr",
+        ],
+    )
+    def test_a_rewrite_that_keeps_the_host_keeps_the_secret(
+        self, migrated: StorageManager, url: str
+    ) -> None:
+        """Scheme, trailing slash and path do not decide who receives it."""
+        self._update(migrated, {"url": url})
+
+        assert migrated.get_credential(1, "my_games", "api_key") == (
+            "issued-for-localhost"
+        )
+        row = migrated.get_source_config(1, "my_games")
+        assert row is not None and row["config"]["url"] == url
+
+    @pytest.mark.parametrize(
+        "url", ["http://other.example:7878", "http://localhost:9999"]
+    )
+    def test_a_new_host_or_port_is_a_move(
+        self, migrated: StorageManager, url: str
+    ) -> None:
+        with pytest.raises(SourceConfigError, match="different host"):
+            self._update(migrated, {"url": url})
+
+    def test_the_move_is_allowed_once_the_secret_is_gone(
+        self, migrated: StorageManager
+    ) -> None:
+        """The refusal names clearing the secret as the remedy — it has to work."""
+        migrated.delete_credential(1, "my_games", "api_key")
+
+        self._update(migrated, {"url": "http://attacker.example"})
+
         row = migrated.get_source_config(1, "my_games")
         assert row is not None
         assert row["config"]["url"] == "http://attacker.example"
 
-    def test_giving_an_unset_bound_field_its_first_value_clears_the_secret(
+    def test_an_unset_bound_field_is_measured_from_the_plugin_default(
         self, storage: StorageManager
     ) -> None:
-        """A stored config with no ``url`` is still a host the secret is bound to.
-
-        The plugin default decided where the last sync sent it, so naming one
-        explicitly moves it just as rewriting an existing value does.
-        """
+        """The default is the host every sync so far actually used."""
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
         storage.save_credential(1, "my_games", "api_key", "issued-for-the-default")
 
-        update_source_config_values(
-            "my_games", FakeGamePlugin(), storage, {"url": "http://attacker.example"}
-        )
+        with pytest.raises(SourceConfigError, match="different host"):
+            self._update(storage, {"url": "http://attacker.example"})
 
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        self._update(storage, {"url": "https://localhost:7878"})
+
+        assert storage.get_credential(1, "my_games", "api_key") == (
+            "issued-for-the-default"
+        )
 
     def test_an_empty_update_leaves_the_secret_alone(
         self, migrated: StorageManager
     ) -> None:
-        update_source_config_values("my_games", FakeGamePlugin(), migrated, {})
+        self._update(migrated, {})
 
         assert migrated.get_credential(1, "my_games", "api_key") == (
             "issued-for-localhost"
@@ -951,9 +1003,7 @@ class TestCredentialBoundUpdates:
     def test_a_non_binding_field_leaves_the_secret_alone(
         self, migrated: StorageManager
     ) -> None:
-        update_source_config_values(
-            "my_games", FakeGamePlugin(), migrated, {"label": "Games"}
-        )
+        self._update(migrated, {"label": "Games"})
 
         assert migrated.get_credential(1, "my_games", "api_key") == (
             "issued-for-localhost"

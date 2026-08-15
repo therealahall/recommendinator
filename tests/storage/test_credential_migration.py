@@ -341,10 +341,10 @@ class TestMigrateConfigCredentials:
     def test_a_migrated_source_is_never_re_seeded_from_the_file(
         self, storage: StorageManager
     ) -> None:
-        """Reported: the ``credential_bound`` clear undid itself on reload.
+        """Reported: a cleared secret came back on reload.
 
         This sweep found no row, read the file and re-encrypted the api_key,
-        so the next sync handed it to the caller's host.
+        so the next sync handed it to the host the source had just moved to.
         """
         plugin = get_registry().get_plugin("sonarr")
         assert plugin is not None
@@ -356,6 +356,8 @@ class TestMigrateConfigCredentials:
         )
         set_source_secret_value("sonarr", plugin, storage, "api_key", "issued-secret")
 
+        # The move a repoint requires: clear the secret, then name the new host.
+        clear_source_secret_value("sonarr", plugin, storage, "api_key")
         update_source_config_values(
             "sonarr", plugin, storage, {"url": "http://attacker.example"}
         )

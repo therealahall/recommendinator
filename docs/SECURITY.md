@@ -81,11 +81,12 @@ library items. Removing the last source on a plugin — through the API or
 since no source can read it any more. Another source on the same plugin, in
 `config.yaml` or the database and enabled or not, keeps it.
 
-**Changing a `credential_bound` field clears that source's stored secrets** —
-`url` on Sonarr, Radarr and Calibre-Web, plus Calibre-Web's `verify_ssl`. A
-credential is bound to where it was issued, so re-enter it through
-`source set-secret` or the **Data** tab after the move. Creating a source clears
-anything left under that id.
+**Pointing a `credential_bound` field at a different host is refused** — `url`
+on Sonarr, Radarr and Calibre-Web. Host and port decide, so an `http` → `https`
+upgrade of the same endpoint goes through untouched. To move a source, clear its
+secret (`source clear-secret` or the **Data** tab), save the new URL, then enter
+the credential the new host expects. Creating a source clears anything left
+under that id.
 
 A source `url` must be `http` or `https`, must name a host, and must not embed
 `user:password@`. Source config is validated when it is written and again at

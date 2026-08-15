@@ -12,6 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
+from urllib.parse import urlsplit
 
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
@@ -40,6 +41,7 @@ SourceConfigErrorKind = Literal[
     "conflict",
     "invalid_id",
     "unknown_plugin",
+    "credential_move",
 ]
 
 
@@ -394,6 +396,9 @@ class SourceConfigError(Exception):
     * ``conflict``        — create attempted on an existing source id (409)
     * ``invalid_id``      — source id violates the allowed character set (400)
     * ``unknown_plugin``  — create / migrate referenced an unregistered plugin (400)
+    * ``credential_move`` — the write would point stored credentials at a
+      different host (400). The message names the fields involved, from the
+      schema alone.
     """
 
     def __init__(self, kind: SourceConfigErrorKind, message: str) -> None:
@@ -636,19 +641,60 @@ def migrate_source(
     }
 
 
-def _moves_credential_binding(
+#: The port a scheme implies, so ``http://host`` and ``https://host`` read as
+#: the same endpoint rather than as a move from port 80 to port 443.
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _credential_host(value: Any) -> tuple[str, int | None] | None:
+    """The party *value* points a credential at, ``None`` when it names none.
+
+    Host and port say who receives the secret; the scheme does not, so an
+    https upgrade is not a move.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parts = urlsplit(value)
+        hostname, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    return hostname, None if port == _DEFAULT_PORTS.get(parts.scheme) else port
+
+
+def _moves_the_credentials_elsewhere(before: Any, after: Any) -> bool:
+    """Whether rewriting *before* to *after* hands the secrets to a new party."""
+    before_host, after_host = _credential_host(before), _credential_host(after)
+    # Neither side is a URL, so there is no host to read and any change counts:
+    # a future ``credential_bound`` field of another shape stays guarded.
+    if before_host is None and after_host is None:
+        return bool(before != after)
+    # One side names nobody — a source that has sent nothing anywhere, or one
+    # that no longer can. Either way no secret is handed on.
+    if before_host is None or after_host is None:
+        return False
+    return before_host != after_host
+
+
+def _fields_moving_the_credentials(
     schema: dict[str, ConfigField],
     stored: dict[str, Any],
     values: dict[str, Any],
-) -> bool:
-    """True when *values* changes a field the stored credentials are bound to.
+) -> list[str]:
+    """The ``credential_bound`` fields *values* points at a different party.
 
-    Compared verbatim, so a cosmetic rewrite counts too: over-clearing costs
-    one re-entry, under-clearing sends the secret somewhere new.
+    An unset field falls back to the schema default, which is the host every
+    sync so far actually used.
     """
-    return any(
-        schema[key].credential_bound and value != stored.get(key)
+    return sorted(
+        key
         for key, value in values.items()
+        if schema[key].credential_bound
+        and _moves_the_credentials_elsewhere(
+            stored.get(key, schema[key].default), value
+        )
     )
 
 
@@ -677,12 +723,25 @@ def misconfigured_detail(plugin: SourcePlugin, errors: list[str]) -> str:
     return f"Source is not properly configured — check these: {quoted}."
 
 
+def _quoted(names: list[str]) -> str:
+    return ", ".join(f"'{name}'" for name in names)
+
+
 def _invalid_values_detail(fields: list[str]) -> str:
     """The refusal the caller gets: which field, never the plugin's reason."""
-    named = ", ".join(f"'{name}'" for name in fields)
+    named = _quoted(fields)
     if len(fields) == 1:
         return f"The value for {named} was refused — check it and try again."
     return f"One of these values was refused — check them and try again: {named}."
+
+
+def _credential_move_detail(fields: list[str], secrets: list[str]) -> str:
+    """The refusal, and the steps that carry the move out without losing a secret."""
+    return (
+        f"Changing {_quoted(fields)} points this source at a different host. "
+        f"Clear its stored {_quoted(secrets)} first, then save this change and "
+        "enter the credential the new host expects."
+    )
 
 
 def _log_refusal(
@@ -800,6 +859,35 @@ def _refuse_values_that_break_the_source(
     raise SourceConfigError("invalid_values", _invalid_values_detail(blamed or changed))
 
 
+def _refuse_to_move_stored_credentials(
+    source_id: str,
+    schema: dict[str, ConfigField],
+    storage: StorageManager,
+    stored: dict[str, Any],
+    values: dict[str, Any],
+    user_id: int,
+) -> None:
+    """Refused rather than applied and cleared.
+
+    Deleting the secret loses the operator a credential they may not get back,
+    and the sync that fails afterwards blames a field they never touched.
+    """
+    moved = _fields_moving_the_credentials(schema, stored, values)
+    if not moved:
+        return
+    # Existence, not readability: an undecryptable row would be handed to the
+    # new host the moment the key file is restored.
+    secrets = _stored_secret_names(
+        source_id,
+        [field.name for field in schema.values() if field.sensitive],
+        storage,
+        user_id,
+    )
+    if not secrets:
+        return
+    raise SourceConfigError("credential_move", _credential_move_detail(moved, secrets))
+
+
 def update_source_config_values(
     source_id: str,
     plugin: SourcePlugin,
@@ -809,12 +897,11 @@ def update_source_config_values(
 ) -> None:
     """Apply non-sensitive field updates to a migrated source.
 
-    Moving a ``credential_bound`` field first clears the source's stored
-    credentials, so repointing one cannot make the next sync hand its secret
-    to the new host.
+    Repointing a ``credential_bound`` field at another host is refused while
+    the source holds a secret, rather than clearing it.
 
     Raises ``SourceConfigError`` — ``not_migrated``, ``invalid_field``,
-    ``invalid_values``, ``sensitive_in_config``.
+    ``invalid_values``, ``sensitive_in_config``, ``credential_move``.
     """
     db_row = storage.get_source_config(user_id, source_id)
     if db_row is None:
@@ -835,16 +922,12 @@ def update_source_config_values(
             )
 
     new_config = {**db_row["config"], **values}
-    # Before the clear: validating afterwards would judge a config whose
-    # secret this call has just removed.
     _refuse_values_that_break_the_source(
         source_id, plugin, storage, db_row["config"], new_config, user_id
     )
-
-    # Before the write, never after: a failure between the two must leave the
-    # secret gone rather than the source repointed with the secret intact.
-    if _moves_credential_binding(schema, db_row["config"], values):
-        storage.delete_credentials_for_source(user_id, source_id)
+    _refuse_to_move_stored_credentials(
+        source_id, schema, storage, db_row["config"], values, user_id
+    )
 
     storage.upsert_source_config(
         user_id, source_id, plugin.name, new_config, enabled=db_row["enabled"]

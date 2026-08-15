@@ -55,9 +55,11 @@ put and a re-added source syncs straight back into them.
 Sensitive values are never returned by the API. The UI shows a "set" / "unset"
 badge with **Replace** and **Clear** actions.
 
-**Changing a source's `url`, or turning off Calibre-Web's `verify_ssl`, clears
-that source's stored credentials**, so re-enter the secret after the move. The
-badge flips to "unset" in the same response.
+**Pointing a source's `url` at a different host is refused while a secret is
+stored**, and the save says so. Editing the URL any other way — an `https`
+upgrade, a path, a trailing slash — keeps the credential. To move a source,
+**Clear** the secret, save the new URL, then enter the credential the new host
+expects.
 
 **A file-based source may only read under `security.allowed_source_roots`**
 (`inputs/` by default). A path outside it fails validation naming the key to add
