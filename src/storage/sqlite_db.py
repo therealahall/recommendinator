@@ -448,6 +448,10 @@ class SQLiteDB:
                 ahead than :data:`MAX_COMPLETION_DATE_SKEW`. The transaction
                 rolls back, so nothing is written.
         """
+        # Taken before the upsert takes it again: _write_completion binds this
+        # item's own values, so the upsert's escaped copy never reaches it.
+        item = _surrogate_free(item)
+
         with self.connection() as conn:
             cursor = conn.cursor()
             db_id = self._upsert_content_item(cursor, item, user_id).db_id
@@ -987,8 +991,11 @@ class SQLiteDB:
         if not isinstance(seasons_watched, list):
             return False
 
-        # If all seasons are still watched, no regression needed
-        if total_seasons is None or all_seasons_watched(seasons_watched, total_seasons):
+        # A missing or zero total is nothing to compare against, so it cannot
+        # show a new season: leave the status alone. ``all_seasons_watched``
+        # answers False there because it is asked whether a show finished, and
+        # an unknown count never proves that.
+        if not total_seasons or all_seasons_watched(seasons_watched, total_seasons):
             return False
 
         # New seasons available that user hasn't watched.
