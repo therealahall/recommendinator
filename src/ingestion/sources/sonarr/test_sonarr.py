@@ -10,6 +10,24 @@ from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
 from src.models.content import ConsumptionStatus, ContentType
 
 
+def _api_response(payload: list[dict]) -> Mock:
+    """Build a mock 200 response carrying *payload* as JSON."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 200
+    response.headers = {}
+    response.json.return_value = payload
+    response.raise_for_status = Mock()
+    return response
+
+
+def _redirect_response(location: str) -> Mock:
+    """Build a mock 301 pointing at *location*."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 301
+    response.headers = {"Location": location}
+    return response
+
+
 @pytest.fixture()
 def plugin() -> SonarrPlugin:
     """Create a SonarrPlugin instance."""
@@ -85,13 +103,21 @@ class TestSonarrPluginProperties:
 
     def test_config_schema(self, plugin: SonarrPlugin) -> None:
         schema = plugin.get_config_schema()
-        assert len(schema) == 2
         names = [field.name for field in schema]
-        assert "url" in names
-        assert "api_key" in names
+        assert names == ["url", "api_key", "verify_ssl"]
         # api_key should be sensitive
         api_key_field = next(field for field in schema if field.name == "api_key")
         assert api_key_field.sensitive is True
+
+    def test_verify_ssl_is_optional_and_defaults_on(self, plugin: SonarrPlugin) -> None:
+        field = next(
+            field for field in plugin.get_config_schema() if field.name == "verify_ssl"
+        )
+        assert field.field_type is bool
+        assert field.required is False
+        assert field.default is True
+        # Nothing about a TLS toggle names where the api key is sent.
+        assert field.credential_bound is False
 
     def test_get_source_identifier(self, plugin: SonarrPlugin) -> None:
         assert plugin.get_source_identifier() == "sonarr"
@@ -137,10 +163,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """All series should be imported regardless of monitored state."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -160,10 +183,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """All imported items should have UNREAD status (Sonarr can't track watching)."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -179,10 +199,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -199,10 +216,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """External ID should be tvdb:{tvdbId} for deduplication."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -219,10 +233,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """Sonarr does not track personal ratings; rating should always be None."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -239,10 +250,7 @@ class TestSonarrPluginFetch:
         sample_series: list[dict],
     ) -> None:
         """Metadata should include genres, network, seasons, etc."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -265,10 +273,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = sample_series
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
@@ -284,10 +289,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """API key should be sent as X-Api-Key header."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response([])
 
         list(plugin.fetch({"url": "http://localhost:8989", "api_key": "my_secret_key"}))
 
@@ -302,10 +304,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """Should call /api/v3/series endpoint."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response([])
 
         list(plugin.fetch({"url": "http://mysonarr:8989", "api_key": "key"}))
 
@@ -319,10 +318,7 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
     ) -> None:
         """Trailing slash in URL should not cause double slash."""
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response([])
 
         list(plugin.fetch({"url": "http://localhost:8989/", "api_key": "key"}))
 
@@ -335,10 +331,7 @@ class TestSonarrPluginFetch:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = []
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response([])
 
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
@@ -350,13 +343,12 @@ class TestSonarrPluginFetch:
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
-        mock_response.json.return_value = [
-            {"title": "", "monitored": True, "tvdbId": 123},
-            {"title": "Valid Show", "monitored": True, "tvdbId": 456},
-        ]
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_get.return_value = _api_response(
+            [
+                {"title": "", "monitored": True, "tvdbId": 123},
+                {"title": "Valid Show", "monitored": True, "tvdbId": 456},
+            ]
+        )
 
         items = list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
@@ -379,12 +371,28 @@ class TestSonarrPluginErrors:
             list(plugin.fetch({"url": "http://localhost:8989", "api_key": "key"}))
 
     @patch("src.ingestion.sources.arr_base.requests.get")
+    def test_tls_failure_is_reported_as_tls_not_as_unreachable(
+        self,
+        mock_get: Mock,
+        plugin: SonarrPlugin,
+    ) -> None:
+        """An unverifiable certificate reads as a certificate problem."""
+        mock_get.side_effect = requests.exceptions.SSLError(
+            "certificate verify failed: unable to get local issuer certificate"
+        )
+
+        with pytest.raises(SourceError, match="TLS verification failed") as raised:
+            list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert "verify_ssl to false" in str(raised.value)
+
+    @patch("src.ingestion.sources.arr_base.requests.get")
     def test_http_error_raises_source_error(
         self,
         mock_get: Mock,
         plugin: SonarrPlugin,
     ) -> None:
-        mock_response = Mock(spec=requests.Response)
+        mock_response = _api_response([])
         mock_response.raise_for_status.side_effect = requests.HTTPError(
             "401 Unauthorized"
         )
@@ -392,3 +400,93 @@ class TestSonarrPluginErrors:
 
         with pytest.raises(SourceError, match="Failed to connect to Sonarr"):
             list(plugin.fetch({"url": "http://localhost:8989", "api_key": "bad_key"}))
+
+
+class TestSonarrTls:
+    """Sonarr behind TLS, with and without a verifiable certificate."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_requests(self):
+        with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
+            self.mock_get = mock_get
+            yield
+
+    def test_an_https_url_is_fetched_with_verification_on(
+        self,
+        plugin: SonarrPlugin,
+        sample_series: list[dict],
+    ) -> None:
+        self.mock_get.return_value = _api_response(sample_series)
+
+        items = list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert len(items) == 3
+        assert self.mock_get.call_args[0][0] == "https://sonarr.lan/api/v3/series"
+        assert self.mock_get.call_args[1]["verify"] is True
+
+    def test_verify_ssl_false_reaches_the_request(self, plugin: SonarrPlugin) -> None:
+        self.mock_get.return_value = _api_response([])
+
+        list(
+            plugin.fetch(
+                {
+                    "url": "https://sonarr.lan",
+                    "api_key": "key",
+                    "verify_ssl": False,
+                }
+            )
+        )
+
+        assert self.mock_get.call_args[1]["verify"] is False
+
+    def test_an_http_url_is_not_followed_to_https_regression(
+        self,
+        plugin: SonarrPlugin,
+    ) -> None:
+        """Bug: a proxy 301'd the configured http url to https.
+
+        ``requests`` followed it, so the sync died on
+        CERTIFICATE_VERIFY_FAILED for a scheme the operator never configured.
+        A redirect off the origin is refused now.
+        """
+        self.mock_get.return_value = _redirect_response(
+            "https://sonarr.lan/api/v3/series"
+        )
+
+        with pytest.raises(SourceError, match="Refused a redirect") as raised:
+            list(plugin.fetch({"url": "http://sonarr.lan", "api_key": "key"}))
+
+        message = str(raised.value)
+        assert "http://sonarr.lan/api/v3/series" in message
+        assert "https://sonarr.lan/api/v3/series" in message
+        # Refused, not followed: the redirect target was never requested.
+        self.mock_get.assert_called_once()
+
+    def test_a_redirect_target_cannot_rewrite_the_log(
+        self,
+        plugin: SonarrPlugin,
+    ) -> None:
+        """``Location`` is server text and the refusal is logged (CWE-117)."""
+        self.mock_get.return_value = _redirect_response(
+            "https://elsewhere.example/\x1b[2Kforged"
+        )
+
+        with pytest.raises(SourceError) as raised:
+            list(plugin.fetch({"url": "http://sonarr.lan", "api_key": "key"}))
+
+        assert "\x1b" not in str(raised.value)
+
+    def test_a_same_origin_redirect_is_still_followed(
+        self,
+        plugin: SonarrPlugin,
+        sample_series: list[dict],
+    ) -> None:
+        self.mock_get.side_effect = [
+            _redirect_response("https://sonarr.lan/api/v3/series/"),
+            _api_response(sample_series),
+        ]
+
+        items = list(plugin.fetch({"url": "https://sonarr.lan", "api_key": "key"}))
+
+        assert len(items) == 3
+        assert self.mock_get.call_count == 2

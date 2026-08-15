@@ -63,13 +63,16 @@ class RadarrPlugin(ArrPlugin):
         self,
         base_url: str,
         api_key: str,
+        verify_ssl: bool,
         item: dict[str, Any],
         metadata: dict[str, Any],
     ) -> None:
         """Add collection/series info from Radarr collections."""
         # Lazy-load collection map on first call
         if not hasattr(self, "_collection_map"):
-            self._collection_map = _fetch_radarr_collections(base_url, api_key)
+            self._collection_map = self._fetch_collections(
+                base_url, api_key, verify_ssl
+            )
 
         tmdb_id = item.get("tmdbId")
         collection_info = self._collection_map.get(tmdb_id) if tmdb_id else None
@@ -77,53 +80,46 @@ class RadarrPlugin(ArrPlugin):
             metadata["series_name"] = collection_info["title"]
             metadata["movie_number"] = collection_info["order"]
 
+    def _fetch_collections(
+        self, base_url: str, api_key: str, verify_ssl: bool
+    ) -> dict[int, dict[str, Any]]:
+        """Fetch collections and build tmdb_id -> (title, order) map.
 
-def _fetch_radarr_collections(base_url: str, api_key: str) -> dict[int, dict[str, Any]]:
-    """Fetch collections and build tmdb_id -> (title, order) map.
+        Radarr collections (e.g., Back to the Future) provide movie order for
+        series-aware recommendations.
+        """
+        url = f"{base_url}/api/v3/collection"
 
-    Radarr collections (e.g., Back to the Future) provide movie order for
-    series-aware recommendations.
+        try:
+            response = self._api_get(url, api_key, verify_ssl)
+            response.raise_for_status()
+        except requests.RequestException as error:
+            logger.warning(
+                "Could not fetch Radarr collections: %s", exception_for_log(error)
+            )
+            return {}
 
-    Args:
-        base_url: Radarr base URL
-        api_key: Radarr API key
+        data = response.json()
+        if not isinstance(data, list):
+            return {}
 
-    Returns:
-        Map of tmdb_id -> {"title": str, "order": int} for movies in collections
-    """
-    url = f"{base_url}/api/v3/collection"
-    headers = {"X-Api-Key": api_key}
+        result: dict[int, dict[str, Any]] = {}
+        for collection in data:
+            title = collection.get("title") or collection.get("name") or ""
+            if not title:
+                continue
 
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-    except requests.RequestException as error:
-        logger.warning(
-            "Could not fetch Radarr collections: %s", exception_for_log(error)
-        )
-        return {}
+            movies = collection.get("movies") or collection.get("items") or []
+            for order, movie in enumerate(movies, start=1):
+                tmdb_id = None
+                if isinstance(movie, dict):
+                    tmdb_id = movie.get("tmdbId") or movie.get("tmdb_id")
+                if tmdb_id is not None:
+                    result[int(tmdb_id)] = {"title": title, "order": order}
 
-    data = response.json()
-    if not isinstance(data, list):
-        return {}
-
-    result: dict[int, dict[str, Any]] = {}
-    for collection in data:
-        title = collection.get("title") or collection.get("name") or ""
-        if not title:
-            continue
-
-        movies = collection.get("movies") or collection.get("items") or []
-        for order, movie in enumerate(movies, start=1):
-            tmdb_id = None
-            if isinstance(movie, dict):
-                tmdb_id = movie.get("tmdbId") or movie.get("tmdb_id")
-            if tmdb_id is not None:
-                result[int(tmdb_id)] = {"title": title, "order": order}
-
-    if result:
-        logger.info("Loaded collection info for %d movies", len(result))
-    return result
+        if result:
+            logger.info("Loaded collection info for %d movies", len(result))
+        return result
 
 
 def _build_radarr_metadata(movie: dict[str, Any]) -> dict[str, Any]:

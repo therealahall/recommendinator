@@ -6,6 +6,7 @@ import logging
 from abc import abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -18,11 +19,20 @@ from src.ingestion.plugin_base import (
 from src.ingestion.urls import source_url_error
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
+from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+_REQUEST_TIMEOUT = 30
+
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+# Only same-origin hops are followed at all, so this caps a redirect loop
+# rather than a chain any real *arr install produces.
+_MAX_REDIRECTS = 5
 
 
 class ArrPlugin(SourcePlugin):
@@ -74,6 +84,7 @@ class ArrPlugin(SourcePlugin):
         return {
             "url": (raw_fields.get("url", cls._get_default_url()) or "").rstrip("/"),
             "api_key": (raw_fields.get("api_key") or "").strip(),
+            "verify_ssl": raw_fields.get("verify_ssl", True),
         }
 
     def get_config_schema(self) -> list[ConfigField]:
@@ -94,6 +105,13 @@ class ArrPlugin(SourcePlugin):
                 description=(
                     f"{self.display_name} API key (Settings > General > Security)"
                 ),
+            ),
+            ConfigField(
+                name="verify_ssl",
+                field_type=bool,
+                required=False,
+                default=True,
+                description="Verify the TLS certificate (disable for self-signed)",
             ),
         ]
 
@@ -144,19 +162,14 @@ class ArrPlugin(SourcePlugin):
         self,
         base_url: str,
         api_key: str,
+        verify_ssl: bool,
         item: dict[str, Any],
         metadata: dict[str, Any],
     ) -> None:
-        """Hook for subclasses to augment metadata after the main fetch.
+        """Hook for subclasses to augment ``metadata`` in place.
 
-        Called for each item before yielding. Override to add extra
-        data (e.g. Radarr collections).
-
-        Args:
-            base_url: Service base URL
-            api_key: Service API key
-            item: Raw API item dict
-            metadata: Metadata dict (modified in place)
+        Called for each item before it is yielded, so an override can add
+        data the main fetch does not carry (e.g. Radarr collections).
         """
 
     def fetch(
@@ -178,6 +191,7 @@ class ArrPlugin(SourcePlugin):
         """
         base_url = config.get("url", self._default_url).rstrip("/")
         api_key = config.get("api_key", "").strip()
+        verify_ssl = config.get("verify_ssl", True)
 
         # A sync of every source skips validate_config, so the api key would
         # otherwise reach whatever scheme and host the config now names.
@@ -187,7 +201,16 @@ class ArrPlugin(SourcePlugin):
 
         logger.info("Fetching items from %s...", self.display_name)
         try:
-            item_list = self._fetch_items(base_url, api_key)
+            item_list = self._fetch_items(base_url, api_key, verify_ssl)
+        except requests.exceptions.SSLError as error:
+            # Naming TLS separately is the whole point: the generic wording
+            # below reads as "unreachable" and sent operators host-hunting.
+            raise SourceError(
+                self.name,
+                f"TLS verification failed for {self.display_name} at "
+                f"{base_url}: {error}. Set verify_ssl to false if the "
+                "certificate is not publicly trusted.",
+            ) from error
         except requests.RequestException as error:
             raise SourceError(
                 self.name,
@@ -205,7 +228,7 @@ class ArrPlugin(SourcePlugin):
 
             external_id = self.build_external_id(item)
             metadata = self.build_metadata(item)
-            self.post_fetch(base_url, api_key, item, metadata)
+            self.post_fetch(base_url, api_key, verify_ssl, item, metadata)
 
             processed_count += 1
             log_progress(logger, f"{self.display_name} items", processed_count, total)
@@ -226,23 +249,18 @@ class ArrPlugin(SourcePlugin):
 
         logger.info("Imported %d items from %s", processed_count, self.display_name)
 
-    def _fetch_items(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
+    def _fetch_items(
+        self, base_url: str, api_key: str, verify_ssl: bool
+    ) -> list[dict[str, Any]]:
         """Fetch all items from the *arr API.
 
-        Args:
-            base_url: Service base URL
-            api_key: Service API key
-
-        Returns:
-            List of item dictionaries
-
         Raises:
+            SourceError: If a redirect leaves the configured origin
             requests.RequestException: On network/API errors
         """
         url = f"{base_url}/api/v3/{self.arr_api_endpoint}"
-        headers = {"X-Api-Key": api_key}
 
-        response = requests.get(url, headers=headers, timeout=30)
+        response = self._api_get(url, api_key, verify_ssl)
         response.raise_for_status()
 
         data = response.json()
@@ -252,3 +270,57 @@ class ArrPlugin(SourcePlugin):
 
         logger.info("Fetched %d items from %s", len(data), self.display_name)
         return list(data)
+
+    def _api_get(self, url: str, api_key: str, verify_ssl: bool) -> requests.Response:
+        """GET an *arr API url, refusing a redirect off its origin.
+
+        ``requests`` replays ``X-Api-Key`` onto any host a redirect names, and
+        follows an http->https bounce silently, so a proxy reported an
+        unverifiable certificate for a scheme nobody configured.
+        """
+        origin = urlsplit(url)
+        current = url
+        for _ in range(_MAX_REDIRECTS):
+            response = requests.get(
+                current,
+                headers={"X-Api-Key": api_key},
+                timeout=_REQUEST_TIMEOUT,
+                verify=verify_ssl,
+                allow_redirects=False,
+            )
+            if response.status_code not in _REDIRECT_STATUSES:
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                return response
+
+            target = urljoin(current, location)
+            target_parts = urlsplit(target)
+            if (target_parts.scheme, target_parts.netloc) != (
+                origin.scheme,
+                origin.netloc,
+            ):
+                raise SourceError(self.name, self._redirect_refusal(current, target))
+            current = target
+
+        raise SourceError(
+            self.name,
+            f"{self.display_name} redirected {url} more than "
+            f"{_MAX_REDIRECTS} times.",
+        )
+
+    def _redirect_refusal(self, url: str, target: str) -> str:
+        """Word a refused redirect as the config change it asks for.
+
+        The target is whatever ``Location`` said and this message is logged on
+        one line, so it is escaped like any other header text (CWE-117).
+        """
+        origin = urlsplit(url)
+        safe_target = sanitize_for_log(target)
+        return (
+            f"Refused a redirect from {url} to {safe_target}. It leaves the "
+            f"configured origin {origin.scheme}://{origin.netloc}, and the API "
+            f"key only goes where the source url points. If {self.display_name} "
+            f"really is at {safe_target}, set the source url to it (and "
+            "verify_ssl to false if its certificate is not publicly trusted)."
+        )
