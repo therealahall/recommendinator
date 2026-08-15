@@ -103,8 +103,7 @@ for class methods are the exceptions.
 - **Data-driven patterns** over copy-pasted branches differing only in names.
 - **Keep developer-facing files self-contained.** Docs, tooling, CI, compose and
   build files, `tests/` and `.claude/` must not point at a path outside the
-  repository. Neither a reader nor CI can verify one.
-  `tests/test_repository_self_contained.py` enforces it. `src/` is exempt,
+  repository. Neither a reader nor CI can verify one. `src/` is exempt,
   because application code genuinely addresses the machine it runs on.
 - **The guard also bans the APIs that build a home-relative path**, so a
   hostile-input test can trip on its own payload. When the outside path IS the
@@ -121,9 +120,9 @@ for class methods are the exceptions.
 
 ## Testing
 
-80%+ coverage. Everything new gets tests. Cross-cutting tests mirror `src/` under
-`tests/`, and plugin tests live next to the plugin. Mock every external
-dependency. Never make a real network request.
+Everything new gets tests. Cross-cutting tests mirror `src/` under `tests/`, and
+plugin tests live next to the plugin. Mock every external dependency. Never make
+a real network request.
 
 ```bash
 python3.11 -m pytest                              # All tests

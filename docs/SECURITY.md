@@ -99,10 +99,7 @@ fixed string. The reason goes to the log instead.
 /api/sync/sources`, `GET /api/plugins` and the 400 from `POST /api/update`
 carry the module name and the exception that lost it, because "No module named
 'defusedxml'" is the answer the operator needs and every one of those routes
-requires a session on a single-user instance. The sweep in
-`tests/test_http_error_detail_sweep.py` does not see it: it is syntactic over
-`src/web/`, and the string is rendered in `src/ingestion/registry.py` long
-before a response quotes it.
+requires a session on a single-user instance.
 
 ## Web sign-in
 
@@ -271,8 +268,7 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), swept over `src/web/` by `tests/test_http_error_detail_sweep.py`,
-  with the plugin-import carve-out above as the one exception
+  forbidden), with the plugin-import carve-out above as the one exception
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values
