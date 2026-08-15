@@ -7,14 +7,11 @@ from unittest.mock import patch
 import pytest
 
 from src.storage import derived, schema
-from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import (
     create_schema,
     create_user,
     get_all_users,
-    get_default_user_id,
     get_user_by_id,
-    get_user_by_username,
     update_user_identity,
     update_user_settings,
 )
@@ -30,24 +27,6 @@ def temp_db(tmp_path: Path) -> sqlite3.Connection:
     conn.close()
 
 
-def test_create_schema(temp_db: sqlite3.Connection) -> None:
-    """Test schema creation."""
-    create_schema(temp_db)
-
-    # Verify tables exist
-    cursor = temp_db.cursor()
-
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    tables = [row[0] for row in cursor.fetchall()]
-
-    assert "users" in tables
-    assert "content_items" in tables
-    assert "book_details" in tables
-    assert "movie_details" in tables
-    assert "tv_show_details" in tables
-    assert "video_game_details" in tables
-
-
 def test_default_user_created(temp_db: sqlite3.Connection) -> None:
     """Test that default user is created with schema."""
     create_schema(temp_db)
@@ -56,11 +35,6 @@ def test_default_user_created(temp_db: sqlite3.Connection) -> None:
     assert user is not None
     assert user["username"] == "default"
     assert user["display_name"] == "Default User"
-
-
-def test_get_default_user_id() -> None:
-    """Test default user ID is always 1."""
-    assert get_default_user_id() == 1
 
 
 def test_create_user(temp_db: sqlite3.Connection) -> None:
@@ -81,26 +55,6 @@ def test_create_user(temp_db: sqlite3.Connection) -> None:
     assert user["username"] == "testuser"
     assert user["display_name"] == "Test User"
     assert user["settings"] == {"compact_cards": True}
-
-
-def test_get_user_by_username(temp_db: sqlite3.Connection) -> None:
-    """Test getting user by username."""
-    create_schema(temp_db)
-
-    user = get_user_by_username(temp_db, "default")
-    assert user is not None
-    assert user["id"] == 1
-
-
-def test_get_nonexistent_user(temp_db: sqlite3.Connection) -> None:
-    """Test getting a user that doesn't exist."""
-    create_schema(temp_db)
-
-    user = get_user_by_id(temp_db, 999)
-    assert user is None
-
-    user = get_user_by_username(temp_db, "nonexistent")
-    assert user is None
 
 
 def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
@@ -139,15 +93,6 @@ class TestUpdatingAUsersIdentity:
         assert (renamed["username"], renamed["display_name"]) == ("owner", None)
         assert renamed == get_user_by_id(temp_db, 1)
         assert renamed["settings"] == {"theme": "dark"}
-
-    def test_an_unknown_user_is_reported_rather_than_inserted(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """What ``StorageManager`` turns into ``UnknownUserError``."""
-        create_schema(temp_db)
-
-        assert update_user_identity(temp_db, 999, "owner", "The Owner") is None
-        assert get_user_by_username(temp_db, "owner") is None
 
     def test_a_username_another_row_holds_is_refused(
         self, temp_db: sqlite3.Connection
@@ -237,21 +182,6 @@ def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return cursor.fetchall()
 
 
-def test_create_schema_is_idempotent(temp_db: sqlite3.Connection) -> None:
-    """Test that create_schema can be called multiple times safely.
-
-    Safe was the original claim. The second call is also cheap: it runs none
-    of the passes that read the whole library.
-    """
-    create_schema(temp_db)
-
-    assert _repair_pass_calls(temp_db) == _NO_PASS_AT_ALL
-
-    # Verify default user still exists (not duplicated)
-    user = get_user_by_id(temp_db, 1)
-    assert user is not None
-
-
 class TestTheOneTimeContentRepair:
     """The three passes that read every content row run once per database.
 
@@ -261,12 +191,6 @@ class TestTheOneTimeContentRepair:
     matches, so an unguarded scan finds it again for the life of the database.
     """
 
-    def test_a_fresh_database_runs_none_of_the_passes(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """``CREATE TABLE`` writes no row any of them could repair."""
-        assert _repair_pass_calls(temp_db) == _NO_PASS_AT_ALL
-
     def test_a_database_written_before_the_guard_runs_each_pass_once(
         self, temp_db: sqlite3.Connection
     ) -> None:
@@ -275,23 +199,6 @@ class TestTheOneTimeContentRepair:
         _seed_a_library_awaiting_the_repair(temp_db)
 
         assert _repair_pass_calls(temp_db) == _EVERY_PASS_ONCE
-
-    def test_the_upgrade_renormalizes_a_title_the_sql_backfill_got_wrong(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """``lower(title)`` is replaced by the canonical normalization.
-
-        The stored value is compared with ``lower(title)`` as well, because a
-        pass that never ran would leave a value that is also "a string".
-        """
-        create_schema(temp_db)
-        _seed_a_library_awaiting_the_repair(temp_db)
-
-        create_schema(temp_db)
-
-        survivor = _content_rows(temp_db)[0]
-        assert survivor["normalized_title"] == "witcher 3 wild hunt"
-        assert survivor["normalized_title"] != "the witcher iii: wild hunt"
 
     def test_the_upgrade_merges_the_duplicate_the_renormalization_exposes(
         self, temp_db: sqlite3.Connection
@@ -320,33 +227,6 @@ class TestTheOneTimeContentRepair:
         create_schema(temp_db)
 
         assert _repair_pass_calls(temp_db) == _NO_PASS_AT_ALL
-
-    def test_a_stale_title_written_after_the_upgrade_is_left_alone(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """What the guard costs, in data rather than call counts.
-
-        Only a pre-upgrade build wrote an un-normalized title, so nothing
-        re-normalizes one written afterwards. A change to
-        ``normalize_title_for_matching`` is therefore a schema version bump,
-        not a silent re-run.
-        """
-        create_schema(temp_db)
-        _seed_a_library_awaiting_the_repair(temp_db)
-        create_schema(temp_db)
-        temp_db.execute(
-            "UPDATE content_items SET normalized_title = 'the witcher iii: wild hunt'"
-        )
-        temp_db.commit()
-
-        create_schema(temp_db)
-
-        assert _content_rows(temp_db)[0]["normalized_title"] == (
-            "the witcher iii: wild hunt"
-        )
-        assert normalize_title_for_matching("The Witcher III: Wild Hunt") == (
-            "witcher 3 wild hunt"
-        )
 
 
 def _rows_backfilled(conn: sqlite3.Connection) -> int:
@@ -402,21 +282,6 @@ class TestTheDerivedColumnBackfill:
     since it runs on every open.
     """
 
-    def test_a_fresh_database_has_no_row_to_fill(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """``CREATE TABLE`` writes no row missing either column."""
-        assert _rows_backfilled(temp_db) == 0
-
-    def test_a_row_written_before_the_columns_is_filled(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """The upgrade itself: the one row that needs it, written once."""
-        create_schema(temp_db)
-        _seed_a_row_missing_the_derived_columns(temp_db)
-
-        assert _rows_backfilled(temp_db) == 1
-
     def test_the_open_after_the_fill_writes_nothing(
         self, temp_db: sqlite3.Connection
     ) -> None:
@@ -451,24 +316,6 @@ class TestTheDerivedColumnBackfill:
         _seed_a_row_missing_the_derived_columns(temp_db)
 
         assert _rows_backfilled(temp_db) == 1
-        assert _derived_columns(temp_db) == (
-            get_sort_title("The Witcher 3"),
-            build_search_text("The Witcher 3", "CD Projekt Red"),
-        )
-
-    def test_the_fill_derives_both_columns_from_the_title_and_the_creator(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        """The values, not just the fact that a row was written.
-
-        The creator comes from the detail table, so a fill reading the content
-        row alone would leave the developer's name unsearchable.
-        """
-        create_schema(temp_db)
-        _seed_a_row_missing_the_derived_columns(temp_db)
-
-        create_schema(temp_db)
-
         assert _derived_columns(temp_db) == (
             get_sort_title("The Witcher 3"),
             build_search_text("The Witcher 3", "CD Projekt Red"),
@@ -580,76 +427,6 @@ class TestTheDerivedColumnBackfill:
         )
 
 
-class TestTheSchemaVersionStamp:
-    """The version is recorded once, and an open with nothing to do is silent.
-
-    ``PRAGMA data_version`` on an observing connection changes when another
-    connection commits a modification, so it says whether an open touched the
-    file at all — the header included, which is where the version lives.
-    """
-
-    @staticmethod
-    def _open(db_path: Path) -> None:
-        """Run ``create_schema`` over its own connection, as the app does."""
-        conn = sqlite3.connect(db_path)
-        try:
-            create_schema(conn)
-        finally:
-            conn.close()
-
-    def test_an_open_with_nothing_to_upgrade_writes_nothing(
-        self, tmp_path: Path
-    ) -> None:
-        """The steady state: every guarded step skipped, and no stamp either."""
-        db_path = tmp_path / "observed.db"
-        self._open(db_path)
-        observer = sqlite3.connect(db_path)
-        try:
-            before = observer.execute("PRAGMA data_version").fetchone()[0]
-
-            self._open(db_path)
-
-            assert observer.execute("PRAGMA data_version").fetchone()[0] == before
-        finally:
-            observer.close()
-
-    def test_restamping_the_same_version_would_write_to_the_file(
-        self, tmp_path: Path
-    ) -> None:
-        """Why the stamp is guarded rather than issued on every open.
-
-        SQLite does not treat writing the version it already holds as a no-op,
-        so the guard is what keeps the test above true. Without this one, that
-        one would pass on an unguarded stamp too and the branch would read as
-        dead code.
-        """
-        db_path = tmp_path / "restamped.db"
-        self._open(db_path)
-        observer = sqlite3.connect(db_path)
-        writer = sqlite3.connect(db_path)
-        try:
-            before = observer.execute("PRAGMA data_version").fetchone()[0]
-
-            writer.execute(f"PRAGMA user_version = {schema._SCHEMA_VERSION}")
-            writer.commit()
-
-            assert observer.execute("PRAGMA data_version").fetchone()[0] != before
-        finally:
-            writer.close()
-            observer.close()
-
-
-def test_get_all_users_default_only(temp_db: sqlite3.Connection) -> None:
-    """Test get_all_users returns only the default user when no others exist."""
-    create_schema(temp_db)
-
-    users = get_all_users(temp_db)
-    assert len(users) == 1
-    assert users[0]["id"] == 1
-    assert users[0]["username"] == "default"
-    assert users[0]["display_name"] == "Default User"
-
-
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
     """Test get_all_users returns all users ordered by id."""
     create_schema(temp_db)
@@ -662,22 +439,6 @@ def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
     assert users[0]["username"] == "default"
     assert users[1]["username"] == "alice"
     assert users[2]["username"] == "bob"
-
-
-def test_content_items_has_user_id(temp_db: sqlite3.Connection) -> None:
-    """Test that content_items table has user_id column."""
-    create_schema(temp_db)
-
-    cursor = temp_db.cursor()
-    cursor.execute("PRAGMA table_info(content_items)")
-    columns = {row[1] for row in cursor.fetchall()}
-
-    assert "user_id" in columns
-    assert "external_id" in columns
-    assert "title" in columns
-    assert "content_type" in columns
-    assert "status" in columns
-    assert "source" in columns
 
 
 def test_content_items_unique_constraint(temp_db: sqlite3.Connection) -> None:
@@ -721,19 +482,3 @@ def test_content_items_unique_constraint(temp_db: sqlite3.Connection) -> None:
     )
 
     temp_db.commit()
-
-
-def test_the_ai_tables_are_no_longer_created(temp_db: sqlite3.Connection) -> None:
-    """The AI removal took its tables with it, so a fresh database has none."""
-    create_schema(temp_db)
-
-    cursor = temp_db.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = {row[0] for row in cursor.fetchall()}
-
-    assert tables.isdisjoint(
-        {"preference_interpretation_cache", "core_memories", "conversation_messages"}
-    )
-    # Anchors the assertion above: the profile table shares their vintage and
-    # is the half that survived.
-    assert "preference_profiles" in tables

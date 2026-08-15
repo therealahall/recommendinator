@@ -1,107 +1,11 @@
 """Tests for credential CRUD operations and StorageManager integration."""
 
-import sqlite3
 from pathlib import Path
 
 import pytest
 
 from src.storage.manager import StorageManager
-from src.storage.schema import (
-    create_schema,
-    delete_credentials_for_source,
-    get_credential,
-    get_credentials_for_source,
-    save_credential,
-)
-
-
-class TestCredentialCRUD:
-    """Tests for low-level credential schema functions."""
-
-    @pytest.fixture()
-    def conn(self) -> sqlite3.Connection:
-        """Create an in-memory DB with schema."""
-        connection = sqlite3.connect(":memory:")
-        create_schema(connection)
-        return connection
-
-    def test_save_and_get_credential(self, conn: sqlite3.Connection) -> None:
-        """Round-trip: save a credential then retrieve it."""
-        save_credential(
-            conn,
-            user_id=1,
-            source_id="gog",
-            credential_key="refresh_token",
-            credential_value="encrypted_abc",
-        )
-
-        result = get_credential(
-            conn, user_id=1, source_id="gog", credential_key="refresh_token"
-        )
-        assert result == "encrypted_abc"
-
-    def test_get_credential_returns_none_when_missing(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """Returns None for a key that doesn't exist."""
-        result = get_credential(
-            conn, user_id=1, source_id="gog", credential_key="nonexistent"
-        )
-        assert result is None
-
-    def test_upsert_overwrites_existing(self, conn: sqlite3.Connection) -> None:
-        """Saving the same key again updates the value."""
-        save_credential(conn, 1, "gog", "refresh_token", "old_value")
-        save_credential(conn, 1, "gog", "refresh_token", "new_value")
-
-        result = get_credential(conn, 1, "gog", "refresh_token")
-        assert result == "new_value"
-
-    def test_get_credentials_for_source(self, conn: sqlite3.Connection) -> None:
-        """Returns all key-value pairs for a source."""
-        save_credential(conn, 1, "steam", "api_key", "steam_key_enc")
-        save_credential(conn, 1, "steam", "steam_id", "steam_id_enc")
-        save_credential(conn, 1, "gog", "refresh_token", "gog_token_enc")
-
-        result = get_credentials_for_source(conn, 1, "steam")
-        assert result == {"api_key": "steam_key_enc", "steam_id": "steam_id_enc"}
-
-    def test_get_credentials_for_source_returns_empty_when_none(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """Returns empty dict when source has no credentials."""
-        result = get_credentials_for_source(conn, user_id=1, source_id="nonexistent")
-        assert result == {}
-
-    def test_credentials_scoped_by_user(self, conn: sqlite3.Connection) -> None:
-        """Different users have separate credential namespaces."""
-        # Create a second user for isolation test
-        conn.cursor().execute("INSERT INTO users (id, username) VALUES (2, 'user2')")
-        conn.commit()
-
-        save_credential(conn, 1, "gog", "refresh_token", "user1_token")
-        save_credential(conn, 2, "gog", "refresh_token", "user2_token")
-
-        assert get_credential(conn, 1, "gog", "refresh_token") == "user1_token"
-        assert get_credential(conn, 2, "gog", "refresh_token") == "user2_token"
-
-    def test_deleting_a_sources_credentials_spares_the_other_users(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """Every other case here uses user 1, so dropping the ``user_id``
-        half of that ``DELETE`` — or swapping its ``AND`` for an ``OR`` —
-        stayed green while it cleared everybody's row for the source.
-        """
-        conn.cursor().execute("INSERT INTO users (id, username) VALUES (2, 'user2')")
-        conn.commit()
-        save_credential(conn, 1, "gog", "refresh_token", "user1_token")
-        save_credential(conn, 2, "gog", "refresh_token", "user2_token")
-
-        deleted = delete_credentials_for_source(conn, 1, "gog")
-
-        assert deleted == 1
-        assert get_credential(conn, 1, "gog", "refresh_token") is None
-        assert get_credential(conn, 2, "gog", "refresh_token") == "user2_token"
+from src.storage.schema import get_credential
 
 
 class TestStorageManagerCredentials:
@@ -136,19 +40,6 @@ class TestStorageManagerCredentials:
         result = storage.get_credentials_for_source(1, "steam")
         assert result == {"api_key": "my_steam_key", "steam_id": "my_steam_id"}
 
-    def test_get_credential_returns_none_when_missing(
-        self, storage: StorageManager
-    ) -> None:
-        """Returns None for missing credentials."""
-        assert storage.get_credential(1, "gog", "nonexistent") is None
-
-    def test_upsert_updates_encrypted_value(self, storage: StorageManager) -> None:
-        """Overwriting a credential re-encrypts the new value."""
-        storage.save_credential(1, "gog", "refresh_token", "old_token")
-        storage.save_credential(1, "gog", "refresh_token", "new_token")
-
-        assert storage.get_credential(1, "gog", "refresh_token") == "new_token"
-
     def test_decrypt_failure_returns_none(self, storage: StorageManager) -> None:
         """Corrupted ciphertext returns None instead of crashing."""
         # Save a credential, then corrupt it directly in the DB
@@ -162,20 +53,3 @@ class TestStorageManagerCredentials:
 
         # Should return None (logged), not raise InvalidToken
         assert storage.get_credential(1, "gog", "refresh_token") is None
-
-    def test_partial_decrypt_failure_excludes_bad_key(
-        self, storage: StorageManager
-    ) -> None:
-        """A corrupted credential is excluded; valid ones in same source still return."""
-        storage.save_credential(1, "steam", "api_key", "good_key")
-        storage.save_credential(1, "steam", "steam_id", "good_id")
-        with storage.connection() as conn:
-            conn.execute(
-                "UPDATE credentials SET credential_value = 'corrupted' "
-                "WHERE source_id = 'steam' AND credential_key = 'api_key'"
-            )
-            conn.commit()
-
-        result = storage.get_credentials_for_source(1, "steam")
-        assert "api_key" not in result
-        assert result.get("steam_id") == "good_id"

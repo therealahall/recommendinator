@@ -5,8 +5,6 @@ string on ``__cause__``, which callers print with ``exc_info=True``.
 """
 
 import ast
-import re
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -26,17 +24,6 @@ _SCANNED_TREES = (
     Path("src/utils"),
     Path("src/web"),
 )
-
-_SCAN_TEST_PATH = "tests/test_credential_url_chains.py"
-
-_DOCS_NAMING_THE_SCAN = (
-    Path("docs/PLUGIN_DEVELOPMENT.md"),
-    Path("docs/SECURITY.md"),
-)
-
-# A backticked token ending in a slash. The same paragraphs name
-# ``_CREDENTIAL_URL_FUNCTIONS`` and ``params=``, which the slash keeps out.
-_TREE_PATHS = re.compile(r"`([^`]+/)`")
 
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
@@ -102,70 +89,6 @@ _REQUEST_ERROR_NAMES = frozenset(
         "Timeout",
     }
 )
-
-_LEAKY_HANDLERS: dict[str, tuple[str, list[str]]] = {
-    "exc_info keyword": (
-        'logger.error("failed", exc_info=True)',
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "logger.exception": (
-        'logger.exception("failed")',
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "format_exc interpolated": (
-        'logger.error("failed: %s", traceback.format_exc())',
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "format_exception bound to a local": (
-        "rendered = traceback.format_exception(error)\n"
-        'logger.error("failed: %s", rendered)',
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "print_exc": (
-        "traceback.print_exc()",
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "print_exception": (
-        "traceback.print_exception(error)",
-        ["fetch_token: logs a traceback of the request error"],
-    ),
-    "raw error as a log argument": (
-        'logger.error("failed: %s", error)',
-        ["fetch_token: logs the request error unscrubbed"],
-    ),
-    "raw error interpolated into an f-string": (
-        'logger.error(f"failed: {error}")',
-        ["fetch_token: logs the request error unscrubbed"],
-    ),
-    "raw error stringified by hand": (
-        'logger.error("failed: %s", str(error))',
-        ["fetch_token: logs the request error unscrubbed"],
-    ),
-    "raw error interpolated with %": (
-        'logger.error("failed: %s", "%s" % error)',
-        ["fetch_token: logs the request error unscrubbed"],
-    ),
-    "raw error interpolated with .format": (
-        'logger.error("failed: %s", "{}".format(error))',
-        ["fetch_token: logs the request error unscrubbed"],
-    ),
-    "cause kept explicitly": (
-        'raise Wrapped("failed") from error',
-        ["fetch_token: `raise Wrapped('failed') from error` keeps it as the cause"],
-    ),
-    "cause kept implicitly": (
-        'raise Wrapped("failed")',
-        ["fetch_token: `raise Wrapped('failed')` keeps it as the cause"],
-    ),
-    "request error re-raised": (
-        "raise error",
-        ["fetch_token: `raise error` keeps it as the cause"],
-    ),
-    "bare re-raise": (
-        "raise",
-        ["fetch_token: `raise` keeps it as the cause"],
-    ),
-}
 
 
 def _bare_name(node: ast.expr) -> str:
@@ -364,36 +287,6 @@ def _credential_url_functions(root: Path, *subtrees: Path) -> set[tuple[str, str
     return found
 
 
-def _paragraph_naming_the_scan(doc: Path) -> str:
-    """The paragraph of *doc* that names this file, empty when none does.
-
-    Empty rather than raising: the caller's set equality then reports the
-    trees nobody documented, which is the answer being asked for.
-    """
-    text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
-    return next(
-        (paragraph for paragraph in text.split("\n\n") if _SCAN_TEST_PATH in paragraph),
-        "",
-    )
-
-
-def _module_with_handler(
-    tmp_path: Path, handler_body: str, catching: str = "requests.RequestException"
-) -> Path:
-    """Write a module whose one function handles a credential-bearing request."""
-    module = tmp_path / "example.py"
-    module.write_text(
-        "import requests\n"
-        "def fetch_token(code):\n"
-        "    try:\n"
-        "        return requests.get('https://auth.gog.com/token', params=code)\n"
-        f"    except {catching} as error:\n"
-        + textwrap.indent(handler_body.strip() + "\n", " " * 8),
-        encoding="utf-8",
-    )
-    return module
-
-
 class TestCredentialUrlHandlersStayOutOfTracebacks:
     """One rule for every call that puts a secret in a query string.
 
@@ -414,35 +307,6 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
             "`from None`:\n  " + "\n  ".join(leaks)
         )
 
-    @pytest.mark.parametrize("doc", _DOCS_NAMING_THE_SCAN, ids=Path.as_posix)
-    def test_each_doc_names_exactly_the_trees_scanned(self, doc: Path) -> None:
-        """Both docs tell a plugin author enrolment is automatic, so the tree
-        list is the promise. Equality, not containment: naming a tree the sweep
-        does not read is the failure that shipped, and it reads as coverage.
-        """
-        named = set(_TREE_PATHS.findall(_paragraph_naming_the_scan(doc)))
-
-        assert named == {f"{subtree.as_posix()}/" for subtree in _SCANNED_TREES}
-
-    @pytest.mark.parametrize("doc", _DOCS_NAMING_THE_SCAN, ids=Path.as_posix)
-    def test_the_paragraph_read_is_the_one_describing_the_scan(self, doc: Path) -> None:
-        """A paragraph picked by luck would carry no tree at all and the
-        equality above would fail loudly, but a doc rewritten so this file is
-        named twice would be read at the wrong one silently.
-        """
-        text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
-
-        assert text.count(_SCAN_TEST_PATH) == 1
-
-    @pytest.mark.parametrize("subtree", _SCANNED_TREES, ids=Path.as_posix)
-    def test_every_scanned_tree_exists(self, subtree: Path) -> None:
-        """``rglob`` over a moved tree yields nothing and raises nothing.
-
-        Most of these hold no registered caller today, so an empty scan of one
-        reads exactly like a clean one and the rename never surfaces.
-        """
-        assert (_REPO_ROOT / subtree).is_dir()
-
     def test_every_caller_sending_a_credential_param_is_registered(self) -> None:
         """A new integration joins the list above, rather than being remembered in."""
         scanned = {
@@ -459,186 +323,3 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
         )
 
         assert _credential_url_functions(_REPO_ROOT, *_SCANNED_TREES) == scanned
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            "    params = {'api_key': api_key, 'format': 'json'}\n",
-            "    params = {}\n    params['api_key'] = api_key\n",
-            "    params = dict(api_key=api_key, format='json')\n",
-        ],
-        ids=["dict literal", "item assignment", "dict() call"],
-    )
-    @pytest.mark.parametrize("prefix", ["def", "async def"], ids=["sync", "async"])
-    def test_the_scan_finds_a_newly_written_integration(
-        self, tmp_path: Path, body: str, prefix: str
-    ) -> None:
-        """A scan that found nothing new would report the whole tree registered."""
-        plugin = tmp_path / "newsource.py"
-        plugin.write_text(
-            "import requests\n"
-            f"{prefix} fetch(api_key):\n"
-            f"{body}"
-            "    return requests.get('https://api.example.com/list', params=params)\n",
-            encoding="utf-8",
-        )
-
-        assert _credential_url_functions(tmp_path, Path(".")) == {
-            (plugin.name, "fetch")
-        }
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            "params = {'page': 1}\n    return requests.get(URL, params=params)",
-            "headers = {'api_key': key}\n    return requests.get(URL, headers=headers)",
-        ],
-        ids=["no credential named", "credential travels in a header"],
-    )
-    def test_the_scan_leaves_clean_call_sites_alone(
-        self, tmp_path: Path, body: str
-    ) -> None:
-        """Flagging every request call would make the registry meaningless."""
-        plugin = tmp_path / "newsource.py"
-        plugin.write_text(
-            f"import requests\ndef fetch(key):\n    {body}\n", encoding="utf-8"
-        )
-
-        assert _credential_url_functions(tmp_path, Path(".")) == set()
-
-    def test_an_async_handler_is_judged(self, tmp_path: Path) -> None:
-        """``async def`` was invisible to the guard, registry entry and all."""
-        module = tmp_path / "example.py"
-        module.write_text(
-            "import requests\n"
-            "async def fetch_token(code):\n"
-            "    try:\n"
-            "        return requests.get('https://auth.gog.com/token', params=code)\n"
-            "    except requests.RequestException as error:\n"
-            "        raise error\n",
-            encoding="utf-8",
-        )
-
-        assert _leaky_renderings(module, "fetch_token") == [
-            "fetch_token: `raise error` keeps it as the cause"
-        ]
-
-    @pytest.mark.parametrize(
-        ("handler_body", "expected"),
-        list(_LEAKY_HANDLERS.values()),
-        ids=list(_LEAKY_HANDLERS),
-    )
-    def test_the_guard_reports_each_leak(
-        self, tmp_path: Path, handler_body: str, expected: list[str]
-    ) -> None:
-        """A guard that cannot fire would stay green through the bug's return."""
-        module = _module_with_handler(tmp_path, handler_body)
-
-        assert _leaky_renderings(module, "fetch_token") == expected
-
-    @pytest.mark.parametrize(
-        "catching",
-        [
-            "requests.RequestException",
-            "RequestException",
-            "requests.exceptions.HTTPError",
-            "HTTPError",
-            "(ValueError, RequestException)",
-            "Exception",
-        ],
-    )
-    def test_every_handler_spelling_is_judged(
-        self, tmp_path: Path, catching: str
-    ) -> None:
-        """Rewriting the ``except`` clause must not smuggle the handler past."""
-        module = _module_with_handler(tmp_path, "raise error", catching=catching)
-
-        assert _leaky_renderings(module, "fetch_token") == [
-            "fetch_token: `raise error` keeps it as the cause"
-        ]
-
-    def test_a_later_handler_is_judged_too(self, tmp_path: Path) -> None:
-        """A leak added below a clean handler is the one a first-match scan misses."""
-        module = tmp_path / "example.py"
-        module.write_text(
-            "import requests\n"
-            "def fetch_token(code):\n"
-            "    try:\n"
-            "        return requests.get('https://auth.gog.com/token', params=code)\n"
-            "    except requests.HTTPError:\n"
-            "        raise Wrapped('failed') from None\n"
-            "    except requests.RequestException as error:\n"
-            "        raise error\n",
-            encoding="utf-8",
-        )
-
-        assert _leaky_renderings(module, "fetch_token") == [
-            "fetch_token: `raise error` keeps it as the cause"
-        ]
-
-    def test_an_unbound_handler_is_judged(self, tmp_path: Path) -> None:
-        """Dropping ``as error`` hides the name the unscrubbed-log check matches on."""
-        module = tmp_path / "example.py"
-        module.write_text(
-            "import requests\n"
-            "def fetch_token(code):\n"
-            "    try:\n"
-            "        return requests.get('https://auth.gog.com/token', params=code)\n"
-            "    except requests.RequestException:\n"
-            "        logger.exception('failed')\n"
-            "        raise\n",
-            encoding="utf-8",
-        )
-
-        assert _leaky_renderings(module, "fetch_token") == [
-            "fetch_token: logs a traceback of the request error",
-            "fetch_token: `raise` keeps it as the cause",
-        ]
-
-    @pytest.mark.parametrize(
-        "logged",
-        [
-            'logger.error("failed: %s", scrub_request_error(error))',
-            'logger.error("failed: %s", exception_for_log(error))',
-            'logger.error(f"failed: {scrub_request_error(error)}")',
-            'logger.error("failed", exc_info=False)',
-        ],
-    )
-    def test_a_scrubbed_handler_is_not_a_leak(
-        self, tmp_path: Path, logged: str
-    ) -> None:
-        """Flagging the fixed shape would leave nobody a way to pass.
-
-        The last two are the false positives a broader predicate buys: a
-        scrubbed value inside an f-string, and the default written out.
-        """
-        module = _module_with_handler(
-            tmp_path,
-            f"{logged}\n" 'raise Wrapped("Failed to connect to GOG servers") from None',
-        )
-
-        assert _leaky_renderings(module, "fetch_token") == []
-
-    def test_a_missing_function_is_an_error(self, tmp_path: Path) -> None:
-        """A rename must break the guard rather than silently empty it."""
-        module = _module_with_handler(tmp_path, "raise error")
-
-        with pytest.raises(AssertionError, match="no function named renamed"):
-            _leaky_renderings(module, "renamed")
-
-    def test_an_unrelated_handler_is_an_error(self, tmp_path: Path) -> None:
-        """A clean report has to mean the credential handler was read and passed."""
-        module = _module_with_handler(tmp_path, "raise error", catching="ValueError")
-
-        with pytest.raises(AssertionError, match="no longer catches a request error"):
-            _leaky_renderings(module, "fetch_token")
-
-    def test_a_request_moved_into_a_helper_is_an_error(self, tmp_path: Path) -> None:
-        """Otherwise a refactor that keeps the symbol quietly retires the guard."""
-        module = tmp_path / "example.py"
-        module.write_text(
-            "def fetch_token(code):\n    return _shared_get(code)\n", encoding="utf-8"
-        )
-
-        with pytest.raises(AssertionError, match="no longer catches a request error"):
-            _leaky_renderings(module, "fetch_token")

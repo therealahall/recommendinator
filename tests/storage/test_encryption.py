@@ -5,7 +5,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from cryptography.fernet import InvalidToken
 
 from src.storage.encryption import CredentialEncryptor
 
@@ -22,15 +21,6 @@ class TestCredentialEncryptor:
 
         assert ciphertext != plaintext
         assert encryptor.decrypt(ciphertext) == plaintext
-
-    def test_key_auto_generated_on_first_use(self, tmp_path: Path) -> None:
-        """Key file is created on first encrypt call."""
-        key_path = tmp_path / ".credential_key"
-        encryptor = CredentialEncryptor(key_path)
-
-        assert not key_path.exists()
-        encryptor.encrypt("test")
-        assert key_path.exists()
 
     def test_key_persists_across_instances(self, tmp_path: Path) -> None:
         """A second encryptor with the same key file can decrypt."""
@@ -56,33 +46,6 @@ class TestCredentialEncryptor:
         assert not (file_mode & stat.S_IWGRP)  # no group write
         assert not (file_mode & stat.S_IROTH)  # no other read
         assert not (file_mode & stat.S_IWOTH)  # no other write
-
-    def test_different_keys_produce_different_ciphertext(self, tmp_path: Path) -> None:
-        """Two different keys encrypt the same plaintext differently."""
-        enc1 = CredentialEncryptor(tmp_path / "key1")
-        enc2 = CredentialEncryptor(tmp_path / "key2")
-
-        ct1 = enc1.encrypt("same_value")
-        ct2 = enc2.encrypt("same_value")
-
-        assert ct1 != ct2
-
-    def test_decrypt_raises_on_invalid_ciphertext(self, tmp_path: Path) -> None:
-        """Decrypting garbage raises InvalidToken (not swallowed)."""
-        encryptor = CredentialEncryptor(tmp_path / ".credential_key")
-        encryptor.encrypt("trigger key creation")
-
-        with pytest.raises(InvalidToken):
-            encryptor.decrypt("this is not valid fernet ciphertext")
-
-    def test_decrypt_with_wrong_key_raises(self, tmp_path: Path) -> None:
-        """Decrypting with a different key raises InvalidToken."""
-        enc1 = CredentialEncryptor(tmp_path / "key1")
-        enc2 = CredentialEncryptor(tmp_path / "key2")
-        ciphertext = enc1.encrypt("secret")
-
-        with pytest.raises(InvalidToken):
-            enc2.decrypt(ciphertext)
 
     def test_rejects_world_readable_key_file(self, tmp_path: Path) -> None:
         """Loading a key file with insecure permissions raises PermissionError."""

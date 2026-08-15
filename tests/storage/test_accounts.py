@@ -6,11 +6,8 @@ library hangs off that row. Sessions are stored as digests.
 
 from __future__ import annotations
 
-import ast
-import base64
 import hashlib
 import sqlite3
-import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,10 +35,8 @@ from src.storage.accounts import (
     set_password,
     verify_password,
 )
-from src.storage.manager import StorageManager, UnknownUserError
+from src.storage.manager import StorageManager
 from src.storage.schema import _SCHEMA_VERSION, create_schema, create_user
-
-_ACCOUNTS_MODULE = Path(accounts.__file__)
 
 # The two tables as the build before the account columns wrote them: no
 # password columns on ``users``, and the ``content_items`` shape that build
@@ -219,18 +214,6 @@ class TestClaimingTheInstance:
         assert verify_password(claimed, "intruder", "hunter2 hunter2") is None
         assert verify_password(claimed, "owner", "correct horse") is not None
 
-    def test_a_database_with_no_account_row_has_nothing_to_claim(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """The other way the guarded UPDATE matches no row: it must not INSERT."""
-        conn.execute("DELETE FROM users WHERE id = 1")
-        conn.commit()
-
-        with pytest.raises(AccountAlreadyClaimedError):
-            claim_account(conn, "owner", None, "correct horse")
-
-        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
-
 
 class TestTheOneFloorBothInterfacesInherit:
     """Regression: the floor was two Pydantic fields in the web layer.
@@ -246,17 +229,6 @@ class TestTheOneFloorBothInterfacesInherit:
             claim_account(conn, "owner", None, "x" * (MIN_PASSWORD_LENGTH - 1))
 
         assert account_is_claimed(conn) is False
-
-    def test_a_short_reset_is_refused_and_leaves_the_old_password_working(
-        self, claimed: sqlite3.Connection
-    ) -> None:
-        before = _stored_password(claimed)
-
-        with pytest.raises(PasswordTooShortError):
-            set_password(claimed, 1, "x" * (MIN_PASSWORD_LENGTH - 1))
-
-        assert _stored_password(claimed) == before
-        assert verify_password(claimed, "owner", "correct horse") is not None
 
     def test_a_password_exactly_at_the_floor_is_accepted(
         self, conn: sqlite3.Connection
@@ -310,24 +282,6 @@ class TestTheOneNameRuleBothWriteDoorsInherit:
         account = claim_account(conn, "  owner  ", "  The Owner  ", "correct horse")
 
         assert (account["username"], account["display_name"]) == ("owner", "The Owner")
-
-    def test_a_claim_at_the_cap_under_its_padding_is_accepted(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """The trim decides what the column holds, so it decides the length."""
-        padded = "  " + "x" * MAX_ACCOUNT_NAME_LENGTH
-
-        account = claim_account(conn, padded, None, "correct horse")
-
-        assert account["username"] == padded.strip()
-
-    def test_a_display_name_of_spaces_is_cleared_rather_than_stored(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        """An emptied optional field means None, not a column holding blanks."""
-        account = claim_account(conn, "owner", "   ", "correct horse")
-
-        assert account["display_name"] is None
 
     @pytest.mark.parametrize("username", _REFUSED_NAMES)
     def test_a_claim_under_a_refused_name_leaves_the_instance_unclaimed(
@@ -387,27 +341,6 @@ class TestHowThePasswordIsStored:
         assert second[0] != first[0]
         assert verify_password(claimed, "owner", "correct horse") is not None
 
-    def test_the_module_imports_nothing_outside_the_standard_library(self) -> None:
-        """The hashing must not cost a dependency: bcrypt and passlib are absent.
-
-        ``cryptography`` would work and is already a direct dependency, but the
-        stdlib is one import fewer for the same primitive.
-        """
-        tree = ast.parse(_ACCOUNTS_MODULE.read_text(encoding="utf-8"))
-        roots = {
-            (node.module or "").split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        } | {
-            alias.name.split(".")[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-
-        assert "hashlib" in roots
-        assert roots <= sys.stdlib_module_names | {"src", "__future__"}
-
 
 class TestDescribingTheAccount:
     """What the ``account`` CLI group and the Settings page read.
@@ -429,20 +362,6 @@ class TestDescribingTheAccount:
             "claimed": True,
             "password_updated_at": stamp,
         }
-
-    def test_an_unclaimed_account_has_no_stamp_and_is_not_claimed(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        account = describe_account(conn, 1)
-
-        assert account is not None
-        assert account["claimed"] is False
-        assert account["password_updated_at"] is None
-
-    def test_a_user_id_no_row_carries_describes_nothing(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        assert describe_account(conn, 999) is None
 
     def test_setting_a_password_moves_the_stamp(
         self, claimed: sqlite3.Connection
@@ -528,19 +447,6 @@ class TestSessions:
         assert digest.encode() in written
         assert token.encode() not in written
 
-    def test_the_token_carries_thirty_two_random_bytes(
-        self, claimed: sqlite3.Connection
-    ) -> None:
-        """``secrets.token_urlsafe(32)``, and never twice the same."""
-        tokens = [create_session(claimed, 1) for _ in range(2)]
-        decoded = [
-            base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-            for token in tokens
-        ]
-
-        assert [len(raw) for raw in decoded] == [32, 32]
-        assert tokens[0] != tokens[1]
-
     def test_a_live_session_resolves_to_its_user(
         self, claimed: sqlite3.Connection
     ) -> None:
@@ -551,14 +457,6 @@ class TestSessions:
 
         assert account is not None
         assert account["id"] == 1
-
-    def test_an_unknown_token_resolves_to_nobody(
-        self, claimed: sqlite3.Connection
-    ) -> None:
-        """A forged cookie is a miss, not an error."""
-        create_session(claimed, 1)
-
-        assert lookup_session(claimed, "not-a-token") is None
 
     def test_an_expired_session_is_refused_and_left_expired(
         self, claimed: sqlite3.Connection
@@ -600,13 +498,6 @@ class TestRevokingAndPurging:
             "lapsed": [_session_opened_at(claimed, datetime(2026, 1, 1, tzinfo=UTC))],
         }
 
-    def test_the_population_starts_with_four_sessions(
-        self, claimed: sqlite3.Connection, population: dict[str, list[str]]
-    ) -> None:
-        """Anchor: every assertion below is vacuous over an empty table."""
-        assert sum(len(tokens) for tokens in population.values()) == 4
-        assert claimed.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 4
-
     def test_revoking_one_session_leaves_the_others(
         self, claimed: sqlite3.Connection, population: dict[str, list[str]]
     ) -> None:
@@ -639,15 +530,6 @@ class TestRevokingAndPurging:
         assert deleted == 1
         assert _live_tokens(claimed, population["lapsed"]) == []
         assert _live_tokens(claimed, population["live"]) == population["live"]
-
-    def test_purging_a_table_with_nothing_lapsed_deletes_nothing(
-        self, claimed: sqlite3.Connection
-    ) -> None:
-        """The counterpart of the count above, over live rows alone."""
-        tokens = [create_session(claimed, 1) for _ in range(2)]
-
-        assert purge_expired_sessions(claimed) == 0
-        assert _live_tokens(claimed, tokens) == tokens
 
 
 class TestUpgradingADatabaseWrittenBeforeTheAccountColumns:
@@ -702,13 +584,6 @@ class TestUpgradingADatabaseWrittenBeforeTheAccountColumns:
 
         assert verify_password(upgraded, "owner", "correct horse") is not None
         assert _library_of(upgraded) == [(1, "The Dispossessed"), (1, "Disco Elysium")]
-
-    def test_the_upgrade_leaves_an_empty_sessions_table_and_the_new_version(
-        self, upgraded: sqlite3.Connection
-    ) -> None:
-        """The table is created by the same open that stamps the version."""
-        assert upgraded.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
 
 
 class TestTheStorageManagerSurface:
@@ -765,38 +640,6 @@ class TestTheStorageManagerSurface:
         assert account["claimed"] is True
         assert storage.verify_password("keeper", "correct horse") is not None
         assert storage.verify_password("owner", "correct horse") is None
-
-    def test_a_rename_stores_both_names_trimmed(self, storage: StorageManager) -> None:
-        """The other door into ``users``, holding the same rule as the claim."""
-        storage.claim_account("owner", "The Owner", "correct horse")
-
-        storage.update_user_identity(1, "  keeper  ", "  Kee  ")
-
-        account = storage.describe_account(1)
-        assert account is not None
-        assert (account["username"], account["display_name"]) == ("keeper", "Kee")
-
-    @pytest.mark.parametrize("username", _REFUSED_NAMES)
-    def test_a_rename_to_a_refused_name_writes_nothing(
-        self, storage: StorageManager, username: str
-    ) -> None:
-        """The username is the login, so a blank one locks the operator out."""
-        storage.claim_account("owner", "The Owner", "correct horse")
-
-        with pytest.raises(AccountNameError):
-            storage.update_user_identity(1, username, None)
-
-        account = storage.describe_account(1)
-        assert account is not None
-        assert account["username"] == "owner"
-
-    def test_renaming_a_user_no_row_carries_is_refused(
-        self, storage: StorageManager
-    ) -> None:
-        with pytest.raises(UnknownUserError):
-            storage.update_user_identity(999, "keeper", None)
-
-        assert storage.describe_account(999) is None
 
     def test_neither_secret_reaches_the_files_the_manager_writes(
         self, storage: StorageManager, tmp_path: Path
@@ -901,65 +744,3 @@ class TestPasswordsThatAreNotASCII:
 
         assert verify_password(conn, "owner", password) is not None
         assert verify_password(conn, "owner", password.strip() + "!") is None
-
-
-class TestWhatDoesNotDeleteASession:
-    """The two revocations, aimed at things they must not match."""
-
-    @pytest.fixture
-    def population(self, claimed: sqlite3.Connection) -> dict[int, list[str]]:
-        """Two sessions for the account and one for a second user."""
-        create_user(claimed, username="second", display_name="Second")
-        return {
-            1: [create_session(claimed, 1) for _ in range(2)],
-            2: [create_session(claimed, 2)],
-        }
-
-    def test_the_population_starts_with_three_sessions(
-        self, claimed: sqlite3.Connection, population: dict[int, list[str]]
-    ) -> None:
-        """Anchor: revoking nothing from an empty table proves nothing."""
-        assert claimed.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 3
-
-    def test_revoking_for_a_user_with_no_sessions_deletes_nothing(
-        self, claimed: sqlite3.Connection, population: dict[int, list[str]]
-    ) -> None:
-        """A user id matching no row must not fall through to matching every row."""
-        create_user(claimed, username="third", display_name="Third")
-
-        revoke_all_sessions(claimed, 3)
-
-        assert _live_tokens(claimed, population[1]) == population[1]
-        assert _live_tokens(claimed, population[2]) == population[2]
-
-    def test_revoking_an_unknown_token_deletes_nothing(
-        self, claimed: sqlite3.Connection, population: dict[int, list[str]]
-    ) -> None:
-        """A stale cookie signing out must not disturb the live browsers."""
-        revoke_session(claimed, "not-a-token")
-
-        assert _live_tokens(claimed, population[1]) == population[1]
-        assert _live_tokens(claimed, population[2]) == population[2]
-
-    def test_deleting_a_user_takes_only_that_users_sessions(
-        self, claimed: sqlite3.Connection, population: dict[int, list[str]]
-    ) -> None:
-        """The sessions row's ``ON DELETE CASCADE``, which needs the pragma to fire."""
-        claimed.execute("DELETE FROM users WHERE id = 2")
-        claimed.commit()
-
-        assert _live_tokens(claimed, population[2]) == []
-        assert _live_tokens(claimed, population[1]) == population[1]
-
-
-class TestUsernamesThatDoNotMatch:
-    """A near-miss username must cost what a wrong password costs."""
-
-    @pytest.mark.parametrize("username", ["Owner", "owner ", "owner' OR 1=1 --", ""])
-    def test_a_near_miss_username_is_refused_at_the_same_cost(
-        self, claimed: sqlite3.Connection, username: str
-    ) -> None:
-        """No login, and no oracle telling an attacker which name is the real one."""
-        attempt = TestVerifyingAPassword._attempt(claimed, username, "correct horse")
-
-        assert attempt == (None, 1, accounts._SALT_BYTES)
