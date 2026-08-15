@@ -74,12 +74,22 @@ export const useDataStore = defineStore('data', () => {
     return jobsByLabel.value[label] || null
   }
 
+  /** The umbrella run, for a source it resolved to sync. The server fixes
+   *  that list at trigger time, so a source enabled mid-run is not in it. */
+  function umbrellaJobFor(label: string): SyncJobResponse | null {
+    const umbrella = jobForLabel(ALL_SOURCES_LABEL)
+    if (!umbrella) return null
+    return umbrella.sources.some((entry) => entry.source === label)
+      ? umbrella
+      : null
+  }
+
   /** Terminal jobs are retained, so rendering the older of the two is how a
    *  message from the newer run ends up displayed nowhere. */
   function currentJobForLabel(label: string): SyncJobResponse | null {
     const own = jobForLabel(label)
     if (label === ALL_SOURCES_LABEL) return own
-    const umbrella = jobForLabel(ALL_SOURCES_LABEL)
+    const umbrella = umbrellaJobFor(label)
     if (!own || !umbrella) return own || umbrella
     // Both are ISO-8601 off the same clock, so ordering them as text orders
     // them in time — and no parse can trip over Python's microseconds.
@@ -95,7 +105,8 @@ export const useDataStore = defineStore('data', () => {
   function isSourceIdSyncing(sourceId: string): boolean {
     if (sourceId === 'all') return isLabelRunning(ALL_SOURCES_LABEL)
     const display = syncSources.value.find((s) => s.id === sourceId)?.display_name
-    return display ? isLabelRunning(display) : false
+    if (!display) return false
+    return isLabelRunning(display) || umbrellaJobFor(display)?.status === 'running'
   }
 
   // Auth state, per source id — a token belongs to the source it was obtained

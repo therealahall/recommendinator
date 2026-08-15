@@ -78,6 +78,18 @@ describe('useDataStore', () => {
     }
   }
 
+  /** The per-source slots an umbrella run carries — one per source it
+   *  resolved to sync, which is how a row knows the run includes it. */
+  function ranSources(...names: string[]) {
+    return names.map((source) => ({
+      source,
+      items_processed: 0,
+      total_items: null,
+      current_item: null,
+      progress_percent: null,
+    }))
+  }
+
   it('triggerSync marks the source label as syncing', async () => {
     mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
 
@@ -408,7 +420,7 @@ describe('useDataStore', () => {
             { source: 'Sonarr', message: 'Set verify_ssl to false' },
             { source: 'Steam', message: 'Rate limit exceeded' },
           ],
-          sources: [],
+          sources: ranSources('Sonarr', 'Steam'),
         },
         {
           source: 'Goodreads',
@@ -454,7 +466,7 @@ describe('useDataStore', () => {
               { source: 'Sonarr', message: 'TLS verification failed' },
               { source: 'Steam', message: 'Rate limit exceeded' },
             ],
-            sources: [],
+            sources: ranSources('Sonarr', 'Steam'),
           },
           {
             source: 'Steam',
@@ -492,7 +504,7 @@ describe('useDataStore', () => {
               { source: 'Sonarr', message: 'TLS verification failed' },
               { source: 'Steam', message: 'Rate limit exceeded' },
             ],
-            sources: [],
+            sources: ranSources('Sonarr', 'Steam'),
           },
           {
             source: 'Steam',
