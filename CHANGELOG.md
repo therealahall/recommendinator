@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.34.1 (2026-08-15)
+
+### Bug Fixes
+
+- **goodreads_rss**: Use the feed path Goodreads still serves signed out
+  ([`cca3aa5`](https://github.com/therealahall/recommendinator/commit/cca3aa51f0b92523d1bc640d60513ad086f3c970))
+
+- **sources**: Close the review findings on the credential and TLS work
+  ([`fefa17e`](https://github.com/therealahall/recommendinator/commit/fefa17e1114c9571dc1955635f5f72bb24216c68))
+
+- **sources**: Give Radarr and Sonarr a verify_ssl toggle, and stop following redirects off the
+  origin
+  ([`86b2e57`](https://github.com/therealahall/recommendinator/commit/86b2e57434f3d9ba2aa1f89565ca0a16fe9c0228))
+
+- **sources**: Stop destroying a credential when the host has not changed
+  ([`e3d9a09`](https://github.com/therealahall/recommendinator/commit/e3d9a09ba9b52130ca260dda374f851479d87689))
+
+- **web**: Say the error list is errors, and keep it bounded
+  ([`17209b9`](https://github.com/therealahall/recommendinator/commit/17209b9f06ae073d34bdb0c4a3ca68ab7f5611fb))
+
+- **web**: Show a source's real defaults, and stop saving them back
+  ([`2d873b1`](https://github.com/therealahall/recommendinator/commit/2d873b1e81d08a0c4fba55c05ca92329e7e83e34))
+
+- **web**: Show which source failed and why, not a count
+  ([`2c81852`](https://github.com/therealahall/recommendinator/commit/2c818527bba981698b6ef55eeb9a95d51adc659f))
+
+### Refactoring
+
+- Make the code say what the comments were saying
+  ([`e6417d3`](https://github.com/therealahall/recommendinator/commit/e6417d307a5ce2b27af6b86b6f352fc96f6284ff))
+
+### Testing
+
+- Pin that the error cap applies per source
+  ([`ebc504c`](https://github.com/therealahall/recommendinator/commit/ebc504c26f239a92cee873a85ca9906af92f8e75))
+
+
 ## v0.34.0 (2026-08-14)
 
 ### Bug Fixes
