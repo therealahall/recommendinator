@@ -95,6 +95,15 @@ sync, and neither 400 carries the plugin's own message: a write names the field
 it blames, or repeats a path-containment refusal verbatim, and a sync answers a
 fixed string. The reason goes to the log instead.
 
+**One carve-out: a plugin module that failed to import.** `GET
+/api/sync/sources`, `GET /api/plugins` and the 400 from `POST /api/update`
+carry the module name and the exception that lost it, because "No module named
+'defusedxml'" is the answer the operator needs and every one of those routes
+requires a session on a single-user instance. The sweep in
+`tests/test_http_error_detail_sweep.py` does not see it: it is syntactic over
+`src/web/`, and the string is rendered in `src/ingestion/registry.py` long
+before a response quotes it.
+
 ## Web sign-in
 
 **One account, username and password, and a session cookie.** A fresh instance
@@ -262,7 +271,8 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), swept over `src/web/` by `tests/test_http_error_detail_sweep.py`
+  forbidden), swept over `src/web/` by `tests/test_http_error_detail_sweep.py`,
+  with the plugin-import carve-out above as the one exception
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values
