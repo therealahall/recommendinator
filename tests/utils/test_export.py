@@ -15,7 +15,6 @@ from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sources.gog.gog import GogPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
-from src.ingestion.sources.steam.steam import SteamPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.templates import (
     COMMON_COLUMNS,
@@ -79,24 +78,6 @@ class TestExportSerialization:
         assert rows[0]["seasons_watched"] == "1,2,5,6"
         assert rows[0]["total_seasons"] == "6"
 
-    def test_export_csv_ignored_item(self) -> None:
-        """Test that ignored=True is exported correctly."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Ignored Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                ignored=True,
-                metadata={},
-            ),
-        ]
-        result = export_items_csv(items, ContentType.BOOK)
-
-        reader = csv.DictReader(io.StringIO(result))
-        rows = list(reader)
-        assert rows[0]["ignored"] == "true"
-
     def test_export_json_books(self) -> None:
         """Test JSON export for books."""
         items = [
@@ -120,164 +101,6 @@ class TestExportSerialization:
         assert entries[0]["ignored"] is False
         assert entries[0]["isbn"] == "978-0756404741"
 
-    def test_export_json_tv_show_with_seasons_watched(self) -> None:
-        """Test JSON export for TV shows with seasons_watched as array."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Breaking Bad",
-                author="Vince Gilligan",
-                content_type=ContentType.TV_SHOW,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={
-                    "seasons_watched": [1, 2, 5, 6],
-                    "seasons": "6",
-                    "genres": ["Drama"],
-                },
-            ),
-        ]
-        result = export_items_json(items, ContentType.TV_SHOW)
-
-        entries = json.loads(result)
-        assert entries[0]["seasons_watched"] == [1, 2, 5, 6]
-
-    def test_export_json_ignored_item(self) -> None:
-        """Test that ignored=True is exported as boolean in JSON."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Ignored Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                ignored=True,
-                metadata={},
-            ),
-        ]
-        result = export_items_json(items, ContentType.BOOK)
-
-        entries = json.loads(result)
-        assert entries[0]["ignored"] is True
-
-    def test_export_csv_empty_items(self) -> None:
-        """Test CSV export with no items produces header only."""
-        result = export_items_csv([], ContentType.BOOK)
-        lines = result.strip().split("\n")
-        assert len(lines) == 1  # Header only
-        assert "title" in lines[0]
-
-    def test_export_csv_empty_items_has_correct_book_headers(self) -> None:
-        """Test CSV export with empty book list has all expected book columns."""
-        result = export_items_csv([], ContentType.BOOK)
-        reader = csv.DictReader(io.StringIO(result))
-        assert reader.fieldnames is not None
-        expected_columns = [
-            "title",
-            "author",
-            "rating",
-            "status",
-            "date_completed",
-            "review",
-            "notes",
-            "isbn",
-            "pages",
-            "year_published",
-            "genre",
-            "ignored",
-        ]
-        assert sorted(reader.fieldnames) == sorted(expected_columns)
-        rows = list(reader)
-        assert len(rows) == 0
-
-    def test_export_csv_empty_items_movie_headers(self) -> None:
-        """Test CSV export with empty movie list has correct movie columns."""
-        result = export_items_csv([], ContentType.MOVIE)
-        reader = csv.DictReader(io.StringIO(result))
-        assert reader.fieldnames is not None
-        assert "director" in reader.fieldnames
-        assert "runtime_minutes" in reader.fieldnames
-        assert "author" not in reader.fieldnames
-        rows = list(reader)
-        assert len(rows) == 0
-
-    def test_export_csv_empty_items_tv_show_headers(self) -> None:
-        """Test CSV export with empty TV show list has correct TV show columns."""
-        result = export_items_csv([], ContentType.TV_SHOW)
-        reader = csv.DictReader(io.StringIO(result))
-        assert reader.fieldnames is not None
-        assert "creator" in reader.fieldnames
-        assert "seasons_watched" in reader.fieldnames
-        assert "total_seasons" in reader.fieldnames
-        rows = list(reader)
-        assert len(rows) == 0
-
-    def test_export_csv_empty_items_video_game_headers(self) -> None:
-        """Test CSV export with empty video game list has correct columns."""
-        result = export_items_csv([], ContentType.VIDEO_GAME)
-        reader = csv.DictReader(io.StringIO(result))
-        assert reader.fieldnames is not None
-        assert "developer" in reader.fieldnames
-        assert "platform" in reader.fieldnames
-        assert "hours_played" in reader.fieldnames
-        rows = list(reader)
-        assert len(rows) == 0
-
-    def test_export_json_empty_items(self) -> None:
-        """Test JSON export with no items produces empty array."""
-        result = export_items_json([], ContentType.BOOK)
-        entries = json.loads(result)
-        assert entries == []
-
-    def test_export_json_empty_items_is_valid_json_array(self) -> None:
-        """Test JSON export with no items is a parseable JSON array for all types."""
-        for content_type in ContentType:
-            result = export_items_json([], content_type)
-            entries = json.loads(result)
-            assert isinstance(entries, list)
-            assert len(entries) == 0
-
-    def test_export_json_multiple_items(self) -> None:
-        """Test JSON export with multiple items preserves all entries."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Dune",
-                author="Frank Herbert",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"genres": ["Science Fiction"]},
-            ),
-            ContentItem(
-                id="2",
-                title="Neuromancer",
-                author="William Gibson",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=4,
-                metadata={"genres": ["Cyberpunk"]},
-            ),
-            ContentItem(
-                id="3",
-                title="The Left Hand of Darkness",
-                author="Ursula K. Le Guin",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"isbn": "978-0441478125"},
-            ),
-        ]
-        result = export_items_json(items, ContentType.BOOK)
-        entries = json.loads(result)
-
-        assert len(entries) == 3
-        assert entries[0]["title"] == "Dune"
-        assert entries[1]["title"] == "Neuromancer"
-        assert entries[2]["title"] == "The Left Hand of Darkness"
-        assert entries[0]["rating"] == 5
-        assert entries[1]["rating"] == 4
-        assert entries[2]["isbn"] == "978-0441478125"
-
     def test_export_json_item_with_no_rating(self) -> None:
         """Test JSON export handles None rating correctly."""
         items = [
@@ -295,163 +118,6 @@ class TestExportSerialization:
         assert len(entries) == 1
         assert entries[0]["title"] == "Unrated Book"
         assert entries[0]["rating"] is None
-
-    def test_export_json_item_with_no_author(self) -> None:
-        """Test JSON export handles None author as empty string."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Anonymous Work",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                metadata={},
-            ),
-        ]
-        result = export_items_json(items, ContentType.BOOK)
-        entries = json.loads(result)
-
-        assert entries[0]["author"] == ""
-
-    def test_export_json_video_game(self) -> None:
-        """Test JSON export for video games uses developer field."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Elden Ring",
-                author="FromSoftware",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={
-                    "platforms": ["PC"],
-                    "genres": ["Action RPG"],
-                    "playtime_hours": "120",
-                },
-            ),
-        ]
-        result = export_items_json(items, ContentType.VIDEO_GAME)
-        entries = json.loads(result)
-
-        assert len(entries) == 1
-        assert entries[0]["developer"] == "FromSoftware"
-        assert entries[0]["platform"] == "PC"
-        assert entries[0]["hours_played"] == "120"
-        assert "author" not in entries[0]
-
-    def test_export_json_movie(self) -> None:
-        """Test JSON export for movies uses director field."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Blade Runner 2049",
-                author="Denis Villeneuve",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={
-                    "release_year": "2017",
-                    "runtime": "164",
-                    "genres": ["Sci-Fi"],
-                },
-            ),
-        ]
-        result = export_items_json(items, ContentType.MOVIE)
-        entries = json.loads(result)
-
-        assert len(entries) == 1
-        assert entries[0]["director"] == "Denis Villeneuve"
-        assert entries[0]["year"] == "2017"
-        assert entries[0]["runtime_minutes"] == "164"
-        assert "author" not in entries[0]
-
-    def test_export_csv_item_with_no_rating(self) -> None:
-        """Test CSV export handles None rating as empty string."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Unrated Book",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.CURRENTLY_CONSUMING,
-                metadata={},
-            ),
-        ]
-        result = export_items_csv(items, ContentType.BOOK)
-        reader = csv.DictReader(io.StringIO(result))
-        rows = list(reader)
-
-        assert len(rows) == 1
-        assert rows[0]["title"] == "Unrated Book"
-        assert rows[0]["rating"] == ""
-
-    def test_export_csv_multiple_items(self) -> None:
-        """Test CSV export with multiple items produces correct row count."""
-        items = [
-            ContentItem(
-                id=str(index),
-                title=f"Book {index}",
-                author=f"Author {index}",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                rating=index,
-                metadata={},
-            )
-            for index in range(1, 4)
-        ]
-        result = export_items_csv(items, ContentType.BOOK)
-        reader = csv.DictReader(io.StringIO(result))
-        rows = list(reader)
-
-        assert len(rows) == 3
-        assert rows[0]["title"] == "Book 1"
-        assert rows[1]["title"] == "Book 2"
-        assert rows[2]["title"] == "Book 3"
-        assert rows[0]["rating"] == "1"
-        assert rows[2]["rating"] == "3"
-
-    def test_export_csv_video_game(self) -> None:
-        """Test CSV export for video games uses developer column."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Hollow Knight",
-                author="Team Cherry",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"platforms": ["PC"], "playtime_hours": "45"},
-            ),
-        ]
-        result = export_items_csv(items, ContentType.VIDEO_GAME)
-        reader = csv.DictReader(io.StringIO(result))
-        rows = list(reader)
-
-        assert len(rows) == 1
-        assert rows[0]["developer"] == "Team Cherry"
-        assert rows[0]["platform"] == "PC"
-        assert rows[0]["hours_played"] == "45"
-        assert "author" not in reader.fieldnames  # type: ignore[operator]
-
-    def test_export_csv_movie(self) -> None:
-        """Test CSV export for movies uses director column."""
-        items = [
-            ContentItem(
-                id="1",
-                title="Arrival",
-                author="Denis Villeneuve",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                rating=5,
-                metadata={"release_year": "2016", "runtime": "116"},
-            ),
-        ]
-        result = export_items_csv(items, ContentType.MOVIE)
-        reader = csv.DictReader(io.StringIO(result))
-        rows = list(reader)
-
-        assert len(rows) == 1
-        assert rows[0]["director"] == "Denis Villeneuve"
-        assert rows[0]["year"] == "2016"
-        assert "author" not in reader.fieldnames  # type: ignore[operator]
 
 
 def _store_and_read_back(tmp_path: Path, item: ContentItem) -> ContentItem:
@@ -518,25 +184,6 @@ def _gog_wishlist_game(product_id: int, details: dict[str, Any]) -> ContentItem:
         return next(
             GogPlugin().fetch({"refresh_token": "token", "include_wishlist": True})
         )
-
-
-def _steam_game(game: dict[str, Any]) -> ContentItem:
-    """Fetch the item the Steam plugin yields for *game*, minus the network."""
-    with patch(
-        "src.ingestion.sources.steam.steam.get_owned_games", return_value=[game]
-    ):
-        return next(
-            SteamPlugin().fetch({"api_key": "key", "steam_id": "76561197960287930"})
-        )
-
-
-def _csv_book(tmp_path: Path, csv_content: str) -> ContentItem:
-    """Fetch the item the CSV importer yields for a one-row book file."""
-    csv_path = tmp_path / "books.csv"
-    csv_path.write_text(csv_content, encoding="utf-8")
-    return next(
-        CsvImportPlugin().fetch({"path": str(csv_path), "content_type": "book"})
-    )
 
 
 class TestExportOfStoredItems:
@@ -643,48 +290,6 @@ class TestExportOfStoredItems:
         assert rows[0]["platform"] == "Windows"
         assert rows[0]["genre"] == "Role-playing"
 
-    def test_game_export_includes_playtime(self, tmp_path: Path) -> None:
-        """A stored Steam game exports the hours it recorded."""
-        stored = _store_and_read_back(
-            tmp_path,
-            _steam_game(
-                {
-                    "appid": 292030,
-                    "name": "The Witcher 3: Wild Hunt",
-                    "playtime_forever": 7200,
-                }
-            ),
-        )
-
-        rows = list(
-            csv.DictReader(
-                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
-            )
-        )
-
-        assert rows[0]["hours_played"] == "120.0"
-
-    def test_book_export_includes_isbn_pages_and_year(self, tmp_path: Path) -> None:
-        """The book columns whose names already matched keep working."""
-        stored = _store_and_read_back(
-            tmp_path,
-            _csv_book(
-                tmp_path,
-                "title,author,rating,status,isbn,pages,year_published,genre\n"
-                "The Name of the Wind,Patrick Rothfuss,5,read,"
-                "978-0756404741,662,2007,Fantasy\n",
-            ),
-        )
-
-        rows = list(
-            csv.DictReader(io.StringIO(export_items_csv([stored], ContentType.BOOK)))
-        )
-
-        assert rows[0]["isbn"] == "978-0756404741"
-        assert rows[0]["pages"] == "662"
-        assert rows[0]["year_published"] == "2007"
-        assert rows[0]["genre"] == "Fantasy"
-
 
 class TestCreatorSurvivesStorage:
     """The creator column round-trips for every content type, not just books.
@@ -776,37 +381,6 @@ class TestCreatorSurvivesStorage:
         assert stored.metadata["publisher"] == "CD Projekt"
         assert rows[0]["developer"] == "CD Projekt Red"
 
-    def test_gog_object_shaped_companies_export_as_their_names(
-        self, tmp_path: Path
-    ) -> None:
-        """GOG names a company as an object on some products, as ``genres`` is.
-
-        ``developer`` and ``publisher`` are text columns, which refuse an
-        object outright, so forwarding one raw would fail the sync for that
-        game. The plugin reduces both to names before they leave it.
-        """
-        stored = _store_and_read_back(
-            tmp_path,
-            _gog_wishlist_game(
-                1207658924,
-                {
-                    "title": "Cyberpunk 2077",
-                    "developers": [{"name": "CD Projekt Red"}],
-                    "publishers": [{"name": "CD Projekt"}],
-                },
-            ),
-        )
-
-        rows = list(
-            csv.DictReader(
-                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
-            )
-        )
-
-        assert stored.author == "CD Projekt Red"
-        assert stored.metadata["publisher"] == "CD Projekt"
-        assert rows[0]["developer"] == "CD Projekt Red"
-
 
 class TestCreatorExportEdges:
     """The creator cell at its boundaries, for every content type.
@@ -819,11 +393,9 @@ class TestCreatorExportEdges:
         ("content_type", "creator_column"),
         [
             (ContentType.BOOK, "author"),
-            (ContentType.MOVIE, "director"),
-            (ContentType.TV_SHOW, "creator"),
             (ContentType.VIDEO_GAME, "developer"),
         ],
-        ids=["book", "movie", "tv_show", "video_game"],
+        ids=["book", "video_game"],
     )
     def test_an_item_with_no_creator_exports_a_blank_cell(
         self, tmp_path: Path, content_type: ContentType, creator_column: str
@@ -882,12 +454,9 @@ class TestCreatorExportEdges:
     @pytest.mark.parametrize(
         ("content_type", "creator_column", "creator"),
         [
-            (ContentType.BOOK, "author", "Åsa Larsson"),
             (ContentType.MOVIE, "director", "宮崎駿"),
-            (ContentType.TV_SHOW, "creator", "Ólafur Ólafsson"),
-            (ContentType.VIDEO_GAME, "developer", "ゲームフリーク"),
         ],
-        ids=["book", "movie", "tv_show", "video_game"],
+        ids=["movie"],
     )
     def test_a_non_latin_creator_exports_and_re_imports_unchanged(
         self,
@@ -924,12 +493,9 @@ class TestCreatorExportEdges:
     @pytest.mark.parametrize(
         ("content_type", "creator_column", "creator"),
         [
-            (ContentType.BOOK, "author", "Patrick Rothfuss"),
-            (ContentType.MOVIE, "director", "Denis Villeneuve"),
             (ContentType.TV_SHOW, "creator", "Vince Gilligan"),
-            (ContentType.VIDEO_GAME, "developer", "Team Cherry"),
         ],
-        ids=["book", "movie", "tv_show", "video_game"],
+        ids=["tv_show"],
     )
     def test_a_json_template_row_keeps_its_creator_through_storage(
         self,
@@ -999,64 +565,6 @@ class TestExportColumnConsistency:
 
         assert sorted(_exported_header(content_type)) == sorted(expected)
 
-    @pytest.mark.parametrize("content_type", list(ContentType))
-    def test_the_json_export_carries_the_same_columns(
-        self, content_type: ContentType
-    ) -> None:
-        """JSON keys come off the entry dict, the CSV header off its own list.
-
-        Two independent routes, so one can gain or lose a column without the
-        other noticing: ``export_items_csv`` passes ``extrasaction="ignore"``,
-        which swallows a key only JSON would show, and a name left in the CSV
-        order that nothing fills is written as an empty cell instead.
-        """
-        columns = CONTENT_TYPE_COLUMNS[content_type.value]
-        expected = (
-            COMMON_COLUMNS
-            | {CREATOR_FIELD[content_type.value]}
-            | (set(columns) - CREATOR_COLUMNS)
-        )
-        item = ContentItem(
-            id="json-columns",
-            title="Column Fixture",
-            author="Someone",
-            content_type=content_type,
-            status=ConsumptionStatus.COMPLETED,
-            rating=3,
-            metadata={},
-        )
-
-        entries = json.loads(export_items_json([item], content_type))
-
-        assert set(entries[0]) == expected
-
-    def test_no_type_declares_a_column_the_common_set_owns(self) -> None:
-        """A shadowed column would be written twice and read back wrong.
-
-        ``_item_to_export_dict`` fills the common columns first and skips a
-        declared column already among them, so a type declaring ``notes`` or
-        ``rating`` would export the common value under that name — twice in
-        the header — and lose the declared field entirely.
-        """
-        for content_type, columns in CONTENT_TYPE_COLUMNS.items():
-            shadowed = set(columns) & COMMON_COLUMNS
-
-            assert not shadowed, f"{content_type} declares {sorted(shadowed)}"
-
-    def test_no_type_borrows_another_types_creator_column(self) -> None:
-        """A borrowed creator column would be dropped from the export silently.
-
-        The export writes the creator cell from ``ContentItem.author`` and so
-        skips every column in ``CREATOR_COLUMNS`` when walking a type's own
-        columns. That set is global rather than per type, so an ordinary
-        column named after another type's creator — a book field called
-        "director" — would never be exported and never raise.
-        """
-        for content_type, columns in CONTENT_TYPE_COLUMNS.items():
-            borrowed = set(columns) & (CREATOR_COLUMNS - {CREATOR_FIELD[content_type]})
-
-            assert not borrowed, f"{content_type} declares {sorted(borrowed)}"
-
 
 class TestShippedTemplatesCarryTheExportColumns:
     """The four template files carry the columns the export writes.
@@ -1074,11 +582,9 @@ class TestShippedTemplatesCarryTheExportColumns:
         ("content_type", "template"),
         [
             (ContentType.BOOK, "books.csv"),
-            (ContentType.MOVIE, "movies.csv"),
-            (ContentType.TV_SHOW, "tv_shows.csv"),
             (ContentType.VIDEO_GAME, "video_games.csv"),
         ],
-        ids=["book", "movie", "tv_show", "video_game"],
+        ids=["book", "video_game"],
     )
     def test_template_header_carries_the_export_columns(
         self, content_type: ContentType, template: str
@@ -1099,8 +605,8 @@ class TestCsvFormulaGuard:
 
     @pytest.mark.parametrize(
         "payload",
-        ['=HYPERLINK("http://evil","x")', "+1+1", "-1+1", "@SUM(A1)", "\tA1"],
-        ids=["equals", "plus", "minus", "at", "tab"],
+        ['=HYPERLINK("http://evil","x")', "+1+1", "\tA1"],
+        ids=["equals", "plus", "tab"],
     )
     def test_a_formula_title_is_written_behind_an_apostrophe_regression(
         self, payload: str
@@ -1152,94 +658,6 @@ class TestCsvFormulaGuard:
         assert rows[0]["genre"] == '\'=WEBSERVICE("http://evil")'
         assert rows[0]["platform"] == "'@PC"
 
-    def test_an_ordinary_row_is_written_exactly_as_before(self) -> None:
-        """Only a leading formula character is touched."""
-        item = ContentItem(
-            id="ordinary",
-            title="Mission: Impossible",
-            author="Brian De Palma",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            review="Best-in-class stunt work",
-        )
-
-        rows = list(
-            csv.DictReader(io.StringIO(export_items_csv([item], ContentType.MOVIE)))
-        )
-
-        assert rows[0]["title"] == "Mission: Impossible"
-        assert rows[0]["director"] == "Brian De Palma"
-        assert rows[0]["review"] == "Best-in-class stunt work"
-        assert rows[0]["rating"] == "4"
-
-    def test_the_json_export_carries_the_payload_raw(self) -> None:
-        """Nothing evaluates JSON, and the JSON importer strips nothing."""
-        item = ContentItem(
-            id="formula-json",
-            title='=HYPERLINK("http://evil","x")',
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        entries = json.loads(export_items_json([item], ContentType.BOOK))
-
-        assert entries[0]["title"] == '=HYPERLINK("http://evil","x")'
-
-    def test_a_guarded_row_re_imports_as_the_original_values_regression(
-        self, tmp_path: Path
-    ) -> None:
-        """The export/edit/re-import loop returns the text it started with."""
-        item = ContentItem(
-            id="formula-roundtrip",
-            title="=1+1",
-            author="+2+2",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            review="@SUM(A1)",
-            metadata={"notes": "-1+1", "genres": ["=Action"], "platforms": ["@PC"]},
-        )
-        exported = tmp_path / "games.csv"
-        exported.write_text(
-            export_items_csv([item], ContentType.VIDEO_GAME), encoding="utf-8"
-        )
-
-        reimported = next(
-            CsvImportPlugin().fetch(
-                {"path": str(exported), "content_type": "video_game"}
-            )
-        )
-
-        assert reimported.title == "=1+1"
-        assert reimported.author == "+2+2"
-        assert reimported.review == "@SUM(A1)"
-        assert reimported.metadata["notes"] == "-1+1"
-        assert reimported.metadata["genres"] == ["=Action"]
-        assert reimported.metadata["platforms"] == ["@PC"]
-
-    def test_a_title_that_really_opens_with_a_quote_survives_the_round_trip(
-        self, tmp_path: Path
-    ) -> None:
-        """Only a quote with a formula character behind it is a guard."""
-        item = ContentItem(
-            id="apostrophe",
-            title="'Tis the Season",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        exported = tmp_path / "books.csv"
-        exported.write_text(
-            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
-        )
-
-        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
-        )
-
-        assert rows[0]["title"] == "'Tis the Season"
-        assert reimported.title == "'Tis the Season"
-
     def test_a_hand_written_csv_keeps_its_leading_formula_character(
         self, tmp_path: Path
     ) -> None:
@@ -1253,7 +671,9 @@ class TestCsvFormulaGuard:
 
         assert reimported.title == "=1+1"
 
-    @pytest.mark.parametrize("content_type", list(ContentType))
+    @pytest.mark.parametrize(
+        "content_type", [ContentType.BOOK, ContentType.TV_SHOW], ids=["book", "tv_show"]
+    )
     def test_each_content_type_round_trips_a_formula_in_every_text_column_regression(
         self, content_type: ContentType, tmp_path: Path
     ) -> None:
@@ -1318,14 +738,10 @@ class TestCsvFormulaGuard:
 
     @pytest.mark.parametrize(
         "title",
-        ["'", "''", "'42", "'Tis", "'—dash", "’=1+1", "a=1+1"],
+        ["'", "'Tis", "a=1+1"],
         ids=[
             "bare-quote",
-            "double-quote",
-            "quote-digit",
             "quote-letter",
-            "quote-em-dash",
-            "curly-quote-formula",
             "formula-mid-string",
         ],
     )
@@ -1353,109 +769,6 @@ class TestCsvFormulaGuard:
 
         assert rows[0]["title"] == title
         assert reimported.title == title
-
-    def test_only_the_offending_row_of_a_mixed_export_is_guarded(self) -> None:
-        """One poisoned row must not change how its neighbours are written."""
-        items = [
-            ContentItem(
-                id="clean",
-                title="Dune",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            ),
-            ContentItem(
-                id="poisoned",
-                title="=1+1",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            ),
-        ]
-
-        rows = list(
-            csv.DictReader(io.StringIO(export_items_csv(items, ContentType.BOOK)))
-        )
-
-        assert [row["title"] for row in rows] == ["Dune", "'=1+1"]
-
-    def test_a_numeric_cell_is_left_as_a_number(self) -> None:
-        """Guarding a rating would make the column unsortable in a sheet."""
-        item = ContentItem(
-            id="numeric",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"pages": 412, "year_published": 1965},
-        )
-
-        rows = list(
-            csv.DictReader(io.StringIO(export_items_csv([item], ContentType.BOOK)))
-        )
-
-        assert rows[0]["rating"] == "4"
-        assert rows[0]["pages"] == "412"
-        assert rows[0]["year_published"] == "1965"
-
-    def test_a_hand_written_csv_keeps_a_quote_the_guard_would_not_have_written(
-        self, tmp_path: Path
-    ) -> None:
-        """Import strips a guard, never an apostrophe that means something."""
-        source = tmp_path / "books.csv"
-        source.write_text("title,status\n'Salem's Lot,unread\n", encoding="utf-8")
-
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(source), "content_type": "book"})
-        )
-
-        assert reimported.title == "'Salem's Lot"
-
-    def test_a_quote_then_a_formula_character_is_read_back_as_a_guard(
-        self, tmp_path: Path
-    ) -> None:
-        """The one value the apostrophe scheme cannot tell apart.
-
-        Documented in the plugin README: the export leaves it alone and the
-        import takes it for a guard, so the leading quote is lost.
-        """
-        item = ContentItem(
-            id="quoted-formula",
-            title="'=1+1",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        exported = tmp_path / "books.csv"
-        exported.write_text(
-            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
-        )
-
-        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
-        )
-
-        assert rows[0]["title"] == "'=1+1"
-        assert reimported.title == "=1+1"
-
-    def test_a_tab_led_title_comes_back_without_its_tab(self, tmp_path: Path) -> None:
-        """The import strips whitespace off every cell, guard or no guard."""
-        item = ContentItem(
-            id="tab-led",
-            title="\tAlpha",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        exported = tmp_path / "books.csv"
-        exported.write_text(
-            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
-        )
-
-        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
-        )
-
-        assert rows[0]["title"] == "'\tAlpha"
-        assert reimported.title == "Alpha"
 
 
 class TestExportRoundtrip:

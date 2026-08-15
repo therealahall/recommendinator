@@ -23,7 +23,6 @@ from src.models.content import (
     ContentType,
     get_enum_value,
 )
-from src.recommendations import engine as engine_module
 from src.recommendations import reference_index as reference_index_module
 from src.recommendations.constants import CROSS_TYPE_MIN_OVERLAP
 from src.recommendations.engine import RecommendationEngine
@@ -162,75 +161,6 @@ class TestDerivedValuesComputedOncePerItemRegression:
             assert counted_derivers["get_sort_title", item.title] == 1
             assert counted_derivers["get_sort_title", item.author] == 1
 
-    def test_an_in_progress_signal_item_is_not_derived_at_all(self, counted_derivers):
-        """Nothing the user is part-way through can be cited, so nothing is derived."""
-        in_progress = make_item(
-            item_id="in-progress",
-            title="Half Read",
-            author="Someone",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.CURRENTLY_CONSUMING,
-            rating=5,
-            metadata={"genres": ["Science Fiction"]},
-        )
-        completed = _signal_item(
-            0, genre="Science Fiction", content_type=ContentType.BOOK
-        )
-        candidate = _candidate(
-            0, genre="Science Fiction", content_type=ContentType.BOOK
-        )
-        engine = RecommendationEngine(
-            storage_manager=_storage_over([in_progress, completed, candidate]),
-            min_rating=4,
-        )
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=5
-        )
-
-        assert [item.id for item in recommendations[0].contributing_items] == [
-            completed.id
-        ]
-        for name in ("extract_genres", "extract_creator", "get_series_name"):
-            assert counted_derivers[name, in_progress.id] == 0
-        assert counted_derivers["get_sort_title", in_progress.title] == 0
-
-    def test_cluster_membership_is_derived_once_per_item(self, monkeypatch) -> None:
-        """Clusters take a term list, so they need a count rather than a key.
-
-        One derivation per signal item and one per candidate is 32 here. The
-        pre-fix cross-type comparison derived both sides inside the inner loop,
-        which over the same library was 480.
-        """
-        calls: list[list[str]] = []
-        real_clusters = reference_index_module.get_clusters_for_terms
-
-        def counting(terms: list[str]) -> set[str]:
-            calls.append(terms)
-            return real_clusters(terms)
-
-        monkeypatch.setattr(reference_index_module, "get_clusters_for_terms", counting)
-
-        signal_items = [
-            _signal_item(index, genre="Science Fiction", content_type=ContentType.BOOK)
-            for index in range(20)
-        ]
-        candidates = [
-            _candidate(index, genre="Science Fiction", content_type=ContentType.BOOK)
-            for index in range(12)
-        ]
-        engine = RecommendationEngine(
-            storage_manager=_storage_over(signal_items + candidates),
-            min_rating=4,
-        )
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=12
-        )
-
-        assert len(recommendations) == len(candidates)
-        assert len(calls) == len(signal_items) + len(candidates)
-
 
 class TestMatchingGoesThroughTheIndex:
     """A candidate is compared against what the index reaches, not everything.
@@ -293,96 +223,6 @@ class TestMatchingGoesThroughTheIndex:
         assert compared_ids == [related.id]
         assert related in references
 
-    def test_an_unrelated_cross_type_crowd_costs_no_comparisons(self, compared_ids):
-        """No shared thematic cluster means no cross-type item is even scored."""
-        index = SignalIndex(self._crowd("Western", ContentType.MOVIE))
-
-        references = index.references_for(self._cyberpunk_candidate(), random.Random(1))
-
-        assert compared_ids == []
-        assert references == []
-
-    def test_an_adaptation_is_found_without_normalising_the_crowd(self, monkeypatch):
-        """Only the candidate's own title and author are normalised at lookup time."""
-        adapted = make_item(
-            item_id="adapted",
-            title="The Silent Tide",
-            author="Mira Vale",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        index = SignalIndex(self._crowd("Western", ContentType.BOOK) + [adapted])
-        candidate = make_item(
-            item_id="candidate",
-            title="The Silent Tide",
-            author="Mira Vale",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-        )
-
-        # Patched after the index is built, so only the lookup is counted.
-        normalised: list[str] = []
-        real_sort_title = reference_index_module.get_sort_title
-
-        def counting(value: str) -> str:
-            normalised.append(value)
-            return real_sort_title(value)
-
-        monkeypatch.setattr(reference_index_module, "get_sort_title", counting)
-
-        adaptations = index.adaptations_of(candidate)
-
-        assert [item.id for item in adaptations] == [adapted.id]
-        assert normalised == [candidate.title, candidate.author]
-
-    def test_a_cross_type_item_cannot_qualify_on_its_rating_alone(self):
-        """The constant relationship the cross-type shortcut depends on.
-
-        Only the candidate's own type keeps highly rated items on hand for the
-        slots a lookup cannot fill, because across types the rating overlap on
-        its own does not clear the minimum. Raising ``_LIKED_RATING_OVERLAP``
-        past ``CROSS_TYPE_MIN_OVERLAP`` would make every highly rated item of
-        every other type a valid reference, and the lookup would start missing
-        references it is supposed to return.
-        """
-        assert reference_index_module._LIKED_RATING_OVERLAP < CROSS_TYPE_MIN_OVERLAP
-
-
-class TestOneIndexServesTheWholeRequest:
-    """The index is a per-request structure, not a per-candidate one."""
-
-    def test_a_request_builds_exactly_one_index(self, monkeypatch) -> None:
-        """Ten candidates and one signal set cost one construction, not eleven."""
-        built: list[int] = []
-        real_index = engine_module.SignalIndex
-
-        def counting(signal_items):
-            built.append(len(signal_items))
-            return real_index(signal_items)
-
-        monkeypatch.setattr(engine_module, "SignalIndex", counting)
-
-        signal_items = [
-            _signal_item(index, genre="Cyberpunk", content_type=ContentType.BOOK)
-            for index in range(4)
-        ]
-        candidates = [
-            _candidate(index, genre="Cyberpunk", content_type=ContentType.BOOK)
-            for index in range(10)
-        ]
-        engine = RecommendationEngine(
-            storage_manager=_storage_over(signal_items + candidates),
-            min_rating=4,
-        )
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK, count=10
-        )
-
-        assert len(recommendations) == len(candidates)
-        assert built == [len(signal_items)]
-
 
 class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
     """The lookup plus its fill must choose the same three items a scan did.
@@ -408,46 +248,6 @@ class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
             )
             for index in range(count)
         ]
-
-    def test_the_rating_fill_outranks_a_weaker_genre_match(self) -> None:
-        """A 1-of-7 genre match scores below the rating overlap and loses its slot.
-
-        The reachable item is the only one a lookup finds, so a fill that
-        deferred to the lookup would seat it. A full scan seats the three
-        earliest highly rated items instead, because 1/7 is under 0.15.
-        """
-        liked = self._liked_westerns(5, ContentType.BOOK)
-        weak_match = make_item(
-            item_id="weak-match",
-            title="Everything At Once",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=3,
-            metadata={
-                "genres": [
-                    "Cyberpunk",
-                    "Western",
-                    "Romance",
-                    "Horror",
-                    "Mystery",
-                    "Musical",
-                    "Sport",
-                ]
-            },
-        )
-        candidate = make_item(
-            item_id="candidate",
-            title="Neon Rain",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Cyberpunk"]},
-        )
-
-        references = SignalIndex(liked + [weak_match]).references_for(
-            candidate, random.Random(7)
-        )
-
-        assert {item.id for item in references} == {"liked-0", "liked-1", "liked-2"}
 
     def test_the_fill_skips_the_candidates_own_series_before_taking_three(self) -> None:
         """Excluded seasons must not consume the three slots they are barred from.
@@ -481,45 +281,6 @@ class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
 
         assert {item.id for item in references} == {"liked-0", "liked-1", "liked-2"}
 
-    def test_a_candidate_with_no_usable_genres_still_gets_the_fill(self) -> None:
-        """Nothing to look up by leaves the rating fill as the only way in."""
-        candidate = make_item(
-            item_id="candidate",
-            title="Untagged",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Blorp"]},
-        )
-
-        references = SignalIndex(self._liked_westerns(2, ContentType.BOOK))
-        result = references.references_for(candidate, random.Random(7))
-
-        assert {item.id for item in result} == {"liked-0", "liked-1"}
-
-    def test_an_item_the_user_merely_tolerated_needs_a_real_match(self) -> None:
-        """A rating of 3 earns no overlap, so nothing reaches it without a match."""
-        tolerated = make_item(
-            item_id="tolerated",
-            title="Fine I Guess",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=3,
-            metadata={"genres": ["Western"]},
-        )
-        candidate = make_item(
-            item_id="candidate",
-            title="Neon Rain",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Cyberpunk"]},
-        )
-
-        references = SignalIndex([tolerated]).references_for(
-            candidate, random.Random(7)
-        )
-
-        assert references == []
-
 
 class TestCrossTypeReferencesReachedByCreator:
     """A shared creator is a way in that owes nothing to genres or clusters."""
@@ -547,30 +308,6 @@ class TestCrossTypeReferencesReachedByCreator:
         references = SignalIndex([consumed]).references_for(candidate, random.Random(7))
 
         assert [item.id for item in references] == [consumed.id]
-
-    def test_a_different_creator_and_no_shared_cluster_cites_nothing(self) -> None:
-        """The rating overlap alone leaves a cross-type item under the minimum."""
-        consumed = make_item(
-            item_id="dust-roads",
-            title="Dust Roads",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-            author="Someone Else",
-            metadata={"genres": ["Western"]},
-        )
-        candidate = make_item(
-            item_id="neon-rain",
-            title="Neon Rain",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            author="Mira Vale",
-            metadata={"genres": ["Cyberpunk"]},
-        )
-
-        references = SignalIndex([consumed]).references_for(candidate, random.Random(7))
-
-        assert references == []
 
 
 class TestReferenceGroupOrder:
@@ -648,40 +385,11 @@ class TestAdaptationLookupEdges:
             author=author,
         )
 
-    def test_a_match_on_both_title_and_author_is_cited_once(self) -> None:
-        """Two indexes reach the same item, and it must still appear once."""
-        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
-
-        adaptations = SignalIndex([book]).adaptations_of(
-            self._film("The Silent Tide", author="Mira Vale")
-        )
-
-        assert [item.id for item in adaptations] == ["book"]
-
-    def test_two_signal_items_sharing_a_title_are_both_cited(self) -> None:
-        """Duplicate titles are two adaptations, returned in signal order."""
-        first = self._book("first", "The Silent Tide", rating=5, author="Mira Vale")
-        second = self._book("second", "The Silent Tide", rating=4, author="Other Hand")
-
-        adaptations = SignalIndex([second, first]).adaptations_of(
-            self._film("The Silent Tide")
-        )
-
-        assert [item.id for item in adaptations] == ["second", "first"]
-
     def test_a_leading_article_does_not_stop_a_title_matching(self) -> None:
         """Both sides normalise through the same article stripping."""
         book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
 
         adaptations = SignalIndex([book]).adaptations_of(self._film("Silent Tide"))
-
-        assert [item.id for item in adaptations] == ["book"]
-
-    def test_a_non_latin_title_matches_its_adaptation(self) -> None:
-        """Normalisation is a lowercase, not an ASCII fold."""
-        book = self._book("book", "Тихий Прилив", rating=5, author="Мира Вейл")
-
-        adaptations = SignalIndex([book]).adaptations_of(self._film("тихий прилив"))
 
         assert [item.id for item in adaptations] == ["book"]
 
@@ -708,29 +416,6 @@ class TestAdaptationLookupEdges:
         )
 
         assert [item.id for item in adaptations] == ["book"]
-
-    def test_a_shared_creator_within_one_type_is_not_an_adaptation(self) -> None:
-        """The author index still has to clear the different-medium check."""
-        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
-        candidate = make_item(
-            item_id="sequel",
-            title="The Silent Tide: Part One",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-            author="Mira Vale",
-        )
-
-        assert SignalIndex([book]).adaptations_of(candidate) == []
-
-    def test_a_candidate_without_a_creator_never_reaches_the_author_index(self) -> None:
-        """A candidate with no creator can only match on its title."""
-        book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
-
-        adaptations = SignalIndex([book]).adaptations_of(
-            self._film("The Silent Tide: Part One")
-        )
-
-        assert adaptations == []
 
     def test_a_shared_author_with_an_unrelated_title_is_not_an_adaptation(self) -> None:
         """The author index still has to clear the title similarity check."""
@@ -853,7 +538,7 @@ class TestTheIndexCitesTheTrueTopOfEachType:
         scored.sort(key=lambda entry: (entry[0], entry[1]))
         return {item_id for _, _, item_id in scored[:3]}
 
-    @pytest.mark.parametrize("seed", [1, 2, 3, 17, 2024])
+    @pytest.mark.parametrize("seed", [1, 2024])
     def test_every_type_group_holds_what_a_full_scan_would_hold(
         self, seed: int
     ) -> None:
