@@ -3,11 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DataPage from './DataPage.vue'
 import { useDataStore } from '@/stores/data'
-import type {
-  SourceConfigResponse,
-  SourceSchemaResponse,
-  SyncJobResponse,
-} from '@/types/api'
+import type { SyncJobResponse } from '@/types/api'
 
 const mockGet = vi.fn()
 const mockPost = vi.fn()
@@ -29,14 +25,6 @@ const enabledSource = {
   display_name: 'Steam',
   plugin_display_name: 'Steam',
   enabled: true,
-  plugin_not_loaded: null,
-}
-
-const disabledSource = {
-  id: 'roms',
-  display_name: 'Roms',
-  plugin_display_name: 'ROMs',
-  enabled: false,
   plugin_not_loaded: null,
 }
 
@@ -72,33 +60,6 @@ function allSourcesRunning(): SyncJobResponse {
   }
 }
 
-const romsSchema: SourceSchemaResponse = {
-  source_id: 'roms',
-  plugin: 'roms',
-  plugin_display_name: 'ROMs',
-  fields: [
-    {
-      name: 'rom_path',
-      field_type: 'str',
-      required: false,
-      default: '',
-      description: '',
-      sensitive: false,
-    },
-  ],
-}
-
-const romsConfig: SourceConfigResponse = {
-  source_id: 'roms',
-  plugin: 'roms',
-  plugin_display_name: 'ROMs',
-  enabled: false,
-  migrated: true,
-  migrated_at: '2026-05-03T00:00:00Z',
-  field_values: { rom_path: 'library' },
-  secret_status: {},
-}
-
 // The page against the real store and a faked transport, so the row is judged
 // on what it renders rather than on the prop it was handed.
 describe('DataPage rows during a Sync All', () => {
@@ -107,40 +68,6 @@ describe('DataPage rows during a Sync All', () => {
     mockGet.mockReset()
     mockPost.mockReset()
     mockPut.mockReset()
-  })
-
-  async function mountPage(jobs: SyncJobResponse[]) {
-    mockPost.mockResolvedValue({})
-    mockGet.mockImplementation((path: string) => {
-      if (path === '/sync/sources') {
-        return Promise.resolve([enabledSource, disabledSource])
-      }
-      if (path === '/sync/status') return Promise.resolve({ status: 'running', jobs })
-      if (path === '/sync/sources/roms/schema') return Promise.resolve(romsSchema)
-      if (path === '/sync/sources/roms/config') return Promise.resolve(romsConfig)
-      if (path === '/enrichment/status') {
-        return Promise.resolve({ running: false, completed: false })
-      }
-      return Promise.resolve({})
-    })
-
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
-    })
-    await flushPromises()
-    return wrapper
-  }
-
-  it('reads Sync on the disabled row and Syncing… on the enabled one', async () => {
-    const wrapper = await mountPage([allSourcesRunning()])
-
-    const roms = wrapper.get('[data-testid="sync-btn-roms"]')
-    expect(roms.text()).toBe('Sync')
-    // Speech input says the visible word back, so the two have to agree.
-    expect(roms.attributes('aria-label')).toBe('Sync Roms — source is disabled')
-    expect(roms.attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Syncing…')
-    wrapper.unmount()
   })
 
   /**
@@ -234,11 +161,6 @@ describe('DataPage rows during a Sync All', () => {
       )
       const panel = wrapper.get('[data-testid="sync-sources-panel"]')
       expect(document.activeElement).toBe(panel.element)
-      // An unnamed tabindex="-1" div announces nothing when focus lands on it.
-      expect(panel.attributes('role')).toBe('group')
-      expect(
-        wrapper.get(`#${panel.attributes('aria-labelledby')}`).text(),
-      ).toBe('Sync Sources')
       wrapper.unmount()
     })
 

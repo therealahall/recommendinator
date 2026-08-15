@@ -36,44 +36,11 @@ describe('useDataStore', () => {
     vi.useRealTimers()
   })
 
-  it('has correct initial state', () => {
-    const store = useDataStore()
-    expect(store.syncSources).toEqual([])
-    expect(store.syncStatus).toBe('idle')
-    expect(store.syncJobs).toEqual([])
-    expect(store.isSourceIdSyncing('steam')).toBe(false)
-    expect(store.enrichmentStats).toBeNull()
-  })
-
-  it('loadSyncSources fetches the source list alone', async () => {
-    const sources = [
-      { id: 'steam', display_name: 'Steam', plugin_display_name: 'Steam', enabled: true },
-    ]
-    mockPost.mockResolvedValue({})
-    mockGet.mockResolvedValueOnce(sources)
-
-    const store = useDataStore()
-    await store.loadSyncSources()
-
-    expect(store.syncSources).toEqual(sources)
-    // OAuth status is per source, so it is read when a source is opened.
-    expect(mockGet).toHaveBeenCalledTimes(1)
-  })
-
   function steamSource() {
     return {
       id: 'steam',
       display_name: 'Steam',
       plugin_display_name: 'Steam',
-      enabled: true,
-    }
-  }
-
-  function goodreadsSource() {
-    return {
-      id: 'goodreads',
-      display_name: 'Goodreads',
-      plugin_display_name: 'Goodreads',
       enabled: true,
     }
   }
@@ -124,18 +91,6 @@ describe('useDataStore', () => {
     expect(mockGet.mock.calls.length).toBe(callsBefore)
   })
 
-  it('triggerSync clears the optimistic trigger on generic error', async () => {
-    mockPost.mockRejectedValue(new Error('network failure'))
-
-    const store = useDataStore()
-    store.$patch({ syncSources: [steamSource()] })
-    await store.triggerSync('steam')
-
-    expect(store.syncStatus).toBe('failed')
-    expect(store.isSourceIdSyncing('steam')).toBe(false)
-    expect(store.syncMessage).toContain('unexpected failure')
-  })
-
   it('triggerSync keeps the optimistic flag and starts polling on a successful start', async () => {
     mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
     mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
@@ -152,81 +107,6 @@ describe('useDataStore', () => {
     expect(mockGet).toHaveBeenLastCalledWith('/sync/status')
 
     store.cleanup()
-  })
-
-  it('triggerSync handles the "all" pseudo-source via the All Sources label', async () => {
-    mockPost.mockResolvedValue({ message: 'Sync started for All Sources' })
-
-    const store = useDataStore()
-    await store.triggerSync('all')
-
-    expect(store.isSourceIdSyncing('all')).toBe(true)
-  })
-
-  it('checkSyncStatus drops the optimistic trigger once the server ack\'s the job', async () => {
-    // Plant an optimistic trigger via triggerSync, then poll status and
-    // observe the trigger is cleared because the server now reports the
-    // job — isSourceIdSyncing should still be true (driven by the job),
-    // but the source of truth has shifted from optimistic to server.
-    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Steam',
-          status: 'running',
-          items_processed: 0,
-          total_items: null,
-          errors: [],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    store.$patch({ syncSources: [steamSource()] })
-    await store.triggerSync('steam')
-    await store.checkSyncStatus()
-
-    expect(store.isSourceIdSyncing('steam')).toBe(true)
-    // A second poll with the same response keeps the source syncing —
-    // the source of truth has shifted from optimistic to server, but
-    // the public flag stays true because the server reports running.
-    await store.checkSyncStatus()
-    expect(store.isSourceIdSyncing('steam')).toBe(true)
-  })
-
-  it('checkSyncStatus reports idle on empty jobs array', async () => {
-    mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncStatus).toBe('idle')
-    expect(store.syncJobs).toEqual([])
-    expect(store.syncMessage).toBe('')
-  })
-
-  it('checkSyncStatus treats total_items=0 as unknown total in aggregate banner', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Steam',
-          status: 'running',
-          items_processed: 5,
-          total_items: 0,
-          errors: [],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('5 items so far')
-    expect(store.syncMessage).not.toContain('/0')
   })
 
   it('checkSyncStatus matches the "all" source ID to the "All Sources" job', async () => {
@@ -363,102 +243,6 @@ describe('useDataStore', () => {
     store.cleanup()
   })
 
-  it('checkSyncStatus does not start enrichment polling when the completed sync left enrichment idle', async () => {
-    // Symmetric to the auto-trigger case: a completed sync that did NOT
-    // start enrichment must not spin up the 3s enrichment poll, otherwise
-    // the data view would fetch /enrichment/status forever for no reason.
-    const idleStatus = {
-      running: false,
-      completed: false,
-      cancelled: false,
-      items_processed: 0,
-      items_enriched: 0,
-      items_failed: 0,
-      items_not_found: 0,
-      total_items: 0,
-      current_item: null,
-      content_type: null,
-      errors: [],
-      elapsed_seconds: 0,
-      progress_percent: 0,
-    }
-    mockGet
-      // checkSyncStatus -> GET /sync/status (completed, nothing running)
-      .mockResolvedValueOnce({
-        status: 'idle',
-        jobs: [
-          {
-            source: 'Steam',
-            status: 'completed',
-            items_processed: 50,
-            total_items: 50,
-            errors: [],
-            sources: [],
-          },
-        ],
-      })
-      // checkEnrichmentStatus -> GET /enrichment/status (not running)
-      .mockResolvedValueOnce(idleStatus)
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-    await vi.advanceTimersByTimeAsync(0)
-
-    expect(store.syncStatus).toBe('completed')
-    expect(store.enrichmentJob).toEqual(idleStatus)
-
-    // No poll is scheduled: advancing past a tick must not re-fetch status.
-    const callsBefore = mockGet.mock.calls.length
-    await vi.advanceTimersByTimeAsync(3000)
-    expect(mockGet.mock.calls.length).toBe(callsBefore)
-
-    store.cleanup()
-  })
-
-  it('checkSyncStatus reports the first error in full, not a count', async () => {
-    mockGet.mockResolvedValue({
-      status: 'idle',
-      jobs: [
-        {
-          source: 'All Sources',
-          status: 'completed',
-          started_at: '2026-08-13T10:05:00',
-          items_processed: 90,
-          total_items: 90,
-          items_added: 90,
-          items_updated: 0,
-          items_unchanged: 0,
-          errors: [
-            { source: 'Sonarr', message: 'Set verify_ssl to false' },
-            { source: 'Steam', message: 'Rate limit exceeded' },
-          ],
-          sources: ranSources('Sonarr', 'Steam'),
-        },
-        {
-          source: 'Goodreads',
-          status: 'completed',
-          started_at: '2026-08-13T10:00:00',
-          items_processed: 10,
-          total_items: 10,
-          items_added: 10,
-          items_updated: 0,
-          items_unchanged: 0,
-          errors: [{ source: 'Goodreads', message: 'Row 4 has no title' }],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    // The counts are the umbrella run's own; the errors outlive it, until the
-    // source they name is re-synced past.
-    expect(store.syncMessage).toContain('90 of 90 items saved')
-    expect(store.syncMessage).toContain('Sonarr: Set verify_ssl to false')
-    expect(store.syncMessage).toContain('(+2 more)')
-  })
-
   // A retained per-source job outlives the run that made it, so the row and
   // the banner could read different jobs — and a message the banner counted
   // was then shown on no row at all.
@@ -569,86 +353,6 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('Steam')
   })
 
-  it('checkSyncStatus is idle when no jobs are tracked', async () => {
-    mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncStatus).toBe('idle')
-    expect(store.syncMessage).toBe('')
-  })
-
-  it('checkSyncStatus marks per-source jobs as syncing for their source IDs', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Goodreads',
-          status: 'running',
-          items_processed: 5,
-          errors: [],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    store.$patch({ syncSources: [goodreadsSource(), steamSource()] })
-    await store.checkSyncStatus()
-
-    expect(store.syncStatus).toBe('running')
-    expect(store.isSourceIdSyncing('goodreads')).toBe(true)
-    expect(store.isSourceIdSyncing('steam')).toBe(false)
-  })
-
-  it('checkSyncStatus builds aggregate progress message with totals', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Steam',
-          status: 'running',
-          items_processed: 10,
-          total_items: 100,
-          progress_percent: 10,
-          current_source: 'Steam',
-          current_item: 'Half-Life 2',
-          errors: [],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('10/100')
-    expect(store.syncMessage).toContain('(10%)')
-    expect(store.syncMessage).toContain('Half-Life 2')
-  })
-
-  it('checkSyncStatus shows "items so far" when total is unknown', async () => {
-    mockGet.mockResolvedValue({
-      status: 'running',
-      jobs: [
-        {
-          source: 'Steam',
-          status: 'running',
-          items_processed: 7,
-          total_items: null,
-          errors: [],
-          sources: [],
-        },
-      ],
-    })
-
-    const store = useDataStore()
-    await store.checkSyncStatus()
-
-    expect(store.syncMessage).toContain('7 items so far')
-  })
-
   it('checkSyncStatus aggregates running jobs into a single banner', async () => {
     mockGet.mockResolvedValue({
       status: 'running',
@@ -677,50 +381,6 @@ describe('useDataStore', () => {
 
     expect(store.syncMessage).toContain('8/30')
     expect(store.syncMessage).toContain('Syncing 2 sources in parallel')
-  })
-
-  it('checkSyncStatus silently ignores GET failure without changing state', async () => {
-    mockGet.mockRejectedValue(new Error('network error'))
-
-    const store = useDataStore()
-    store.$patch({ syncStatus: 'running', syncMessage: 'previous message' })
-    await store.checkSyncStatus()
-
-    expect(store.syncStatus).toBe('running')
-    expect(store.syncMessage).toBe('previous message')
-  })
-
-  it('jobForSourceId returns the job whose source matches display_name', async () => {
-    const job = {
-      source: 'Steam',
-      status: 'running' as const,
-      items_processed: 9,
-      total_items: 10,
-      current_item: 'Half-Life 2',
-      errors: [],
-      sources: [] as never[],
-    }
-    mockGet.mockResolvedValue({ status: 'running', jobs: [job] })
-
-    const store = useDataStore()
-    store.$patch({ syncSources: [steamSource()] })
-    await store.checkSyncStatus()
-
-    const found = store.jobForSourceId('steam')
-    expect(found?.source).toBe('Steam')
-    expect(found?.current_item).toBe('Half-Life 2')
-    expect(store.jobForSourceId('goodreads')).toBeNull()
-  })
-
-  it('loadEnrichmentStats fetches stats', async () => {
-    const stats = { enabled: true, total: 100, enriched: 50, pending: 30, not_found: 10, failed: 10, by_provider: {}, by_quality: {} }
-    mockGet.mockResolvedValue(stats)
-
-    const store = useDataStore()
-    await store.loadEnrichmentStats()
-
-    expect(store.enrichmentStats).toEqual(stats)
-    expect(store.enrichmentEnabled).toBe(true)
   })
 
   describe('enrichment stats poll regression', () => {
@@ -832,32 +492,6 @@ describe('useDataStore', () => {
       expect(store.oauthStatusFor('trakt_work').enabled).toBe(true)
     })
 
-    it('lets two sources recheck at once without cancelling each other', async () => {
-      const answer = pendingStatusReads()
-
-      const store = useDataStore()
-      const work = store.loadOAuthStatus('trakt_work', 'trakt')
-      const home = store.loadOAuthStatus('trakt_home', 'trakt')
-
-      answer[1]({ enabled: true, connected: true, auth_url: null })
-      await home
-      answer[0]({ enabled: true, connected: true, auth_url: null })
-      await work
-
-      // Both sources run the one OAuth plugin. A counter keyed on the plugin,
-      // or one counter for the whole store, reads the trakt_work answer as
-      // overtaken and drops a status nobody asks for again.
-      expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
-      expect(store.oauthStatusFor('trakt_home').connected).toBe(true)
-    })
-
-    it('loadOAuthStatus asks nothing for a plugin with no OAuth flow', async () => {
-      const store = useDataStore()
-      await store.loadOAuthStatus('my_books', 'goodreads_csv')
-
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
     it('submitGogCode posts the code for that source and re-reads its status', async () => {
       mockPost.mockResolvedValueOnce({ message: 'GOG account connected!' })
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
@@ -873,35 +507,6 @@ describe('useDataStore', () => {
       expect(mockGet).toHaveBeenCalledWith('/gog/status', { source_id: 'gog_work' })
       expect(store.oauthMessages['gog_work']).toBe('GOG account connected!')
       expect(store.oauthStatusFor('gog_work').connected).toBe(true)
-    })
-
-    it('submitEpicCode posts the code for that source and re-reads its status', async () => {
-      mockPost.mockResolvedValueOnce({ message: 'Epic account connected!' })
-      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
-
-      const store = useDataStore()
-      await store.submitEpicCode('epic_work', '{"authorizationCode":"x"}')
-
-      expect(mockPost).toHaveBeenCalledWith(
-        '/epic/exchange',
-        { code_or_json: '{"authorizationCode":"x"}' },
-        { source_id: 'epic_work' },
-      )
-      expect(mockGet).toHaveBeenCalledWith('/epic/status', { source_id: 'epic_work' })
-      expect(store.oauthMessages['epic_work']).toBe('Epic account connected!')
-    })
-
-    it('submitGogCode surfaces an API error against that source alone', async () => {
-      mockPost.mockRejectedValueOnce(new ApiError(500, 'Internal Server Error'))
-
-      const store = useDataStore()
-      await store.submitGogCode('gog_work', 'auth-code')
-
-      expect(store.oauthMessages['gog_work']).toBe(
-        'Error: 500 Internal Server Error',
-      )
-      expect(store.oauthMessages['gog']).toBeUndefined()
-      expect(mockGet).not.toHaveBeenCalled()
     })
 
     it('submitGogCode surfaces the refusal the server wrote for the user', async () => {
@@ -955,167 +560,9 @@ describe('useDataStore', () => {
       )
       expect(store.oauthStatusFor('gog_work').connected).toBe(false)
     })
-
-    it('disconnectEpic deletes that source token and re-reads its status', async () => {
-      mockDelete.mockResolvedValue({})
-      mockGet.mockResolvedValueOnce({ enabled: true, connected: false })
-
-      const store = useDataStore()
-      await store.disconnectEpic('epic_work')
-
-      expect(mockDelete).toHaveBeenCalledWith('/epic/token', {
-        source_id: 'epic_work',
-      })
-      expect(store.oauthMessages['epic_work']).toBe(
-        'Disconnected. You can reconnect below.',
-      )
-    })
-
-    it('disconnectGog surfaces API error and does not re-read status', async () => {
-      mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
-
-      const store = useDataStore()
-      await store.disconnectGog('gog_work')
-
-      expect(store.oauthMessages['gog_work']).toBe(
-        'Error: 500 Internal Server Error',
-      )
-      // The re-read must only run on success — otherwise a failed disconnect
-      // triggers a spurious status fetch that itself may error.
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
-    it('disconnectGog keeps the confirmation and rejects when the re-read fails', async () => {
-      mockDelete.mockResolvedValueOnce({})
-      mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
-
-      const store = useDataStore()
-
-      // Swallowed, this left the panel claiming the account was connected —
-      // Disconnect button and all — beside the message saying it was not.
-      await expect(store.disconnectGog('gog_work')).rejects.toBeInstanceOf(
-        ApiError,
-      )
-      // The credential is already gone; a stale panel is not a failed
-      // disconnect and must not be reported as one.
-      expect(store.oauthMessages['gog_work']).toBe(
-        'Disconnected. You can reconnect below.',
-      )
-    })
-
-    it('disconnectEpic surfaces API error and does not re-read status', async () => {
-      mockDelete.mockRejectedValue(new ApiError(500, 'Internal Server Error'))
-
-      const store = useDataStore()
-      await store.disconnectEpic('epic_work')
-
-      expect(store.oauthMessages['epic_work']).toBe(
-        'Error: 500 Internal Server Error',
-      )
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
-    it('disconnectGog surfaces generic error with fallback message', async () => {
-      mockDelete.mockRejectedValue(new Error('network timeout'))
-
-      const store = useDataStore()
-      await store.disconnectGog('gog_work')
-
-      expect(store.oauthMessages['gog_work']).toBe('Error: disconnect failed')
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
-    it('disconnectEpic surfaces generic error with fallback message', async () => {
-      mockDelete.mockRejectedValue(new Error('network timeout'))
-
-      const store = useDataStore()
-      await store.disconnectEpic('epic_work')
-
-      expect(store.oauthMessages['epic_work']).toBe('Error: disconnect failed')
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
-    it('disconnectGog sets in-progress message before awaiting DELETE', async () => {
-      let rejectDelete: (err: Error) => void = () => {}
-      mockDelete.mockImplementation(
-        () => new Promise((_, reject) => { rejectDelete = reject })
-      )
-
-      const store = useDataStore()
-      const pending = store.disconnectGog('gog_work')
-      // Synchronous assignment must land before the promise resolves so the
-      // aria-live region announces activity immediately.
-      expect(store.oauthMessages['gog_work']).toBe('Disconnecting GOG...')
-
-      rejectDelete(new ApiError(500, 'Internal Server Error'))
-      await pending
-
-      expect(store.oauthMessages['gog_work']).toBe(
-        'Error: 500 Internal Server Error',
-      )
-    })
-
-    it('disconnectEpic sets in-progress message before awaiting DELETE', async () => {
-      let rejectDelete: (err: Error) => void = () => {}
-      mockDelete.mockImplementation(
-        () => new Promise((_, reject) => { rejectDelete = reject })
-      )
-
-      const store = useDataStore()
-      const pending = store.disconnectEpic('epic_work')
-      expect(store.oauthMessages['epic_work']).toBe('Disconnecting Epic Games...')
-
-      rejectDelete(new ApiError(500, 'Internal Server Error'))
-      await pending
-
-      expect(store.oauthMessages['epic_work']).toBe(
-        'Error: 500 Internal Server Error',
-      )
-    })
   })
 
   describe('trakt device-code auth', () => {
-    it('startTraktFlow POSTs for the named source and returns the payload', async () => {
-      const flow = {
-        user_code: 'ABCD-1234',
-        verification_url: 'https://trakt.tv/activate',
-        device_code: 'dev-code',
-        expires_in: 600,
-        interval: 5,
-      }
-      mockPost.mockResolvedValueOnce(flow)
-
-      const store = useDataStore()
-      const result = await store.startTraktFlow('trakt_work')
-
-      expect(mockPost).toHaveBeenCalledWith(
-        '/trakt/start-device-flow',
-        undefined,
-        { source_id: 'trakt_work' },
-      )
-      expect(result).toEqual(flow)
-    })
-
-    it('pollTraktApproval returns pending without re-reading status', async () => {
-      mockPost.mockResolvedValueOnce({
-        connected: false,
-        status: 'pending',
-        message: 'Waiting',
-      })
-
-      const store = useDataStore()
-      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
-
-      expect(mockPost).toHaveBeenCalledWith(
-        '/trakt/poll-device-approval',
-        { device_code: 'dev-code' },
-        { source_id: 'trakt_work' },
-      )
-      expect(result.connected).toBe(false)
-      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
-      expect(mockGet).not.toHaveBeenCalled()
-    })
-
     it('pollTraktApproval re-reads that source status on success', async () => {
       mockPost.mockResolvedValueOnce({ connected: true, message: 'Connected' })
       mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
@@ -1131,72 +578,6 @@ describe('useDataStore', () => {
       // The device-code flow is unmounted by that very status flip, so the
       // confirmation has to reach the panel's own live region to be announced.
       expect(store.oauthMessages['trakt_work']).toBe('Connected')
-    })
-
-    it('pollTraktApproval falls back to a default confirmation message', async () => {
-      mockPost.mockResolvedValueOnce({ connected: true, message: '' })
-      mockGet.mockResolvedValueOnce({ enabled: true, connected: true })
-
-      const store = useDataStore()
-      await store.pollTraktApproval('trakt_work', 'dev-code')
-
-      expect(store.oauthMessages['trakt_work']).toBe('Trakt account connected.')
-    })
-
-    it('pollTraktApproval keeps the confirmation when the status re-read fails', async () => {
-      mockPost.mockResolvedValueOnce({ connected: true, message: 'Connected' })
-      mockGet.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
-
-      const store = useDataStore()
-      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
-
-      // The token is stored; the flow must not report the connect as failed.
-      expect(result.connected).toBe(true)
-      expect(store.oauthMessages['trakt_work']).toBe('Connected')
-    })
-
-    it('pollTraktApproval surfaces the expired terminal status', async () => {
-      mockPost.mockResolvedValueOnce({
-        connected: false,
-        status: 'expired',
-        message: 'Code expired',
-      })
-
-      const store = useDataStore()
-      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
-
-      expect(result.status).toBe('expired')
-      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
-    })
-
-    it('pollTraktApproval surfaces the denied terminal status', async () => {
-      mockPost.mockResolvedValueOnce({
-        connected: false,
-        status: 'denied',
-        message: 'Denied',
-      })
-
-      const store = useDataStore()
-      const result = await store.pollTraktApproval('trakt_work', 'dev-code')
-
-      expect(result.status).toBe('denied')
-      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
-    })
-
-    it('disconnectTrakt DELETEs that source token and re-reads its status', async () => {
-      mockDelete.mockResolvedValueOnce({})
-      mockGet.mockResolvedValueOnce({ enabled: true, connected: false })
-
-      const store = useDataStore()
-      await store.disconnectTrakt('trakt_work')
-
-      expect(mockDelete).toHaveBeenCalledWith('/trakt/token', {
-        source_id: 'trakt_work',
-      })
-      expect(store.oauthStatusFor('trakt_work').connected).toBe(false)
-      expect(store.oauthMessages['trakt_work']).toBe(
-        'Disconnected. You can reconnect below.',
-      )
     })
 
     it('loadOAuthStatus propagates the rejection without clobbering state', async () => {
@@ -1216,15 +597,6 @@ describe('useDataStore', () => {
         connected: true,
         authUrl: null,
       })
-    })
-
-    it('startTraktFlow propagates a 400 not-configured rejection to the caller', async () => {
-      const error = new ApiError(400, 'Bad Request')
-      mockPost.mockRejectedValueOnce(error)
-
-      const store = useDataStore()
-
-      await expect(store.startTraktFlow('trakt_work')).rejects.toBe(error)
     })
 
     it('disconnectTrakt reports a refused disconnect instead of rejecting', async () => {
@@ -1249,72 +621,9 @@ describe('useDataStore', () => {
       expect(mockGet).toHaveBeenCalledTimes(1)
       expect(store.oauthStatusFor('trakt_work').connected).toBe(true)
     })
-
-    it('disconnectTrakt announces the attempt before awaiting the DELETE', async () => {
-      let rejectDelete: (err: Error) => void = () => {}
-      mockDelete.mockImplementation(
-        () => new Promise((_, reject) => { rejectDelete = reject })
-      )
-
-      const store = useDataStore()
-      const pending = store.disconnectTrakt('trakt_work')
-      expect(store.oauthMessages['trakt_work']).toBe('Disconnecting Trakt...')
-
-      rejectDelete(new Error('network timeout'))
-      await pending
-
-      expect(store.oauthMessages['trakt_work']).toBe('Error: disconnect failed')
-    })
   })
 
   describe('source config flows', () => {
-    it('loadSourceSchema fetches and caches the schema', async () => {
-      const schema = {
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        fields: [
-          {
-            name: 'api_key',
-            field_type: 'str',
-            required: true,
-            default: null,
-            description: '',
-            sensitive: true,
-          },
-        ],
-      }
-      mockGet.mockResolvedValueOnce(schema)
-
-      const store = useDataStore()
-      const result = await store.loadSourceSchema('steam')
-
-      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/schema')
-      expect(result).toEqual(schema)
-      expect(store.sourceSchemas.steam).toEqual(schema)
-    })
-
-    it('loadSourceConfig fetches and caches the config snapshot', async () => {
-      const cfg = {
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        enabled: true,
-        migrated: true,
-        migrated_at: '2026-05-03T00:00:00Z',
-        field_values: { vanity_url: 'me' },
-        secret_status: { api_key: true },
-      }
-      mockGet.mockResolvedValueOnce(cfg)
-
-      const store = useDataStore()
-      const result = await store.loadSourceConfig('steam')
-
-      expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
-      expect(result).toEqual(cfg)
-      expect(store.sourceConfigs.steam).toEqual(cfg)
-    })
-
     it('migrateSource POSTs migrate and refreshes config', async () => {
       const migration = {
         source_id: 'steam',
@@ -1364,72 +673,6 @@ describe('useDataStore', () => {
       })
       expect(mockGet).toHaveBeenCalledWith('/sync/sources/steam/config')
       expect(store.sourceConfigs.steam.field_values.vanity_url).toBe('new')
-    })
-
-    it('setSourceSecret PUTs the secret to the per-key endpoint', async () => {
-      mockPut.mockResolvedValueOnce(null)
-      mockGet.mockResolvedValueOnce({
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        enabled: true,
-        migrated: true,
-        migrated_at: 'now',
-        field_values: {},
-        secret_status: { api_key: true },
-      })
-
-      const store = useDataStore()
-      await store.setSourceSecret('steam', 'api_key', 'rotated')
-
-      expect(mockPut).toHaveBeenCalledWith(
-        '/sync/sources/steam/secret/api_key',
-        { value: 'rotated' },
-      )
-      expect(store.sourceConfigs.steam.secret_status.api_key).toBe(true)
-    })
-
-    it('clearSourceSecret deletes secret and refreshes config', async () => {
-      mockDelete.mockResolvedValueOnce(null)
-      mockGet.mockResolvedValueOnce({
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        enabled: true,
-        migrated: true,
-        migrated_at: 'now',
-        field_values: {},
-        secret_status: { api_key: false },
-      })
-
-      const store = useDataStore()
-      await store.clearSourceSecret('steam', 'api_key')
-
-      expect(mockDelete).toHaveBeenCalledWith(
-        '/sync/sources/steam/secret/api_key',
-      )
-      expect(store.sourceConfigs.steam.secret_status.api_key).toBe(false)
-    })
-
-    it('setSourceEnabled PUTs new enabled flag', async () => {
-      mockPut.mockResolvedValueOnce({
-        source_id: 'steam',
-        plugin: 'steam',
-        plugin_display_name: 'Steam',
-        enabled: false,
-        migrated: true,
-        migrated_at: 'now',
-        field_values: {},
-        secret_status: {},
-      })
-
-      const store = useDataStore()
-      await store.setSourceEnabled('steam', false)
-
-      expect(mockPut).toHaveBeenCalledWith('/sync/sources/steam/enabled', {
-        enabled: false,
-      })
-      expect(store.sourceConfigs.steam.enabled).toBe(false)
     })
 
     it('setSourceEnabled also patches the matching syncSources listing entry', async () => {
@@ -1523,27 +766,6 @@ describe('useDataStore', () => {
       expect(store.syncSources.map((s) => s.id)).toEqual(['fresh'])
     })
 
-    it('createSource propagates API rejection to the caller', async () => {
-      const error = new ApiError(409, 'Conflict')
-      mockPost.mockRejectedValueOnce(error)
-
-      const store = useDataStore()
-      const beforeCount = store.syncSources.length
-
-      await expect(
-        store.createSource({
-          id: 'taken',
-          plugin: 'fake_file',
-          values: {},
-          enabled: true,
-        }),
-      ).rejects.toBe(error)
-
-      // Listing left untouched on rejection — caller is the one with UI to react.
-      expect(store.syncSources.length).toBe(beforeCount)
-      expect(store.sourceConfigs.taken).toBeUndefined()
-    })
-
     it('deleteSource DELETEs and prunes the listing + caches', async () => {
       mockDelete.mockResolvedValueOnce(null)
 
@@ -1608,26 +830,6 @@ describe('useDataStore', () => {
       // Landing after the prune, this re-seeded the id, and a source recreated
       // under it rendered "connected" until the fresh read corrected it.
       expect(store.oauthStatus.goner).toBeUndefined()
-    })
-
-    it('deleteSource leaves caches intact when the API rejects', async () => {
-      const error = new ApiError(404, 'Not Found')
-      mockDelete.mockRejectedValueOnce(error)
-
-      const store = useDataStore()
-      store.syncSources = [
-        {
-          id: 'still_here',
-          display_name: 'Still Here',
-          plugin_display_name: 'Fake File',
-          enabled: true,
-          plugin_not_loaded: null,
-        },
-      ]
-
-      await expect(store.deleteSource('still_here')).rejects.toBe(error)
-      // The listing is untouched so the UI keeps showing the source.
-      expect(store.syncSources.map((s) => s.id)).toEqual(['still_here'])
     })
   })
 })

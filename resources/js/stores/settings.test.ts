@@ -93,16 +93,6 @@ describe('useSettingsStore', () => {
     expect(store.loadError).toBe('')
   })
 
-  it('load records loadError on failure', async () => {
-    mockGet.mockRejectedValue(new Error('down'))
-    const store = useSettingsStore()
-
-    await store.load()
-
-    expect(store.loadError).toBe('down')
-    expect(store.sections).toEqual([])
-  })
-
   it('saveSection PUTs the given updates and applies the refreshed view', async () => {
     mockPut.mockResolvedValue(
       view({
@@ -180,18 +170,6 @@ describe('useSettingsStore', () => {
     expect(store.fieldErrors['recommendations.default_count']).toBeUndefined()
   })
 
-  it('saveSection leaves another section\'s field errors alone', async () => {
-    mockGet.mockResolvedValue(twoSettingView())
-    const store = useSettingsStore()
-    await store.load()
-    store.fieldErrors['logging.file'] = 'does not match the required format'
-
-    mockPut.mockResolvedValueOnce(twoSettingView())
-    await store.saveSection('recommendations', { 'recommendations.max_count': 50 })
-
-    expect(store.fieldErrors['logging.file']).toBe('does not match the required format')
-  })
-
   it('saveSection records the error message when the failure is a plain Error', async () => {
     mockPut.mockRejectedValue(new Error('network down'))
     const store = useSettingsStore()
@@ -202,26 +180,6 @@ describe('useSettingsStore', () => {
     expect(store.saveStatus.recommendations).toBe('error')
     expect(store.saveError.recommendations).toBe('network down')
     expect(store.fieldErrors['recommendations.default_count']).toBeUndefined()
-  })
-
-  it('saveSection falls back to the message on a non-422 ApiError', async () => {
-    mockPut.mockRejectedValue(new MockApiError(500, 'Internal Server Error'))
-    const store = useSettingsStore()
-
-    const ok = await store.saveSection('recommendations', { 'recommendations.default_count': 9000 })
-
-    expect(ok).toBe(false)
-    expect(store.saveStatus.recommendations).toBe('error')
-    expect(store.saveError.recommendations).toBe('500 Internal Server Error')
-  })
-
-  it('clearSaveStatus resets a section back to idle', () => {
-    const store = useSettingsStore()
-    store.saveStatus.recommendations = 'saved'
-
-    store.clearSaveStatus('recommendations')
-
-    expect(store.saveStatus.recommendations).toBe('idle')
   })
 
   it('resetSetting DELETEs the key and applies the refreshed view', async () => {

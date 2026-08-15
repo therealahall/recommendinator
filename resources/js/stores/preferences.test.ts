@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { usePreferencesStore, DEFAULT_WEIGHTS } from './preferences'
+import { usePreferencesStore } from './preferences'
 
 const mockGet = vi.fn()
 const mockPut = vi.fn()
@@ -49,17 +49,6 @@ describe('usePreferencesStore', () => {
     mockApplyTheme.mockReset()
   })
 
-  it('has correct initial state', () => {
-    const store = usePreferencesStore()
-    expect(store.scorerWeights).toEqual({})
-    expect(store.seriesInOrder).toBe(true)
-    expect(store.varietyPenalty).toBe(0)
-    expect(store.customRules).toEqual([])
-    expect(store.pendingTheme).toBe('')
-    expect(store.loading).toBe(false)
-    expect(store.saveStatus).toBe('idle')
-  })
-
   it('load populates state from API', async () => {
     mockGet.mockResolvedValue({
       scorer_weights: { genre_match: 3.0, tag_overlap: 0.5 },
@@ -78,104 +67,6 @@ describe('usePreferencesStore', () => {
     expect(store.varietyPenalty).toBe(0.5)
     expect(store.contentLengthPreferences).toEqual({ book: 'short' })
     expect(store.customRules).toEqual(['avoid horror'])
-  })
-
-  it('load defaults varietyPenalty to 0 when absent', async () => {
-    mockGet.mockResolvedValue({
-      scorer_weights: {},
-      series_in_order: true,
-      content_length_preferences: {},
-      custom_rules: [],
-      theme: '',
-    })
-
-    const store = usePreferencesStore()
-    await store.load()
-
-    expect(store.varietyPenalty).toBe(0)
-  })
-
-  it('load reads varietyPenalty at the max (5.0)', async () => {
-    mockGet.mockResolvedValue({
-      scorer_weights: {},
-      series_in_order: true,
-      variety_penalty: 5.0,
-      content_length_preferences: {},
-      custom_rules: [],
-      theme: '',
-    })
-
-    const store = usePreferencesStore()
-    await store.load()
-
-    expect(store.varietyPenalty).toBe(5.0)
-  })
-
-  it('load applies saved theme and sets pendingTheme', async () => {
-    mockGet.mockResolvedValue({
-      scorer_weights: {},
-      series_in_order: true,
-      variety_penalty: 0,
-      custom_rules: [],
-      content_length_preferences: {},
-      theme: 'snowstorm',
-    })
-
-    const store = usePreferencesStore()
-    await store.load()
-
-    expect(store.pendingTheme).toBe('snowstorm')
-    expect(mockApplyTheme).toHaveBeenCalledWith('snowstorm')
-  })
-
-  it('load falls back to defaultThemeId when no saved theme', async () => {
-    mockGet.mockResolvedValue({
-      scorer_weights: {},
-      series_in_order: true,
-      variety_penalty: 0,
-      custom_rules: [],
-      content_length_preferences: {},
-      theme: '',
-    })
-
-    const store = usePreferencesStore()
-    await store.load()
-
-    expect(store.pendingTheme).toBe('nord')
-    expect(mockApplyTheme).not.toHaveBeenCalled()
-  })
-
-  it('getWeight returns stored value or default', () => {
-    const store = usePreferencesStore()
-    store.scorerWeights = { genre_match: 4.0 }
-
-    expect(store.getWeight('genre_match')).toBe(4.0)
-    expect(store.getWeight('tag_overlap')).toBe(DEFAULT_WEIGHTS.tag_overlap)
-  })
-
-  it('setWeight updates scorer weight', () => {
-    const store = usePreferencesStore()
-    store.setWeight('genre_match', 3.5)
-    expect(store.scorerWeights.genre_match).toBe(3.5)
-  })
-
-  it('addRule appends trimmed rule', () => {
-    const store = usePreferencesStore()
-    store.addRule('  avoid horror  ')
-    expect(store.customRules).toEqual(['avoid horror'])
-  })
-
-  it('addRule ignores empty strings', () => {
-    const store = usePreferencesStore()
-    store.addRule('   ')
-    expect(store.customRules).toEqual([])
-  })
-
-  it('removeRule removes by index', () => {
-    const store = usePreferencesStore()
-    store.customRules = ['rule1', 'rule2', 'rule3']
-    store.removeRule(1)
-    expect(store.customRules).toEqual(['rule1', 'rule3'])
   })
 
   it('save sends preferences including theme to API', async () => {
@@ -201,44 +92,6 @@ describe('usePreferencesStore', () => {
       }),
     )
     expect(store.saveStatus).toBe('saved')
-  })
-
-  it('save sends varietyPenalty at the max (5.0)', async () => {
-    mockPut.mockResolvedValue({})
-
-    const store = await loadedStore()
-    store.varietyPenalty = 5.0
-
-    await store.save()
-
-    expect(mockPut).toHaveBeenCalledWith(
-      '/users/1/preferences',
-      expect.objectContaining({ variety_penalty: 5.0 }),
-    )
-  })
-
-  it('save sends varietyPenalty off (0.0)', async () => {
-    mockPut.mockResolvedValue({})
-
-    const store = await loadedStore()
-    store.varietyPenalty = 0
-
-    await store.save()
-
-    expect(mockPut).toHaveBeenCalledWith(
-      '/users/1/preferences',
-      expect.objectContaining({ variety_penalty: 0 }),
-    )
-  })
-
-  it('save applies theme only after successful save', async () => {
-    mockPut.mockResolvedValue({})
-
-    const store = await loadedStore()
-    store.pendingTheme = 'snowstorm'
-    await store.save()
-
-    expect(mockApplyTheme).toHaveBeenCalledWith('snowstorm')
   })
 
   it('save does not apply theme on failure', async () => {

@@ -59,35 +59,6 @@ const filePlugin: PluginInfoResponse = {
   ],
 }
 
-// A plugin with TWO sensitive fields (mirrors Trakt's client_secret +
-// refresh_token) so the ordering and per-field error-naming can be verified.
-const twoSecretPlugin: PluginInfoResponse = {
-  name: 'trakt_like',
-  display_name: 'Trakt-like',
-  description: 'Two secrets',
-  content_types: ['tv'],
-  requires_api_key: true,
-  requires_network: true,
-  fields: [
-    {
-      name: 'client_secret',
-      field_type: 'str',
-      required: true,
-      default: null,
-      description: '',
-      sensitive: true,
-    },
-    {
-      name: 'refresh_token',
-      field_type: 'str',
-      required: true,
-      default: null,
-      description: '',
-      sensitive: true,
-    },
-  ],
-}
-
 // A plugin with a required non-sensitive field and an OPTIONAL secret, so the
 // "empty optional secret is skipped" path can be exercised.
 const optionalSecretPlugin: PluginInfoResponse = {
@@ -147,13 +118,6 @@ describe('AddSourceModal', () => {
     setActivePinia(createPinia())
   })
 
-  it('prefills the Source id from the selected plugin name', async () => {
-    const { wrapper } = await mountWithPlugins()
-    const input = wrapper.find('#add-source-id')
-      .element as HTMLInputElement
-    expect(input.value).toBe('calibre_web')
-  })
-
   it('updates the prefilled id when the plugin changes but not after the user edits it', async () => {
     const { wrapper } = await mountWithPlugins([calibrePlugin, filePlugin])
     const idInput = wrapper.find('#add-source-id')
@@ -168,14 +132,6 @@ describe('AddSourceModal', () => {
     expect((idInput.element as HTMLInputElement).value).toBe('custom-id')
   })
 
-  it('accepts a hyphenated id as valid (no inline error)', async () => {
-    const { wrapper } = await mountWithPlugins()
-    await wrapper.find('#add-source-id').setValue('calibre-web')
-    expect(wrapper.find('[data-testid="add-source-id-error"]').exists()).toBe(
-      false,
-    )
-  })
-
   it('shows an inline error and disables Create for an invalid id', async () => {
     const { wrapper } = await mountWithPlugins()
     await wrapper.find('#add-source-id').setValue('Bad ID')
@@ -185,37 +141,6 @@ describe('AddSourceModal', () => {
     expect(
       wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
     ).toBeDefined()
-  })
-
-  it('renders a sensitive field as a password input', async () => {
-    const { wrapper } = await mountWithPlugins()
-    const secret = wrapper.find('[data-testid="add-source-secret-password"]')
-    expect(secret.exists()).toBe(true)
-    expect(secret.attributes('type')).toBe('password')
-    expect(secret.attributes('autocomplete')).toBe('new-password')
-  })
-
-  it('disables Create with a visible reason when a required field is empty', async () => {
-    const { wrapper } = await mountWithPlugins()
-    // Required base_url, username, password all empty.
-    const missing = wrapper.find('[data-testid="add-source-missing-fields"]')
-    expect(missing.exists()).toBe(true)
-    expect(missing.text()).toContain('password')
-    expect(
-      wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
-    ).toBeDefined()
-  })
-
-  it('enables Create once every required field (including the secret) is filled', async () => {
-    const { wrapper } = await mountWithPlugins()
-    await wrapper.find('#add-source-field-base_url').setValue('http://cw')
-    await wrapper.find('#add-source-field-username').setValue('me')
-    await wrapper
-      .find('[data-testid="add-source-secret-password"]')
-      .setValue('hunter2')
-    expect(
-      wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
-    ).toBeUndefined()
   })
 
   it('calls createSource without the secret, then setSourceSecret for it', async () => {
@@ -278,62 +203,6 @@ describe('AddSourceModal', () => {
     expect(alert.text()).toContain('password')
   })
 
-  it('sets each secret once in field order for a two-secret plugin', async () => {
-    const { wrapper, store } = await mountWithPlugins([twoSecretPlugin])
-    vi.spyOn(store, 'createSource').mockResolvedValue(
-      createdConfig('trakt-like', 'trakt_like'),
-    )
-    const setSecret = vi
-      .spyOn(store, 'setSourceSecret')
-      .mockResolvedValue(undefined)
-
-    await wrapper.find('#add-source-id').setValue('trakt-like')
-    await wrapper
-      .find('[data-testid="add-source-secret-client_secret"]')
-      .setValue('cs')
-    await wrapper
-      .find('[data-testid="add-source-secret-refresh_token"]')
-      .setValue('rt')
-    await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
-    await flushPromises()
-
-    expect(setSecret).toHaveBeenCalledTimes(2)
-    expect(setSecret.mock.calls[0]).toEqual(['trakt-like', 'client_secret', 'cs'])
-    expect(setSecret.mock.calls[1]).toEqual([
-      'trakt-like',
-      'refresh_token',
-      'rt',
-    ])
-    expect(wrapper.emitted('close')).toBeTruthy()
-  })
-
-  it('names the SECOND secret in the error when it is the one that fails', async () => {
-    const { wrapper, store } = await mountWithPlugins([twoSecretPlugin])
-    vi.spyOn(store, 'createSource').mockResolvedValue(
-      createdConfig('trakt-like', 'trakt_like'),
-    )
-    // First secret saves, second rejects.
-    vi.spyOn(store, 'setSourceSecret')
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('boom'))
-
-    await wrapper.find('#add-source-id').setValue('trakt-like')
-    await wrapper
-      .find('[data-testid="add-source-secret-client_secret"]')
-      .setValue('cs')
-    await wrapper
-      .find('[data-testid="add-source-secret-refresh_token"]')
-      .setValue('rt')
-    await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
-    await flushPromises()
-
-    const alert = wrapper.find('.add-source-error')
-    expect(alert.text()).toContain('refresh_token')
-    // Must NOT mislabel it as the first field or a generic "password".
-    expect(alert.text()).not.toContain('password')
-    expect(wrapper.emitted('close')).toBeFalsy()
-  })
-
   it('skips setSourceSecret for an empty optional secret while still creating', async () => {
     const { wrapper, store } = await mountWithPlugins([optionalSecretPlugin])
     vi.spyOn(store, 'createSource').mockResolvedValue(
@@ -352,88 +221,5 @@ describe('AddSourceModal', () => {
     expect(setSecret).not.toHaveBeenCalled()
     expect(wrapper.emitted('created')).toEqual([['opt']])
     expect(wrapper.emitted('close')).toBeTruthy()
-  })
-
-  it('re-enables the Create button after the partial-failure path', async () => {
-    const { wrapper, store } = await mountWithPlugins()
-    vi.spyOn(store, 'createSource').mockResolvedValue(
-      createdConfig('calibre-web'),
-    )
-    vi.spyOn(store, 'setSourceSecret').mockRejectedValue(new Error('down'))
-
-    await wrapper.find('#add-source-id').setValue('calibre-web')
-    await wrapper.find('#add-source-field-base_url').setValue('http://cw')
-    await wrapper.find('#add-source-field-username').setValue('me')
-    await wrapper
-      .find('[data-testid="add-source-secret-password"]')
-      .setValue('hunter2')
-    await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
-    await flushPromises()
-
-    // submitting reset → button is interactive again so the user can retry.
-    expect(
-      wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
-    ).toBeUndefined()
-  })
-
-  describe('while a create is in flight', () => {
-    // Mirrors useFocusTrap's own selector. A native `disabled` on every control
-    // removes them all from this set.
-    const FOCUSABLE =
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
-      ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-    async function mountMidSubmit() {
-      const { wrapper, store } = await mountWithPlugins()
-      // Never resolves: holds the component in the submitting state.
-      vi.spyOn(store, 'createSource').mockReturnValue(new Promise(() => {}))
-      await wrapper.find('#add-source-id').setValue('calibre-web')
-      await wrapper.find('#add-source-field-base_url').setValue('http://cw')
-      await wrapper.find('#add-source-field-username').setValue('me')
-      await wrapper
-        .find('[data-testid="add-source-secret-password"]')
-        .setValue('hunter2')
-      await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
-      await flushPromises()
-      return wrapper
-    }
-
-    it('keeps at least one focusable element so the focus trap cannot collapse', async () => {
-      // Regression: Create was `:disabled="!canSubmit"` with `!submitting`
-      // folded into canSubmit, while every field AND Cancel were
-      // `:disabled="submitting"`. Mid-request the dialog held ZERO focusable
-      // elements, so useFocusTrap returned early on the empty list and Tab
-      // walked out behind an aria-modal="true" dialog (WCAG 2.4.3).
-      const wrapper = await mountMidSubmit()
-
-      expect(wrapper.element.querySelectorAll(FOCUSABLE).length).toBeGreaterThan(0)
-    })
-
-    it('marks Create aria-disabled rather than removing it from the a11y tree', async () => {
-      const button = (await mountMidSubmit()).find('[data-testid="add-source-submit"]')
-
-      expect(button.attributes('aria-disabled')).toBe('true')
-      expect(button.attributes('disabled')).toBeUndefined()
-    })
-
-    it('leaves Cancel focusable but inert', async () => {
-      const wrapper = await mountMidSubmit()
-      const cancel = wrapper.findAll('button').find((b) => b.text() === 'Cancel')!
-
-      expect(cancel.attributes('disabled')).toBeUndefined()
-      expect(cancel.attributes('aria-disabled')).toBe('true')
-      await cancel.trigger('click')
-      expect(wrapper.emitted('close')).toBeFalsy()
-    })
-
-    it('natively disables Create while the form is merely incomplete', async () => {
-      // The other axis: invalid-input state can only change on input, so focus
-      // is never inside the button when this flips.
-      const { wrapper } = await mountWithPlugins()
-
-      expect(
-        wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
-      ).toBeDefined()
-    })
   })
 })

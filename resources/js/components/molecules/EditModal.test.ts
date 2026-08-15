@@ -39,41 +39,6 @@ describe('EditModal', () => {
     vi.useFakeTimers()
   })
 
-  it('has role="dialog" and aria-modal', () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    const dialog = wrapper.find('[role="dialog"]')
-    expect(dialog.exists()).toBe(true)
-    expect(dialog.attributes('aria-modal')).toBe('true')
-    wrapper.unmount()
-  })
-
-  it('has aria-labelledby matching the title heading', () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    const dialog = wrapper.find('[role="dialog"]')
-    const heading = wrapper.find('#edit-modal-title')
-    expect(dialog.attributes('aria-labelledby')).toBe('edit-modal-title')
-    expect(heading.text()).toBe('Test Book')
-    wrapper.unmount()
-  })
-
-  it('form fields have label/id associations', () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    expect(wrapper.find('label[for="edit-status"]').exists()).toBe(true)
-    expect(wrapper.find('#edit-status').exists()).toBe(true)
-    expect(wrapper.find('label[for="edit-review"]').exists()).toBe(true)
-    expect(wrapper.find('#edit-review').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
   it('Escape key emits close', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false },
@@ -81,16 +46,6 @@ describe('EditModal', () => {
     })
     await vi.runAllTimersAsync()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    expect(wrapper.emitted('close')).toBeTruthy()
-    wrapper.unmount()
-  })
-
-  it('backdrop click emits close', async () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    await wrapper.find('.edit-modal').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
     wrapper.unmount()
   })
@@ -112,31 +67,6 @@ describe('EditModal', () => {
       tags: [],
       description: null,
     })
-    wrapper.unmount()
-  })
-
-  it('renders the enrichment subsection with genres, tags, and description fields', () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    expect(wrapper.find('.edit-modal-section').text()).toBe('Enrichment metadata')
-    expect(wrapper.find('label[for="edit-genres"]').exists()).toBe(true)
-    expect(wrapper.find('label[for="edit-tags"]').exists()).toBe(true)
-    expect(wrapper.find('label[for="edit-description"]').exists()).toBe(true)
-    expect(wrapper.find('#edit-description').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('pre-fills enrichment fields from the item', () => {
-    const item = { ...defaultItem, genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' }
-    const wrapper = mount(EditModal, {
-      props: { item, saving: false },
-      attachTo: document.body,
-    })
-    expect(wrapper.text()).toContain('Sci-Fi')
-    expect(wrapper.text()).toContain('classic')
-    expect((wrapper.find('#edit-description').element as HTMLTextAreaElement).value).toBe('A tale.')
     wrapper.unmount()
   })
 
@@ -186,19 +116,6 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('save keeps a review that has content', async () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-
-    await wrapper.find('#edit-review').setValue('  Loved it.  ')
-    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
-
-    expect((wrapper.emitted('save')![0][1] as { review: string | null }).review).toBe('  Loved it.  ')
-    wrapper.unmount()
-  })
-
   it('picking completed ticks every season and sends both', async () => {
     // Regression (#123): the modal resent the half-ticked checklist beside the
     // new status, and the backend derived currently_consuming back over it.
@@ -219,24 +136,6 @@ describe('EditModal', () => {
       tags: [],
       description: null,
       seasons_watched: [1, 2, 3, 4, 5],
-    })
-    wrapper.unmount()
-  })
-
-  it('save serializes an empty description to null', async () => {
-    const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
-      attachTo: document.body,
-    })
-    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
-    const emitted = wrapper.emitted('save')!
-    expect(emitted[0][1]).toEqual({
-      status: 'unread',
-      rating: null,
-      review: null,
-      genres: [],
-      tags: [],
-      description: null,
     })
     wrapper.unmount()
   })

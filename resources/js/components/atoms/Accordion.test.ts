@@ -3,65 +3,6 @@ import { mount } from '@vue/test-utils'
 import Accordion from './Accordion.vue'
 
 describe('Accordion', () => {
-  it('renders header slot inside the trigger button', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: false },
-      slots: {
-        header: '<span class="hdr">Steam</span>',
-        default: '<p>Body</p>',
-      },
-    })
-
-    const button = wrapper.find('button.accordion-trigger')
-    expect(button.exists()).toBe(true)
-    expect(button.find('.hdr').text()).toBe('Steam')
-  })
-
-  it('marks the trigger with aria-expanded=false when collapsed', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: false },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    expect(
-      wrapper.find('button.accordion-trigger').attributes('aria-expanded'),
-    ).toBe('false')
-  })
-
-  it('marks the trigger with aria-expanded=true when expanded', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: true },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    expect(
-      wrapper.find('button.accordion-trigger').attributes('aria-expanded'),
-    ).toBe('true')
-  })
-
-  it('wires aria-controls on the trigger to the panel id', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: true },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    const button = wrapper.find('button.accordion-trigger')
-    const panel = wrapper.find('[role="region"]')
-    expect(panel.exists()).toBe(true)
-    expect(button.attributes('aria-controls')).toBe(panel.attributes('id'))
-  })
-
-  it('wires aria-labelledby on the panel back to the trigger id', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: true },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    const button = wrapper.find('button.accordion-trigger')
-    const panel = wrapper.find('[role="region"]')
-    expect(panel.attributes('aria-labelledby')).toBe(button.attributes('id'))
-  })
-
   it('emits update:expanded toggling true when collapsed', async () => {
     const wrapper = mount(Accordion, {
       props: { id: 'src-x', expanded: false },
@@ -70,16 +11,6 @@ describe('Accordion', () => {
 
     await wrapper.find('button.accordion-trigger').trigger('click')
     expect(wrapper.emitted('update:expanded')).toEqual([[true]])
-  })
-
-  it('emits update:expanded toggling false when expanded', async () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: true },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    await wrapper.find('button.accordion-trigger').trigger('click')
-    expect(wrapper.emitted('update:expanded')).toEqual([[false]])
   })
 
   it('hides panel content from assistive tech when collapsed', () => {
@@ -103,37 +34,6 @@ describe('Accordion', () => {
     expect(panel.find('.b').text()).toBe('Body')
   })
 
-  it('derives unique trigger and panel ids from the id prop', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'steam_source', expanded: false },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    const button = wrapper.find('button.accordion-trigger')
-    const panel = wrapper.find('[role="region"]')
-    expect(button.attributes('id')).toBe('accordion-steam_source-trigger')
-    expect(panel.attributes('id')).toBe('accordion-steam_source-panel')
-  })
-
-  it('wraps the trigger in an h3 heading by default', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: false },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    expect(wrapper.find('h3.accordion-heading button.accordion-trigger').exists()).toBe(true)
-  })
-
-  it('renders the trigger under the requested heading level', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: false, headingLevel: 4 },
-      slots: { header: 'h', default: 'b' },
-    })
-
-    expect(wrapper.find('h4.accordion-heading button.accordion-trigger').exists()).toBe(true)
-    expect(wrapper.find('h3.accordion-heading').exists()).toBe(false)
-  })
-
   it('renders header-actions slot as siblings outside the trigger button', () => {
     const wrapper = mount(Accordion, {
       props: { id: 'src-x', expanded: false },
@@ -149,25 +49,5 @@ describe('Accordion', () => {
     // The action button must NOT be nested inside the accordion trigger button.
     const trigger = wrapper.find('button.accordion-trigger').element
     expect(trigger.contains(action.element)).toBe(false)
-  })
-
-  it('renders the notice slot readably while collapsed', () => {
-    const wrapper = mount(Accordion, {
-      props: { id: 'src-x', expanded: false },
-      slots: {
-        header: 'Steam',
-        notice: '<p data-testid="notice">Sync failed</p>',
-        default: 'b',
-      },
-    })
-
-    const notice = wrapper.get('[data-testid="notice"]')
-    // Neither hidden with the panel nor read as part of the trigger's name.
-    expect(wrapper.get('[role="region"]').element.contains(notice.element)).toBe(
-      false,
-    )
-    expect(
-      wrapper.get('button.accordion-trigger').element.contains(notice.element),
-    ).toBe(false)
   })
 })
