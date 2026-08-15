@@ -136,4 +136,15 @@ describe('SetupForm', () => {
     expect(wrapper.find<HTMLInputElement>('#setup-password').element.value).toBe(LONG)
     expect(wrapper.find<HTMLInputElement>('#setup-confirmation').element.value).toBe(LONG)
   })
+
+  it('locks the submit button without blurring it while the request is in flight', async () => {
+    const wrapper = mount(SetupForm, { props: { pending: true } })
+    await fillIn(wrapper, { username: 'aaron', password: LONG, confirmation: LONG })
+    await wrapper.find('form').trigger('submit')
+
+    const button = wrapper.find('button[type="submit"]')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(wrapper.emitted('submit')).toBeUndefined()
+  })
 })

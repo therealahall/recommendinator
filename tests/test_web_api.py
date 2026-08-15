@@ -47,7 +47,7 @@ from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import LINE_BREAKS
-from src.web.api import APP_VERSION
+from src.web.api import APP_VERSION, CompletionRequest
 from src.web.app import (
     _raised_refusal_json_can_carry,
 )
@@ -674,6 +674,27 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
     stored = storage.get_content_item(db_id)
     assert stored is not None
     assert stored.rating == 2
+
+
+class TestCompletionEndpointRefusesABlankReview:
+    """Typed ``str | None``, ``{"review": ""}`` reaches the overwriting
+    completion door and erases a review the user wrote. The CLI half of this
+    defect is covered in ``tests/cli/test_cli_error_disclosure.py``."""
+
+    @pytest.mark.parametrize("blank_review", ["", "   "])
+    def test_the_request_model_refuses_it_regression(self, blank_review: str) -> None:
+        with pytest.raises(ValidationError) as caught:
+            CompletionRequest(content_type="book", title="Dune", review=blank_review)
+
+        assert [error["loc"] for error in caught.value.errors()] == [("review",)]
+
+    def test_it_names_no_remedy_a_completion_does_not_have_regression(self) -> None:
+        with pytest.raises(ValidationError) as caught:
+            CompletionRequest(content_type="book", title="Dune", review="   ")
+
+        assert str(caught.value.errors()[0]["msg"]) == (
+            "Value error, review cannot be blank"
+        )
 
 
 def test_complete_invalid_rating(client):
@@ -1505,7 +1526,6 @@ def test_recommendations_include_variety_penalty(client, mock_components):
 
 
 def test_recommendations_with_user_id(client, mock_components):
-    """GET /api/recommendations with user_id loads user preferences."""
     mock_item = ContentItem(
         id="1",
         title="Test Book",
@@ -3880,17 +3900,10 @@ class TestDependencyGuards:
         body = response.json()
         assert body["status"] == "initializing"
         assert body["components"]["engine"] is False
-        # Storage is what authenticated the request, so it reports up: no
-        # caller can reach this route with it down.
+        # No caller reaches this route with storage down: it authenticated them.
         assert body["components"]["storage"] is True
 
     def test_every_api_route_is_classified(self, client, mock_components) -> None:
-        """Both lists together must name every route the app serves.
-
-        A new handler is unlisted until someone classifies it, and the tests
-        above then hold it to the list it landed in: 503 naming each component
-        it needs, or an answer that is not a fault at all.
-        """
         assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES
 
 
