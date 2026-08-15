@@ -47,7 +47,7 @@ from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.conversation.engine import ConversationEngine
 from src.ingestion.paths import get_allowed_source_roots
-from src.ingestion.sync import SyncResult
+from src.ingestion.sync import SyncErrorCallback, SyncResult
 from src.llm.client import OllamaClient
 from src.llm.embeddings import EmbeddingGenerator
 from src.llm.recommendations import RecommendationGenerator
@@ -3878,6 +3878,51 @@ class TestUpdateEndpointParallelSync:
         sources_in_play = [job["source"] for job in body["jobs"]]
         assert sources_in_play == ["Goodreads", "Steam"]
         assert body["status"] == "running"
+
+
+class TestSyncStatusNamesTheSourceThatFailedRegression:
+    """Reported: a failed source showed the web a badge reading "1 error".
+
+    Cause: errors reached the job as bare strings, keyed on the job label.
+    Fix: each names its source, so the UI shows the CLI's text.
+    """
+
+    REMEDY = (
+        "TLS verification failed for Sonarr at https://sonarr.example: bad "
+        "handshake. Set verify_ssl to false if the certificate is not "
+        "publicly trusted."
+    )
+
+    def test_a_run_that_synced_items_still_reports_the_remedy(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        completion = threading.Event()
+
+        def fake_execute(
+            *, error_callback: SyncErrorCallback, **_kwargs: object
+        ) -> list[SyncResult]:
+            try:
+                error_callback("Sonarr", self.REMEDY)
+                return [SyncResult(source_name="Goodreads Csv", items_synced=3)]
+            finally:
+                completion.set()
+
+        with (
+            patch("src.web.api.execute_multi_source_sync", side_effect=fake_execute),
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                return_value=[],
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+            assert completion.wait(timeout=5.0), "background sync did not run"
+
+        assert response.status_code == 200
+        # Completed, not failed: the run saved items, which is the shape that
+        # used to leave the message nowhere in the response at all.
+        job = client.get("/api/sync/status").json()["jobs"][0]
+        assert job["status"] == "completed"
+        assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
 
 
 # ---------------------------------------------------------------------------

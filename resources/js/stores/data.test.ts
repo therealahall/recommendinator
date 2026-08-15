@@ -403,16 +403,21 @@ describe('useDataStore', () => {
     store.cleanup()
   })
 
-  it('checkSyncStatus aggregates errors across completed jobs', async () => {
+  it('checkSyncStatus reports the first error in full, not a count', async () => {
+    // A count told the operator nothing: the message text is what names the
+    // setting to change, and the rest are one row away in the accordion.
     mockGet.mockResolvedValue({
       status: 'idle',
       jobs: [
         {
-          source: 'Steam',
+          source: 'All Sources',
           status: 'completed',
           items_processed: 90,
           error_count: 2,
-          errors: ['e1', 'e2'],
+          errors: [
+            { source: 'Sonarr', message: 'Set verify_ssl to false' },
+            { source: 'Steam', message: 'Rate limit exceeded' },
+          ],
           sources: [],
         },
         {
@@ -420,7 +425,7 @@ describe('useDataStore', () => {
           status: 'completed',
           items_processed: 10,
           error_count: 1,
-          errors: ['e3'],
+          errors: [{ source: 'Goodreads', message: 'Row 4 has no title' }],
           sources: [],
         },
       ],
@@ -430,7 +435,8 @@ describe('useDataStore', () => {
     await store.checkSyncStatus()
 
     expect(store.syncMessage).toContain('100 items synced')
-    expect(store.syncMessage).toContain('3 errors')
+    expect(store.syncMessage).toContain('Sonarr: Set verify_ssl to false')
+    expect(store.syncMessage).toContain('(+2 more)')
   })
 
   it('checkSyncStatus surfaces a failed job before completed jobs', async () => {
@@ -443,7 +449,7 @@ describe('useDataStore', () => {
           items_processed: 0,
           error_message: 'timeout',
           error_count: 1,
-          errors: ['timeout'],
+          errors: [{ source: 'Steam', message: 'timeout' }],
           sources: [],
         },
       ],

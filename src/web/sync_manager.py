@@ -29,6 +29,18 @@ class SyncStatus(str, Enum):
 
 
 @dataclass
+class SyncError:
+    """A sync failure and the source that produced it.
+
+    One job can cover several sources, so the message alone leaves the
+    operator guessing which of them to go and fix.
+    """
+
+    source: str
+    message: str
+
+
+@dataclass
 class _SourceProgress:
     """Per-source progress slot for a multi-source sync job."""
 
@@ -50,7 +62,7 @@ class SyncJob:
     current_item: str | None = None
     current_source: str | None = None  # Currently syncing source (for multi-source)
     error_message: str | None = None
-    errors: list[str] = field(default_factory=list)
+    errors: list[SyncError] = field(default_factory=list)
     # Keyed by humanised source name so the UI can render one row per source.
     source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
 
@@ -88,7 +100,10 @@ class SyncJob:
                 else None
             ),
             "error_count": len(self.errors),
-            "errors": list(self.errors),
+            "errors": [
+                {"source": error.source, "message": error.message}
+                for error in self.errors
+            ],
             "sources": sources,
         }
 
@@ -243,7 +258,7 @@ class SyncManager:
                 # the UI banner branches on the status field.
                 if count == 0 and job.errors:
                     job.status = SyncStatus.FAILED
-                    job.error_message = job.errors[0]
+                    job.error_message = job.errors[0].message
                 else:
                     job.status = SyncStatus.COMPLETED
                 final_status = job.status
@@ -344,12 +359,16 @@ class SyncManager:
                 if current_item is not None:
                     job.current_item = current_item
 
-    def add_error(self, source: str, error: str) -> None:
-        """Append an error message to the job keyed by ``source``."""
+    def add_error(self, source: str, failed_source: str, error: str) -> None:
+        """Append an error to the job keyed by ``source``.
+
+        ``failed_source`` names the source the message came from, which the UI
+        matches against its own rows to show it on the right one.
+        """
         with self._lock:
             job = self._jobs.get(source)
             if job is not None:
-                job.errors.append(error)
+                job.errors.append(SyncError(source=failed_source, message=error))
 
 
 # Global sync manager instance

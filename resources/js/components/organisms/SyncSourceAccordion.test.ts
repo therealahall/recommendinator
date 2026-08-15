@@ -5,7 +5,11 @@ import SyncSourceAccordion from './SyncSourceAccordion.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import { useDataStore, type OAuthStatus } from '@/stores/data'
 import { componentStyles } from '@/testing/styles'
-import type { SourceConfigResponse, SourceSchemaResponse } from '@/types/api'
+import type {
+  SourceConfigResponse,
+  SourceSchemaResponse,
+  SyncErrorResponse,
+} from '@/types/api'
 
 const baseSource = {
   id: 'steam',
@@ -1374,7 +1378,7 @@ describe('SyncSourceAccordion', () => {
         error_message: null,
         progress_percent: 40,
         error_count: 0,
-        errors: [] as string[],
+        errors: [] as SyncErrorResponse[],
         sources: [] as never[],
         ...overrides,
       }
@@ -1437,46 +1441,81 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.text()).not.toContain('4/0')
     })
 
-    it('renders the error badge for a completed job with errors', () => {
+    it('renders each error message for a completed job', () => {
       const job = makeJob({
         status: 'completed',
-        error_count: 3,
-        errors: ['e1', 'e2', 'e3'],
+        error_count: 2,
+        errors: [
+          { source: 'Steam', message: 'Set verify_ssl to false' },
+          { source: 'Steam', message: "Failed to process 'Portal 2'" },
+        ],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false, job },
       })
 
-      expect(wrapper.text()).toContain('3 errors')
-      const badge = wrapper.find('.source-accordion-error-badge')
-      expect(badge.attributes('aria-label')).toBe('3 errors on last sync')
+      const errors = wrapper.get('[data-testid="source-sync-errors"]')
+      expect(errors.attributes('aria-label')).toBe('Last sync errors for Steam')
+      expect(errors.findAll('li').map((li) => li.text())).toEqual([
+        'Set verify_ssl to false',
+        "Failed to process 'Portal 2'",
+      ])
     })
 
-    it('uses singular wording when error_count is 1', () => {
+    it('shows the messages without expanding the accordion', () => {
       const job = makeJob({
         status: 'completed',
         error_count: 1,
-        errors: ['e1'],
+        errors: [{ source: 'Steam', message: 'Set verify_ssl to false' }],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false, job },
       })
 
-      const badge = wrapper.find('.source-accordion-error-badge')
-      expect(badge.text()).toBe('1 error')
-      expect(badge.attributes('aria-label')).toBe('1 error on last sync')
+      // Outside the collapsible panel, and outside the trigger button whose
+      // accessible name would otherwise swallow the whole message.
+      const errors = wrapper.get('[data-testid="source-sync-errors"]')
+      const panel = wrapper.get('.accordion-panel')
+      const trigger = wrapper.get('button.accordion-trigger')
+      expect(panel.attributes('hidden')).toBeDefined()
+      expect(panel.element.contains(errors.element)).toBe(false)
+      expect(trigger.element.contains(errors.element)).toBe(false)
     })
 
-    it('hides the error badge while a sync is in progress', () => {
+    it('shows only the errors belonging to this source', () => {
+      const job = makeJob({
+        source: 'All Sources',
+        status: 'completed',
+        error_count: 2,
+        errors: [
+          { source: 'Sonarr', message: 'TLS verification failed' },
+          { source: 'Steam', message: 'Rate limit exceeded' },
+        ],
+      })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false, job },
+      })
+
+      const errors = wrapper.get('[data-testid="source-sync-errors"]')
+      expect(errors.findAll('li').map((li) => li.text())).toEqual([
+        'Rate limit exceeded',
+      ])
+      expect(wrapper.text()).not.toContain('TLS verification failed')
+    })
+
+    it('hides the errors while a sync is in progress', () => {
       const job = makeJob({
         status: 'running',
-        error_count: 5,
+        error_count: 1,
+        errors: [{ source: 'Steam', message: 'Rate limit exceeded' }],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: true, job },
       })
 
-      expect(wrapper.find('.source-accordion-error-badge').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="source-sync-errors"]').exists()).toBe(
+        false,
+      )
     })
 
     it('renders nothing extra when job is null', () => {
@@ -1485,8 +1524,10 @@ describe('SyncSourceAccordion', () => {
       })
 
       // The aria-live progress region is in the DOM via v-show but
-      // hidden, and the error badge is absent because there's no job.
-      expect(wrapper.find('.source-accordion-error-badge').exists()).toBe(false)
+      // hidden, and the error list is absent because there's no job.
+      expect(wrapper.find('[data-testid="source-sync-errors"]').exists()).toBe(
+        false,
+      )
       const region = wrapper.find('.source-accordion-progress')
       expect(region.exists()).toBe(true)
       expect((region.element as HTMLElement).style.display).toBe('none')

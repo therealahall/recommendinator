@@ -366,13 +366,17 @@ const progressLabel = computed<string>(() => {
   return `${entry.items_processed} items`
 })
 
-const errorBadgeText = computed<string>(() => {
-  const count = props.job?.error_count ?? 0
-  return `${count} error${count === 1 ? '' : 's'}`
+// Filtered by name, never taken whole: an "All Sources" job carries every
+// source's failures, and the remedy for one source is wrong on the next row.
+const sourceErrors = computed<string[]>(() => {
+  if (props.syncing || !props.job) return []
+  return props.job.errors
+    .filter((entry) => entry.source === props.source.display_name)
+    .map((entry) => entry.message)
 })
 
-const errorBadgeAriaLabel = computed<string>(
-  () => `${errorBadgeText.value} on last sync`,
+const errorsLabel = computed<string>(
+  () => `Last sync errors for ${props.source.display_name}`,
 )
 </script>
 
@@ -422,11 +426,6 @@ const errorBadgeAriaLabel = computed<string>(
             class="source-accordion-progress-item"
           >{{ progress.current_item }}</span>
         </span>
-        <span
-          v-if="!progress && job && job.error_count > 0 && !syncing"
-          class="source-accordion-error-badge"
-          :aria-label="errorBadgeAriaLabel"
-        >{{ errorBadgeText }}</span>
       </span>
     </template>
 
@@ -445,6 +444,23 @@ const errorBadgeAriaLabel = computed<string>(
         "
         @click="onSyncClick"
       >{{ syncLabel }}</button>
+    </template>
+
+    <!--
+      Plain content, not a live region: it renders on the poll that ends the
+      sync, and a region arriving already populated is read as page content
+      rather than a status change. The page-level sync banner announces
+      (WCAG 4.1.3).
+    -->
+    <template #notice>
+      <ul
+        v-if="sourceErrors.length"
+        class="source-accordion-errors"
+        data-testid="source-sync-errors"
+        :aria-label="errorsLabel"
+      >
+        <li v-for="(message, index) in sourceErrors" :key="index">{{ message }}</li>
+      </ul>
     </template>
 
     <div v-if="detailsLoading && !detailsLoaded" class="empty-state">
@@ -740,15 +756,16 @@ const errorBadgeAriaLabel = computed<string>(
   font-style: italic;
 }
 
-.source-accordion-error-badge {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+.source-accordion-errors {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  list-style: none;
+  font-size: var(--text-sm);
   color: var(--text-primary);
-  font-weight: 500;
-  margin-left: var(--space-3);
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+}
+
+.source-accordion-errors li + li {
+  margin-top: var(--space-1);
 }
 </style>

@@ -31,7 +31,9 @@ Parses and normalizes data from external sources.
 - `execute_multi_source_sync` is shared by CLI and web. Each enabled source runs
   on its own thread (`sync.max_workers`, default 4) and results keep input
   order. Rate limits are per source, so cross-source parallelism is safe.
-- The web `SyncManager` aggregates progress callbacks into a `sources` map.
+- The web `SyncManager` aggregates progress callbacks into a `sources` map, and
+  files each error under the source that produced it, so the Data tab shows a
+  plugin's own wording on that source's row rather than a count.
 - Source config is writable over HTTP, so two field kinds are constrained rather
   than trusted. `paths.py` contains a file plugin's path inside
   `security.allowed_source_roots`, a config.yaml key the settings API cannot
