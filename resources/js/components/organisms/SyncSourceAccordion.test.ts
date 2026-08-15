@@ -1483,8 +1483,6 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('caps the rendered messages and counts the rest', () => {
-      // One entry per failed item, so a Calibre library failing per-item
-      // rendered thousands of rows and pushed the tab off screen.
       const job = makeJob({
         status: 'completed',
         errors: Array.from({ length: 7 }, (_, i) => ({

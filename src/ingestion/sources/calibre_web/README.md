@@ -32,12 +32,8 @@ password at create time.
 | `password` | str | yes | Calibre-Web login password. Sensitive — stored encrypted, not in YAML. |
 | `verify_ssl` | bool | no | Verify the TLS certificate (default `true`; set `false` for self-signed instances). |
 
-**Pointing `url` at a different host is refused while the password is stored**,
-so it is never sent to a host it was not entrusted to. Host and port decide, so
-the same endpoint switching between `http` and `https` goes through either way —
-including a downgrade, which then sends the password in cleartext. To move
-Calibre-Web: clear the password (`source clear-secret calibre_web password`, or
-**Data** tab), save the new URL, then set the password the new host expects.
+Moving Calibre-Web to another host takes the steps in
+[SECURITY.md](../../../../docs/SECURITY.md#credential-encryption).
 
 Set the password when you create the source in the web UI **Data** tab — enter it
 directly in the **+ Add source** modal (it renders as a password field and is

@@ -3918,8 +3918,8 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
             assert completion.wait(timeout=5.0), "background sync did not run"
 
         assert response.status_code == 200
-        # Completed, not failed: the run saved items, which is the shape that
-        # used to leave the message nowhere in the response at all.
+        # The run saved items, which is the shape that used to leave the
+        # message nowhere in the response at all.
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
         assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]

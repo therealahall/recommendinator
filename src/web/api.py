@@ -464,8 +464,6 @@ class SyncSourceProgressResponse(BaseModel):
 
 
 class SyncErrorResponse(BaseModel):
-    """One sync failure, named for the source that produced it."""
-
     source: str
     message: str
 
@@ -1872,8 +1870,7 @@ _ERROR_KIND_TO_STATUS: dict[str, int] = {
 
 # Fixed user-facing strings keyed by error kind so HTTP responses never
 # echo back caller-controlled identifiers (path params would otherwise
-# end up in JSON `detail` fields). The two kinds in
-# ``_KINDS_ANSWERED_WITH_THEIR_MESSAGE`` are deliberately absent from both maps.
+# end up in JSON `detail` fields).
 _ERROR_KIND_TO_DETAIL: dict[str, str] = {
     "not_found": "Field or source not found.",
     "not_migrated": "Source has not been migrated to the database.",
@@ -1912,9 +1909,9 @@ def require_plugin(
 ResolvedPlugin = Annotated[SourcePlugin, Depends(require_plugin)]
 
 
-# The kinds whose message is returned, because nothing else can say which field
-# to fix. The source service builds both from schema field names and the
-# containment guard alone — never from a plugin's own words or caller input.
+# Deliberately absent from the maps above: the source service builds these two
+# messages from schema field names and the containment guard alone — never from
+# a plugin's own words or caller input.
 _KINDS_ANSWERED_WITH_THEIR_MESSAGE = {"invalid_values", "credential_move"}
 
 

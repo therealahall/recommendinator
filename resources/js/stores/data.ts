@@ -74,9 +74,8 @@ export const useDataStore = defineStore('data', () => {
     return jobsByLabel.value[label] || null
   }
 
-  /** The job a source's row shows: its own run or the umbrella one, whichever
-   *  started last. Terminal jobs are retained, so rendering the older of the
-   *  two is how a message from the newer run ends up displayed nowhere. */
+  /** Terminal jobs are retained, so rendering the older of the two is how a
+   *  message from the newer run ends up displayed nowhere. */
   function currentJobForLabel(label: string): SyncJobResponse | null {
     const own = jobForLabel(label)
     if (label === ALL_SOURCES_LABEL) return own
@@ -245,9 +244,6 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
-  /** The errors the accordion rows are showing, which is where the banner
-   *  sends the operator: one from a job no row renders any more names a
-   *  message they will not find. */
   function visibleErrors(): SyncErrorResponse[] {
     return syncJobs.value.flatMap((job) =>
       job.errors.filter((error) => currentJobForLabel(error.source) === job),

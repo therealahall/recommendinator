@@ -398,8 +398,6 @@ describe('useDataStore', () => {
   })
 
   it('checkSyncStatus reports the first error in full, not a count', async () => {
-    // A count told the operator nothing: the message text is what names the
-    // setting to change, and the rest are one row away in the accordion.
     mockGet.mockResolvedValue({
       status: 'idle',
       jobs: [

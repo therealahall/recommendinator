@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
-from src.ingestion.urls import UnreadableUrl, url_origin
+from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
 from src.storage.credential_orphans import delete_orphaned_credentials
 from src.utils.text import humanize_source_id, sanitize_for_log
@@ -551,7 +551,7 @@ def build_config_view(
     }
 
 
-def _stored_secret_names(
+def _secret_names_with_a_stored_row(
     source_id: str,
     sensitive_names: list[str],
     storage: StorageManager,
@@ -560,8 +560,7 @@ def _stored_secret_names(
     """What ``secrets_migrated`` reports, asked of the rows.
 
     Not what a call moved: startup empties the YAML entry first, so a source it
-    just encrypted would report none. Existence, not readability: a stale row
-    still counts.
+    just encrypted would report none.
     """
     return sorted(
         name
@@ -597,7 +596,7 @@ def migrate_source(
             "source_id": source_id,
             "migrated_at": existing_row["migrated_at"],
             "fields_migrated": sorted(existing_row["config"].keys()),
-            "secrets_migrated": _stored_secret_names(
+            "secrets_migrated": _secret_names_with_a_stored_row(
                 source_id, sensitive_names, storage, user_id
             ),
         }
@@ -635,38 +634,24 @@ def migrate_source(
         "source_id": source_id,
         "migrated_at": row["migrated_at"],
         "fields_migrated": sorted(fields_migrated),
-        "secrets_migrated": _stored_secret_names(
+        "secrets_migrated": _secret_names_with_a_stored_row(
             source_id, sensitive_names, storage, user_id
         ),
     }
 
 
-def _credential_host(value: Any) -> tuple[str, int | None] | None:
-    """The party *value* points a credential at, ``None`` when it names none.
-
-    Host and port say who receives the secret; the scheme does not, so
-    switching between http and https is not a move.
-    """
-    origin = url_origin(value) if isinstance(value, str) else None
-    return None if origin is None else (origin.host, origin.port)
+def _credential_host(value: Any) -> CredentialHost | NoOrigin:
+    origin = url_origin(value) if isinstance(value, str) else NoOrigin.ADDRESSES_NOBODY
+    return origin.credential_host if isinstance(origin, UrlOrigin) else origin
 
 
 def _moves_the_credentials_elsewhere(before: Any, after: Any) -> bool:
-    """Whether rewriting *before* to *after* hands the secrets to a new party."""
-    try:
-        before_host, after_host = _credential_host(before), _credential_host(after)
-    except UnreadableUrl:
-        # Reading it as "names nobody" would let two writes walk the secret to
-        # any host: the first hides behind an unparseable port, the second
-        # moves off it.
+    before_host, after_host = _credential_host(before), _credential_host(after)
+    if NoOrigin.UNREADABLE in (before_host, after_host):
         return True
-    # Neither side is a URL, so there is no host to read and any change counts:
-    # a future ``credential_bound`` field of another shape stays guarded.
-    if before_host is None and after_host is None:
-        return bool(before != after)
     # One side names nobody — a source that has sent nothing anywhere, or one
     # that no longer can. Either way no secret is handed on.
-    if before_host is None or after_host is None:
+    if NoOrigin.ADDRESSES_NOBODY in (before_host, after_host):
         return False
     return before_host != after_host
 
@@ -729,7 +714,6 @@ def _invalid_values_detail(fields: list[str]) -> str:
 
 
 def _credential_move_detail(fields: list[str], secrets: list[str]) -> str:
-    """The refusal, and the steps that carry the move out without losing a secret."""
     return (
         f"Changing {_quoted(fields)} points this source at a different host. "
         f"Clear its stored {_quoted(secrets)} first, then save this change and "
@@ -860,17 +844,13 @@ def _refuse_to_move_stored_credentials(
     values: dict[str, Any],
     user_id: int,
 ) -> None:
-    """Refused rather than applied and cleared.
-
-    Deleting the secret loses the operator a credential they may not get back,
+    """Deleting the secret loses the operator a credential they may not get back,
     and the sync that fails afterwards blames a field they never touched.
     """
     moved = _fields_moving_the_credentials(schema, stored, values)
     if not moved:
         return
-    # Existence, not readability: an undecryptable row would be handed to the
-    # new host the moment the key file is restored.
-    secrets = _stored_secret_names(
+    secrets = _secret_names_with_a_stored_row(
         source_id,
         [field.name for field in schema.values() if field.sensitive],
         storage,

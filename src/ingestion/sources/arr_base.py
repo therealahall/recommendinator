@@ -16,7 +16,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.urls import UnreadableUrl, source_url_error, url_origin
+from src.ingestion.urls import UrlOrigin, source_url_error, url_origin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.progress import log_progress
 from src.utils.text import sanitize_for_log
@@ -30,21 +30,13 @@ _REQUEST_TIMEOUT = 30
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
-# Only same-origin hops are followed at all, so this caps a redirect loop
-# rather than a chain any real *arr install produces.
-_MAX_REDIRECTS = 5
+_MAX_SAME_ORIGIN_REDIRECTS = 5
 
 
 def _same_origin(url: str, target: str) -> bool:
-    """Whether *target* addresses the party *url* does, scheme included.
-
-    A url neither side can read is nobody's origin, so it matches nothing —
-    including another unreadable one.
-    """
-    try:
-        return url_origin(target) == url_origin(url)
-    except UnreadableUrl:
-        return False
+    """Whether *target* addresses the party *url* does, scheme included."""
+    origin = url_origin(url)
+    return isinstance(origin, UrlOrigin) and url_origin(target) == origin
 
 
 class ArrPlugin(SourcePlugin):
@@ -181,11 +173,8 @@ class ArrPlugin(SourcePlugin):
         item: dict[str, Any],
         metadata: dict[str, Any],
     ) -> None:
-        """Hook for subclasses to augment ``metadata`` in place.
-
-        Called for each item before it is yielded, so an override can add
-        data the main fetch does not carry (e.g. Radarr collections).
-        """
+        """Hook for subclasses to add data the main fetch does not carry
+        (e.g. Radarr collections)."""
 
     def fetch(
         self,
@@ -267,12 +256,7 @@ class ArrPlugin(SourcePlugin):
     def _fetch_items(
         self, base_url: str, api_key: str, verify_ssl: bool
     ) -> list[dict[str, Any]]:
-        """Fetch all items from the *arr API.
-
-        Raises:
-            SourceError: If a redirect leaves the configured origin
-            requests.RequestException: On network/API errors
-        """
+        """Fetch all items from the *arr API."""
         url = f"{base_url}/api/v3/{self.arr_api_endpoint}"
 
         response = self._api_get(url, api_key, verify_ssl)
@@ -287,17 +271,15 @@ class ArrPlugin(SourcePlugin):
         return list(data)
 
     def _api_get(self, url: str, api_key: str, verify_ssl: bool) -> requests.Response:
-        """GET an *arr API url, refusing a redirect off its origin.
-
-        ``requests`` replays ``X-Api-Key`` onto any host a redirect names, and
-        follows an http->https bounce silently, so a proxy reported an
+        """``requests`` replays ``X-Api-Key`` onto any host a redirect names,
+        and follows an http->https bounce silently, so a proxy reported an
         unverifiable certificate for a scheme nobody configured.
 
         The origin is read the way a stored credential's is, so a proxy naming
         the scheme's default port explicitly is the same hop, not a move.
         """
         current = url
-        for _ in range(_MAX_REDIRECTS):
+        for _ in range(_MAX_SAME_ORIGIN_REDIRECTS):
             response = requests.get(
                 current,
                 headers={"X-Api-Key": api_key},
@@ -319,14 +301,12 @@ class ArrPlugin(SourcePlugin):
         raise SourceError(
             self.name,
             f"{self.display_name} redirected {url} more than "
-            f"{_MAX_REDIRECTS} times.",
+            f"{_MAX_SAME_ORIGIN_REDIRECTS} times.",
         )
 
     def _redirect_refusal(self, url: str, target: str) -> str:
-        """Word a refused redirect as the config change it asks for.
-
-        The target is whatever ``Location`` said and this message is logged on
-        one line, so it is escaped like any other header text (CWE-117).
+        """The target is whatever ``Location`` said and this message is logged
+        on one line, so it is escaped like any other header text (CWE-117).
         """
         origin = urlsplit(url)
         safe_target = sanitize_for_log(target)

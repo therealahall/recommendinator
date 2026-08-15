@@ -897,8 +897,6 @@ class TestResolveInputsWithDbSourceConfig:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestCredentialBoundUpdates:
-    """Where the line falls between an edit and a move to another host."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -981,7 +979,6 @@ class TestCredentialBoundUpdates:
     def test_the_move_is_allowed_once_the_secret_is_gone(
         self, migrated: StorageManager
     ) -> None:
-        """The refusal names clearing the secret as the remedy — it has to work."""
         migrated.delete_credential(1, "my_games", "api_key")
 
         self._update(migrated, {"url": "http://attacker.example"})
@@ -993,7 +990,6 @@ class TestCredentialBoundUpdates:
     def test_an_unset_bound_field_is_measured_from_the_plugin_default(
         self, storage: StorageManager
     ) -> None:
-        """The default is the host every sync so far actually used."""
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
         storage.save_credential(1, "my_games", "api_key", "issued-for-the-default")
 

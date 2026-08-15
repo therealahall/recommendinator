@@ -30,12 +30,6 @@ class SyncStatus(str, Enum):
 
 @dataclass
 class SyncError:
-    """A sync failure and the source that produced it.
-
-    One job can cover several sources, so the message alone leaves the
-    operator guessing which of them to go and fix.
-    """
-
     source: str
     message: str
 

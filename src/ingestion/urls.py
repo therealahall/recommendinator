@@ -2,53 +2,49 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 
-#: The port a scheme implies, so ``http://host`` and ``http://host:80`` read as
-#: the same endpoint rather than as two.
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
-class UnreadableUrl(ValueError):
-    """A url whose host and port cannot be read.
-
-    Distinct from a url addressing nobody: two unreadable urls are not each
-    other's party, so a caller comparing them refuses instead of matching.
-    """
+def _non_default_port(scheme: str, port: int | None) -> int | None:
+    return None if port == _DEFAULT_PORTS.get(scheme) else port
 
 
-class UrlOrigin(NamedTuple):
-    """The party a url addresses."""
+class NoOrigin(Enum):
+    ADDRESSES_NOBODY = "addresses_nobody"
+    UNREADABLE = "unreadable"
 
-    scheme: str
+
+class CredentialHost(NamedTuple):
     host: str
     port: int | None
 
 
-def url_origin(value: str) -> UrlOrigin | None:
-    """The party *value* addresses, ``None`` when it addresses nobody.
+class UrlOrigin(NamedTuple):
+    scheme: str
+    host: str
+    port: int | None
 
-    The scheme's default port is folded away, so ``http://host`` and
-    ``http://host:80`` name one party rather than two.
+    @property
+    def credential_host(self) -> CredentialHost:
+        return CredentialHost(self.host, self.port)
 
-    Raises:
-        UnreadableUrl: *value* cannot be parsed.
-    """
+
+def url_origin(value: str) -> UrlOrigin | NoOrigin:
+    """The party *value* addresses, or why it addresses none."""
     try:
         parts = urlsplit(value)
         hostname, port = parts.hostname, parts.port
-    except ValueError as error:
-        raise UnreadableUrl(f"{value!r} cannot be parsed as a url") from error
+    except ValueError:
+        return NoOrigin.UNREADABLE
     if not hostname:
-        return None
-    return UrlOrigin(
-        parts.scheme,
-        hostname,
-        None if port == _DEFAULT_PORTS.get(parts.scheme) else port,
-    )
+        return NoOrigin.ADDRESSES_NOBODY
+    return UrlOrigin(parts.scheme, hostname, _non_default_port(parts.scheme, port))
 
 
 def source_url_error(value: str) -> str | None:
@@ -58,17 +54,15 @@ def source_url_error(value: str) -> str | None:
     prefix hands those credentials to whatever host follows it. An unreadable
     url is refused rather than stored.
     """
-    try:
-        parts = urlsplit(value)
-        username, password = parts.username, parts.password
-        origin = url_origin(value)
-    except ValueError:
+    origin = url_origin(value)
+    if origin is NoOrigin.UNREADABLE:
         return f"'url' is not a valid URL: {value}"
 
+    parts = urlsplit(value)
     if parts.scheme not in _ALLOWED_SCHEMES:
         return "'url' must start with http:// or https://"
-    if origin is None:
+    if origin is NoOrigin.ADDRESSES_NOBODY:
         return "'url' must name a host"
-    if username or password:
+    if parts.username or parts.password:
         return "'url' must not embed a username or password"
     return None

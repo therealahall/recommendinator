@@ -266,7 +266,6 @@ def execute_sync(
 
 
 def _error_source_name(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> str:
-    """What a failed source is called, when no ``SyncResult`` got that far."""
     source_id = plugin_config.get("_source_id")
     return humanize_source_id(source_id) if source_id else plugin.display_name
 
@@ -343,7 +342,7 @@ def execute_multi_source_sync(
             )
             # The CLI writes ``result.errors`` to a terminal and these quote a
             # ``requests`` fault, so the server's reason phrase could erase the
-            # line the operator just read (CWE-117). Escaping is idempotent.
+            # line the operator just read (CWE-117).
             return SyncResult(
                 source_name=_error_source_name(plugin, plugin_config),
                 errors=[sanitize_for_log(error.message)],
