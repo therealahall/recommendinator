@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PreferencesPage from './PreferencesPage.vue'
 import { useThemeStore } from '@/stores/theme'
-import { usePreferencesStore } from '@/stores/preferences'
 
 const PROFILE = {
   user_id: 1,
@@ -15,41 +13,45 @@ const PROFILE = {
   generated_at: '2026-01-01T00:00:00+00:00',
 }
 
+const PREFERENCES = {
+  scorer_weights: {},
+  series_in_order: true,
+  variety_penalty: 0.0,
+  content_length_preferences: {},
+  custom_rules: [],
+  theme: 'nord',
+}
+
 const mockPost = vi.fn()
+const mockPreferencesGet = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
-    get: vi.fn((path: string) =>
-      Promise.resolve(
-        path === '/profile'
-          ? PROFILE
-          : {
-              scorer_weights: {},
-              series_in_order: true,
-              variety_penalty: 0.0,
-              content_length_preferences: {},
-              custom_rules: [],
-              theme: 'nord',
-            },
-      ),
-    ),
+    get: (path: string) =>
+      path === '/profile' ? Promise.resolve(PROFILE) : mockPreferencesGet(path),
     post: (...args: unknown[]) => mockPost(...args),
     put: vi.fn().mockResolvedValue({}),
   }),
 }))
 
+/** Register the one theme the Appearance section needs to render. */
+function withTheme() {
+  useThemeStore().themes = [
+    { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
+  ]
+}
+
 describe('PreferencesPage information architecture', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockPost.mockReset()
+    mockPreferencesGet.mockReset()
+    mockPreferencesGet.mockResolvedValue(PREFERENCES)
   })
 
   it('renders the heading outline Appearance -> Scoring -> Rules -> Your Profile with sub-blocks', async () => {
     // Appearance only renders when themes are available.
-    const theme = useThemeStore()
-    theme.themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-    ]
+    withTheme()
 
     const wrapper = mount(PreferencesPage)
     await flushPromises()
@@ -84,34 +86,99 @@ describe('PreferencesPage information architecture', () => {
     expect(mockPost).toHaveBeenCalledWith('/profile/regenerate', expect.anything())
   })
 
-  it('marks the preferences card aria-busy while loading, then clears it', async () => {
-    const theme = useThemeStore()
-    theme.themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-    ]
-
-    const wrapper = mount(PreferencesPage)
-    const prefs = usePreferencesStore()
-    await flushPromises()
-
-    prefs.loading = true
-    await nextTick()
-    expect(wrapper.find('.card').attributes('aria-busy')).toBe('true')
-
-    prefs.loading = false
-    await nextTick()
-    expect(wrapper.find('.card').attributes('aria-busy')).toBeUndefined()
-  })
-
   it('no longer renders a "Toggles" section', async () => {
-    const theme = useThemeStore()
-    theme.themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-    ]
+    withTheme()
 
     const wrapper = mount(PreferencesPage)
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('Toggles')
+  })
+})
+
+// Symptom: a failed preferences GET rendered the form at its hardcoded
+// defaults, and one Save wiped the stored preferences. Fix: the form renders
+// only off server values, and a failure says so and offers a retry.
+describe('PreferencesPage load failure', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockPost.mockReset()
+    mockPreferencesGet.mockReset()
+    withTheme()
+  })
+
+  async function mountFailed() {
+    mockPreferencesGet.mockRejectedValue(new Error('boom'))
+    const wrapper = mount(PreferencesPage)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows an error with a Retry that reloads, not the form', async () => {
+    const wrapper = await mountFailed()
+
+    expect(wrapper.find('[role="alert"]').text()).toContain(
+      "Couldn't load preferences",
+    )
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain(
+      'Save Preferences',
+    )
+
+    mockPreferencesGet.mockResolvedValue(PREFERENCES)
+    await wrapper.find('[data-testid="preferences-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain(
+      'Save Preferences',
+    )
+  })
+
+  it('keeps the Retry button out of the alert region', async () => {
+    // Alert content is announced as one chunk, so a button inside it has its
+    // affordance buried in the error prose.
+    const wrapper = await mountFailed()
+
+    const alert = wrapper.find('[role="alert"]')
+    expect(alert.find('[data-testid="preferences-retry"]').exists()).toBe(false)
+    // Defaults to type="submit" without this, which would post a wrapping form.
+    expect(
+      wrapper.find('[data-testid="preferences-retry"]').attributes('type'),
+    ).toBe('button')
+  })
+})
+
+// The busy flag has to live on the page wrapper: it is the only node present in
+// every outcome, so it is the only one that can flip rather than unmount (4.1.3).
+describe.each([
+  { outcome: 'preferences arrive', settle: PREFERENCES, shows: 'Save Preferences' },
+  { outcome: 'the load fails', settle: new Error('boom'), shows: "Couldn't load preferences" },
+])('PreferencesPage aria-busy when $outcome', ({ settle, shows }) => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockPost.mockReset()
+    mockPreferencesGet.mockReset()
+    withTheme()
+  })
+
+  it('clears in place on the page wrapper', async () => {
+    let settleGet: () => void = () => {}
+    mockPreferencesGet.mockReturnValue(
+      new Promise((resolve, reject) => {
+        settleGet = () =>
+          settle instanceof Error ? reject(settle) : resolve(settle)
+      }),
+    )
+    const wrapper = mount(PreferencesPage)
+    await flushPromises()
+
+    const busy = wrapper.find('[aria-busy="true"]')
+    expect(busy.element).toBe(wrapper.element)
+
+    settleGet()
+    await flushPromises()
+
+    expect(busy.attributes('aria-busy')).toBeUndefined()
+    expect(wrapper.text()).toContain(shows)
   })
 })

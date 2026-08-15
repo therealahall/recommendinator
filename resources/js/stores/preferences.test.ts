@@ -24,6 +24,23 @@ vi.mock('@/stores/theme', () => ({
   }),
 }))
 
+const STORED_PREFS = {
+  scorer_weights: {},
+  series_in_order: true,
+  variety_penalty: 0,
+  content_length_preferences: {},
+  custom_rules: [],
+  theme: '',
+}
+
+/** A store in the only state the Save button is reachable from: loaded. */
+async function loadedStore() {
+  mockGet.mockResolvedValue(STORED_PREFS)
+  const store = usePreferencesStore()
+  await store.load()
+  return store
+}
+
 describe('usePreferencesStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -128,29 +145,6 @@ describe('usePreferencesStore', () => {
     expect(mockApplyTheme).not.toHaveBeenCalled()
   })
 
-  it('load resets pendingTheme on error', async () => {
-    mockGet.mockRejectedValue(new Error('Network error'))
-
-    const store = usePreferencesStore()
-    store.pendingTheme = 'snowstorm'
-    await store.load()
-
-    expect(store.pendingTheme).toBe('')
-    expect(store.scorerWeights).toEqual({})
-  })
-
-  it('load uses defaults on error', async () => {
-    mockGet.mockRejectedValue(new Error('Network error'))
-
-    const store = usePreferencesStore()
-    await store.load()
-
-    expect(store.scorerWeights).toEqual({})
-    expect(store.seriesInOrder).toBe(true)
-    expect(store.varietyPenalty).toBe(0)
-    expect(store.customRules).toEqual([])
-  })
-
   it('getWeight returns stored value or default', () => {
     const store = usePreferencesStore()
     store.scorerWeights = { genre_match: 4.0 }
@@ -187,7 +181,7 @@ describe('usePreferencesStore', () => {
   it('save sends preferences including theme to API', async () => {
     mockPut.mockResolvedValue({})
 
-    const store = usePreferencesStore()
+    const store = await loadedStore()
     store.scorerWeights = { genre_match: 3.0 }
     store.seriesInOrder = false
     store.varietyPenalty = 0.4
@@ -212,7 +206,7 @@ describe('usePreferencesStore', () => {
   it('save sends varietyPenalty at the max (5.0)', async () => {
     mockPut.mockResolvedValue({})
 
-    const store = usePreferencesStore()
+    const store = await loadedStore()
     store.varietyPenalty = 5.0
 
     await store.save()
@@ -226,7 +220,7 @@ describe('usePreferencesStore', () => {
   it('save sends varietyPenalty off (0.0)', async () => {
     mockPut.mockResolvedValue({})
 
-    const store = usePreferencesStore()
+    const store = await loadedStore()
     store.varietyPenalty = 0
 
     await store.save()
@@ -240,7 +234,7 @@ describe('usePreferencesStore', () => {
   it('save applies theme only after successful save', async () => {
     mockPut.mockResolvedValue({})
 
-    const store = usePreferencesStore()
+    const store = await loadedStore()
     store.pendingTheme = 'snowstorm'
     await store.save()
 
@@ -250,12 +244,72 @@ describe('usePreferencesStore', () => {
   it('save does not apply theme on failure', async () => {
     mockPut.mockRejectedValue(new Error('Server error'))
 
-    const store = usePreferencesStore()
+    const store = await loadedStore()
     store.pendingTheme = 'snowstorm'
     await store.save()
 
     expect(mockApplyTheme).not.toHaveBeenCalled()
     expect(store.saveStatus).toBe('error')
     expect(store.saveError).toBe('Server error')
+  })
+})
+
+// Symptom: a failed Preferences load then a Save wiped every stored rule and
+// weight. Cause: load()'s catch reset the store to empty defaults, which save()
+// PUT. Fix: keep the values, record loadError, gate save on hasLoaded.
+describe('preferences load-failure regression', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockPut.mockReset()
+    mockApplyTheme.mockReset()
+  })
+
+  it('keeps the previously loaded values when a later load fails', async () => {
+    const store = await loadedStore()
+    store.customRules = ['no horror']
+    store.scorerWeights = { genre_match: 4.0 }
+    mockGet.mockRejectedValue(new Error('Network error'))
+
+    await store.load()
+
+    expect(store.customRules).toEqual(['no horror'])
+    expect(store.scorerWeights).toEqual({ genre_match: 4.0 })
+    expect(store.loadError).toBe('Network error')
+  })
+
+  it('refuses to save after a failed load, so nothing is PUT', async () => {
+    const store = await loadedStore()
+    store.customRules = ['no horror']
+    mockGet.mockRejectedValue(new Error('Network error'))
+    await store.load()
+
+    await store.save()
+
+    expect(mockPut).not.toHaveBeenCalled()
+    expect(store.saveStatus).toBe('error')
+    expect(store.saveError).toBe('Preferences have not loaded yet.')
+  })
+
+  it('refuses to save before any load has run', async () => {
+    const store = usePreferencesStore()
+
+    await store.save()
+
+    expect(mockPut).not.toHaveBeenCalled()
+    expect(store.hasLoaded).toBe(false)
+  })
+
+  it('clears loadError and re-enables save once a retry succeeds', async () => {
+    mockGet.mockRejectedValue(new Error('Network error'))
+    const store = usePreferencesStore()
+    await store.load()
+
+    mockGet.mockResolvedValue({ ...STORED_PREFS, custom_rules: ['no horror'] })
+    await store.load()
+
+    expect(store.loadError).toBe('')
+    expect(store.hasLoaded).toBe(true)
+    expect(store.customRules).toEqual(['no horror'])
   })
 })

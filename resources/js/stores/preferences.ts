@@ -64,6 +64,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const customRules = ref<string[]>([])
   const pendingTheme = ref('')
   const loading = ref(false)
+  const loadError = ref('')
+  // True only while the values above came from the server. Everything is PUT
+  // unconditionally on save, so saving from any other state overwrites the
+  // stored preferences with this store's empty defaults.
+  const hasLoaded = ref(false)
   const saving = ref(false)
   const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const saveError = ref('')
@@ -72,6 +77,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function load() {
     const app = useAppStore()
     loading.value = true
+    loadError.value = ''
+    hasLoaded.value = false
     try {
       const prefs = await api.get<UserPreferenceResponse>(
         `/users/${app.currentUserId}/preferences`,
@@ -90,20 +97,20 @@ export const usePreferencesStore = defineStore('preferences', () => {
       } else {
         pendingTheme.value = theme.currentThemeId ?? theme.defaultThemeId
       }
-    } catch {
-      // Use defaults on error
-      scorerWeights.value = {}
-      seriesInOrder.value = true
-      varietyPenalty.value = 0
-      contentLengthPreferences.value = {}
-      customRules.value = []
-      pendingTheme.value = ''
+      hasLoaded.value = true
+    } catch (err) {
+      loadError.value = err instanceof Error ? err.message : 'Unknown error'
     } finally {
       loading.value = false
     }
   }
 
   async function save() {
+    if (!hasLoaded.value) {
+      saveStatus.value = 'error'
+      saveError.value = 'Preferences have not loaded yet.'
+      return
+    }
     const app = useAppStore()
     saving.value = true
     saveStatus.value = 'saving'
@@ -165,6 +172,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
     customRules,
     pendingTheme,
     loading,
+    loadError,
+    hasLoaded,
     saving,
     saveStatus,
     saveError,

@@ -60,6 +60,24 @@ describe('useDataStore', () => {
     expect(mockGet).toHaveBeenCalledTimes(1)
   })
 
+  // Regression: the catch emptied syncSources, so a failed read reached the
+  // page as "No sync sources configured" — telling the user to go and edit
+  // config.yaml over a request that never landed.
+  it('loadSyncSources records the failure and keeps the loaded list', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockResolvedValueOnce([
+      { id: 'steam', display_name: 'Steam', plugin_display_name: 'Steam', enabled: true },
+    ])
+    const store = useDataStore()
+    await store.loadSyncSources()
+
+    mockGet.mockRejectedValueOnce(new Error('Network error'))
+    await store.loadSyncSources()
+
+    expect(store.syncSourcesError).toBe('Network error')
+    expect(store.syncSources.map((s) => s.id)).toEqual(['steam'])
+  })
+
   function steamSource() {
     return {
       id: 'steam',

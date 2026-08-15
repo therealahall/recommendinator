@@ -69,6 +69,17 @@ const orderedSources = computed(() => {
       </p>
 
       <div v-if="data.syncLoading" class="empty-state"><span class="spinner" /> Loading sync sources...</div>
+      <div v-else-if="data.syncSourcesError" class="empty-state">
+        <!-- The Retry button sits OUTSIDE the alert: alert content is announced
+             as one chunk, which buries the control's affordance. -->
+        <span role="alert">Couldn't load sync sources.</span>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          data-testid="sync-sources-retry"
+          @click="data.loadSyncSources()"
+        >Retry</button>
+      </div>
       <div v-else-if="data.syncSources.length === 0" class="empty-state">
         No sync sources configured. Add sources to config.yaml with enabled: true.
       </div>

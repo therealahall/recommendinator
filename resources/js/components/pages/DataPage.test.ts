@@ -263,6 +263,59 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
+  // Regression: a rejected /sync/sources emptied the list, so a request that
+  // never landed rendered as configuration advice the user cannot act on.
+  it('says the load failed rather than that nothing is configured', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) =>
+      path === '/sync/sources'
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve({}),
+    )
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('No sync sources configured')
+    expect(wrapper.find('[role="alert"]').text()).toContain(
+      "Couldn't load sync sources",
+    )
+    expect(wrapper.find('[data-testid="sync-sources-retry"]').attributes('type'))
+      .toBe('button')
+    wrapper.unmount()
+  })
+
+  // Catches dropping the `syncSourcesError = ''` reset at the top of
+  // loadSyncSources: the card would outlive the failure and Retry would look
+  // dead, with the store's own error test still green.
+  it('clears the error and lists the sources when Retry succeeds', async () => {
+    mockPost.mockResolvedValue({})
+    let sourcesFail = true
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') {
+        return sourcesFail
+          ? Promise.reject(new Error('boom'))
+          : Promise.resolve([enabledSource])
+      }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+    })
+    await flushPromises()
+
+    sourcesFail = false
+    await wrapper.get('[data-testid="sync-sources-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="sync-btn-steam"]').text()).toBe('Sync')
+    wrapper.unmount()
+  })
+
   // FAILING: the store's `currentJobForLabel` hands every row the umbrella job
   // once it is the newer of the two, and that job carries no errors for a
   // source it never ran. Dropping the `syncing` gate was half the fix.
