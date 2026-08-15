@@ -160,8 +160,7 @@ describe('SourceConfigForm', () => {
   })
 
   it('drops a second activation while saving instead of double-submitting', async () => {
-    // aria-disabled does not block activation the way native disabled does, so
-    // the guard in onSave is the only thing preventing a duplicate save.
+    // aria-disabled does not block activation, so onSave's guard is the only stop.
     const wrapper = mount(SourceConfigForm, {
       props: {
         schema: [field({ name: 'path' })],

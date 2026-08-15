@@ -609,7 +609,6 @@ class TestTvRecommendationCarriesDbIdRegression:
             count=5,
         )
 
-        # Season 1 is watched, so the next surfaced season is season 2.
         assert len(recommendations) == 1
         rec_item = recommendations[0].item
         assert rec_item.title == "The Expanse (Season 2)"
@@ -1464,7 +1463,6 @@ class TestVarietyAfterCompletion:
             user_preference_config=UserPreferenceConfig(variety_penalty=4.0),
         )
 
-        # Sci-fi finished most recently => stronger penalty => ranked lower.
         assert _variety_rank_of(recs, "fantasy_candidate") < _variety_rank_of(
             recs, "scifi_candidate"
         )
@@ -1478,7 +1476,6 @@ class TestVarietyAfterCompletion:
             UserPreferenceConfig.LEGACY_VARIETY_ON
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
         )
-        # Sci-fi takes the top rung; fantasy the next rung down the ladder.
         assert scifi_penalty == pytest.approx(top_fraction)
         assert fantasy_penalty == pytest.approx(
             top_fraction * (VARIETY_LADDER_STEPS - 1) / VARIETY_LADDER_STEPS
