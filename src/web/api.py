@@ -463,6 +463,13 @@ class SyncSourceProgressResponse(BaseModel):
     progress_percent: int | None
 
 
+class SyncErrorResponse(BaseModel):
+    """One sync failure, named for the source that produced it."""
+
+    source: str
+    message: str
+
+
 class SyncJobResponse(BaseModel):
     """Response model for sync job status."""
 
@@ -477,7 +484,7 @@ class SyncJobResponse(BaseModel):
     error_message: str | None
     progress_percent: int | None
     error_count: int
-    errors: list[str] = []
+    errors: list[SyncErrorResponse] = []
     sources: list[SyncSourceProgressResponse] = []
 
 
@@ -1633,8 +1640,8 @@ def update_data(
                 current_source=current_source,
             )
 
-        def error_callback(error_message: str) -> None:
-            sync_manager.add_error(source_label, error_message)
+        def error_callback(failed_source: str, error_message: str) -> None:
+            sync_manager.add_error(source_label, failed_source, error_message)
 
         max_workers = resolve_max_workers(config, override=request.max_workers)
 

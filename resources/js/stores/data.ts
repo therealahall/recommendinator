@@ -6,6 +6,7 @@ import { truncate } from '@/utils/format'
 import type {
   SyncSourceResponse,
   SyncStatusResponse,
+  SyncErrorResponse,
   SyncJobResponse,
   EnrichmentStatsResponse,
   EnrichmentJobStatusResponse,
@@ -197,12 +198,9 @@ export const useDataStore = defineStore('data', () => {
             (sum, j) => sum + j.items_processed,
             0,
           )
-          const totalErrors = syncJobs.value.reduce(
-            (sum, j) => sum + j.error_count,
-            0,
-          )
+          const errors = syncJobs.value.flatMap((j) => j.errors)
           let msg = `Completed: ${totalItems} items synced`
-          if (totalErrors > 0) msg += ` (${totalErrors} errors)`
+          if (errors.length > 0) msg += ` — ${describeErrors(errors)}`
           syncMessage.value = msg
         }
         stopSyncPolling()
@@ -232,6 +230,14 @@ export const useDataStore = defineStore('data', () => {
       clearInterval(syncPollTimer)
       syncPollTimer = null
     }
+  }
+
+  // The first message in full, not a count of them: the text is what names
+  // the setting to change, and the rest are one row away in the accordion.
+  function describeErrors(errors: SyncErrorResponse[]): string {
+    const [first, ...rest] = errors
+    const more = rest.length > 0 ? ` (+${rest.length} more)` : ''
+    return `${first.source}: ${first.message}${more}`
   }
 
   function buildRunningMessage(running: SyncJobResponse[]): string {

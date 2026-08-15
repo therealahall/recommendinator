@@ -422,7 +422,9 @@ class TestExecuteMultiSourceSync:
         assert results[0].items_synced == 0
         assert results[0].errors == [remedy]
         assert results[1].items_synced == 1
-        error_callback.assert_called_once_with(remedy)
+        # Named, not just reported: one job covers every source, so a bare
+        # message leaves the operator guessing which one to go and fix.
+        error_callback.assert_called_once_with("Failing", remedy)
 
     def test_a_request_fault_quoting_a_key_is_still_swallowed(self) -> None:
         """The substitution exists for this: ``requests`` quotes the url.
@@ -585,7 +587,7 @@ class TestExecuteMultiSourceSync:
         assert results[0].items_synced == 0
         assert results[0].errors == ["boom"]
         assert results[1].items_synced == 1
-        error_callback.assert_called_once_with("boom")
+        error_callback.assert_called_once_with("Failing", "boom")
 
     def test_mark_for_enrichment_passed_through(self) -> None:
         """mark_for_enrichment flag is passed to execute_sync."""

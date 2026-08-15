@@ -45,6 +45,10 @@ function toggle(): void {
         <slot name="header-actions" />
       </div>
     </div>
+    <!-- Outside the trigger button and outside the collapsible panel: what
+         goes here has to be readable without expanding, and must not be
+         swallowed into the trigger's accessible name. -->
+    <slot name="notice" />
     <div
       :id="panelId"
       role="region"

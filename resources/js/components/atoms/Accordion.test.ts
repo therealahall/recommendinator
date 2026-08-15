@@ -150,4 +150,24 @@ describe('Accordion', () => {
     const trigger = wrapper.find('button.accordion-trigger').element
     expect(trigger.contains(action.element)).toBe(false)
   })
+
+  it('renders the notice slot readably while collapsed', () => {
+    const wrapper = mount(Accordion, {
+      props: { id: 'src-x', expanded: false },
+      slots: {
+        header: 'Steam',
+        notice: '<p data-testid="notice">Sync failed</p>',
+        default: 'b',
+      },
+    })
+
+    const notice = wrapper.get('[data-testid="notice"]')
+    // Neither hidden with the panel nor read as part of the trigger's name.
+    expect(wrapper.get('[role="region"]').element.contains(notice.element)).toBe(
+      false,
+    )
+    expect(
+      wrapper.get('button.accordion-trigger').element.contains(notice.element),
+    ).toBe(false)
+  })
 })

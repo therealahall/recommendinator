@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from src.web.sync_manager import (
+    SyncError,
     SyncJob,
     SyncManager,
     SyncStatus,
@@ -76,7 +77,10 @@ class TestSyncJobToDict:
             current_item="The Name of the Wind",
             current_source="goodreads",
             error_message="Some warning",
-            errors=["Error 1", "Error 2"],
+            errors=[
+                SyncError("goodreads", "Error 1"),
+                SyncError("goodreads", "Error 2"),
+            ],
         )
 
         result = job.to_dict()
@@ -92,7 +96,10 @@ class TestSyncJobToDict:
         assert result["error_message"] == "Some warning"
         assert result["progress_percent"] == 50
         assert result["error_count"] == 2
-        assert result["errors"] == ["Error 1", "Error 2"]
+        assert result["errors"] == [
+            {"source": "goodreads", "message": "Error 1"},
+            {"source": "goodreads", "message": "Error 2"},
+        ]
 
     def test_progress_percent_calculation(self) -> None:
         job = SyncJob(source="steam", items_processed=75, total_items=200)
@@ -549,27 +556,29 @@ class TestSyncManagerAddError:
         manager = SyncManager()
         _planted(manager, "steam")
 
-        manager.add_error("steam", "Failed to fetch game: Portal 2")
+        manager.add_error("steam", "Steam", "Failed to fetch game: Portal 2")
 
         job = manager.get_status()["jobs"][0]
         assert job["error_count"] == 1
-        assert job["errors"] == ["Failed to fetch game: Portal 2"]
+        assert job["errors"] == [
+            {"source": "Steam", "message": "Failed to fetch game: Portal 2"}
+        ]
 
     def test_add_multiple_errors(self) -> None:
         manager = SyncManager()
         _planted(manager, "steam")
 
-        manager.add_error("steam", "Failed to fetch game: Portal 2")
-        manager.add_error("steam", "Rate limit exceeded")
-        manager.add_error("steam", "Invalid response for game: Half-Life")
+        manager.add_error("steam", "Steam", "Failed to fetch game: Portal 2")
+        manager.add_error("steam", "Steam", "Rate limit exceeded")
+        manager.add_error("steam", "Steam", "Invalid response for game: Half-Life")
 
         job = manager.get_status()["jobs"][0]
         assert job["error_count"] == 3
-        assert "Rate limit exceeded" in job["errors"]
+        assert {"source": "Steam", "message": "Rate limit exceeded"} in job["errors"]
 
     def test_add_error_when_no_job(self) -> None:
         manager = SyncManager()
-        manager.add_error("steam", "Some error")
+        manager.add_error("steam", "Steam", "Some error")
         assert manager.get_status()["jobs"] == []
 
     def test_errors_are_per_job(self) -> None:
@@ -577,12 +586,34 @@ class TestSyncManagerAddError:
         _planted(manager, "steam")
         _planted(manager, "goodreads")
 
-        manager.add_error("steam", "Steam error")
-        manager.add_error("goodreads", "Goodreads error")
+        manager.add_error("steam", "Steam", "Steam error")
+        manager.add_error("goodreads", "Goodreads", "Goodreads error")
 
         jobs = {j["source"]: j for j in manager.get_status()["jobs"]}
-        assert jobs["steam"]["errors"] == ["Steam error"]
-        assert jobs["goodreads"]["errors"] == ["Goodreads error"]
+        assert jobs["steam"]["errors"] == [
+            {"source": "Steam", "message": "Steam error"}
+        ]
+        assert jobs["goodreads"]["errors"] == [
+            {"source": "Goodreads", "message": "Goodreads error"}
+        ]
+
+    def test_one_job_keeps_each_source_apart(self) -> None:
+        """A run of every source reports into one job, keyed by the label.
+
+        The UI matches each message against its own rows, so an umbrella job
+        that lost the producing source would show every failure on every row.
+        """
+        manager = SyncManager()
+        _planted(manager, "All Sources")
+
+        manager.add_error("All Sources", "Sonarr", "TLS verification failed")
+        manager.add_error("All Sources", "Steam", "Rate limit exceeded")
+
+        job = manager.get_status()["jobs"][0]
+        assert job["errors"] == [
+            {"source": "Sonarr", "message": "TLS verification failed"},
+            {"source": "Steam", "message": "Rate limit exceeded"},
+        ]
 
 
 class TestSyncManagerOnCompleteCallback:
@@ -924,7 +955,7 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         manager = SyncManager()
 
         def sync_function(job: SyncJob) -> int:
-            manager.add_error("Epic Games", "Epic Games API returned 401")
+            manager.add_error("Epic Games", "Epic Games", "Epic Games API returned 401")
             return 0
 
         manager.start_sync(source="Epic Games", sync_function=sync_function)
@@ -944,7 +975,7 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         manager = SyncManager()
 
         def sync_function(job: SyncJob) -> int:
-            manager.add_error("steam", "Item 3 failed to parse")
+            manager.add_error("steam", "Steam", "Item 3 failed to parse")
             return 5
 
         manager.start_sync(source="steam", sync_function=sync_function)
@@ -954,6 +985,11 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         assert job["status"] == "completed"
         assert job["items_processed"] == 5
         assert job["error_count"] == 1
+        # A partial failure sets no ``error_message`` — the UI reads the text
+        # off ``errors`` instead, which is the only place it survives.
+        assert job["errors"] == [
+            {"source": "Steam", "message": "Item 3 failed to parse"}
+        ]
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_on_complete_not_called_when_zero_items_with_errors(
@@ -964,7 +1000,7 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         on_complete = MagicMock()
 
         def sync_function(job: SyncJob) -> int:
-            manager.add_error("Epic Games", "Epic Games API returned 401")
+            manager.add_error("Epic Games", "Epic Games", "Epic Games API returned 401")
             return 0
 
         manager.start_sync(
@@ -1026,7 +1062,7 @@ class TestSyncManagerLogInjectionRegression:
         manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
 
         def sync_function(job: SyncJob) -> int:
-            manager.add_error(FORGED_SOURCE, "plugin said no")
+            manager.add_error(FORGED_SOURCE, "Steam", "plugin said no")
             return 0
 
         with caplog.at_level(logging.WARNING, logger=SYNC_MANAGER_LOGGER):

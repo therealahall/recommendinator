@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # Callback signature: (items_processed, total_items, current_item_title, current_source)
 SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
 
+# Callback signature: (source_name, error_message). The source is named because
+# a multi-source run reports into one job, and a message with no attribution
+# leaves the operator guessing which source it came from.
+SyncErrorCallback = Callable[[str, str], None]
+
 
 @dataclass
 class SyncResult:
@@ -272,7 +277,7 @@ def execute_multi_source_sync(
     embedding_generator: EmbeddingGenerator | None = None,
     use_embeddings: bool = False,
     progress_callback: SyncProgressCallback | None = None,
-    error_callback: Callable[[str], None] | None = None,
+    error_callback: SyncErrorCallback | None = None,
     mark_for_enrichment: bool = False,
     user_id: int = 1,
     max_workers: int = 1,
@@ -299,8 +304,9 @@ def execute_multi_source_sync(
         use_embeddings: Whether to generate embeddings.
         progress_callback: Optional callback for progress updates. Must be
             thread-safe when ``max_workers > 1``.
-        error_callback: Optional callback for error reporting. Must be
-            thread-safe when ``max_workers > 1``.
+        error_callback: Optional callback for error reporting, called with the
+            name of the source that produced each message. Must be thread-safe
+            when ``max_workers > 1``.
         mark_for_enrichment: Whether to mark items as needing enrichment after save.
         user_id: User ID for credential storage (default 1).
         max_workers: Maximum sources to sync concurrently. ``1`` (default)
@@ -335,9 +341,12 @@ def execute_multi_source_sync(
                 safe_plugin_name,
                 exception_for_log(error),
             )
+            # The CLI writes ``result.errors`` to a terminal and these quote a
+            # ``requests`` fault, so the server's reason phrase could erase the
+            # line the operator just read (CWE-117). Escaping is idempotent.
             return SyncResult(
                 source_name=_error_source_name(plugin, plugin_config),
-                errors=[error.message],
+                errors=[sanitize_for_log(error.message)],
             )
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text
@@ -370,7 +379,7 @@ def execute_multi_source_sync(
     if error_callback:
         for result in results:
             for error_message in result.errors:
-                error_callback(error_message)
+                error_callback(result.source_name, error_message)
 
     total_synced = sum(result.items_synced for result in results)
     logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)

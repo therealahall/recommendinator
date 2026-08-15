@@ -127,7 +127,10 @@ class CalibreWebPlugin(SourcePlugin):
                 field_type=bool,
                 required=False,
                 default=True,
-                description="Verify the TLS certificate (disable for self-signed)",
+                description=(
+                    "Verify the TLS certificate (disable for a self-signed "
+                    "certificate or a private CA)"
+                ),
             ),
         ]
 
