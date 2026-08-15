@@ -25,7 +25,6 @@ class TestShouldLogProgress:
         assert should_log_progress(99, 100) is False
 
     def test_last_item_always_logged(self) -> None:
-        """The last item is always logged regardless of position."""
         assert should_log_progress(100, 100) is True
         assert should_log_progress(37, 37) is True
 

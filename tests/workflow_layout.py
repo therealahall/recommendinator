@@ -1,9 +1,3 @@
-"""The workflow directory, read the way GitHub reads it.
-
-GitHub honours `.yaml` as readily as `.yml`, and two suites sweep these files.
-A second enumerator is a second place to forget one extension.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,14 +8,6 @@ import yaml
 # parents[1] resolves /tests/workflow_layout.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
-
-_EXTENSIONS = {".yml", ".yaml"}
-
-
-def workflow_files(directory: Path = WORKFLOWS) -> list[Path]:
-    paths = sorted(path for path in directory.iterdir() if path.suffix in _EXTENSIONS)
-    assert paths, f"no workflow files under {directory}; a sweep would be empty"
-    return paths
 
 
 def parsed_workflow(path: Path) -> dict[str, Any]:

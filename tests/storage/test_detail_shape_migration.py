@@ -705,12 +705,9 @@ class TestALegacyGogRowSurvivesTheUpgrade:
 
 
 class TestStrandedPlatformFlagsMigration:
-    """The flag dict becomes the list of names every other producer writes."""
-
     def test_flag_dict_becomes_the_supported_platform_names(
         self, tmp_path: Path
     ) -> None:
-        """Only the platforms flagged as supported survive, as GOG names them."""
         db_path = tmp_path / "test.db"
         db_id = _seed_game(SQLiteDB(db_path), platforms=_FLAGS_WINDOWS_AND_LINUX)
 
