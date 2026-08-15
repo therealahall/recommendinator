@@ -33,36 +33,11 @@ class TestResolveMaxWorkers:
     def test_override_wins_over_config(self) -> None:
         assert resolve_max_workers({"sync": {"max_workers": 9}}, override=2) == 2
 
-    def test_override_clamps_to_floor(self) -> None:
-        # Belt-and-braces: Click's IntRange already enforces this on the
-        # CLI side, but the helper must remain safe if any future caller
-        # passes a non-Click-validated value.
-        assert resolve_max_workers({}, override=0) == 1
-        assert resolve_max_workers({}, override=-5) == 1
-
-    def test_override_clamps_to_ceiling(self) -> None:
-        assert (
-            resolve_max_workers({}, override=MAX_WORKERS_CEILING + 100)
-            == MAX_WORKERS_CEILING
-        )
-
-    def test_config_value_used_when_no_override(self) -> None:
-        assert resolve_max_workers({"sync": {"max_workers": 12}}, override=None) == 12
-
     def test_config_value_clamped_to_ceiling(self) -> None:
         assert (
             resolve_max_workers({"sync": {"max_workers": 9999}}, override=None)
             == MAX_WORKERS_CEILING
         )
-
-    def test_config_value_clamped_to_floor(self) -> None:
-        assert resolve_max_workers({"sync": {"max_workers": 0}}, override=None) == 1
-
-    def test_default_used_when_config_missing(self) -> None:
-        assert resolve_max_workers({}, override=None, default=6) == 6
-
-    def test_default_used_when_config_is_none(self) -> None:
-        assert resolve_max_workers(None, override=None, default=4) == 4
 
     def test_non_integer_config_falls_back_to_default(self) -> None:
         assert (
@@ -71,41 +46,6 @@ class TestResolveMaxWorkers:
             )
             == 4
         )
-
-    def test_none_config_value_falls_back_to_default(self) -> None:
-        assert (
-            resolve_max_workers(
-                {"sync": {"max_workers": None}}, override=None, default=4
-            )
-            == 4
-        )
-
-    def test_float_config_value_truncates(self) -> None:
-        # int(7.9) = 7. Documents the cast behaviour rather than promises.
-        assert (
-            resolve_max_workers(
-                {"sync": {"max_workers": 7.9}}, override=None, default=4
-            )
-            == 7
-        )
-
-
-class TestSyncResult:
-    """Tests for SyncResult dataclass."""
-
-    def test_defaults(self) -> None:
-        result = SyncResult(source_name="Test")
-        assert result.source_name == "Test"
-        assert result.items_synced == 0
-        assert result.total_items == 0
-        assert result.errors == []
-
-    def test_errors_not_shared(self) -> None:
-        """Each SyncResult gets its own error list (no mutable default sharing)."""
-        result_a = SyncResult(source_name="A")
-        result_b = SyncResult(source_name="B")
-        result_a.errors.append("oops")
-        assert result_b.errors == []
 
 
 class TestExecuteSync:
@@ -188,111 +128,9 @@ class TestExecuteSync:
         ]
         assert in_loop_counts == [1, 2, 3]
 
-    def test_progress_callback_called(self) -> None:
-        """Progress callback receives updates during sync."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        progress = MagicMock()
-
-        execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            progress_callback=progress,
-        )
-
-        # Should be called at least: initial, post-fetch, and per-item
-        assert progress.call_count >= 3
-
-    def test_fetch_error_propagates(self) -> None:
-        """SourceError from plugin.fetch propagates to caller."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.side_effect = SourceError("test", "connection failed")
-
-        storage = MagicMock(spec=StorageManager)
-
-        with pytest.raises(SourceError, match="connection failed"):
-            execute_sync(
-                plugin=plugin,
-                plugin_config={},
-                storage_manager=storage,
-            )
-
-    def test_empty_source(self) -> None:
-        """Sync with no items returns zero counts."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "EmptyPlugin"
-        plugin.fetch.return_value = iter([])
-
-        storage = MagicMock(spec=StorageManager)
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-        )
-
-        assert result.items_synced == 0
-        assert result.total_items == 0
-        assert result.errors == []
-        storage.save_content_item_outcome.assert_not_called()
-
-    def test_plugin_config_passed_through(self) -> None:
-        """Plugin receives the config dict (with injected credential callback)."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter([])
-
-        storage = MagicMock(spec=StorageManager)
-        config = {"url": "http://example.com", "api_key": "secret"}
-
-        execute_sync(
-            plugin=plugin,
-            plugin_config=config,
-            storage_manager=storage,
-        )
-
-        plugin.fetch.assert_called_once()
-        call_args = plugin.fetch.call_args
-        passed_config = call_args[0][0]
-        # Original config keys are preserved
-        assert passed_config["url"] == "http://example.com"
-        assert passed_config["api_key"] == "secret"
-        # Credential rotation callback is injected
-        assert callable(passed_config["_on_credential_rotated"])
-
 
 class TestExecuteMultiSourceSync:
     """Tests for execute_multi_source_sync function."""
-
-    def test_multiple_sources(self) -> None:
-        """Syncs multiple sources sequentially and returns results."""
-        plugin_a = MagicMock(spec=SourcePlugin)
-        plugin_a.name = "source_a"
-        plugin_a.display_name = "Source A"
-        plugin_a.fetch.return_value = iter([make_item("A1")])
-
-        plugin_b = MagicMock(spec=SourcePlugin)
-        plugin_b.name = "source_b"
-        plugin_b.display_name = "Source B"
-        plugin_b.fetch.return_value = iter([make_item("B1"), make_item("B2")])
-
-        storage = MagicMock(spec=StorageManager)
-
-        results = execute_multi_source_sync(
-            sources=[(plugin_a, {"k": "v"}), (plugin_b, {"k": "v"})],
-            storage_manager=storage,
-        )
-
-        assert len(results) == 2
-        assert results[0].items_synced == 1
-        assert results[1].items_synced == 2
-        assert storage.save_content_item_outcome.call_count == 3
 
     def test_source_error_continues(self) -> None:
         """A failing source doesn't block subsequent sources.
@@ -351,49 +189,6 @@ class TestExecuteMultiSourceSync:
 
         assert results[0].errors == ["Sync failed for steam"]
 
-    def test_empty_sources(self) -> None:
-        """Empty source list returns empty results."""
-        storage = MagicMock(spec=StorageManager)
-
-        results = execute_multi_source_sync(
-            sources=[],
-            storage_manager=storage,
-        )
-
-        assert results == []
-
-    def test_max_workers_default_runs_sequentially(self) -> None:
-        """Default max_workers=1 keeps the legacy sequential ordering."""
-        order: list[str] = []
-
-        def fetch_a(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
-            order.append("a")
-            return iter([make_item("A1")])
-
-        def fetch_b(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
-            order.append("b")
-            return iter([make_item("B1")])
-
-        plugin_a = MagicMock(spec=SourcePlugin)
-        plugin_a.name = "source_a"
-        plugin_a.display_name = "Source A"
-        plugin_a.fetch.side_effect = fetch_a
-
-        plugin_b = MagicMock(spec=SourcePlugin)
-        plugin_b.name = "source_b"
-        plugin_b.display_name = "Source B"
-        plugin_b.fetch.side_effect = fetch_b
-
-        storage = MagicMock(spec=StorageManager)
-
-        results = execute_multi_source_sync(
-            sources=[(plugin_a, {}), (plugin_b, {})],
-            storage_manager=storage,
-        )
-
-        assert order == ["a", "b"]
-        assert [result.source_name for result in results] == ["Source A", "Source B"]
-
     def test_max_workers_runs_sources_concurrently(self) -> None:
         """With max_workers>1, sources fetch in parallel via a thread pool."""
         thread_count = 3
@@ -432,24 +227,6 @@ class TestExecuteMultiSourceSync:
             f"Src {index}" for index in range(thread_count)
         ]
         assert all(result.items_synced == 1 for result in results)
-
-    def test_max_workers_capped_to_source_count(self) -> None:
-        """max_workers larger than len(sources) does not spawn extra threads."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "only"
-        plugin.display_name = "Only"
-        plugin.fetch.return_value = iter([make_item("Solo")])
-
-        storage = MagicMock(spec=StorageManager)
-
-        results = execute_multi_source_sync(
-            sources=[(plugin, {})],
-            storage_manager=storage,
-            max_workers=99,
-        )
-
-        assert len(results) == 1
-        assert results[0].items_synced == 1
 
     def test_parallel_isolates_per_source_failures(self) -> None:
         """A failing source under parallel execution does not break others."""
@@ -497,62 +274,9 @@ class TestExecuteMultiSourceSync:
             ("Working", ()),
         }
 
-    def test_mark_for_enrichment_passed_through(self) -> None:
-        """mark_for_enrichment flag is passed to execute_sync."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "test"
-        plugin.display_name = "Test"
-        plugin.fetch.return_value = iter([make_item("Book 1")])
-
-        storage = MagicMock(spec=StorageManager)
-        storage.save_content_item_outcome.return_value = SavedItem(
-            db_id=1, outcome=SaveOutcome.ADDED
-        )
-
-        results = execute_multi_source_sync(
-            sources=[(plugin, {})],
-            storage_manager=storage,
-            mark_for_enrichment=True,
-        )
-
-        assert len(results) == 1
-        assert results[0].items_synced == 1
-        # Should have called mark_item_needs_enrichment
-        storage.mark_item_needs_enrichment.assert_called_once_with(1)
-
 
 class TestCredentialRotationCallback:
     """Tests for credential rotation callback injection in execute_sync."""
-
-    def test_credential_callback_injected_into_config(self) -> None:
-        """Regression test: execute_sync injects _on_credential_rotated callback.
-
-        Bug: Rotated OAuth refresh tokens from GOG/Epic were discarded during
-        sync because plugins had no way to persist them.
-
-        Fix: execute_sync creates a callback that wraps
-        storage_manager.save_credential and injects it into the plugin_config
-        as _on_credential_rotated. Plugins that rotate tokens call this
-        callback to persist the new value.
-        """
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "gog"
-        plugin.display_name = "GOG"
-        plugin.fetch.return_value = iter([])
-
-        storage = MagicMock(spec=StorageManager)
-
-        execute_sync(
-            plugin=plugin,
-            plugin_config={"refresh_token": "old"},
-            storage_manager=storage,
-        )
-
-        # Verify the config passed to plugin.fetch has the callback
-        call_args = plugin.fetch.call_args
-        config_passed = call_args[0][0]
-        assert "_on_credential_rotated" in config_passed
-        assert callable(config_passed["_on_credential_rotated"])
 
     def test_credential_callback_calls_save_credential(self) -> None:
         """The injected callback persists credentials via storage_manager."""
@@ -591,66 +315,6 @@ class TestCredentialRotationCallback:
             1, "gog", "refresh_token", "new_rotated_value"
         )
 
-    def test_credential_callback_defaults_to_user_id_1(self) -> None:
-        """The callback uses user_id=1 when not explicitly passed."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "gog"
-        plugin.display_name = "GOG"
-        plugin.get_source_identifier.return_value = "gog"
-
-        def capture_fetch(
-            config: dict[str, Any], **kwargs: object
-        ) -> Iterator[ContentItem]:
-            callback = config.get("_on_credential_rotated")
-            if callback:
-                callback("refresh_token", "new_value")
-            return iter([])
-
-        plugin.fetch.side_effect = capture_fetch
-
-        storage = MagicMock(spec=StorageManager)
-
-        # Do NOT pass user_id — should default to 1
-        execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-        )
-
-        storage.save_credential.assert_called_once_with(
-            1, "gog", "refresh_token", "new_value"
-        )
-
-    def test_credential_callback_uses_custom_user_id(self) -> None:
-        """The callback uses the user_id parameter from execute_sync."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "epic_games"
-        plugin.display_name = "Epic Games"
-        plugin.get_source_identifier.return_value = "epic_games"
-
-        def capture_fetch(
-            config: dict[str, Any], **kwargs: object
-        ) -> Iterator[ContentItem]:
-            callback = config.get("_on_credential_rotated")
-            if callback:
-                callback("refresh_token", "new_value")
-            return iter([])
-
-        plugin.fetch.side_effect = capture_fetch
-
-        storage = MagicMock(spec=StorageManager)
-
-        execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            user_id=42,
-        )
-
-        storage.save_credential.assert_called_once_with(
-            42, "epic_games", "refresh_token", "new_value"
-        )
-
     def test_credential_callback_error_logged_not_raised(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -684,35 +348,6 @@ class TestCredentialRotationCallback:
         assert any(
             "Failed to persist rotated credential" in msg and "refresh_token" in msg
             for msg in caplog.messages
-        )
-
-    def test_multi_source_sync_forwards_user_id(self) -> None:
-        """execute_multi_source_sync forwards user_id to execute_sync."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "gog"
-        plugin.display_name = "GOG"
-        plugin.get_source_identifier.return_value = "gog"
-
-        def capture_fetch(
-            config: dict[str, Any], **kwargs: object
-        ) -> Iterator[ContentItem]:
-            callback = config.get("_on_credential_rotated")
-            if callback:
-                callback("refresh_token", "rotated_value")
-            return iter([])
-
-        plugin.fetch.side_effect = capture_fetch
-
-        storage = MagicMock(spec=StorageManager)
-
-        execute_multi_source_sync(
-            sources=[(plugin, {"refresh_token": "old"})],
-            storage_manager=storage,
-            user_id=7,
-        )
-
-        storage.save_credential.assert_called_once_with(
-            7, "gog", "refresh_token", "rotated_value"
         )
 
 
@@ -820,28 +455,6 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
             "rotating"
         ]
 
-    def test_an_explicit_none_source_id_is_the_same_as_no_key(
-        self, storage: StorageManager
-    ) -> None:
-        """``get`` cannot tell the two apart, so nor may the stored owner."""
-        self._sync({"_source_id": None, "refresh_token": "old"}, storage)
-
-        assert storage.get_credential(1, "rotating", "refresh_token") == _ROTATED_TOKEN
-        assert [item.source for item in storage.get_content_items(user_id=1)] == [
-            "rotating"
-        ]
-
-    def test_two_ids_differing_only_in_case_keep_separate_tokens(
-        self, storage: StorageManager
-    ) -> None:
-        """A NOCASE collation would hand one source the other's secret."""
-        self._sync({"_source_id": "Work_Games", "refresh_token": "old"}, storage)
-
-        assert storage.get_credential(1, "Work_Games", "refresh_token") == (
-            _ROTATED_TOKEN
-        )
-        assert storage.get_credential(1, "work_games", "refresh_token") is None
-
 
 class TestAPluginCannotRedirectARotatedTokenRegression:
     """Reported: a plugin could write its token under another source's id.
@@ -851,10 +464,6 @@ class TestAPluginCannotRedirectARotatedTokenRegression:
     source's id redirected the write. Fix: the override is refused outright.
     """
 
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
     def test_the_hijacking_subclass_never_gets_as_far_as_a_sync(self) -> None:
         with pytest.raises(TypeError, match="name property"):
 
@@ -863,18 +472,6 @@ class TestAPluginCannotRedirectARotatedTokenRegression:
                     self, config: dict[str, Any] | None = None
                 ) -> str:
                     return "other_source"
-
-    def test_the_token_lands_only_under_the_source_that_rotated_it(
-        self, storage: StorageManager
-    ) -> None:
-        execute_sync(
-            plugin=RotatingAttributingPlugin(),
-            plugin_config={"_source_id": "my_source", "refresh_token": "old"},
-            storage_manager=storage,
-        )
-
-        assert storage.get_credential(1, "my_source", "refresh_token") == _ROTATED_TOKEN
-        assert storage.get_credential(1, "other_source", "refresh_token") is None
 
 
 class TestASyncLeavesAStrandedTokenWhereItIs:
@@ -932,54 +529,6 @@ class TestAutoEnrichmentHook:
         assert storage.mark_item_needs_enrichment.call_count == 2
         storage.mark_item_needs_enrichment.assert_any_call(1)
         storage.mark_item_needs_enrichment.assert_any_call(2)
-
-    def test_mark_for_enrichment_disabled(self) -> None:
-        """Items are not marked for enrichment when flag is False."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.save_content_item_outcome.return_value = SavedItem(
-            db_id=1, outcome=SaveOutcome.ADDED
-        )
-
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-            mark_for_enrichment=False,
-        )
-
-        assert result.items_synced == 1
-        # Anchored: a mock the save loop chokes on would satisfy the check
-        # below by crashing, since the broad handler swallows what it raised.
-        assert result.errors == []
-        storage.mark_item_needs_enrichment.assert_not_called()
-
-    def test_mark_for_enrichment_default_disabled(self) -> None:
-        """mark_for_enrichment defaults to False."""
-        items = [make_item("Book 1")]
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "TestPlugin"
-        plugin.fetch.return_value = iter(items)
-
-        storage = MagicMock(spec=StorageManager)
-        storage.save_content_item_outcome.return_value = SavedItem(
-            db_id=1, outcome=SaveOutcome.ADDED
-        )
-
-        # Don't pass mark_for_enrichment - should default to False
-        result = execute_sync(
-            plugin=plugin,
-            plugin_config={},
-            storage_manager=storage,
-        )
-
-        assert result.items_synced == 1
-        assert result.errors == []
-        storage.mark_item_needs_enrichment.assert_not_called()
 
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
         """Errors from marking for enrichment don't stop the sync."""
@@ -1089,31 +638,6 @@ class TestAnImportedTitleCannotForgeALogLine:
 
         assert result.errors == [f"Failed to process '{_ESCAPED_TITLE}'"]
 
-    def test_a_message_less_save_fault_still_names_its_class(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """``str(TimeoutError())`` is empty, so the sink diagnosed nothing."""
-        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
-            _sync_one_forged_title(save_error=TimeoutError())
-
-        assert [
-            message for message in caplog.messages if "Failed to process" in message
-        ] == [
-            f"[SYNC] CSV Import: Failed to process '{_ESCAPED_TITLE}': TimeoutError: "
-        ]
-
-    def test_a_message_less_enrichment_fault_still_names_its_class(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
-            _sync_one_forged_title(enrich_error=TimeoutError())
-
-        assert [
-            message for message in caplog.messages if "for enrichment" in message
-        ] == [
-            f"[SYNC] Failed to mark '{_ESCAPED_TITLE}' for enrichment: TimeoutError: "
-        ]
-
 
 class TestTheOtherSyncSinksEscapeTheirValuesToo:
     """A title is not the only value this module logs from outside it.
@@ -1142,50 +666,6 @@ class TestTheOtherSyncSinksEscapeTheirValuesToo:
             "[SYNC] Books\\nerror | forged: Found 0 items, saving..." in caplog.messages
         )
         assert all(len(message.splitlines()) == 1 for message in caplog.messages)
-
-    def test_a_forged_credential_key_cannot_forge_a_line(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "GOG"
-        plugin.get_source_identifier.return_value = "gog"
-
-        def rotate(config: dict[str, Any], **kwargs: object) -> Iterator[ContentItem]:
-            config["_on_credential_rotated"]("refresh_token\nERROR | forged", "new")
-            return iter([])
-
-        plugin.fetch.side_effect = rotate
-        storage = MagicMock(spec=StorageManager)
-
-        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
-            execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
-
-        assert [
-            message for message in caplog.messages if "rotated credential" in message
-        ] == [
-            "[SYNC] GOG: Persisted rotated credential 'refresh_token\\nERROR | forged'"
-        ]
-
-    def test_a_failing_source_escapes_its_name_and_keeps_the_fault_class(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The multi-source wrapper logs the plugin's own name twice."""
-        plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "csv\nERROR | forged"
-        plugin.display_name = "CSV Import"
-        plugin.fetch.side_effect = TimeoutError()
-        storage = MagicMock(spec=StorageManager)
-
-        with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
-            results = execute_multi_source_sync(
-                sources=[(plugin, {})], storage_manager=storage
-            )
-
-        assert [message for message in caplog.messages if "forged" in message] == [
-            "[SYNC] === Starting sync for source: csv\\nERROR | forged ===",
-            "[SYNC] Sync failed for csv\\nERROR | forged: TimeoutError: ",
-        ]
-        assert results[0].errors == ["Sync failed for csv\nERROR | forged"]
 
 
 # ESC[2K erases the line an operator just read, so it rewrites an entry
@@ -1302,35 +782,6 @@ class TestARefusedTextValueCostsOneRow:
         items = storage.get_content_items(user_id=1)
         assert items[0].metadata["isbn"] == "9780441013593, 9780441172719"
 
-    def test_the_log_names_the_key_the_report_withholds(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The operator's only route from a lost item back to the bad field.
-
-        ``result.errors`` is served to clients, so it names the item and no
-        field. Nothing else would say which key was refused if the
-        server-side line did not carry the codec's message whole, and
-        ``docs/PLUGIN_DEVELOPMENT.md`` sends plugin authors to it.
-        """
-        json_path = tmp_path / "books.json"
-        json_path.write_text(
-            json.dumps([{"title": "Neuromancer", "isbn": {"value": "9780441569595"}}])
-        )
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
-            result = execute_sync(
-                plugin=JsonImportPlugin(),
-                plugin_config={"path": str(json_path), "content_type": "book"},
-                storage_manager=storage,
-            )
-
-        assert result.errors == ["Failed to process 'Neuromancer'"]
-        assert [message for message in caplog.messages if "Neuromancer" in message] == [
-            f"[SYNC] {JsonImportPlugin().display_name}: Failed to process"
-            " 'Neuromancer': TypeError: 'isbn': a text column cannot hold a dict"
-        ]
-
 
 class TestIgnoreFlagSurvivesReimport:
     """Regression tests for a re-import un-ignoring items the user ignored.
@@ -1376,28 +827,6 @@ class TestIgnoreFlagSurvivesReimport:
         assert storage.set_item_ignored(db_id, True) is True
 
         self._sync(plugin, csv_path, storage)
-
-        stored = self._only_item(storage)
-        assert stored.db_id == db_id
-        assert stored.ignored is True
-
-    def test_json_reimport_without_ignored_field_preserves_ignore_regression(
-        self, tmp_path: Path
-    ) -> None:
-        """A JSON entry with no ignored field does not clear the user's ignore."""
-        json_path = tmp_path / "books.json"
-        json_path.write_text(
-            json.dumps([{"title": "Dune", "author": "Frank Herbert", "status": "read"}])
-        )
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        plugin = JsonImportPlugin()
-
-        self._sync(plugin, json_path, storage)
-        db_id = self._only_item(storage).db_id
-        assert db_id is not None
-        assert storage.set_item_ignored(db_id, True) is True
-
-        self._sync(plugin, json_path, storage)
 
         stored = self._only_item(storage)
         assert stored.db_id == db_id

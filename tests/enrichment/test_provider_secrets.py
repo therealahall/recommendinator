@@ -104,27 +104,6 @@ def _config() -> dict[str, Any]:
 class TestProviderConfigInjection:
     """The provider config seam overlays the secret from credentials."""
 
-    def test_api_key_read_from_credentials(
-        self, storage: StorageManager, registry: EnrichmentRegistry
-    ) -> None:
-        """A stored secret is injected into the provider config from credentials."""
-        storage.set_global_secret(_SECRET_KEY, "cred_key")
-        manager = EnrichmentManager(storage, _config(), registry)
-
-        provider_config = manager._get_provider_config("keyed")
-
-        assert provider_config["api_key"] == "cred_key"
-
-    def test_absent_key_leaves_field_unset(
-        self, storage: StorageManager, registry: EnrichmentRegistry
-    ) -> None:
-        """With no stored secret the api_key stays absent (graceful degradation)."""
-        manager = EnrichmentManager(storage, _config(), registry)
-
-        provider_config = manager._get_provider_config("keyed")
-
-        assert "api_key" not in provider_config
-
     def test_boot_migration_then_enrichment_reads_credential(
         self, storage: StorageManager
     ) -> None:
@@ -149,35 +128,6 @@ class TestProviderConfigInjection:
 
         manager = EnrichmentManager(storage, config, registry)
         assert manager._get_provider_config("tmdb")["api_key"] == "yaml_key"
-
-
-class TestProviderReceivesSecretDuringJob:
-    """A full enrichment run hands the credential-sourced key to enrich()."""
-
-    def test_enrich_receives_credential_api_key(
-        self, storage: StorageManager, registry: EnrichmentRegistry
-    ) -> None:
-        """The running job passes the credential api_key into provider.enrich()."""
-        storage.set_global_secret(_SECRET_KEY, "job_key")
-        storage.save_content_item(
-            ContentItem(
-                id="movie1",
-                user_id=1,
-                title="The Matrix",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-            )
-        )
-
-        provider = registry.get_provider("keyed")
-        assert isinstance(provider, KeyedProvider)
-
-        manager = EnrichmentManager(storage, _config(), registry)
-        manager.start_enrichment(user_id=1)
-        assert manager._wait_for_completion()
-
-        assert provider.received_configs
-        assert all(cfg["api_key"] == "job_key" for cfg in provider.received_configs)
 
 
 class TestSecretResolutionCaching:

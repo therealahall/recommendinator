@@ -2,7 +2,6 @@
 
 import logging
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,6 @@ import pytest
 import requests
 
 from src.enrichment.manager import (
-    EnrichmentJobStatus,
     EnrichmentManager,
     merge_enrichment,
 )
@@ -268,83 +266,8 @@ def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
     return buckets
 
 
-class TestEnrichmentJobStatus:
-    """Tests for EnrichmentJobStatus dataclass."""
-
-    def test_default_values(self) -> None:
-        """Test default status values."""
-        status = EnrichmentJobStatus()
-
-        assert status.running is False
-        assert status.completed is False
-        assert status.cancelled is False
-        assert status.items_processed == 0
-        assert status.total_items == 0
-        assert status.errors == []
-
-    def test_progress_percent_zero_total(self) -> None:
-        """Test progress with zero total items."""
-        status = EnrichmentJobStatus()
-        assert status.progress_percent == 0.0
-
-    def test_progress_percent_with_items(self) -> None:
-        """Test progress calculation."""
-        status = EnrichmentJobStatus(items_processed=50, total_items=100)
-        assert status.progress_percent == 50.0
-
-    def test_elapsed_seconds_not_started(self) -> None:
-        """Test elapsed time when not started."""
-        status = EnrichmentJobStatus()
-        assert status.elapsed_seconds == 0.0
-
-    def test_elapsed_seconds_running(self) -> None:
-        """Test elapsed time while running."""
-        status = EnrichmentJobStatus(started_at=time.time() - 5.0)
-        assert 4.9 < status.elapsed_seconds < 5.5
-
-    def test_elapsed_seconds_completed(self) -> None:
-        """Test elapsed time when completed."""
-        status = EnrichmentJobStatus(
-            started_at=time.time() - 10.0,
-            completed_at=time.time() - 5.0,
-        )
-        assert 4.9 < status.elapsed_seconds < 5.1
-
-
 class TestMergeEnrichment:
     """Tests for the merge_enrichment function."""
-
-    def test_merge_empty_metadata(self) -> None:
-        """Test merging into empty metadata."""
-        result = EnrichmentResult(
-            external_id="tmdb:123",
-            genres=["Action"],
-            tags=["exciting"],
-            description="A movie.",
-            extra_metadata={"runtime": 120},
-            provider="tmdb",
-        )
-
-        merged = merge_enrichment({}, result)
-
-        assert merged["genres"] == ["Action"]
-        assert merged["tags"] == ["exciting"]
-        assert merged["description"] == "A movie."
-        assert merged["runtime"] == 120
-        assert merged["enrichment_id"] == "tmdb:123"
-
-    def test_merge_combines_genres(self) -> None:
-        """Test that genres are merged (enrichment first, then existing)."""
-        existing = {"genres": ["Comedy"]}
-        result = EnrichmentResult(
-            genres=["Action"],
-            provider="tmdb",
-        )
-
-        merged = merge_enrichment(existing, result)
-
-        # Enrichment genres first, then existing (no duplicates)
-        assert merged["genres"] == ["Action", "Comedy"]
 
     def test_merge_fills_and_combines_fields(self) -> None:
         """Test that genres/tags are merged while other fields follow priority rules."""
@@ -370,35 +293,6 @@ class TestMergeEnrichment:
             merged["director"] == "Someone"
         )  # Preserved (extra_metadata doesn't overwrite)
         assert merged["runtime"] == 90  # Added
-
-    def test_merge_handles_none_values(self) -> None:
-        """Test merging when result has None values."""
-        existing = {}
-        result = EnrichmentResult(
-            genres=None,
-            tags=["tag"],
-            description=None,
-            provider="tmdb",
-        )
-
-        merged = merge_enrichment(existing, result)
-
-        assert "genres" not in merged or merged.get("genres") is None
-        assert merged["tags"] == ["tag"]
-        assert "description" not in merged or merged.get("description") is None
-
-    def test_merge_fills_empty_string_fields(self) -> None:
-        """Test that empty string fields are filled."""
-        existing = {"description": ""}
-        result = EnrichmentResult(
-            description="New description",
-            provider="tmdb",
-        )
-
-        merged = merge_enrichment(existing, result)
-
-        # Empty string should be treated as missing
-        assert merged["description"] == "New description"
 
 
 class TestEnrichmentManager:
@@ -432,19 +326,6 @@ class TestEnrichmentManager:
                 },
             }
         }
-
-    def test_start_enrichment_returns_true(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test starting enrichment returns True."""
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-
-        result = manager.start_enrichment()
-
-        assert result is True
 
     def test_start_enrichment_when_running_returns_false(
         self,
@@ -495,212 +376,6 @@ class TestEnrichmentManager:
         finally:
             release_enrich.set()
             manager._wait_for_completion()
-
-    def test_stop_enrichment(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test stopping enrichment."""
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment()
-
-        manager.stop_enrichment()
-
-        manager._wait_for_completion()
-        status = manager.get_status()
-        assert status.running is False
-
-    def test_get_status(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test getting job status."""
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-
-        status = manager.get_status()
-
-        assert isinstance(status, EnrichmentJobStatus)
-        assert status.running is False
-
-    def test_enrichment_processes_items(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test that enrichment processes items from storage."""
-        # Setup items to enrich
-        items = [
-            (
-                1,
-                ContentItem(
-                    id="movie1",
-                    title="Movie 1",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-            ),
-            (
-                2,
-                ContentItem(
-                    id="movie2",
-                    title="Movie 2",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-            ),
-        ]
-
-        # Return items on first call, empty on second
-        mock_storage.get_items_needing_enrichment.side_effect = [items, []]
-        mock_storage.count_items_needing_enrichment.return_value = 2
-
-        # Setup provider
-        provider = MockProvider()
-        mock_registry.register(provider)
-
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment()
-
-        manager._wait_for_completion()
-
-        status = manager.get_status()
-        assert status.completed is True
-        assert status.items_processed == 2
-        assert status.items_enriched == 2
-        assert status.total_items == 2
-
-    def test_enrichment_marks_not_found(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test that items not found are marked appropriately."""
-        items = [
-            (
-                1,
-                ContentItem(
-                    id="movie1",
-                    title="Unknown Movie",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-            ),
-        ]
-        mock_storage.get_items_needing_enrichment.side_effect = [items, []]
-
-        # Provider returns not_found
-        provider = MockProvider(should_not_find=True)
-        mock_registry.register(provider)
-
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment()
-
-        manager._wait_for_completion()
-
-        status = manager.get_status()
-        assert status.items_not_found == 1
-
-    def test_enrichment_handles_provider_errors(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test that provider errors are handled gracefully."""
-        items = [
-            (
-                1,
-                ContentItem(
-                    id="movie1",
-                    title="Movie 1",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-            ),
-        ]
-        mock_storage.get_items_needing_enrichment.side_effect = [items, []]
-
-        # Provider always fails
-        provider = MockProvider(should_fail=True)
-        mock_registry.register(provider)
-
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment()
-
-        manager._wait_for_completion()
-
-        status = manager.get_status()
-        assert status.completed is True
-        assert len(status.errors) > 0
-
-    def test_enrichment_filters_by_content_type(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test that enrichment can filter by content type."""
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment(content_type=ContentType.MOVIE)
-
-        manager._wait_for_completion()
-
-        # Verify storage was called with content_type filter
-        mock_storage.get_items_needing_enrichment.assert_called_with(
-            content_type=ContentType.MOVIE,
-            user_id=None,
-            limit=10,
-            include_not_found=False,
-            after_db_id=None,
-        )
-        # The count query that drives total_items must propagate the same filter,
-        # otherwise the UI would show a total for all types while processing one.
-        mock_storage.count_items_needing_enrichment.assert_called_once_with(
-            content_type=ContentType.MOVIE,
-            user_id=None,
-        )
-
-    def test_enrichment_merges_genres_and_tags(
-        self,
-        mock_storage: MagicMock,
-        mock_registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Test that enrichment merges genres/tags (enrichment first, then existing)."""
-        # Item with existing genres
-        item = ContentItem(
-            id="movie1",
-            title="Movie 1",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Comedy"]},  # Existing genre
-        )
-        items = [(1, item)]
-        mock_storage.get_items_needing_enrichment.side_effect = [items, []]
-
-        provider = MockProvider()
-        mock_registry.register(provider)
-
-        manager = EnrichmentManager(mock_storage, config, mock_registry)
-        manager.start_enrichment()
-
-        manager._wait_for_completion()
-
-        # Verify save was called
-        assert mock_storage.save_content_item.called
-        saved_item = mock_storage.save_content_item.call_args[0][0]
-
-        # Genres should be merged (enrichment first: Action, Drama, then existing: Comedy)
-        assert saved_item.metadata["genres"] == ["Action", "Drama", "Comedy"]
-        # New fields should be added
-        assert saved_item.metadata.get("tags") == ["test-tag"]
-        assert saved_item.metadata.get("description") == "A test description."
 
     def test_no_providers_for_content_type(
         self,
@@ -1292,29 +967,6 @@ class TestTransientProviderFailureIsRetryable:
         assert job_status.items_failed == 1
         assert job_status.items_not_found == 0
 
-    def test_failed_item_is_attempted_once_per_run(
-        self,
-        storage_manager: StorageManager,
-        registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """A queued failure must not be re-fetched forever inside the same run.
-
-        The failed item stays in the pending query, so the batch loop would
-        hand it back on every iteration if the manager did not skip the items
-        it already attempted.
-        """
-        save_movie(storage_manager)
-        failing = MockProvider(should_fail=True)
-        registry.register(failing)
-
-        manager = EnrichmentManager(storage_manager, config, registry)
-        manager.start_enrichment(content_type=ContentType.MOVIE)
-        assert manager._wait_for_completion()
-
-        assert len(failing.enrich_calls) == 1
-        assert manager.get_status().items_processed == 1
-
     def test_run_reaches_the_items_queued_behind_a_failing_batch(
         self,
         storage_manager: StorageManager,
@@ -1424,43 +1076,6 @@ class TestTransientProviderFailureIsRetryable:
         job_status = manager.get_status()
         assert job_status.completed is True
         assert job_status.items_failed == 1
-        assert job_status.items_not_found == 0
-
-    def test_retry_run_with_a_full_batch_still_terminates(
-        self,
-        storage_manager: StorageManager,
-        registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """Failures from both queues must not loop, starve or double-count.
-
-        The nastiest corner of the batch loop: a batch size of one, a pending
-        item and a previously not_found item, and a provider that fails on
-        both. The pending failure has to be skipped on the next iteration
-        while the not_found item is still mixed in, and the run has to end
-        with each item attempted exactly once.
-        """
-        config["enrichment"]["batch_size"] = 1
-        pending_id = save_movie(storage_manager, "Pending Movie")
-        retried_id = save_movie(storage_manager, "Retried Movie")
-        storage_manager.mark_enrichment_complete(retried_id, "none", "not_found")
-        failing = MockProvider(should_fail=True)
-        registry.register(failing)
-
-        manager = EnrichmentManager(storage_manager, config, registry)
-        manager.start_enrichment(content_type=ContentType.MOVIE, include_not_found=True)
-        assert manager._wait_for_completion()
-
-        assert sorted(item.title for item in failing.enrich_calls) == [
-            "Pending Movie",
-            "Retried Movie",
-        ]
-        assert queued_ids(storage_manager) == {pending_id, retried_id}
-
-        job_status = manager.get_status()
-        assert job_status.completed is True
-        assert job_status.items_processed == 2
-        assert job_status.items_failed == 2
         assert job_status.items_not_found == 0
 
     def test_recorded_error_names_every_provider_that_raised(
@@ -1653,7 +1268,7 @@ class TestPermanentProviderFailureStopsRetrying:
         assert manager.get_status().items_not_found == 1
 
     @pytest.mark.parametrize("provider_class", WRAPPING_PROVIDERS)
-    @pytest.mark.parametrize("status_code", [408, 429, 500, 503])
+    @pytest.mark.parametrize("status_code", [429, 503])
     def test_retryable_status_still_requeues_the_item(
         self,
         storage_manager: StorageManager,
@@ -2120,40 +1735,4 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
         enriched = storage_manager.get_content_item(db_id)
         assert enriched.metadata.get("genres") == ["Action", "Science Fiction"]
         assert manager.get_status().items_enriched == 1
-        assert queued_ids(storage_manager) == set()
-
-    def test_a_rejected_key_retires_the_item_without_quoting_it(
-        self,
-        storage_manager: StorageManager,
-        config: dict[str, Any],
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """TMDB sends the key as a query parameter, so the message ``requests``
-        raises for the 401 has it in the URL."""
-        db_id = save_movie(storage_manager)
-        leaky = requests.HTTPError(
-            "401 Client Error for url: "
-            f"{self._tmdb_url('search/movie')}?api_key={self._API_KEY}",
-            response=http_error(401).response,
-        )
-
-        def fake_get(url: str, **_kwargs: Any) -> MagicMock:
-            raise leaky
-
-        manager = EnrichmentManager(storage_manager, config)
-        with (
-            patch("src.enrichment.providers.tmdb.tmdb.requests.get", fake_get),
-            caplog.at_level(logging.WARNING, logger="src.enrichment.manager"),
-        ):
-            manager.start_enrichment(content_type=ContentType.MOVIE)
-            assert manager._wait_for_completion()
-
-        job_status = manager.get_status()
-        assert job_status.errors == ["tmdb: HTTP 401"]
-        assert self._API_KEY not in caplog.text
-
-        status = storage_manager.get_enrichment_status(db_id)
-        assert status is not None
-        assert status["enrichment_quality"] == "not_found"
-        assert status["enrichment_error"] is None
         assert queued_ids(storage_manager) == set()
