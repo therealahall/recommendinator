@@ -16,7 +16,7 @@ const emit = defineEmits<{
 <template>
   <div class="rec-card">
     <div class="rec-header">
-      <div>
+      <div class="rec-heading">
         <div class="rec-title">
           <span class="rec-rank">{{ rank }}.</span>
           {{ rec.title }}
