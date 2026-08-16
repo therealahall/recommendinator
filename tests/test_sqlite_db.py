@@ -1933,8 +1933,6 @@ class TestRatingSetOnce:
 
 
 class TestBlankReviewNeverFillsTheColumn:
-    """A whitespace review filled the column, blocking every later value."""
-
     @pytest.mark.parametrize("blank_review", ["", "   ", "\n"])
     def test_insert_stores_null_for_a_blank_review_regression(
         self, temp_db: SQLiteDB, blank_review: str
@@ -1951,7 +1949,10 @@ class TestBlankReviewNeverFillsTheColumn:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.review is None
+        assert retrieved.review is None, (
+            "a whitespace review filled the column, and once filled it blocked "
+            "every later value"
+        )
 
     def test_a_blank_review_does_not_overwrite_a_stored_one(
         self, temp_db: SQLiteDB
@@ -2756,9 +2757,6 @@ class TestCompleteContentItem:
     def test_blank_review_does_not_replace_the_stored_one_regression(
         self, temp_db: SQLiteDB, blank_review: str
     ) -> None:
-        """This door overwrites rather than fills, so a completion carrying a
-        blank replaced the review the user wrote — and, stored, that blank then
-        blocked the fill-only leg against every later one."""
         db_id = self._seeded(temp_db)
 
         temp_db.complete_content_item(
@@ -2773,7 +2771,11 @@ class TestCompleteContentItem:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.review == "Loved it"
+        assert retrieved.review == "Loved it", (
+            "this door overwrites rather than fills, so a completion carrying a "
+            "blank replaced the review the user wrote — and, stored, that blank "
+            "then blocked the fill-only leg against every later one"
+        )
 
     def test_completion_and_creation_are_one_transaction_regression(
         self, temp_db: SQLiteDB
@@ -4527,14 +4529,6 @@ class TestMissingColumnRaisesRegression:
     def test_null_joined_columns_still_read_as_absent_data(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A row the joins match nothing for reads back, it does not raise.
-
-        The other half of the same distinction: the LEFT JOINs hand every
-        detail and enrichment column over as NULL for an item that has neither
-        row, and that is real absent data rather than a broken query. Raising
-        here would break every item whose detail row a merge or an older
-        schema left behind.
-        """
         db_id = _insert_raw_item(
             temp_db, "no-joined-rows", "Unjoined Game", "unjoined game"
         )

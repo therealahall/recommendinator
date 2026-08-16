@@ -737,10 +737,6 @@ class TestFloatingTagsOnlyMoveForward:
         }
 
     def test_the_action_is_told_not_to_apply_latest_on_its_own(self) -> None:
-        """qs5i.9.8: `flavor.latest` defaults to `auto`, under which
-        metadata-action appends `latest` to any non-prerelease semver tag — so
-        a backport moved GHCR's `:latest` backwards and the next
-        `docker compose pull` downgraded the app."""
         metadata = _step_named(DOCKER, "publish", "Generate image metadata")
         fields = {
             field.strip()
@@ -749,8 +745,9 @@ class TestFloatingTagsOnlyMoveForward:
             if field.strip()
         }
         assert "latest=false" in fields, (
-            "metadata-action applies `latest` to every semver tag unless the "
-            f"flavor forbids it, so the guard decides nothing: {fields}"
+            "qs5i.9.8: metadata-action applies `latest` to every semver tag "
+            "unless the flavor forbids it, so a backport moved GHCR's `:latest` "
+            f"backwards and the next `docker compose pull` downgraded: {fields}"
         )
 
     def test_every_alias_freezes_when_the_main_ref_is_missing(
