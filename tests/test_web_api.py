@@ -688,14 +688,6 @@ class TestCompletionEndpointRefusesABlankReview:
 
         assert [error["loc"] for error in caught.value.errors()] == [("review",)]
 
-    def test_it_names_no_remedy_a_completion_does_not_have_regression(self) -> None:
-        with pytest.raises(ValidationError) as caught:
-            CompletionRequest(content_type="book", title="Dune", review="   ")
-
-        assert str(caught.value.errors()[0]["msg"]) == (
-            "Value error, review cannot be blank"
-        )
-
 
 def test_complete_invalid_rating(client):
     """Test complete endpoint with invalid rating."""

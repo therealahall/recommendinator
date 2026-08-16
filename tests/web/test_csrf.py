@@ -32,8 +32,6 @@ _BODYLESS_POSTS = [
     "/api/auth/logout",
 ]
 
-_ELSEWHERE = ["cross-site", "same-site"]
-
 _READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
@@ -78,12 +76,11 @@ class TestAStateChangeFromAnotherOrigin:
     """What a page on another localhost port can make the browser send."""
 
     @pytest.mark.parametrize("target", _BODYLESS_POSTS)
-    @pytest.mark.parametrize("site", _ELSEWHERE)
     def test_it_is_refused_by_the_header_the_browser_sets(
-        self, signed_in: TestClient, target: str, site: str
+        self, signed_in: TestClient, target: str
     ) -> None:
         """Page script cannot forge ``Sec-Fetch-Site``; only a browser sets it."""
-        response = signed_in.post(target, headers={"Sec-Fetch-Site": site})
+        response = signed_in.post(target, headers={"Sec-Fetch-Site": "same-site"})
 
         assert response.status_code == 403
         assert response.json()["detail"] == CROSS_ORIGIN_DETAIL

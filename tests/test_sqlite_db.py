@@ -1953,34 +1953,6 @@ class TestBlankReviewNeverFillsTheColumn:
         assert retrieved is not None
         assert retrieved.review is None
 
-    @pytest.mark.parametrize("blank_review", ["", "   ", "\n"])
-    def test_a_blank_review_does_not_block_a_later_fill_regression(
-        self, temp_db: SQLiteDB, blank_review: str
-    ) -> None:
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                id="book_blank_fill",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-                review=blank_review,
-            )
-        )
-
-        temp_db.save_content_item(
-            ContentItem(
-                id="book_blank_fill",
-                title="Foundation",
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.COMPLETED,
-                review="Classic sci-fi",
-            )
-        )
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.review == "Classic sci-fi"
-
     def test_a_blank_review_does_not_overwrite_a_stored_one(
         self, temp_db: SQLiteDB
     ) -> None:

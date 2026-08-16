@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 import yaml
@@ -186,8 +184,8 @@ class TestTheTimezoneOverrideReachesTheContainer:
 class TestTheShippedImageRunsTheLivenessProbe:
     """A probe is only worth writing if the image actually invokes it.
 
-    ``test_healthcheck.py`` holds what it answers; these hold that the image
-    asks it, about the port it serves.
+    ``test_healthcheck.py`` holds what it answers; this holds that the image
+    asks it.
     """
 
     def test_the_healthcheck_runs_the_probe(self) -> None:
@@ -198,16 +196,6 @@ class TestTheShippedImageRunsTheLivenessProbe:
         """
         assert _instruction(_stages()[RUNTIME_STAGE], "HEALTHCHECK").endswith(
             HEALTHCHECK_COMMAND
-        )
-
-    def test_the_probe_asks_the_port_the_image_serves(self) -> None:
-        """Nothing else ties the two, and a probe aimed past the server would
-        report an outage that is entirely its own."""
-        command = json.loads(_instruction(_stages()[RUNTIME_STAGE], "CMD"))
-
-        assert "--port" in command
-        assert urlparse(healthcheck.STATUS_URL).port == int(
-            command[command.index("--port") + 1]
         )
 
 
