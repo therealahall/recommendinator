@@ -122,11 +122,9 @@ describe('AddSourceModal', () => {
     const { wrapper } = await mountWithPlugins([calibrePlugin, filePlugin])
     const idInput = wrapper.find('#add-source-id')
 
-    // Plugin change updates the (unedited) id.
     await wrapper.find('#add-source-plugin').setValue('my_books')
     expect((idInput.element as HTMLInputElement).value).toBe('my_books')
 
-    // User edits the id — subsequent plugin changes must NOT clobber it.
     await idInput.setValue('custom-id')
     await wrapper.find('#add-source-plugin').setValue('calibre_web')
     expect((idInput.element as HTMLInputElement).value).toBe('custom-id')
@@ -164,7 +162,6 @@ describe('AddSourceModal', () => {
     expect(create).toHaveBeenCalledTimes(1)
     const payload = create.mock.calls[0][0]
     expect(payload.id).toBe('calibre-web')
-    // Secret must NOT be in the create payload.
     expect(payload.values).not.toHaveProperty('password')
     expect(payload.values).toMatchObject({
       base_url: 'http://cw',
@@ -193,13 +190,11 @@ describe('AddSourceModal', () => {
     await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
     await flushPromises()
 
-    // Source exists → list refreshed (created emitted) but modal stays open.
     expect(wrapper.emitted('created')).toEqual([['calibre-web']])
     expect(wrapper.emitted('close')).toBeFalsy()
     const alert = wrapper.find('.add-source-error')
     expect(alert.exists()).toBe(true)
     expect(alert.text()).toContain('was created')
-    // Names the actual failing field (this plugin's secret is "password").
     expect(alert.text()).toContain('password')
   })
 
@@ -214,7 +209,6 @@ describe('AddSourceModal', () => {
 
     await wrapper.find('#add-source-id').setValue('opt')
     await wrapper.find('#add-source-field-base_url').setValue('http://x')
-    // Leave the optional "token" secret empty.
     await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
     await flushPromises()
 
@@ -239,14 +233,17 @@ describe('AddSourceModal', () => {
         .setValue('hunter2')
       await wrapper.find('[data-testid="add-source-submit"]').trigger('click')
       await flushPromises()
-      return wrapper
+      return { wrapper, store }
     }
 
-    it('keeps at least one focusable element so the focus trap cannot collapse', async () => {
+    it('keeps the submit button focusable so the trap holds', async () => {
       // `disabled` everywhere left none, so Tab walked out (WCAG 2.4.3).
-      const wrapper = await mountMidSubmit()
+      const { wrapper, store } = await mountMidSubmit()
 
-      expect(wrapper.element.querySelectorAll(FOCUSABLE).length).toBeGreaterThan(0)
+      expect(store.createSource).toHaveBeenCalled()
+      expect(
+        wrapper.find('[data-testid="add-source-submit"]').element.matches(FOCUSABLE),
+      ).toBe(true)
     })
   })
 })
