@@ -161,7 +161,7 @@ Note: Use `command make check` (not bare `make check`) to bypass a zsh shell sna
 
 ### Agent-Enforced Standards
 
-Review tooling learns this project's rules by reading this CLAUDE.md and the docs it links — so this project's specifics (Python version, `config.yaml` rules, coverage target, regression-test format, frontend conventions) live in those docs, and keeping them current is what keeps review accurate.
+Review tooling learns this project's rules by reading this CLAUDE.md and the docs it links — so this project's specifics (Python version, `config.yaml` rules, regression-test format, frontend conventions) live in those docs, and keeping them current is what keeps review accurate.
 
 One review agent is committed here: **parity-review** (`.claude/agents/parity-review.md`) — CLI/web feature parity. It is native deliberately: parity is this repository's invariant, the agent enumerates this repository's capability surface, and it means nothing anywhere else. It only resolves for a session started at the repository root, where Claude Code discovers `.claude/agents/`.
 
