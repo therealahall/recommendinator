@@ -237,7 +237,7 @@ class TestResolveSourcePath:
         — the one outcome the NUL-byte branch above exists to prevent.
         """
         with pytest.raises(PathNotAllowed, match="cannot be resolved"):
-            unknown_user = "~nosuchuser/books.csv"  # self-contained: test subject
+            unknown_user = "~nosuchuser/books.csv"
             resolve_source_path(unknown_user)
 
 
@@ -313,6 +313,15 @@ class TestEveryNetworkPluginGuardsItsSecret:
             if any(field.name == "url" for field in plugin.get_config_schema())
         }
         assert has_a_url == {param.id for param in _URL_PLUGINS}
+
+    @pytest.mark.parametrize("plugin", _URL_PLUGINS)
+    def test_the_url_is_credential_bound_when_the_plugin_stores_a_secret(
+        self, plugin: SourcePlugin
+    ) -> None:
+        schema = plugin.get_config_schema()
+        assert any(field.sensitive for field in schema)
+        url_field = next(field for field in schema if field.name == "url")
+        assert url_field.credential_bound is True
 
     @pytest.mark.parametrize("plugin", _URL_PLUGINS)
     def test_validate_refuses_a_url_that_would_read_local_files(
