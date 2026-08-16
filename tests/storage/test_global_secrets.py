@@ -37,10 +37,8 @@ class TestMigrateConfigSecrets:
 
         migrate_config_secrets(config, storage)
 
-        # Decryptable via the credentials store.
         assert read_secret(storage, _TMDB_KEY) == "yaml_key"
 
-        # Stored ciphertext must not be the plaintext value.
         source_id, credential_key = secret_ref(_TMDB_KEY)
         with storage.connection() as conn:
             row = conn.execute(
@@ -54,7 +52,6 @@ class TestMigrateConfigSecrets:
     def test_strips_secret_from_config_after_migration(
         self, storage: StorageManager
     ) -> None:
-        """The plaintext leaf is removed from the in-memory config, siblings kept."""
         config = {
             "enrichment": {
                 "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
@@ -65,13 +62,11 @@ class TestMigrateConfigSecrets:
 
         provider = config["enrichment"]["providers"]["tmdb"]
         assert "api_key" not in provider
-        # Non-sensitive siblings survive the sweep.
         assert provider["enabled"] is True
 
     def test_never_persists_plaintext_in_settings_table(
         self, storage: StorageManager
     ) -> None:
-        """The secret must not leak into the plaintext settings store."""
         config = {
             "enrichment": {
                 "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
@@ -83,7 +78,7 @@ class TestMigrateConfigSecrets:
         assert "yaml_key" not in str(storage.list_settings())
 
     def test_existing_db_secret_not_clobbered_by_stale_yaml(
-        self, storage: StorageManager
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A readable DB secret wins; a stale YAML copy neither overwrites nor lingers."""
         storage.set_global_secret(_TMDB_KEY, "db_key")
@@ -98,6 +93,8 @@ class TestMigrateConfigSecrets:
 
         assert read_secret(storage, _TMDB_KEY) == "db_key"
         assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
+        assert "stale_key" not in caplog.text, "config plaintext reached the log"
+        assert "db_key" not in caplog.text, "the decrypted secret reached the log"
 
     def test_idempotent_across_repeated_boots(self, storage: StorageManager) -> None:
         """Re-running the sweep leaves the stored secret unchanged."""

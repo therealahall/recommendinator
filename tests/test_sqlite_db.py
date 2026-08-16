@@ -4545,19 +4545,11 @@ class TestIgnoredSignalFetchRegression:
 
 
 class TestMissingColumnRaisesRegression:
-    """A column the row does not carry raises instead of reading as absent.
+    """A NULL joined column reads as absent data, not as a missing column.
 
-    Bug: metadata could go missing from items, and every item could read back
-    as not enriched, with nothing in the logs and no failing test unless one
-    happened to assert that exact field.
-
-    Root cause: ``SQLiteDB._get_row_value`` caught KeyError/IndexError and
-    returned its default, so a column name absent from the SELECT was
-    indistinguishable from a column holding NULL.
-
-    Fix: the read path subscripts ``sqlite3.Row`` directly. Every row it is
-    handed comes from ``_CONTENT_ITEM_SELECT``, whose aliases are generated
-    from ``DETAIL_FIELDS``, so a name it does not carry is a bug and says so.
+    ``_get_row_value`` swallowed KeyError, making a column absent from the
+    SELECT indistinguishable from one holding NULL. The read path subscripts
+    ``sqlite3.Row`` directly.
     """
 
     def test_null_joined_columns_still_read_as_absent_data(
