@@ -13,7 +13,7 @@ from src.web.healthcheck import HEALTHY_STATUS, probe
 
 class _QuietHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
-        """Drop the per-request access log; it goes to the suite's stderr."""
+        """Drop the per-request access log, which goes to the suite's stderr."""
 
 
 @pytest.fixture()
@@ -44,10 +44,16 @@ def _unused_url() -> str:
 
 
 class TestTheProbeSurvivesTheAuthRequirement:
-    """Containers never left `unhealthy`: the probe read any `urlopen` raise as
-    death, and the authenticated `/api/status` answers 401, which raises."""
+    """Regression test: both shipped images reported unhealthy forever.
+
+    Bug reported: containers never left `unhealthy`.
+    Root cause: the probe read any `urlopen` raise as death; auth made 401,
+    which raises, the only answer.
+    Fix: it reads the status code.
+    """
 
     def test_a_401_is_healthy(self, answering) -> None:
+        assert HEALTHY_STATUS == 401
         assert probe(answering(HEALTHY_STATUS)) == 0
 
     @pytest.mark.parametrize("status", [200, 404, 500, 503])
