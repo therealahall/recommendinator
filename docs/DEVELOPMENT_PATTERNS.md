@@ -140,17 +140,6 @@ for the patterns it names.
   files, `tests/` or `.claude/`.** Not in prose, comments, docstrings, report
   strings or tests. Neither a reader nor CI can verify a path they cannot see.
   `src/` is exempt, because application code addresses the machine it runs on.
-- **The same guard bans the APIs that build a home-relative path**, so a
-  hostile-input test can trip on its own payload. Mark that line rather than
-  changing the payload. The reason is required, and the marker counts only when
-  it opens a comment (`#`, `//`, or `<!--`), one per language in scope: `#` for
-  Python, YAML and shell, `//` for TypeScript, `<!--` for Markdown. Quoting it in
-  prose exempts nothing. **A security test is never weakened to satisfy the
-  guard.**
-
-  ```python
-  scan_root = Path(configured).expanduser()  # self-contained: allow the API under test
-  ```
 
 ### Shell discipline
 

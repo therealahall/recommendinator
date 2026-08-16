@@ -105,18 +105,6 @@ for class methods are the exceptions.
   build files, `tests/` and `.claude/` must not point at a path outside the
   repository. Neither a reader nor CI can verify one. `src/` is exempt,
   because application code genuinely addresses the machine it runs on.
-- **The guard also bans the APIs that build a home-relative path**, so a
-  hostile-input test can trip on its own payload. When the outside path IS the
-  subject, exempt that one line with a comment marker. The reason is required,
-  and it counts only when the marker opens a comment (`#`, `//`, or `<!--`), one
-  per language in scope: `#` for Python, YAML and shell, `//` for TypeScript,
-  `<!--` for Markdown. Quoting it in prose exempts nothing.
-
-  ```python
-  scan_root = Path(configured).expanduser()  # self-contained: allow the API under test
-  ```
-
-  **Never water down a security test to satisfy the guard.**
 
 ## Testing
 
