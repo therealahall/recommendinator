@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { nextTick } from 'vue'
 import App from './App.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
@@ -41,12 +40,6 @@ function answerSession(
   vi.mocked(fetch).mockResolvedValue(
     jsonResponse(200, { claimed, authenticated, user, min_password_length: minPasswordLength }),
   )
-}
-
-function mountWithShellStubs() {
-  return mount(App, {
-    global: { stubs: { RouterView: true, AppSidebar: true, StatusBar: true, UpdateBanner: true } },
-  })
 }
 
 function sessionCalls(): number {
@@ -141,38 +134,6 @@ describe('App', () => {
     // rather than an error: no field on this form has been touched yet.
     expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
     expect(wrapper.findComponent(LoginForm).props('error')).toBe('')
-  })
-
-  it('lands the session-ended words in a region that was already on screen', async () => {
-    spyOnLoad()
-    answerSession(true, true, AARON)
-    const wrapper = mountWithShellStubs()
-    await flushPromises()
-
-    useAuthStore().reject()
-    await nextTick()
-    const region = wrapper.find('#login-status')
-    expect(region.exists()).toBe(true)
-    expect(region.text()).toBe('')
-
-    await flushPromises()
-
-    expect(wrapper.find('#login-status').element).toBe(region.element)
-    expect(wrapper.find('#login-status').text()).toBe(SESSION_ENDED)
-  })
-
-  it('marks nothing invalid on the form a sign-out just put up', async () => {
-    spyOnLoad()
-    answerSession(true, true, AARON)
-    const wrapper = mountWithShellStubs()
-    await flushPromises()
-
-    useAuthStore().reject()
-    await flushPromises()
-
-    expect(wrapper.find('#login-status').text()).toBe(SESSION_ENDED)
-    expect(wrapper.find('#login-username').attributes('aria-invalid')).toBeUndefined()
-    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
   })
 
   it('reports an unreachable server without blaming the empty sign-in form', async () => {

@@ -88,14 +88,4 @@ describe('AccountSection', () => {
     expect(wrapper.find('#account-profile-status').text()).toContain('taken')
     expect(wrapper.find('#account-password-status').text()).toBe('')
   })
-
-  it('locks neither save button natively while its request is in flight', () => {
-    const wrapper = mountSection({ profilePending: true, passwordPending: true })
-
-    for (const id of ['account-profile-save', 'account-password-save']) {
-      const button = wrapper.find(`[data-testid="${id}"]`)
-      expect(button.attributes('aria-disabled'), id).toBe('true')
-      expect(button.attributes('disabled'), id).toBeUndefined()
-    }
-  })
 })

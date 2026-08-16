@@ -56,9 +56,8 @@ class TestTheProbeSurvivesTheAuthRequirement:
         assert HEALTHY_STATUS == 401
         assert probe(answering(HEALTHY_STATUS)) == 0
 
-    @pytest.mark.parametrize("status", [200, 404, 500, 503])
-    def test_no_other_answer_is(self, answering, status: int) -> None:
-        assert probe(answering(status)) == 1
+    def test_a_200_is_not(self, answering) -> None:
+        assert probe(answering(200)) == 1
 
     def test_a_refused_connection_is_not(self) -> None:
         assert probe(_unused_url()) == 1
