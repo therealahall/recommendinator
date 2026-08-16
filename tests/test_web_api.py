@@ -3904,7 +3904,10 @@ class TestDependencyGuards:
         assert body["components"]["storage"] is True
 
     def test_every_api_route_is_classified(self, client, mock_components) -> None:
-        assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES
+        assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES, (
+            "a new handler is unlisted until someone classifies it, and the "
+            "dependency-free list exempts it from every guard case above"
+        )
 
 
 _WRONG_SESSION = "wrong-session-0f0e0d0c0b0a09080706050403020100"
@@ -3949,8 +3952,7 @@ class TestEveryApiRouteRequiresASession:
     def test_a_request_with_an_unknown_cookie_is_401(self, mock_components) -> None:
         """A dead session is refused like an absent one.
 
-        One route: the branch is inside ``require_session``, and the no-cookie
-        sweep proves every route carries it.
+        Every other route: ``test_the_sign_in_routes_are_the_only_exempt_ones``.
         """
         client = TestClient(
             mock_components["app"], cookies={SESSION_COOKIE: _WRONG_SESSION}

@@ -1,3 +1,5 @@
+"""``docs/CLI.md`` promises progress lines on stderr, CLI-wide."""
+
 from __future__ import annotations
 
 from typing import Any

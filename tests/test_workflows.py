@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
-
-from tests.workflow_layout import WORKFLOWS, workflow_jobs
+import yaml
 
 # parents[1] resolves /tests/test_workflows.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 CHANGELOG = _REPO_ROOT / "CHANGELOG.md"
 
 # A release heading and a bullet under it, as python-semantic-release writes
@@ -69,8 +69,13 @@ def _semantic_release_config() -> dict[str, Any]:
     return configured
 
 
+def _workflow_jobs(path: Path) -> dict[str, Any]:
+    jobs: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+    return jobs
+
+
 def _steps(path: Path, job: str) -> list[dict[str, Any]]:
-    steps: list[dict[str, Any]] = workflow_jobs(path)[job]["steps"]
+    steps: list[dict[str, Any]] = _workflow_jobs(path)[job]["steps"]
     return steps
 
 
@@ -217,7 +222,7 @@ def _decide_aliases(repository: Path, tmp_path: Path, tag: str) -> dict[str, str
     )
     # Held against what the job exports, not a literal: a name written here and
     # not exported there resolves to the empty string in publish's `enable=`.
-    assert set(decided) == set(workflow_jobs(DOCKER)["guard"]["outputs"]), decided
+    assert set(decided) == set(_workflow_jobs(DOCKER)["guard"]["outputs"]), decided
     return decided
 
 
