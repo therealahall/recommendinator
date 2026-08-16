@@ -77,3 +77,16 @@ class TestTheSeedSurvivesTheConfigMount:
 
         assert result.returncode == 0
         assert (config_dir / "config.yaml").read_text() == seeded
+
+    def test_an_existing_config_is_left_alone(self, config_dir: Path) -> None:
+        written = "storage:\n  database_path: /srv/library.db\n"
+        (config_dir / "config.yaml").write_text(written)
+        _seed_for(config_dir).write_text('web:\n  host: "127.0.0.1"\n')
+
+        result = _run(config_dir, "echo", "ok")
+
+        assert result.returncode == 0
+        assert (config_dir / "config.yaml").read_text() == written, (
+            "every restart reseeds the operator's config, so the app boots on an "
+            "empty library — docs/DOCKER.md promises restarts are safe"
+        )
