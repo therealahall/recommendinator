@@ -3892,8 +3892,9 @@ class TestDependencyGuards:
         body = response.json()
         assert body["status"] == "initializing"
         assert body["components"]["engine"] is False
-        # No caller reaches this route with storage down: it authenticated them.
-        assert body["components"]["storage"] is True
+        assert (
+            body["components"]["storage"] is True
+        ), "no caller reaches this route with storage down: it authenticated them"
 
     def test_every_api_route_is_classified(self, client, mock_components) -> None:
         assert _served_api_routes(mock_components["app"]) == _CLASSIFIED_API_ROUTES, (

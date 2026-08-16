@@ -29,8 +29,6 @@ class TestStaleEditableInstallRegression:
             )
 
     def test_real_pyproject_is_parseable_in_dev_tree(self) -> None:
-        """Asserted unconditionally: everywhere this runs, pyproject.toml IS
-        adjacent to ``src/``, so ``None`` is a layout regression, not a skip."""
         version = src._read_source_version()
         assert version is not None, "pyproject.toml is no longer adjacent to src/"
         parts = version.split(".")

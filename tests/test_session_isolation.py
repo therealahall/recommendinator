@@ -1,9 +1,3 @@
-"""The credential-key redirect the repository-root conftest installs.
-
-Dropped, a real ``StorageManager`` writes its encryption key beside its
-database — for a plugin test on the default path, the developer's ``data/``.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path

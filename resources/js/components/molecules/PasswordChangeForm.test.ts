@@ -87,4 +87,19 @@ describe('PasswordChangeForm', () => {
     expect(wrapper.find<HTMLInputElement>('#account-confirm-password').element.value).toBe('')
     expect(wrapper.find('#account-password-status').text()).toBe('Password changed.')
   })
+
+  it('never locks the button natively, so an accepted change cannot blur it', async () => {
+    const wrapper = mount(PasswordChangeForm)
+    const button = () => wrapper.find('[data-testid="account-password-save"]')
+    expect(button().attributes('disabled')).toBeUndefined()
+
+    await fillIn(wrapper, { current: 'hunter2', replacement: LONG, confirmation: LONG })
+    await wrapper.setProps({ saved: true })
+
+    expect(button().attributes('aria-disabled')).toBe('true')
+    expect(
+      button().attributes('disabled'),
+      'native `disabled` on save drops focus from the button to <body>, past the whole sidebar (WCAG 2.4.3)',
+    ).toBeUndefined()
+  })
 })
