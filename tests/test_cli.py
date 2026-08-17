@@ -15,7 +15,11 @@ from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
-from tests.factories import back_mock_preference_store, back_mock_settings_store
+from tests.factories import (
+    back_mock_preference_store,
+    back_mock_settings_store,
+    spec_sub_stores,
+)
 
 
 @pytest.fixture
@@ -47,6 +51,7 @@ def mock_components(mock_config):
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
+        spec_sub_stores(mock_storage_manager)
         mock_storage_manager.credentials.get_for_source.return_value = {}
         mock_storage_manager.sources.list.return_value = []
         # Let the real migrate_config_settings boot hook run against an empty

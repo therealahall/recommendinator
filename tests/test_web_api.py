@@ -74,6 +74,7 @@ from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
     booted_web_app,
+    spec_sub_stores,
 )
 
 
@@ -106,6 +107,7 @@ def mock_components(mock_config):
     reset_sync_manager()
 
     mock_storage_manager = Mock(spec=StorageManager)
+    spec_sub_stores(mock_storage_manager)
     mock_storage_manager.credentials.get_for_source.return_value = {}
     mock_storage_manager.sources.list.return_value = []
     mock_storage_manager.sources.get.return_value = None
