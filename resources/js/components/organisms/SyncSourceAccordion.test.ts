@@ -373,6 +373,28 @@ describe('SyncSourceAccordion', () => {
       expect(setSchedule.mock.calls.map((call) => call[1])).toEqual(['off', '6h'])
     })
 
+    it('keeps the chosen cadence on screen while the save is in flight', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      vi.spyOn(store, 'setSourceSchedule').mockImplementation(
+        () => new Promise<void>(() => {}),
+      )
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      await select.setValue('off')
+      await flushPromises()
+
+      expect((select.element as HTMLSelectElement).value).toBe('off')
+      expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toContain(
+        'Saving',
+      )
+    })
+
     it('reports a refused cadence change instead of swallowing it', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
@@ -392,8 +414,31 @@ describe('SyncSourceAccordion', () => {
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
       expect(status.text()).toContain('not migrated to the database')
       expect(status.attributes('role')).toBe('alert')
-      // The select still shows the refused value, so it has to carry the why.
+      // Back to the server's cadence, with the alert beside it saying why.
+      expect((select.element as HTMLSelectElement).value).toBe('6h')
       expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
+    })
+
+    it('drops a stale refusal when the row is expanded again', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(new Error('refused'))
+
+      const trigger = wrapper.find('button.accordion-trigger')
+      await trigger.trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+      await flushPromises()
+      await trigger.trigger('click')
+      await trigger.trigger('click')
+      await flushPromises()
+
+      const status = wrapper.get('[data-testid="cadence-status-steam"]')
+      expect(status.text()).toBe('')
+      expect(status.attributes('role')).toBe('status')
     })
   })
 

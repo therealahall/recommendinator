@@ -83,6 +83,9 @@ async function onToggleExpanded(value: boolean): Promise<void> {
   // a message left from the last visit would re-enter the accessibility tree
   // already populated — read as page content, never as a status (WCAG 4.1.3).
   data.setOAuthMessage(props.source.id, '')
+  clearScheduleTimer()
+  scheduleStatus.value = 'idle'
+  scheduleError.value = ''
   await ensureDetails()
 }
 
@@ -423,8 +426,7 @@ function clearScheduleTimer(): void {
 }
 
 const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
-// The listing carries the resolved key, and only the schema carries its label —
-// so a collapsed row reads the key until expanding it fetches the words.
+// Only the schema carries the labels, so a collapsed row reads the raw key.
 const intervalLabel = computed(
   () =>
     intervalOptions.value.find(
@@ -433,7 +435,7 @@ const intervalLabel = computed(
 )
 
 // Arrow-keying a closed <select> fires a change per keystroke, outrunning the
-// save. Dropping the ones mid-flight reverts the select under the user.
+// save, so the last one of a burst is queued rather than dropped.
 async function onScheduleChange(interval: string): Promise<void> {
   pendingInterval = interval
   if (scheduleStatus.value === 'saving') return
