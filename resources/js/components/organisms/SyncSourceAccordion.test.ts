@@ -11,12 +11,27 @@ import type {
   SyncSourceProgressResponse,
 } from '@/types/api'
 
+const TWO_HOURS_AGO = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+const IN_SIX_HOURS = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
+
 const baseSource = {
   id: 'steam',
   display_name: 'Steam',
   plugin_display_name: 'Steam',
   enabled: true,
   plugin_not_loaded: null,
+  sync_interval: '6h',
+  sync_interval_default: 'daily',
+  last_run_at: TWO_HOURS_AGO,
+  last_run_status: 'completed',
+  next_run_at: IN_SIX_HOURS,
+}
+
+const neverSyncedSource = {
+  ...baseSource,
+  last_run_at: null,
+  last_run_status: null,
+  next_run_at: null,
 }
 
 const disabledSource = {
@@ -28,6 +43,10 @@ const baseSchema: SourceSchemaResponse = {
   source_id: 'steam',
   plugin: 'steam',
   plugin_display_name: 'Steam',
+  sync_intervals: [
+    { key: 'off', label: 'Off' },
+    { key: '6h', label: 'Every 6 hours' },
+  ],
   fields: [
     {
       name: 'vanity_url',
@@ -57,6 +76,8 @@ const migratedConfig: SourceConfigResponse = {
   migrated_at: '2026-05-03T00:00:00Z',
   field_values: { vanity_url: 'me' },
   secret_status: { api_key: true },
+  sync_interval: '6h',
+  sync_interval_default: 'daily',
 }
 
 const yamlConfig: SourceConfigResponse = {
@@ -255,15 +276,200 @@ describe('SyncSourceAccordion', () => {
     expect(status.attributes('role')).toBe('alert')
   })
 
+  describe('schedule and run history', () => {
+    function failedRun(message: string) {
+      return {
+        source_id: 'steam',
+        started_at: TWO_HOURS_AGO,
+        finished_at: TWO_HOURS_AGO,
+        status: 'failed',
+        items_added: 0,
+        items_updated: 0,
+        items_unchanged: 0,
+        total_items: 0,
+        errors: [message],
+      }
+    }
+
+    it('states the last run, its outcome and the next one without expanding', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+
+      const line = wrapper.get('[data-testid="sync-schedule-steam"]').text()
+      expect(line).toContain('2 hours ago')
+      // In words, never a colour alone (WCAG 1.4.1).
+      expect(line).toContain('succeeded')
+      expect(line).toContain('in 6 hours')
+      expect(
+        wrapper.find('button.accordion-trigger').attributes('aria-expanded'),
+      ).toBe('false')
+    })
+
+    it('states a failed last run in words, not by colour alone', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: {
+          source: { ...baseSource, last_run_status: 'failed' },
+          syncing: false,
+        },
+      })
+
+      const line = wrapper.get('[data-testid="sync-schedule-steam"]')
+      expect(line.text()).toContain('failed')
+      expect(line.find('.sync-schedule-failed').exists()).toBe(true)
+    })
+
+    it('says a source has never synced rather than rendering the line blank', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: neverSyncedSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockResolvedValue([])
+
+      const line = wrapper.get('[data-testid="sync-schedule-steam"]')
+      expect(line.text()).toContain('Never synced')
+      // Nothing has run, so there is no due time to quote.
+      expect(line.text()).not.toContain('Next run')
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      // An empty history rendered nothing at all, which reads as a failed fetch.
+      expect(
+        wrapper.get('[data-testid="run-history-status-steam"]').text(),
+      ).toContain('No runs recorded yet')
+    })
+
+    it('offers the cadence options the schema response carried', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+
+      // Hardcoding these in TypeScript is how the two interfaces drift.
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      expect(select.findAll('option').map((option) => option.text())).toEqual([
+        'Off',
+        'Every 6 hours',
+      ])
+      expect((select.element as HTMLSelectElement).value).toBe('6h')
+    })
+
+    it('forwards a cadence change to store.setSourceSchedule', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      const setSchedule = vi
+        .spyOn(store, 'setSourceSchedule')
+        .mockResolvedValue(undefined)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+
+      expect(setSchedule).toHaveBeenCalledWith('steam', 'off')
+    })
+
+    it('reports a refused cadence change instead of swallowing it', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(
+        new Error('Source is not migrated to the database'),
+      )
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+      await flushPromises()
+
+      const status = wrapper.get('[data-testid="cadence-status-steam"]')
+      expect(status.text()).toContain('not migrated to the database')
+      expect(status.attributes('aria-live')).toBe('polite')
+    })
+
+    it('fetches the run history when the disclosure opens, not on page load', async () => {
+      // Spied before the mount, or the page-load half below asserts nothing.
+      const store = useDataStore()
+      const loadRuns = vi
+        .spyOn(store, 'loadSourceRuns')
+        .mockImplementation(async (id: string) => {
+          store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
+          return store.sourceRuns[id]
+        })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      await flushPromises()
+
+      expect(loadRuns).not.toHaveBeenCalled()
+
+      const toggle = wrapper.get('[data-testid="run-history-toggle-steam"]')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      await toggle.trigger('click')
+      await flushPromises()
+
+      expect(loadRuns).toHaveBeenCalledWith('steam')
+      expect(
+        wrapper.get('[data-testid="run-history-toggle-steam"]').attributes(
+          'aria-expanded',
+        ),
+      ).toBe('true')
+    })
+
+    it('shows the error text of a failed run, not just its counts', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockImplementation(async (id: string) => {
+        store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
+        return store.sourceRuns[id]
+      })
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      // As reported: a failed sync showed a count and no way to see the cause.
+      const history = wrapper.get('[data-testid="run-history-steam"]')
+      expect(history.text()).toContain('Steam API returned 401 Unauthorized')
+      expect(history.text()).toContain('failed')
+    })
+
+    it('reports a run-history read that failed instead of calling it no runs', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockRejectedValue(
+        new Error('Service Unavailable'),
+      )
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      const status = wrapper.get('[data-testid="run-history-status-steam"]')
+      expect(status.text()).toContain('Service Unavailable')
+      expect(status.text()).not.toContain('No runs recorded yet')
+    })
+  })
+
   // Each OAuth source below is named for its purpose, not for its plugin: the
   // connect flow is chosen by plugin and addressed by source id.
   describe('trakt device-code connect/disconnect', () => {
     const traktSource = {
+      ...baseSource,
       id: 'trakt_work',
       display_name: 'Trakt (work)',
       plugin_display_name: 'Trakt',
-      enabled: true,
-      plugin_not_loaded: null,
     }
     const traktConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -379,11 +585,10 @@ describe('SyncSourceAccordion', () => {
 
   describe('gog/epic connect/disconnect', () => {
     const gogSource = {
+      ...baseSource,
       id: 'gog_work',
       display_name: 'GOG (work)',
       plugin_display_name: 'GOG',
-      enabled: true,
-      plugin_not_loaded: null,
     }
     const gogConfig: SourceConfigResponse = {
       ...migratedConfig,
@@ -451,11 +656,10 @@ describe('SyncSourceAccordion', () => {
     // The Epic branch is `v-else-if="isEpic"`, so a third OAuth plugin cannot
     // silently inherit Epic's flow, origin and label.
     const epicSource = {
+      ...baseSource,
       id: 'epic_work',
       display_name: 'Epic (work)',
       plugin_display_name: 'Epic Games',
-      enabled: true,
-      plugin_not_loaded: null,
     }
     const epicConfig: SourceConfigResponse = {
       ...migratedConfig,

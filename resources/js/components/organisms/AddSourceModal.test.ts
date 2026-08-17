@@ -98,6 +98,8 @@ function createdConfig(sourceId: string, plugin = 'calibre_web'): SourceConfigRe
     migrated_at: '2026-07-22T00:00:00Z',
     field_values: {},
     secret_status: {},
+    sync_interval: 'daily',
+    sync_interval_default: 'daily',
   }
 }
 

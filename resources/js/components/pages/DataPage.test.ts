@@ -26,6 +26,11 @@ const enabledSource = {
   plugin_display_name: 'Steam',
   enabled: true,
   plugin_not_loaded: null,
+  sync_interval: 'daily',
+  sync_interval_default: 'daily',
+  last_run_at: null,
+  last_run_status: null,
+  next_run_at: null,
 }
 
 /** The umbrella run, carrying a progress slot only for the source it syncs. */
@@ -77,11 +82,10 @@ describe('DataPage rows during a Sync All', () => {
    */
   it('locks the Sync button of a source the run has not reached yet', async () => {
     const goodreads = {
+      ...enabledSource,
       id: 'goodreads',
       display_name: 'Goodreads',
       plugin_display_name: 'Goodreads',
-      enabled: true,
-      plugin_not_loaded: null,
     }
     mockPost.mockResolvedValue({
       message: 'Sync started for All Sources',

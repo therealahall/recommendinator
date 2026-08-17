@@ -31,6 +31,29 @@ export function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString()
 }
 
+/** Largest unit first, so the caller below stops at the first that fits. */
+const RELATIVE_UNITS: ReadonlyArray<[Intl.RelativeTimeFormatUnit, number]> = [
+  ['year', 31557600],
+  ['month', 2629800],
+  ['day', 86400],
+  ['hour', 3600],
+  ['minute', 60],
+]
+
+/** "2 hours ago", "in 4 hours" — for a timestamp the API sends as ISO 8601. */
+export function formatRelativeTime(iso: string, now: Date = new Date()): string {
+  const seconds = (new Date(iso).getTime() - now.getTime()) / 1000
+  // Pinned to 'en' like every other string in this UI, so the line does not
+  // change language with the host locale while the words around it do not.
+  const format = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) >= size) {
+      return format.format(Math.round(seconds / size), unit)
+    }
+  }
+  return format.format(Math.round(seconds), 'second')
+}
+
 export function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`
   const minutes = Math.floor(seconds / 60)
