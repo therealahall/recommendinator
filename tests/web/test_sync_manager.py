@@ -13,7 +13,7 @@ import pytest
 import requests
 from fastapi import FastAPI
 
-from src.ingestion.sync import ALL_SOURCES_LABEL
+from src.ingestion.sync import ALL_SOURCES_KEY
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from src.utils.dates import utc_now
@@ -833,7 +833,7 @@ class TestScheduledSyncDispatch:
 
         self._tick(storage, manager)
 
-        manager.is_running.assert_called_once_with(ALL_SOURCES_LABEL)
+        manager.is_running.assert_called_once_with(ALL_SOURCES_KEY)
         manager.start_sync.assert_not_called()
         assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 

@@ -40,9 +40,8 @@ _MAX_BACKOFF_DOUBLINGS = 5
 
 
 def resolve_interval(stored: str | None, plugin: SourcePlugin) -> str:
-    if stored is not None and stored in _PRESETS_BY_KEY:
-        return stored
-    return plugin.default_sync_interval
+    candidates = (stored or "", plugin.default_sync_interval)
+    return next((key for key in candidates if key in _PRESETS_BY_KEY), "off")
 
 
 def effective_interval(base_key: str, consecutive_failures: int) -> timedelta | None:

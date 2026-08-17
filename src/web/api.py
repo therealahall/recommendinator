@@ -49,7 +49,7 @@ from src.auth.trakt import (
 )
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
-from src.ingestion.sync import ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
+from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
 from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
@@ -1459,6 +1459,7 @@ def update_data(
     sync_manager = get_sync_manager()
     source = request.source
     source_label = humanize_source_id(source) if source != "all" else ALL_SOURCES_LABEL
+    job_key = ALL_SOURCES_KEY if source == "all" else source_label
 
     # Two POSTs racing on the same label both pass any pre-check here, so that
     # duplicate is left to ``start_sync``'s atomic check-and-set below.
@@ -1474,7 +1475,7 @@ def update_data(
             raise HTTPException(status_code=409, detail="A sync is already in progress")
         resolved = resolve_inputs(config, storage=storage)
     else:
-        if sync_manager.is_running(ALL_SOURCES_LABEL):
+        if sync_manager.is_running(ALL_SOURCES_KEY):
             raise HTTPException(status_code=409, detail="A sync is already in progress")
         # Single source: select the enabled, resolved entry matching ``source``.
         # Filtering the resolved list (not the YAML ``inputs`` map) is what lets
@@ -1533,7 +1534,7 @@ def update_data(
     # a scheduled one are the same job.
     dispatch = build_sync_job(
         sync_manager,
-        source_label,
+        job_key,
         resolved,
         storage,
         config,
@@ -1541,7 +1542,7 @@ def update_data(
     )
 
     success, message = sync_manager.start_sync(
-        source_label, dispatch.run, on_complete=dispatch.on_complete
+        job_key, dispatch.run, on_complete=dispatch.on_complete
     )
 
     if not success:

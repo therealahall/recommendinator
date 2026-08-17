@@ -32,7 +32,7 @@ from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.ingestion.paths import get_allowed_source_roots
-from src.ingestion.sync import SyncResult, SyncResultCallback
+from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
@@ -2573,20 +2573,20 @@ class TestSyncingEverythingWaitsForTheRunInFlight:
             job["source"] for job in manager.get_status()["jobs"]
         }
 
-    def test_one_source_is_refused_while_all_sources_is_already_syncing(
+    def test_only_the_umbrella_job_refuses_a_source_not_a_namesake_of_its_label(
         self, client: TestClient, mock_components: dict
     ) -> None:
         manager = get_sync_manager()
         with patch("src.web.sync_manager.threading.Thread"):
+            # The source id ``all_sources`` is legal, and humanizes to this.
             manager.start_sync(source="All Sources", sync_function=lambda _job: 0)
+            allowed = client.post("/api/update", json={"source": "goodreads_csv"})
+            manager.start_sync(source=ALL_SOURCES_KEY, sync_function=lambda _job: 0)
+            refused = client.post("/api/update", json={"source": "goodreads_csv"})
 
-        response = client.post("/api/update", json={"source": "goodreads_csv"})
-
-        assert response.status_code == 409
-        assert response.json()["detail"] == "A sync is already in progress"
-        assert "Goodreads CSV" not in {
-            job["source"] for job in manager.get_status()["jobs"]
-        }
+        assert allowed.status_code != 409, allowed.text
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == "A sync is already in progress"
 
 
 class TestUpdateEndpointParallelSync:

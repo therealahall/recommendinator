@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.ingestion.schedule import is_due
-from src.ingestion.sync import ALL_SOURCES_LABEL
+from src.ingestion.sync import ALL_SOURCES_KEY
 from src.sources.service import resolve_inputs, schedule_state
 from src.utils.dates import utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
@@ -29,7 +29,7 @@ def dispatch_due_syncs(
     sync_manager = get_sync_manager()
     # ``start_sync``'s per-label refusal cannot see a source syncing under the
     # umbrella label, so that half of the overlap check is asked here.
-    if sync_manager.is_running(ALL_SOURCES_LABEL):
+    if sync_manager.is_running(ALL_SOURCES_KEY):
         logger.debug("Skipping scheduler tick: a run over every source is in flight")
         return
 

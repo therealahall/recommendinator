@@ -57,8 +57,10 @@ SyncResultCallback = Callable[[SyncResult], None]
 
 
 #: What both interfaces call a run over every source. One spelling, because
-#: the web keys its job record on it and the CLI reports under it.
+#: the CLI reports under it and the web serves it as the umbrella job's name.
 ALL_SOURCES_LABEL = "All Sources"
+#: The umbrella's job key. Not the label: ``all_sources`` humanizes to that.
+ALL_SOURCES_KEY = "*all*"
 
 # Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag
 # (via Click IntRange) and the config-file path so a malicious or
