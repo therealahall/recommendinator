@@ -24,11 +24,7 @@ _NEWEST_FIRST = "ORDER BY started_at DESC, id DESC"
 
 
 def _stamp(moment: datetime | None) -> str | None:
-    """Render *moment* as ISO 8601 text of a fixed width.
-
-    The column is ordered as text, and ``isoformat`` drops a zero microseconds
-    field — a stamp one field short sorts by its offset sign instead.
-    """
+    """Fixed width: the column sorts as text, and a short stamp sorts by sign."""
     return moment.isoformat(timespec="microseconds") if moment is not None else None
 
 
@@ -48,8 +44,6 @@ def _to_dict(row: sqlite3.Row) -> SyncRunDict:
 
 
 class SyncRunStore:
-    """Each source's recent sync history. ``StorageManager.sync_runs``."""
-
     def __init__(self, sqlite_db: SQLiteDB) -> None:
         self._sqlite_db = sqlite_db
 
@@ -67,11 +61,7 @@ class SyncRunStore:
         total_items: int = 0,
         errors: Sequence[str] = (),
     ) -> int:
-        """Store one finished run, returning its id.
-
-        Everything past :data:`_MAX_RUNS_PER_SOURCE` for this source is pruned
-        in the same transaction, so a schedule cannot grow the table for good.
-        """
+        """Prunes past ``_MAX_RUNS_PER_SOURCE`` in the same transaction."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -114,7 +104,6 @@ class SyncRunStore:
     def list_for_source(
         self, user_id: int, source_id: str, limit: int
     ) -> list[SyncRunDict]:
-        """Return one source's runs, newest first."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -125,7 +114,6 @@ class SyncRunStore:
             return [_to_dict(row) for row in cursor.fetchall()]
 
     def list_recent(self, user_id: int, limit: int) -> list[SyncRunDict]:
-        """Return the user's runs across every source, newest first."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -136,7 +124,6 @@ class SyncRunStore:
             return [_to_dict(row) for row in cursor.fetchall()]
 
     def latest_per_source(self, user_id: int) -> dict[str, SyncRunDict]:
-        """Return each source's most recent run, keyed by source id."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -148,11 +135,7 @@ class SyncRunStore:
             return {row["source_id"]: _to_dict(row) for row in cursor.fetchall()}
 
     def consecutive_failures(self, user_id: int, source_id: str) -> int:
-        """Count the failures a source has run up since it last succeeded.
-
-        Skipped runs are left out entirely: a skip attempted nothing, so it
-        neither breaks the run of failures nor extends it.
-        """
+        """A skip attempted nothing, so it neither breaks nor extends the run."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
