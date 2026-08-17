@@ -78,6 +78,13 @@ export const useDataStore = defineStore('data', () => {
     return job?.status === 'running'
   }
 
+  /** What the server refuses an all-sources run against. */
+  const anySyncRunning = computed(
+    () =>
+      optimisticTriggers.value.size > 0 ||
+      syncJobs.value.some((job) => job.status === 'running'),
+  )
+
   function jobForLabel(label: string): SyncJobResponse | null {
     return jobsByLabel.value[label] || null
   }
@@ -197,10 +204,10 @@ export const useDataStore = defineStore('data', () => {
       startSyncPolling()
     } catch (err) {
       console.error('Sync trigger failed:', err)
-      syncMessage.value =
-        err instanceof ApiError
-          ? `Error: server returned ${err.status}`
-          : 'Error: unexpected failure — check the console'
+      syncMessage.value = apiErrorMessage(
+        err,
+        'Error: unexpected failure — check the console',
+      )
       const next = new Set(optimisticTriggers.value)
       next.delete(label)
       optimisticTriggers.value = next
@@ -373,7 +380,7 @@ export const useDataStore = defineStore('data', () => {
     oauthMessages.value = { ...oauthMessages.value, [sourceId]: message }
   }
 
-  function oauthErrorMessage(err: unknown, fallback: string): string {
+  function apiErrorMessage(err: unknown, fallback: string): string {
     // ApiError.message is the server's own ``detail`` when it sent one, which
     // is the only part of a refusal that tells the user what to do about it
     // ("GOG is not enabled for that source.").
@@ -396,7 +403,7 @@ export const useDataStore = defineStore('data', () => {
       setOAuthMessage(sourceId, data.message)
     } catch (err) {
       console.error('OAuth connect failed:', err)
-      setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: connection failed'))
+      setOAuthMessage(sourceId, apiErrorMessage(err, 'Error: connection failed'))
       return
     }
     // Rejects to the caller: the token is stored by now, so a stale panel would
@@ -438,7 +445,7 @@ export const useDataStore = defineStore('data', () => {
       setOAuthMessage(sourceId, 'Disconnected. You can reconnect below.')
     } catch (err) {
       console.error('OAuth disconnect failed:', err)
-      setOAuthMessage(sourceId, oauthErrorMessage(err, 'Error: disconnect failed'))
+      setOAuthMessage(sourceId, apiErrorMessage(err, 'Error: disconnect failed'))
       return
     }
     // Rejects to the caller: the credential is gone by now, so a stale panel
@@ -723,6 +730,7 @@ export const useDataStore = defineStore('data', () => {
     syncLoading,
     syncSourcesError,
     // Helpers
+    anySyncRunning,
     isSourceIdSyncing,
     jobForSourceId,
     oauthStatus,

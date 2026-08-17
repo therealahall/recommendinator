@@ -176,7 +176,7 @@ const orderedSources = computed(() => {
             <button
               type="button"
               class="btn btn-secondary sync-btn"
-              :disabled="data.isSourceIdSyncing('all')"
+              :disabled="data.anySyncRunning"
               :aria-label="
                 data.isSourceIdSyncing('all')
                   ? 'Syncing all sources — in progress'

@@ -343,7 +343,6 @@ class SyncSourceResponse(BaseModel):
     enabled: bool
     plugin_not_loaded: PluginNotLoadedResponse | None = None
     sync_interval: str
-    sync_interval_default: str
     last_run_at: str | None
     last_run_status: str | None
     next_run_at: str | None
@@ -722,7 +721,6 @@ class SourceConfigResponse(BaseModel):
     field_values: dict[str, Any]
     secret_status: dict[str, bool]
     sync_interval: str
-    sync_interval_default: str
 
 
 class SourceConfigUpdateRequest(BaseModel):
@@ -1449,8 +1447,8 @@ def update_data(
     """Start a background sync job for the specified data source.
 
     The sync runs in the background. Use GET /sync/status to monitor progress.
-    Multiple sources can sync concurrently — only a duplicate request for
-    the same source label (while still running) is rejected with 409.
+    Different sources can sync concurrently; a duplicate of a running label,
+    or anything overlapping the all-sources run, is rejected with 409.
 
     Args:
         request: Update request specifying the source to sync.
@@ -1476,6 +1474,8 @@ def update_data(
             raise HTTPException(status_code=409, detail="A sync is already in progress")
         resolved = resolve_inputs(config, storage=storage)
     else:
+        if sync_manager.is_running(ALL_SOURCES_LABEL):
+            raise HTTPException(status_code=409, detail="A sync is already in progress")
         # Single source: select the enabled, resolved entry matching ``source``.
         # Filtering the resolved list (not the YAML ``inputs`` map) is what lets
         # a DB-only source sync — and a disabled/unknown source yields no entry.
@@ -1633,7 +1633,6 @@ def get_sync_sources(
                 else None
             ),
             sync_interval=source.sync_interval,
-            sync_interval_default=source.sync_interval_default,
             last_run_at=source.last_run_at,
             last_run_status=source.last_run_status,
             next_run_at=source.next_run_at,
