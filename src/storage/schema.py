@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
@@ -41,6 +41,7 @@ class SourceConfigRow(TypedDict):
     plugin: str
     config_json: str
     enabled: int
+    sync_interval: str | None
     migrated_at: str
     updated_at: str
 
@@ -57,8 +58,29 @@ class SourceConfigDict(TypedDict):
     plugin: str
     config: dict[str, Any]
     enabled: bool
+    sync_interval: str | None
     migrated_at: str
     updated_at: str
+
+
+#: How a finished sync run ended. ``skipped`` is "nothing was attempted", which
+#: is why it neither breaks nor extends a run of failures.
+SyncRunStatus = Literal["completed", "failed", "skipped"]
+
+
+class SyncRunDict(TypedDict):
+    """One recorded run of one source's sync, as SyncRunStore returns it."""
+
+    id: int
+    source_id: str
+    started_at: str
+    finished_at: str | None
+    status: SyncRunStatus
+    items_added: int
+    items_updated: int
+    items_unchanged: int
+    total_items: int
+    errors: list[str]
 
 
 # Schema version tracked in SQLite's ``PRAGMA user_version``. Bumped when a
@@ -80,6 +102,9 @@ class SourceConfigDict(TypedDict):
 # (``src/storage/accounts.py``), and guards nothing: the unconditional ALTER
 # and CREATE add both, and an unclaimed instance is exactly the NULL columns.
 #
+# Version 7 records ``source_configs.sync_interval`` and the ``sync_runs``
+# table, and guards nothing for the same reason.
+#
 # A guarded step runs once per database, so the values it wrote never follow a
 # change to the function that produced them: changing
 # ``normalize_title_for_matching``, ``get_sort_title`` or ``build_search_text``
@@ -89,7 +114,7 @@ class SourceConfigDict(TypedDict):
 #
 # The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
 # and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -373,11 +398,39 @@ def create_schema(conn: sqlite3.Connection) -> None:
             plugin TEXT NOT NULL,
             config_json TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1,
+            -- Automatic-sync cadence. NULL is the plugin's own default;
+            -- 'off' is never.
+            sync_interval TEXT,
             migrated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, source_id)
         )
         """
+    )
+    _add_column_if_not_exists(cursor, "source_configs", "sync_interval", "TEXT")
+
+    # One row per finished sync of one source: what it moved, how it ended, and
+    # what it said when it failed. Pruned per source by SyncRunStore.record.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL,
+            started_at TIMESTAMP NOT NULL,
+            finished_at TIMESTAMP,
+            status TEXT NOT NULL,  -- completed, failed or skipped
+            items_added INTEGER NOT NULL DEFAULT 0,
+            items_updated INTEGER NOT NULL DEFAULT 0,
+            items_unchanged INTEGER NOT NULL DEFAULT 0,
+            total_items INTEGER NOT NULL DEFAULT 0,
+            errors_json TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sync_runs_source "
+        "ON sync_runs(user_id, source_id, started_at DESC)"
     )
 
     # Global/system settings: dotted leaf key -> JSON-encoded value. Holds ONLY
@@ -1327,6 +1380,7 @@ def _row_to_source_config(row: sqlite3.Row) -> SourceConfigRow:
         plugin=row["plugin"],
         config_json=row["config_json"],
         enabled=row["enabled"],
+        sync_interval=row["sync_interval"],
         migrated_at=row["migrated_at"],
         updated_at=row["updated_at"],
     )
@@ -1344,7 +1398,8 @@ def get_source_config(
     """
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT source_id, plugin, config_json, enabled, migrated_at, updated_at "
+        "SELECT source_id, plugin, config_json, enabled, sync_interval, "
+        "migrated_at, updated_at "
         "FROM source_configs WHERE user_id = ? AND source_id = ?",
         (user_id, source_id),
     )
@@ -1363,8 +1418,8 @@ def upsert_source_config(
     """Insert or update a migrated source config (UPSERT).
 
     On insert ``migrated_at`` is set to ``CURRENT_TIMESTAMP``. On update only
-    ``updated_at`` advances — ``migrated_at`` is preserved as the original
-    migration moment.
+    ``updated_at`` advances, and ``sync_interval`` is left alone: editing a
+    source's config must not clear the schedule it is on.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -1406,6 +1461,28 @@ def set_source_config_enabled(
     return cursor.rowcount > 0
 
 
+def set_source_config_schedule(
+    conn: sqlite3.Connection,
+    user_id: int,
+    source_id: str,
+    sync_interval: str | None,
+) -> bool:
+    """Set the automatic-sync cadence for a migrated source.
+
+    ``None`` restores the plugin's default cadence and ``"off"`` stops
+    automatic syncing. Returns ``True`` if a row was updated, ``False`` if the
+    source has not been migrated yet.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE source_configs SET sync_interval = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE user_id = ? AND source_id = ?",
+        (sync_interval, user_id, source_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def delete_source_config(
     conn: sqlite3.Connection,
     user_id: int,
@@ -1428,7 +1505,8 @@ def list_source_configs(
     """List every migrated source config for a user."""
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT source_id, plugin, config_json, enabled, migrated_at, updated_at "
+        "SELECT source_id, plugin, config_json, enabled, sync_interval, "
+        "migrated_at, updated_at "
         "FROM source_configs WHERE user_id = ? ORDER BY source_id",
         (user_id,),
     )
