@@ -49,14 +49,7 @@ from src.auth.trakt import (
 )
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
-from src.ingestion.sync import (
-    ALL_SOURCES_LABEL,
-    MAX_WORKERS_CEILING,
-    SyncResult,
-    execute_multi_source_sync,
-    resolve_max_workers,
-    sync_run_recorder,
-)
+from src.ingestion.sync import ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
 from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
@@ -141,7 +134,8 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.sync_manager import SyncJob, get_sync_manager
+from src.web.sync_dispatch import build_sync_job
+from src.web.sync_manager import get_sync_manager
 
 logger = logging.getLogger(__name__)
 
@@ -1549,97 +1543,19 @@ def update_data(
 
     sources_to_sync = [entry.source_id for entry in resolved]
 
-    # Check if auto-enrichment is enabled
-    enrichment_config = config.get("enrichment", {})
-    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
-        "auto_enrich_on_sync", False
+    # The same builder the scheduler dispatches through, so a requested run and
+    # a scheduled one are the same job.
+    dispatch = build_sync_job(
+        sync_manager,
+        source_label,
+        resolved,
+        storage,
+        config,
+        max_workers=request.max_workers,
     )
 
-    source_pairs = [(entry.plugin, entry.config) for entry in resolved]
-    record_run = sync_run_recorder(storage)
-
-    # Create the sync function that will run in background
-    def run_sync(job: SyncJob) -> int:
-        def progress_callback(
-            items_processed: int,
-            total_items: int | None,
-            current_item: str | None,
-            current_source: str | None,
-        ) -> None:
-            sync_manager.update_progress(
-                source=source_label,
-                items_processed=items_processed,
-                total_items=total_items,
-                current_item=current_item,
-                current_source=current_source,
-            )
-
-        def result_callback(result: SyncResult) -> None:
-            sync_manager.record_source_result(
-                source_label,
-                result.source_name,
-                items_added=result.items_added,
-                items_updated=result.items_updated,
-                items_unchanged=result.items_unchanged,
-            )
-            for error_message in result.errors:
-                sync_manager.add_error(source_label, result.source_name, error_message)
-            record_run(result)
-
-        max_workers = resolve_max_workers(config, override=request.max_workers)
-
-        results = execute_multi_source_sync(
-            sources=source_pairs,
-            storage_manager=storage,
-            progress_callback=progress_callback,
-            result_callback=result_callback,
-            mark_for_enrichment=auto_enrich,
-            user_id=1,
-            max_workers=max_workers,
-        )
-        return sum(result.items_synced for result in results)
-
-    # Determine content type for enrichment based on synced source config
-    # If syncing a single source with a configured content_type, use that type
-    # Otherwise (multiple sources or "all"), enrich all types
-    enrichment_content_type: ContentType | None = None
-    if len(resolved) == 1:
-        # str() at the read, not at the log call: config.yaml can put anything
-        # here, and ContentType refuses a non-member either way.
-        raw_content_type = resolved[0].config.get("content_type")
-        content_type_str = str(raw_content_type) if raw_content_type else ""
-        if content_type_str:
-            try:
-                enrichment_content_type = ContentType(content_type_str)
-            except ValueError:
-                logger.warning(
-                    "Invalid content_type '%s' for source %s, enriching all types",
-                    sanitize_for_log(content_type_str),
-                    sanitize_for_log(resolved[0].source_id),
-                )
-
-    # Create completion callback for auto-enrichment
-    def on_sync_complete() -> None:
-        if auto_enrich:
-            enrichment_manager = get_enrichment_manager()
-            started, message = enrichment_manager.start_enrichment(
-                storage_manager=storage,
-                config=config,
-                content_type=enrichment_content_type,
-            )
-            if started:
-                logger.info(
-                    "[ENRICHMENT] Auto-started after sync: %s",
-                    sanitize_for_log(message),
-                )
-            else:
-                logger.info(
-                    "[ENRICHMENT] Auto-start skipped: %s", sanitize_for_log(message)
-                )
-
-    # Start background sync
     success, message = sync_manager.start_sync(
-        source_label, run_sync, on_complete=on_sync_complete
+        source_label, dispatch.run, on_complete=dispatch.on_complete
     )
 
     if not success:
