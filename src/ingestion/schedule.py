@@ -56,13 +56,16 @@ def effective_interval(base_key: str, consecutive_failures: int) -> timedelta | 
 
 
 def next_due(
+    now: datetime,
     last_finished_at: datetime | None,
     base_key: str,
     consecutive_failures: int,
 ) -> datetime | None:
     interval = effective_interval(base_key, consecutive_failures)
-    if interval is None or last_finished_at is None:
+    if interval is None:
         return None
+    if last_finished_at is None:
+        return now
     return last_finished_at + interval
 
 
@@ -72,9 +75,5 @@ def is_due(
     base_key: str,
     consecutive_failures: int,
 ) -> bool:
-    interval = effective_interval(base_key, consecutive_failures)
-    if interval is None:
-        return False
-    if last_finished_at is None:
-        return True
-    return now >= last_finished_at + interval
+    due = next_due(now, last_finished_at, base_key, consecutive_failures)
+    return due is not None and now >= due

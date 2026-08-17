@@ -467,7 +467,7 @@ class TestScheduleEndpoint:
 
 
 class TestSourceListingReportsTheSchedule:
-    def test_an_unscheduled_source_reports_the_plugin_default_and_no_runs(
+    def test_an_unscheduled_source_reports_the_plugin_default_and_is_due_now(
         self, client: TestClient
     ) -> None:
         entry = _listing_entry(client, "my_books")
@@ -476,7 +476,16 @@ class TestSourceListingReportsTheSchedule:
         assert entry["sync_interval_default"] == "daily"
         assert entry["last_run_at"] is None
         assert entry["last_run_status"] is None
-        assert entry["next_run_at"] is None
+        assert entry["next_run_at"] is not None
+        assert datetime.fromisoformat(entry["next_run_at"]) <= datetime.now(UTC)
+
+    def test_a_source_switched_off_reports_no_next_run(
+        self, client: TestClient
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        client.put("/api/sync/sources/my_books/schedule", json={"interval": "off"})
+
+        assert _listing_entry(client, "my_books")["next_run_at"] is None
 
     def test_a_recorded_run_reaches_the_listing_with_a_due_time(
         self, client: TestClient, storage: StorageManager

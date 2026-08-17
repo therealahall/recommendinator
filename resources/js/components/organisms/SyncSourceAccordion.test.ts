@@ -31,6 +31,12 @@ const neverSyncedSource = {
   ...baseSource,
   last_run_at: null,
   last_run_status: null,
+  next_run_at: new Date().toISOString(),
+}
+
+const unscheduledSource = {
+  ...baseSource,
+  sync_interval: 'off',
   next_run_at: null,
 }
 
@@ -299,7 +305,17 @@ describe('SyncSourceAccordion', () => {
 
       const line = wrapper.get('[data-testid="sync-schedule-steam"]')
       expect(line.text()).toContain('Never synced')
-      expect(line.text()).not.toContain('Next run')
+      expect(line.text()).toContain('Next run due now')
+    })
+
+    it('reports no next run for a source switched off', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: unscheduledSource, syncing: false },
+      })
+
+      expect(wrapper.get('[data-testid="sync-schedule-steam"]').text()).not.toContain(
+        'Next run',
+      )
     })
 
     it('offers the schema cadence options and forwards a change', async () => {

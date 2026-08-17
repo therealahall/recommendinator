@@ -24,6 +24,7 @@ from src.ingestion.schedule import (
 )
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
+from src.utils.dates import utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -362,10 +363,14 @@ def _last_run_at(run: SyncRunDict | None) -> str | None:
     return run["finished_at"] or run["started_at"]
 
 
-def _next_run_at(interval: str, run: SyncRunDict | None, failures: int) -> str | None:
-    if run is None or run["finished_at"] is None:
-        return None
-    due = next_due(datetime.fromisoformat(run["finished_at"]), interval, failures)
+def _next_run_at(
+    interval: str, run: SyncRunDict | None, failures: int, now: datetime
+) -> str | None:
+    finished_at = run["finished_at"] if run is not None else None
+    last_finished_at = (
+        datetime.fromisoformat(finished_at) if finished_at is not None else None
+    )
+    due = next_due(now, last_finished_at, interval, failures)
     return due.isoformat() if due is not None else None
 
 
@@ -404,6 +409,7 @@ def get_available_sync_sources(
         latest_runs = storage.sync_runs.latest_per_source(user_id)
 
     sources: list[SyncSourceInfo] = []
+    now = utc_now()
     for source_id in sorted(set(inputs_config.keys()) | set(db_configs.keys())):
         configured_row = db_configs.get(source_id)
         yaml_entry = inputs_config.get(source_id)
@@ -448,7 +454,7 @@ def get_available_sync_sources(
                 last_run_status=(
                     latest_run["status"] if latest_run is not None else None
                 ),
-                next_run_at=_next_run_at(interval, latest_run, failures),
+                next_run_at=_next_run_at(interval, latest_run, failures, now),
             )
         )
     return sources
