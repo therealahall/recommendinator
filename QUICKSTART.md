@@ -166,6 +166,13 @@ python3.11 -m src.cli update --source my_books
 python3.11 -m src.cli update --source all       # every enabled source
 ```
 
+Or give a source a cadence and let it sync itself, from here or from the Data
+page. It runs only while the web server is up.
+
+```bash
+python3.11 -m src.cli source schedule my_books weekly   # off, hourly, 6h, daily, weekly
+```
+
 Without `auto_enrich_on_sync`, run enrichment yourself:
 
 ```bash

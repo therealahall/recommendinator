@@ -53,6 +53,7 @@ SQLite holds everything.
 | `source_configs` | Non-sensitive per-source config |
 | `settings` | Global config, dotted leaf key to JSON value, only what a user set |
 | `enrichment_status` | Enrichment tracking |
+| `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source |
 | `preference_profiles` | The generated per-user taste profile |
 
 #### User-owned fields
@@ -469,6 +470,11 @@ Library, Data, Preferences and Settings. Internal network only.
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
+- `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan beside the
+  config watcher, ticking once a minute and starting every source whose cadence
+  is due. No server, no scheduled sync. It and `POST /api/update` build the job
+  the same way, through `build_sync_job` in `src/web/sync_dispatch.py`, so a
+  scheduled run records and enriches exactly as a requested one does.
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
   `RequiredConfig`, `RequiredEngine`). Absent, it answers

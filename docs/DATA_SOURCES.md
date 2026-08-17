@@ -60,6 +60,13 @@ badge with **Replace** and **Clear** actions.
 it to, in `config.yaml` — see
 [SECURITY.md](SECURITY.md#where-file-imports-may-read).
 
+Each panel also carries an **Automatic sync** select, the peer of
+`source schedule <id> <interval>`. Until you set one, a source runs on its
+plugin's `default_sync_interval`: `daily` unless the plugin declares otherwise,
+and a plugin reading a file you maintain by hand declares something slower, like
+`weekly`. The web server is what runs the cadence, so nothing syncs on a
+schedule while only the CLI is in use.
+
 Full CLI reference: [CLI.md](CLI.md#source-management).
 
 ## Parallel sync
