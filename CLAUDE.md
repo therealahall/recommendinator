@@ -79,7 +79,10 @@ src/
 │                     # One exception: _isolation/ is not a plugin. It holds the test proving
 │                     # plugin-local tests get the root conftest's isolation, and its leading
 │                     # underscore is what keeps the plugin registry from importing it.
-├── storage/          # SQLite (settings table, global_secrets, settings_migration)
+├── storage/          # SQLite. manager.py is the facade: content items, users and
+│                     # preference config directly, everything else through a typed
+│                     # store (credentials, secrets, accounts, enrichment, settings,
+│                     # sources, profiles)
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
