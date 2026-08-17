@@ -273,7 +273,6 @@ class TestSourceSchedule:
         base_config: dict[str, Any],
     ) -> None:
         storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
-        _record_run(storage)
 
         scheduled = _invoke_with_mocks(
             cli_runner,
@@ -291,8 +290,6 @@ class TestSourceSchedule:
         assert scheduled.exit_code == 0
         assert json.loads(scheduled.output)["sync_interval"] == "6h"
         assert "6h" in shown.output
-        assert "2026-03-01T12:00:30" in shown.output
-        assert "completed" in shown.output
 
     def test_schedule_refuses_an_interval_outside_the_presets(
         self,

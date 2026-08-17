@@ -75,19 +75,6 @@ def _config_view(
     )
 
 
-def _last_run_cells(ctx: click.Context, source_id: str) -> tuple[str, str]:
-    """When *source_id* last ran and how — what its config view does not carry."""
-    listing = get_available_sync_sources(
-        ctx.obj.get("config") or {},
-        storage=ctx.obj.get("storage"),
-        user_id=_SOURCE_DEFAULT_USER_ID,
-    )
-    entry = next((info for info in listing if info.id == source_id), None)
-    if entry is None:
-        return "—", "—"
-    return entry.last_run_at or "—", entry.last_run_status or "—"
-
-
 @click.group()
 def source() -> None:
     """Manage data source configuration."""
@@ -180,15 +167,12 @@ def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
         click.echo(json.dumps(view, indent=2))
         return
 
-    last_run_at, last_run_status = _last_run_cells(ctx, source_id)
     rows: list[list[str]] = [
         ["plugin", view["plugin"]],
         ["enabled", str(view["enabled"])],
         ["migrated", str(view["migrated"])],
         ["migrated_at", str(view["migrated_at"] or "—")],
         ["sync_interval", view["sync_interval"]],
-        ["last_run_at", last_run_at],
-        ["last_run_status", last_run_status],
     ]
     for name, value in view["field_values"].items():
         rows.append([name, json.dumps(value)])
