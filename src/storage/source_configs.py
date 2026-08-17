@@ -69,11 +69,6 @@ class SourceConfigStore:
             return set_source_config_enabled(conn, user_id, source_id, enabled)
 
     def set_schedule(self, user_id: int, source_id: str, interval: str | None) -> bool:
-        """Set the automatic-sync cadence on an already-migrated source.
-
-        ``None`` restores the plugin's default cadence, ``"off"`` never syncs.
-        Returns ``False`` when the source has not been migrated yet.
-        """
         with self._sqlite_db.connection() as conn:
             return set_source_config_schedule(conn, user_id, source_id, interval)
 

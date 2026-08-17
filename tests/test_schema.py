@@ -428,9 +428,6 @@ class TestTheDerivedColumnBackfill:
         )
 
 
-# The ``source_configs`` shape a version-6 database carries: everything the
-# current one has bar ``sync_interval``. Written out rather than derived,
-# because the point is to be a build this one no longer is.
 _SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL = """
     CREATE TABLE source_configs (
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -446,16 +443,11 @@ _SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL = """
 
 
 class TestOpeningADatabaseThatPredatesSyncScheduling:
-    """The source configs an operator already migrated must survive the upgrade.
-
-    ``sync_interval`` arrives by ALTER, and rebuilding the table to add it
-    would take those rows with it.
-    """
+    """``sync_interval`` arrives by ALTER; a rebuild would drop migrated rows."""
 
     def test_a_version_six_database_keeps_its_source_configs(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The stored config is intact, and on no schedule of its own yet."""
         temp_db.execute(_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL)
         temp_db.execute(
             "INSERT INTO source_configs (user_id, source_id, plugin, config_json)"
@@ -474,7 +466,6 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
     def test_a_version_six_database_gains_the_sync_run_history(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The new table reaches an existing database, not just a fresh one."""
         temp_db.execute(_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL)
         temp_db.execute("PRAGMA user_version = 6")
         temp_db.commit()

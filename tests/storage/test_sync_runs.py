@@ -1,5 +1,3 @@
-"""Tests for the ``sync_runs`` table: one row per finished sync of one source."""
-
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -96,10 +94,6 @@ def test_latest_per_source_reports_each_source_newest_run(
 def test_consecutive_failures_counts_only_the_run_since_the_last_success(
     storage: StorageManager,
 ) -> None:
-    """A skip attempted nothing, so it neither resets nor extends the count:
-    reading it as an outcome would hide a source that has been failing all week,
-    or back off a source that is fine.
-    """
     _record(storage, minute=0, status="failed")
     _record(storage, minute=5, status="completed")
     assert storage.sync_runs.consecutive_failures(1, "steam") == 0
@@ -107,8 +101,7 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
     _record(storage, minute=10, status="failed")
     _record(storage, minute=15, status="failed")
     _record(storage, minute=20, status="skipped")
-    # A second source failing throughout: the count is asked per source, and a
-    # dropped source_id filter would back every source off because one broke.
+    # A dropped source_id filter would back every source off because one broke.
     _record(storage, "trakt", minute=12, status="failed")
     _record(storage, "trakt", minute=17, status="failed")
 
@@ -122,9 +115,7 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
 def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(
     storage: StorageManager,
 ) -> None:
-    """The other source's single run is asserted too: the prune is per source, so
-    a widened DELETE would take the whole table down to fifty rows.
-    """
+    """The trakt row is asserted because a widened DELETE would take it too."""
     _record(storage, "trakt", minute=0)
     for minute in range(60):
         _record(storage, "steam", minute=minute)

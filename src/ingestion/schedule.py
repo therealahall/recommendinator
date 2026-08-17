@@ -10,15 +10,12 @@ from src.ingestion.plugin_base import SourcePlugin
 
 @dataclass(frozen=True)
 class SyncIntervalPreset:
-    """``duration`` is None for the "off" preset."""
-
     key: str
     label: str
     duration: timedelta | None
 
 
-#: The CLI choice, the web validation and the frontend option list are all
-#: built from this, in this order, never from a copy.
+#: Every interface's option list, in this order, never a copy.
 SYNC_INTERVAL_PRESETS: tuple[SyncIntervalPreset, ...] = (
     SyncIntervalPreset("off", "Off", None),
     SyncIntervalPreset("hourly", "Every hour", timedelta(hours=1)),
@@ -35,24 +32,21 @@ _PRESETS_BY_KEY: dict[str, SyncIntervalPreset] = {
     preset.key: preset for preset in SYNC_INTERVAL_PRESETS
 }
 
-#: A source broken since last week is still retried today, so the operator's
-#: fix takes effect without them hunting for a "sync now" button.
+#: A source broken since last week is still retried today.
 MAX_BACKOFF_INTERVAL = timedelta(hours=24)
 
-# Five doublings clear the ceiling from any preset. Capping the exponent stops
-# 2**thousands raising OverflowError on a long-broken source.
+# Bounds the exponent below: 2**thousands raises OverflowError.
 _MAX_BACKOFF_DOUBLINGS = 5
 
 
 def resolve_interval(stored: str | None, plugin: SourcePlugin) -> str:
-    """Unset, or a preset this release dropped, falls back to the plugin's."""
     if stored is not None and stored in _PRESETS_BY_KEY:
         return stored
     return plugin.default_sync_interval
 
 
 def effective_interval(base_key: str, consecutive_failures: int) -> timedelta | None:
-    """Doubled per failure, capped, and the cap never shortens a longer base."""
+    """The cap never shortens a base longer than itself."""
     base = _PRESETS_BY_KEY[base_key].duration
     if base is None:
         return None
@@ -66,7 +60,6 @@ def next_due(
     base_key: str,
     consecutive_failures: int,
 ) -> datetime | None:
-    """None when off, or never run and so due now."""
     interval = effective_interval(base_key, consecutive_failures)
     if interval is None or last_finished_at is None:
         return None
