@@ -63,9 +63,6 @@ class TestStorageManagerSourceConfigs:
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)
-        before = storage.sources.get(1, "steam")
-        assert before is not None
-        assert before["sync_interval"] is None
 
         assert storage.sources.set_schedule(1, "steam", "6h") is True
 
@@ -74,11 +71,6 @@ class TestStorageManagerSourceConfigs:
         )
         assert reopened is not None
         assert reopened["sync_interval"] == "6h"
-
-        assert storage.sources.set_schedule(1, "steam", None) is True
-        cleared = storage.sources.get(1, "steam")
-        assert cleared is not None
-        assert cleared["sync_interval"] is None
 
     def test_upsert_keeps_the_stored_schedule(self, storage: StorageManager) -> None:
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)

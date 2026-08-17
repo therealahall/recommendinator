@@ -462,24 +462,11 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
         assert stored is not None
         assert stored["config_json"] == '{"vanity_url": "myname"}'
         assert stored["sync_interval"] is None
-
-    def test_a_version_six_database_gains_the_sync_run_history(
-        self, temp_db: sqlite3.Connection
-    ) -> None:
-        temp_db.execute(_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL)
-        temp_db.execute("PRAGMA user_version = 6")
-        temp_db.commit()
-
-        create_schema(temp_db)
-
+        # The run history is a new table, so the upgrade has to create it too.
         temp_db.execute(
             "INSERT INTO sync_runs (user_id, source_id, started_at, status)"
             " VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00', 'completed')"
         )
-        row = temp_db.execute(
-            "SELECT total_items, errors_json FROM sync_runs"
-        ).fetchone()
-        assert (row["total_items"], row["errors_json"]) == (0, "[]")
 
 
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:

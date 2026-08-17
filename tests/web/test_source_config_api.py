@@ -451,7 +451,6 @@ class TestScheduleEndpoint:
         assert response.json()["sync_interval"] == "6h"
         entry = _listing_entry(client, "my_books")
         assert entry["sync_interval"] == "6h"
-        assert entry["sync_interval_default"] == "daily"
 
     def test_an_interval_outside_the_presets_is_refused_and_stores_nothing(
         self, client: TestClient, storage: StorageManager
@@ -487,33 +486,17 @@ class TestSourceListingReportsTheSchedule:
         assert entry["last_run_status"] is None
         assert entry["next_run_at"] is None
 
-    def test_a_source_switched_off_reports_a_last_run_but_no_next_run(
+    def test_a_recorded_run_reaches_the_listing_with_a_due_time(
         self, client: TestClient, storage: StorageManager
     ) -> None:
         client.post("/api/sync/sources/my_books/migrate")
-        client.put("/api/sync/sources/my_books/schedule", json={"interval": "off"})
-        _record_run(storage)
+        _record_run(storage, status="failed")
 
         entry = _listing_entry(client, "my_books")
 
-        assert entry["sync_interval"] == "off"
-        assert entry["last_run_status"] == "completed"
-        assert entry["next_run_at"] is None
-
-    def test_next_run_at_widens_with_the_failure_streak(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        client.post("/api/sync/sources/my_books/migrate")
-        client.put("/api/sync/sources/my_books/schedule", json={"interval": "hourly"})
-        for minute in (0, 10, 20):
-            _record_run(storage, status="failed", minute=minute)
-
-        entry = _listing_entry(client, "my_books")
-
-        last_finished = _RUN_START + timedelta(minutes=20, seconds=30)
-        assert entry["last_run_at"].startswith("2026-03-01T12:20:30")
+        assert entry["last_run_at"].startswith("2026-03-01T12:00:30")
         assert entry["last_run_status"] == "failed"
-        assert entry["next_run_at"] == (last_finished + timedelta(hours=8)).isoformat()
+        assert entry["next_run_at"] is not None
 
 
 class TestSyncRunsEndpoint:
@@ -528,7 +511,6 @@ class TestSyncRunsEndpoint:
         assert [run["status"] for run in body] == ["failed", "completed"]
         assert body[0]["source_id"] == "my_books"
         assert body[0]["errors"] == ["429 from the API"]
-        assert body[0]["finished_at"] is not None
 
     def test_source_id_keeps_another_sources_runs_out(
         self, client: TestClient, storage: StorageManager

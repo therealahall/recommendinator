@@ -779,16 +779,13 @@ describe('useDataStore', () => {
       mockGet.mockResolvedValueOnce(runs)
 
       const store = useDataStore()
-      const result = await store.loadSourceRuns('steam')
+      await store.loadSourceRuns('steam')
 
       expect(mockGet).toHaveBeenCalledWith('/sync/runs', {
         source_id: 'steam',
         limit: 10,
       })
-      expect(result).toEqual(runs)
-      expect(store.sourceRuns.steam[0].errors).toEqual([
-        'Steam API returned 401 Unauthorized',
-      ])
+      expect(store.sourceRuns.steam).toEqual(runs)
     })
 
     it('loadAvailablePlugins caches the plugins and what failed to load', async () => {

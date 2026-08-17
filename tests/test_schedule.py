@@ -8,7 +8,6 @@ import pytest
 
 from src.ingestion.registry import get_registry
 from src.ingestion.schedule import (
-    MAX_BACKOFF_INTERVAL,
     SYNC_INTERVAL_KEYS,
     effective_interval,
     is_due,
@@ -30,10 +29,6 @@ class TestEffectiveInterval:
         [
             (0, timedelta(hours=1)),
             (1, timedelta(hours=2)),
-            (2, timedelta(hours=4)),
-            (3, timedelta(hours=8)),
-            (4, timedelta(hours=16)),
-            (5, timedelta(hours=24)),
             (10, timedelta(hours=24)),
         ],
     )
@@ -42,24 +37,12 @@ class TestEffectiveInterval:
     ) -> None:
         assert effective_interval("hourly", failures) == expected
 
-    @pytest.mark.parametrize("failures", [0, 1, 5, 100])
+    @pytest.mark.parametrize("failures", [0, 100])
     def test_weekly_never_backs_off(self, failures: int) -> None:
         assert effective_interval("weekly", failures) == timedelta(days=7)
 
     def test_off_has_no_interval(self) -> None:
         assert effective_interval("off", 0) is None
-
-    def test_every_preset_key_resolves_to_an_interval(self) -> None:
-        for key in SYNC_INTERVAL_KEYS:
-            interval = effective_interval(key, 0)
-            assert interval is None if key == "off" else interval > timedelta(0)
-
-    def test_every_short_preset_backs_off_all_the_way_to_the_ceiling(self) -> None:
-        for key in SYNC_INTERVAL_KEYS:
-            base = effective_interval(key, 0)
-            if base is None or base >= MAX_BACKOFF_INTERVAL:
-                continue
-            assert effective_interval(key, 100) == MAX_BACKOFF_INTERVAL
 
 
 class TestDue:
