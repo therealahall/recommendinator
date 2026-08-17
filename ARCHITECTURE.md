@@ -477,7 +477,7 @@ Library, Data, Preferences and Settings. Internal network only.
   scheduled run records and enriches exactly as a requested one does. A run over
   every source and a single-source one never overlap: the tick skips while the
   umbrella runs, and `POST /api/update` answers **409** to `all` while any job
-  is in flight.
+  is in flight, and to a single source while the umbrella is.
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
   `RequiredConfig`, `RequiredEngine`). Absent, it answers

@@ -27,7 +27,6 @@ const enabledSource = {
   enabled: true,
   plugin_not_loaded: null,
   sync_interval: 'daily',
-  sync_interval_default: 'daily',
   last_run_at: null,
   last_run_status: null,
   next_run_at: null,
@@ -124,6 +123,43 @@ describe('DataPage rows during a Sync All', () => {
     expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([
       ['/update', { source: 'all' }],
     ])
+    wrapper.unmount()
+  })
+
+  it('disables Sync All while a per-source run nobody triggered here is in flight', async () => {
+    const goodreads = {
+      ...enabledSource,
+      id: 'goodreads',
+      display_name: 'Goodreads',
+      plugin_display_name: 'Goodreads',
+    }
+    const steamJob: SyncJobResponse = {
+      ...allSourcesRunning(),
+      source: 'Steam',
+      sources: [],
+    }
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') {
+        return Promise.resolve([enabledSource, goodreads])
+      }
+      if (path === '/sync/status') {
+        return Promise.resolve({ status: 'running', jobs: [steamJob] })
+      }
+      if (path === '/enrichment/status') {
+        return Promise.resolve({ running: false, completed: false })
+      }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+    })
+    await flushPromises()
+
+    const button = wrapper.get('.sync-all-card button')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.text()).toBe('Sync All Sources')
     wrapper.unmount()
   })
 

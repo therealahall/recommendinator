@@ -53,7 +53,6 @@ describe('useDataStore', () => {
       enabled: true,
       plugin_not_loaded: null,
       sync_interval: 'off',
-      sync_interval_default: 'off',
       last_run_at: null,
       last_run_status: null,
       next_run_at: null,
@@ -99,11 +98,23 @@ describe('useDataStore', () => {
 
     expect(store.syncStatus).toBe('failed')
     expect(store.isSourceIdSyncing('steam')).toBe(false)
-    expect(store.syncMessage).toContain('server returned 503')
+    expect(store.syncMessage).toContain('503 Service Unavailable')
     // No poll timer left running to spin against a non-existent job.
     const callsBefore = mockGet.mock.calls.length
     await vi.advanceTimersByTimeAsync(2000)
     expect(mockGet.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('triggerSync reports the refusal detail rather than the status code', async () => {
+    mockPost.mockRejectedValue(
+      new ApiError(409, 'Conflict', { detail: 'A sync is already in progress' }),
+    )
+
+    const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
+    await store.triggerSync('steam')
+
+    expect(store.syncMessage).toBe('Error: A sync is already in progress')
   })
 
   it('triggerSync keeps the optimistic flag and starts polling on a successful start', async () => {
@@ -722,7 +733,6 @@ describe('useDataStore', () => {
         field_values: {},
         secret_status: {},
         sync_interval: '6h',
-        sync_interval_default: 'daily',
       })
       mockGet.mockResolvedValueOnce([
         {
@@ -842,7 +852,6 @@ describe('useDataStore', () => {
           field_values: {},
           secret_status: {},
           sync_interval: 'off',
-          sync_interval_default: 'off',
         },
       }
       store.oauthStatus = {

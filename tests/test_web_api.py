@@ -753,6 +753,7 @@ def test_update_endpoint_steam(client, mock_components):
         "enabled": True,
     }
     sync_manager = Mock(spec=SyncManager)
+    sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = (True, "Started sync for Steam")
 
     with patch("src.web.api.get_sync_manager", return_value=sync_manager):
@@ -986,6 +987,7 @@ class TestUpdateResolvesTheSourceOnceRegression:
             "enabled": True,
         }
         sync_manager = Mock(spec=SyncManager)
+        sync_manager.is_running.return_value = False
         sync_manager.start_sync.return_value = (True, "Started sync for Probe Me 42")
 
         with (
@@ -1016,6 +1018,7 @@ def _sync_a_source_typed(client, content_type):
         "enabled": True,
     }
     sync_manager = Mock(spec=SyncManager)
+    sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = (True, "Started sync for Typed")
     enrichment_manager = Mock(spec=WebEnrichmentManager)
     enrichment_manager.start_enrichment.return_value = (True, "started")
@@ -2490,6 +2493,7 @@ class TestUpdateEndpoint409Conflict:
         """409 surfaces start_sync's atomic check-and-set rejection."""
         with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
+            mock_manager.is_running.return_value = False
             mock_manager.start_sync.return_value = (
                 False,
                 "Sync already in progress for Goodreads CSV",
@@ -2566,6 +2570,21 @@ class TestSyncingEverythingWaitsForTheRunInFlight:
         assert response.status_code == 409
         assert response.json()["detail"] == "A sync is already in progress"
         assert "All Sources" not in {
+            job["source"] for job in manager.get_status()["jobs"]
+        }
+
+    def test_one_source_is_refused_while_all_sources_is_already_syncing(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            manager.start_sync(source="All Sources", sync_function=lambda _job: 0)
+
+        response = client.post("/api/update", json={"source": "goodreads_csv"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "A sync is already in progress"
+        assert "Goodreads CSV" not in {
             job["source"] for job in manager.get_status()["jobs"]
         }
 
