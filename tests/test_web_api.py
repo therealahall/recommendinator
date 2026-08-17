@@ -2494,10 +2494,7 @@ class TestUpdateEndpoint409Conflict:
         with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.is_running.return_value = False
-            mock_manager.start_sync.return_value = (
-                False,
-                "Sync already in progress for Goodreads CSV",
-            )
+            mock_manager.start_sync.return_value = (False, "Sync already in progress")
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
@@ -2507,9 +2504,7 @@ class TestUpdateEndpoint409Conflict:
                 response = client.post("/api/update", json={"source": "goodreads_csv"})
 
             assert response.status_code == 409
-            detail = response.json()["detail"]
-            assert "Sync already in progress" in detail
-            assert "Goodreads CSV" in detail
+            assert response.json()["detail"] == "A sync is already in progress"
             assert mock_manager.start_sync.call_args.args[0] == "Goodreads CSV"
 
     def test_update_allows_different_sources_concurrently(

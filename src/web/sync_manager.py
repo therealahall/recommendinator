@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, sync_run_failed
+from src.ingestion.sync import job_label, sync_run_failed
 from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -65,8 +65,6 @@ class SyncJob:
     source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        # The umbrella's key is a sentinel; clients match jobs by name.
-        job_name = ALL_SOURCES_LABEL if self.source == ALL_SOURCES_KEY else self.source
         progress_slots = list(self.source_progress.values())
         sources = [
             {
@@ -86,7 +84,7 @@ class SyncJob:
             for name, progress in sorted(self.source_progress.items())
         ]
         return {
-            "source": job_name,
+            "source": job_label(self.source),
             "status": self.status.value,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": (
@@ -177,8 +175,8 @@ class SyncManager:
         concurrently.
 
         Args:
-            source: Label that identifies the job (e.g. ``"Steam"`` or
-                ``"All Sources"``). Used as the dict key.
+            source: Label that identifies the job, e.g. ``"Steam"``. Used
+                as the dict key.
             sync_function: Function that performs the sync. Should accept a
                 SyncJob parameter for progress updates and return the count
                 of items processed.
@@ -192,7 +190,7 @@ class SyncManager:
         with self._lock:
             existing = self._jobs.get(source)
             if existing is not None and existing.status == SyncStatus.RUNNING:
-                return False, f"Sync already in progress for {source}"
+                return False, f"Sync already in progress for {job_label(source)}"
 
             self._jobs[source] = SyncJob(
                 source=source,
@@ -214,7 +212,7 @@ class SyncManager:
         )
         thread.start()
 
-        return True, f"Started sync for {source}"
+        return True, f"Started sync for {job_label(source)}"
 
     def _evict_history_locked(self) -> None:
         """Drop the oldest non-running jobs once history exceeds the cap.
@@ -250,7 +248,7 @@ class SyncManager:
         # ``source`` is the humanised source id POST /api/update supplies, and
         # nothing restricts its characters, so every sink below shares one
         # escaped copy.
-        safe_source = sanitize_for_log(source)
+        safe_source = sanitize_for_log(job_label(source))
 
         try:
             count = sync_function(job)
