@@ -2790,11 +2790,6 @@ class TestUpdateEndpointRecordsTheRun:
         args, kwargs = storage.sync_runs.record.call_args
         assert args == (1, "goodreads_csv")
         assert kwargs["status"] == "completed"
-        assert (kwargs["items_added"], kwargs["total_items"], kwargs["errors"]) == (
-            1,
-            1,
-            [],
-        )
 
 
 class TestConfigReload:

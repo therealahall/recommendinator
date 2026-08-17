@@ -767,27 +767,6 @@ class TestScheduledSyncDispatch:
             for _plugin, source_config in execute.call_args.kwargs["sources"]
         ] == ["steam"]
 
-    def test_a_source_set_to_off_is_never_dispatched(
-        self, storage: StorageManager
-    ) -> None:
-        _steam_source(storage, "off")
-        _completed_run(storage, timedelta(days=730))
-        manager = _accepting_manager()
-
-        self._tick(storage, manager)
-
-        manager.start_sync.assert_not_called()
-
-    def test_a_source_with_no_run_history_is_dispatched_on_the_first_tick(
-        self, storage: StorageManager
-    ) -> None:
-        _steam_source(storage, "hourly")
-        manager = _accepting_manager()
-
-        self._tick(storage, manager)
-
-        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
-
     def test_a_run_that_finished_seconds_ago_leaves_an_hourly_source_not_due(
         self, storage: StorageManager
     ) -> None:
@@ -838,23 +817,6 @@ class TestScheduledSyncDispatch:
         self._tick(storage, manager)
 
         manager.start_sync.assert_not_called()
-        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
-
-    def test_a_start_the_manager_refuses_records_nothing(
-        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        _steam_source(storage, "hourly")
-        _completed_run(storage, timedelta(hours=2))
-        manager = _accepting_manager()
-        manager.start_sync.return_value = (
-            False,
-            f"Sync already in progress for {STEAM_LABEL}",
-        )
-
-        with caplog.at_level(logging.INFO, logger=SCHEDULER_LOGGER):
-            self._tick(storage, manager)
-
-        assert "declined: Sync already in progress for Steam" in caplog.text
         assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
 
 

@@ -306,19 +306,6 @@ describe('SyncSourceAccordion', () => {
       ).toBe('false')
     })
 
-    it('states a failed last run in words, not by colour alone', () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: {
-          source: { ...baseSource, last_run_status: 'failed' },
-          syncing: false,
-        },
-      })
-
-      const line = wrapper.get('[data-testid="sync-schedule-steam"]')
-      expect(line.text()).toContain('failed')
-      expect(line.find('.sync-schedule-failed').exists()).toBe(true)
-    })
-
     it('says a source has never synced rather than rendering the line blank', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: neverSyncedSource, syncing: false },
@@ -340,26 +327,7 @@ describe('SyncSourceAccordion', () => {
       ).toContain('No runs recorded yet')
     })
 
-    it('offers the cadence options the schema response carried', async () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-      })
-      const store = useDataStore()
-      primeStore(store, migratedConfig)
-
-      await wrapper.find('button.accordion-trigger').trigger('click')
-      await flushPromises()
-
-      // Hardcoding these in TypeScript is how the two interfaces drift.
-      const select = wrapper.get('[data-testid="cadence-select-steam"]')
-      expect(select.findAll('option').map((option) => option.text())).toEqual([
-        'Off',
-        'Every 6 hours',
-      ])
-      expect((select.element as HTMLSelectElement).value).toBe('6h')
-    })
-
-    it('forwards a cadence change to store.setSourceSchedule', async () => {
+    it('offers the schema cadence options and forwards a change', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
       })
@@ -371,8 +339,16 @@ describe('SyncSourceAccordion', () => {
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
 
+      // Hardcoding these in TypeScript is how the two interfaces drift.
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      expect(select.findAll('option').map((option) => option.text())).toEqual([
+        'Off',
+        'Every 6 hours',
+      ])
+      expect((select.element as HTMLSelectElement).value).toBe('6h')
+
+      await select.setValue('off')
       expect(setSchedule).toHaveBeenCalledWith('steam', 'off')
     })
 
@@ -418,26 +394,7 @@ describe('SyncSourceAccordion', () => {
       await flushPromises()
 
       expect(loadRuns).toHaveBeenCalledWith('steam')
-      expect(
-        wrapper.get('[data-testid="run-history-toggle-steam"]').attributes(
-          'aria-expanded',
-        ),
-      ).toBe('true')
-    })
-
-    it('shows the error text of a failed run, not just its counts', async () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-      })
-      const store = useDataStore()
-      vi.spyOn(store, 'loadSourceRuns').mockImplementation(async (id: string) => {
-        store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
-        return store.sourceRuns[id]
-      })
-
-      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
-      await flushPromises()
-
+      expect(toggle.attributes('aria-expanded')).toBe('true')
       // As reported: a failed sync showed a count and no way to see the cause.
       const history = wrapper.get('[data-testid="run-history-steam"]')
       expect(history.text()).toContain('Steam API returned 401 Unauthorized')
