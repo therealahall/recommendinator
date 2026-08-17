@@ -158,8 +158,8 @@ class CalibreWebPlugin(SourcePlugin):
             source_id = config.get("_source_id", self.name)
             stored_password = ""
             if storage is not None:
-                db_creds = storage.get_credentials_for_source(user_id, source_id)
-                # get_credentials_for_source returns dict[str, str] today, but
+                db_creds = storage.credentials.get_for_source(user_id, source_id)
+                # get_for_source returns dict[str, str] today, but
                 # guard None defensively so a stub/alt store can't AttributeError.
                 stored_password = ((db_creds or {}).get("password") or "").strip()
             if not stored_password:

@@ -81,7 +81,7 @@ class TestMigrateConfigSecrets:
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A readable DB secret wins; a stale YAML copy neither overwrites nor lingers."""
-        storage.set_global_secret(_TMDB_KEY, "db_key")
+        storage.secrets.set(_TMDB_KEY, "db_key")
 
         config = {
             "enrichment": {
@@ -155,7 +155,7 @@ class TestGlobalSecretAccessors:
         self, storage: StorageManager
     ) -> None:
         """A set secret is decryptable and stored as ciphertext."""
-        storage.set_global_secret(_TMDB_KEY, "round_trip")
+        storage.secrets.set(_TMDB_KEY, "round_trip")
 
         assert read_secret(storage, _TMDB_KEY) == "round_trip"
 
@@ -170,9 +170,9 @@ class TestGlobalSecretAccessors:
 
     def test_clear_removes_secret(self, storage: StorageManager) -> None:
         """Clearing removes the secret; a second clear reports nothing removed."""
-        storage.set_global_secret(_TMDB_KEY, "to_clear")
+        storage.secrets.set(_TMDB_KEY, "to_clear")
 
-        assert storage.clear_global_secret(_TMDB_KEY) is True
-        assert storage.has_global_secret(_TMDB_KEY) is False
+        assert storage.secrets.clear(_TMDB_KEY) is True
+        assert storage.secrets.has(_TMDB_KEY) is False
         assert read_secret(storage, _TMDB_KEY) is None
-        assert storage.clear_global_secret(_TMDB_KEY) is False
+        assert storage.secrets.clear(_TMDB_KEY) is False

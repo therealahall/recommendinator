@@ -165,7 +165,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # Loud, but not fatal: refusing to start is what left the owner of an
         # instance locked out of it. The window closes the moment someone
         # completes setup, and only the first visitor can.
-        if not storage.account_is_claimed():
+        if not storage.accounts.is_claimed():
             logger.warning(
                 "No account on this instance yet — the first visitor to the web "
                 "UI claims it. Open it and create yours before anyone else can."
@@ -173,7 +173,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         # Nothing else deletes a lapsed session, so without this the table
         # grows for the life of the database.
-        purged = storage.purge_expired_sessions()
+        purged = storage.accounts.purge_expired_sessions()
         if purged:
             logger.info("Purged %d expired session(s)", purged)
 

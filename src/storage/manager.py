@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import functools
 import json
-import logging
-import os
 import sqlite3
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.models.content import (
     ConsumptionStatus,
@@ -20,34 +18,16 @@ from src.models.content import (
     EnrichmentFilter,
 )
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.accounts import (
-    AccountRecord,
-    account_is_claimed,
-    claim_account,
-    create_session,
-    describe_account,
-    lookup_session,
-    normalize_account_name,
-    purge_expired_sessions,
-    revoke_all_sessions,
-    revoke_other_sessions,
-    revoke_session,
-    set_password,
-    verify_password,
-)
-from src.storage.global_secrets import GLOBAL_SECRET_USER_ID, secret_ref
+from src.storage.accounts import AccountStore, normalize_account_name
+from src.storage.credentials import CredentialStore
+from src.storage.global_secrets import SecretStore
 from src.storage.schema import (
     EnrichmentStatusDict,
     SourceConfigDict,
     UserDict,
-    credential_row_exists,
-    delete_credential,
-    delete_credentials_for_source,
     delete_setting,
     delete_source_config,
     get_all_users,
-    get_credential,
-    get_credentials_for_source,
     get_enrichment_stats,
     get_enrichment_status,
     get_preference_profile,
@@ -60,7 +40,6 @@ from src.storage.schema import (
     mark_enrichment_failed,
     mark_item_needs_enrichment,
     reset_enrichment_status,
-    save_credential,
     save_preference_profile,
     set_setting,
     set_source_config_enabled,
@@ -83,11 +62,6 @@ from src.storage.sqlite_db import SQLiteDB
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
 
-if TYPE_CHECKING:
-    from src.storage.encryption import CredentialEncryptor
-
-logger = logging.getLogger(__name__)
-
 
 class UnknownUserError(LookupError):
     """A write named a user id no ``users`` row carries."""
@@ -97,52 +71,31 @@ class StorageManager:
     """Unified storage manager for the SQLite library."""
 
     def __init__(self, sqlite_path: Path) -> None:
-        """Initialize storage manager.
-
-        Args:
-            sqlite_path: Path to SQLite database file
-        """
         self.sqlite_db = SQLiteDB(sqlite_path)
-        self._credential_key_path = self._resolve_key_path(sqlite_path)
+        self._sqlite_path = sqlite_path
         # Serialises every read-then-write on this manager: each `with` site
         # below leaves a gap between read and write that WAL's concurrent
         # readers do not close, and the callers that collide there are parallel
         # sync workers and FastAPI threadpool workers alike.
         self._save_lock = threading.Lock()
 
-    @staticmethod
-    def _resolve_key_path(sqlite_path: Path) -> Path:
-        """Determine the credential encryption key file path.
-
-        Uses the ``RECOMMENDINATOR_KEY_PATH`` environment variable if set,
-        otherwise defaults to the same directory as the SQLite database.
-        Co-locating the key with the database ensures both survive container
-        restarts when ``data/`` is on a persistent volume.
-
-        Operators who want key-database separation (e.g., for backup
-        isolation) can set ``RECOMMENDINATOR_KEY_PATH`` to a separate path.
-
-        Args:
-            sqlite_path: Path to the SQLite database file.
-
-        Returns:
-            Resolved Path for the key file.
-        """
-        env_path = os.environ.get("RECOMMENDINATOR_KEY_PATH")
-        if env_path:
-            return Path(env_path)
-        return Path(sqlite_path).parent / ".credential_key"
+    # Sub-facades, as properties rather than attributes assigned above so that
+    # a ``Mock(spec=StorageManager)`` resolves them: mock reads the class.
 
     @functools.cached_property
-    def _encryptor(self) -> CredentialEncryptor:
-        """Lazy-loaded credential encryptor.
+    def credentials(self) -> CredentialStore:
+        """The encrypted per-source credentials."""
+        return CredentialStore(self.sqlite_db, self._sqlite_path, self._save_lock)
 
-        Deferred so that StorageManager construction does not touch the
-        filesystem or import cryptography until credentials are accessed.
-        """
-        from src.storage.encryption import CredentialEncryptor
+    @functools.cached_property
+    def secrets(self) -> SecretStore:
+        """The global settings secrets, kept in the same encrypted table."""
+        return SecretStore(self.credentials)
 
-        return CredentialEncryptor(self._credential_key_path)
+    @functools.cached_property
+    def accounts(self) -> AccountStore:
+        """The one web account and its sessions."""
+        return AccountStore(self.sqlite_db)
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -569,74 +522,6 @@ class StorageManager:
             raise UnknownUserError(f"No user with id {user_id}.")
         return renamed
 
-    # Account and session methods
-
-    def account_is_claimed(self) -> bool:
-        """Report whether anyone has set a password on this instance."""
-        with self.sqlite_db.connection() as conn:
-            return account_is_claimed(conn)
-
-    def describe_account(self, user_id: int) -> AccountRecord | None:
-        """Report a user's names and the state of its password, or None."""
-        with self.sqlite_db.connection() as conn:
-            return describe_account(conn, user_id)
-
-    def claim_account(
-        self, username: str, display_name: str | None, plaintext_password: str
-    ) -> UserDict:
-        """Claim the instance: name the account and give it a password.
-
-        Raises:
-            AccountAlreadyClaimedError: The account already has a password.
-            PasswordTooShortError: The password is under the floor.
-        """
-        with self.sqlite_db.connection() as conn:
-            return claim_account(conn, username, display_name, plaintext_password)
-
-    def set_password(self, user_id: int, plaintext: str) -> None:
-        """Replace a user's password.
-
-        Raises:
-            PasswordTooShortError: The password is under the floor.
-        """
-        with self.sqlite_db.connection() as conn:
-            set_password(conn, user_id, plaintext)
-
-    def verify_password(self, username: str, plaintext: str) -> UserDict | None:
-        """Return the user *plaintext* logs *username* in as, or None."""
-        with self.sqlite_db.connection() as conn:
-            return verify_password(conn, username, plaintext)
-
-    def create_session(self, user_id: int) -> str:
-        """Open a session and return its token, the only copy in plaintext."""
-        with self.sqlite_db.connection() as conn:
-            return create_session(conn, user_id)
-
-    def lookup_session(self, token: str) -> UserDict | None:
-        """Return the user *token* is signed in as, extending the session."""
-        with self.sqlite_db.connection() as conn:
-            return lookup_session(conn, token)
-
-    def revoke_session(self, token: str) -> None:
-        """End one session."""
-        with self.sqlite_db.connection() as conn:
-            revoke_session(conn, token)
-
-    def revoke_other_sessions(self, user_id: int, keep_token: str) -> None:
-        """End every session a user holds but the one making the request."""
-        with self.sqlite_db.connection() as conn:
-            revoke_other_sessions(conn, user_id, keep_token)
-
-    def revoke_all_sessions(self, user_id: int) -> None:
-        """End every session a user holds, on every device."""
-        with self.sqlite_db.connection() as conn:
-            revoke_all_sessions(conn, user_id)
-
-    def purge_expired_sessions(self) -> int:
-        """Delete the lapsed sessions, returning how many were deleted."""
-        with self.sqlite_db.connection() as conn:
-            return purge_expired_sessions(conn)
-
     def get_user_preference_config(self, user_id: int) -> UserPreferenceConfig:
         """Load user preference config from DB.
 
@@ -913,160 +798,6 @@ class StorageManager:
         """
         with self.sqlite_db.connection() as conn:
             return save_preference_profile(conn, user_id, profile_json)
-
-    # Credential methods (encrypted at rest)
-
-    def get_credential(self, user_id: int, source_id: str, key: str) -> str | None:
-        """Get a decrypted credential value.
-
-        Args:
-            user_id: User ID.
-            source_id: Source identifier (e.g. "gog").
-            key: Credential field name (e.g. "refresh_token").
-
-        Returns:
-            Decrypted plaintext value, or None if not found.
-        """
-        with self.sqlite_db.connection() as conn:
-            encrypted = get_credential(conn, user_id, source_id, key)
-        if encrypted is None:
-            return None
-        from cryptography.fernet import InvalidToken
-
-        try:
-            return self._encryptor.decrypt(encrypted)
-        except InvalidToken:
-            logger.error(
-                "Failed to decrypt credential for source=%s key=%s — "
-                "possible key mismatch or data corruption",
-                source_id,
-                key,
-            )
-            return None
-
-    def save_credential(
-        self, user_id: int, source_id: str, key: str, value: str
-    ) -> None:
-        """Encrypt and save a credential value.
-
-        Args:
-            user_id: User ID.
-            source_id: Source identifier.
-            key: Credential field name.
-            value: Plaintext value to encrypt and store.
-        """
-        encrypted = self._encryptor.encrypt(value)
-        with self._save_lock, self.sqlite_db.connection() as conn:
-            save_credential(conn, user_id, source_id, key, encrypted)
-
-    def get_credentials_for_source(
-        self, user_id: int, source_id: str
-    ) -> dict[str, str]:
-        """Get all decrypted credentials for a source.
-
-        Args:
-            user_id: User ID.
-            source_id: Source identifier.
-
-        Returns:
-            Dict mapping credential key to decrypted plaintext value.
-        """
-        with self.sqlite_db.connection() as conn:
-            encrypted_map = get_credentials_for_source(conn, user_id, source_id)
-        from cryptography.fernet import InvalidToken
-
-        result: dict[str, str] = {}
-        for k, v in encrypted_map.items():
-            try:
-                result[k] = self._encryptor.decrypt(v)
-            except InvalidToken:
-                logger.error(
-                    "Failed to decrypt credential key=%s for source=%s",
-                    k,
-                    source_id,
-                )
-        return result
-
-    def credential_row_exists(self, user_id: int, source_id: str, key: str) -> bool:
-        """Check if a credential row exists in the DB (without decrypting).
-
-        Args:
-            user_id: User ID.
-            source_id: Source identifier.
-            key: Credential field name.
-
-        Returns:
-            True if a row exists in the credentials table.
-        """
-        with self.sqlite_db.connection() as conn:
-            return credential_row_exists(conn, user_id, source_id, key)
-
-    def delete_credential(self, user_id: int, source_id: str, key: str) -> bool:
-        """Delete a credential row.
-
-        Args:
-            user_id: User ID.
-            source_id: Source identifier.
-            key: Credential field name.
-
-        Returns:
-            True if a row was deleted, False if not found.
-        """
-        with self.sqlite_db.connection() as conn:
-            return delete_credential(conn, user_id, source_id, key)
-
-    def delete_credentials_for_source(self, user_id: int, source_id: str) -> int:
-        """Delete every stored credential for a source.
-
-        Keyed by source, not by a plugin's current schema: an unregistered
-        plugin or a no-longer-sensitive field must not leave a row behind.
-
-        Returns:
-            Number of credential rows deleted.
-        """
-        with self.sqlite_db.connection() as conn:
-            return delete_credentials_for_source(conn, user_id, source_id)
-
-    # Global secret methods (encrypted; write-only surface for settings UI/CLI)
-
-    def set_global_secret(self, key: str, value: str) -> None:
-        """Encrypt and store a global settings secret by its registry key.
-
-        Routes through the encrypted ``credentials`` table under the reserved
-        ``settings:`` namespace (see :mod:`src.storage.global_secrets`).
-
-        Args:
-            key: Dotted registry leaf key (e.g. ``enrichment.providers.tmdb.api_key``).
-            value: Plaintext secret to encrypt and store.
-        """
-        source_id, credential_key = secret_ref(key)
-        self.save_credential(GLOBAL_SECRET_USER_ID, source_id, credential_key, value)
-
-    def clear_global_secret(self, key: str) -> bool:
-        """Delete a global settings secret.
-
-        Args:
-            key: Dotted registry leaf key.
-
-        Returns:
-            True if a stored secret was removed, False if none existed.
-        """
-        source_id, credential_key = secret_ref(key)
-        return self.delete_credential(GLOBAL_SECRET_USER_ID, source_id, credential_key)
-
-    def has_global_secret(self, key: str) -> bool:
-        """Return True when a global settings secret is stored (no decryption).
-
-        Args:
-            key: Dotted registry leaf key.
-
-        Returns:
-            True if a credential row exists for the secret.
-        """
-        source_id, credential_key = secret_ref(key)
-        return self.credential_row_exists(
-            GLOBAL_SECRET_USER_ID, source_id, credential_key
-        )
 
     # Source config methods (DB-backed per-source config after migration)
 

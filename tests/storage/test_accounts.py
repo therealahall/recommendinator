@@ -596,50 +596,55 @@ class TestTheStorageManagerSurface:
 
     def test_a_claim_and_a_login_round_trip(self, storage: StorageManager) -> None:
         """Setup, then sign in, then sign out — the whole surface of a session."""
-        assert storage.account_is_claimed() is False
+        assert storage.accounts.is_claimed() is False
 
-        account = storage.claim_account("owner", "The Owner", "correct horse")
+        account = storage.accounts.claim("owner", "The Owner", "correct horse")
         assert account["id"] == 1
-        assert storage.account_is_claimed() is True
-        assert storage.verify_password("owner", "hunter2") is None
+        assert storage.accounts.is_claimed() is True
+        assert storage.accounts.verify_password("owner", "hunter2") is None
 
-        signed_in = storage.verify_password("owner", "correct horse")
+        signed_in = storage.accounts.verify_password("owner", "correct horse")
         assert signed_in is not None
 
-        token = storage.create_session(signed_in["id"])
-        assert storage.lookup_session(token) == signed_in
+        token = storage.accounts.create_session(signed_in["id"])
+        assert storage.accounts.lookup_session(token) == signed_in
 
-        storage.revoke_session(token)
-        assert storage.lookup_session(token) is None
+        storage.accounts.revoke_session(token)
+        assert storage.accounts.lookup_session(token) is None
 
     def test_a_password_change_can_end_every_session(
         self, storage: StorageManager
     ) -> None:
         """What the settings page does: new password, every browser signed out."""
-        storage.claim_account("owner", None, "correct horse")
-        tokens = [storage.create_session(1) for _ in range(2)]
+        storage.accounts.claim("owner", None, "correct horse")
+        tokens = [storage.accounts.create_session(1) for _ in range(2)]
 
-        storage.set_password(1, "a longer passphrase")
-        storage.revoke_all_sessions(1)
+        storage.accounts.set_password(1, "a longer passphrase")
+        storage.accounts.revoke_all_sessions(1)
 
-        assert storage.verify_password("owner", "a longer passphrase") is not None
-        assert [storage.lookup_session(token) for token in tokens] == [None, None]
-        assert storage.purge_expired_sessions() == 0
+        assert (
+            storage.accounts.verify_password("owner", "a longer passphrase") is not None
+        )
+        assert [storage.accounts.lookup_session(token) for token in tokens] == [
+            None,
+            None,
+        ]
+        assert storage.accounts.purge_expired_sessions() == 0
 
     def test_a_rename_carries_the_password_to_the_new_username(
         self, storage: StorageManager
     ) -> None:
         """The username is the login, so the CLI's rename must not lock it out."""
-        storage.claim_account("owner", "The Owner", "correct horse")
+        storage.accounts.claim("owner", "The Owner", "correct horse")
 
         storage.update_user_identity(1, "keeper", None)
 
-        account = storage.describe_account(1)
+        account = storage.accounts.describe(1)
         assert account is not None
         assert (account["username"], account["display_name"]) == ("keeper", None)
         assert account["claimed"] is True
-        assert storage.verify_password("keeper", "correct horse") is not None
-        assert storage.verify_password("owner", "correct horse") is None
+        assert storage.accounts.verify_password("keeper", "correct horse") is not None
+        assert storage.accounts.verify_password("owner", "correct horse") is None
 
     def test_neither_secret_reaches_the_files_the_manager_writes(
         self, storage: StorageManager, tmp_path: Path
@@ -649,8 +654,8 @@ class TestTheStorageManagerSurface:
         Checked over every file SQLite left, with the two digests as the anchor
         that the rows really are in the bytes being searched.
         """
-        storage.claim_account("owner", None, "correct horse")
-        token = storage.create_session(1)
+        storage.accounts.claim("owner", None, "correct horse")
+        token = storage.accounts.create_session(1)
         digest = hashlib.sha256(token.encode()).hexdigest()
         with storage.connection() as conn:
             stored_hash, _ = _stored_password(conn)

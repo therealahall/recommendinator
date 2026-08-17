@@ -275,7 +275,7 @@ WAL mode, and `_get_connection` sets `PRAGMA busy_timeout = 5000` so concurrent
 writers block instead of raising `SQLITE_BUSY`. A per-`StorageManager`
 `threading.Lock` serialises the read-resolve-write dedup merge against the
 parallel sync executor. `StorageManager.save_content_item`,
-`complete_content_item`, `save_credential` and
+`complete_content_item`, `credentials.save` and
 `merge_user_preference_config` all take it — the last because
 `PUT /api/users/{id}/preferences` is a partial merge, and two of them at once
 would otherwise each write a `users.settings` blob read before the other

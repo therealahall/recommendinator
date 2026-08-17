@@ -106,7 +106,7 @@ def mock_components(mock_config):
     reset_sync_manager()
 
     mock_storage_manager = Mock(spec=StorageManager)
-    mock_storage_manager.get_credentials_for_source.return_value = {}
+    mock_storage_manager.credentials.get_for_source.return_value = {}
     mock_storage_manager.list_source_configs.return_value = []
     mock_storage_manager.get_source_config.return_value = None
 
@@ -297,8 +297,7 @@ class TestCreateAppSettingsMigration:
         with booted_web_app(storage_manager, config):
             # The secret was encrypted into storage on boot.
             assert (
-                storage_manager.has_global_secret("enrichment.providers.tmdb.api_key")
-                is True
+                storage_manager.secrets.has("enrichment.providers.tmdb.api_key") is True
             )
             # And stripped from the running config, so no plaintext lingers.
             providers = app_state.config["enrichment"]["providers"]
@@ -1411,7 +1410,7 @@ def test_list_users(client, mock_components):
     )
     # The password stamp is fetched per row, and an unstubbed Mock is not
     # subscriptable.
-    mock_components["storage"].describe_account = Mock(return_value=None)
+    mock_components["storage"].accounts.describe = Mock(return_value=None)
 
     response = client.get("/api/users")
     assert response.status_code == 200
@@ -3007,27 +3006,27 @@ class TestAuthDisconnectEndpoints:
     ):
         """The id is the credential key, so each route owns which ones it may use."""
         storage = mock_components["storage"]
-        storage.delete_credential.return_value = True
+        storage.credentials.delete.return_value = True
 
         response = client.delete(f"/api/{provider}/token?source_id={source_id}")
 
         assert response.status_code == 404, response.text
-        storage.delete_credential.assert_not_called()
+        storage.credentials.delete.assert_not_called()
 
     def test_gog_disconnect_success(self, client, mock_components):
         """DELETE /api/gog/token removes stored refresh token."""
         storage = mock_components["storage"]
-        storage.delete_credential.return_value = True
+        storage.credentials.delete.return_value = True
 
         response = client.delete("/api/gog/token")
 
         assert response.status_code == 200
         assert response.json() == {"success": True, "message": "GOG disconnected."}
-        storage.delete_credential.assert_called_once_with(1, "gog", "refresh_token")
+        storage.credentials.delete.assert_called_once_with(1, "gog", "refresh_token")
 
     def test_gog_disconnect_not_connected(self, client, mock_components):
         """DELETE /api/gog/token returns 404 when no credential exists."""
-        mock_components["storage"].delete_credential.return_value = False
+        mock_components["storage"].credentials.delete.return_value = False
 
         response = client.delete("/api/gog/token")
 
@@ -3036,12 +3035,12 @@ class TestAuthDisconnectEndpoints:
     def test_gog_disconnect_custom_user_id(self, client, mock_components):
         """user_id query parameter is forwarded to storage."""
         storage = mock_components["storage"]
-        storage.delete_credential.return_value = True
+        storage.credentials.delete.return_value = True
 
         response = client.delete("/api/gog/token?user_id=5")
 
         assert response.status_code == 200
-        storage.delete_credential.assert_called_once_with(5, "gog", "refresh_token")
+        storage.credentials.delete.assert_called_once_with(5, "gog", "refresh_token")
 
 
 class TestTraktStartDeviceFlow:
@@ -3460,7 +3459,7 @@ class TestSettingsEndpoints:
         )
 
         assert put.status_code == 204
-        assert storage.has_global_secret(_SETTINGS_SECRET_KEY) is True
+        assert storage.secrets.has(_SETTINGS_SECRET_KEY) is True
         # The secret is never persisted in the plaintext settings table.
         assert storage.list_settings() == {}
         # And it surfaces only as has_secret, never as a value.
@@ -3471,7 +3470,7 @@ class TestSettingsEndpoints:
         delete = client.delete(f"/api/settings/secret/{_SETTINGS_SECRET_KEY}")
 
         assert delete.status_code == 204
-        assert storage.has_global_secret(_SETTINGS_SECRET_KEY) is False
+        assert storage.secrets.has(_SETTINGS_SECRET_KEY) is False
 
     def test_secret_put_rejects_non_sensitive_key(self, settings_env) -> None:
         client, storage, _config = settings_env
@@ -3994,7 +3993,7 @@ class TestTheSessionTokenStaysOutOfEverythingObservable:
         self, real_boot, caplog
     ) -> None:
         """A token in the server log is a token in whoever reads the log."""
-        app_state.storage.claim_account("owner", None, "correct horse battery")
+        app_state.storage.accounts.claim("owner", None, "correct horse battery")
         client = TestClient(real_boot)
 
         response = client.post(
@@ -4271,7 +4270,7 @@ class TestSourceCreateReadsBothHalvesRegression:
         assert response.status_code == 503
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
         storage.delete_source_config.assert_not_called()
-        storage.delete_credentials_for_source.assert_not_called()
+        storage.credentials.delete_for_source.assert_not_called()
 
 
 # The three plugin-resolving routes that also carry a body, so the order

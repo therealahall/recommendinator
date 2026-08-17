@@ -140,20 +140,20 @@ class TestOAuthConnectSourceBindingRegression:
             resolved_config(config, storage, "gog_work")["refresh_token"]
             == "gog-work-token"
         )
-        assert storage.get_credential(USER_ID, "gog", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "gog", "refresh_token") is None
         assert client.get("/api/gog/status?source_id=gog_work").json()["connected"]
         assert not client.get("/api/gog/status").json()["connected"]
 
         delete_source("gog_work", storage, config, user_id=USER_ID)
 
-        assert storage.get_credential(USER_ID, "gog_work", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "gog_work", "refresh_token") is None
 
     def test_trakt_round_trip_regression(
         self, client: TestClient, storage: StorageManager, config: dict[str, Any]
     ) -> None:
         # The device flow resolves this source's own client credentials, so the
         # secret has to sit under the id the poll is asked about.
-        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
         with patch(
             "src.web.api.poll_device_token",
@@ -169,13 +169,13 @@ class TestOAuthConnectSourceBindingRegression:
             resolved_config(config, storage, "trakt_work")["refresh_token"]
             == "trakt-work-token"
         )
-        assert storage.get_credential(USER_ID, "trakt", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "trakt", "refresh_token") is None
         assert client.get("/api/trakt/status?source_id=trakt_work").json()["connected"]
         assert not client.get("/api/trakt/status").json()["connected"]
 
         delete_source("trakt_work", storage, config, user_id=USER_ID)
 
-        assert storage.get_credential(USER_ID, "trakt_work", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "trakt_work", "refresh_token") is None
 
 
 @pytest.fixture()
@@ -201,7 +201,7 @@ def db_only_client(
     storage.upsert_source_config(
         USER_ID, "trakt_db", "trakt", {"client_id": "cid"}, enabled=True
     )
-    storage.save_credential(USER_ID, "trakt_db", "client_secret", "secret")
+    storage.credentials.save(USER_ID, "trakt_db", "client_secret", "secret")
 
     with booted_client(storage, db_only_config) as test_client:
         yield test_client
@@ -239,7 +239,7 @@ class TestDatabaseBackedSourceCanConnectRegression:
 
         assert response.status_code == 200
         assert (
-            storage.get_credential(USER_ID, "trakt_db", "refresh_token")
+            storage.credentials.get(USER_ID, "trakt_db", "refresh_token")
             == "trakt-db-token"
         )
 
@@ -261,7 +261,8 @@ class TestDatabaseBackedSourceCanConnectRegression:
 
         assert response.status_code == 200, response.text
         assert (
-            storage.get_credential(USER_ID, "gog_db", "refresh_token") == "gog-db-token"
+            storage.credentials.get(USER_ID, "gog_db", "refresh_token")
+            == "gog-db-token"
         )
 
 
@@ -277,15 +278,16 @@ class TestDisconnectTargetsTheNamedSource:
         provider: str,
         source_id: str,
     ) -> None:
-        storage.save_credential(USER_ID, source_id, "refresh_token", "mine")
-        storage.save_credential(USER_ID, "other_source", "refresh_token", "theirs")
+        storage.credentials.save(USER_ID, source_id, "refresh_token", "mine")
+        storage.credentials.save(USER_ID, "other_source", "refresh_token", "theirs")
 
         response = client.delete(f"/api/{provider}/token?source_id={source_id}")
 
         assert response.status_code == 200
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
         assert (
-            storage.get_credential(USER_ID, "other_source", "refresh_token") == "theirs"
+            storage.credentials.get(USER_ID, "other_source", "refresh_token")
+            == "theirs"
         )
 
 
@@ -330,7 +332,7 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
         config = yaml_held_token_config(source_id, plugin)
 
         with booted_client(storage, config, migrate_credentials=True) as client:
-            assert storage.get_credential(USER_ID, source_id, "refresh_token") == (
+            assert storage.credentials.get(USER_ID, source_id, "refresh_token") == (
                 "from-yaml"
             )
             assert client.get(f"/api/{provider}/status?source_id={source_id}").json()[
@@ -343,7 +345,7 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
                 == 200
             )
 
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
 
     @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
     def test_a_file_token_on_a_migrated_source_stays_out_of_reach(
@@ -366,7 +368,7 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
             # Only the real pass empties the entry. Every other assertion here
             # also holds when the migration never ran at all.
             assert "refresh_token" not in config["inputs"][source_id]
-            assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+            assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
             assert not client.get(
                 f"/api/{provider}/status?source_id={source_id}"
             ).json()["connected"]
@@ -411,7 +413,7 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
         exchange: str,
         body: dict[str, str],
     ) -> None:
-        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "trakt-token")
+        storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "trakt-token")
 
         with (
             patch(extract, return_value="code"),
@@ -421,7 +423,7 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
 
         assert response.status_code == 400, response.text
         assert (
-            storage.get_credential(USER_ID, "trakt_work", "refresh_token")
+            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
             == "trakt-token"
         )
 
@@ -429,13 +431,13 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
     def test_disconnect_does_not_delete_a_trakt_source_token(
         self, client: TestClient, storage: StorageManager, provider: str
     ) -> None:
-        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "trakt-token")
+        storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "trakt-token")
 
         response = client.delete(f"/api/{provider}/token?source_id=trakt_work")
 
         assert response.status_code == 404, response.text
         assert (
-            storage.get_credential(USER_ID, "trakt_work", "refresh_token")
+            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
             == "trakt-token"
         )
 
@@ -454,7 +456,7 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
         assert response.status_code == 400, response.text
         reached.assert_not_called()
         assert (
-            storage.get_credential(USER_ID, "no_such_source", "refresh_token") is None
+            storage.credentials.get(USER_ID, "no_such_source", "refresh_token") is None
         )
 
 
@@ -469,7 +471,7 @@ class TestDisconnectingAnIdNoSourceClaimsRegression:
     def test_a_stranded_token_can_still_be_revoked(
         self, client: TestClient, storage: StorageManager, provider: str
     ) -> None:
-        storage.save_credential(USER_ID, "leftover", "refresh_token", "stranded")
+        storage.credentials.save(USER_ID, "leftover", "refresh_token", "stranded")
 
         # Status is what the operator has to notice it by, so it answers for
         # the row this verb can reach rather than for a source there is none of.
@@ -480,7 +482,7 @@ class TestDisconnectingAnIdNoSourceClaimsRegression:
         response = client.delete(f"/api/{provider}/token?source_id=leftover")
 
         assert response.status_code == 200, response.text
-        assert storage.get_credential(USER_ID, "leftover", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "leftover", "refresh_token") is None
 
     @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
     def test_an_id_holding_nothing_is_still_a_404(
@@ -503,7 +505,7 @@ class TestADisabledSourceCanStillBeDisconnectedRegression:
     def disabled(
         self, client: TestClient, storage: StorageManager, source_id: str
     ) -> StorageManager:
-        storage.save_credential(USER_ID, source_id, "refresh_token", "still-live")
+        storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
         storage.set_source_config_enabled(USER_ID, source_id, False)
         return storage
 
@@ -521,7 +523,7 @@ class TestADisabledSourceCanStillBeDisconnectedRegression:
         response = client.delete(f"/api/{provider}/token?source_id={source_id}")
 
         assert response.status_code == 200, response.text
-        assert disabled.get_credential(USER_ID, source_id, "refresh_token") is None
+        assert disabled.credentials.get(USER_ID, source_id, "refresh_token") is None
 
 
 CONNECT_EXCHANGES = [
@@ -573,7 +575,7 @@ class TestConnectingADisabledSourceIsRefused:
             response = client.post(f"{endpoint}?source_id={source_id}", json=body)
 
         assert response.status_code == (200 if enabled else 400), response.text
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") == (
+        assert storage.credentials.get(USER_ID, source_id, "refresh_token") == (
             "fresh-token" if enabled else None
         )
 
@@ -581,7 +583,7 @@ class TestConnectingADisabledSourceIsRefused:
     def test_poll_saves_a_token_only_for_an_enabled_source(
         self, client: TestClient, storage: StorageManager, enabled: bool
     ) -> None:
-        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
         storage.set_source_config_enabled(USER_ID, "trakt_work", enabled)
 
         with patch(
@@ -594,7 +596,7 @@ class TestConnectingADisabledSourceIsRefused:
             )
 
         assert response.status_code == (200 if enabled else 400), response.text
-        assert storage.get_credential(USER_ID, "trakt_work", "refresh_token") == (
+        assert storage.credentials.get(USER_ID, "trakt_work", "refresh_token") == (
             "trakt-token" if enabled else None
         )
 
@@ -618,8 +620,8 @@ class TestClearingTheTraktClientSecretLeavesTheTokenVisibleRegression:
     def test_connected_survives_a_cleared_client_secret(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
-        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "still-live")
+        storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "still-live")
 
         # Anchor: with the secret in place both answers are true, so the clear
         # below is the only thing that moves either.
@@ -628,7 +630,7 @@ class TestClearingTheTraktClientSecretLeavesTheTokenVisibleRegression:
             "connected": True,
         }
 
-        storage.delete_credential(USER_ID, "trakt_work", "client_secret")
+        storage.credentials.delete(USER_ID, "trakt_work", "client_secret")
 
         assert client.get("/api/trakt/status?source_id=trakt_work").json() == {
             "enabled": False,
@@ -655,8 +657,8 @@ class TestStatusSeparatesEnabledFromConnected:
         secrets: dict[str, str],
     ) -> None:
         for key, value in secrets.items():
-            storage.save_credential(USER_ID, source_id, key, value)
-        storage.save_credential(USER_ID, source_id, "refresh_token", "still-live")
+            storage.credentials.save(USER_ID, source_id, key, value)
+        storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
         storage.set_source_config_enabled(USER_ID, source_id, enabled)
 
         body = client.get(f"/api/{provider}/status?source_id={source_id}").json()
@@ -684,7 +686,7 @@ class TestEveryOAuthRouteValidatesTheSourceId:
 
         assert response.status_code == 422, response.text
         reached.assert_not_called()
-        assert storage.get_credential(USER_ID, bad_id, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, bad_id, "refresh_token") is None
 
     @pytest.mark.parametrize(("method", "endpoint"), READ_ROUTES)
     @pytest.mark.parametrize("bad_id", MALFORMED_IDS)

@@ -157,7 +157,7 @@ class FakeCredentialPlugin(SourcePlugin):
         if not (config.get("refresh_token") or "").strip():
             source_id = config.get("_source_id", self.name)
             if storage is not None:
-                db_creds = storage.get_credentials_for_source(user_id, source_id)
+                db_creds = storage.credentials.get_for_source(user_id, source_id)
                 if (db_creds.get("refresh_token") or "").strip():
                     return errors
             errors.append("'refresh_token' is required")
@@ -399,7 +399,7 @@ class TestResolveInputsWithStorage:
                 }
             }
         }
-        storage.save_credential(1, "my_games", "api_key", "db_key")
+        storage.credentials.save(1, "my_games", "api_key", "db_key")
 
         resolved = resolve_inputs(config, storage=storage)
 
@@ -437,7 +437,7 @@ class TestValidateSourceConfigWithStorage:
                 },
             }
         }
-        storage.save_credential(1, "my_epic", "refresh_token", "db_token_value")
+        storage.credentials.save(1, "my_epic", "refresh_token", "db_token_value")
 
         errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
 
@@ -529,7 +529,7 @@ class TestResolveInputsWithDbSourceConfig:
         """Sensitive creds from credentials table merge over DB config dict."""
         config: dict[str, Any] = {"inputs": {}}
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
-        storage.save_credential(1, "my_games", "api_key", "secret_from_creds")
+        storage.credentials.save(1, "my_games", "api_key", "secret_from_creds")
 
         resolved = resolve_inputs(config, storage=storage)
 
@@ -565,7 +565,7 @@ class TestCredentialBoundUpdates:
         storage.upsert_source_config(
             1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
         )
-        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
         return storage
 
     @staticmethod
@@ -584,7 +584,7 @@ class TestCredentialBoundUpdates:
             "stored 'api_key' first, then save this change and enter the "
             "credential the new host expects."
         )
-        assert migrated.get_credential(1, "my_games", "api_key") == (
+        assert migrated.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
         row = migrated.get_source_config(1, "my_games")
@@ -604,7 +604,7 @@ class TestCredentialBoundUpdates:
         """Scheme, trailing slash and path do not decide who receives it."""
         self._update(migrated, {"url": url})
 
-        assert migrated.get_credential(1, "my_games", "api_key") == (
+        assert migrated.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
         row = migrated.get_source_config(1, "my_games")
@@ -622,7 +622,7 @@ class TestCredentialBoundUpdates:
     def test_the_move_is_allowed_once_the_secret_is_gone(
         self, migrated: StorageManager
     ) -> None:
-        migrated.delete_credential(1, "my_games", "api_key")
+        migrated.credentials.delete(1, "my_games", "api_key")
 
         self._update(migrated, {"url": "http://attacker.example"})
 
@@ -634,14 +634,14 @@ class TestCredentialBoundUpdates:
         self, storage: StorageManager
     ) -> None:
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
-        storage.save_credential(1, "my_games", "api_key", "issued-for-the-default")
+        storage.credentials.save(1, "my_games", "api_key", "issued-for-the-default")
 
         with pytest.raises(SourceConfigError, match="different host"):
             self._update(storage, {"url": "http://attacker.example"})
 
         self._update(storage, {"url": "https://localhost:7878"})
 
-        assert storage.get_credential(1, "my_games", "api_key") == (
+        assert storage.credentials.get(1, "my_games", "api_key") == (
             "issued-for-the-default"
         )
 
@@ -650,7 +650,7 @@ class TestCredentialBoundUpdates:
     ) -> None:
         self._update(migrated, {"label": "Games"})
 
-        assert migrated.get_credential(1, "my_games", "api_key") == (
+        assert migrated.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
 
@@ -658,7 +658,7 @@ class TestCredentialBoundUpdates:
         self, storage: StorageManager
     ) -> None:
         """Delete-then-recreate must not resurrect a secret under a new url."""
-        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
 
         create_source(
             "my_games",
@@ -667,7 +667,7 @@ class TestCredentialBoundUpdates:
             storage,
         )
 
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -692,7 +692,7 @@ class TestUnreadableUrlWalksTheCredentialRegression:
         storage.upsert_source_config(
             1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
         )
-        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
 
         with pytest.raises(SourceConfigError) as onto:
             self._update(storage, {"url": "http://attacker.example:99999"})
@@ -712,7 +712,7 @@ class TestUnreadableUrlWalksTheCredentialRegression:
 
         assert onto.value.kind == "credential_move"
         assert off.value.kind == "credential_move"
-        assert storage.get_credential(1, "my_games", "api_key") == (
+        assert storage.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
 
@@ -736,11 +736,11 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         storage.upsert_source_config(
             1, "ghost", "this_plugin_no_longer_exists", {}, enabled=True
         )
-        storage.save_credential(1, "ghost", "api_key", "still-valid-upstream")
+        storage.credentials.save(1, "ghost", "api_key", "still-valid-upstream")
 
         delete_source("ghost", storage, {})
 
-        assert storage.get_credentials_for_source(1, "ghost") == {}
+        assert storage.credentials.get_for_source(1, "ghost") == {}
         assert storage.get_source_config(1, "ghost") is None
 
     def test_a_field_no_longer_marked_sensitive_is_removed_too(
@@ -748,21 +748,21 @@ class TestDeleteSourceOrphanedCredentialsRegression:
     ) -> None:
         """``fake_games`` has no ``legacy_token`` field; the row exists anyway."""
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
-        storage.save_credential(1, "my_games", "api_key", "secret")
-        storage.save_credential(1, "my_games", "legacy_token", "was-sensitive-once")
+        storage.credentials.save(1, "my_games", "api_key", "secret")
+        storage.credentials.save(1, "my_games", "legacy_token", "was-sensitive-once")
 
         delete_source("my_games", storage, {})
 
-        assert storage.get_credentials_for_source(1, "my_games") == {}
+        assert storage.credentials.get_for_source(1, "my_games") == {}
 
     def test_another_sources_credentials_survive(self, storage: StorageManager) -> None:
         storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
-        storage.save_credential(1, "my_games", "api_key", "secret")
-        storage.save_credential(1, "other", "api_key", "untouched")
+        storage.credentials.save(1, "my_games", "api_key", "secret")
+        storage.credentials.save(1, "other", "api_key", "untouched")
 
         delete_source("my_games", storage, {})
 
-        assert storage.get_credential(1, "other", "api_key") == "untouched"
+        assert storage.credentials.get(1, "other", "api_key") == "untouched"
 
 
 class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
@@ -779,7 +779,7 @@ class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
         storage.upsert_source_config(
             1, "my_games", "fake_games", {"label": "Games"}, enabled=True
         )
-        storage.save_credential(1, "my_games", "api_key", "issued-for-localhost")
+        storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
         plugin = RecordingGamePlugin()
 
         update_source_config_values("my_games", plugin, storage, {"label": "Shelf"})
@@ -982,8 +982,10 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     ) -> None:
         self._sync_a_rotating_source(plugin_name, storage)
 
-        assert storage.get_credential(1, "work_games", "refresh_token") == ROTATED_TOKEN
-        assert storage.get_credential(1, plugin_name, "refresh_token") is None
+        assert (
+            storage.credentials.get(1, "work_games", "refresh_token") == ROTATED_TOKEN
+        )
+        assert storage.credentials.get(1, plugin_name, "refresh_token") is None
 
     @pytest.mark.parametrize("plugin_name", ROTATING_PLUGINS)
     def test_the_next_sync_resolves_the_rotated_token(
@@ -1001,11 +1003,11 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
         self, storage: StorageManager
     ) -> None:
         """Nothing migrates them, which is what SECURITY.md promises."""
-        storage.save_credential(1, "gog", "refresh_token", "orphaned-by-an-old-sync")
+        storage.credentials.save(1, "gog", "refresh_token", "orphaned-by-an-old-sync")
 
         self._sync_a_rotating_source("gog", storage)
 
-        assert storage.get_credential(1, "gog", "refresh_token") == (
+        assert storage.credentials.get(1, "gog", "refresh_token") == (
             "orphaned-by-an-old-sync"
         )
 
@@ -1022,7 +1024,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def storage(self, tmp_path: Path) -> StorageManager:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         storage.upsert_source_config(1, "work_games", "fake_games", {}, enabled=True)
-        storage.save_credential(1, "fake_games", "api_key", "stranded-by-an-upgrade")
+        storage.credentials.save(1, "fake_games", "api_key", "stranded-by-an-upgrade")
         return storage
 
     def test_the_last_source_on_the_plugin_takes_the_row_with_it(
@@ -1030,7 +1032,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     ) -> None:
         delete_source("work_games", storage, {"inputs": {}})
 
-        assert storage.get_credential(1, "fake_games", "api_key") is None
+        assert storage.credentials.get(1, "fake_games", "api_key") is None
 
     def test_a_sibling_on_the_same_plugin_keeps_the_row(
         self, storage: StorageManager
@@ -1039,7 +1041,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
 
         delete_source("work_games", storage, {"inputs": {}})
 
-        assert storage.get_credential(1, "fake_games", "api_key") == (
+        assert storage.credentials.get(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
         )
 
@@ -1049,7 +1051,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
 
         delete_source("work_games", storage, config)
 
-        assert storage.get_credential(1, "fake_games", "api_key") == (
+        assert storage.credentials.get(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
         )
 
@@ -1061,18 +1063,18 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
 
         delete_source("work_games", storage, config)
 
-        assert storage.get_credential(1, "fake_games", "api_key") == (
+        assert storage.credentials.get(1, "fake_games", "api_key") == (
             "stranded-by-an-upgrade"
         )
 
     def test_the_deleted_sources_own_credentials_still_go(
         self, storage: StorageManager
     ) -> None:
-        storage.save_credential(1, "work_games", "api_key", "its-own")
+        storage.credentials.save(1, "work_games", "api_key", "its-own")
 
         delete_source("work_games", storage, {"inputs": {}})
 
-        assert storage.get_credentials_for_source(1, "work_games") == {}
+        assert storage.credentials.get_for_source(1, "work_games") == {}
 
 
 class TestAPluginCannotDropAFrameworkConfigKey:
@@ -1182,8 +1184,8 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
     ) -> None:
         self._sync_yaml_source(source_id, storage)
 
-        assert storage.get_credential(1, source_id, "refresh_token") == ROTATED_TOKEN
-        assert storage.get_credential(1, "gog", "refresh_token") is None
+        assert storage.credentials.get(1, source_id, "refresh_token") == ROTATED_TOKEN
+        assert storage.credentials.get(1, "gog", "refresh_token") is None
 
     def test_ids_differing_only_in_case_do_not_share_a_token(
         self, storage: StorageManager
@@ -1191,4 +1193,4 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
         """A NOCASE collation here would hand one source another's secret."""
         self._sync_yaml_source("Work_Games", storage)
 
-        assert storage.get_credential(1, "work_games", "refresh_token") is None
+        assert storage.credentials.get(1, "work_games", "refresh_token") is None

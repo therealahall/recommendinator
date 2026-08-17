@@ -363,7 +363,7 @@ def as_user_response(storage: StorageManager, user: UserDict) -> UserResponse:
     The stamp is fetched rather than read off *user*: no other reader of a
     ``users`` row wants a credential column beside it.
     """
-    account = storage.describe_account(user["id"])
+    account = storage.accounts.describe(user["id"])
     return UserResponse(
         id=user["id"],
         username=user["username"],
@@ -1010,18 +1010,21 @@ def change_password(
             password is wrong, 400 when the new one is under the floor.
     """
     _refuse_another_account(user_id, user)
-    if storage.verify_password(user["username"], request.current_password) is None:
+    if (
+        storage.accounts.verify_password(user["username"], request.current_password)
+        is None
+    ):
         raise HTTPException(status_code=401, detail=_WRONG_CURRENT_PASSWORD)
 
     try:
-        storage.set_password(user_id, request.new_password)
+        storage.accounts.set_password(user_id, request.new_password)
     except PasswordTooShortError as error:
         raise HTTPException(status_code=400, detail=PASSWORD_TOO_SHORT) from error
     # The token is a live session by the time this runs — the dependency that
     # produced ``user`` looked it up — so the caller keeps the browser they
     # changed the password in, and every other one is signed out.
     token = http_request.cookies[SESSION_COOKIE]
-    storage.revoke_other_sessions(user_id, token)
+    storage.accounts.revoke_other_sessions(user_id, token)
 
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
@@ -2327,7 +2330,7 @@ def _disconnect_source(
         )
         raise HTTPException(status_code=404, detail=detail)
 
-    if not storage.delete_credential(user_id, source_id, REFRESH_TOKEN_KEY):
+    if not storage.credentials.delete(user_id, source_id, REFRESH_TOKEN_KEY):
         raise HTTPException(status_code=404, detail=detail)
 
 

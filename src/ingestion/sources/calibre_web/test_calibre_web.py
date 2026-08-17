@@ -127,14 +127,14 @@ class TestCalibreWebValidateConfig:
     ) -> None:
         """Password absent from config but present in the DB should validate."""
         mock_storage = Mock(spec=StorageManager)
-        mock_storage.get_credentials_for_source.return_value = {"password": "db_secret"}
+        mock_storage.credentials.get_for_source.return_value = {"password": "db_secret"}
         errors = plugin.validate_config(
             {"url": "http://host", "username": "u", "_source_id": "my_calibre"},
             storage=mock_storage,
             user_id=1,
         )
         assert errors == []
-        mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_calibre")
+        mock_storage.credentials.get_for_source.assert_called_once_with(1, "my_calibre")
 
 
 class TestCalibreWebFetch:
@@ -621,7 +621,7 @@ class TestCalibreWebCredentialMoveRegression:
             {"url": "http://localhost:8083", "username": "reader", "verify_ssl": True},
             enabled=True,
         )
-        storage.save_credential(1, "calibre_web", "password", "hunter2")
+        storage.credentials.save(1, "calibre_web", "password", "hunter2")
         return storage
 
     def _resolved(self, storage: StorageManager) -> dict[str, object]:

@@ -145,7 +145,7 @@ class TestSecretResolutionCaching:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Three items enrich, but the api_key is decrypted from storage once."""
-        storage.set_global_secret(_SECRET_KEY, "cred_key")
+        storage.secrets.set(_SECRET_KEY, "cred_key")
         for i in range(3):
             storage.save_content_item(
                 ContentItem(

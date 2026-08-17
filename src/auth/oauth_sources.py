@@ -90,7 +90,7 @@ class OAuthSourceBinding:
         return (
             storage is not None
             and may_revoke(self.plugin_name, source_id, config, storage, user_id)
-            and storage.credential_row_exists(user_id, source_id, REFRESH_TOKEN_KEY)
+            and storage.credentials.exists(user_id, source_id, REFRESH_TOKEN_KEY)
         )
 
     def save_token(
@@ -102,7 +102,7 @@ class OAuthSourceBinding:
     ) -> None:
         """Encrypt and store the refresh token under *source_id*."""
         try:
-            storage.save_credential(
+            storage.credentials.save(
                 user_id, source_id, REFRESH_TOKEN_KEY, refresh_token
             )
             logger.info("Saved %s refresh token to database", self.display_name)

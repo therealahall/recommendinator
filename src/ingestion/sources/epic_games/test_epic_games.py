@@ -156,7 +156,7 @@ class TestEpicGamesPluginValidation:
         """
         plugin = EpicGamesPlugin()
         mock_storage = Mock()
-        mock_storage.get_credentials_for_source.return_value = {
+        mock_storage.credentials.get_for_source.return_value = {
             "refresh_token": "db_stored_token"
         }
 
@@ -167,7 +167,7 @@ class TestEpicGamesPluginValidation:
             user_id=1,
         )
         assert errors == []
-        mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_epic")
+        mock_storage.credentials.get_for_source.assert_called_once_with(1, "my_epic")
 
 
 # ===========================================================================

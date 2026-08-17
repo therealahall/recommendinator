@@ -44,9 +44,9 @@ class TestPluginLocalIsolationRegression:
 
         database_dir = tmp_path / "data"
         storage = StorageManager(sqlite_path=database_dir / "library.db")
-        storage.save_credential(1, "steam", "api_key", "plugin-local-secret")
+        storage.credentials.save(1, "steam", "api_key", "plugin-local-secret")
 
-        assert storage.get_credential(1, "steam", "api_key") == "plugin-local-secret"
+        assert storage.credentials.get(1, "steam", "api_key") == "plugin-local-secret"
         assert isolated_key_path.exists()
         assert not (database_dir / ".credential_key").exists()
 

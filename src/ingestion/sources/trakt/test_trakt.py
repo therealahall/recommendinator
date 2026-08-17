@@ -142,7 +142,7 @@ class TestTraktPluginValidation:
         """Test missing sensitive fields are satisfied from the credential DB."""
         plugin = TraktPlugin()
         mock_storage = Mock(spec=StorageManager)
-        mock_storage.get_credentials_for_source.return_value = {
+        mock_storage.credentials.get_for_source.return_value = {
             "client_secret": "db_secret",
             "refresh_token": "db_token",
         }
@@ -153,7 +153,7 @@ class TestTraktPluginValidation:
             user_id=1,
         )
         assert errors == []
-        mock_storage.get_credentials_for_source.assert_called_with(1, "my_trakt")
+        mock_storage.credentials.get_for_source.assert_called_with(1, "my_trakt")
 
 
 class TestTraktPluginFetch:

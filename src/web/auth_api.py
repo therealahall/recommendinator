@@ -82,7 +82,7 @@ def read_session(request: Request, storage: RequiredStorage) -> SessionResponse:
     """
     user = signed_in_user(request)
     return SessionResponse(
-        claimed=storage.account_is_claimed(),
+        claimed=storage.accounts.is_claimed(),
         authenticated=user is not None,
         user=as_user_response(storage, user) if user is not None else None,
     )
@@ -99,10 +99,10 @@ def claim_instance(
             second one too, so a request that raced past the check writes
             nothing either — and 400 for a password under the floor.
     """
-    if storage.account_is_claimed():
+    if storage.accounts.is_claimed():
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED)
     try:
-        user = storage.claim_account(
+        user = storage.accounts.claim(
             body.username, body.display_name or None, body.password
         )
     except PasswordTooShortError as error:
@@ -110,7 +110,7 @@ def claim_instance(
     except AccountAlreadyClaimedError as error:
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED) from error
 
-    set_session_cookie(response, storage.create_session(user["id"]))
+    set_session_cookie(response, storage.accounts.create_session(user["id"]))
     logger.info("Account claimed; this instance is no longer open to setup")
     return as_user_response(storage, user)
 
@@ -124,11 +124,11 @@ def sign_in(
     Raises:
         HTTPException: 401, naming neither half as the wrong one.
     """
-    user = storage.verify_password(body.username, body.password)
+    user = storage.accounts.verify_password(body.username, body.password)
     if user is None:
         raise HTTPException(status_code=401, detail=_SIGN_IN_REFUSED)
 
-    set_session_cookie(response, storage.create_session(user["id"]))
+    set_session_cookie(response, storage.accounts.create_session(user["id"]))
     return as_user_response(storage, user)
 
 
@@ -141,5 +141,5 @@ def sign_out(request: Request, response: Response, storage: RequiredStorage) -> 
     """
     token = request.cookies.get(SESSION_COOKIE)
     if token:
-        storage.revoke_session(token)
+        storage.accounts.revoke_session(token)
     clear_session_cookie(response)

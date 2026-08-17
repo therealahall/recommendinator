@@ -311,14 +311,14 @@ class TestCredentialRotationCallback:
         )
 
         assert captured_callback is not None
-        storage.save_credential.assert_called_once_with(
+        storage.credentials.save.assert_called_once_with(
             1, "gog", "refresh_token", "new_rotated_value"
         )
 
     def test_credential_callback_error_logged_not_raised(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Errors in save_credential are logged but don't crash sync."""
+        """Errors in the credential save are logged but don't crash sync."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
@@ -334,7 +334,7 @@ class TestCredentialRotationCallback:
         plugin.fetch.side_effect = capture_fetch
 
         storage = MagicMock(spec=StorageManager)
-        storage.save_credential.side_effect = Exception("DB locked")
+        storage.credentials.save.side_effect = Exception("DB locked")
 
         with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
             result = execute_sync(
@@ -426,7 +426,7 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
     ) -> None:
         self._sync({"_source_id": source_id, "refresh_token": "old"}, storage)
 
-        assert storage.get_credential(1, source_id, "refresh_token") == _ROTATED_TOKEN
+        assert storage.credentials.get(1, source_id, "refresh_token") == _ROTATED_TOKEN
         assert [item.source for item in storage.get_content_items(user_id=1)] == [
             source_id
         ]
@@ -438,7 +438,7 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
         """The orphan the ``or`` produced: a token under ``rotating``."""
         self._sync({"_source_id": source_id, "refresh_token": "old"}, storage)
 
-        assert storage.get_credential(1, "rotating", "refresh_token") is None
+        assert storage.credentials.get(1, "rotating", "refresh_token") is None
 
     def test_a_config_with_no_source_id_still_owns_its_token(
         self, storage: StorageManager
@@ -450,7 +450,7 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
         """
         self._sync({"refresh_token": "old"}, storage)
 
-        assert storage.get_credential(1, "rotating", "refresh_token") == _ROTATED_TOKEN
+        assert storage.credentials.get(1, "rotating", "refresh_token") == _ROTATED_TOKEN
         assert [item.source for item in storage.get_content_items(user_id=1)] == [
             "rotating"
         ]
@@ -486,7 +486,7 @@ class TestASyncLeavesAStrandedTokenWhereItIs:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     def test_the_sync_neither_reads_nor_moves_it(self, storage: StorageManager) -> None:
-        storage.save_credential(1, "rotating", "refresh_token", "stranded-by-upgrade")
+        storage.credentials.save(1, "rotating", "refresh_token", "stranded-by-upgrade")
 
         execute_sync(
             plugin=RotatingAttributingPlugin(),
@@ -494,12 +494,14 @@ class TestASyncLeavesAStrandedTokenWhereItIs:
             storage_manager=storage,
         )
 
-        assert storage.get_credential(1, "rotating", "refresh_token") == (
+        assert storage.credentials.get(1, "rotating", "refresh_token") == (
             "stranded-by-upgrade"
         )
         # Anchored: the sync ran to the rotation, so it had every chance at the
         # row above.
-        assert storage.get_credential(1, "my_source", "refresh_token") == _ROTATED_TOKEN
+        assert (
+            storage.credentials.get(1, "my_source", "refresh_token") == _ROTATED_TOKEN
+        )
 
 
 class TestAutoEnrichmentHook:

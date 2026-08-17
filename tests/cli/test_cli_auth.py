@@ -47,7 +47,7 @@ class TestAuthStatus:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """Non-OAuth sources are configured too, and stay off the list."""
-        storage.save_credential(USER_ID, "gog_work", "refresh_token", "token")
+        storage.credentials.save(USER_ID, "gog_work", "refresh_token", "token")
         config = _sources(
             gog_work="gog", epic_work="epic_games", my_books="calibre_web"
         )
@@ -77,7 +77,7 @@ class TestAuthStatusShowsADisabledSourcesTokenRegression:
         source_id: str,
         plugin: str,
     ) -> None:
-        storage.save_credential(USER_ID, source_id, "refresh_token", "still-live")
+        storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
         config = _sources(**{source_id: plugin})
         config["inputs"][source_id]["enabled"] = False
 
@@ -104,7 +104,7 @@ class TestAuthStatusSeesADatabaseBackedSourceRegression:
         plugin: str,
     ) -> None:
         storage.upsert_source_config(USER_ID, source_id, plugin, {}, enabled=True)
-        storage.save_credential(USER_ID, source_id, "refresh_token", "token")
+        storage.credentials.save(USER_ID, source_id, "refresh_token", "token")
 
         result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
 
@@ -300,7 +300,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
         result = self._connect(cli_runner, storage, {})
 
         assert result.exit_code == 0, result.output
-        assert storage.get_credential(USER_ID, "gog", "refresh_token") == "fresh-token"
+        assert storage.credentials.get(USER_ID, "gog", "refresh_token") == "fresh-token"
 
     def test_a_named_source_takes_its_own_token(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -311,10 +311,10 @@ class TestConnectingASourceTheWebCanConnectRegression:
 
         assert result.exit_code == 0, result.output
         assert (
-            storage.get_credential(USER_ID, "gog_work", "refresh_token")
+            storage.credentials.get(USER_ID, "gog_work", "refresh_token")
             == "fresh-token"
         )
-        assert storage.get_credential(USER_ID, "gog", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "gog", "refresh_token") is None
 
     def test_a_named_trakt_source_resolves_its_own_client_credentials(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -322,7 +322,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
         """The device flow reads the client id off the source being connected."""
         config = _sources(trakt_work="trakt")
         config["inputs"]["trakt_work"]["client_id"] = "cid"
-        storage.save_credential(USER_ID, "trakt_work", "client_secret", "secret")
+        storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
         with (
             patch(
@@ -350,7 +350,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
 
         assert result.exit_code == 0, result.output
         assert (
-            storage.get_credential(USER_ID, "trakt_work", "refresh_token")
+            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
             == "trakt-token"
         )
 
@@ -371,7 +371,7 @@ class TestAuthDisconnect:
         source: str,
         plugin: str,
     ) -> None:
-        storage.save_credential(USER_ID, plugin, "refresh_token", "token")
+        storage.credentials.save(USER_ID, plugin, "refresh_token", "token")
         config = _sources(**{plugin: plugin})
 
         result = _invoke_with_mocks(
@@ -383,13 +383,13 @@ class TestAuthDisconnect:
 
         assert result.exit_code == 0
         assert "disconnected" in result.output.lower()
-        assert storage.get_credential(USER_ID, plugin, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, plugin, "refresh_token") is None
 
     def test_disconnect_without_yes(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """Test aborting disconnect when user declines confirmation."""
-        storage.save_credential(USER_ID, "gog", "refresh_token", "token")
+        storage.credentials.save(USER_ID, "gog", "refresh_token", "token")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -400,7 +400,7 @@ class TestAuthDisconnect:
         )
 
         assert "Aborted" in result.output
-        assert storage.get_credential(USER_ID, "gog", "refresh_token") == "token"
+        assert storage.credentials.get(USER_ID, "gog", "refresh_token") == "token"
 
     def test_disconnect_no_active_connection(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -436,8 +436,10 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         source: str,
         plugin: str,
     ) -> None:
-        storage.save_credential(USER_ID, f"{plugin}_work", "refresh_token", "mine")
-        storage.save_credential(USER_ID, plugin, "refresh_token", "the-plugin-name-row")
+        storage.credentials.save(USER_ID, f"{plugin}_work", "refresh_token", "mine")
+        storage.credentials.save(
+            USER_ID, plugin, "refresh_token", "the-plugin-name-row"
+        )
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -456,12 +458,12 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
 
         assert result.exit_code == 0
         assert (
-            storage.get_credential(USER_ID, f"{plugin}_work", "refresh_token") is None
+            storage.credentials.get(USER_ID, f"{plugin}_work", "refresh_token") is None
         )
         # The row under the plugin name belongs to whoever is named that, and
         # this call was never asked about it.
         assert (
-            storage.get_credential(USER_ID, plugin, "refresh_token")
+            storage.credentials.get(USER_ID, plugin, "refresh_token")
             == "the-plugin-name-row"
         )
 
@@ -469,7 +471,7 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """Disabling a source is how revoking its token starts."""
-        storage.save_credential(USER_ID, "gog_work", "refresh_token", "still-live")
+        storage.credentials.save(USER_ID, "gog_work", "refresh_token", "still-live")
         config = _sources(gog_work="gog")
         config["inputs"]["gog_work"]["enabled"] = False
 
@@ -489,13 +491,13 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         )
 
         assert result.exit_code == 0
-        assert storage.get_credential(USER_ID, "gog_work", "refresh_token") is None
+        assert storage.credentials.get(USER_ID, "gog_work", "refresh_token") is None
 
     def test_an_id_another_plugin_owns_is_refused(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """The id is a credential key, so the plugin behind it decides."""
-        storage.save_credential(USER_ID, "trakt_work", "refresh_token", "not-gogs")
+        storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "not-gogs")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -515,7 +517,8 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         assert result.exit_code != 0
         assert "No active gog connection" in result.output
         assert (
-            storage.get_credential(USER_ID, "trakt_work", "refresh_token") == "not-gogs"
+            storage.credentials.get(USER_ID, "trakt_work", "refresh_token")
+            == "not-gogs"
         )
 
 
@@ -534,7 +537,7 @@ class TestRevokingATokenNoSourceClaimsRegression:
         source: str,
         plugin: str,
     ) -> None:
-        storage.save_credential(USER_ID, plugin, "refresh_token", "stranded")
+        storage.credentials.save(USER_ID, plugin, "refresh_token", "stranded")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -544,7 +547,7 @@ class TestRevokingATokenNoSourceClaimsRegression:
         )
 
         assert result.exit_code == 0, result.output
-        assert storage.get_credential(USER_ID, plugin, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, plugin, "refresh_token") is None
 
 
 class TestBothAuthVerbsValidateTheSourceId:
@@ -569,7 +572,7 @@ class TestBothAuthVerbsValidateTheSourceId:
         source: str,
         plugin: str,
     ) -> None:
-        storage.save_credential(USER_ID, plugin, "refresh_token", "the-default-id")
+        storage.credentials.save(USER_ID, plugin, "refresh_token", "the-default-id")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -590,7 +593,7 @@ class TestBothAuthVerbsValidateTheSourceId:
         assert "--source-id must start with a lowercase letter" in result.output
         # The row a bare invocation would have hit, untouched: neither verb
         # falls back to the plugin's own id for an argument it refused.
-        assert storage.get_credential(USER_ID, plugin, "refresh_token") == (
+        assert storage.credentials.get(USER_ID, plugin, "refresh_token") == (
             "the-default-id"
         )
 
@@ -613,7 +616,7 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
         # Trakt is enabled by its client credentials rather than its token, and
         # the enabled half of the line must not move with the token.
         config["inputs"][source_id]["client_id"] = "cid"
-        storage.save_credential(USER_ID, source_id, "client_secret", "secret")
+        storage.credentials.save(USER_ID, source_id, "client_secret", "secret")
         return config
 
     @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
@@ -655,7 +658,7 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
         )
 
         assert result.exit_code == 0, result.output
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
 
     @pytest.mark.parametrize("plugin", [plugin for _source, plugin in PROVIDERS])
     def test_a_migrated_source_drops_the_file_copy_instead(
@@ -678,4 +681,4 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
 
         assert f"  {source_id} ({plugin}): enabled, not connected" in result.output
         assert "refresh_token" not in config["inputs"][source_id]
-        assert storage.get_credential(USER_ID, source_id, "refresh_token") is None
+        assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None

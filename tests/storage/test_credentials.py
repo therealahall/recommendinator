@@ -18,10 +18,10 @@ class TestStorageManagerCredentials:
 
     def test_save_and_get_encrypted(self, storage: StorageManager) -> None:
         """Values are encrypted in DB but decrypted when read."""
-        storage.save_credential(1, "gog", "refresh_token", "plain_token_123")
+        storage.credentials.save(1, "gog", "refresh_token", "plain_token_123")
 
         # Read back through StorageManager (decrypted)
-        result = storage.get_credential(1, "gog", "refresh_token")
+        result = storage.credentials.get(1, "gog", "refresh_token")
         assert result == "plain_token_123"
 
         # Verify raw DB value is encrypted (not plaintext)
@@ -33,17 +33,27 @@ class TestStorageManagerCredentials:
         assert raw.startswith("gAAAAA")
 
     def test_get_credentials_for_source_decrypts(self, storage: StorageManager) -> None:
-        """get_credentials_for_source returns decrypted values."""
-        storage.save_credential(1, "steam", "api_key", "my_steam_key")
-        storage.save_credential(1, "steam", "steam_id", "my_steam_id")
+        """get_for_source returns decrypted values."""
+        storage.credentials.save(1, "steam", "api_key", "my_steam_key")
+        storage.credentials.save(1, "steam", "steam_id", "my_steam_id")
 
-        result = storage.get_credentials_for_source(1, "steam")
+        result = storage.credentials.get_for_source(1, "steam")
         assert result == {"api_key": "my_steam_key", "steam_id": "my_steam_id"}
+
+    def test_a_credential_write_takes_the_manager_lock(
+        self, storage: StorageManager
+    ) -> None:
+        """Catches the store minting a lock of its own.
+
+        ARCHITECTURE.md promises a credential write serialises against a
+        content-item write, and nothing else here fails when it stops to.
+        """
+        assert storage.credentials._save_lock is storage._save_lock
 
     def test_decrypt_failure_returns_none(self, storage: StorageManager) -> None:
         """Corrupted ciphertext returns None instead of crashing."""
         # Save a credential, then corrupt it directly in the DB
-        storage.save_credential(1, "gog", "refresh_token", "good_token")
+        storage.credentials.save(1, "gog", "refresh_token", "good_token")
         with storage.connection() as conn:
             conn.execute(
                 "UPDATE credentials SET credential_value = 'corrupted_garbage' "
@@ -52,4 +62,4 @@ class TestStorageManagerCredentials:
             conn.commit()
 
         # Should return None (logged), not raise InvalidToken
-        assert storage.get_credential(1, "gog", "refresh_token") is None
+        assert storage.credentials.get(1, "gog", "refresh_token") is None

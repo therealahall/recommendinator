@@ -47,7 +47,7 @@ def mock_components(mock_config):
     ):
         # Setup mocks
         mock_storage_manager = Mock(spec=StorageManager)
-        mock_storage_manager.get_credentials_for_source.return_value = {}
+        mock_storage_manager.credentials.get_for_source.return_value = {}
         mock_storage_manager.list_source_configs.return_value = []
         # Let the real migrate_config_settings boot hook run against an empty
         # settings store (no stub) — the DB overlay is a no-op and nothing

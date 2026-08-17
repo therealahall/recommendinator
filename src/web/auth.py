@@ -56,7 +56,7 @@ def signed_in_user(request: Request) -> UserDict | None:
     storage = get_storage()
     if not token or storage is None:
         return None
-    return storage.lookup_session(token)
+    return storage.accounts.lookup_session(token)
 
 
 def require_session(request: Request) -> UserDict:

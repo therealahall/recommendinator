@@ -40,7 +40,7 @@ class TestMigrateConfigCredentials:
 
         migrate_config_credentials(config, storage)
 
-        assert storage.get_credential(1, "gog", "refresh_token") == "my_gog_token"
+        assert storage.credentials.get(1, "gog", "refresh_token") == "my_gog_token"
 
     def test_scrubs_config_after_migration(self, storage: StorageManager) -> None:
         """Sensitive value is removed from in-memory config after migration."""
@@ -63,7 +63,7 @@ class TestMigrateConfigCredentials:
     ) -> None:
         """Existing DB credentials are never overwritten by config values."""
         # Pre-populate DB with a different token
-        storage.save_credential(1, "gog", "refresh_token", "db_token")
+        storage.credentials.save(1, "gog", "refresh_token", "db_token")
 
         config = {
             "inputs": {
@@ -78,7 +78,7 @@ class TestMigrateConfigCredentials:
         migrate_config_credentials(config, storage)
 
         # DB value should be unchanged
-        assert storage.get_credential(1, "gog", "refresh_token") == "db_token"
+        assert storage.credentials.get(1, "gog", "refresh_token") == "db_token"
 
     def test_duplicate_plaintext_stripped_when_db_credential_wins(
         self, storage: StorageManager
@@ -89,7 +89,7 @@ class TestMigrateConfigCredentials:
         popping the field, so a plaintext secret the app had already superseded
         stayed in ``app_state.config`` for the lifetime of the process.
         """
-        storage.save_credential(1, "gog", "refresh_token", "db_token")
+        storage.credentials.save(1, "gog", "refresh_token", "db_token")
         config = {
             "inputs": {
                 "gog": {
@@ -153,7 +153,7 @@ class TestMigrateConfigCredentials:
 
         migrate_config_credentials(config, storage)
 
-        assert storage.get_credential(1, "gog", "refresh_token") is None
+        assert storage.credentials.get(1, "gog", "refresh_token") is None
 
     def test_stale_credential_re_encrypted_from_config(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
@@ -191,7 +191,7 @@ class TestMigrateConfigCredentials:
         ):
             migrate_config_credentials(config, storage)
 
-        assert storage.get_credential(1, "gog", "refresh_token") == (
+        assert storage.credentials.get(1, "gog", "refresh_token") == (
             "rotated-plaintext-value"
         )
         # This branch migrates, so it must also scrub the plaintext copy and say
@@ -239,7 +239,7 @@ class TestMigrateConfigCredentials:
             migrate_config_credentials(config, storage)
 
         # Row must still exist — never silently delete credentials
-        assert storage.credential_row_exists(1, "gog", "refresh_token")
+        assert storage.credentials.exists(1, "gog", "refresh_token")
         assert "Cannot decrypt" in caplog.text
 
     def test_a_migrated_source_is_never_re_seeded_from_the_file(
@@ -278,7 +278,7 @@ class TestMigrateConfigCredentials:
 
         resolved = resolve_inputs(config, storage=storage)
         assert not any(entry.config.get("api_key") for entry in resolved)
-        assert storage.get_credential(1, "sonarr", "api_key") is None
+        assert storage.credentials.get(1, "sonarr", "api_key") is None
         assert "api_key" not in config["inputs"]["sonarr"]
 
     def test_a_revoked_secret_is_not_resurrected_by_the_next_reload(
@@ -306,7 +306,7 @@ class TestMigrateConfigCredentials:
         }
         migrate_config_credentials(config, storage)
 
-        assert storage.get_credential(1, "sonarr", "api_key") is None
+        assert storage.credentials.get(1, "sonarr", "api_key") is None
 
     def test_multiple_sources_migrated(self, storage: StorageManager) -> None:
         """Multiple sources with sensitive fields are all migrated."""
@@ -328,7 +328,7 @@ class TestMigrateConfigCredentials:
 
         migrate_config_credentials(config, storage)
 
-        assert storage.get_credential(1, "gog", "refresh_token") == "gog_token"
-        assert storage.get_credential(1, "my_steam", "api_key") == "steam_key"
+        assert storage.credentials.get(1, "gog", "refresh_token") == "gog_token"
+        assert storage.credentials.get(1, "my_steam", "api_key") == "steam_key"
         # steam_id is not sensitive, so should NOT be migrated
-        assert storage.get_credential(1, "my_steam", "steam_id") is None
+        assert storage.credentials.get(1, "my_steam", "steam_id") is None

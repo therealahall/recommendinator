@@ -108,7 +108,7 @@ class TestUpgradingAPopulatedInstall:
         """The claim renames user 1, so rows keyed to it stay reachable."""
         created = client.post("/api/auth/setup", json=_SETUP_BODY)
 
-        stamped = upgraded.describe_account(1)
+        stamped = upgraded.accounts.describe(1)
         assert created.status_code == 200
         assert stamped is not None
         assert created.json() == {
