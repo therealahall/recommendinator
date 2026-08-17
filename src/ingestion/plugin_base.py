@@ -115,6 +115,11 @@ class SourcePlugin(ABC):
                 yield ContentItem(...)
     """
 
+    #: Cadence a source syncs at until the user picks one, a key of
+    #: ``src.ingestion.schedule.SYNC_INTERVAL_KEYS``. Override where daily is
+    #: wrong for the shape of the source.
+    default_sync_interval: str = "daily"
+
     @property
     @abstractmethod
     def name(self) -> str:

@@ -164,6 +164,10 @@ class CsvImportPlugin(SourcePlugin):
     to match the template. Template files are available in the templates/ directory.
     """
 
+    # The user maintains this file by hand, so polling daily only re-reads
+    # rows already imported.
+    default_sync_interval = "weekly"
+
     @property
     def name(self) -> str:
         return "csv_import"
