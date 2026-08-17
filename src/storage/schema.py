@@ -70,7 +70,7 @@ class SyncRunDict(TypedDict):
     id: int
     source_id: str
     started_at: str
-    finished_at: str | None
+    finished_at: str
     status: SyncRunStatus
     items_added: int
     items_updated: int

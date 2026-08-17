@@ -21,9 +21,9 @@ _COLUMNS = (
 _NEWEST_FIRST = "ORDER BY started_at DESC, id DESC"
 
 
-def _stamp(moment: datetime | None) -> str | None:
+def _stamp(moment: datetime) -> str:
     """Fixed width: the column sorts as text, and a short stamp sorts by sign."""
-    return moment.isoformat(timespec="microseconds") if moment is not None else None
+    return moment.isoformat(timespec="microseconds")
 
 
 def _to_dict(row: sqlite3.Row) -> SyncRunDict:
@@ -51,7 +51,7 @@ class SyncRunStore:
         source_id: str,
         *,
         started_at: datetime,
-        finished_at: datetime | None,
+        finished_at: datetime,
         status: SyncRunStatus,
         items_added: int = 0,
         items_updated: int = 0,
@@ -89,6 +89,16 @@ class SyncRunStore:
             )
             conn.commit()
             return run_id
+
+    def delete_for_source(self, user_id: int, source_id: str) -> int:
+        with self._sqlite_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM sync_runs WHERE user_id = ? AND source_id = ?",
+                (user_id, source_id),
+            )
+            conn.commit()
+            return cursor.rowcount
 
     def latest_per_source(self, user_id: int) -> dict[str, SyncRunDict]:
         with self._sqlite_db.connection() as conn:

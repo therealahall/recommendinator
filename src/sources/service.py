@@ -356,19 +356,16 @@ def assemble_plugin_config(
     return assembled
 
 
-def _last_run_at(run: SyncRunDict | None) -> str | None:
-    """A run still going has a time worth showing: when it began."""
-    if run is None:
-        return None
-    return run["finished_at"] or run["started_at"]
+def resolve_source_interval(row: SourceConfigDict | None, plugin: SourcePlugin) -> str:
+    """A cadence is a migrated source's property: nothing else auto-syncs."""
+    return "off" if row is None else resolve_interval(row["sync_interval"], plugin)
 
 
 def _next_run_at(
     interval: str, run: SyncRunDict | None, failures: int, now: datetime
 ) -> str | None:
-    finished_at = run["finished_at"] if run is not None else None
     last_finished_at = (
-        datetime.fromisoformat(finished_at) if finished_at is not None else None
+        datetime.fromisoformat(run["finished_at"]) if run is not None else None
     )
     due = next_due(now, last_finished_at, interval, failures)
     return due.isoformat() if due is not None else None
@@ -432,10 +429,7 @@ def get_available_sync_sources(
             )
             continue
 
-        stored_interval = (
-            configured_row["sync_interval"] if configured_row is not None else None
-        )
-        interval = resolve_interval(stored_interval, source.plugin)
+        interval = resolve_source_interval(configured_row, source.plugin)
         latest_run = latest_runs.get(source_id)
         failures = (
             storage.sync_runs.consecutive_failures(user_id, source_id)
@@ -450,7 +444,9 @@ def get_available_sync_sources(
                 enabled=source.enabled,
                 sync_interval=interval,
                 sync_interval_default=source.plugin.default_sync_interval,
-                last_run_at=_last_run_at(latest_run),
+                last_run_at=(
+                    latest_run["finished_at"] if latest_run is not None else None
+                ),
                 last_run_status=(
                     latest_run["status"] if latest_run is not None else None
                 ),
@@ -758,9 +754,7 @@ def build_config_view(
         "migrated_at": migrated_at,
         "field_values": field_values,
         "secret_status": secret_status,
-        "sync_interval": resolve_interval(
-            db_row["sync_interval"] if db_row is not None else None, plugin
-        ),
+        "sync_interval": resolve_source_interval(db_row, plugin),
         "sync_interval_default": plugin.default_sync_interval,
     }
 
@@ -1373,6 +1367,8 @@ def delete_source(
         )
 
     storage.credentials.delete_for_source(user_id, source_id)
+    # A namesake source must not inherit this one's runs, or its backoff.
+    storage.sync_runs.delete_for_source(user_id, source_id)
     storage.sources.delete(user_id, source_id)
 
     # Read after the row is gone, so "who is left" reads as it now is. *config*
