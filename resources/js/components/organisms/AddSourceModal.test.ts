@@ -99,7 +99,6 @@ function createdConfig(sourceId: string, plugin = 'calibre_web'): SourceConfigRe
     field_values: {},
     secret_status: {},
     sync_interval: 'daily',
-    sync_interval_default: 'daily',
   }
 }
 

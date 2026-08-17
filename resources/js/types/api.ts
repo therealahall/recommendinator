@@ -131,7 +131,6 @@ export interface SyncSourceResponse {
   plugin_not_loaded: PluginNotLoadedResponse | null
   /** Already resolved, so the plugin default is never applied client-side. */
   sync_interval: string
-  sync_interval_default: string
   last_run_at: string | null
   last_run_status: string | null
   next_run_at: string | null
@@ -172,7 +171,6 @@ export interface SourceConfigResponse {
   field_values: Record<string, unknown>
   secret_status: Record<string, boolean>
   sync_interval: string
-  sync_interval_default: string
 }
 
 export interface SourceMigrationResponse {
