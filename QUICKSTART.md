@@ -166,8 +166,7 @@ python3.11 -m src.cli update --source my_books
 python3.11 -m src.cli update --source all       # every enabled source
 ```
 
-Or give a source a cadence and let it sync itself, from here or from the Data
-page. It runs only while the web server is up.
+Or give a source a cadence, here or on the Data page, and let the server run it:
 
 ```bash
 python3.11 -m src.cli source schedule my_books weekly   # off, hourly, 6h, daily, weekly

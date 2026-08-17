@@ -180,6 +180,8 @@ const orderedSources = computed(() => {
               :aria-label="
                 data.isSourceIdSyncing('all')
                   ? 'Syncing all sources — in progress'
+                  : data.anySyncRunning
+                  ? 'Sync all sources — another sync is in progress'
                   : 'Sync all sources'
               "
               @click="data.triggerSync('all')"

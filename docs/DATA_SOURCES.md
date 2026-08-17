@@ -61,14 +61,11 @@ it to, in `config.yaml` — see
 [SECURITY.md](SECURITY.md#where-file-imports-may-read).
 
 Each panel also carries an **Automatic sync** select, the peer of
-`source schedule <id> <interval>`. It is offered on a migrated source only, and
-one still in `config.yaml` never syncs on a schedule. Nor does a disabled one,
-which reports no next run. Until you set a cadence, a
-migrated source runs on its plugin's `default_sync_interval`: `daily` unless the
-plugin declares otherwise,
-and a plugin reading a file you maintain by hand declares something slower, like
-`weekly`. The web server is what runs the cadence, so nothing syncs on a
-schedule while only the CLI is in use.
+`source schedule <id> <interval>`. Only a migrated source is offered one; a
+disabled source and one still in `config.yaml` never sync on a schedule. Until
+you pick a cadence, a migrated source runs on its plugin's
+`default_sync_interval`. The web server is what runs them, so nothing syncs on a
+cadence while only the CLI is up.
 
 Full CLI reference: [CLI.md](CLI.md#source-management).
 

@@ -470,14 +470,13 @@ Library, Data, Preferences and Settings. Internal network only.
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
-- `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan beside the
-  config watcher, ticking once a minute and starting one source whose cadence is
-  due, so a backlog staggers instead of opening a thread per source. No server, no scheduled sync. It and `POST /api/update` build the job
-  the same way, through `build_sync_job` in `src/web/sync_dispatch.py`, so a
-  scheduled run records and enriches exactly as a requested one does. A run over
-  every source and a single-source one never overlap: the tick skips while the
-  umbrella runs, and `POST /api/update` answers **409** to `all` while any job
-  is in flight, and to a single source while the umbrella is.
+- `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan, ticking
+  once a minute and starting one due source, so a backlog staggers instead of
+  opening a thread per source. No server, no scheduled sync. It and
+  `POST /api/update` build the job through the same `build_sync_job`
+  (`src/web/sync_dispatch.py`), so a scheduled run records and enriches as a
+  requested one does. The run over every source overlaps nothing: the tick skips
+  while it runs, and `POST /api/update` answers **409** either way.
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
   `RequiredConfig`, `RequiredEngine`). Absent, it answers
