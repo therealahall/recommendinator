@@ -7,14 +7,17 @@ duplicated sync logic across callers.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
 from src.storage.manager import SaveOutcome
+from src.storage.schema import SyncRunStatus
+from src.utils.dates import utc_now
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -36,12 +39,15 @@ class SyncResult:
     """
 
     source_name: str
+    source_id: str = ""
     items_synced: int = 0
     items_added: int = 0
     items_updated: int = 0
     items_unchanged: int = 0
     total_items: int = 0
     errors: list[str] = field(default_factory=list)
+    started_at: datetime = field(default_factory=utc_now)
+    finished_at: datetime | None = None
 
 
 # Called with each source's result as that source finishes, rather than once
@@ -87,6 +93,36 @@ def resolve_max_workers(
         return default
 
 
+def sync_run_failed(items_synced: int, errors: Sequence[object]) -> bool:
+    """Saved nothing while reporting errors — the rule every door applies."""
+    return items_synced == 0 and bool(errors)
+
+
+def sync_run_recorder(
+    storage_manager: StorageManager, user_id: int = 1
+) -> SyncResultCallback:
+    def record(result: SyncResult) -> None:
+        status: SyncRunStatus = (
+            "failed"
+            if sync_run_failed(result.items_synced, result.errors)
+            else "completed"
+        )
+        storage_manager.sync_runs.record(
+            user_id,
+            result.source_id,
+            started_at=result.started_at,
+            finished_at=result.finished_at,
+            status=status,
+            items_added=result.items_added,
+            items_updated=result.items_updated,
+            items_unchanged=result.items_unchanged,
+            total_items=result.total_items,
+            errors=result.errors,
+        )
+
+    return record
+
+
 def execute_sync(
     plugin: SourcePlugin,
     plugin_config: dict[str, Any],
@@ -111,9 +147,9 @@ def execute_sync(
     Returns:
         SyncResult with counts and any errors.
     """
-    source_id = plugin_config.get("_source_id")
+    source_id = _configured_source_id(plugin_config)
     source_name = humanize_source_id(source_id) if source_id else plugin.display_name
-    result = SyncResult(source_name=source_name)
+    result = SyncResult(source_name=source_name, source_id=source_id)
 
     # ``_source_id`` is typed into config.yaml and the web source form, so the
     # logged copy is escaped while ``SyncResult`` keeps the raw name for the
@@ -253,9 +289,20 @@ def execute_sync(
     return result
 
 
-def _error_source_name(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> str:
+def _configured_source_id(plugin_config: dict[str, Any]) -> str:
     source_id = plugin_config.get("_source_id")
-    return humanize_source_id(source_id) if source_id else plugin.display_name
+    return str(source_id) if source_id else ""
+
+
+def _error_result(
+    plugin: SourcePlugin, plugin_config: dict[str, Any], message: str
+) -> SyncResult:
+    source_id = _configured_source_id(plugin_config)
+    return SyncResult(
+        source_name=humanize_source_id(source_id) if source_id else plugin.display_name,
+        source_id=source_id,
+        errors=[message],
+    )
 
 
 def execute_multi_source_sync(
@@ -299,7 +346,10 @@ def execute_multi_source_sync(
     """
 
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
+        started_at = utc_now()
         result = _sync_one(plugin, plugin_config)
+        result.started_at = started_at
+        result.finished_at = utc_now()
         if result_callback:
             result_callback(result)
         return result
@@ -328,10 +378,7 @@ def execute_multi_source_sync(
             # The CLI writes ``result.errors`` to a terminal and these quote a
             # ``requests`` fault, so the server's reason phrase could erase the
             # line the operator just read (CWE-117).
-            return SyncResult(
-                source_name=_error_source_name(plugin, plugin_config),
-                errors=[sanitize_for_log(error.message)],
-            )
+            return _error_result(plugin, plugin_config, sanitize_for_log(error.message))
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text
             # out of result.errors. Plugin failures can include
@@ -341,9 +388,8 @@ def execute_multi_source_sync(
                 safe_plugin_name,
                 exception_for_log(error),
             )
-            return SyncResult(
-                source_name=_error_source_name(plugin, plugin_config),
-                errors=[f"Sync failed for {plugin.name}"],
+            return _error_result(
+                plugin, plugin_config, f"Sync failed for {plugin.name}"
             )
 
     effective_workers = min(max_workers, len(sources)) if sources else 1

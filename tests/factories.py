@@ -19,6 +19,7 @@ from src.storage.global_secrets import SecretStore
 from src.storage.schema import UserDict, get_default_user_id
 from src.storage.settings_store import SettingsStore
 from src.storage.source_configs import SourceConfigStore
+from src.storage.sync_runs import SyncRunStore
 from src.web.app import create_app
 from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
@@ -47,6 +48,7 @@ _SUB_STORES: dict[str, type] = {
     "secrets": SecretStore,
     "settings": SettingsStore,
     "sources": SourceConfigStore,
+    "sync_runs": SyncRunStore,
 }
 
 

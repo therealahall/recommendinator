@@ -4,9 +4,10 @@ import json
 import logging
 import threading
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -20,9 +21,11 @@ from src.ingestion.sync import (
     execute_multi_source_sync,
     execute_sync,
     resolve_max_workers,
+    sync_run_recorder,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import SavedItem, SaveOutcome, StorageManager
+from src.storage.schema import SyncRunDict
 from src.utils.text import LINE_BREAKS
 from tests.factories import make_item
 
@@ -273,6 +276,92 @@ class TestExecuteMultiSourceSync:
             ("Failing", ("boom",)),
             ("Working", ()),
         }
+
+
+class TestEverySyncLeavesARun:
+    _SOURCE_ID = "goodreads_csv"
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    def _sync(self, plugin: SourcePlugin, storage: StorageManager) -> None:
+        execute_multi_source_sync(
+            sources=[(plugin, {"_source_id": self._SOURCE_ID})],
+            storage_manager=storage,
+            result_callback=sync_run_recorder(storage),
+        )
+
+    @staticmethod
+    def _plugin(items: int) -> MagicMock:
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "goodreads_csv"
+        plugin.display_name = "Goodreads CSV"
+        plugin.fetch.return_value = iter(
+            [make_item(f"Book {index}", item_id=f"b{index}") for index in range(items)]
+        )
+        return plugin
+
+    def _run(self, storage: StorageManager) -> SyncRunDict:
+        (run,) = storage.sync_runs.list_for_source(1, self._SOURCE_ID, limit=10)
+        return run
+
+    def test_the_recorded_stamps_are_aware_utc(self, storage: StorageManager) -> None:
+        self._sync(self._plugin(1), storage)
+
+        run = self._run(storage)
+        stamps = [
+            datetime.fromisoformat(run["started_at"]),
+            datetime.fromisoformat(str(run["finished_at"])),
+        ]
+        # Naive stamps land silently and blow up where the scheduler compares
+        # them to an aware now.
+        assert {stamp.utcoffset() for stamp in stamps} == {timedelta(0)}
+        assert stamps[1] >= stamps[0]
+
+    def test_each_source_of_one_run_lands_its_own_row(
+        self, storage: StorageManager
+    ) -> None:
+        remedy = "Export the library again: the file has no 'Title' column."
+        failing = self._plugin(0)
+        failing.name = "storygraph_csv"
+        failing.fetch.side_effect = SourceError("storygraph_csv", remedy)
+
+        execute_multi_source_sync(
+            sources=[
+                (self._plugin(1), {"_source_id": self._SOURCE_ID}),
+                (failing, {"_source_id": "storygraph_csv"}),
+            ],
+            storage_manager=storage,
+            result_callback=sync_run_recorder(storage),
+            max_workers=2,
+        )
+
+        assert {
+            (run["source_id"], run["status"], tuple(run["errors"]))
+            for run in storage.sync_runs.list_recent(1, limit=10)
+        } == {
+            ("goodreads_csv", "completed", ()),
+            ("storygraph_csv", "failed", (remedy,)),
+        }
+
+    def test_a_partial_failure_that_still_saved_items_is_recorded_completed(
+        self, storage: StorageManager
+    ) -> None:
+        with patch.object(
+            storage,
+            "save_content_item_outcome",
+            side_effect=[
+                SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
+                ValueError("db"),
+            ],
+        ):
+            self._sync(self._plugin(2), storage)
+
+        run = self._run(storage)
+        assert run["status"] == "completed"
+        assert (run["items_added"], run["total_items"]) == (1, 2)
+        assert run["errors"] == ["Failed to process 'Book 1'"]
 
 
 class TestCredentialRotationCallback:

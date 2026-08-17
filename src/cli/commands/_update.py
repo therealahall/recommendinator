@@ -17,6 +17,8 @@ from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
     resolve_max_workers,
+    sync_run_failed,
+    sync_run_recorder,
 )
 from src.sources.service import (
     ResolvedInput,
@@ -73,9 +75,7 @@ def _status_view(
         for result in results
         for message in result.errors
     ]
-    # A run that saved nothing while reporting errors is a failure, the rule
-    # the web's job manager applies to the same two numbers.
-    failed = items_processed == 0 and bool(errors)
+    failed = sync_run_failed(items_processed, errors)
     return {
         "status": "idle",
         "jobs": [
@@ -292,6 +292,7 @@ def update(
             sources=[(entry.plugin, entry.config) for entry in valid],
             storage_manager=storage,
             progress_callback=cli_progress,
+            result_callback=sync_run_recorder(storage),
             mark_for_enrichment=auto_enrich,
             max_workers=max_workers,
         )
