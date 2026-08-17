@@ -44,9 +44,8 @@ CLAUDE.md, `docs/`), commit atomically in conventional format.
 
 1. Write the regression test first. It must fail before the fix.
 2. Fix the bug.
-3. Document it in the test docstring: what was reported, root cause, fix.
-4. Update the docs if behaviour changed or was documented wrongly.
-5. Commit with the `fix` type.
+3. Update the docs if behaviour changed or was documented wrongly.
+4. Commit with the `fix` type.
 
 ## Anti-churn checklist (run BEFORE writing code)
 
@@ -94,8 +93,8 @@ for the patterns it names.
   are duplicating conftest.
 - **`ContentItem` requires `status`**, and most tests need `rating` too. On
   "Missing named argument", read the dataclass signature rather than guessing.
-- **Regression tests go in a `Test<Feature>Regression` class with a docstring**
-  giving symptom, root cause and fix. No bare tests with cryptic names.
+- **A test's name is what says which regression it catches.** No bare tests with
+  cryptic names, and no docstring restating the name.
 - **Assertions must be strong.** `assert result.exit_code == 0` is necessary and
   not sufficient. Assert specific output strings, mock call args or parsed JSON
   keys. "Output is non-empty" is not an assertion.
