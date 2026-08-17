@@ -2553,6 +2553,23 @@ class TestUpdateEndpoint409Conflict:
         }
 
 
+class TestSyncingEverythingWaitsForTheRunInFlight:
+    def test_all_is_refused_while_one_source_is_already_syncing(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        manager = get_sync_manager()
+        with patch("src.web.sync_manager.threading.Thread"):
+            manager.start_sync(source="Steam", sync_function=lambda _job: 0)
+
+        response = client.post("/api/update", json={"source": "all"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "A sync is already in progress"
+        assert "All Sources" not in {
+            job["source"] for job in manager.get_status()["jobs"]
+        }
+
+
 class TestUpdateEndpointParallelSync:
     """Tests for max_workers wiring in POST /api/update (issue #45).
 

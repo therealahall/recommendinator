@@ -464,8 +464,9 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
         assert stored["sync_interval"] is None
         # The run history is a new table, so the upgrade has to create it too.
         temp_db.execute(
-            "INSERT INTO sync_runs (user_id, source_id, started_at, status)"
-            " VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00', 'completed')"
+            "INSERT INTO sync_runs (user_id, source_id, started_at, finished_at,"
+            " status) VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00',"
+            " '2026-03-01T12:00:30.000000+00:00', 'completed')"
         )
 
 

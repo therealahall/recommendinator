@@ -412,7 +412,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             source_id TEXT NOT NULL,
             started_at TIMESTAMP NOT NULL,
-            finished_at TIMESTAMP,
+            finished_at TIMESTAMP NOT NULL,
             status TEXT NOT NULL,  -- completed or failed
             items_added INTEGER NOT NULL DEFAULT 0,
             items_updated INTEGER NOT NULL DEFAULT 0,
