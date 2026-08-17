@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { domId } from '@/utils/format'
 import type { SyncIntervalOption } from '@/types/api'
 
@@ -9,7 +9,6 @@ const props = defineProps<{
   sourceId: string
   sourceName: string
   interval: string
-  /** Straight from the schema response: no interface retypes the presets. */
   options: SyncIntervalOption[]
   status: SaveStatus
   error: string
@@ -18,6 +17,19 @@ const props = defineProps<{
 const emit = defineEmits<{
   change: [interval: string]
 }>()
+
+// Vue re-patches the DOM value from the prop on every render (vuejs/core#1471),
+// so binding it straight snaps the select back for the length of the save.
+const selected = ref(props.interval)
+watch([() => props.interval, () => props.status], () => {
+  // The prop is what the server has, stale only while a save is in flight.
+  if (props.status !== 'saving') selected.value = props.interval
+})
+
+function onChange(event: Event): void {
+  selected.value = (event.target as HTMLSelectElement).value
+  emit('change', selected.value)
+}
 
 const selectId = computed(() => domId('sync-cadence', props.sourceId))
 const statusId = computed(() => domId('sync-cadence-status', props.sourceId))
@@ -38,9 +50,9 @@ const statusText = computed(() => {
       :id="selectId"
       class="toolbar-select cadence-select"
       :data-testid="`cadence-select-${sourceId}`"
-      :value="interval"
+      :value="selected"
       :aria-describedby="statusText ? statusId : undefined"
-      @change="emit('change', ($event.target as HTMLSelectElement).value)"
+      @change="onChange"
     >
       <option v-for="option in options" :key="option.key" :value="option.key">
         {{ option.label }}
@@ -61,7 +73,6 @@ const statusText = computed(() => {
 </template>
 
 <style scoped>
-/* .source-form-field/-label and .toolbar-select are base.css primitives. */
 .cadence-field {
   margin-bottom: var(--space-4);
 }
