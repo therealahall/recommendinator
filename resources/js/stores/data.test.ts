@@ -45,6 +45,22 @@ describe('useDataStore', () => {
     }
   }
 
+  /** A listing entry as GET /sync/sources sends it, schedule fields included. */
+  function listedSource(id: string, displayName: string) {
+    return {
+      id,
+      display_name: displayName,
+      plugin_display_name: 'Fake File',
+      enabled: true,
+      plugin_not_loaded: null,
+      sync_interval: 'off',
+      sync_interval_default: 'off',
+      last_run_at: null,
+      last_run_status: null,
+      next_run_at: null,
+    }
+  }
+
   /** The per-source slots an umbrella run carries — one per source it
    *  resolved to sync, which is how a row knows the run includes it. */
   function ranSources(...names: string[]) {
@@ -689,19 +705,90 @@ describe('useDataStore', () => {
 
       const store = useDataStore()
       // Seed the listing as the page would after loadSyncSources.
-      store.syncSources = [
-        {
-          id: 'steam',
-          display_name: 'Steam',
-          plugin_display_name: 'Steam',
-          enabled: true,
-          plugin_not_loaded: null,
-        },
-      ]
+      store.syncSources = [listedSource('steam', 'Steam')]
 
       await store.setSourceEnabled('steam', false)
 
       expect(store.syncSources[0].enabled).toBe(false)
+    })
+
+    it('setSourceSchedule PUTs the interval and re-reads the listing for it', async () => {
+      mockPut.mockResolvedValueOnce({
+        source_id: 'steam',
+        plugin: 'steam',
+        plugin_display_name: 'Steam',
+        enabled: true,
+        migrated: true,
+        migrated_at: 'now',
+        field_values: {},
+        secret_status: {},
+        sync_interval: '6h',
+        sync_interval_default: 'daily',
+      })
+      mockGet.mockResolvedValueOnce([
+        {
+          ...listedSource('steam', 'Steam'),
+          sync_interval: '6h',
+          next_run_at: '2026-08-17T18:00:00+00:00',
+        },
+      ])
+
+      const store = useDataStore()
+      store.syncSources = [listedSource('steam', 'Steam')]
+      await store.setSourceSchedule('steam', '6h')
+
+      expect(mockPut).toHaveBeenCalledWith('/sync/sources/steam/schedule', {
+        interval: '6h',
+      })
+      expect(store.sourceConfigs.steam.sync_interval).toBe('6h')
+      // Patching the interval alone would leave next_run_at on the old cadence,
+      // which the header quotes as the due time.
+      expect(store.syncSources[0].next_run_at).toBe('2026-08-17T18:00:00+00:00')
+    })
+
+    it('setSourceSchedule rejects so the caller can report a refusal', async () => {
+      mockPut.mockRejectedValueOnce(
+        new ApiError(400, 'Bad Request', {
+          detail: 'Interval must be one of: off, hourly, 6h, daily, weekly.',
+        }),
+      )
+
+      const store = useDataStore()
+
+      // Swallowed, the select would snap back to the old cadence with nothing
+      // on screen saying the change was refused (WCAG 3.3.1).
+      await expect(
+        store.setSourceSchedule('steam', 'fortnightly'),
+      ).rejects.toBeInstanceOf(ApiError)
+    })
+
+    it('loadSourceRuns asks for that source newest-first and caches them', async () => {
+      const runs = [
+        {
+          source_id: 'steam',
+          started_at: '2026-08-17T10:00:00+00:00',
+          finished_at: '2026-08-17T10:00:30+00:00',
+          status: 'failed',
+          items_added: 0,
+          items_updated: 0,
+          items_unchanged: 0,
+          total_items: 0,
+          errors: ['Steam API returned 401 Unauthorized'],
+        },
+      ]
+      mockGet.mockResolvedValueOnce(runs)
+
+      const store = useDataStore()
+      const result = await store.loadSourceRuns('steam')
+
+      expect(mockGet).toHaveBeenCalledWith('/sync/runs', {
+        source_id: 'steam',
+        limit: 10,
+      })
+      expect(result).toEqual(runs)
+      expect(store.sourceRuns.steam[0].errors).toEqual([
+        'Steam API returned 401 Unauthorized',
+      ])
     })
 
     it('loadAvailablePlugins caches the plugins and what failed to load', async () => {
@@ -771,20 +858,8 @@ describe('useDataStore', () => {
 
       const store = useDataStore()
       store.syncSources = [
-        {
-          id: 'goner',
-          display_name: 'Goner',
-          plugin_display_name: 'Fake File',
-          enabled: true,
-          plugin_not_loaded: null,
-        },
-        {
-          id: 'survivor',
-          display_name: 'Survivor',
-          plugin_display_name: 'Fake File',
-          enabled: true,
-          plugin_not_loaded: null,
-        },
+        listedSource('goner', 'Goner'),
+        listedSource('survivor', 'Survivor'),
       ]
       store.sourceConfigs = {
         goner: {
@@ -796,7 +871,24 @@ describe('useDataStore', () => {
           migrated_at: 'now',
           field_values: {},
           secret_status: {},
+          sync_interval: 'off',
+          sync_interval_default: 'off',
         },
+      }
+      store.sourceRuns = {
+        goner: [
+          {
+            source_id: 'goner',
+            started_at: '2026-08-17T10:00:00+00:00',
+            finished_at: '2026-08-17T10:01:00+00:00',
+            status: 'failed',
+            items_added: 0,
+            items_updated: 0,
+            items_unchanged: 0,
+            total_items: 0,
+            errors: ['401 Unauthorized'],
+          },
+        ],
       }
       store.oauthStatus = {
         goner: { enabled: true, connected: true, authUrl: null },
@@ -812,6 +904,7 @@ describe('useDataStore', () => {
       // of that name a connection state and an announcement it never earned.
       expect(store.oauthStatus.goner).toBeUndefined()
       expect(store.oauthMessages.goner).toBeUndefined()
+      expect(store.sourceRuns.goner).toBeUndefined()
     })
 
     it('drops a status read still in flight when the source is deleted', async () => {

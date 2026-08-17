@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  formatStatusForContentType, humanizeSection, truncate, domId,
+  formatRelativeTime, formatStatusForContentType, humanizeSection, truncate, domId,
 } from './format'
 
 describe('domId', () => {
@@ -39,6 +39,25 @@ describe('humanizeSection', () => {
   it('splits underscores and hyphens into words', () => {
     expect(humanizeSection('api_key')).toBe('API Key')
     expect(humanizeSection('log-level')).toBe('Log Level')
+  })
+})
+
+describe('formatRelativeTime', () => {
+  const now = new Date('2026-08-17T12:00:00+00:00')
+
+  it('reads a past sync in the largest unit that fits', () => {
+    expect(formatRelativeTime('2026-08-17T10:00:00+00:00', now)).toBe('2 hours ago')
+    expect(formatRelativeTime('2026-08-17T11:59:30+00:00', now)).toBe('30 seconds ago')
+  })
+
+  it('reads a due time as future', () => {
+    expect(formatRelativeTime('2026-08-17T18:00:00+00:00', now)).toBe('in 6 hours')
+  })
+
+  it('reads the offset the API sends rather than the host zone', () => {
+    // Python writes an aware UTC stamp, so dropping the offset would shift
+    // every line by the operator's own zone.
+    expect(formatRelativeTime('2026-08-17T12:00:00+02:00', now)).toBe('2 hours ago')
   })
 })
 

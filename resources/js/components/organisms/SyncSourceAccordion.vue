@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
+import SourceScheduleSelect from '@/components/molecules/SourceScheduleSelect.vue'
+import SourceSyncSchedule from '@/components/molecules/SourceSyncSchedule.vue'
 import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
 import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
@@ -408,6 +410,48 @@ const unshownErrorCount = computed<number>(() =>
   Math.max(0, sourceErrors.value.length - MAX_SHOWN_ERRORS),
 )
 
+const savingSchedule = ref(false)
+const scheduleError = ref('')
+const runsLoading = ref(false)
+const runsError = ref('')
+
+const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
+// The listing carries the resolved key, and only the schema carries its label —
+// so a collapsed row reads the key until expanding it fetches the words.
+const intervalLabel = computed(
+  () =>
+    intervalOptions.value.find(
+      (option) => option.key === props.source.sync_interval,
+    )?.label ?? props.source.sync_interval,
+)
+const runs = computed(() => data.sourceRuns[props.source.id] ?? [])
+
+async function onScheduleChange(interval: string): Promise<void> {
+  if (savingSchedule.value) return
+  savingSchedule.value = true
+  scheduleError.value = ''
+  try {
+    await data.setSourceSchedule(props.source.id, interval)
+  } catch (err) {
+    scheduleError.value = err instanceof Error ? err.message : 'Unknown error'
+  } finally {
+    savingSchedule.value = false
+  }
+}
+
+async function onOpenRunHistory(): Promise<void> {
+  if (runsLoading.value) return
+  runsLoading.value = true
+  runsError.value = ''
+  try {
+    await data.loadSourceRuns(props.source.id)
+  } catch (err) {
+    runsError.value = err instanceof Error ? err.message : 'Unknown error'
+  } finally {
+    runsLoading.value = false
+  }
+}
+
 const errorsTitle = computed<string>(
   () => `Last sync errors for ${props.source.display_name}`,
 )
@@ -489,6 +533,18 @@ const errorsTitleId = computed<string>(() =>
       (WCAG 4.1.3).
     -->
     <template #notice>
+      <SourceSyncSchedule
+        :source-id="source.id"
+        :source-name="source.display_name"
+        :interval-label="intervalLabel"
+        :last-run-at="source.last_run_at"
+        :last-run-status="source.last_run_status"
+        :next-run-at="source.next_run_at"
+        :runs="runs"
+        :loading="runsLoading"
+        :error="runsError"
+        @open="onOpenRunHistory"
+      />
       <!-- Beside the errors rather than in the header: the header slot is the
            trigger button's content, so this would run into the source name in
            its accessible name and in the heading (WCAG 2.4.6). -->
@@ -624,6 +680,16 @@ const errorsTitleId = computed<string>(() =>
             aria-atomic="true"
           ><span v-if="oauthMessage" class="sr-only">{{ source.display_name }}: </span>{{ oauthMessage }}</p>
         </template>
+
+        <SourceScheduleSelect
+          :source-id="source.id"
+          :source-name="source.display_name"
+          :interval="source.sync_interval"
+          :options="intervalOptions"
+          :saving="savingSchedule"
+          :error="scheduleError"
+          @change="onScheduleChange"
+        />
 
         <SourceConfigForm
           :schema="schema.fields"
