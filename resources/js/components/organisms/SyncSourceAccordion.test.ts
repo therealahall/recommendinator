@@ -340,7 +340,37 @@ describe('SyncSourceAccordion', () => {
       expect((select.element as HTMLSelectElement).value).toBe('6h')
 
       await select.setValue('off')
+      await flushPromises()
       expect(setSchedule).toHaveBeenCalledWith('steam', 'off')
+      // Cleared on a timer rather than at once: clearing announces nothing.
+      expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toContain(
+        'Cadence saved',
+      )
+    })
+
+    it('persists the last cadence of a burst typed while a save is in flight', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      let releaseFirst: () => void = () => {}
+      const setSchedule = vi
+        .spyOn(store, 'setSourceSchedule')
+        .mockImplementationOnce(
+          () => new Promise<void>((resolve) => (releaseFirst = resolve)),
+        )
+        .mockResolvedValue(undefined)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      await select.setValue('off')
+      await select.setValue('6h')
+      releaseFirst()
+      await flushPromises()
+
+      expect(setSchedule.mock.calls.map((call) => call[1])).toEqual(['off', '6h'])
     })
 
     it('reports a refused cadence change instead of swallowing it', async () => {
@@ -355,14 +385,16 @@ describe('SyncSourceAccordion', () => {
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      await select.setValue('off')
       await flushPromises()
 
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
       expect(status.text()).toContain('not migrated to the database')
-      expect(status.attributes('aria-live')).toBe('polite')
+      expect(status.attributes('role')).toBe('alert')
+      // The select still shows the refused value, so it has to carry the why.
+      expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
     })
-
   })
 
   // Each OAuth source below is named for its purpose, not for its plugin: the

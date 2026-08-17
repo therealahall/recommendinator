@@ -34,6 +34,7 @@ const migrating = ref(false)
 const savingConfig = ref(false)
 const togglingEnabled = ref(false)
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+const SAVED_STATUS_MS = 2500
 const saveStatus = ref<SaveStatus>('idle')
 const saveError = ref('')
 let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
@@ -114,7 +115,7 @@ async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
     saveStatusTimer = setTimeout(() => {
       saveStatus.value = 'idle'
       saveStatusTimer = null
-    }, 2500)
+    }, SAVED_STATUS_MS)
   } catch (err) {
     saveStatus.value = 'error'
     saveError.value = err instanceof Error ? err.message : 'Unknown error'
@@ -332,6 +333,7 @@ onBeforeUnmount(() => {
     clearTimeout(saveStatusTimer)
     saveStatusTimer = null
   }
+  clearScheduleTimer()
 })
 
 const syncDisabled = computed(() => props.syncing || !props.source.enabled)
@@ -410,8 +412,15 @@ const unshownErrorCount = computed<number>(() =>
   Math.max(0, sourceErrors.value.length - MAX_SHOWN_ERRORS),
 )
 
-const savingSchedule = ref(false)
+const scheduleStatus = ref<SaveStatus>('idle')
 const scheduleError = ref('')
+let scheduleStatusTimer: ReturnType<typeof setTimeout> | null = null
+let pendingInterval: string | null = null
+
+function clearScheduleTimer(): void {
+  if (scheduleStatusTimer) clearTimeout(scheduleStatusTimer)
+  scheduleStatusTimer = null
+}
 
 const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
 // The listing carries the resolved key, and only the schema carries its label —
@@ -423,16 +432,29 @@ const intervalLabel = computed(
     )?.label ?? props.source.sync_interval,
 )
 
+// Arrow-keying a closed <select> fires a change per keystroke, outrunning the
+// save. Dropping the ones mid-flight reverts the select under the user.
 async function onScheduleChange(interval: string): Promise<void> {
-  if (savingSchedule.value) return
-  savingSchedule.value = true
+  pendingInterval = interval
+  if (scheduleStatus.value === 'saving') return
+  clearScheduleTimer()
+  scheduleStatus.value = 'saving'
   scheduleError.value = ''
   try {
-    await data.setSourceSchedule(props.source.id, interval)
+    while (pendingInterval !== null) {
+      const next = pendingInterval
+      pendingInterval = null
+      await data.setSourceSchedule(props.source.id, next)
+    }
+    scheduleStatus.value = 'saved'
+    scheduleStatusTimer = setTimeout(() => {
+      scheduleStatus.value = 'idle'
+      scheduleStatusTimer = null
+    }, SAVED_STATUS_MS)
   } catch (err) {
+    pendingInterval = null
+    scheduleStatus.value = 'error'
     scheduleError.value = err instanceof Error ? err.message : 'Unknown error'
-  } finally {
-    savingSchedule.value = false
   }
 }
 
@@ -665,7 +687,7 @@ const errorsTitleId = computed<string>(() =>
           :source-name="source.display_name"
           :interval="source.sync_interval"
           :options="intervalOptions"
-          :saving="savingSchedule"
+          :status="scheduleStatus"
           :error="scheduleError"
           @change="onScheduleChange"
         />

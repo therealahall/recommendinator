@@ -3,13 +3,15 @@ import { computed } from 'vue'
 import { domId } from '@/utils/format'
 import type { SyncIntervalOption } from '@/types/api'
 
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 const props = defineProps<{
   sourceId: string
   sourceName: string
   interval: string
   /** Straight from the schema response: no interface retypes the presets. */
   options: SyncIntervalOption[]
-  saving: boolean
+  status: SaveStatus
   error: string
 }>()
 
@@ -20,9 +22,12 @@ const emit = defineEmits<{
 const selectId = computed(() => domId('sync-cadence', props.sourceId))
 const statusId = computed(() => domId('sync-cadence-status', props.sourceId))
 const label = computed(() => `Automatic sync for ${props.sourceName}`)
+const failed = computed(() => props.status === 'error')
+// 'saved' exists to be announced: clearing a live region announces nothing.
 const statusText = computed(() => {
-  if (props.error) return `Error: ${props.error}`
-  return props.saving ? 'Saving the cadence…' : ''
+  if (failed.value) return `Error: ${props.error}`
+  if (props.status === 'saving') return 'Saving the cadence…'
+  return props.status === 'saved' ? 'Cadence saved.' : ''
 })
 </script>
 
@@ -34,6 +39,7 @@ const statusText = computed(() => {
       class="toolbar-select cadence-select"
       :data-testid="`cadence-select-${sourceId}`"
       :value="interval"
+      :aria-describedby="statusText ? statusId : undefined"
       @change="emit('change', ($event.target as HTMLSelectElement).value)"
     >
       <option v-for="option in options" :key="option.key" :value="option.key">
@@ -45,10 +51,10 @@ const statusText = computed(() => {
     <p
       :id="statusId"
       class="cadence-status"
-      :class="{ 'cadence-status--error': error }"
+      :class="{ 'cadence-status--error': failed }"
       :data-testid="`cadence-status-${sourceId}`"
-      role="status"
-      aria-live="polite"
+      :role="failed ? 'alert' : 'status'"
+      :aria-live="failed ? 'assertive' : 'polite'"
       aria-atomic="true"
     >{{ statusText }}</p>
   </div>
