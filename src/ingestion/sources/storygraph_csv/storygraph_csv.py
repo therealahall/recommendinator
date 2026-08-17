@@ -53,8 +53,6 @@ class StorygraphCsvPlugin(SourcePlugin):
     point this plugin at the downloaded file.
     """
 
-    # Nothing changes until the user exports again by hand, so polling daily
-    # only re-reads rows already imported.
     default_sync_interval = "weekly"
 
     @property

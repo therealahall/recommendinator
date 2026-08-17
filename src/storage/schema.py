@@ -63,14 +63,11 @@ class SourceConfigDict(TypedDict):
     updated_at: str
 
 
-#: How a finished sync run ended. ``skipped`` is "nothing was attempted", which
-#: is why it neither breaks nor extends a run of failures.
+#: ``skipped`` attempted nothing, so it breaks no run of failures.
 SyncRunStatus = Literal["completed", "failed", "skipped"]
 
 
 class SyncRunDict(TypedDict):
-    """One recorded run of one source's sync, as SyncRunStore returns it."""
-
     id: int
     source_id: str
     started_at: str
@@ -102,8 +99,7 @@ class SyncRunDict(TypedDict):
 # (``src/storage/accounts.py``), and guards nothing: the unconditional ALTER
 # and CREATE add both, and an unclaimed instance is exactly the NULL columns.
 #
-# Version 7 records ``source_configs.sync_interval`` and the ``sync_runs``
-# table, and guards nothing for the same reason.
+# Version 7 adds ``source_configs.sync_interval`` and ``sync_runs``, likewise.
 #
 # A guarded step runs once per database, so the values it wrote never follow a
 # change to the function that produced them: changing
@@ -409,8 +405,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_not_exists(cursor, "source_configs", "sync_interval", "TEXT")
 
-    # One row per finished sync of one source: what it moved, how it ended, and
-    # what it said when it failed. Pruned per source by SyncRunStore.record.
+    # Pruned per source by SyncRunStore.record.
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS sync_runs (
@@ -1467,12 +1462,7 @@ def set_source_config_schedule(
     source_id: str,
     sync_interval: str | None,
 ) -> bool:
-    """Set the automatic-sync cadence for a migrated source.
-
-    ``None`` restores the plugin's default cadence and ``"off"`` stops
-    automatic syncing. Returns ``True`` if a row was updated, ``False`` if the
-    source has not been migrated yet.
-    """
+    """``None`` restores the plugin's default; ``False`` when unmigrated."""
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE source_configs SET sync_interval = ?, updated_at = CURRENT_TIMESTAMP "

@@ -1,5 +1,3 @@
-"""The ``sync_runs`` table: how each run of each source's sync ended."""
-
 from __future__ import annotations
 
 import json
@@ -61,18 +59,13 @@ class SyncRunStore:
         total_items: int = 0,
         errors: Sequence[str] = (),
     ) -> int:
-        """Prunes past ``_MAX_RUNS_PER_SOURCE`` in the same transaction."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                INSERT INTO sync_runs (
-                    user_id, source_id, started_at, finished_at, status,
-                    items_added, items_updated, items_unchanged, total_items,
-                    errors_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                "INSERT INTO sync_runs (user_id, source_id, started_at, "
+                "finished_at, status, items_added, items_updated, "
+                "items_unchanged, total_items, errors_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     source_id,
@@ -89,13 +82,9 @@ class SyncRunStore:
             # Read before the prune, which leaves it meaning nothing.
             run_id: int = cursor.lastrowid  # type: ignore[assignment]
             cursor.execute(
-                f"""
-                DELETE FROM sync_runs WHERE id IN (
-                    SELECT id FROM sync_runs
-                     WHERE user_id = ? AND source_id = ?
-                     {_NEWEST_FIRST} LIMIT -1 OFFSET ?
-                )
-                """,
+                "DELETE FROM sync_runs WHERE id IN ("
+                "SELECT id FROM sync_runs WHERE user_id = ? AND source_id = ? "
+                f"{_NEWEST_FIRST} LIMIT -1 OFFSET ?)",
                 (user_id, source_id, _MAX_RUNS_PER_SOURCE),
             )
             conn.commit()
@@ -135,7 +124,6 @@ class SyncRunStore:
             return {row["source_id"]: _to_dict(row) for row in cursor.fetchall()}
 
     def consecutive_failures(self, user_id: int, source_id: str) -> int:
-        """A skip attempted nothing, so it neither breaks nor extends the run."""
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
