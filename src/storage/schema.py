@@ -63,8 +63,7 @@ class SourceConfigDict(TypedDict):
     updated_at: str
 
 
-#: ``skipped`` attempted nothing, so it breaks no run of failures.
-SyncRunStatus = Literal["completed", "failed", "skipped"]
+SyncRunStatus = Literal["completed", "failed"]
 
 
 class SyncRunDict(TypedDict):
@@ -414,7 +413,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             source_id TEXT NOT NULL,
             started_at TIMESTAMP NOT NULL,
             finished_at TIMESTAMP,
-            status TEXT NOT NULL,  -- completed, failed or skipped
+            status TEXT NOT NULL,  -- completed or failed
             items_added INTEGER NOT NULL DEFAULT 0,
             items_updated INTEGER NOT NULL DEFAULT 0,
             items_unchanged INTEGER NOT NULL DEFAULT 0,

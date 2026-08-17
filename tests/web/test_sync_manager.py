@@ -1,14 +1,23 @@
 """Tests for background sync job manager."""
 
+import asyncio
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from fastapi import FastAPI
 
+from src.ingestion.sync import ALL_SOURCES_LABEL
+from src.storage.manager import StorageManager
+from src.utils.dates import utc_now
+from src.web.app import lifespan
+from src.web.scheduler import SyncScheduler, dispatch_due_syncs
+from src.web.state import app_state
 from src.web.sync_manager import (
     SyncError,
     SyncJob,
@@ -698,3 +707,204 @@ class TestSyncManagerLogInjectionRegression:
         ]
         assert api_key not in caplog.text
         assert not any(record.exc_info for record in caplog.records)
+
+
+SCHEDULER_LOGGER = "src.web.scheduler"
+STEAM_LABEL = "Steam"
+
+
+def _steam_source(storage: StorageManager, interval: str) -> None:
+    storage.sources.upsert(1, "steam", "steam", {"steam_id": "7656119"}, enabled=True)
+    storage.sources.set_schedule(1, "steam", interval)
+
+
+def _completed_run(storage: StorageManager, ago: timedelta) -> None:
+    finished_at = utc_now() - ago
+    storage.sync_runs.record(
+        1,
+        "steam",
+        started_at=finished_at - timedelta(seconds=10),
+        finished_at=finished_at,
+        status="completed",
+    )
+
+
+def _accepting_manager() -> MagicMock:
+    manager = MagicMock(spec=SyncManager)
+    manager.is_running.return_value = False
+    manager.start_sync.return_value = (True, f"Started sync for {STEAM_LABEL}")
+    return manager
+
+
+class TestScheduledSyncDispatch:
+    """What one scheduler tick does, driven without waiting for the clock."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _tick(storage: StorageManager, manager: MagicMock) -> None:
+        with patch("src.web.scheduler.get_sync_manager", return_value=manager):
+            dispatch_due_syncs(storage, {})
+
+    def test_an_hourly_source_last_run_two_hours_ago_is_dispatched(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _completed_run(storage, timedelta(hours=2))
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+        with patch(
+            "src.web.sync_dispatch.execute_multi_source_sync", return_value=[]
+        ) as execute:
+            manager.start_sync.call_args.args[1](MagicMock(spec=SyncJob))
+        assert [
+            source_config["_source_id"]
+            for _plugin, source_config in execute.call_args.kwargs["sources"]
+        ] == ["steam"]
+
+    def test_a_source_set_to_off_is_never_dispatched(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "off")
+        _completed_run(storage, timedelta(days=730))
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+    def test_a_source_with_no_run_history_is_dispatched_on_the_first_tick(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+
+    def test_a_run_that_finished_seconds_ago_leaves_an_hourly_source_not_due(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _completed_run(storage, timedelta(seconds=50))
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+    def test_a_tick_declined_for_the_umbrella_records_nothing_and_stays_due(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _completed_run(storage, timedelta(hours=2))
+        manager = _accepting_manager()
+        manager.is_running.return_value = True
+
+        self._tick(storage, manager)
+
+        manager.is_running.assert_called_once_with(ALL_SOURCES_LABEL)
+        manager.start_sync.assert_not_called()
+        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+
+        manager.is_running.return_value = False
+        self._tick(storage, manager)
+
+        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+        # The declined tick left no row of its own, here or a moment ago: a
+        # skip that outranked the real run read as no history at all.
+        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+
+    def test_the_umbrellas_own_run_leaves_the_declined_source_not_due_again(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        manager = _accepting_manager()
+        manager.is_running.return_value = True
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+        # The umbrella's own Steam run lands while that tick is declining.
+        _completed_run(storage, timedelta(seconds=50))
+        manager.is_running.return_value = False
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+
+    def test_a_start_the_manager_refuses_records_nothing(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _completed_run(storage, timedelta(hours=2))
+        manager = _accepting_manager()
+        manager.start_sync.return_value = (
+            False,
+            f"Sync already in progress for {STEAM_LABEL}",
+        )
+
+        with caplog.at_level(logging.INFO, logger=SCHEDULER_LOGGER):
+            self._tick(storage, manager)
+
+        assert "declined: Sync already in progress for Steam" in caplog.text
+        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+
+
+class TestSyncSchedulerLifecycle:
+    def test_the_loop_keeps_ticking_after_a_tick_raises(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        scheduler = SyncScheduler()
+        second_tick = threading.Event()
+        ticks: list[int] = []
+
+        def fail_once(*_args: object) -> None:
+            ticks.append(1)
+            if len(ticks) == 1:
+                raise RuntimeError("plugin registry exploded")
+            second_tick.set()
+
+        async def drive() -> None:
+            await scheduler.start()
+            await asyncio.to_thread(second_tick.wait, 5)
+            await scheduler.stop()
+
+        with (
+            patch("src.web.scheduler.TICK_SECONDS", 0),
+            patch(
+                "src.web.scheduler.get_storage",
+                return_value=MagicMock(spec=StorageManager),
+            ),
+            patch("src.web.scheduler.get_config", return_value={}),
+            patch("src.web.scheduler.dispatch_due_syncs", side_effect=fail_once),
+            caplog.at_level(logging.ERROR, logger=SCHEDULER_LOGGER),
+        ):
+            asyncio.run(drive())
+
+        assert second_tick.is_set()
+        assert "Scheduled sync tick failed" in caplog.text
+
+    def test_the_lifespan_starts_the_scheduler_and_stops_it_on_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scheduler = SyncScheduler()
+        monkeypatch.setattr(app_state, "config_path", None)
+        monkeypatch.setattr("src.web.app.sync_scheduler", scheduler)
+
+        async def boot_then_shut_down() -> tuple[bool, bool, bool]:
+            async with lifespan(MagicMock(spec=FastAPI)):
+                booted = scheduler.running
+                task = scheduler._task
+            assert task is not None
+            # A cancel shutdown never awaited leaves the task pending here.
+            return booted, scheduler.running, task.done()
+
+        assert asyncio.run(boot_then_shut_down()) == (True, False, True)

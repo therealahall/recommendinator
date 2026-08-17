@@ -37,6 +37,7 @@ from src.web.api import router as api_router
 from src.web.auth import set_session_cookie
 from src.web.auth_api import router as auth_router
 from src.web.responses import SurrogateSafeJSONResponse
+from src.web.scheduler import sync_scheduler
 from src.web.state import app_state, get_config
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ _app: FastAPI | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage application lifecycle — start/stop config file watcher."""
+    """Manage application lifecycle — config file watcher and sync scheduler."""
     if app_state.config_path:
         await app_state.config_watcher.start(Path(app_state.config_path))
     else:
@@ -94,7 +95,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Config watcher not started: no config_path in app_state. "
             "Hot-reload is disabled."
         )
+    await sync_scheduler.start()
     yield
+    await sync_scheduler.stop()
     await app_state.config_watcher.stop()
 
 
