@@ -170,7 +170,15 @@ python3.11 -m src.cli source schema goodreads_csv           # editable fields
 python3.11 -m src.cli source disable goodreads_csv          # skipped during sync
 python3.11 -m src.cli source enable goodreads_csv
 python3.11 -m src.cli source remove my_books                # clears its secrets too
+
+# Cadence: off, hourly, 6h, daily or weekly
+python3.11 -m src.cli source schedule goodreads_csv weekly
 ```
+
+`source schedule` takes a migrated source and one of those five keys. The web
+server syncs each source on its cadence while it is running; `off` leaves it to
+`update`. A source you never scheduled uses its plugin's default, and one that
+has never synced is due on the next tick.
 
 Every `source` subcommand except `set-secret` and `clear-secret` accepts
 `--format json`.

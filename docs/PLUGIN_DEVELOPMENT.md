@@ -90,6 +90,11 @@ one error per field, since the field name is all the caller sees.
 `requires_network` defaults to `requires_api_key`. Override it for a file-based
 source that needs neither.
 
+`default_sync_interval` is the cadence a source of this plugin gets until the
+user picks one: `off`, `hourly`, `6h`, `daily` (the default) or `weekly`. Declare
+`weekly` when the plugin reads a file the user maintains by hand — re-reading an
+unchanged export hourly buys nothing.
+
 Call `progress_callback(items_processed, total_items, current_item)` during long
 operations, with `total_items=None` when the total is unknown.
 

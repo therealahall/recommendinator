@@ -86,6 +86,8 @@ export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 - Natural-language [custom rules](docs/CUSTOM_RULES.md) like "avoid horror"
 - [Metadata enrichment](docs/ENRICHMENT_SETUP.md) from TMDB, OpenLibrary and
   RAWG, automatic or edited by hand
+- Automated syncing: each source carries its own cadence, set from the CLI or
+  the Data page, and the web server runs it while it is up
 - Content-length filtering, multi-user support, typo-tolerant library search,
   themes
 
