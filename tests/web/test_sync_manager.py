@@ -718,8 +718,12 @@ STEAM_LABEL = "Steam"
 _YAML_ONLY_STEAM = {"inputs": {"steam": {"plugin": "steam", "enabled": True}}}
 
 
-def _steam_source(storage: StorageManager, interval: str) -> None:
-    storage.sources.upsert(1, "steam", "steam", {"steam_id": "7656119"}, enabled=True)
+def _steam_source(
+    storage: StorageManager, interval: str, *, enabled: bool = True
+) -> None:
+    storage.sources.upsert(
+        1, "steam", "steam", {"steam_id": "7656119"}, enabled=enabled
+    )
     storage.sources.set_schedule(1, "steam", interval)
 
 
@@ -806,6 +810,16 @@ class TestScheduledSyncDispatch:
         manager = _accepting_manager()
 
         self._tick(storage, manager, _YAML_ONLY_STEAM)
+
+        manager.start_sync.assert_not_called()
+
+    def test_a_source_the_operator_switched_off_is_never_dispatched(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly", enabled=False)
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
 
         manager.start_sync.assert_not_called()
 

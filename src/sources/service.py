@@ -24,7 +24,7 @@ from src.ingestion.schedule import (
 )
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
-from src.utils.dates import utc_now
+from src.utils.dates import parse_iso_timestamp, utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -361,14 +361,37 @@ def resolve_source_interval(row: SourceConfigDict | None, plugin: SourcePlugin) 
     return "off" if row is None else resolve_interval(row["sync_interval"], plugin)
 
 
-def _next_run_at(
-    interval: str, run: SyncRunDict | None, failures: int, now: datetime
-) -> str | None:
-    last_finished_at = (
-        datetime.fromisoformat(run["finished_at"]) if run is not None else None
+@dataclass(frozen=True)
+class ScheduleState:
+    interval: str
+    last_finished_at: datetime | None
+    failures: int
+
+
+def schedule_state(
+    storage: StorageManager | None,
+    user_id: int,
+    source_id: str,
+    row: SourceConfigDict | None,
+    plugin: SourcePlugin,
+    latest_run: SyncRunDict | None,
+) -> ScheduleState:
+    """Everything ``next_due`` asks about a source, for the listing and the tick."""
+    return ScheduleState(
+        interval=resolve_source_interval(row, plugin),
+        last_finished_at=(
+            parse_iso_timestamp(latest_run["finished_at"])
+            if latest_run is not None
+            else None
+        ),
+        failures=(
+            storage.sync_runs.consecutive_failures(user_id, source_id)
+            if storage is not None
+            and latest_run is not None
+            and latest_run["status"] != "completed"
+            else 0
+        ),
     )
-    due = next_due(now, last_finished_at, interval, failures)
-    return due.isoformat() if due is not None else None
 
 
 def get_available_sync_sources(
@@ -429,12 +452,15 @@ def get_available_sync_sources(
             )
             continue
 
-        interval = resolve_source_interval(configured_row, source.plugin)
         latest_run = latest_runs.get(source_id)
-        failures = (
-            storage.sync_runs.consecutive_failures(user_id, source_id)
-            if storage is not None and latest_run is not None
-            else 0
+        state = schedule_state(
+            storage, user_id, source_id, configured_row, source.plugin, latest_run
+        )
+        # ``resolve_inputs`` drops a disabled source, so its next run never comes.
+        due = (
+            next_due(now, state.last_finished_at, state.interval, state.failures)
+            if source.enabled
+            else None
         )
         sources.append(
             SyncSourceInfo(
@@ -442,7 +468,7 @@ def get_available_sync_sources(
                 display_name=humanize_source_id(source_id),
                 plugin_display_name=source.plugin.display_name,
                 enabled=source.enabled,
-                sync_interval=interval,
+                sync_interval=state.interval,
                 sync_interval_default=source.plugin.default_sync_interval,
                 last_run_at=(
                     latest_run["finished_at"] if latest_run is not None else None
@@ -450,7 +476,7 @@ def get_available_sync_sources(
                 last_run_status=(
                     latest_run["status"] if latest_run is not None else None
                 ),
-                next_run_at=_next_run_at(interval, latest_run, failures, now),
+                next_run_at=due.isoformat() if due is not None else None,
             )
         )
     return sources

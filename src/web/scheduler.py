@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.schedule import is_due
 from src.ingestion.sync import ALL_SOURCES_LABEL
-from src.sources.service import resolve_inputs, resolve_source_interval
-from src.utils.dates import parse_iso_timestamp, utc_now
+from src.sources.service import resolve_inputs, schedule_state
+from src.utils.dates import utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
 from src.web.state import get_config, get_storage
 from src.web.sync_dispatch import build_sync_job
@@ -38,19 +38,15 @@ def dispatch_due_syncs(
     now = utc_now()
 
     for entry in resolve_inputs(config, storage=storage, user_id=user_id):
-        interval = resolve_source_interval(rows.get(entry.source_id), entry.plugin)
-        latest_run = latest_runs.get(entry.source_id)
-        failures = (
-            storage.sync_runs.consecutive_failures(user_id, entry.source_id)
-            if latest_run is not None and latest_run["status"] != "completed"
-            else 0
+        state = schedule_state(
+            storage,
+            user_id,
+            entry.source_id,
+            rows.get(entry.source_id),
+            entry.plugin,
+            latest_runs.get(entry.source_id),
         )
-        last_finished_at = (
-            parse_iso_timestamp(latest_run["finished_at"])
-            if latest_run is not None
-            else None
-        )
-        if not is_due(now, last_finished_at, interval, failures):
+        if not is_due(now, state.last_finished_at, state.interval, state.failures):
             continue
 
         label = humanize_source_id(entry.source_id)

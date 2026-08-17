@@ -496,6 +496,17 @@ class TestSourceListingReportsTheSchedule:
 
         assert _listing_entry(client, "my_books")["next_run_at"] is None
 
+    def test_a_disabled_source_reports_no_next_run_it_would_never_get(
+        self, client: TestClient
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        client.put("/api/sync/sources/my_books/enabled", json={"enabled": False})
+
+        entry = _listing_entry(client, "my_books")
+
+        assert entry["sync_interval"] == "daily"
+        assert entry["next_run_at"] is None
+
     def test_a_recorded_run_reaches_the_listing_with_a_due_time(
         self, client: TestClient, storage: StorageManager
     ) -> None:

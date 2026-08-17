@@ -1462,17 +1462,18 @@ def update_data(
     source = request.source
     source_label = humanize_source_id(source) if source != "all" else ALL_SOURCES_LABEL
 
-    # Multiple sources can sync concurrently; the duplicate check happens
-    # atomically inside ``sync_manager.start_sync`` further down. Two
-    # POSTs racing to start the same source-label would both pass any
-    # pre-check here, so don't bother with one — let start_sync's
-    # check-and-set be the single source of truth.
+    # Two POSTs racing on the same label both pass any pre-check here, so that
+    # duplicate is left to ``start_sync``'s atomic check-and-set below.
 
     # Resolve which sources to sync. ``resolve_inputs`` is the single source
     # of truth: it merges YAML ``inputs`` with DB-backed ``source_configs``,
     # injects ``_source_id``, and layers decrypted credentials — so it covers
     # sources created via the Add-source modal that live only in the database.
     if source == "all":
+        # Overlapping whatever single run is already going would fetch and save
+        # that source twice.
+        if sync_manager.is_running():
+            raise HTTPException(status_code=409, detail="A sync is already in progress")
         resolved = resolve_inputs(config, storage=storage)
     else:
         # Single source: select the enabled, resolved entry matching ``source``.

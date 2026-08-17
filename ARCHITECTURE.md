@@ -474,7 +474,10 @@ Library, Data, Preferences and Settings. Internal network only.
   config watcher, ticking once a minute and starting one source whose cadence is
   due, so a backlog staggers instead of opening a thread per source. No server, no scheduled sync. It and `POST /api/update` build the job
   the same way, through `build_sync_job` in `src/web/sync_dispatch.py`, so a
-  scheduled run records and enriches exactly as a requested one does.
+  scheduled run records and enriches exactly as a requested one does. A run over
+  every source and a single-source one never overlap: the tick skips while the
+  umbrella runs, and `POST /api/update` answers **409** to `all` while any job
+  is in flight.
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
   `RequiredConfig`, `RequiredEngine`). Absent, it answers
