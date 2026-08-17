@@ -120,18 +120,12 @@ python3.11 -m pytest tests/test_web_api.py -v     # One file
 python3.11 -m pytest --cov=src --cov-report=html  # With coverage
 ```
 
-Every bug fix gets a regression test that fails before the fix and passes after,
-in a `Test<Feature>Regression` class:
+Every bug fix gets a regression test that fails before the fix and passes after.
+Name it for the bug it catches; the name is the documentation.
 
 ```python
-class TestMyFeatureRegression:
-    def test_specific_bug_description_regression(self):
-        """Regression test: Brief description of the bug.
-
-        Bug reported: What was observed.
-        Root cause: Why it happened.
-        Fix: What was changed.
-        """
+def test_blank_review_no_longer_erases_a_written_one(self):
+    ...
 ```
 
 ## Pre-commit Workflow
