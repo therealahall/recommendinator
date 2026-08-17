@@ -67,7 +67,6 @@ class StorageManager:
 
     @functools.cached_property
     def credentials(self) -> CredentialStore:
-        """The encrypted per-source credentials."""
         return CredentialStore(self.sqlite_db, self._sqlite_path, self._save_lock)
 
     @functools.cached_property
@@ -77,12 +76,10 @@ class StorageManager:
 
     @functools.cached_property
     def accounts(self) -> AccountStore:
-        """The one web account and its sessions."""
         return AccountStore(self.sqlite_db)
 
     @functools.cached_property
     def enrichment(self) -> EnrichmentStore:
-        """The enrichment queue and each item's status."""
         return EnrichmentStore(self.sqlite_db)
 
     @functools.cached_property
@@ -92,12 +89,10 @@ class StorageManager:
 
     @functools.cached_property
     def sources(self) -> SourceConfigStore:
-        """The per-source configuration rows."""
         return SourceConfigStore(self.sqlite_db)
 
     @functools.cached_property
     def profiles(self) -> ProfileStore:
-        """The generated preference profile."""
         return ProfileStore(self.sqlite_db)
 
     @contextmanager
@@ -215,7 +210,9 @@ class StorageManager:
 
         The one set that may shape *taste*: the user excluded ignored items,
         and an unrated completion carries no signal (issue #99). Deliberately
-        narrower than :meth:`get_consumption_items`.
+        narrower than :meth:`get_consumption_items`. *limit* bounds the
+        completed read, before the rating filter, so a caller that passes one
+        may get back fewer items than it asked for.
         """
         completed = self.get_completed_items(
             user_id=user_id,
@@ -234,9 +231,12 @@ class StorageManager:
         """Get consumption items: non-ignored, rating irrelevant.
 
         What genre fatigue reacts to, wider than :meth:`get_signal_items`: an
-        unrated completion says nothing about taste, but six finished fantasy
-        novels are still six fantasy novels. Series ordering reads the full
-        completed set.
+        unrated completion says nothing about taste, but six fantasy novels
+        read or reading are still six fantasy novels — what is in progress
+        comes along too, and the variety ladder narrows that itself. *limit*
+        cuts a title-sorted set, so it yields an alphabetical prefix rather
+        than the most recent items. Series ordering reads the full completed
+        set.
         """
         return self.get_completed_items(
             user_id=user_id,
