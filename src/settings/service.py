@@ -114,7 +114,7 @@ def setting_view(
         view["has_secret"] = storage.secrets.has(entry.key)
     else:
         view["value"] = _effective_value(config, entry)
-        view["db_overridden"] = storage.get_setting(entry.key) is not None
+        view["db_overridden"] = storage.settings.get(entry.key) is not None
     return view
 
 
@@ -141,7 +141,7 @@ def apply_settings(
         validated.append((entry, coerce_and_validate(entry, value)))
 
     for entry, coerced in validated:
-        storage.set_setting(entry.key, coerced)
+        storage.settings.set(entry.key, coerced)
 
     _apply_live(
         config,
@@ -166,7 +166,7 @@ def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> 
         raise SettingsValidationError(key, "unknown setting")
     if entry.sensitive:
         raise SettingsValidationError(key, "use the secret endpoint for secrets")
-    storage.delete_setting(key)
+    storage.settings.delete(key)
     if not entry.restart_required:
         # default_of, not entry.default: this writes into the running config, so
         # it must not be the registry's own object.

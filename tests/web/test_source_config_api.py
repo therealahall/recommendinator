@@ -129,7 +129,7 @@ class TestConfigEndpoint:
     def test_post_migration_returns_db_values(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "my_books",
             "fake_file",
@@ -183,7 +183,7 @@ class TestMigrateEndpoint:
         }
         assert body["secrets_migrated"] == ["api_key"]
 
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert row["plugin"] == "fake_api"
         assert row["enabled"] is True
@@ -235,7 +235,7 @@ class TestMigrateEndpoint:
         assert first.status_code == 200
         assert second.status_code == 200
         # Only one row exists
-        rows = storage.list_source_configs(1)
+        rows = storage.sources.list(1)
         assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
 
 
@@ -288,7 +288,7 @@ class TestUpdateConfigEndpoint:
         assert body["field_values"]["min_minutes"] == 60
         assert body["field_values"]["tags"] == ["rpg"]
         assert body["field_values"]["active"] is False
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert row["config"]["user_id"] == "new_user"
         assert row["config"]["min_minutes"] == 60
@@ -385,7 +385,7 @@ class TestEnabledEndpoint:
         # migrated_at survives the toggle (a regression that returned None
         # would still satisfy the boolean assertion above).
         assert body["migrated_at"] is not None
-        row = storage.get_source_config(1, "my_books")
+        row = storage.sources.get(1, "my_books")
         assert row is not None
         assert row["enabled"] is False
 
@@ -531,7 +531,7 @@ class TestCreateSourceEndpoint:
             "content_type": "book",
         }
         assert body["secret_status"] == {}
-        row = storage.get_source_config(1, "new_books")
+        row = storage.sources.get(1, "new_books")
         assert row is not None
         assert row["config"]["path"] == "/data/new.csv"
 
@@ -563,7 +563,7 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 201
         assert response.json()["source_id"] == "calibre-web"
-        assert storage.get_source_config(1, "calibre-web") is not None
+        assert storage.sources.get(1, "calibre-web") is not None
 
     def test_rejects_invalid_id(self, client: TestClient) -> None:
         response = client.post(
@@ -591,7 +591,7 @@ class TestCreateSourceEndpoint:
             },
         )
         assert response.status_code == 400
-        assert storage.get_source_config(1, "leaky") is None
+        assert storage.sources.get(1, "leaky") is None
         assert storage.credentials.get(1, "leaky", "api_key") is None
 
 
@@ -626,7 +626,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
 
         assert response.status_code == 400
         assert "outside the allowed source roots" in response.json()["detail"]
-        assert storage.get_source_config(1, "leaky") is None
+        assert storage.sources.get(1, "leaky") is None
 
     def test_a_missing_file_is_refused_without_saying_it_is_missing(
         self, client: TestClient, storage: StorageManager, tmp_path: Path
@@ -653,7 +653,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         assert "not found" not in detail.lower()
         assert str(missing) not in detail
         assert missing.name not in detail
-        assert storage.get_source_config(1, "ghost") is None
+        assert storage.sources.get(1, "ghost") is None
 
     def test_the_refused_field_is_named_rather_than_the_plugins_reason(
         self, client: TestClient
@@ -736,7 +736,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
 
         assert response.status_code == 400
         assert "outside the allowed source roots" in response.json()["detail"]
-        assert storage.get_source_config(1, "roms") is None
+        assert storage.sources.get(1, "roms") is None
 
     def test_the_operator_reads_the_plugins_reason_in_the_log(
         self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -936,13 +936,13 @@ class TestDeleteSourceEndpoint:
         self, client: TestClient, storage: StorageManager
     ) -> None:
         client.post("/api/sync/sources/my_games/migrate")
-        assert storage.get_source_config(1, "my_games") is not None
+        assert storage.sources.get(1, "my_games") is not None
         assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
 
         response = client.delete("/api/sync/sources/my_games")
         assert response.status_code == 204
 
-        assert storage.get_source_config(1, "my_games") is None
+        assert storage.sources.get(1, "my_games") is None
         assert storage.credentials.get(1, "my_games", "api_key") is None
 
     def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
@@ -962,7 +962,7 @@ class TestDeleteSourceEndpoint:
     ) -> None:
         """Drop the config the route hands down and the sweep never runs."""
         base_config["inputs"].pop("my_games")
-        storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
         response = client.delete("/api/sync/sources/work_games")
@@ -974,7 +974,7 @@ class TestDeleteSourceEndpoint:
         self, client: TestClient, storage: StorageManager
     ) -> None:
         """``my_games`` stays in the config, and it alone may read that row."""
-        storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
         response = client.delete("/api/sync/sources/work_games")
@@ -1073,7 +1073,7 @@ class TestUpdateEndpointDbOnlySourcesRegression:
         self, client: TestClient, storage: StorageManager
     ) -> None:
         """A disabled DB-only source answers 4xx, not a 200 dead-end."""
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "calibre-web", "fake_api", {"user_id": "reader"}, enabled=False
         )
         response = client.post("/api/update", json={"source": "calibre-web"})

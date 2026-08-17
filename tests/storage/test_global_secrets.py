@@ -75,7 +75,7 @@ class TestMigrateConfigSecrets:
 
         migrate_config_secrets(config, storage)
 
-        assert "yaml_key" not in str(storage.list_settings())
+        assert "yaml_key" not in str(storage.settings.list())
 
     def test_existing_db_secret_not_clobbered_by_stale_yaml(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture

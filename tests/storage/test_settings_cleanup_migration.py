@@ -138,7 +138,7 @@ class TestOrphanedSettingsPrune:
 
         storage = StorageManager(sqlite_path=db_path)
 
-        assert storage.list_settings() == {"recommendations.default_count": 9}
+        assert storage.settings.list() == {"recommendations.default_count": 9}
         assert _user_version(db_path) == _SCHEMA_VERSION
 
     def test_prune_does_not_re_run_after_upgrade(self, tmp_path: Path) -> None:
@@ -152,13 +152,13 @@ class TestOrphanedSettingsPrune:
         db_path = tmp_path / "test.db"
         _seed_v1_db_with_orphans(db_path)
         storage = StorageManager(sqlite_path=db_path)
-        assert storage.get_setting("web.debug") is None  # pruned on upgrade
+        assert storage.settings.get("web.debug") is None  # pruned on upgrade
 
         # set_setting is raw storage with no registry validation, so this
         # reproduces a row the migration would delete if it ever fired again.
-        storage.set_setting("web.debug", True)
+        storage.settings.set("web.debug", True)
 
-        assert StorageManager(sqlite_path=db_path).get_setting("web.debug") is True
+        assert StorageManager(sqlite_path=db_path).settings.get("web.debug") is True
 
 
 def _seed_v2_db_with_ai_leaves(path: Path) -> None:
@@ -208,7 +208,7 @@ class TestTheAiRemovalPrunesItsOwnLeaves:
 
         storage = StorageManager(sqlite_path=db_path)
 
-        assert storage.list_settings() == {"recommendations.default_count": 9}
+        assert storage.settings.list() == {"recommendations.default_count": 9}
         assert _user_version(db_path) == _SCHEMA_VERSION
 
 
@@ -225,7 +225,7 @@ class TestSettingsCleanupMigration:
 
         storage = StorageManager(sqlite_path=db_path)
 
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert _user_version(db_path) == _SCHEMA_VERSION
 
     def test_second_init_does_not_reclear_after_upgrade(self, tmp_path: Path) -> None:
@@ -236,8 +236,8 @@ class TestSettingsCleanupMigration:
         # First init performs the one-time clear and advances the version.
         StorageManager(sqlite_path=db_path)
         # A real user edit lands after the feature ships.
-        StorageManager(sqlite_path=db_path).set_setting("enrichment.enabled", True)
+        StorageManager(sqlite_path=db_path).settings.set("enrichment.enabled", True)
 
         reopened = StorageManager(sqlite_path=db_path)
 
-        assert reopened.get_setting("enrichment.enabled") is True
+        assert reopened.settings.get("enrichment.enabled") is True

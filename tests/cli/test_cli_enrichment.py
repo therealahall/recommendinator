@@ -133,7 +133,7 @@ class TestEnrichmentStatus:
     def test_enrichment_status_json(self, cli_runner: CliRunner) -> None:
         """Test status JSON output matches web API EnrichmentStatsResponse shape."""
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_enrichment_stats.return_value = {
+        mock_storage.enrichment.stats.return_value = {
             "total": 100,
             "enriched": 80,
             "pending": 15,
@@ -173,7 +173,7 @@ class TestEnrichmentReset:
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
         """Test reset command for all items forwards correct filters."""
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.reset_enrichment_status.return_value = 50
+        mock_storage.enrichment.reset.return_value = 50
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -183,7 +183,7 @@ class TestEnrichmentReset:
 
         assert result.exit_code == 0
         assert "Reset enrichment status for 50 item(s)" in result.output
-        mock_storage.reset_enrichment_status.assert_called_once_with(
+        mock_storage.enrichment.reset.assert_called_once_with(
             provider=None, content_type=None, user_id=1
         )
 
@@ -202,4 +202,4 @@ class TestEnrichmentReset:
 
         assert result.exit_code == 0
         assert "Aborted" in result.output
-        mock_storage.reset_enrichment_status.assert_not_called()
+        mock_storage.enrichment.reset.assert_not_called()

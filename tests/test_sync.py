@@ -528,9 +528,9 @@ class TestAutoEnrichmentHook:
         )
 
         assert result.items_synced == 2
-        assert storage.mark_item_needs_enrichment.call_count == 2
-        storage.mark_item_needs_enrichment.assert_any_call(1)
-        storage.mark_item_needs_enrichment.assert_any_call(2)
+        assert storage.enrichment.mark_needed.call_count == 2
+        storage.enrichment.mark_needed.assert_any_call(1)
+        storage.enrichment.mark_needed.assert_any_call(2)
 
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
         """Errors from marking for enrichment don't stop the sync."""
@@ -544,7 +544,7 @@ class TestAutoEnrichmentHook:
             SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
             SavedItem(db_id=2, outcome=SaveOutcome.ADDED),
         ]
-        storage.mark_item_needs_enrichment.side_effect = [
+        storage.enrichment.mark_needed.side_effect = [
             Exception("enrichment error"),
             None,
         ]
@@ -558,7 +558,7 @@ class TestAutoEnrichmentHook:
 
         # Both items should be synced even though first enrichment marking failed
         assert result.items_synced == 2
-        assert storage.mark_item_needs_enrichment.call_count == 2
+        assert storage.enrichment.mark_needed.call_count == 2
         # The failure is reported, not just logged: nothing else shows the
         # operator that one item will never be enriched.
         assert result.errors == [
@@ -586,7 +586,7 @@ def _sync_one_forged_title(
         db_id=1, outcome=SaveOutcome.ADDED
     )
     storage.save_content_item_outcome.side_effect = save_error
-    storage.mark_item_needs_enrichment.side_effect = enrich_error
+    storage.enrichment.mark_needed.side_effect = enrich_error
 
     return execute_sync(
         plugin=plugin,

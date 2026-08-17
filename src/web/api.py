@@ -2163,7 +2163,7 @@ def get_enrichment_stats(
     enrichment_config = config.get("enrichment", {})
     enrichment_enabled = enrichment_config.get("enabled", False)
 
-    stats = storage.get_enrichment_stats(user_id=user_id)
+    stats = storage.enrichment.stats(user_id=user_id)
 
     return EnrichmentStatsResponse(
         enabled=enrichment_enabled,
@@ -2204,7 +2204,7 @@ def reset_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
-    count = storage.reset_enrichment_status(
+    count = storage.enrichment.reset(
         provider=request.provider,
         content_type=content_type,
         user_id=request.user_id,
@@ -2218,7 +2218,7 @@ def get_profile(
     storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
     """Get a user's preference profile summary."""
-    profile_data = storage.get_preference_profile(user_id)
+    profile_data = storage.profiles.get(user_id)
 
     if profile_data:
         # The stored row nests the profile under "profile".

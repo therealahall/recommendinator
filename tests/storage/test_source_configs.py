@@ -24,7 +24,7 @@ class TestStorageManagerSourceConfigs:
 
     def test_upsert_and_get_round_trips_dict(self, storage: StorageManager) -> None:
         """StorageManager accepts/returns dicts and handles JSON serialization."""
-        storage.upsert_source_config(
+        storage.sources.upsert(
             user_id=1,
             source_id="steam",
             plugin="steam",
@@ -32,7 +32,7 @@ class TestStorageManagerSourceConfigs:
             enabled=True,
         )
 
-        result = storage.get_source_config(1, "steam")
+        result = storage.sources.get(1, "steam")
         assert result is not None
         assert result["source_id"] == "steam"
         assert result["plugin"] == "steam"
@@ -44,27 +44,27 @@ class TestStorageManagerSourceConfigs:
         self, storage: StorageManager
     ) -> None:
         """set_source_config_enabled flips the bool without altering config dict."""
-        storage.upsert_source_config(1, "steam", "steam", {"a": 1}, enabled=True)
-        storage.set_source_config_enabled(1, "steam", enabled=False)
+        storage.sources.upsert(1, "steam", "steam", {"a": 1}, enabled=True)
+        storage.sources.set_enabled(1, "steam", enabled=False)
 
-        result = storage.get_source_config(1, "steam")
+        result = storage.sources.get(1, "steam")
         assert result is not None
         assert result["enabled"] is False
         assert result["config"] == {"a": 1}
 
     def test_delete_source_config(self, storage: StorageManager) -> None:
         """Delete removes the migration entirely."""
-        storage.upsert_source_config(1, "steam", "steam", {}, True)
-        storage.delete_source_config(1, "steam")
+        storage.sources.upsert(1, "steam", "steam", {}, True)
+        storage.sources.delete(1, "steam")
 
-        assert storage.get_source_config(1, "steam") is None
+        assert storage.sources.get(1, "steam") is None
 
     def test_list_source_configs_returns_dicts(self, storage: StorageManager) -> None:
         """List returns parsed dicts for every migrated source."""
-        storage.upsert_source_config(1, "steam", "steam", {"a": 1}, True)
-        storage.upsert_source_config(1, "books", "goodreads", {"path": "x"}, False)
+        storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)
+        storage.sources.upsert(1, "books", "goodreads", {"path": "x"}, False)
 
-        result = storage.list_source_configs(1)
+        result = storage.sources.list(1)
 
         by_id = {row["source_id"]: row for row in result}
         assert by_id["steam"]["config"] == {"a": 1}

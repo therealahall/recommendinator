@@ -46,7 +46,7 @@ class SourceConfigRow(TypedDict):
 
 
 class SourceConfigDict(TypedDict):
-    """Parsed source config record returned by StorageManager.
+    """Parsed source config record returned by SourceConfigStore.
 
     ``config`` is the deserialised non-sensitive config dict; sensitive
     values stay in the encrypted ``credentials`` table and must be merged in

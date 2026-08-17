@@ -98,17 +98,17 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     if not isinstance(storage, NonCallableMock):
         return store
 
-    storage.get_setting.side_effect = lambda key: store.get(key)
-    storage.set_setting.side_effect = store.__setitem__
-    storage.list_settings.side_effect = store.copy
+    storage.settings.get.side_effect = lambda key: store.get(key)
+    storage.settings.set.side_effect = store.__setitem__
+    storage.settings.list.side_effect = store.copy
     # An unstubbed method on a spec'd Mock returns a truthy Mock, which reads
     # as "already stored" — the opposite of an empty database. For
-    # ``get_source_config`` that means the sweep discards every sensitive field
+    # ``sources.get`` that means the sweep discards every sensitive field
     # the test's config declared.
     _default_return(storage.credentials.get, None)
     _default_return(storage.credentials.exists, False)
     _default_return(storage.secrets.has, False)
-    _default_return(storage.get_source_config, None)
+    _default_return(storage.sources.get, None)
     return store
 
 

@@ -483,7 +483,7 @@ class TestResolveInputsWithDbSourceConfig:
                 },
             }
         }
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=True
         )
 
@@ -504,7 +504,7 @@ class TestResolveInputsWithDbSourceConfig:
                 },
             }
         }
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_books", "fake_books", {"path": "/db/books.csv"}, enabled=False
         )
 
@@ -515,7 +515,7 @@ class TestResolveInputsWithDbSourceConfig:
     def test_db_only_source_resolves(self, storage: StorageManager) -> None:
         """A source that exists in DB but not yaml still resolves."""
         config: dict[str, Any] = {"inputs": {}}
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "books_only_in_db", "fake_books", {"path": "/db/x.csv"}, enabled=True
         )
 
@@ -528,7 +528,7 @@ class TestResolveInputsWithDbSourceConfig:
     def test_db_config_merges_with_credentials(self, storage: StorageManager) -> None:
         """Sensitive creds from credentials table merge over DB config dict."""
         config: dict[str, Any] = {"inputs": {}}
-        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "secret_from_creds")
 
         resolved = resolve_inputs(config, storage=storage)
@@ -545,7 +545,7 @@ class TestResolveInputsWithDbSourceConfig:
         name. ``resolve_inputs`` must log + skip rather than raise.
         """
         config: dict[str, Any] = {"inputs": {}}
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "ghost_source", "this_plugin_no_longer_exists", {}, enabled=True
         )
 
@@ -562,7 +562,7 @@ class TestCredentialBoundUpdates:
 
     @pytest.fixture()
     def migrated(self, storage: StorageManager) -> StorageManager:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
         )
         storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
@@ -587,7 +587,7 @@ class TestCredentialBoundUpdates:
         assert migrated.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
-        row = migrated.get_source_config(1, "my_games")
+        row = migrated.sources.get(1, "my_games")
         assert row is not None
         assert row["config"]["url"] == "http://localhost:7878"
 
@@ -607,7 +607,7 @@ class TestCredentialBoundUpdates:
         assert migrated.credentials.get(1, "my_games", "api_key") == (
             "issued-for-localhost"
         )
-        row = migrated.get_source_config(1, "my_games")
+        row = migrated.sources.get(1, "my_games")
         assert row is not None and row["config"]["url"] == url
 
     @pytest.mark.parametrize(
@@ -626,14 +626,14 @@ class TestCredentialBoundUpdates:
 
         self._update(migrated, {"url": "http://attacker.example"})
 
-        row = migrated.get_source_config(1, "my_games")
+        row = migrated.sources.get(1, "my_games")
         assert row is not None
         assert row["config"]["url"] == "http://attacker.example"
 
     def test_an_unset_bound_field_is_measured_from_the_plugin_default(
         self, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "issued-for-the-default")
 
         with pytest.raises(SourceConfigError, match="different host"):
@@ -689,7 +689,7 @@ class TestUnreadableUrlWalksTheCredentialRegression:
     def test_neither_step_of_the_walk_is_accepted(
         self, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_games", "fake_games", {"url": "http://localhost:7878"}, enabled=True
         )
         storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
@@ -699,7 +699,7 @@ class TestUnreadableUrlWalksTheCredentialRegression:
 
         # A config.yaml entry reaches the same state without a write: migration
         # copies the url in unvalidated.
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "my_games",
             "fake_games",
@@ -733,7 +733,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
     def test_unregistered_plugin_leaves_no_credential_row(
         self, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "ghost", "this_plugin_no_longer_exists", {}, enabled=True
         )
         storage.credentials.save(1, "ghost", "api_key", "still-valid-upstream")
@@ -741,13 +741,13 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         delete_source("ghost", storage, {})
 
         assert storage.credentials.get_for_source(1, "ghost") == {}
-        assert storage.get_source_config(1, "ghost") is None
+        assert storage.sources.get(1, "ghost") is None
 
     def test_a_field_no_longer_marked_sensitive_is_removed_too(
         self, storage: StorageManager
     ) -> None:
         """``fake_games`` has no ``legacy_token`` field; the row exists anyway."""
-        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "secret")
         storage.credentials.save(1, "my_games", "legacy_token", "was-sensitive-once")
 
@@ -756,7 +756,7 @@ class TestDeleteSourceOrphanedCredentialsRegression:
         assert storage.credentials.get_for_source(1, "my_games") == {}
 
     def test_another_sources_credentials_survive(self, storage: StorageManager) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "secret")
         storage.credentials.save(1, "other", "api_key", "untouched")
 
@@ -776,7 +776,7 @@ class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
     ) -> None:
         """``storage`` still goes through, so a plugin can ask whether it is set."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_games", "fake_games", {"label": "Games"}, enabled=True
         )
         storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
@@ -863,7 +863,7 @@ class TestCreateSourceRefusesUncontainedPaths:
 
         assert raised.value.kind == "invalid_values"
         assert "outside the allowed source roots" in raised.value.message
-        assert storage.get_source_config(1, "leaky") is None
+        assert storage.sources.get(1, "leaky") is None
 
     def test_a_path_under_an_allowed_root_is_accepted(
         self, storage: StorageManager, tmp_path: Path
@@ -873,7 +873,7 @@ class TestCreateSourceRefusesUncontainedPaths:
 
         create_source("my_roms", "roms", {"paths": [str(games)]}, storage)
 
-        row = storage.get_source_config(1, "my_roms")
+        row = storage.sources.get(1, "my_roms")
         assert row is not None
         assert row["config"]["paths"] == [str(games)]
 
@@ -966,7 +966,7 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
         self, plugin_name: str, storage: StorageManager
     ) -> None:
         """Sync a DB-backed source through the production resolution path."""
-        storage.upsert_source_config(1, "work_games", plugin_name, {}, enabled=True)
+        storage.sources.upsert(1, "work_games", plugin_name, {}, enabled=True)
         resolved = get_sync_handler("work_games", {}, storage)
         assert resolved is not None
 
@@ -1023,7 +1023,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.upsert_source_config(1, "work_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "work_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "fake_games", "api_key", "stranded-by-an-upgrade")
         return storage
 
@@ -1037,7 +1037,7 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def test_a_sibling_on_the_same_plugin_keeps_the_row(
         self, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(1, "home_games", "fake_games", {}, enabled=True)
+        storage.sources.upsert(1, "home_games", "fake_games", {}, enabled=True)
 
         delete_source("work_games", storage, {"inputs": {}})
 
@@ -1137,7 +1137,7 @@ class TestARealPluginsItemsCarryTheSourceIdRegression:
         owned_games.return_value = [
             {"appid": 7, "name": "A Game", "playtime_forever": 120}
         ]
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "work_games",
             "steam",

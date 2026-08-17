@@ -341,7 +341,7 @@ class EnrichmentManager:
             not_found_ids: set[int] = set()
             if include_not_found:
                 # Collect all not_found item IDs upfront
-                not_found_items = self.storage_manager.get_items_needing_enrichment(
+                not_found_items = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
                     user_id=user_id,
                     limit=10000,  # Get all not_found items
@@ -349,7 +349,7 @@ class EnrichmentManager:
                 )
                 # Filter to only those that are actually not_found (not new items)
                 for db_id, _item in not_found_items:
-                    status = self.storage_manager.get_enrichment_status(db_id)
+                    status = self.storage_manager.enrichment.status(db_id)
                     if status and status.get("enrichment_quality") == "not_found":
                         not_found_ids.add(db_id)
                 logger.info(
@@ -360,7 +360,7 @@ class EnrichmentManager:
             # Status polling reads total_items mid-run, so it must be set
             # before the first batch starts. Querying upfront avoids the
             # previous "growing in batch_size steps" UI behavior.
-            pending_count = self.storage_manager.count_items_needing_enrichment(
+            pending_count = self.storage_manager.enrichment.count_needing(
                 content_type=content_type,
                 user_id=user_id,
             )
@@ -381,7 +381,7 @@ class EnrichmentManager:
             # Process items in batches
             while not self._stop_requested:
                 # Fetch next batch of items (normal items only, not include_not_found)
-                fetched = self.storage_manager.get_items_needing_enrichment(
+                fetched = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
                     user_id=user_id,
                     limit=batch_size,
@@ -504,7 +504,7 @@ class EnrichmentManager:
             logger.debug(
                 "[ENRICHMENT] No providers for %s: %s", content_type_str, safe_title
             )
-            self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
+            self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
             with self._lock:
                 self._status.items_processed += 1
                 self._status.items_not_found += 1
@@ -536,7 +536,7 @@ class EnrichmentManager:
                 if result and result.match_quality != "not_found":
                     # Success - merge and save
                     self._apply_enrichment(db_id, item, result)
-                    self.storage_manager.mark_enrichment_complete(
+                    self.storage_manager.enrichment.mark_complete(
                         db_id, provider.name, result.match_quality
                     )
                     logger.info(
@@ -582,7 +582,7 @@ class EnrichmentManager:
                     content_type_str,
                     safe_title,
                 )
-                self.storage_manager.mark_enrichment_failed(db_id, reported)
+                self.storage_manager.enrichment.mark_failed(db_id, reported)
                 with self._lock:
                     self._status.items_processed += 1
                     self._status.items_failed += 1
@@ -602,7 +602,7 @@ class EnrichmentManager:
                 "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
             )
 
-        self.storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
+        self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
         with self._lock:
             self._status.items_processed += 1
             self._status.items_not_found += 1

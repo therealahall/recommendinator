@@ -614,7 +614,7 @@ class TestCalibreWebCredentialMoveRegression:
 
     @pytest.fixture()
     def migrated(self, storage: StorageManager) -> StorageManager:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "calibre_web",
             "calibre_web",

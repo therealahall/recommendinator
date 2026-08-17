@@ -168,7 +168,7 @@ class TestScorerWeightFallback:
         directly, so the pipeline weight *is* the effective weight for a new
         user. It must equal the DB value, not the class/const default.
         """
-        storage.set_setting("recommendations.scorer_weights.genre_match", 7.0)
+        storage.settings.set("recommendations.scorer_weights.genre_match", 7.0)
 
         engine = _build_engine({}, storage)
 
@@ -182,8 +182,8 @@ class TestScorerWeightFallback:
         This exercises the exact engine code path for a user *with* overrides:
         ``build_scorers_with_overrides`` clones only the overridden scorers.
         """
-        storage.set_setting("recommendations.scorer_weights.genre_match", 7.0)
-        storage.set_setting("recommendations.scorer_weights.creator_match", 6.0)
+        storage.settings.set("recommendations.scorer_weights.genre_match", 7.0)
+        storage.settings.set("recommendations.scorer_weights.creator_match", 6.0)
 
         engine = _build_engine({}, storage)
 
@@ -207,7 +207,7 @@ class TestScorerWeightFallback:
         engine = _build_engine(config, storage)
 
         assert _weight_of(engine.pipeline.scorers, GenreMatchScorer) == 4.0
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
 
 class TestMinRatingFallback:
@@ -215,7 +215,7 @@ class TestMinRatingFallback:
 
     def test_db_min_rating_is_effective(self, storage: StorageManager) -> None:
         """A DB-set global min rating flows into the engine's analyzer."""
-        storage.set_setting("recommendations.min_rating_for_preference", 2)
+        storage.settings.set("recommendations.min_rating_for_preference", 2)
 
         engine = _build_engine({}, storage)
 
@@ -227,8 +227,8 @@ class TestCountFallback:
 
     def test_db_counts_are_effective(self, storage: StorageManager) -> None:
         """DB-set counts flow through the merged config to the API reader."""
-        storage.set_setting("recommendations.default_count", 8)
-        storage.set_setting("recommendations.max_count", 30)
+        storage.settings.set("recommendations.default_count", 8)
+        storage.settings.set("recommendations.max_count", 30)
         config: dict[str, Any] = {}
 
         migrate_config_settings(config, storage)
@@ -297,7 +297,7 @@ class TestCustomPreferenceWeightRegression:
     ) -> None:
         """A global weight of 0 makes the rule inert, matching no rules at all."""
         self._seed_library(storage)
-        storage.set_setting("recommendations.scorer_weights.custom_preference", 0.0)
+        storage.settings.set("recommendations.scorer_weights.custom_preference", 0.0)
         engine = _build_engine({}, storage)
 
         with_rule = self._scores(engine, UserPreferenceConfig(custom_rules=self._RULES))
@@ -362,7 +362,7 @@ class TestConstDefaultFallback:
         )
         assert rec_config.max_count == _const_default("recommendations.max_count")
         # No writes on boot — the fallback comes from consts, not a seeded row.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
 
 class TestLiveSettingsApply:

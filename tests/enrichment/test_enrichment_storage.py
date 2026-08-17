@@ -42,9 +42,9 @@ class TestEnrichmentStatusMethods:
         """Test marking an item as successfully enriched."""
         db_id = storage_manager.save_content_item(sample_item)
 
-        storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_provider"] == "tmdb"
         assert status["enrichment_quality"] == "high"
@@ -62,13 +62,13 @@ class TestEnrichmentStatusMethods:
         """
         db_id = storage_manager.save_content_item(sample_item)
 
-        storage_manager.mark_enrichment_failed(db_id, "API rate limit exceeded")
+        storage_manager.enrichment.mark_failed(db_id, "API rate limit exceeded")
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_error"] == "API rate limit exceeded"
         assert status["needs_enrichment"] is True
-        queued = storage_manager.get_items_needing_enrichment()
+        queued = storage_manager.enrichment.items_needing()
         assert [db for db, _item in queued] == [db_id]
 
     def test_reset_enrichment_status_by_provider(
@@ -92,17 +92,15 @@ class TestEnrichmentStatusMethods:
         db_id1 = storage_manager.save_content_item(item1)
         db_id2 = storage_manager.save_content_item(item2)
 
-        storage_manager.mark_enrichment_complete(db_id1, "tmdb", "high")
-        storage_manager.mark_enrichment_complete(db_id2, "other", "high")
+        storage_manager.enrichment.mark_complete(db_id1, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(db_id2, "other", "high")
 
         # Reset only tmdb items
-        count = storage_manager.reset_enrichment_status(provider="tmdb")
+        count = storage_manager.enrichment.reset(provider="tmdb")
 
         assert count == 1
-        assert storage_manager.get_enrichment_status(db_id1)["needs_enrichment"] is True
-        assert (
-            storage_manager.get_enrichment_status(db_id2)["needs_enrichment"] is False
-        )
+        assert storage_manager.enrichment.status(db_id1)["needs_enrichment"] is True
+        assert storage_manager.enrichment.status(db_id2)["needs_enrichment"] is False
 
 
 class TestGetItemsNeedingEnrichment:
@@ -125,7 +123,7 @@ class TestGetItemsNeedingEnrichment:
         storage_manager.save_content_item(item)
 
         # New items should need enrichment
-        items = storage_manager.get_items_needing_enrichment()
+        items = storage_manager.enrichment.items_needing()
 
         assert len(items) == 1
         assert items[0][1].title == "Test Movie"
@@ -139,9 +137,9 @@ class TestGetItemsNeedingEnrichment:
             status=ConsumptionStatus.UNREAD,
         )
         db_id = storage_manager.save_content_item(item)
-        storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
 
-        items = storage_manager.get_items_needing_enrichment()
+        items = storage_manager.enrichment.items_needing()
 
         assert len(items) == 0
 
@@ -163,10 +161,10 @@ class TestGetItemsNeedingEnrichment:
         storage_manager.save_content_item(movie)
         storage_manager.save_content_item(book)
 
-        movie_items = storage_manager.get_items_needing_enrichment(
+        movie_items = storage_manager.enrichment.items_needing(
             content_type=ContentType.MOVIE
         )
-        book_items = storage_manager.get_items_needing_enrichment(
+        book_items = storage_manager.enrichment.items_needing(
             content_type=ContentType.BOOK
         )
 
@@ -197,9 +195,7 @@ class TestGetItemsNeedingEnrichment:
             for index in range(4)
         ]
 
-        page = storage_manager.get_items_needing_enrichment(
-            limit=2, after_db_id=db_ids[1]
-        )
+        page = storage_manager.enrichment.items_needing(limit=2, after_db_id=db_ids[1])
 
         assert [db_id for db_id, _item in page] == db_ids[2:]
 
@@ -239,16 +235,11 @@ class TestCountItemsNeedingEnrichment:
         )
 
         assert (
-            storage_manager.count_items_needing_enrichment(
-                content_type=ContentType.MOVIE
-            )
+            storage_manager.enrichment.count_needing(content_type=ContentType.MOVIE)
             == 1
         )
         assert (
-            storage_manager.count_items_needing_enrichment(
-                content_type=ContentType.BOOK
-            )
-            == 1
+            storage_manager.enrichment.count_needing(content_type=ContentType.BOOK) == 1
         )
 
     def test_count_matches_get_length(self, storage_manager: StorageManager) -> None:
@@ -264,10 +255,10 @@ class TestCountItemsNeedingEnrichment:
             )
             if index == 0:
                 # Enrich one item — both methods should agree it's excluded.
-                storage_manager.mark_enrichment_complete(db_id, "tmdb", "high")
+                storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
 
-        items = storage_manager.get_items_needing_enrichment(limit=100)
-        count = storage_manager.count_items_needing_enrichment()
+        items = storage_manager.enrichment.items_needing(limit=100)
+        count = storage_manager.enrichment.count_needing()
 
         assert count == 2
         assert len(items) == 2
@@ -311,13 +302,13 @@ class TestEnrichmentStats:
             )
             for index in range(5)
         ]
-        storage_manager.mark_enrichment_complete(db_ids[0], "tmdb", "high")
-        storage_manager.mark_enrichment_complete(db_ids[1], "none", "not_found")
-        storage_manager.mark_enrichment_failed(db_ids[2], "tmdb: HTTP 503")
-        storage_manager.mark_item_needs_enrichment(db_ids[3])
+        storage_manager.enrichment.mark_complete(db_ids[0], "tmdb", "high")
+        storage_manager.enrichment.mark_complete(db_ids[1], "none", "not_found")
+        storage_manager.enrichment.mark_failed(db_ids[2], "tmdb: HTTP 503")
+        storage_manager.enrichment.mark_needed(db_ids[3])
         # Item 4 is untracked.
 
-        stats = storage_manager.get_enrichment_stats()
+        stats = storage_manager.enrichment.stats()
 
         assert stats["enriched"] == 1
         assert stats["not_found"] == 1
@@ -359,12 +350,12 @@ class TestEnrichmentStats:
             ),
             user_id=other_user,
         )
-        storage_manager.mark_enrichment_complete(mine[0], "tmdb", "high")
-        storage_manager.mark_enrichment_failed(mine[1], "tmdb: HTTP 503")
-        storage_manager.mark_enrichment_complete(theirs, "rawg", "medium")
+        storage_manager.enrichment.mark_complete(mine[0], "tmdb", "high")
+        storage_manager.enrichment.mark_failed(mine[1], "tmdb: HTTP 503")
+        storage_manager.enrichment.mark_complete(theirs, "rawg", "medium")
         # mine[2] is untracked.
 
-        stats = storage_manager.get_enrichment_stats(user_id=1)
+        stats = storage_manager.enrichment.stats(user_id=1)
 
         assert stats["total"] == 3
         assert stats["enriched"] == 1
@@ -456,10 +447,10 @@ class TestEnrichmentFilter:
         failed = self._save(storage_manager, "failed")
         enriched = self._save(storage_manager, "enriched")
 
-        storage_manager.mark_item_needs_enrichment(pending)
-        storage_manager.mark_enrichment_complete(not_found, "tmdb", "not_found")
-        storage_manager.mark_enrichment_failed(failed, "boom")
-        storage_manager.mark_enrichment_complete(enriched, "tmdb", "high")
+        storage_manager.enrichment.mark_needed(pending)
+        storage_manager.enrichment.mark_complete(not_found, "tmdb", "not_found")
+        storage_manager.enrichment.mark_failed(failed, "boom")
+        storage_manager.enrichment.mark_complete(enriched, "tmdb", "high")
 
         items = storage_manager.get_content_items(enrichment="not_enriched")
         db_ids = {item.db_id for item in items}
@@ -473,8 +464,8 @@ class TestEnrichmentFilter:
         high = self._save(storage_manager, "high")
         medium = self._save(storage_manager, "medium")
 
-        storage_manager.mark_enrichment_complete(high, "tmdb", "high")
-        storage_manager.mark_enrichment_complete(medium, "tmdb", "medium")
+        storage_manager.enrichment.mark_complete(high, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(medium, "tmdb", "medium")
 
         items = storage_manager.get_content_items(enrichment="enriched")
         db_ids = {item.db_id for item in items}
@@ -493,7 +484,7 @@ class TestEnrichmentFilter:
         """
         movie_pending = self._save(storage_manager, "movie_pending")
         movie_enriched = self._save(storage_manager, "movie_enriched")
-        storage_manager.mark_enrichment_complete(movie_enriched, "tmdb", "high")
+        storage_manager.enrichment.mark_complete(movie_enriched, "tmdb", "high")
 
         book_pending = storage_manager.save_content_item(
             ContentItem(
@@ -556,7 +547,7 @@ class TestManualMetadataEdit:
         assert loaded.metadata.get("description") == "A tense character study."
         assert loaded.enriched is True
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status["enrichment_provider"] == "manual"
         assert status["needs_enrichment"] is False
 
@@ -610,7 +601,7 @@ class TestManualMetadataEdit:
 
         storage_manager.update_item_from_ui(db_id=db_id, status="completed", rating=5)
 
-        assert storage_manager.get_enrichment_status(db_id) is None
+        assert storage_manager.enrichment.status(db_id) is None
         assert storage_manager.get_content_item(db_id).enriched is False
 
     def test_genres_empty_list_clears_while_none_leaves_as_is(

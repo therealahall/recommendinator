@@ -241,7 +241,7 @@ def queued_ids(storage_manager: StorageManager) -> set[int]:
     """db_ids a plain (non-retry) enrichment run would pick up."""
     return {
         db_id
-        for db_id, _item in storage_manager.get_items_needing_enrichment(
+        for db_id, _item in storage_manager.enrichment.items_needing(
             content_type=ContentType.MOVIE, include_not_found=False
         )
     }
@@ -255,7 +255,7 @@ def enrichment_buckets(storage_manager: StorageManager) -> dict[str, int]:
     A caller wants the counts and that invariant together, never one without
     the other, so this returns the first only after asserting the second.
     """
-    stats = storage_manager.get_enrichment_stats()
+    stats = storage_manager.enrichment.stats()
     buckets = {
         state: stats[state] for state in ("enriched", "pending", "not_found", "failed")
     }
@@ -302,10 +302,10 @@ class TestEnrichmentManager:
     def mock_storage(self) -> MagicMock:
         """Create a mock storage manager."""
         storage = MagicMock(spec=StorageManager)
-        storage.get_items_needing_enrichment.return_value = []
+        storage.enrichment.items_needing.return_value = []
         # Return an int so `_run_enrichment` can compute total_items without
         # silently producing a MagicMock when tests don't override the value.
-        storage.count_items_needing_enrichment.return_value = 0
+        storage.enrichment.count_needing.return_value = 0
         return storage
 
     @pytest.fixture
@@ -359,8 +359,8 @@ class TestEnrichmentManager:
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
         )
-        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
-        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_storage.enrichment.items_needing.side_effect = [[(1, item)], []]
+        mock_storage.enrichment.count_needing.return_value = 1
         mock_registry.register(BlockingProvider())
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
@@ -396,7 +396,7 @@ class TestEnrichmentManager:
                 ),
             ),
         ]
-        mock_storage.get_items_needing_enrichment.side_effect = [items, []]
+        mock_storage.enrichment.items_needing.side_effect = [items, []]
 
         # Only movie provider
         provider = MockProvider(content_types=[ContentType.MOVIE])
@@ -424,8 +424,8 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
     @pytest.fixture
     def mock_storage(self) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
-        storage.get_items_needing_enrichment.return_value = []
-        storage.count_items_needing_enrichment.return_value = 0
+        storage.enrichment.items_needing.return_value = []
+        storage.enrichment.count_needing.return_value = 0
         return storage
 
     @pytest.fixture
@@ -470,8 +470,8 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
         )
-        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
-        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_storage.enrichment.items_needing.side_effect = [[(1, item)], []]
+        mock_storage.enrichment.count_needing.return_value = 1
 
         mock_registry.register(RawRequestErrorProvider(self._http_error()))
 
@@ -507,8 +507,8 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
         )
-        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
-        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_storage.enrichment.items_needing.side_effect = [[(1, item)], []]
+        mock_storage.enrichment.count_needing.return_value = 1
 
         mock_registry.register(WrappedRequestErrorProvider(self._http_error()))
 
@@ -541,8 +541,8 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
     @pytest.fixture
     def mock_storage(self) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
-        storage.get_items_needing_enrichment.return_value = []
-        storage.count_items_needing_enrichment.return_value = 0
+        storage.enrichment.items_needing.return_value = []
+        storage.enrichment.count_needing.return_value = 0
         return storage
 
     @pytest.fixture
@@ -573,8 +573,8 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
         )
-        mock_storage.get_items_needing_enrichment.side_effect = [[(1, item)], []]
-        mock_storage.count_items_needing_enrichment.return_value = 1
+        mock_storage.enrichment.items_needing.side_effect = [[(1, item)], []]
+        mock_storage.enrichment.count_needing.return_value = 1
         mock_registry.register(
             RawRequestErrorProvider(ValueError(f"bad response for {self._FORGED}"))
         )
@@ -596,7 +596,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
         config: dict[str, Any],
     ) -> None:
         """``status.errors`` is served over HTTP, so it carries no message."""
-        mock_storage.count_items_needing_enrichment.side_effect = ValueError(
+        mock_storage.enrichment.count_needing.side_effect = ValueError(
             f"query failed for {self._FORGED}"
         )
 
@@ -618,7 +618,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
         def _raise_inside_the_job(*_args: object, **_kwargs: object) -> int:
             raise ValueError("query failed")
 
-        mock_storage.count_items_needing_enrichment.side_effect = _raise_inside_the_job
+        mock_storage.enrichment.count_needing.side_effect = _raise_inside_the_job
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         with caplog.at_level(logging.ERROR, logger="src.enrichment.manager"):
@@ -643,7 +643,7 @@ class TestEnrichmentProgressRegression:
     the value reported by ``get_status()`` only matched reality once every
     page had been fetched.
 
-    Fix: query ``StorageManager.count_items_needing_enrichment`` once before
+    Fix: query ``EnrichmentStore.count_needing`` once before
     the batch loop and assign ``total_items`` in a single statement (combined
     with the precomputed ``not_found_ids`` set when retrying not-found items).
     """
@@ -651,8 +651,8 @@ class TestEnrichmentProgressRegression:
     @pytest.fixture
     def mock_storage(self) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
-        storage.get_items_needing_enrichment.return_value = []
-        storage.count_items_needing_enrichment.return_value = 0
+        storage.enrichment.items_needing.return_value = []
+        storage.enrichment.count_needing.return_value = 0
         return storage
 
     @pytest.fixture
@@ -697,8 +697,8 @@ class TestEnrichmentProgressRegression:
             ]
             for db_id in (1, 2, 3)
         ]
-        mock_storage.get_items_needing_enrichment.side_effect = items_batches + [[]]
-        mock_storage.count_items_needing_enrichment.return_value = 3
+        mock_storage.enrichment.items_needing.side_effect = items_batches + [[]]
+        mock_storage.enrichment.count_needing.return_value = 3
 
         provider = MockProvider()
         mock_registry.register(provider)
@@ -721,7 +721,7 @@ class TestEnrichmentProgressRegression:
             "total_items should report the full count from the first batch onward, "
             f"got {observed_totals}"
         )
-        mock_storage.count_items_needing_enrichment.assert_called_once_with(
+        mock_storage.enrichment.count_needing.assert_called_once_with(
             content_type=None,
             user_id=None,
         )
@@ -753,15 +753,15 @@ class TestEnrichmentProgressRegression:
         # entry must exist so the loop exits via the empty-batch break instead
         # of via StopIteration (which would silently route through the broad
         # `except Exception` in _run_enrichment and mask any real failure).
-        mock_storage.get_items_needing_enrichment.side_effect = [
+        mock_storage.enrichment.items_needing.side_effect = [
             [(99, not_found_item)],
             [],
             [],
         ]
-        mock_storage.get_enrichment_status.return_value = {
+        mock_storage.enrichment.status.return_value = {
             "enrichment_quality": "not_found"
         }
-        mock_storage.count_items_needing_enrichment.return_value = 5
+        mock_storage.enrichment.count_needing.return_value = 5
         mock_storage.get_content_items_by_db_ids.return_value = [not_found_item]
 
         provider = MockProvider()
@@ -777,7 +777,7 @@ class TestEnrichmentProgressRegression:
         # the broad except in _run_enrichment swallowing a mock-setup error.
         assert status.completed is True
         assert status.errors == []
-        mock_storage.count_items_needing_enrichment.assert_called_once_with(
+        mock_storage.enrichment.count_needing.assert_called_once_with(
             content_type=None,
             user_id=None,
         )
@@ -845,7 +845,7 @@ class TestTransientProviderFailureIsRetryable:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_quality"] != "not_found"
         assert status["enrichment_error"] is not None
@@ -925,7 +925,7 @@ class TestTransientProviderFailureIsRetryable:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_quality"] == "not_found"
         assert status["enrichment_error"] is None
@@ -958,7 +958,7 @@ class TestTransientProviderFailureIsRetryable:
         assert manager._wait_for_completion()
 
         assert len(answering.enrich_calls) == 1, "the healthy provider was consulted"
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_quality"] != "not_found"
         assert queued_ids(storage_manager) == {db_id}
@@ -1031,7 +1031,7 @@ class TestTransientProviderFailureIsRetryable:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_provider"] == "mock"
         assert status["enrichment_quality"] == "high"
@@ -1058,7 +1058,7 @@ class TestTransientProviderFailureIsRetryable:
         would need a second manual retry to recover.
         """
         db_id = save_movie(storage_manager)
-        storage_manager.mark_enrichment_complete(db_id, "none", "not_found")
+        storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
         registry.register(
             RawRequestErrorProvider(requests.ConnectionError("network is unreachable"))
         )
@@ -1067,7 +1067,7 @@ class TestTransientProviderFailureIsRetryable:
         manager.start_enrichment(content_type=ContentType.MOVIE, include_not_found=True)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_quality"] != "not_found"
         assert status["enrichment_error"] is not None
@@ -1104,7 +1104,7 @@ class TestTransientProviderFailureIsRetryable:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert (
             status["enrichment_error"]
@@ -1151,14 +1151,14 @@ class TestTransientProviderFailureIsRetryable:
         assert manager._wait_for_completion()
 
         assert queued_ids(storage_manager) == {broken_id}
-        found_status = storage_manager.get_enrichment_status(found_id)
+        found_status = storage_manager.enrichment.status(found_id)
         assert found_status is not None
         assert found_status["enrichment_quality"] == "high"
-        missing_status = storage_manager.get_enrichment_status(missing_id)
+        missing_status = storage_manager.enrichment.status(missing_id)
         assert missing_status is not None
         assert missing_status["enrichment_quality"] == "not_found"
         assert missing_status["enrichment_error"] is None
-        broken_status = storage_manager.get_enrichment_status(broken_id)
+        broken_status = storage_manager.enrichment.status(broken_id)
         assert broken_status is not None
         assert broken_status["enrichment_error"] is not None
 
@@ -1235,7 +1235,7 @@ class TestPermanentProviderFailureStopsRetrying:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_quality"] == "not_found"
         assert queued_ids(storage_manager) == set()
@@ -1290,7 +1290,7 @@ class TestPermanentProviderFailureStopsRetrying:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_error"] == f"{provider.name}: HTTP {status_code}"
         assert queued_ids(storage_manager) == {db_id}
@@ -1407,7 +1407,7 @@ class TestPersistedEnrichmentErrorIsDerived:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_error"] == "wrapped_request: HTTP 503"
 
@@ -1542,7 +1542,7 @@ class TestEnrichmentFetchWindowRegression:
 
         requested_limits: list[int] = []
         hydrated_rows = 0
-        real_fetch = storage_manager.get_items_needing_enrichment
+        real_fetch = storage_manager.enrichment.items_needing
 
         def spy(**kwargs: Any) -> list[tuple[int, ContentItem]]:
             nonlocal hydrated_rows
@@ -1551,9 +1551,7 @@ class TestEnrichmentFetchWindowRegression:
             hydrated_rows += len(fetched)
             return fetched
 
-        with patch.object(
-            storage_manager, "get_items_needing_enrichment", side_effect=spy
-        ):
+        with patch.object(storage_manager.enrichment, "items_needing", side_effect=spy):
             manager = EnrichmentManager(storage_manager, config, registry)
             manager.start_enrichment(content_type=ContentType.MOVIE)
             assert manager._wait_for_completion()
@@ -1728,7 +1726,7 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
             manager.start_enrichment(content_type=ContentType.MOVIE)
             assert manager._wait_for_completion()
 
-        status = storage_manager.get_enrichment_status(db_id)
+        status = storage_manager.enrichment.status(db_id)
         assert status is not None
         assert status["enrichment_provider"] == "tmdb"
         assert status["enrichment_quality"] == "high"

@@ -177,7 +177,7 @@ class TestSettingsSet:
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting(_BOOL_KEY) is False
+        assert storage.settings.get(_BOOL_KEY) is False
 
     def test_set_list_splits_on_commas(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -189,7 +189,7 @@ class TestSettingsSet:
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting(_LIST_KEY) == [
+        assert storage.settings.get(_LIST_KEY) == [
             "https://a.example",
             "https://b.example",
         ]
@@ -204,7 +204,7 @@ class TestSettingsSet:
         assert result.exit_code != 0
         assert "Error" in result.output
         assert ">= 1" in result.output
-        assert storage.get_setting(_INT_KEY) is None
+        assert storage.settings.get(_INT_KEY) is None
 
     def test_set_rejects_sensitive_key(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -216,7 +216,7 @@ class TestSettingsSet:
         assert result.exit_code != 0
         assert "set-secret" in result.output
         assert "leak" not in result.output
-        assert storage.get_setting(_SECRET_KEY) is None
+        assert storage.settings.get(_SECRET_KEY) is None
         assert storage.secrets.has(_SECRET_KEY) is False
 
     def test_set_unknown_key_errors(
@@ -234,14 +234,14 @@ class TestSettingsReset:
     def test_reset_removes_override(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.set_setting(_INT_KEY, 9)
+        storage.settings.set(_INT_KEY, 9)
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "reset", _INT_KEY], storage
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting(_INT_KEY) is None
+        assert storage.settings.get(_INT_KEY) is None
 
     def test_reset_rejects_sensitive_key(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -337,8 +337,8 @@ class TestSettingsApply:
         )
 
         assert result.exit_code == 0
-        assert storage.get_setting(_INT_KEY) == 9
-        assert storage.get_setting("recommendations.max_count") == 30
+        assert storage.settings.get(_INT_KEY) == 9
+        assert storage.settings.get("recommendations.max_count") == 30
 
     def test_apply_is_all_or_nothing_on_invalid_key(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -358,7 +358,7 @@ class TestSettingsApply:
         assert "recommendations.max_count" in result.output
         assert ">= 1" in result.output
         # All-or-nothing: the valid key in the same batch was not written.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_apply_rejects_sensitive_key_in_batch(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -374,7 +374,7 @@ class TestSettingsApply:
 
         assert result.exit_code != 0
         assert "leak" not in result.output
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert storage.secrets.has(_SECRET_KEY) is False
 
 
@@ -437,7 +437,7 @@ class TestMutatingCommandsEmitTheRefreshedView:
     def test_reset_emits_the_updated_view(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.set_setting(_INT_KEY, 9)
+        storage.settings.set(_INT_KEY, 9)
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "reset", _INT_KEY, "--format", "json"], storage

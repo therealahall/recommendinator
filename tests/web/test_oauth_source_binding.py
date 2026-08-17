@@ -59,7 +59,7 @@ def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClie
     """A booted app over a real credential database, sources already migrated."""
     for source_id, entry in config["inputs"].items():
         fields = {k: v for k, v in entry.items() if k not in ("plugin", "enabled")}
-        storage.upsert_source_config(
+        storage.sources.upsert(
             USER_ID, source_id, entry["plugin"], fields, enabled=True
         )
 
@@ -196,9 +196,9 @@ def db_only_client(
     storage: StorageManager, db_only_config: dict[str, Any]
 ) -> Iterator[TestClient]:
     """A booted app whose three OAuth sources exist only in the database."""
-    storage.upsert_source_config(USER_ID, "gog_db", "gog", {}, enabled=True)
-    storage.upsert_source_config(USER_ID, "epic_db", "epic_games", {}, enabled=True)
-    storage.upsert_source_config(
+    storage.sources.upsert(USER_ID, "gog_db", "gog", {}, enabled=True)
+    storage.sources.upsert(USER_ID, "epic_db", "epic_games", {}, enabled=True)
+    storage.sources.upsert(
         USER_ID, "trakt_db", "trakt", {"client_id": "cid"}, enabled=True
     )
     storage.credentials.save(USER_ID, "trakt_db", "client_secret", "secret")
@@ -360,7 +360,7 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
         Nothing reads it and no verb can delete it — which is what the
         disconnect 404 below reports.
         """
-        storage.upsert_source_config(USER_ID, source_id, plugin, {}, enabled=True)
+        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=True)
         config = yaml_held_token_config(source_id, plugin)
         assert config["inputs"][source_id]["refresh_token"] == "from-yaml"
 
@@ -506,7 +506,7 @@ class TestADisabledSourceCanStillBeDisconnectedRegression:
         self, client: TestClient, storage: StorageManager, source_id: str
     ) -> StorageManager:
         storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
-        storage.set_source_config_enabled(USER_ID, source_id, False)
+        storage.sources.set_enabled(USER_ID, source_id, False)
         return storage
 
     @pytest.mark.parametrize(
@@ -566,7 +566,7 @@ class TestConnectingADisabledSourceIsRefused:
         exchange: str,
         body: dict[str, str],
     ) -> None:
-        storage.set_source_config_enabled(USER_ID, source_id, enabled)
+        storage.sources.set_enabled(USER_ID, source_id, enabled)
 
         with (
             patch(extract, return_value="code"),
@@ -584,7 +584,7 @@ class TestConnectingADisabledSourceIsRefused:
         self, client: TestClient, storage: StorageManager, enabled: bool
     ) -> None:
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
-        storage.set_source_config_enabled(USER_ID, "trakt_work", enabled)
+        storage.sources.set_enabled(USER_ID, "trakt_work", enabled)
 
         with patch(
             "src.web.api.poll_device_token",
@@ -659,7 +659,7 @@ class TestStatusSeparatesEnabledFromConnected:
         for key, value in secrets.items():
             storage.credentials.save(USER_ID, source_id, key, value)
         storage.credentials.save(USER_ID, source_id, "refresh_token", "still-live")
-        storage.set_source_config_enabled(USER_ID, source_id, enabled)
+        storage.sources.set_enabled(USER_ID, source_id, enabled)
 
         body = client.get(f"/api/{provider}/status?source_id={source_id}").json()
 
