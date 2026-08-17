@@ -1049,7 +1049,7 @@ class TestSyncLogsTheReasonItRefused:
             done.set()
             return [SyncResult(source_name=plugin.name) for plugin, _cfg in sources]
 
-        with patch("src.web.api.execute_multi_source_sync", fake_execute):
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", fake_execute):
             sync = client.post("/api/update", json={"source": "games"})
             assert done.wait(timeout=5)
 
@@ -1195,7 +1195,7 @@ class TestUpdateEndpointDbOnlySourcesRegression:
         )
 
         captured, done = self._capture_sync()
-        with patch("src.web.api.execute_multi_source_sync", captured["fn"]):
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", captured["fn"]):
             response = client.post("/api/update", json={"source": "calibre-web"})
             assert response.status_code == 200
             body = response.json()
@@ -1305,7 +1305,7 @@ class TestSourceCredentialMoveRegression:
             started.set()
             return [SyncResult(source_name=plugin.name) for plugin, _cfg in sources]
 
-        with patch("src.web.api.execute_multi_source_sync", fake_execute):
+        with patch("src.web.sync_dispatch.execute_multi_source_sync", fake_execute):
             sync = client.post("/api/update", json={"source": "calibre"})
 
         assert sync.status_code == 200

@@ -1022,7 +1022,10 @@ def _sync_a_source_typed(client, content_type):
 
     with (
         patch("src.web.api.get_sync_manager", return_value=sync_manager),
-        patch("src.web.api.get_enrichment_manager", return_value=enrichment_manager),
+        patch(
+            "src.web.sync_dispatch.get_enrichment_manager",
+            return_value=enrichment_manager,
+        ),
         patch(
             "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
             return_value=[],
@@ -1053,7 +1056,7 @@ class TestUpdateEnrichmentContentType:
         The sync still starts and enrichment falls back to every type, so a
         typo in the config file cannot strand the source.
         """
-        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        with caplog.at_level(logging.WARNING, logger="src.web.sync_dispatch"):
             response, started_with = _sync_a_source_typed(client, "paperback")
 
         assert response.status_code == 200
@@ -1068,7 +1071,7 @@ class TestUpdateEnrichmentContentType:
         Coercing ahead of the emptiness check would make it the string
         "False" and warn about a source nobody misconfigured.
         """
-        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        with caplog.at_level(logging.WARNING, logger="src.web.sync_dispatch"):
             response, started_with = _sync_a_source_typed(client, False)
 
         assert response.status_code == 200
@@ -2533,7 +2536,7 @@ class TestUpdateEndpoint409Conflict:
             # Drop the captured execute_multi_source_sync into a no-op so
             # the second sync's daemon doesn't try to actually run.
             with patch(
-                "src.web.api.execute_multi_source_sync",
+                "src.web.sync_dispatch.execute_multi_source_sync",
                 return_value=[
                     SyncJob(source="Goodreads CSV", status=SyncStatus.RUNNING)
                 ],
@@ -2594,7 +2597,7 @@ class TestUpdateEndpointParallelSync:
         completion = threading.Event()
         with (
             patch(
-                "src.web.api.execute_multi_source_sync",
+                "src.web.sync_dispatch.execute_multi_source_sync",
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
@@ -2618,7 +2621,7 @@ class TestUpdateEndpointParallelSync:
         completion = threading.Event()
         with (
             patch(
-                "src.web.api.execute_multi_source_sync",
+                "src.web.sync_dispatch.execute_multi_source_sync",
                 side_effect=self._make_capture(captured_kwargs, completion),
             ),
             patch(
@@ -2739,7 +2742,10 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
                 completion.set()
 
         with (
-            patch("src.web.api.execute_multi_source_sync", side_effect=fake_execute),
+            patch(
+                "src.web.sync_dispatch.execute_multi_source_sync",
+                side_effect=fake_execute,
+            ),
             patch(
                 "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
                 return_value=[],
