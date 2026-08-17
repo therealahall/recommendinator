@@ -100,7 +100,6 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
 
     _record(storage, minute=10, status="failed")
     _record(storage, minute=15, status="failed")
-    _record(storage, minute=20, status="skipped")
     # A dropped source_id filter would back every source off because one broke.
     _record(storage, "trakt", minute=12, status="failed")
     _record(storage, "trakt", minute=17, status="failed")

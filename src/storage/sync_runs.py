@@ -127,8 +127,7 @@ class SyncRunStore:
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT status FROM sync_runs "
-                "WHERE user_id = ? AND source_id = ? AND status != 'skipped' "
+                "SELECT status FROM sync_runs WHERE user_id = ? AND source_id = ? "
                 f"{_NEWEST_FIRST}",
                 (user_id, source_id),
             )
