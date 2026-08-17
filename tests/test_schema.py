@@ -11,6 +11,7 @@ from src.storage.schema import (
     create_schema,
     create_user,
     get_all_users,
+    get_source_config,
     get_user_by_id,
     update_user_identity,
     update_user_settings,
@@ -425,6 +426,69 @@ class TestTheDerivedColumnBackfill:
             get_sort_title("A Lonely Row"),
             build_search_text("A Lonely Row", None),
         )
+
+
+# The ``source_configs`` shape a version-6 database carries: everything the
+# current one has bar ``sync_interval``. Written out rather than derived,
+# because the point is to be a build this one no longer is.
+_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL = """
+    CREATE TABLE source_configs (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        plugin TEXT NOT NULL,
+        config_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        migrated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, source_id)
+    )
+"""
+
+
+class TestOpeningADatabaseThatPredatesSyncScheduling:
+    """The source configs an operator already migrated must survive the upgrade.
+
+    ``sync_interval`` arrives by ALTER, and rebuilding the table to add it
+    would take those rows with it.
+    """
+
+    def test_a_version_six_database_keeps_its_source_configs(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """The stored config is intact, and on no schedule of its own yet."""
+        temp_db.execute(_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL)
+        temp_db.execute(
+            "INSERT INTO source_configs (user_id, source_id, plugin, config_json)"
+            " VALUES (1, 'steam', 'steam', '{\"vanity_url\": \"myname\"}')"
+        )
+        temp_db.execute("PRAGMA user_version = 6")
+        temp_db.commit()
+
+        create_schema(temp_db)
+
+        stored = get_source_config(temp_db, 1, "steam")
+        assert stored is not None
+        assert stored["config_json"] == '{"vanity_url": "myname"}'
+        assert stored["sync_interval"] is None
+
+    def test_a_version_six_database_gains_the_sync_run_history(
+        self, temp_db: sqlite3.Connection
+    ) -> None:
+        """The new table reaches an existing database, not just a fresh one."""
+        temp_db.execute(_SOURCE_CONFIGS_BEFORE_SYNC_INTERVAL)
+        temp_db.execute("PRAGMA user_version = 6")
+        temp_db.commit()
+
+        create_schema(temp_db)
+
+        temp_db.execute(
+            "INSERT INTO sync_runs (user_id, source_id, started_at, status)"
+            " VALUES (1, 'steam', '2026-03-01T12:00:00.000000+00:00', 'completed')"
+        )
+        row = temp_db.execute(
+            "SELECT total_items, errors_json FROM sync_runs"
+        ).fetchone()
+        assert (row["total_items"], row["errors_json"]) == (0, "[]")
 
 
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:

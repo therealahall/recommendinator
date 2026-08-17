@@ -44,6 +44,7 @@ from src.storage.sqlite_db import SaveOutcome as SaveOutcome
 from src.storage.sqlite_db import SQLiteDB
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
+from src.storage.sync_runs import SyncRunStore
 
 
 class UnknownUserError(LookupError):
@@ -94,6 +95,10 @@ class StorageManager:
     @functools.cached_property
     def profiles(self) -> ProfileStore:
         return ProfileStore(self.sqlite_db)
+
+    @functools.cached_property
+    def sync_runs(self) -> SyncRunStore:
+        return SyncRunStore(self.sqlite_db)
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:

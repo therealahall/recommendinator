@@ -12,6 +12,7 @@ from src.storage.schema import (
     get_source_config,
     list_source_configs,
     set_source_config_enabled,
+    set_source_config_schedule,
     upsert_source_config,
 )
 from src.storage.sqlite_db import SQLiteDB
@@ -23,6 +24,7 @@ def _to_dict(row: SourceConfigRow) -> SourceConfigDict:
         plugin=row["plugin"],
         config=json.loads(row["config_json"]),
         enabled=bool(row["enabled"]),
+        sync_interval=row["sync_interval"],
         migrated_at=row["migrated_at"],
         updated_at=row["updated_at"],
     )
@@ -65,6 +67,15 @@ class SourceConfigStore:
         """
         with self._sqlite_db.connection() as conn:
             return set_source_config_enabled(conn, user_id, source_id, enabled)
+
+    def set_schedule(self, user_id: int, source_id: str, interval: str | None) -> bool:
+        """Set the automatic-sync cadence on an already-migrated source.
+
+        ``None`` restores the plugin's default cadence, ``"off"`` never syncs.
+        Returns ``False`` when the source has not been migrated yet.
+        """
+        with self._sqlite_db.connection() as conn:
+            return set_source_config_schedule(conn, user_id, source_id, interval)
 
     def delete(self, user_id: int, source_id: str) -> bool:
         """Remove a migrated source config row. Returns True when deleted."""
