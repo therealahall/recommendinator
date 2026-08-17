@@ -50,7 +50,7 @@ def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClie
 @pytest.fixture()
 def claimed(storage: StorageManager, client: TestClient) -> TestClient:
     """The same client, signed in as the account that claimed the instance."""
-    storage.claim_account(_USERNAME, "The Owner", _PASSWORD)
+    storage.accounts.claim(_USERNAME, "The Owner", _PASSWORD)
     response = client.post(
         "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
     )
@@ -66,7 +66,7 @@ def _set_cookie(response: Any) -> SimpleCookie:
 
 def _account(storage: StorageManager, **names: Any) -> dict[str, Any]:
     """The account body a route returns, with the stamp storage holds."""
-    record = storage.describe_account(1)
+    record = storage.accounts.describe(1)
     assert record is not None
     return {"id": 1, **names, "password_updated_at": record["password_updated_at"]}
 
@@ -91,7 +91,7 @@ class TestFirstRunSetup:
         assert response.json() == _account(
             storage, username=_USERNAME, display_name="The Owner"
         )
-        assert storage.account_is_claimed() is True
+        assert storage.accounts.is_claimed() is True
         assert client.get("/api/auth/session").json()["authenticated"] is True
 
     def test_a_blank_display_name_falls_back_to_the_username(
@@ -121,7 +121,7 @@ class TestFirstRunSetup:
 
         assert response.status_code == 409
         assert storage.get_all_users()[0]["username"] == _USERNAME
-        assert storage.verify_password(_USERNAME, _PASSWORD) is not None
+        assert storage.accounts.verify_password(_USERNAME, _PASSWORD) is not None
 
     def test_a_short_password_is_refused_in_words_the_form_can_show(
         self, client: TestClient, storage: StorageManager
@@ -143,7 +143,7 @@ class TestFirstRunSetup:
 
         assert response.status_code == 400
         assert response.json()["detail"] == PASSWORD_TOO_SHORT
-        assert storage.account_is_claimed() is False
+        assert storage.accounts.is_claimed() is False
 
 
 class TestLogin:
@@ -303,7 +303,7 @@ class TestTheSessionReport:
         self, client: TestClient, storage: StorageManager
     ) -> None:
         """The SPA opens on the login form rather than offering setup again."""
-        storage.claim_account(_USERNAME, "The Owner", _PASSWORD)
+        storage.accounts.claim(_USERNAME, "The Owner", _PASSWORD)
 
         body = client.get("/api/auth/session").json()
 
@@ -394,13 +394,13 @@ class TestTheAccountRoutes:
         )
 
         assert response.status_code == 401
-        assert storage.verify_password(_USERNAME, _PASSWORD) is not None
+        assert storage.accounts.verify_password(_USERNAME, _PASSWORD) is not None
 
     def test_a_password_change_signs_the_other_browsers_out(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
         """The point of changing it: whoever else is signed in stops being."""
-        elsewhere = storage.create_session(1)
+        elsewhere = storage.accounts.create_session(1)
 
         response = claimed.put(
             "/api/users/1/password",
@@ -408,10 +408,10 @@ class TestTheAccountRoutes:
         )
 
         assert response.status_code == 204
-        assert storage.lookup_session(elsewhere) is None
+        assert storage.accounts.lookup_session(elsewhere) is None
         # The browser that made the change keeps working, on the same cookie.
         assert claimed.get("/api/users").status_code == 200
-        assert storage.verify_password(_USERNAME, "a new password") is not None
+        assert storage.accounts.verify_password(_USERNAME, "a new password") is not None
 
     def test_a_password_change_for_another_account_is_refused(
         self, claimed: TestClient
@@ -437,7 +437,7 @@ class TestTheAccountRoutes:
 
         assert response.status_code == 400
         assert response.json()["detail"] == PASSWORD_TOO_SHORT
-        assert storage.verify_password(_USERNAME, _PASSWORD) is not None
+        assert storage.accounts.verify_password(_USERNAME, _PASSWORD) is not None
 
     @pytest.mark.parametrize(
         "username",
@@ -481,17 +481,17 @@ class TestLapsedSessionsAreSweptAtStartup:
     def test_boot_drops_them_and_leaves_the_live_session_alone(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        storage.claim_account(_USERNAME, "The Owner", _PASSWORD)
-        storage.create_session(1)
+        storage.accounts.claim(_USERNAME, "The Owner", _PASSWORD)
+        storage.accounts.create_session(1)
         _lapse_every_session(storage)
-        live = storage.create_session(1)
+        live = storage.accounts.create_session(1)
         assert _session_rows(storage) == 2
 
         with booted_web_app(storage, config):
             pass
 
         assert _session_rows(storage) == 1
-        assert storage.lookup_session(live) is not None
+        assert storage.accounts.lookup_session(live) is not None
 
 
 class TestABareMountedRouterStillAuthenticates:

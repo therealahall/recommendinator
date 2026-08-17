@@ -191,7 +191,7 @@ class TestMigrateEndpoint:
         assert row["config"]["min_minutes"] == 30
         assert "api_key" not in row["config"]
 
-        decrypted = storage.get_credential(1, "my_games", "api_key")
+        decrypted = storage.credentials.get(1, "my_games", "api_key")
         assert decrypted == "yaml_api_key"
 
         # YAML entry remains in the in-memory config (mutating shared state
@@ -224,7 +224,7 @@ class TestMigrateEndpoint:
         response = client.post("/api/sync/sources/my_games/migrate")
 
         assert response.status_code == 200, response.text
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
         assert response.json()["secrets_migrated"] == ["api_key"]
 
     def test_migration_is_idempotent(
@@ -255,12 +255,12 @@ class TestMigrateNamesASecretTheBootPassEncryptedRegression:
         with booted_web_app(storage, base_config, migrate_credentials=True) as app:
             client = authenticated_client(app)
             # Anchored: startup, not this request, is what encrypted it.
-            assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
+            assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
             response = client.post("/api/sync/sources/my_games/migrate")
 
         assert response.status_code == 200, response.text
         assert response.json()["secrets_migrated"] == ["api_key"]
-        assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
+        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
 
 
 class TestUpdateConfigEndpoint:
@@ -304,7 +304,7 @@ class TestUpdateConfigEndpoint:
             json={"values": {"api_key": "leaked"}},
         )
         assert response.status_code == 400
-        decrypted = storage.get_credential(1, "my_games", "api_key")
+        decrypted = storage.credentials.get(1, "my_games", "api_key")
         assert decrypted == "yaml_api_key"
 
     def test_rejects_unknown_field(
@@ -335,7 +335,7 @@ class TestSecretEndpoints:
             json={"value": "rotated_key"},
         )
         assert response.status_code == 204
-        assert storage.get_credential(1, "my_games", "api_key") == "rotated_key"
+        assert storage.credentials.get(1, "my_games", "api_key") == "rotated_key"
 
     def test_put_secret_404_for_unknown_field_name(
         self, client: TestClient, storage: StorageManager
@@ -348,7 +348,7 @@ class TestSecretEndpoints:
         )
         assert response.status_code == 404
         # Guard fired before any DB write — no credential row created.
-        assert storage.get_credential(1, "my_games", "no_such_field") is None
+        assert storage.credentials.get(1, "my_games", "no_such_field") is None
 
     def test_put_secret_400_for_non_sensitive_field(
         self, client: TestClient, storage: StorageManager
@@ -366,7 +366,7 @@ class TestSecretEndpoints:
         client.post("/api/sync/sources/my_games/migrate")
         response = client.delete("/api/sync/sources/my_games/secret/api_key")
         assert response.status_code == 204
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
 
 class TestEnabledEndpoint:
@@ -592,7 +592,7 @@ class TestCreateSourceEndpoint:
         )
         assert response.status_code == 400
         assert storage.get_source_config(1, "leaky") is None
-        assert storage.get_credential(1, "leaky", "api_key") is None
+        assert storage.credentials.get(1, "leaky", "api_key") is None
 
 
 class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
@@ -937,13 +937,13 @@ class TestDeleteSourceEndpoint:
     ) -> None:
         client.post("/api/sync/sources/my_games/migrate")
         assert storage.get_source_config(1, "my_games") is not None
-        assert storage.get_credential(1, "my_games", "api_key") == "yaml_api_key"
+        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
 
         response = client.delete("/api/sync/sources/my_games")
         assert response.status_code == 204
 
         assert storage.get_source_config(1, "my_games") is None
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
     def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
         response = client.delete("/api/sync/sources/my_books")
@@ -963,24 +963,24 @@ class TestDeleteSourceEndpoint:
         """Drop the config the route hands down and the sweep never runs."""
         base_config["inputs"].pop("my_games")
         storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
-        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+        storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
         response = client.delete("/api/sync/sources/work_games")
 
         assert response.status_code == 204
-        assert storage.get_credential(1, "fake_api", "api_key") is None
+        assert storage.credentials.get(1, "fake_api", "api_key") is None
 
     def test_a_yaml_sibling_on_the_plugin_keeps_the_stranded_row(
         self, client: TestClient, storage: StorageManager
     ) -> None:
         """``my_games`` stays in the config, and it alone may read that row."""
         storage.upsert_source_config(1, "work_games", "fake_api", {}, enabled=True)
-        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+        storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
         response = client.delete("/api/sync/sources/work_games")
 
         assert response.status_code == 204
-        assert storage.get_credential(1, "fake_api", "api_key") == (
+        assert storage.credentials.get(1, "fake_api", "api_key") == (
             "stranded-by-an-upgrade"
         )
 
@@ -1152,7 +1152,7 @@ class TestSourceCredentialMoveRegression:
 
         assert saved.status_code == 200
         assert saved.json()["secret_status"]["password"] is True
-        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+        assert storage.credentials.get(1, "calibre", "password") == "hunter2"
 
         started = threading.Event()
 
@@ -1185,7 +1185,7 @@ class TestSourceCredentialMoveRegression:
 
         assert saved.status_code == 200
         assert saved.json()["field_values"]["verify_ssl"] is False
-        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+        assert storage.credentials.get(1, "calibre", "password") == "hunter2"
 
     def test_repointing_at_another_host_is_refused_with_the_secret_intact(
         self, real_plugin_client: TestClient, storage: StorageManager
@@ -1213,7 +1213,7 @@ class TestSourceCredentialMoveRegression:
         )
         current = client.get("/api/sync/sources/calibre/config").json()
         assert current["field_values"]["url"] == "http://books.lan:8083"
-        assert storage.get_credential(1, "calibre", "password") == "hunter2"
+        assert storage.credentials.get(1, "calibre", "password") == "hunter2"
 
     def test_clearing_the_secret_first_lets_the_move_through(
         self, real_plugin_client: TestClient, storage: StorageManager
@@ -1237,4 +1237,4 @@ class TestSourceCredentialMoveRegression:
         assert cleared.status_code == 204
         assert moved.status_code == 200
         assert moved.json()["field_values"]["url"] == "https://books.example:8083"
-        assert storage.get_credential(1, "calibre", "password") is None
+        assert storage.credentials.get(1, "calibre", "password") is None

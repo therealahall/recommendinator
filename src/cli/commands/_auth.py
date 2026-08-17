@@ -330,7 +330,7 @@ def auth_disconnect(
 
     if may_revoke(
         plugin_name, disconnecting, config, storage, user_id
-    ) and storage.delete_credential(user_id, disconnecting, REFRESH_TOKEN_KEY):
+    ) and storage.credentials.delete(user_id, disconnecting, REFRESH_TOKEN_KEY):
         click.echo(f"{source} disconnected.")
         return
 

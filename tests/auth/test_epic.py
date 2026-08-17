@@ -88,7 +88,7 @@ class TestSaveEpicToken:
         """Token is saved to encrypted DB storage."""
         save_epic_token(storage, "new_refresh_token")
 
-        result = storage.get_credential(1, "epic_games", "refresh_token")
+        result = storage.credentials.get(1, "epic_games", "refresh_token")
         assert result == "new_refresh_token"
 
     def test_db_failure_logs_the_class_not_a_traceback(
@@ -97,7 +97,7 @@ class TestSaveEpicToken:
         """Regression: this sink logged a traceback naming absolute source paths."""
         with caplog.at_level(logging.ERROR, logger=OAUTH_LOGGER):
             with patch.object(
-                storage, "save_credential", side_effect=OSError("disk full")
+                storage.credentials, "save", side_effect=OSError("disk full")
             ):
                 with pytest.raises(EpicAuthError):
                     save_epic_token(storage, "some_token")
@@ -126,7 +126,7 @@ class TestHasEpicToken:
 
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
         """DB token detected even when config has no token."""
-        storage.save_credential(1, "epic_games", "refresh_token", "db_token")
+        storage.credentials.save(1, "epic_games", "refresh_token", "db_token")
 
         assert has_epic_token(_epic_source(refresh_token=""), storage=storage) is True
 

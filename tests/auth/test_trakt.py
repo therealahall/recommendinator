@@ -134,7 +134,7 @@ class TestSaveTraktToken:
         """Token is saved to encrypted DB storage under source_id 'trakt'."""
         save_trakt_token(storage, "refresh-token")
 
-        assert storage.get_credential(1, "trakt", "refresh_token") == "refresh-token"
+        assert storage.credentials.get(1, "trakt", "refresh_token") == "refresh-token"
 
 
 class TestResolveTraktClientCredentials:
@@ -192,7 +192,7 @@ class TestHasTraktToken:
 
     def test_true_when_token_present(self, storage: StorageManager) -> None:
         """Returns True when a refresh token is stored."""
-        storage.save_credential(1, "trakt", "refresh_token", "token")
+        storage.credentials.save(1, "trakt", "refresh_token", "token")
 
         assert has_trakt_token(self._trakt_source(), storage) is True
 
@@ -204,6 +204,6 @@ class TestHasTraktToken:
         A GOG source called ``trakt`` answered True, and the CLI asked it with
         no ownership gate in front.
         """
-        storage.save_credential(1, "trakt", "refresh_token", "gog-token")
+        storage.credentials.save(1, "trakt", "refresh_token", "gog-token")
 
         assert has_trakt_token(self._trakt_source(plugin="gog"), storage) is False

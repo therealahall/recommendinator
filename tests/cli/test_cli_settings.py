@@ -92,7 +92,7 @@ class TestSettingsList:
     def test_list_json_masks_secret(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
+        storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "list", "--format", "json"], storage
@@ -135,7 +135,7 @@ class TestSettingsGet:
     def test_get_secret_shows_presence_only(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
+        storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "get", _SECRET_KEY, "--format", "json"], storage
@@ -217,7 +217,7 @@ class TestSettingsSet:
         assert "set-secret" in result.output
         assert "leak" not in result.output
         assert storage.get_setting(_SECRET_KEY) is None
-        assert storage.has_global_secret(_SECRET_KEY) is False
+        assert storage.secrets.has(_SECRET_KEY) is False
 
     def test_set_unknown_key_errors(
         self, cli_runner: CliRunner, storage: StorageManager
@@ -267,7 +267,7 @@ class TestSettingsSecrets:
         )
 
         assert result.exit_code == 0
-        assert storage.has_global_secret(_SECRET_KEY) is True
+        assert storage.secrets.has(_SECRET_KEY) is True
         assert "env_secret" not in result.output
 
     def test_set_secret_via_hidden_prompt(
@@ -281,7 +281,7 @@ class TestSettingsSecrets:
         )
 
         assert result.exit_code == 0
-        assert storage.has_global_secret(_SECRET_KEY) is True
+        assert storage.secrets.has(_SECRET_KEY) is True
         assert "prompt_secret" not in result.output
 
     def test_set_secret_rejects_non_sensitive_key(
@@ -295,19 +295,19 @@ class TestSettingsSecrets:
         )
 
         assert result.exit_code != 0
-        assert storage.has_global_secret(_INT_KEY) is False
+        assert storage.secrets.has(_INT_KEY) is False
 
     def test_clear_secret_removes_it(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
+        storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "clear-secret", _SECRET_KEY], storage
         )
 
         assert result.exit_code == 0
-        assert storage.has_global_secret(_SECRET_KEY) is False
+        assert storage.secrets.has(_SECRET_KEY) is False
         assert "SECRETPLAIN" not in result.output
 
     def test_clear_secret_reports_when_none_set(
@@ -375,7 +375,7 @@ class TestSettingsApply:
         assert result.exit_code != 0
         assert "leak" not in result.output
         assert storage.list_settings() == {}
-        assert storage.has_global_secret(_SECRET_KEY) is False
+        assert storage.secrets.has(_SECRET_KEY) is False
 
 
 class TestSettingsBootSecretMigration:
@@ -401,7 +401,7 @@ class TestSettingsBootSecretMigration:
         )
 
         assert result.exit_code == 0
-        assert storage.has_global_secret(_SECRET_KEY) is True
+        assert storage.secrets.has(_SECRET_KEY) is True
         # Stripped from the running config the CLI assembled in place.
         providers = config.get("enrichment", {}).get("providers", {})
         assert providers.get("tmdb", {}).get("api_key") is None
@@ -452,7 +452,7 @@ class TestMutatingCommandsEmitTheRefreshedView:
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         """The refreshed view spans every section, including sensitive leaves."""
-        storage.set_global_secret(_SECRET_KEY, "SECRETPLAIN")
+        storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
             cli_runner, ["settings", "set", _INT_KEY, "9", "--format", "json"], storage

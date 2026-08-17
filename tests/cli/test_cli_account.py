@@ -45,7 +45,7 @@ def storage(tmp_path: Path) -> StorageManager:
 @pytest.fixture
 def claimed(storage: StorageManager) -> StorageManager:
     """That instance, claimed by ``owner`` with ``correct horse``."""
-    storage.claim_account("owner", "The Owner", _OLD_PASSWORD)
+    storage.accounts.claim("owner", "The Owner", _OLD_PASSWORD)
     return storage
 
 
@@ -80,20 +80,26 @@ class TestResettingThePasswordWithNoServerRunning:
 
         assert result.exit_code == 0, result.output
         assert "Password set. Every session has been signed out." in result.output
-        assert claimed.verify_password("owner", _NEW_PASSWORD) is not None
-        assert claimed.verify_password("owner", _OLD_PASSWORD) is None
+        assert claimed.accounts.verify_password("owner", _NEW_PASSWORD) is not None
+        assert claimed.accounts.verify_password("owner", _OLD_PASSWORD) is None
 
     def test_every_session_is_revoked(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
         """A browser someone else left signed in dies with the old password."""
-        tokens = [claimed.create_session(1) for _ in range(2)]
-        assert [claimed.lookup_session(token) for token in tokens] != [None, None]
+        tokens = [claimed.accounts.create_session(1) for _ in range(2)]
+        assert [claimed.accounts.lookup_session(token) for token in tokens] != [
+            None,
+            None,
+        ]
 
         result = _run(cli_runner, claimed, _SET_PASSWORD, _TYPED_TWICE)
 
         assert result.exit_code == 0, result.output
-        assert [claimed.lookup_session(token) for token in tokens] == [None, None]
+        assert [claimed.accounts.lookup_session(token) for token in tokens] == [
+            None,
+            None,
+        ]
 
     def test_it_also_sweeps_the_sessions_that_have_already_lapsed(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -138,8 +144,8 @@ class TestTheFloorTheWebFormAlsoKeeps:
         assert result.exit_code != 0
         assert PASSWORD_TOO_SHORT in result.output
         assert _stored_password(claimed) == before
-        assert claimed.verify_password("owner", _OLD_PASSWORD) is not None
-        assert claimed.verify_password("owner", short) is None
+        assert claimed.accounts.verify_password("owner", _OLD_PASSWORD) is not None
+        assert claimed.accounts.verify_password("owner", short) is None
 
     def test_a_password_at_the_floor_is_accepted(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -152,7 +158,7 @@ class TestTheFloorTheWebFormAlsoKeeps:
         )
 
         assert result.exit_code == 0, result.output
-        assert claimed.verify_password("owner", at_the_floor) is not None
+        assert claimed.accounts.verify_password("owner", at_the_floor) is not None
 
 
 class TestThePasswordIsNeverAnArgvValue:
@@ -170,7 +176,7 @@ class TestThePasswordIsNeverAnArgvValue:
         )
 
         assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout) == claimed.describe_account(1)
+        assert json.loads(result.stdout) == claimed.accounts.describe(1)
         assert "New password" in result.stderr
 
 
@@ -180,22 +186,22 @@ class TestAnUnclaimedInstanceIsRefused:
     def test_set_password_refuses_and_writes_nothing(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        before = storage.describe_account(1)
+        before = storage.accounts.describe(1)
         assert before is not None and before["claimed"] is False
 
         result = _run(cli_runner, storage, _SET_PASSWORD, _TYPED_TWICE)
 
         assert result.exit_code != 0
         assert "unclaimed" in result.output
-        assert storage.describe_account(1) == before
-        assert storage.verify_password("default", _NEW_PASSWORD) is None
+        assert storage.accounts.describe(1) == before
+        assert storage.accounts.verify_password("default", _NEW_PASSWORD) is None
 
 
 class TestShowingTheAccount:
     def test_the_table_names_the_account_and_its_password_age(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        record = claimed.describe_account(1)
+        record = claimed.accounts.describe(1)
         assert record is not None
 
         result = _run(cli_runner, claimed, ["account", "show"])
@@ -224,7 +230,7 @@ class TestRenamingTheAccount:
             cli_runner, claimed, ["account", "set-name", "--username", "keeper"]
         )
 
-        record = claimed.describe_account(1)
+        record = claimed.accounts.describe(1)
         assert result.exit_code == 0, result.output
         assert "Account updated. Username: keeper." in result.output
         assert record is not None
@@ -236,8 +242,8 @@ class TestRenamingTheAccount:
         """The username is the login, so the password has to follow it."""
         _run(cli_runner, claimed, ["account", "set-name", "--username", "keeper"])
 
-        assert claimed.verify_password("keeper", _OLD_PASSWORD) is not None
-        assert claimed.verify_password("owner", _OLD_PASSWORD) is None
+        assert claimed.accounts.verify_password("keeper", _OLD_PASSWORD) is not None
+        assert claimed.accounts.verify_password("owner", _OLD_PASSWORD) is None
 
     def test_a_blank_username_is_refused_and_writes_nothing(
         self, cli_runner: CliRunner, claimed: StorageManager
@@ -246,13 +252,13 @@ class TestRenamingTheAccount:
 
         The web renders the same sentence for the same value.
         """
-        before = claimed.describe_account(1)
+        before = claimed.accounts.describe(1)
 
         result = _run(cli_runner, claimed, ["account", "set-name", "--username", "  "])
 
         assert result.exit_code != 0
         assert f"--username: {ACCOUNT_NAME_BLANK}" in result.output
-        assert claimed.describe_account(1) == before
+        assert claimed.accounts.describe(1) == before
 
     @pytest.mark.parametrize("option", ["--username", "--display-name"])
     def test_a_name_past_the_column_is_refused_as_the_web_refuses_it(
@@ -263,7 +269,7 @@ class TestRenamingTheAccount:
         Regression: the group carried its own copy of the cap and its own
         sentence, so the two interfaces could refuse different widths.
         """
-        before = claimed.describe_account(1)
+        before = claimed.accounts.describe(1)
 
         result = _run(
             cli_runner,
@@ -273,18 +279,18 @@ class TestRenamingTheAccount:
 
         assert result.exit_code != 0
         assert f"{option}: {ACCOUNT_NAME_TOO_LONG}" in result.output
-        assert claimed.describe_account(1) == before
+        assert claimed.accounts.describe(1) == before
 
     def test_passing_neither_name_is_refused(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        before = claimed.describe_account(1)
+        before = claimed.accounts.describe(1)
 
         result = _run(cli_runner, claimed, ["account", "set-name"])
 
         assert result.exit_code != 0
         assert "Pass --username, --display-name, or both." in result.output
-        assert claimed.describe_account(1) == before
+        assert claimed.accounts.describe(1) == before
 
 
 class TestTheJsonViewIsTheRecordStorageHolds:
@@ -319,4 +325,4 @@ class TestTheJsonViewIsTheRecordStorageHolds:
         result = _run(CliRunner(mix_stderr=False), claimed, args, input_text)
 
         assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout) == claimed.describe_account(1)
+        assert json.loads(result.stdout) == claimed.accounts.describe(1)

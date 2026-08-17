@@ -27,6 +27,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.settings.metadata import all_entries
+from src.storage.credentials import CredentialStore
 from src.utils.dotted_path import get_leaf, pop_leaf
 
 if TYPE_CHECKING:
@@ -64,22 +65,44 @@ def secret_ref(key: str) -> tuple[str, str]:
     return f"{_SETTINGS_SOURCE_PREFIX}{parent}", leaf
 
 
+class SecretStore:
+    """The sensitive registry leaves. ``StorageManager.secrets``.
+
+    Write-only on purpose: the settings UI and CLI may set, clear and test for
+    a secret, and only enrichment reads one back, via :func:`read_secret`.
+    """
+
+    def __init__(self, credentials: CredentialStore) -> None:
+        self._credentials = credentials
+
+    def set(self, key: str, value: str) -> None:
+        """Encrypt and store the secret *key* names."""
+        source_id, credential_key = secret_ref(key)
+        self._credentials.save(GLOBAL_SECRET_USER_ID, source_id, credential_key, value)
+
+    def clear(self, key: str) -> bool:
+        """Delete a stored secret, reporting whether there was one."""
+        source_id, credential_key = secret_ref(key)
+        return self._credentials.delete(
+            GLOBAL_SECRET_USER_ID, source_id, credential_key
+        )
+
+    def has(self, key: str) -> bool:
+        """Report whether a secret is stored, without decrypting it."""
+        source_id, credential_key = secret_ref(key)
+        return self._credentials.exists(
+            GLOBAL_SECRET_USER_ID, source_id, credential_key
+        )
+
+
 def read_secret(storage: StorageManager, key: str) -> str | None:
     """Return the decrypted global secret for *key*, or ``None`` if unset.
 
-    Enrichment-only read path: the settings UI/CLI must use the write-only
-    ``StorageManager.set_global_secret`` / ``clear_global_secret`` /
-    ``has_global_secret`` surface rather than reading plaintext back out.
-
-    Args:
-        storage: StorageManager providing encrypted credential access.
-        key: Dotted registry leaf key.
-
-    Returns:
-        Decrypted plaintext secret, or ``None`` when not stored.
+    The enrichment-only read path: everything else goes through the write-only
+    :class:`SecretStore` rather than reading plaintext back out.
     """
     source_id, credential_key = secret_ref(key)
-    return storage.get_credential(GLOBAL_SECRET_USER_ID, source_id, credential_key)
+    return storage.credentials.get(GLOBAL_SECRET_USER_ID, source_id, credential_key)
 
 
 def migrate_config_secrets(
@@ -123,7 +146,7 @@ def migrate_config_secrets(
 
         # A readable DB secret already exists — it wins. Drop any duplicate or
         # stale plaintext copy so it does not linger in the running config.
-        existing = storage.get_credential(user_id, source_id, credential_key)
+        existing = storage.credentials.get(user_id, source_id, credential_key)
         if existing is not None:
             if has_config_value:
                 # The stored secret wins and the file value is DISCARDED, not
@@ -142,9 +165,9 @@ def migrate_config_secrets(
 
         # A stale (unreadable) row exists — re-encrypt from config if we can,
         # otherwise leave it for the operator to recover. Never delete it.
-        if storage.credential_row_exists(user_id, source_id, credential_key):
+        if storage.credentials.exists(user_id, source_id, credential_key):
             if has_config_value:
-                storage.save_credential(
+                storage.credentials.save(
                     user_id, source_id, credential_key, str(config_value)
                 )
                 logger.warning(
@@ -167,7 +190,7 @@ def migrate_config_secrets(
 
         # No DB row at all — migrate from config when a value is present.
         if has_config_value:
-            storage.save_credential(
+            storage.credentials.save(
                 user_id, source_id, credential_key, str(config_value)
             )
             logger.warning(

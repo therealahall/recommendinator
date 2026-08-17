@@ -133,7 +133,7 @@ def execute_sync(
     def on_credential_rotated(key: str, value: str) -> None:
         safe_key = sanitize_for_log(key)
         try:
-            storage_manager.save_credential(user_id, credential_owner, key, value)
+            storage_manager.credentials.save(user_id, credential_owner, key, value)
             logger.info(
                 "[SYNC] %s: Persisted rotated credential '%s'",
                 safe_source_name,

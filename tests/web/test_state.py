@@ -117,7 +117,7 @@ class TestReloadConfig:
         result = reload_config()
 
         assert result is True
-        assert storage.has_global_secret("enrichment.providers.tmdb.api_key") is True
+        assert storage.secrets.has("enrichment.providers.tmdb.api_key") is True
         providers = app_state.config["enrichment"]["providers"]
         assert providers.get("tmdb", {}).get("api_key") is None
 

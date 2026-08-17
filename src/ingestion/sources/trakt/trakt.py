@@ -443,7 +443,7 @@ class TraktPlugin(SourcePlugin):
         source_id = config.get("_source_id", self.name)
         db_creds: dict[str, Any] = {}
         if storage is not None:
-            db_creds = storage.get_credentials_for_source(user_id, source_id)
+            db_creds = storage.credentials.get_for_source(user_id, source_id)
 
         for field_name in _REQUIRED_SENSITIVE_FIELDS:
             if (config.get(field_name) or "").strip():

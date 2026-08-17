@@ -24,7 +24,7 @@ class TestCredentialKeyRedirectIsLoadBearing:
         database_dir = tmp_path / "data"
 
         storage = StorageManager(sqlite_path=database_dir / "library.db")
-        storage.save_credential(1, "steam", "api_key", "unredirected-secret")
+        storage.credentials.save(1, "steam", "api_key", "unredirected-secret")
 
         assert (database_dir / ".credential_key").exists()
         assert not (tmp_path / ".credential_key").exists()
@@ -36,7 +36,7 @@ class TestCredentialKeyRedirectIsLoadBearing:
         database_dir = tmp_path / "data"
 
         storage = StorageManager(sqlite_path=database_dir / "library.db")
-        storage.save_credential(1, "steam", "api_key", "redirected-secret")
+        storage.credentials.save(1, "steam", "api_key", "redirected-secret")
 
         assert (tmp_path / ".credential_key").exists()
         assert not (database_dir / ".credential_key").exists()

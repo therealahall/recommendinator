@@ -152,7 +152,7 @@ class TestGogPluginValidation:
         """
         plugin = GogPlugin()
         mock_storage = Mock()
-        mock_storage.get_credentials_for_source.return_value = {
+        mock_storage.credentials.get_for_source.return_value = {
             "refresh_token": "db_stored_token"
         }
 
@@ -163,7 +163,7 @@ class TestGogPluginValidation:
             user_id=1,
         )
         assert errors == []
-        mock_storage.get_credentials_for_source.assert_called_once_with(1, "my_gog")
+        mock_storage.credentials.get_for_source.assert_called_once_with(1, "my_gog")
 
 
 class TestGogPluginTransformConfig:

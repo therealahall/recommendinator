@@ -104,7 +104,7 @@ class TestBuildSettingsView:
     def test_sensitive_has_secret_true_after_set(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        storage.set_global_secret(_SECRET_KEY, "tmdb-key")
+        storage.secrets.set(_SECRET_KEY, "tmdb-key")
 
         setting = setting_view(_entry(_SECRET_KEY), config, storage)
 
@@ -477,7 +477,7 @@ class TestSecretGating:
     ) -> None:
         set_secret(storage, _SECRET_KEY, "tmdb-key")
 
-        assert storage.has_global_secret(_SECRET_KEY) is True
+        assert storage.secrets.has(_SECRET_KEY) is True
         # The secret never lands in the plaintext settings table.
         assert storage.list_settings() == {}
 
@@ -485,7 +485,7 @@ class TestSecretGating:
         set_secret(storage, _SECRET_KEY, "tmdb-key")
 
         assert clear_secret(storage, _SECRET_KEY) is True
-        assert storage.has_global_secret(_SECRET_KEY) is False
+        assert storage.secrets.has(_SECRET_KEY) is False
 
     def test_set_secret_rejects_non_sensitive(self, storage: StorageManager) -> None:
         with pytest.raises(SettingsValidationError):

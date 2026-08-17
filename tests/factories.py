@@ -44,11 +44,11 @@ def back_mock_session_store(storage: Any) -> None:
     cookie, and every guess, authenticates. A no-op for real storage.
     """
     if isinstance(storage, NonCallableMock):
-        storage.lookup_session.side_effect = lambda token: (
+        storage.accounts.lookup_session.side_effect = lambda token: (
             SESSION_USER if token == _MOCK_SESSION_TOKEN else None
         )
         # A count, because boot logs it with ``%d``.
-        _default_return(storage.purge_expired_sessions, 0)
+        _default_return(storage.accounts.purge_expired_sessions, 0)
 
 
 def issue_session(storage: Any) -> str:
@@ -56,7 +56,7 @@ def issue_session(storage: Any) -> str:
     back_mock_session_store(storage)
     if isinstance(storage, NonCallableMock):
         return _MOCK_SESSION_TOKEN
-    return str(storage.create_session(get_default_user_id()))
+    return str(storage.accounts.create_session(get_default_user_id()))
 
 
 def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
@@ -105,9 +105,9 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     # as "already stored" — the opposite of an empty database. For
     # ``get_source_config`` that means the sweep discards every sensitive field
     # the test's config declared.
-    _default_return(storage.get_credential, None)
-    _default_return(storage.credential_row_exists, False)
-    _default_return(storage.has_global_secret, False)
+    _default_return(storage.credentials.get, None)
+    _default_return(storage.credentials.exists, False)
+    _default_return(storage.secrets.has, False)
     _default_return(storage.get_source_config, None)
     return store
 

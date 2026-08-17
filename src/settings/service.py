@@ -111,7 +111,7 @@ def setting_view(
         "sensitive": entry.sensitive,
     }
     if entry.sensitive:
-        view["has_secret"] = storage.has_global_secret(entry.key)
+        view["has_secret"] = storage.secrets.has(entry.key)
     else:
         view["value"] = _effective_value(config, entry)
         view["db_overridden"] = storage.get_setting(entry.key) is not None
@@ -180,7 +180,7 @@ def set_secret(storage: StorageManager, key: str, value: str) -> None:
     sensitive in the registry. The value is never persisted in plaintext.
     """
     _require_sensitive(key)
-    storage.set_global_secret(key, value)
+    storage.secrets.set(key, value)
 
 
 def clear_secret(storage: StorageManager, key: str) -> bool:
@@ -190,7 +190,7 @@ def clear_secret(storage: StorageManager, key: str) -> bool:
     :class:`SettingsValidationError` when *key* is unknown or not sensitive.
     """
     _require_sensitive(key)
-    return storage.clear_global_secret(key)
+    return storage.secrets.clear(key)
 
 
 def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:

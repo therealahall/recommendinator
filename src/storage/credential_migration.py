@@ -107,7 +107,7 @@ def migrate_config_credentials(
             has_config_value = bool(config_value and str(config_value).strip())
 
             # Check if a readable DB entry already exists
-            existing = storage.get_credential(user_id, source_id, field.name)
+            existing = storage.credentials.get(user_id, source_id, field.name)
             if existing is not None:
                 if has_config_value:
                     # The stored credential wins and the file value is DISCARDED,
@@ -131,10 +131,10 @@ def migrate_config_credentials(
                 continue
 
             # Check if a stale (unreadable) row exists in the DB
-            if storage.credential_row_exists(user_id, source_id, field.name):
+            if storage.credentials.exists(user_id, source_id, field.name):
                 if has_config_value:
                     # Re-encrypt from config value (UPSERT overwrites stale row)
-                    storage.save_credential(
+                    storage.credentials.save(
                         user_id, source_id, field.name, str(config_value)
                     )
                     logger.warning(
@@ -162,7 +162,7 @@ def migrate_config_credentials(
 
             # No DB row at all — migrate from config if available
             if has_config_value:
-                storage.save_credential(
+                storage.credentials.save(
                     user_id, source_id, field.name, str(config_value)
                 )
                 logger.warning(

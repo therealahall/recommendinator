@@ -103,7 +103,7 @@ class TestSaveGogToken:
         """Token is saved to encrypted DB storage."""
         save_gog_token(storage, "new_refresh_token")
 
-        result = storage.get_credential(1, "gog", "refresh_token")
+        result = storage.credentials.get(1, "gog", "refresh_token")
         assert result == "new_refresh_token"
 
     def test_db_failure_logs_the_class_not_a_traceback(
@@ -116,7 +116,7 @@ class TestSaveGogToken:
         """
         with caplog.at_level(logging.ERROR, logger=OAUTH_LOGGER):
             with patch.object(
-                storage, "save_credential", side_effect=OSError("disk full")
+                storage.credentials, "save", side_effect=OSError("disk full")
             ):
                 with pytest.raises(GogAuthError):
                     save_gog_token(storage, "some_token")
@@ -157,7 +157,7 @@ class TestHasGogToken:
 
     def test_returns_true_when_token_in_db(self, storage: StorageManager) -> None:
         """DB token detected even when config has no token."""
-        storage.save_credential(1, "gog", "refresh_token", "db_token")
+        storage.credentials.save(1, "gog", "refresh_token", "db_token")
 
         assert has_gog_token(_gog_source(refresh_token=""), storage=storage) is True
 
@@ -175,7 +175,7 @@ class TestHasGogToken:
     ) -> None:
         """A Trakt source's token is not GOG's, however the id is spelled."""
         config = {"inputs": {"gog": {"plugin": "trakt", "enabled": True}}}
-        storage.save_credential(1, "gog", "refresh_token", "trakt_token")
+        storage.credentials.save(1, "gog", "refresh_token", "trakt_token")
 
         assert has_gog_token(config, storage=storage) is False
 

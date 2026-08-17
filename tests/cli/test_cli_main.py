@@ -96,7 +96,7 @@ class TestUpdateDbOnlySourceRegression:
             {"user_id": "reader"},
             enabled=enabled,
         )
-        storage.save_credential(1, "calibre-web", "api_key", "top-secret")
+        storage.credentials.save(1, "calibre-web", "api_key", "top-secret")
 
     def _run_update(
         self,

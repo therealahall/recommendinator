@@ -31,7 +31,7 @@ def account() -> None:
 
 
 def _account_or_abort(storage: StorageManager, user_id: int) -> AccountRecord:
-    account_record = storage.describe_account(user_id)
+    account_record = storage.accounts.describe(user_id)
     if account_record is None:
         abort_with(f"No user with id {user_id}.")
     return account_record
@@ -107,9 +107,9 @@ def account_set_password(ctx: click.Context, user_id: int, output_format: str) -
         abort_with(PASSWORD_TOO_SHORT)
 
     try:
-        storage.set_password(user_id, password)
-        storage.revoke_all_sessions(user_id)
-        storage.purge_expired_sessions()
+        storage.accounts.set_password(user_id, password)
+        storage.accounts.revoke_all_sessions(user_id)
+        storage.accounts.purge_expired_sessions()
     except Exception as error:
         abort_after_failure(ctx, PASSWORD_WRITE_FAILED, error)
 

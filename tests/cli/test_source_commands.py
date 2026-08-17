@@ -160,7 +160,7 @@ class TestSourceMigrate:
         assert row["plugin"] == "fake_api"
         assert row["config"]["user_id"] == "yaml_user"
         assert "api_key" not in row["config"]
-        assert storage.get_credential(1, "my_games", "api_key") == "yaml_key"
+        assert storage.credentials.get(1, "my_games", "api_key") == "yaml_key"
 
     def test_migrate_is_idempotent(
         self,
@@ -333,7 +333,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code != 0
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -421,7 +421,7 @@ class TestSourceApply:
             input_text=json.dumps({"api_key": "leaked"}),
         )
         assert result.exit_code != 0
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
     def test_apply_aborts_when_file_missing(
         self,
@@ -465,7 +465,7 @@ class TestSourceSecrets:
             input_text="rotated_value\n",
         )
         assert result.exit_code == 0
-        assert storage.get_credential(1, "my_games", "api_key") == "rotated_value"
+        assert storage.credentials.get(1, "my_games", "api_key") == "rotated_value"
 
     def test_set_secret_reads_value_from_env_var_non_interactively(
         self,
@@ -488,7 +488,7 @@ class TestSourceSecrets:
             config=base_config,
         )
         assert result.exit_code == 0
-        assert storage.get_credential(1, "my_games", "api_key") == "env_secret"
+        assert storage.credentials.get(1, "my_games", "api_key") == "env_secret"
 
     def test_clear_secret_removes_credential(
         self,
@@ -497,7 +497,7 @@ class TestSourceSecrets:
         base_config: dict[str, Any],
     ) -> None:
         storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
-        storage.save_credential(1, "my_games", "api_key", "to_be_cleared")
+        storage.credentials.save(1, "my_games", "api_key", "to_be_cleared")
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "clear-secret", "my_games", "api_key"],
@@ -505,7 +505,7 @@ class TestSourceSecrets:
             config=base_config,
         )
         assert result.exit_code == 0
-        assert storage.get_credential(1, "my_games", "api_key") is None
+        assert storage.credentials.get(1, "my_games", "api_key") is None
 
     def test_set_secret_rejects_non_sensitive_field(
         self,
@@ -649,7 +649,7 @@ class TestSourceRemove:
         storage.upsert_source_config(
             1, "to_remove", "fake_api", {"user_id": "x"}, enabled=True
         )
-        storage.save_credential(1, "to_remove", "api_key", "secret_value")
+        storage.credentials.save(1, "to_remove", "api_key", "secret_value")
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -659,7 +659,7 @@ class TestSourceRemove:
         )
         assert result.exit_code == 0
         assert storage.get_source_config(1, "to_remove") is None
-        assert storage.get_credential(1, "to_remove", "api_key") is None
+        assert storage.credentials.get(1, "to_remove", "api_key") is None
 
     def test_remove_aborts_when_user_declines_confirmation(
         self,
@@ -692,7 +692,7 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
     @pytest.fixture()
     def stranded(self, storage: StorageManager) -> StorageManager:
         storage.upsert_source_config(1, "games_work", "fake_api", {}, enabled=True)
-        storage.save_credential(1, "fake_api", "api_key", "stranded-by-an-upgrade")
+        storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
         return storage
 
     def test_the_row_under_the_plugin_name_goes_with_the_last_source(
@@ -706,7 +706,7 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
         )
 
         assert result.exit_code == 0
-        assert stranded.get_credential(1, "fake_api", "api_key") is None
+        assert stranded.credentials.get(1, "fake_api", "api_key") is None
 
     def test_a_yaml_sibling_on_the_plugin_keeps_it(
         self,
@@ -727,7 +727,7 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
 
         assert result.exit_code == 0
         assert (
-            stranded.get_credential(1, "fake_api", "api_key")
+            stranded.credentials.get(1, "fake_api", "api_key")
             == "stranded-by-an-upgrade"
         )
 
@@ -749,7 +749,7 @@ class TestSourceSetGuardsBoundCredentials:
             {"url": "http://localhost:8083", "username": "reader"},
             enabled=True,
         )
-        storage.save_credential(1, "calibre", "password", "hunter2")
+        storage.credentials.save(1, "calibre", "password", "hunter2")
         return storage
 
     def _set(
@@ -772,7 +772,7 @@ class TestSourceSetGuardsBoundCredentials:
         assert "Clear its stored 'password' first" in result.output
         row = migrated.get_source_config(1, "calibre")
         assert row is not None and row["config"]["url"] == "http://localhost:8083"
-        assert migrated.get_credential(1, "calibre", "password") == "hunter2"
+        assert migrated.credentials.get(1, "calibre", "password") == "hunter2"
 
     def test_upgrading_to_https_keeps_the_password(
         self, cli_runner: CliRunner, migrated: StorageManager
@@ -782,4 +782,4 @@ class TestSourceSetGuardsBoundCredentials:
         assert result.exit_code == 0
         row = migrated.get_source_config(1, "calibre")
         assert row is not None and row["config"]["url"] == "https://localhost:8083"
-        assert migrated.get_credential(1, "calibre", "password") == "hunter2"
+        assert migrated.credentials.get(1, "calibre", "password") == "hunter2"

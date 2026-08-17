@@ -337,7 +337,7 @@ def assemble_plugin_config(
     """
     assembled = _plugin_config_without_credentials(source_id, plugin, fields)
     if storage is not None:
-        for key, value in storage.get_credentials_for_source(
+        for key, value in storage.credentials.get_for_source(
             user_id, source_id
         ).items():
             if value:
@@ -687,9 +687,7 @@ def build_config_view(
     secret_status: dict[str, bool] = {}
     for name in sensitive_names:
         is_set = False
-        if storage is not None and storage.credential_row_exists(
-            user_id, source_id, name
-        ):
+        if storage is not None and storage.credentials.exists(user_id, source_id, name):
             is_set = True
         elif not migrated and is_nonempty_secret_value(yaml_entry.get(name)):
             is_set = True
@@ -721,7 +719,7 @@ def _secret_names_with_a_stored_row(
     return sorted(
         name
         for name in sensitive_names
-        if storage.credential_row_exists(user_id, source_id, name)
+        if storage.credentials.exists(user_id, source_id, name)
     )
 
 
@@ -770,7 +768,7 @@ def migrate_source(
     for name in sensitive_names:
         value = yaml_entry.get(name)
         if is_nonempty_secret_value(value):
-            storage.save_credential(user_id, source_id, name, value.strip())
+            storage.credentials.save(user_id, source_id, name, value.strip())
 
     storage.upsert_source_config(
         user_id,
@@ -892,7 +890,7 @@ def _log_refusal(
             redact_credentials(
                 " ".join(errors),
                 plugin,
-                storage.get_credentials_for_source(user_id, source_id),
+                storage.credentials.get_for_source(user_id, source_id),
             )
         ),
     )
@@ -1084,7 +1082,7 @@ def set_source_secret_value(
             "not_sensitive",
             f"Field '{key}' is not sensitive — set it via the config API/CLI",
         )
-    storage.save_credential(user_id, source_id, key, value)
+    storage.credentials.save(user_id, source_id, key, value)
 
 
 def clear_source_secret_value(
@@ -1106,7 +1104,7 @@ def clear_source_secret_value(
         raise SourceConfigError("not_found", f"Unknown field: {key}")
     if not field.sensitive:
         raise SourceConfigError("not_sensitive", f"Field '{key}' is not sensitive")
-    storage.delete_credential(user_id, source_id, key)
+    storage.credentials.delete(user_id, source_id, key)
 
 
 def set_source_enabled_state(
@@ -1267,7 +1265,7 @@ def create_source(
 
     # A new source must not inherit a secret an older one left under this id:
     # that secret would go to whatever host these values name.
-    storage.delete_credentials_for_source(user_id, source_id)
+    storage.credentials.delete_for_source(user_id, source_id)
     storage.upsert_source_config(
         user_id, source_id, plugin.name, dict(values), enabled=enabled
     )
@@ -1297,7 +1295,7 @@ def delete_source(
             f"Source '{source_id}' is not migrated to the database",
         )
 
-    storage.delete_credentials_for_source(user_id, source_id)
+    storage.credentials.delete_for_source(user_id, source_id)
     storage.delete_source_config(user_id, source_id)
 
     # Read after the row is gone, so "who is left" reads as it now is. *config*
@@ -1310,7 +1308,7 @@ def delete_source(
     if plugin_name in sources or plugin_name in sources.values():
         return
 
-    deleted = storage.delete_credentials_for_source(user_id, plugin_name)
+    deleted = storage.credentials.delete_for_source(user_id, plugin_name)
     if deleted:
         logger.info(
             "Deleted %d credential(s) stranded under plugin name '%s': no "
