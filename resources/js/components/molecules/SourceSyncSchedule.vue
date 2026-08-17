@@ -27,9 +27,12 @@ const lastRunOutcome = computed(() =>
     : RUN_OUTCOMES[props.lastRunStatus] ?? props.lastRunStatus,
 )
 
-const nextRunLabel = computed(() =>
-  props.nextRunAt === null ? '' : `Next run ${formatRelativeTime(props.nextRunAt)}`,
-)
+const nextRunLabel = computed(() => {
+  if (props.nextRunAt === null) return ''
+  // A never-run source is dated now, so relative time would read as the past.
+  if (Date.parse(props.nextRunAt) <= Date.now()) return 'Next run due now'
+  return `Next run ${formatRelativeTime(props.nextRunAt)}`
+})
 
 const lastRunFailed = computed(() => props.lastRunStatus === 'failed')
 </script>

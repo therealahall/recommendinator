@@ -46,14 +46,15 @@ class TestEffectiveInterval:
 
 
 class TestDue:
-    def test_never_run_source_is_due_immediately(self) -> None:
+    def test_never_run_source_is_due_now_not_undated(self) -> None:
+        assert next_due(NOW, None, "daily", 0) == NOW
         assert is_due(NOW, None, "daily", 0) is True
-        assert next_due(None, "daily", 0) is None
 
     def test_off_is_never_due(self) -> None:
         assert is_due(NOW, None, "off", 0) is False
         assert is_due(NOW, NOW - timedelta(days=365), "off", 0) is False
-        assert next_due(NOW - timedelta(days=365), "off", 0) is None
+        assert next_due(NOW, None, "off", 0) is None
+        assert next_due(NOW, NOW - timedelta(days=365), "off", 0) is None
 
     def test_due_only_once_the_interval_has_elapsed(self) -> None:
         last = NOW - timedelta(hours=23)
@@ -62,7 +63,7 @@ class TestDue:
 
     def test_next_due_widens_with_the_failure_streak(self) -> None:
         last = NOW - timedelta(hours=3)
-        assert next_due(last, "hourly", 3) == last + timedelta(hours=8)
+        assert next_due(NOW, last, "hourly", 3) == last + timedelta(hours=8)
         assert is_due(NOW, last, "hourly", 3) is False
 
 
