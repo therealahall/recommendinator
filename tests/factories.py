@@ -6,14 +6,19 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import fields
 from typing import Any
-from unittest.mock import DEFAULT, Mock, NonCallableMock, patch
+from unittest.mock import DEFAULT, MagicMock, Mock, NonCallableMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
+from src.storage.accounts import AccountStore
+from src.storage.credentials import CredentialStore
+from src.storage.global_secrets import SecretStore
 from src.storage.schema import UserDict, get_default_user_id
+from src.storage.settings_store import SettingsStore
+from src.storage.source_configs import SourceConfigStore
 from src.web.app import create_app
 from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
@@ -36,6 +41,29 @@ SESSION_USER: UserDict = {
 # separates a full-match check from a search.
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
+_SUB_STORES: dict[str, type] = {
+    "accounts": AccountStore,
+    "credentials": CredentialStore,
+    "secrets": SecretStore,
+    "settings": SettingsStore,
+    "sources": SourceConfigStore,
+}
+
+
+def spec_sub_stores(storage: Any) -> None:
+    """Spec each stubbed sub-store, so a rename cannot orphan a stub.
+
+    ``Mock(spec=StorageManager)`` checks top-level names only, and
+    ``create_autospec`` cannot help: the sub-stores are ``cached_property``,
+    so each child would be spec'd against the descriptor. Idempotent, so
+    pre-stubbing survives.
+    """
+    if not isinstance(storage, NonCallableMock):
+        return
+    for name, store in _SUB_STORES.items():
+        if not isinstance(getattr(storage, name), store):
+            setattr(storage, name, MagicMock(spec=store))
+
 
 def back_mock_session_store(storage: Any) -> None:
     """Teach a mocked StorageManager the one token tests present.
@@ -44,6 +72,7 @@ def back_mock_session_store(storage: Any) -> None:
     cookie, and every guess, authenticates. A no-op for real storage.
     """
     if isinstance(storage, NonCallableMock):
+        spec_sub_stores(storage)
         storage.accounts.lookup_session.side_effect = lambda token: (
             SESSION_USER if token == _MOCK_SESSION_TOKEN else None
         )
@@ -98,6 +127,7 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     if not isinstance(storage, NonCallableMock):
         return store
 
+    spec_sub_stores(storage)
     storage.settings.get.side_effect = lambda key: store.get(key)
     storage.settings.set.side_effect = store.__setitem__
     storage.settings.list.side_effect = store.copy
