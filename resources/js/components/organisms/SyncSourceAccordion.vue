@@ -83,12 +83,6 @@ async function onToggleExpanded(value: boolean): Promise<void> {
   // a message left from the last visit would re-enter the accessibility tree
   // already populated — read as page content, never as a status (WCAG 4.1.3).
   data.setOAuthMessage(props.source.id, '')
-  // A save in flight owns the status; only a settled one is stale.
-  if (scheduleStatus.value !== 'saving') {
-    clearScheduleTimer()
-    scheduleStatus.value = 'idle'
-    scheduleError.value = ''
-  }
   await ensureDetails()
 }
 

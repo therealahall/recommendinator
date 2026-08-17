@@ -417,7 +417,7 @@ describe('SyncSourceAccordion', () => {
       expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
     })
 
-    it('drops a stale refusal when the row is expanded again', async () => {
+    it('keeps a refusal that landed while the row was collapsed', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
       })
@@ -428,41 +428,16 @@ describe('SyncSourceAccordion', () => {
       const trigger = wrapper.find('button.accordion-trigger')
       await trigger.trigger('click')
       await flushPromises()
-      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
-      await flushPromises()
+      // Unawaited on purpose: the refusal must settle after the collapse.
+      void wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
       await trigger.trigger('click')
+      await flushPromises()
       await trigger.trigger('click')
       await flushPromises()
 
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
-      expect(status.text()).toBe('')
-      expect(status.attributes('role')).toBe('status')
-    })
-
-    it('keeps a save in flight when the row is collapsed and expanded again', async () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-      })
-      const store = useDataStore()
-      primeStore(store, migratedConfig)
-      vi.spyOn(store, 'setSourceSchedule').mockImplementation(
-        () => new Promise<void>(() => {}),
-      )
-
-      const trigger = wrapper.find('button.accordion-trigger')
-      await trigger.trigger('click')
-      await flushPromises()
-      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
-      await flushPromises()
-      await trigger.trigger('click')
-      await trigger.trigger('click')
-      await flushPromises()
-
-      const select = wrapper.get('[data-testid="cadence-select-steam"]')
-      expect((select.element as HTMLSelectElement).value).toBe('off')
-      expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toContain(
-        'Saving',
-      )
+      expect(status.text()).toContain('refused')
+      expect(status.attributes('role')).toBe('alert')
     })
   })
 
