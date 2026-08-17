@@ -132,23 +132,9 @@ export interface SyncSourceResponse {
   /** Already resolved, so the plugin default is never applied client-side. */
   sync_interval: string
   sync_interval_default: string
-  /** All three are null until the source has run once. */
   last_run_at: string | null
   last_run_status: string | null
   next_run_at: string | null
-}
-
-/** One recorded sync run, newest first from GET /sync/runs. */
-export interface SyncRunResponse {
-  source_id: string
-  started_at: string
-  finished_at: string | null
-  status: string
-  items_added: number
-  items_updated: number
-  items_unchanged: number
-  total_items: number
-  errors: string[]
 }
 
 /** A cadence preset. Server-side, so no interface retypes the list. */

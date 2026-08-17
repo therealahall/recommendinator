@@ -718,9 +718,9 @@ def _steam_source(storage: StorageManager, interval: str) -> None:
     storage.sources.set_schedule(1, "steam", interval)
 
 
-def _completed_run(storage: StorageManager, ago: timedelta) -> None:
+def _completed_run(storage: StorageManager, ago: timedelta) -> int:
     finished_at = utc_now() - ago
-    storage.sync_runs.record(
+    return storage.sync_runs.record(
         1,
         "steam",
         started_at=finished_at - timedelta(seconds=10),
@@ -782,7 +782,7 @@ class TestScheduledSyncDispatch:
         self, storage: StorageManager
     ) -> None:
         _steam_source(storage, "hourly")
-        _completed_run(storage, timedelta(hours=2))
+        run_id = _completed_run(storage, timedelta(hours=2))
         manager = _accepting_manager()
         manager.is_running.return_value = True
 
@@ -790,7 +790,7 @@ class TestScheduledSyncDispatch:
 
         manager.is_running.assert_called_once_with(ALL_SOURCES_LABEL)
         manager.start_sync.assert_not_called()
-        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+        assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
         manager.is_running.return_value = False
         self._tick(storage, manager)
@@ -798,7 +798,7 @@ class TestScheduledSyncDispatch:
         assert manager.start_sync.call_args.args[0] == STEAM_LABEL
         # The declined tick left no row of its own, here or a moment ago: a
         # skip that outranked the real run read as no history at all.
-        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+        assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
     def test_the_umbrellas_own_run_leaves_the_declined_source_not_due_again(
         self, storage: StorageManager
@@ -812,12 +812,12 @@ class TestScheduledSyncDispatch:
         manager.start_sync.assert_not_called()
 
         # The umbrella's own Steam run lands while that tick is declining.
-        _completed_run(storage, timedelta(seconds=50))
+        run_id = _completed_run(storage, timedelta(seconds=50))
         manager.is_running.return_value = False
         self._tick(storage, manager)
 
         manager.start_sync.assert_not_called()
-        assert len(storage.sync_runs.list_for_source(1, "steam", limit=10)) == 1
+        assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
 
 class TestSyncSchedulerLifecycle:

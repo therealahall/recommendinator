@@ -47,7 +47,7 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
         errors=("timed out", "429 from Steam"),
     )
 
-    (run,) = storage.sync_runs.list_for_source(1, "steam", limit=10)
+    run = storage.sync_runs.latest_per_source(1)["steam"]
 
     assert run["id"] == run_id
     assert run["status"] == "failed"
@@ -60,20 +60,6 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
     )
     assert run["total_items"] == 12
     assert run["errors"] == ["timed out", "429 from Steam"]
-
-
-def test_list_recent_spans_every_source_newest_first(storage: StorageManager) -> None:
-    _record(storage, "steam", minute=0)
-    _record(storage, "trakt", minute=5)
-    _record(storage, "steam", minute=10)
-
-    recent = storage.sync_runs.list_recent(1, limit=10)
-
-    assert [(run["source_id"], run["started_at"][11:16]) for run in recent] == [
-        ("steam", "12:10"),
-        ("trakt", "12:05"),
-        ("steam", "12:00"),
-    ]
 
 
 def test_latest_per_source_reports_each_source_newest_run(
@@ -115,13 +101,9 @@ def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(
     storage: StorageManager,
 ) -> None:
     """The trakt row is asserted because a widened DELETE would take it too."""
-    _record(storage, "trakt", minute=0)
+    _record(storage, "trakt", minute=0, status="failed")
     for minute in range(60):
-        _record(storage, "steam", minute=minute)
+        _record(storage, "steam", minute=minute, status="failed")
 
-    runs = storage.sync_runs.list_for_source(1, "steam", limit=100)
-
-    assert len(runs) == 50
-    assert runs[0]["started_at"][11:16] == "12:59"
-    assert runs[-1]["started_at"][11:16] == "12:10"
-    assert len(storage.sync_runs.list_for_source(1, "trakt", limit=100)) == 1
+    assert storage.sync_runs.consecutive_failures(1, "steam") == 50
+    assert storage.sync_runs.consecutive_failures(1, "trakt") == 1

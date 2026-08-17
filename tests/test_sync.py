@@ -303,8 +303,7 @@ class TestEverySyncLeavesARun:
         return plugin
 
     def _run(self, storage: StorageManager) -> SyncRunDict:
-        (run,) = storage.sync_runs.list_for_source(1, self._SOURCE_ID, limit=10)
-        return run
+        return storage.sync_runs.latest_per_source(1)[self._SOURCE_ID]
 
     def test_the_recorded_stamps_are_aware_utc(self, storage: StorageManager) -> None:
         self._sync(self._plugin(1), storage)
@@ -339,7 +338,7 @@ class TestEverySyncLeavesARun:
 
         assert {
             (run["source_id"], run["status"], tuple(run["errors"]))
-            for run in storage.sync_runs.list_recent(1, limit=10)
+            for run in storage.sync_runs.latest_per_source(1).values()
         } == {
             ("goodreads_csv", "completed", ()),
             ("storygraph_csv", "failed", (remedy,)),

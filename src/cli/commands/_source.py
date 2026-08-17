@@ -24,7 +24,6 @@ from src.sources.service import (
     SourceConfigError,
     build_config_view,
     build_plugins_view,
-    build_runs_view,
     build_schema_view,
     build_sources_view,
     clear_source_secret_value,
@@ -356,74 +355,6 @@ def source_schedule(
         output_format,
         lambda: _config_view(ctx, source_id, plugin),
         f"Source '{source_id}' now syncs on the '{interval}' cadence.",
-    )
-
-
-@source.command("history")
-@click.argument("source_id", required=False)
-@click.option(
-    "--limit",
-    type=click.IntRange(1, 100),
-    default=20,
-    help="Maximum runs to return",
-)
-@click.option(
-    "--format",
-    "output_format",
-    type=click.Choice(["table", "json"], case_sensitive=False),
-    default="table",
-    help="Output format",
-)
-@click.pass_context
-def source_history(
-    ctx: click.Context, source_id: str | None, limit: int, output_format: str
-) -> None:
-    """Recorded sync runs, newest first (mirrors GET /api/sync/runs).
-
-    Spans every source unless SOURCE_ID names one.
-    """
-    storage = require_storage(ctx)
-    runs = (
-        storage.sync_runs.list_for_source(_SOURCE_DEFAULT_USER_ID, source_id, limit)
-        if source_id is not None
-        else storage.sync_runs.list_recent(_SOURCE_DEFAULT_USER_ID, limit)
-    )
-    view = build_runs_view(runs)
-
-    if output_format == "json":
-        click.echo(json.dumps(view, indent=2))
-        return
-
-    if not view:
-        click.echo("No sync runs recorded.")
-        return
-
-    rows = [
-        [
-            run["source_id"],
-            run["started_at"],
-            run["finished_at"] or "—",
-            run["status"],
-            f"{run['items_added']}/{run['items_updated']}/{run['items_unchanged']}",
-            str(run["total_items"]),
-            "; ".join(run["errors"]),
-        ]
-        for run in view
-    ]
-    click.echo(
-        tabulate(
-            rows,
-            headers=[
-                "Source",
-                "Started",
-                "Finished",
-                "Status",
-                "Added/Updated/Unchanged",
-                "Total",
-                "Errors",
-            ],
-            tablefmt="grid",
-        )
     )
 
 

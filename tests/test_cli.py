@@ -621,9 +621,7 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
         result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code == 0, result.output
-    (run,) = StorageManager(sqlite_path=db_path).sync_runs.list_for_source(
-        1, "steam", limit=10
-    )
+    run = StorageManager(sqlite_path=db_path).sync_runs.latest_per_source(1)["steam"]
     assert run["status"] == "completed"
 
 

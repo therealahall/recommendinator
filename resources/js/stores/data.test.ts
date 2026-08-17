@@ -45,7 +45,6 @@ describe('useDataStore', () => {
     }
   }
 
-  /** A listing entry as GET /sync/sources sends it, schedule fields included. */
   function listedSource(id: string, displayName: string) {
     return {
       id,
@@ -762,32 +761,6 @@ describe('useDataStore', () => {
       ).rejects.toBeInstanceOf(ApiError)
     })
 
-    it('loadSourceRuns asks for that source newest-first and caches them', async () => {
-      const runs = [
-        {
-          source_id: 'steam',
-          started_at: '2026-08-17T10:00:00+00:00',
-          finished_at: '2026-08-17T10:00:30+00:00',
-          status: 'failed',
-          items_added: 0,
-          items_updated: 0,
-          items_unchanged: 0,
-          total_items: 0,
-          errors: ['Steam API returned 401 Unauthorized'],
-        },
-      ]
-      mockGet.mockResolvedValueOnce(runs)
-
-      const store = useDataStore()
-      await store.loadSourceRuns('steam')
-
-      expect(mockGet).toHaveBeenCalledWith('/sync/runs', {
-        source_id: 'steam',
-        limit: 10,
-      })
-      expect(store.sourceRuns.steam).toEqual(runs)
-    })
-
     it('loadAvailablePlugins caches the plugins and what failed to load', async () => {
       const plugins = [
         {
@@ -872,21 +845,6 @@ describe('useDataStore', () => {
           sync_interval_default: 'off',
         },
       }
-      store.sourceRuns = {
-        goner: [
-          {
-            source_id: 'goner',
-            started_at: '2026-08-17T10:00:00+00:00',
-            finished_at: '2026-08-17T10:01:00+00:00',
-            status: 'failed',
-            items_added: 0,
-            items_updated: 0,
-            items_unchanged: 0,
-            total_items: 0,
-            errors: ['401 Unauthorized'],
-          },
-        ],
-      }
       store.oauthStatus = {
         goner: { enabled: true, connected: true, authUrl: null },
       }
@@ -901,7 +859,6 @@ describe('useDataStore', () => {
       // of that name a connection state and an announcement it never earned.
       expect(store.oauthStatus.goner).toBeUndefined()
       expect(store.oauthMessages.goner).toBeUndefined()
-      expect(store.sourceRuns.goner).toBeUndefined()
     })
 
     it('drops a status read still in flight when the source is deleted', async () => {
