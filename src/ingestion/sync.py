@@ -62,6 +62,11 @@ ALL_SOURCES_LABEL = "All Sources"
 #: The umbrella's job key. Not the label: ``all_sources`` humanizes to that.
 ALL_SOURCES_KEY = "*all*"
 
+
+def job_label(key: str) -> str:
+    return ALL_SOURCES_LABEL if key == ALL_SOURCES_KEY else key
+
+
 # Hard ceiling on the parallel-sync worker pool. Bounds both the CLI flag
 # (via Click IntRange) and the config-file path so a malicious or
 # misconfigured config.yaml cannot exhaust OS thread limits.

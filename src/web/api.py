@@ -1541,12 +1541,12 @@ def update_data(
         max_workers=request.max_workers,
     )
 
-    success, message = sync_manager.start_sync(
+    success, _ = sync_manager.start_sync(
         job_key, dispatch.run, on_complete=dispatch.on_complete
     )
 
     if not success:
-        raise HTTPException(status_code=409, detail=message)
+        raise HTTPException(status_code=409, detail="A sync is already in progress")
 
     # humanize_source_id title-cases but strips nothing, so the request's own
     # source id reaches here with its newlines intact.

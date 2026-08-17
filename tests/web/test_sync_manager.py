@@ -13,7 +13,7 @@ import pytest
 import requests
 from fastapi import FastAPI
 
-from src.ingestion.sync import ALL_SOURCES_KEY
+from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from src.utils.dates import utc_now
@@ -485,6 +485,19 @@ class TestSyncManagerRunSync:
         passed_job = sync_function.call_args[0][0]
         assert isinstance(passed_job, SyncJob)
         assert passed_job.source == "steam"
+
+    @patch("src.web.sync_manager.threading.Thread")
+    def test_the_umbrella_run_logs_its_label_not_its_sentinel_key(
+        self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_thread.return_value = MagicMock()
+        manager = SyncManager()
+        manager.start_sync(source=ALL_SOURCES_KEY, sync_function=MagicMock())
+
+        with caplog.at_level(logging.INFO, logger=SYNC_MANAGER_LOGGER):
+            manager._run_sync(ALL_SOURCES_KEY, MagicMock(return_value=3))
+
+        assert f"Sync completed for {ALL_SOURCES_LABEL}: 3 items" in caplog.text
 
 
 class TestSyncManagerHistoryEviction:
