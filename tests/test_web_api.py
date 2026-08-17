@@ -3741,6 +3741,14 @@ _GUARDED_ENDPOINTS = [
         url="/api/sync/sources/my_books/enabled",
         body={"enabled": True},
     ),
+    _Endpoint(
+        "PUT",
+        "/api/sync/sources/{source_id}/schedule",
+        ("storage", "config"),
+        url="/api/sync/sources/my_books/schedule",
+        body={"interval": "daily"},
+    ),
+    _Endpoint("GET", "/api/sync/runs", ("storage",)),
     _Endpoint("GET", "/api/settings", ("config", "storage")),
     _Endpoint("PUT", "/api/settings", ("config", "storage"), body={"updates": {}}),
     _Endpoint(
@@ -4311,17 +4319,18 @@ class TestSourceCreateReadsBothHalvesRegression:
         storage.credentials.delete_for_source.assert_not_called()
 
 
-# The three plugin-resolving routes that also carry a body, so the order
-# between the lookup and body validation is observable on them.
+# The plugin-resolving routes that also carry a body, so the order between the
+# lookup and body validation is observable on them.
 _PLUGIN_ROUTES_WITH_A_BODY = [
     "/api/sync/sources/no_such_source/config",
     "/api/sync/sources/no_such_source/secret/api_key",
     "/api/sync/sources/no_such_source/enabled",
+    "/api/sync/sources/no_such_source/schedule",
 ]
 
 
 class TestPluginLookupVersusRequestValidation:
-    """The URL is answered before the body, on the three routes carrying both.
+    """The URL is answered before the body, on the routes carrying both.
 
     ``require_plugin`` is a dependency now rather than the handler's first
     statement, so FastAPI resolves it with the rest of the dependency tree —

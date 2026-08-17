@@ -87,6 +87,11 @@ class TestSourceList:
             "plugin_display_name",
             "enabled",
             "plugin_not_loaded",
+            "sync_interval",
+            "sync_interval_default",
+            "last_run_at",
+            "last_run_status",
+            "next_run_at",
         }
         assert payload[0]["plugin_not_loaded"] is None
 
