@@ -1,9 +1,4 @@
-"""Tests for the ``sync_runs`` table and ``StorageManager.sync_runs``.
-
-One row per finished sync of one source, which is what an automatic schedule
-reads to decide whether a source is healthy and what an operator reads to see
-why it is not.
-"""
+"""Tests for the ``sync_runs`` table: one row per finished sync of one source."""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,7 +13,6 @@ _START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """A StorageManager over a temp DB."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
@@ -30,7 +24,6 @@ def _record(
     minute: int = 0,
     errors: tuple[str, ...] = (),
 ) -> int:
-    """Record one run, *minute* minutes after the fixed start."""
     started_at = _START + timedelta(minutes=minute)
     return storage.sync_runs.record(
         1,
@@ -43,7 +36,6 @@ def _record(
 
 
 def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
-    """Counts and the error list survive the round trip through JSON."""
     run_id = storage.sync_runs.record(
         1,
         "steam",
@@ -73,7 +65,6 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
 
 
 def test_list_recent_spans_every_source_newest_first(storage: StorageManager) -> None:
-    """The unfiltered history is one ordered list, not one list per source."""
     _record(storage, "steam", minute=0)
     _record(storage, "trakt", minute=5)
     _record(storage, "steam", minute=10)
@@ -90,7 +81,6 @@ def test_list_recent_spans_every_source_newest_first(storage: StorageManager) ->
 def test_latest_per_source_reports_each_source_newest_run(
     storage: StorageManager,
 ) -> None:
-    """One entry per source, and it is the newest rather than the first found."""
     _record(storage, "steam", minute=0, status="failed")
     newest_steam = _record(storage, "steam", minute=10)
     trakt = _record(storage, "trakt", minute=5)
@@ -106,10 +96,9 @@ def test_latest_per_source_reports_each_source_newest_run(
 def test_consecutive_failures_counts_only_the_run_since_the_last_success(
     storage: StorageManager,
 ) -> None:
-    """A skip attempted nothing, so it neither resets nor extends the count.
-
-    Reading a skip as an outcome would either hide a source that has been
-    failing all week (reset) or back off a source that is fine (extend).
+    """A skip attempted nothing, so it neither resets nor extends the count:
+    reading it as an outcome would hide a source that has been failing all week,
+    or back off a source that is fine.
     """
     _record(storage, minute=0, status="failed")
     _record(storage, minute=5, status="completed")
@@ -133,9 +122,7 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
 def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(
     storage: StorageManager,
 ) -> None:
-    """An hourly schedule must not grow the table without bound.
-
-    The other source's single run is asserted too: the prune is per source, so
+    """The other source's single run is asserted too: the prune is per source, so
     a widened DELETE would take the whole table down to fifty rows.
     """
     _record(storage, "trakt", minute=0)

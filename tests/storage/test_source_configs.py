@@ -62,11 +62,6 @@ class TestStorageManagerSourceConfigs:
     def test_schedule_survives_reopening_the_database(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
-        """A cadence is stored, not held in memory, and starts unset.
-
-        Clearing it back to ``None`` is asserted too: a write that declines to
-        store one would leave a cadence the user removed running for good.
-        """
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)
         before = storage.sources.get(1, "steam")
         assert before is not None
@@ -86,11 +81,6 @@ class TestStorageManagerSourceConfigs:
         assert cleared["sync_interval"] is None
 
     def test_upsert_keeps_the_stored_schedule(self, storage: StorageManager) -> None:
-        """Editing a config carries no cadence, and must not clear the stored one.
-
-        A clobbering upsert would stop automatic syncing every time a user
-        changed a path.
-        """
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)
         storage.sources.set_schedule(1, "steam", "6h")
 
@@ -104,7 +94,6 @@ class TestStorageManagerSourceConfigs:
     def test_set_schedule_reports_an_unmigrated_source(
         self, storage: StorageManager
     ) -> None:
-        """No row means no schedule was set, which the caller surfaces as a 404."""
         assert storage.sources.set_schedule(1, "steam", "6h") is False
 
     def test_list_source_configs_returns_dicts(self, storage: StorageManager) -> None:

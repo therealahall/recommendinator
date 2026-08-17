@@ -1,8 +1,4 @@
-"""Sync cadence presets and due computation for automated per-source syncing.
-
-Pure logic: callers pass the instants in, aware UTC as
-:func:`src.utils.dates.utc_now` returns them.
-"""
+"""Cadence presets and due computation. Pure logic: callers pass aware UTC in."""
 
 from __future__ import annotations
 
@@ -14,7 +10,7 @@ from src.ingestion.plugin_base import SourcePlugin
 
 @dataclass(frozen=True)
 class SyncIntervalPreset:
-    """One selectable sync cadence. ``duration`` is None for "off"."""
+    """``duration`` is None for the "off" preset."""
 
     key: str
     label: str
@@ -49,23 +45,14 @@ _MAX_BACKOFF_DOUBLINGS = 5
 
 
 def resolve_interval(stored: str | None, plugin: SourcePlugin) -> str:
-    """Resolve a source's stored cadence to a preset key.
-
-    Unset, or naming a preset this release no longer ships, falls back to the
-    plugin's declared default — repaired here so no caller downstream meets
-    either.
-    """
+    """Unset, or a preset this release dropped, falls back to the plugin's."""
     if stored is not None and stored in _PRESETS_BY_KEY:
         return stored
     return plugin.default_sync_interval
 
 
 def effective_interval(base_key: str, consecutive_failures: int) -> timedelta | None:
-    """The wait a source has earned: its cadence doubled per consecutive failure.
-
-    Capped at :data:`MAX_BACKOFF_INTERVAL`, which never shortens a base already
-    longer than it. None for "off".
-    """
+    """Doubled per failure, capped, and the cap never shortens a longer base."""
     base = _PRESETS_BY_KEY[base_key].duration
     if base is None:
         return None
@@ -79,11 +66,7 @@ def next_due(
     base_key: str,
     consecutive_failures: int,
 ) -> datetime | None:
-    """The instant the source is next eligible to sync.
-
-    None when there is no such instant: the source is "off", or it has never
-    run and is due now (see :func:`is_due`).
-    """
+    """None when off, or never run and so due now."""
     interval = effective_interval(base_key, consecutive_failures)
     if interval is None or last_finished_at is None:
         return None
@@ -96,10 +79,6 @@ def is_due(
     base_key: str,
     consecutive_failures: int,
 ) -> bool:
-    """Whether the source should sync at *now*.
-
-    A source that has never run is due immediately; one set to "off" never is.
-    """
     interval = effective_interval(base_key, consecutive_failures)
     if interval is None:
         return False
