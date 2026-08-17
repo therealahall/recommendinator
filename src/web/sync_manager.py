@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from src.ingestion.sync import sync_run_failed
+from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, sync_run_failed
 from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,8 @@ class SyncJob:
     source_progress: dict[str, _SourceProgress] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert job to dictionary for API response."""
+        # The umbrella's key is a sentinel; clients match jobs by name.
+        job_name = ALL_SOURCES_LABEL if self.source == ALL_SOURCES_KEY else self.source
         progress_slots = list(self.source_progress.values())
         sources = [
             {
@@ -85,7 +86,7 @@ class SyncJob:
             for name, progress in sorted(self.source_progress.items())
         ]
         return {
-            "source": self.source,
+            "source": job_name,
             "status": self.status.value,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": (

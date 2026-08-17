@@ -1,5 +1,3 @@
-"""Tests for sync-interval presets, failure backoff and due computation."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -75,8 +73,11 @@ class TestResolveInterval:
     def test_stored_value_wins_over_the_plugin_default(self) -> None:
         assert resolve_interval("6h", WeeklyPlugin()) == "6h"
 
-    def test_unknown_stored_value_falls_back_to_the_plugin_default(self) -> None:
+    def test_an_unknown_key_falls_through_to_the_next_known_preset(self) -> None:
         assert resolve_interval("fortnightly", WeeklyPlugin()) == "weekly"
+        typo = FakeFilePlugin()
+        typo.default_sync_interval = "12h"
+        assert resolve_interval("fortnightly", typo) == "off"
 
     def test_shipped_plugins_declare_a_known_preset(self) -> None:
         plugins = get_registry().get_all_plugins()
