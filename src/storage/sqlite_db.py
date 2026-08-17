@@ -179,12 +179,6 @@ def unset_if_none(value: _T | None) -> _T | Unset:
     tell absent from null (the web, which
     reads ``model_fields_set``) passes its ``None`` through untranslated, so
     an explicit null still clears the field.
-
-    Args:
-        value: The value the caller supplied, or None if they supplied none.
-
-    Returns:
-        The value, or UNSET when it was None.
     """
     return UNSET if value is None else value
 
@@ -323,14 +317,9 @@ class SQLiteDB:
     """SQLite database manager for content items."""
 
     def __init__(self, db_path: Path) -> None:
-        """Initialize SQLite database manager.
-
-        Args:
-            db_path: Path to SQLite database file
-        """
+        """Initialize SQLite database manager."""
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Set WAL mode once during initialization
         init_conn = sqlite3.connect(self.db_path)
         try:
             init_conn.execute("PRAGMA journal_mode = WAL")
@@ -339,11 +328,7 @@ class SQLiteDB:
         self._ensure_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection.
-
-        Returns:
-            SQLite connection
-        """
+        """Get a database connection."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -355,13 +340,7 @@ class SQLiteDB:
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Context manager for database connections.
-
-        Yields a connection and ensures it is closed after use.
-
-        Yields:
-            SQLite connection
-        """
+        """Yield a database connection, closing it after use."""
         conn = self._get_connection()
         try:
             yield conn
@@ -382,13 +361,6 @@ class SQLiteDB:
         regression the module docstring describes;
         ``date_completed`` is later-date-wins; and ``ignored`` follows only a
         stated incoming value.
-
-        Args:
-            item: ContentItem to save
-            user_id: User ID (defaults to item.user_id or default user)
-
-        Returns:
-            Database ID of the saved item
         """
         return self.save_content_item_outcome(item, user_id=user_id).db_id
 
@@ -399,13 +371,6 @@ class SQLiteDB:
 
         What :meth:`save_content_item` does, for the caller that has to tell a
         first import from a second run of it.
-
-        Args:
-            item: ContentItem to save
-            user_id: User ID (defaults to item.user_id or default user)
-
-        Returns:
-            The row's database ID and the outcome of the write.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -432,16 +397,6 @@ class SQLiteDB:
         :meth:`_write_completion`. A completion carrying no date is the case
         the module docstring describes: an empty column is stamped with today
         in the host's zone, an existing date is kept.
-
-        Args:
-            item: ContentItem being completed, created if the library has no
-                match by external id or normalized title. Its
-                ``date_completed`` is the date the user named, or None when
-                they named none.
-            user_id: User ID (defaults to item.user_id or default user)
-
-        Returns:
-            Database ID of the completed item
 
         Raises:
             FutureCompletionDateError: ``item.date_completed`` is further
@@ -485,24 +440,17 @@ class SQLiteDB:
         for the same reason — the upsert's later-date-wins rule is a sync rule,
         and leaving the date to it would drop a correction pointing backwards.
 
-        Args:
-            cursor: Database cursor (within an active transaction).
-            db_id: Database ID of the row being completed.
-            rating: Rating the user supplied, or None if they supplied none.
-            review: Review the user supplied, or None if they supplied none.
-                Blank counts as none: this door overwrites, so writing ``""``
-                would replace a stored review with a value that reads as one
-                the user wrote and stops a later import from filling the
-                field. The check is repeated here because it protects a
-                different write from the callers' own: the web and CLI
-                surfaces refuse a blank outright, and
-                :meth:`_upsert_content_item` — which runs first, so this guard
-                never sees what it writes — separately declines to fill from
-                one.
-            date_completed: Completion date the user supplied, written as
-                given unless it is further ahead than
-                :data:`MAX_COMPLETION_DATE_SKEW`. UNSET fills an empty column
-                with today in the host's zone and leaves a stored date alone.
+        A blank *review* counts as none. This door overwrites, so writing
+        ``""`` would replace a stored review with a value that reads as one
+        the user wrote and stops a later import from filling the field. The
+        check is repeated here because it protects a different write from the
+        callers' own: the web and CLI surfaces refuse a blank outright, and
+        :meth:`_upsert_content_item` — which runs first, so this guard never
+        sees what it writes — separately declines to fill from one.
+
+        An UNSET *date_completed* fills an empty column with today in the
+        host's zone and leaves a stored date alone; a supplied one is written
+        as given.
 
         Raises:
             FutureCompletionDateError: *date_completed* is a day nobody has
@@ -545,20 +493,11 @@ class SQLiteDB:
         dedup by normalized title, and the fill-only rules for user-owned
         fields. Runs on the caller's cursor and does not commit, so a caller
         can add its own writes to the same transaction.
-
-        Args:
-            cursor: Database cursor (within an active transaction).
-            item: ContentItem to save.
-            user_id: User ID (defaults to item.user_id or default user).
-
-        Returns:
-            The row's database ID, and what this write did to it.
         """
         # The one door every plugin's items pass, so the SQLite text guarantee
         # is taken here rather than in each of them.
         item = _surrogate_free(item)
 
-        # Use provided user_id, fall back to item's user_id, then default
         effective_user_id = (
             user_id
             if user_id is not None
@@ -573,7 +512,6 @@ class SQLiteDB:
         # and block the field for good.
         incoming_review = item.review if item.review and item.review.strip() else None
 
-        # Check if item exists (by user_id, external_id, and content_type)
         existing_id: int | None = None
         if item.id:
             cursor.execute(
@@ -630,14 +568,9 @@ class SQLiteDB:
                 existing_id = int(row["id"])
 
         if existing_id is not None:
-            # Update existing item in base table.
-            # This is the sync door: user-owned fields are filled only
-            # while they are empty, never overwritten.
-            #   - rating/review: only set when the stored value is null
-            #   - status: forward-only (unread → consuming → completed)
-            #   - date_completed: only if incoming is later than existing
-            #   - ignored: only when the incoming value states one
-            #   - None incoming values never overwrite existing data
+            # The sync door: user-owned fields are filled only while they are
+            # empty, never overwritten, and a None incoming value states
+            # nothing to fill from.
             cursor.execute(
                 "SELECT title, normalized_title, source, status, rating, review,"
                 " date_completed, ignored FROM content_items WHERE id = ?",
@@ -665,7 +598,7 @@ class SQLiteDB:
             if existing_row["review"] is None and incoming_review is not None:
                 offered["review"] = incoming_review
 
-            # Date completed: only if incoming is not None and later
+            # Date completed: fill only from a later incoming date.
             if item.date_completed is not None:
                 incoming_date_str = item.date_completed.isoformat()
                 existing_date_str = existing_row["date_completed"]
@@ -696,7 +629,6 @@ class SQLiteDB:
             db_id = existing_id
             row_changed = bool(changed) or merged_a_duplicate
         else:
-            # Insert new item into base table
             cursor.execute(
                 """
                 INSERT INTO content_items
@@ -724,7 +656,6 @@ class SQLiteDB:
             db_id = lastrowid
             row_changed = True
 
-        # Save to type-specific detail table
         detail_changed = self._save_detail_table(
             cursor, db_id, item, content_type_value
         )
@@ -733,7 +664,6 @@ class SQLiteDB:
         # was actually stored rather than the one this sync offered.
         write_derived_columns(cursor, db_id)
 
-        # For TV shows, check if new seasons should regress status
         season_regressed = content_type_value == "tv_show" and (
             self._handle_tv_season_change(cursor, db_id)
         )
@@ -760,16 +690,8 @@ class SQLiteDB:
           later manual/existing date, but a genuinely newer Trakt watch does
           update it; new seasons are added)
 
-        For new rows, all data from ingestion is used as-is.
-
-        Args:
-            cursor: Database cursor
-            db_id: Content item database ID
-            item: ContentItem to save
-            content_type: Content type as string
-
-        Returns:
-            Whether the write moved any column of the detail row.
+        For new rows, all data from ingestion is used as-is. Reports whether
+        the write moved any column of the detail row.
 
         Raises:
             KeyError: For a content type with no field declaration, like
@@ -784,7 +706,6 @@ class SQLiteDB:
             raise ValueError(f"Unknown detail table: {table!r}")
         known_keys = spec.known_keys
 
-        # Check for an existing row
         cursor.execute(
             f"SELECT * FROM {table} WHERE content_item_id = ?",
             (db_id,),
@@ -801,7 +722,6 @@ class SQLiteDB:
             else {}
         )
 
-        # Build column values
         col_names = ["content_item_id"]
         values: list[Any] = [db_id]
 
@@ -816,15 +736,12 @@ class SQLiteDB:
                 raw = item.author or raw
             new_value = detail_field.store(raw)
 
-            # Decide final value based on existing data
             if col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
-                # Genres/tags: additive merge
                 existing_list = parse_json_list(existing_data.get(col_name))
                 new_list = parse_json_list(new_value)
                 merged = merge_string_lists(existing_list, new_list)
                 values.append(json.dumps(merged) if merged else new_value)
             elif col_name in MONOTONIC_DETAIL_COLUMNS and existing_data:
-                # Seasons/episodes: take the higher value
                 existing_val = to_int(existing_data.get(col_name))
                 incoming_val = to_int(new_value)
                 if existing_val is not None and incoming_val is not None:
@@ -834,15 +751,13 @@ class SQLiteDB:
                 else:
                     values.append(existing_val)
             elif existing_data and existing_data.get(col_name) is not None:
-                # Existing row has data — keep it (enrichment is source of truth)
+                # Enrichment is the source of truth for a column already set.
                 values.append(existing_data[col_name])
             else:
-                # No existing row, or existing value is None — use incoming
                 values.append(new_value)
 
             col_names.append(col_name)
 
-        # Remaining metadata as JSON — merge additively with existing
         remaining_metadata = {
             key: val for key, val in metadata.items() if key not in known_keys
         }
@@ -923,11 +838,6 @@ class SQLiteDB:
         Delegates to the module-level ``merge_scalar_columns`` and
         ``merge_detail_tables`` functions so that the same merge logic
         is available to both runtime and migration paths.
-
-        Args:
-            cursor: Database cursor (within an active transaction).
-            keep_id: Database ID of the row to keep.
-            delete_id: Database ID of the duplicate row to delete.
         """
         merge_scalar_columns(cursor, keep_id, delete_id)
         merge_detail_tables(cursor, keep_id, delete_id)
@@ -951,13 +861,6 @@ class SQLiteDB:
 
         This only fires when ``seasons_watched`` metadata exists (i.e. the
         user has used the edit modal's season checklist at least once).
-
-        Args:
-            cursor: Database cursor (within an active transaction).
-            db_id: Content item database ID.
-
-        Returns:
-            Whether the status was regressed.
         """
         cursor.execute(
             "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
@@ -974,11 +877,9 @@ class SQLiteDB:
         ignored = bool(row["ignored"])
         total_seasons = row["seasons"]
 
-        # Only applies when currently completed
         if status != "completed":
             return False
 
-        # Parse seasons_watched from metadata
         metadata_raw = row["metadata"]
         if not metadata_raw:
             return False
@@ -998,12 +899,9 @@ class SQLiteDB:
         if not total_seasons or all_seasons_watched(seasons_watched, total_seasons):
             return False
 
-        # New seasons available that user hasn't watched.
-        # If ignored, leave status alone.
         if ignored:
             return False
 
-        # Regress to currently_consuming
         cursor.execute(
             "UPDATE content_items SET status = 'currently_consuming',"
             " updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1014,15 +912,7 @@ class SQLiteDB:
     def get_content_item(
         self, db_id: int, user_id: int | None = None
     ) -> ContentItem | None:
-        """Get a content item by database ID.
-
-        Args:
-            db_id: Database ID
-            user_id: Optional user ID filter (for security)
-
-        Returns:
-            ContentItem if found, None otherwise
-        """
+        """Get a content item by database ID."""
         with self.connection() as conn:
             cursor = conn.cursor()
             query = _CONTENT_ITEM_SELECT + " WHERE ci.id = ?"
@@ -1041,14 +931,8 @@ class SQLiteDB:
     def get_content_items_by_db_ids(self, db_ids: list[int]) -> list[ContentItem]:
         """Get multiple content items by their database IDs in a single query.
 
-        Args:
-            db_ids: List of database IDs to fetch
-
-        Returns:
-            One ContentItem per id that names a row, in the order asked for.
-            An id naming no row is skipped and a repeated id is returned once
-            per occurrence, so the result tracks the argument rather than the
-            set of distinct ids in it.
+        Ids come back in the order asked for; one naming no row is skipped,
+        and a repeated one returns once per occurrence.
         """
         if not db_ids:
             return []
@@ -1084,16 +968,8 @@ class SQLiteDB:
     ) -> list[ContentItem]:
         """Get multiple content items by their external IDs in a single query.
 
-        Args:
-            external_ids: External IDs to fetch.
-            user_id: Filter by user ID (defaults to default user).
-            content_type: Filter by content type. One external id may name a
-                row of each type, since rows are unique per
-                ``(user, external id, content type)``.
-
-        Returns:
-            One ContentItem per row matching the filters, in no particular
-            order. An id naming no such row is skipped.
+        Rows are unique per ``(user, external id, content type)``, so one
+        external id may name a row of each type. Results are unordered.
         """
         if not external_ids:
             return []
@@ -1134,32 +1010,11 @@ class SQLiteDB:
     ) -> list[ContentItem]:
         """Get content items with optional filters.
 
-        Args:
-            user_id: Filter by user ID (defaults to default user)
-            content_type: Filter by content type
-            status: Filter by consumption status (single value or list for
-                IN-clause filtering)
-            min_rating: Minimum rating (inclusive)
-            unrated_only: When True, only return items with no rating set
-                (rating IS NULL)
-            limit: Maximum number of results. None or 0 means no limit.
-            offset: Number of results to skip (for pagination). Independent of
-                limit: an offset with no limit skips and returns the rest.
-            sort_by: Sort order - "title" (default, ignores articles),
-                "updated_at", "rating", or "created_at"
-            include_ignored: Whether to include ignored items (default True
-                for backward compatibility)
-            enrichment: Filter by enrichment state ("enriched" or
-                "not_enriched"). None returns all items.
-            search: Optional search term. When non-empty (after strip),
-                results are filtered to items whose title or creator
-                (author/director/creators/developer) matches the term via
-                exact, substring, or fuzzy matching. ANDs with all other
-                filters. Filtering happens before limit/offset so pagination
-                pages over the full matched set.
-
-        Returns:
-            List of ContentItem objects
+        A falsy *limit* is no limit, and *offset* is independent of it: an
+        offset with no limit skips and returns the rest. A *search* term that
+        is empty after stripping filters nothing; otherwise it ANDs with the
+        other filters and applies before limit/offset, so pagination pages
+        over the full matched set.
 
         Note:
             A request builds a ContentItem for the rows it returns and no
@@ -1331,17 +1186,7 @@ class SQLiteDB:
         limit: int | None = None,
         include_ignored: bool = True,
     ) -> list[ContentItem]:
-        """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING).
-
-        Args:
-            user_id: Filter by user ID
-            content_type: Filter by content type
-            limit: Maximum number of results
-            include_ignored: Whether to include ignored items (default True)
-
-        Returns:
-            List of unconsumed ContentItem objects
-        """
+        """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING)."""
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
@@ -1358,18 +1203,7 @@ class SQLiteDB:
         limit: int | None = None,
         include_ignored: bool = True,
     ) -> list[ContentItem]:
-        """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING).
-
-        Args:
-            user_id: Filter by user ID
-            content_type: Filter by content type
-            min_rating: Minimum rating (inclusive)
-            limit: Maximum number of results
-            include_ignored: Whether to include ignored items (default True)
-
-        Returns:
-            List of completed ContentItem objects
-        """
+        """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING)."""
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
@@ -1382,15 +1216,11 @@ class SQLiteDB:
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:
         """Convert a database row to ContentItem.
 
-        Args:
-            row: A row from _CONTENT_ITEM_SELECT, carrying every detail and
-                enrichment column that query aliases. A column it does not
-                carry raises rather than reading as absent data: the aliases
-                are generated from DETAIL_FIELDS, so a name that misses is a
-                bug in the declaration and not a value the row lacks.
-
-        Returns:
-            ContentItem object
+        *row* comes from _CONTENT_ITEM_SELECT, carrying every detail and
+        enrichment column that query aliases. A column it does not carry
+        raises rather than reading as absent data: the aliases are generated
+        from DETAIL_FIELDS, so a name that misses is a bug in the declaration
+        and not a value the row lacks.
 
         Raises:
             KeyError: For a content type with no field declaration, like
@@ -1429,7 +1259,6 @@ class SQLiteDB:
             if isinstance(leftover, dict):
                 metadata.update(leftover)
 
-        # Parse date_completed
         date_completed = None
         if date_completed_str := row["date_completed"]:
             try:
@@ -1557,31 +1386,10 @@ class SQLiteDB:
         moving away from completed leaves the stored date alone — it records
         that a completion happened, and dropping it would be the same silent
         loss this door exists to avoid.
-
-        Args:
-            db_id: Database ID of the item to update.
-            status: New status value (unread, currently_consuming, completed),
-                UNSET to leave unchanged.
-            rating: New rating (1-5), None to clear, UNSET to leave unchanged.
-            review: New review text, None or blank to clear, UNSET to leave
-                unchanged.
-            seasons_watched: List of watched season numbers (TV shows only).
-                None leaves them to *status* (see above), ``[]`` clears them.
-            genres: Manual genres to set (overwrite). None leaves them as-is,
-                ``[]`` clears them.
-            tags: Manual tags to set (overwrite). None leaves them as-is,
-                ``[]`` clears them.
-            description: Manual description to set. None leaves it as-is,
-                ``""`` clears it.
-            user_id: Optional user ID filter for authorization.
-
-        Returns:
-            True if item was updated, False if not found.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
 
-            # Verify item exists (and belongs to user_id if provided)
             if user_id is not None:
                 cursor.execute(
                     "SELECT id, content_type, status FROM content_items"
@@ -1625,7 +1433,6 @@ class SQLiteDB:
                         ).value
 
                 if tv_row and seasons_watched is not None:
-                    # Merge seasons_watched into tv_show_details metadata
                     existing_metadata: dict[str, Any] = {}
                     if tv_row["metadata"]:
                         try:
@@ -1757,15 +1564,7 @@ class SQLiteDB:
             )
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
-        """Delete a content item by database ID.
-
-        Args:
-            db_id: Database ID
-            user_id: Optional user ID filter (for security)
-
-        Returns:
-            True if item was deleted, False if not found
-        """
+        """Delete a content item by database ID."""
         with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
@@ -1784,18 +1583,11 @@ class SQLiteDB:
         Scans for groups of rows sharing the same (user_id, content_type,
         normalized_title) and merges each group into a single row, keeping
         the oldest row (lowest id) and merging data from duplicates.
-
-        Args:
-            user_id: If specified, only deduplicate items for this user.
-
-        Returns:
-            Number of duplicate rows removed.
         """
         merged_count = 0
         with self.connection() as conn:
             cursor = conn.cursor()
 
-            # Find groups with duplicates
             query = """
                 SELECT user_id, content_type, normalized_title
                 FROM content_items
@@ -1818,7 +1610,6 @@ class SQLiteDB:
                 g_content_type = group["content_type"]
                 g_normalized = group["normalized_title"]
 
-                # Get all rows in this group, ordered by id (keep oldest)
                 cursor.execute(
                     """SELECT id FROM content_items
                        WHERE user_id = ? AND content_type = ?
@@ -1844,16 +1635,7 @@ class SQLiteDB:
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
-        """Set the ignored status of a content item.
-
-        Args:
-            db_id: Database ID of the item
-            ignored: Whether the item should be ignored
-            user_id: Optional user ID filter (for security)
-
-        Returns:
-            True if item was updated, False if not found
-        """
+        """Set the ignored status of a content item."""
         with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
@@ -1879,16 +1661,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         status: ConsumptionStatus | None = None,
     ) -> int:
-        """Count content items with optional filters.
-
-        Args:
-            user_id: Filter by user ID (defaults to default user)
-            content_type: Filter by content type
-            status: Filter by consumption status
-
-        Returns:
-            Number of matching items
-        """
+        """Count content items with optional filters."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
         with self.connection() as conn:
@@ -1916,16 +1689,7 @@ class SQLiteDB:
         content_type: ContentType,
         user_id: int | None = None,
     ) -> ContentItem | None:
-        """Get a content item by external ID and content type.
-
-        Args:
-            external_id: External ID from source
-            content_type: Content type
-            user_id: Filter by user ID (defaults to default user)
-
-        Returns:
-            ContentItem if found, None otherwise
-        """
+        """Get a content item by external ID and content type."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
         with self.connection() as conn:
@@ -1956,18 +1720,9 @@ class SQLiteDB:
         2. needs_enrichment = TRUE, OR
         3. enrichment_quality = 'not_found' (if include_not_found is True)
 
-        Args:
-            content_type: Optional filter by content type
-            user_id: Filter by user ID (defaults to default user)
-            limit: Maximum number of items to return
-            include_not_found: Also include items previously marked as not_found
-            after_db_id: Only return items with a database ID above this one.
-                Results are ordered by ID, so a caller walking the queue passes
-                the last ID it saw to page past the items it already handled —
-                including any it left queued on purpose.
-
-        Returns:
-            List of (db_id, ContentItem) tuples for items needing enrichment
+        Results are ordered by ID, so a caller walking the queue passes the
+        last ID it saw as *after_db_id* to page past the items it already
+        handled — including any it left queued on purpose.
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
@@ -2003,13 +1758,6 @@ class SQLiteDB:
         total upfront instead of incrementing per batch. Items previously
         marked as ``not_found`` are tracked separately by the manager and are
         intentionally excluded here to avoid double-counting.
-
-        Args:
-            content_type: Optional filter by content type
-            user_id: Filter by user ID (defaults to default user)
-
-        Returns:
-            Number of items matching the enrichment filter.
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
@@ -2035,10 +1783,9 @@ class SQLiteDB:
     ) -> tuple[str, list[Any]]:
         """Build the shared SELECT for items needing enrichment.
 
-        Returns the query string and the bound parameter list. Callers append
-        ORDER BY / LIMIT clauses as needed. The SELECT clause is hardcoded
-        based on ``count_only`` rather than accepting an open string, so this
-        helper cannot be misused to inject SQL.
+        Callers append ORDER BY / LIMIT clauses as needed. The SELECT clause
+        is hardcoded based on ``count_only`` rather than accepting an open
+        string, so this helper cannot be misused to inject SQL.
         """
         select_clause = "SELECT COUNT(*)" if count_only else "SELECT ci.id"
 
@@ -2074,16 +1821,7 @@ class SQLiteDB:
         content_type: ContentType,
         user_id: int | None = None,
     ) -> int | None:
-        """Get the database ID of a content item by external ID.
-
-        Args:
-            external_id: External ID from source
-            content_type: Content type
-            user_id: Filter by user ID (defaults to default user)
-
-        Returns:
-            Database ID if found, None otherwise
-        """
+        """Get the database ID of a content item by external ID."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
         with self.connection() as conn:
