@@ -11,9 +11,7 @@ from itertools import takewhile
 from src.storage.schema import SyncRunDict, SyncRunStatus
 from src.storage.sqlite_db import SQLiteDB
 
-# How much history one source keeps. An hourly schedule fills this in two days,
-# and the runs are read as how a source has been doing lately rather than as an
-# audit trail, so the oldest are dropped.
+# Read as how a source has been doing lately, not as an audit trail.
 _MAX_RUNS_PER_SOURCE = 50
 
 _COLUMNS = (
@@ -21,8 +19,7 @@ _COLUMNS = (
     "items_updated, items_unchanged, total_items, errors_json"
 )
 
-# The id breaks a tie on the stamp, so two runs recorded in the same instant
-# still read back in the order they were recorded.
+# The id breaks a tie on the stamp, so same-instant runs keep their order.
 _NEWEST_FIRST = "ORDER BY started_at DESC, id DESC"
 
 

@@ -21,9 +21,8 @@ class SyncIntervalPreset:
     duration: timedelta | None
 
 
-#: The single source of truth for sync cadences: the CLI choice, the web
-#: validation and the frontend option list are all built from this, in this
-#: order, never from a copy.
+#: The CLI choice, the web validation and the frontend option list are all
+#: built from this, in this order, never from a copy.
 SYNC_INTERVAL_PRESETS: tuple[SyncIntervalPreset, ...] = (
     SyncIntervalPreset("off", "Off", None),
     SyncIntervalPreset("hourly", "Every hour", timedelta(hours=1)),
@@ -40,14 +39,12 @@ _PRESETS_BY_KEY: dict[str, SyncIntervalPreset] = {
     preset.key: preset for preset in SYNC_INTERVAL_PRESETS
 }
 
-#: Backoff never widens a cadence past a day, so a source broken since last
-#: week is still retried today and the operator's fix takes effect without them
-#: hunting for a "sync now" button.
+#: A source broken since last week is still retried today, so the operator's
+#: fix takes effect without them hunting for a "sync now" button.
 MAX_BACKOFF_INTERVAL = timedelta(hours=24)
 
-# Five doublings put even the shortest preset past the ceiling. Capping the
-# exponent keeps a source that has failed thousands of times from multiplying a
-# timedelta by 2**thousands, which raises OverflowError.
+# Five doublings clear the ceiling from any preset. Capping the exponent stops
+# 2**thousands raising OverflowError on a long-broken source.
 _MAX_BACKOFF_DOUBLINGS = 5
 
 
