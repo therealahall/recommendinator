@@ -21,7 +21,6 @@ const baseSource = {
   enabled: true,
   plugin_not_loaded: null,
   sync_interval: '6h',
-  sync_interval_default: 'daily',
   last_run_at: TWO_HOURS_AGO,
   last_run_status: 'completed',
   next_run_at: IN_SIX_HOURS,
@@ -83,7 +82,6 @@ const migratedConfig: SourceConfigResponse = {
   field_values: { vanity_url: 'me' },
   secret_status: { api_key: true },
   sync_interval: '6h',
-  sync_interval_default: 'daily',
 }
 
 const yamlConfig: SourceConfigResponse = {
@@ -439,6 +437,32 @@ describe('SyncSourceAccordion', () => {
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
       expect(status.text()).toBe('')
       expect(status.attributes('role')).toBe('status')
+    })
+
+    it('keeps a save in flight when the row is collapsed and expanded again', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      vi.spyOn(store, 'setSourceSchedule').mockImplementation(
+        () => new Promise<void>(() => {}),
+      )
+
+      const trigger = wrapper.find('button.accordion-trigger')
+      await trigger.trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+      await flushPromises()
+      await trigger.trigger('click')
+      await trigger.trigger('click')
+      await flushPromises()
+
+      const select = wrapper.get('[data-testid="cadence-select-steam"]')
+      expect((select.element as HTMLSelectElement).value).toBe('off')
+      expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toContain(
+        'Saving',
+      )
     })
   })
 

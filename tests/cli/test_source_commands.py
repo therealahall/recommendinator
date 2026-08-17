@@ -104,7 +104,6 @@ class TestSourceList:
             "enabled",
             "plugin_not_loaded",
             "sync_interval",
-            "sync_interval_default",
             "last_run_at",
             "last_run_status",
             "next_run_at",

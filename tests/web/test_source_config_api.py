@@ -473,7 +473,6 @@ class TestSourceListingReportsTheSchedule:
         entry = _listing_entry(client, "my_books")
 
         assert entry["sync_interval"] == "off"
-        assert entry["sync_interval_default"] == "daily"
         assert entry["last_run_at"] is None
         assert entry["next_run_at"] is None
 

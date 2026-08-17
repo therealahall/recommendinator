@@ -88,7 +88,6 @@ class SyncSourceInfo:
     plugin_not_loaded: PluginNotLoaded | None = None
     #: Resolved, never the stored ``None``: a caller must not need the default.
     sync_interval: str = "off"
-    sync_interval_default: str = "off"
     last_run_at: str | None = None
     last_run_status: str | None = None
     next_run_at: str | None = None
@@ -469,7 +468,6 @@ def get_available_sync_sources(
                 plugin_display_name=source.plugin.display_name,
                 enabled=source.enabled,
                 sync_interval=state.interval,
-                sync_interval_default=source.plugin.default_sync_interval,
                 last_run_at=(
                     latest_run["finished_at"] if latest_run is not None else None
                 ),
@@ -687,7 +685,6 @@ def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
                 else None
             ),
             "sync_interval": entry.sync_interval,
-            "sync_interval_default": entry.sync_interval_default,
             "last_run_at": entry.last_run_at,
             "last_run_status": entry.last_run_status,
             "next_run_at": entry.next_run_at,
@@ -781,7 +778,6 @@ def build_config_view(
         "field_values": field_values,
         "secret_status": secret_status,
         "sync_interval": resolve_source_interval(db_row, plugin),
-        "sync_interval_default": plugin.default_sync_interval,
     }
 
 
