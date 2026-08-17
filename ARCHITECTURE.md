@@ -471,8 +471,8 @@ Library, Data, Preferences and Settings. Internal network only.
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
 - `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan beside the
-  config watcher, ticking once a minute and starting every source whose cadence
-  is due. No server, no scheduled sync. It and `POST /api/update` build the job
+  config watcher, ticking once a minute and starting one source whose cadence is
+  due, so a backlog staggers instead of opening a thread per source. No server, no scheduled sync. It and `POST /api/update` build the job
   the same way, through `build_sync_job` in `src/web/sync_dispatch.py`, so a
   scheduled run records and enriches exactly as a requested one does.
 - A component a handler **requires** is a parameter of it, annotated with one
