@@ -8,6 +8,7 @@ stay in lockstep.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,34 @@ import pytest
 from click.testing import CliRunner, Result
 
 from src.storage.manager import StorageManager
+from src.storage.schema import SyncRunStatus
 from tests.cli.conftest import _invoke_with_mocks
+
+_RUN_START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
     return StorageManager(sqlite_path=tmp_path / "cli.db")
+
+
+def _record_run(
+    storage: StorageManager,
+    *,
+    source_id: str = "my_books",
+    status: SyncRunStatus = "completed",
+    minute: int = 0,
+    errors: tuple[str, ...] = (),
+) -> None:
+    started_at = _RUN_START + timedelta(minutes=minute)
+    storage.sync_runs.record(
+        1,
+        source_id,
+        started_at=started_at,
+        finished_at=started_at + timedelta(seconds=30),
+        status=status,
+        errors=errors,
+    )
 
 
 @pytest.fixture()
@@ -94,6 +117,27 @@ class TestSourceList:
             "next_run_at",
         }
         assert payload[0]["plugin_not_loaded"] is None
+
+    def test_list_table_shows_the_cadence_and_the_last_outcome(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
+        storage.sources.set_schedule(1, "my_books", "weekly")
+        _record_run(storage, status="failed")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0
+        assert "weekly" in result.output
+        assert "failed" in result.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -225,6 +269,184 @@ class TestSourceEnableDisable:
             config=base_config,
         )
         assert result.exit_code != 0
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceSchedule:
+    def test_schedule_is_read_back_by_the_listing_and_by_show(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
+        _record_run(storage)
+
+        scheduled = _invoke_with_mocks(
+            cli_runner,
+            ["source", "schedule", "my_books", "6h", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        listed = _invoke_with_mocks(
+            cli_runner,
+            ["source", "list", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        shown = _invoke_with_mocks(
+            cli_runner,
+            ["source", "show", "my_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert scheduled.exit_code == 0
+        assert json.loads(scheduled.output)["sync_interval"] == "6h"
+        entry = next(
+            item for item in json.loads(listed.output) if item["id"] == "my_books"
+        )
+        assert entry["sync_interval"] == "6h"
+        assert entry["sync_interval_default"] == "daily"
+        assert "6h" in shown.output
+        assert "2026-03-01T12:00:30" in shown.output
+        assert "completed" in shown.output
+
+    def test_schedule_refuses_an_interval_outside_the_presets(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
+        storage.sources.set_schedule(1, "my_books", "6h")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "schedule", "my_books", "fortnightly"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code != 0
+        row = storage.sources.get(1, "my_books")
+        assert row is not None and row["sync_interval"] == "6h"
+
+    def test_schedule_when_not_migrated_fails_as_enable_does(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "schedule", "my_books", "daily"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        enabling = _invoke_with_mocks(
+            cli_runner,
+            ["source", "enable", "my_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code != 0
+        assert "not migrated to the database" in result.output
+        assert (result.exit_code, result.output) == (
+            enabling.exit_code,
+            enabling.output,
+        )
+        assert storage.sources.get(1, "my_books") is None
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceHistory:
+    def test_history_json_reports_runs_newest_first_in_the_api_key_set(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        _record_run(storage, minute=0)
+        _record_run(storage, minute=10, status="failed", errors=("429 from the API",))
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert [run["status"] for run in payload] == ["failed", "completed"]
+        assert payload[0]["errors"] == ["429 from the API"]
+        # Exact key match against SyncRunResponse, so a key added on one side
+        # without the other is caught immediately.
+        assert set(payload[0].keys()) == {
+            "source_id",
+            "started_at",
+            "finished_at",
+            "status",
+            "items_added",
+            "items_updated",
+            "items_unchanged",
+            "total_items",
+            "errors",
+        }
+
+    def test_history_reports_nothing_ran_as_empty_json_and_as_prose(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        as_json = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        as_table = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert json.loads(as_json.output) == []
+        assert "No sync runs recorded." in as_table.output
+
+    def test_history_without_a_source_id_spans_every_source_and_limit_trims_it(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        _record_run(storage, source_id="my_books", minute=0)
+        _record_run(storage, source_id="my_games", minute=10)
+
+        every = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        newest = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "--limit", "1"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert [run["source_id"] for run in json.loads(every.output)] == [
+            "my_games",
+            "my_books",
+        ]
+        assert "my_games" in newest.output
+        assert "my_books" not in newest.output
+        assert "2026-03-01T12:10:30" in newest.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

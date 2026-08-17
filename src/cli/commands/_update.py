@@ -185,7 +185,11 @@ def update(
                 if info.plugin_not_loaded is not None
                 else "enabled" if info.enabled else "disabled"
             )
-            click.echo(f"  {info.id:20s} plugin={info.plugin_display_name} [{status}]")
+            click.echo(
+                f"  {info.id:20s} plugin={info.plugin_display_name} [{status}] "
+                f"cadence={info.sync_interval} last={info.last_run_at or '—'} "
+                f"({info.last_run_status or '—'})"
+            )
         return
 
     # Check if auto-enrichment is enabled

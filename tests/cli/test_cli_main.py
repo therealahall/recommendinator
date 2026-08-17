@@ -216,6 +216,8 @@ class TestUpdateDbOnlySourceRegression:
         assert result.exit_code == 0, result.output
         assert "calibre-web" in result.output
         assert "enabled" in result.output
+        # The listing line carries the cadence too, as ``source list`` does.
+        assert "cadence=daily" in result.output
 
 
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
