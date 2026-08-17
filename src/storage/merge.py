@@ -40,14 +40,7 @@ __all__ = [
 
 
 def parse_json_list(raw: str | None) -> list[str]:
-    """Parse a JSON array string into a Python list of strings.
-
-    Args:
-        raw: JSON array string, or None.
-
-    Returns:
-        List of strings (empty if *raw* is None or unparseable).
-    """
+    """Parse a JSON array string; an absent or unparseable value reads as empty."""
     if not raw:
         return []
     try:
@@ -167,13 +160,6 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
     Status can only advance: unread → currently_consuming → completed.
     A re-sync with an earlier status does not revert, and neither does a
     duplicate-row merge.
-
-    Args:
-        existing_status: Current status in the database (may be None).
-        incoming_status: Status from the incoming sync or duplicate row.
-
-    Returns:
-        The resolved status string.
     """
     if existing_status is None:
         return incoming_status
@@ -192,29 +178,17 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
 def normalize_title_for_matching(title: str) -> str:
     """Normalize a title for duplicate detection.
 
-    Removes common variations to match items from different sources:
-    - Lowercases
-    - Removes trademark/copyright symbols (™, ®, ©)
-    - Removes articles (the, a, an)
-    - Removes edition/remaster suffixes
-    - Converts Roman numerals to Arabic (I->1, II->2, etc.)
-    - Removes punctuation and extra whitespace
-
-    Args:
-        title: Original title
-
-    Returns:
-        Normalized title for comparison
+    Strips the variations that stop the same work matching across sources:
+    case, trademark symbols, leading articles, edition and remaster suffixes,
+    Roman numerals, punctuation and repeated whitespace.
     """
     if not title:
         return ""
 
     normalized = title.lower().strip()
 
-    # Remove trademark/copyright symbols early
     normalized = re.sub(r"[™®©]", "", normalized)
 
-    # Remove common suffixes
     suffixes_to_remove = [
         r"\s*[:\-–]\s*remastered\s*$",
         r"\s*remastered\s*$",
@@ -239,17 +213,13 @@ def normalize_title_for_matching(title: str) -> str:
     for suffix in suffixes_to_remove:
         normalized = re.sub(suffix, "", normalized, flags=re.IGNORECASE)
 
-    # Remove leading articles
     normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
 
-    # Convert hyphens to spaces before removing punctuation
-    # This handles "Year-One" vs "Year One"
+    # Hyphens go first so "Year-One" matches "Year One" rather than "YearOne".
     normalized = re.sub(r"-", " ", normalized)
 
-    # Remove punctuation except spaces
     normalized = re.sub(r"[^\w\s]", "", normalized)
 
-    # Convert Roman numerals to Arabic (at word boundaries)
     # Order matters - check longer numerals first
     roman_map = [
         (r"\bviii\b", "8"),
@@ -266,7 +236,6 @@ def normalize_title_for_matching(title: str) -> str:
     for roman, arabic in roman_map:
         normalized = re.sub(roman, arabic, normalized)
 
-    # Collapse whitespace
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
     return normalized
@@ -296,11 +265,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     Note:
         Requires the connection to use ``row_factory = sqlite3.Row`` so
         that rows can be accessed by column name.
-
-    Args:
-        cursor: Database cursor (within an active transaction).
-        keep_id: Database ID of the row to keep.
-        delete_id: Database ID of the duplicate row to delete.
     """
     # Fetch both rows to determine whether the merge would produce any
     # actual data change.  We skip the UPDATE entirely when no delta exists
@@ -454,11 +418,6 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
 
     Note:
         Requires the connection to use ``row_factory = sqlite3.Row``.
-
-    Args:
-        cursor: Database cursor (within an active transaction).
-        keep_id: Database ID of the row to keep.
-        delete_id: Database ID of the duplicate row to delete.
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():
         cursor.execute(
@@ -474,20 +433,17 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
         if dup_detail is None:
             continue
         if keep_detail is None:
-            # Move the duplicate's detail row to the kept item
             cursor.execute(
                 f"UPDATE {table} SET content_item_id = ? WHERE content_item_id = ?",
                 (keep_id, delete_id),
             )
             continue
 
-        # Both have detail rows — merge using compile-time column list
         detail_updates: list[str] = []
         detail_params: list[Any] = []
 
         for col in columns:
             if col in MERGEABLE_DETAIL_COLUMNS:
-                # Genres/tags: additive merge
                 keep_list = parse_json_list(keep_detail[col])
                 dup_list = parse_json_list(dup_detail[col])
                 if dup_list:
@@ -495,7 +451,6 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
                     detail_updates.append(f"{col} = ?")
                     detail_params.append(json.dumps(merged))
             elif col in MONOTONIC_DETAIL_COLUMNS:
-                # Seasons/episodes: take the higher value
                 keep_val = keep_detail[col]
                 dup_val = dup_detail[col]
                 try:
@@ -507,11 +462,9 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
                 except (ValueError, TypeError):
                     pass  # Non-integer value — skip monotonic merge
             elif keep_detail[col] is None and dup_detail[col] is not None:
-                # Fill-only: use duplicate's value if kept is null
                 detail_updates.append(f"{col} = ?")
                 detail_params.append(dup_detail[col])
 
-        # Merge metadata JSON additively (existing keys preserved).
         merged_meta_json = _merge_detail_metadata(keep_detail, dup_detail)
         if merged_meta_json is not None:
             detail_updates.append("metadata = ?")

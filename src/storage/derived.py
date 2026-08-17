@@ -59,10 +59,6 @@ def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
     Read back from the database rather than taken from the item being saved:
     the creator column is fill-only, so what a sync hands over is not always
     what ends up stored.
-
-    Args:
-        cursor: Database cursor (within an active transaction).
-        db_id: Content item database ID.
     """
     cursor.execute(f"{_SOURCE_SELECT} WHERE ci.id = ?", (db_id,))
     row = cursor.fetchone()

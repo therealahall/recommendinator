@@ -146,11 +146,7 @@ def _password_columns(plaintext: str) -> tuple[str, str, str]:
 
 
 def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | None:
-    """Report *user_id*'s names and the state of its password.
-
-    Returns:
-        None when no ``users`` row carries *user_id*.
-    """
+    """Report *user_id*'s names and the state of its password, or None."""
     cursor = conn.cursor()
     cursor.execute(
         """SELECT username, display_name, password_hash, password_updated_at
@@ -171,11 +167,7 @@ def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | 
 
 
 def account_is_claimed(conn: sqlite3.Connection) -> bool:
-    """Report whether anyone has set a password on this instance.
-
-    Returns:
-        True once the account carries a password hash.
-    """
+    """Report whether anyone has set a password on this instance."""
     account = describe_account(conn, get_default_user_id())
     return account is not None and account["claimed"]
 
@@ -187,9 +179,6 @@ def claim_account(
     plaintext_password: str,
 ) -> UserDict:
     """Claim the instance: name the account and give it a password.
-
-    Returns:
-        The claimed account.
 
     Raises:
         AccountAlreadyClaimedError: The account already has a password.
@@ -347,11 +336,7 @@ def revoke_all_sessions(conn: sqlite3.Connection, user_id: int) -> None:
 
 
 def purge_expired_sessions(conn: sqlite3.Connection) -> int:
-    """Delete the lapsed sessions.
-
-    Returns:
-        Number of rows deleted.
-    """
+    """Delete the lapsed sessions, returning how many were deleted."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM sessions WHERE expires_at <= ?", (_utc_text(utc_now()),)
