@@ -3749,7 +3749,6 @@ _GUARDED_ENDPOINTS = [
         url="/api/sync/sources/my_books/schedule",
         body={"interval": "daily"},
     ),
-    _Endpoint("GET", "/api/sync/runs", ("storage",)),
     _Endpoint("GET", "/api/settings", ("config", "storage")),
     _Endpoint("PUT", "/api/settings", ("config", "storage"), body={"updates": {}}),
     _Endpoint(

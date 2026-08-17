@@ -1459,9 +1459,9 @@ def set_source_config_schedule(
     conn: sqlite3.Connection,
     user_id: int,
     source_id: str,
-    sync_interval: str | None,
+    sync_interval: str,
 ) -> bool:
-    """``None`` restores the plugin's default; ``False`` when unmigrated."""
+    """``False`` when the source is not migrated."""
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE source_configs SET sync_interval = ?, updated_at = CURRENT_TIMESTAMP "

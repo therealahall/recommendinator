@@ -2,9 +2,8 @@
 
 These endpoints back the data-source accordions in the web UI: schema
 introspection, current values (with secrets stripped), one-shot
-migration of a YAML entry into the database, incremental updates of
-non-sensitive fields, secrets, the enabled flag and the sync cadence, and the
-recorded run history behind each accordion's header.
+migration of a YAML entry into the database, and incremental updates of
+non-sensitive fields, secrets, the enabled flag and the sync cadence.
 """
 
 from __future__ import annotations
@@ -414,21 +413,14 @@ _RUN_START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
 
 def _record_run(
-    storage: StorageManager,
-    *,
-    source_id: str = "my_books",
-    status: SyncRunStatus = "completed",
-    minute: int = 0,
-    errors: tuple[str, ...] = (),
+    storage: StorageManager, *, status: SyncRunStatus = "completed"
 ) -> None:
-    started_at = _RUN_START + timedelta(minutes=minute)
     storage.sync_runs.record(
         1,
-        source_id,
-        started_at=started_at,
-        finished_at=started_at + timedelta(seconds=30),
+        "my_books",
+        started_at=_RUN_START,
+        finished_at=_RUN_START + timedelta(seconds=30),
         status=status,
-        errors=errors,
     )
 
 
@@ -497,30 +489,6 @@ class TestSourceListingReportsTheSchedule:
         assert entry["last_run_at"].startswith("2026-03-01T12:00:30")
         assert entry["last_run_status"] == "failed"
         assert entry["next_run_at"] is not None
-
-
-class TestSyncRunsEndpoint:
-    def test_reports_runs_newest_first_with_a_failure_error(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        _record_run(storage, minute=0)
-        _record_run(storage, minute=10, status="failed", errors=("429 from the API",))
-
-        body = client.get("/api/sync/runs").json()
-
-        assert [run["status"] for run in body] == ["failed", "completed"]
-        assert body[0]["source_id"] == "my_books"
-        assert body[0]["errors"] == ["429 from the API"]
-
-    def test_source_id_keeps_another_sources_runs_out(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        _record_run(storage, source_id="my_books", minute=0)
-        _record_run(storage, source_id="my_games", minute=10)
-
-        body = client.get("/api/sync/runs", params={"source_id": "my_books"}).json()
-
-        assert [run["source_id"] for run in body] == ["my_books"]
 
 
 class TestPluginsEndpoint:

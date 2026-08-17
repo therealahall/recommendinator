@@ -412,8 +412,6 @@ const unshownErrorCount = computed<number>(() =>
 
 const savingSchedule = ref(false)
 const scheduleError = ref('')
-const runsLoading = ref(false)
-const runsError = ref('')
 
 const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
 // The listing carries the resolved key, and only the schema carries its label —
@@ -424,7 +422,6 @@ const intervalLabel = computed(
       (option) => option.key === props.source.sync_interval,
     )?.label ?? props.source.sync_interval,
 )
-const runs = computed(() => data.sourceRuns[props.source.id] ?? [])
 
 async function onScheduleChange(interval: string): Promise<void> {
   if (savingSchedule.value) return
@@ -436,19 +433,6 @@ async function onScheduleChange(interval: string): Promise<void> {
     scheduleError.value = err instanceof Error ? err.message : 'Unknown error'
   } finally {
     savingSchedule.value = false
-  }
-}
-
-async function onOpenRunHistory(): Promise<void> {
-  if (runsLoading.value) return
-  runsLoading.value = true
-  runsError.value = ''
-  try {
-    await data.loadSourceRuns(props.source.id)
-  } catch (err) {
-    runsError.value = err instanceof Error ? err.message : 'Unknown error'
-  } finally {
-    runsLoading.value = false
   }
 }
 
@@ -535,15 +519,10 @@ const errorsTitleId = computed<string>(() =>
     <template #notice>
       <SourceSyncSchedule
         :source-id="source.id"
-        :source-name="source.display_name"
         :interval-label="intervalLabel"
         :last-run-at="source.last_run_at"
         :last-run-status="source.last_run_status"
         :next-run-at="source.next_run_at"
-        :runs="runs"
-        :loading="runsLoading"
-        :error="runsError"
-        @open="onOpenRunHistory"
       />
       <!-- Beside the errors rather than in the header: the header slot is the
            trigger button's content, so this would run into the source name in

@@ -80,7 +80,6 @@ from src.sources.service import (
     SourceConfigError,
     build_config_view,
     build_plugins_view,
-    build_runs_view,
     build_schema_view,
     clear_source_secret_value,
     create_source,
@@ -530,20 +529,6 @@ class SyncStatusResponse(BaseModel):
 
     status: str
     jobs: list[SyncJobResponse] = []
-
-
-class SyncRunResponse(BaseModel):
-    """One recorded sync run, as the history endpoint reports it."""
-
-    source_id: str
-    started_at: str
-    finished_at: str | None
-    status: str
-    items_added: int
-    items_updated: int
-    items_unchanged: int
-    total_items: int
-    errors: list[str]
 
 
 class UserPreferenceUpdateRequest(BaseModel):
@@ -1654,22 +1639,6 @@ def get_sync_sources(
         )
         for source in sources
     ]
-
-
-@router.get("/sync/runs", response_model=list[SyncRunResponse])
-def get_sync_runs(
-    storage: RequiredStorage,
-    source_id: str | None = Query(None, description="Only this source's runs"),
-    limit: int = Query(20, ge=1, le=100, description="Maximum runs to return"),
-    user_id: int = Query(1, ge=1, description="User ID"),
-) -> list[SyncRunResponse]:
-    """Recorded sync runs, newest first, for one source or every source."""
-    runs = (
-        storage.sync_runs.list_for_source(user_id, source_id, limit)
-        if source_id is not None
-        else storage.sync_runs.list_recent(user_id, limit)
-    )
-    return [SyncRunResponse(**view) for view in build_runs_view(runs)]
 
 
 @router.get("/plugins", response_model=PluginListResponse)

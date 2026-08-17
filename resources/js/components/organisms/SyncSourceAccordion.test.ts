@@ -276,21 +276,7 @@ describe('SyncSourceAccordion', () => {
     expect(status.attributes('role')).toBe('alert')
   })
 
-  describe('schedule and run history', () => {
-    function failedRun(message: string) {
-      return {
-        source_id: 'steam',
-        started_at: TWO_HOURS_AGO,
-        finished_at: TWO_HOURS_AGO,
-        status: 'failed',
-        items_added: 0,
-        items_updated: 0,
-        items_unchanged: 0,
-        total_items: 0,
-        errors: [message],
-      }
-    }
-
+  describe('schedule', () => {
     it('states the last run, its outcome and the next one without expanding', () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
@@ -306,25 +292,14 @@ describe('SyncSourceAccordion', () => {
       ).toBe('false')
     })
 
-    it('says a source has never synced rather than rendering the line blank', async () => {
+    it('says a source has never synced rather than rendering the line blank', () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: neverSyncedSource, syncing: false },
       })
-      const store = useDataStore()
-      vi.spyOn(store, 'loadSourceRuns').mockResolvedValue([])
 
       const line = wrapper.get('[data-testid="sync-schedule-steam"]')
       expect(line.text()).toContain('Never synced')
-      // Nothing has run, so there is no due time to quote.
       expect(line.text()).not.toContain('Next run')
-
-      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
-      await flushPromises()
-
-      // An empty history rendered nothing at all, which reads as a failed fetch.
-      expect(
-        wrapper.get('[data-testid="run-history-status-steam"]').text(),
-      ).toContain('No runs recorded yet')
     })
 
     it('offers the schema cadence options and forwards a change', async () => {
@@ -372,51 +347,6 @@ describe('SyncSourceAccordion', () => {
       expect(status.attributes('aria-live')).toBe('polite')
     })
 
-    it('fetches the run history when the disclosure opens, not on page load', async () => {
-      // Spied before the mount, or the page-load half below asserts nothing.
-      const store = useDataStore()
-      const loadRuns = vi
-        .spyOn(store, 'loadSourceRuns')
-        .mockImplementation(async (id: string) => {
-          store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
-          return store.sourceRuns[id]
-        })
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-      })
-      await flushPromises()
-
-      expect(loadRuns).not.toHaveBeenCalled()
-
-      const toggle = wrapper.get('[data-testid="run-history-toggle-steam"]')
-      expect(toggle.attributes('aria-expanded')).toBe('false')
-      await toggle.trigger('click')
-      await flushPromises()
-
-      expect(loadRuns).toHaveBeenCalledWith('steam')
-      expect(toggle.attributes('aria-expanded')).toBe('true')
-      // As reported: a failed sync showed a count and no way to see the cause.
-      const history = wrapper.get('[data-testid="run-history-steam"]')
-      expect(history.text()).toContain('Steam API returned 401 Unauthorized')
-      expect(history.text()).toContain('failed')
-    })
-
-    it('reports a run-history read that failed instead of calling it no runs', async () => {
-      const wrapper = mount(SyncSourceAccordion, {
-        props: { source: baseSource, syncing: false },
-      })
-      const store = useDataStore()
-      vi.spyOn(store, 'loadSourceRuns').mockRejectedValue(
-        new Error('Service Unavailable'),
-      )
-
-      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
-      await flushPromises()
-
-      const status = wrapper.get('[data-testid="run-history-status-steam"]')
-      expect(status.text()).toContain('Service Unavailable')
-      expect(status.text()).not.toContain('No runs recorded yet')
-    })
   })
 
   // Each OAuth source below is named for its purpose, not for its plugin: the

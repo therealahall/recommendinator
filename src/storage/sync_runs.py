@@ -90,28 +90,6 @@ class SyncRunStore:
             conn.commit()
             return run_id
 
-    def list_for_source(
-        self, user_id: int, source_id: str, limit: int
-    ) -> list[SyncRunDict]:
-        with self._sqlite_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                f"SELECT {_COLUMNS} FROM sync_runs "
-                f"WHERE user_id = ? AND source_id = ? {_NEWEST_FIRST} LIMIT ?",
-                (user_id, source_id, limit),
-            )
-            return [_to_dict(row) for row in cursor.fetchall()]
-
-    def list_recent(self, user_id: int, limit: int) -> list[SyncRunDict]:
-        with self._sqlite_db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                f"SELECT {_COLUMNS} FROM sync_runs "
-                f"WHERE user_id = ? {_NEWEST_FIRST} LIMIT ?",
-                (user_id, limit),
-            )
-            return [_to_dict(row) for row in cursor.fetchall()]
-
     def latest_per_source(self, user_id: int) -> dict[str, SyncRunDict]:
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()

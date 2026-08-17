@@ -668,27 +668,6 @@ def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
     ]
 
 
-def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
-    """Return the run-history shape, matching ``SyncRunResponse``.
-
-    The row id is dropped: nothing addresses a run on its own.
-    """
-    return [
-        {
-            "source_id": run["source_id"],
-            "started_at": run["started_at"],
-            "finished_at": run["finished_at"],
-            "status": run["status"],
-            "items_added": run["items_added"],
-            "items_updated": run["items_updated"],
-            "items_unchanged": run["items_unchanged"],
-            "total_items": run["total_items"],
-            "errors": run["errors"],
-        }
-        for run in runs
-    ]
-
-
 def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
     """Return the schema response shape for *plugin*.
 
