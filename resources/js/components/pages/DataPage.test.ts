@@ -159,7 +159,9 @@ describe('DataPage rows during a Sync All', () => {
 
     const button = wrapper.get('.sync-all-card button')
     expect(button.attributes('disabled')).toBeDefined()
-    expect(button.text()).toBe('Sync All Sources')
+    expect(button.attributes('aria-label')).toBe(
+      'Sync all sources — another sync is in progress',
+    )
     wrapper.unmount()
   })
 
