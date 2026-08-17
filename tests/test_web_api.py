@@ -41,7 +41,7 @@ from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import default_of
 from src.settings.service import build_settings_view
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
-from src.storage.manager import UNSET, StorageManager
+from src.storage.manager import UNSET, SavedItem, SaveOutcome, StorageManager
 from src.storage.schema import update_user_settings
 from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
@@ -74,6 +74,7 @@ from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
     booted_web_app,
+    make_item,
     spec_sub_stores,
 )
 
@@ -2753,6 +2754,41 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
         assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
+
+
+class TestUpdateEndpointRecordsTheRun:
+    def test_a_web_sync_records_the_run_the_cli_would_have(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        storage = mock_components["storage"]
+        recorded = threading.Event()
+        storage.sync_runs.record.side_effect = lambda *_args, **_kwargs: recorded.set()
+        storage.save_content_item_outcome.return_value = SavedItem(
+            db_id=1, outcome=SaveOutcome.ADDED
+        )
+
+        with (
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.fetch",
+                return_value=iter([make_item("Dune", item_id="b1")]),
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "goodreads_csv"})
+            assert recorded.wait(timeout=5.0), "background sync did not record a run"
+
+        assert response.status_code == 200, response.text
+        args, kwargs = storage.sync_runs.record.call_args
+        assert args == (1, "goodreads_csv")
+        assert kwargs["status"] == "completed"
+        assert (kwargs["items_added"], kwargs["total_items"], kwargs["errors"]) == (
+            1,
+            1,
+            [],
+        )
 
 
 class TestConfigReload:

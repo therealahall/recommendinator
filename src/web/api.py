@@ -54,6 +54,7 @@ from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
     resolve_max_workers,
+    sync_run_recorder,
 )
 from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
@@ -1516,6 +1517,7 @@ def update_data(
     )
 
     source_pairs = [(entry.plugin, entry.config) for entry in resolved]
+    record_run = sync_run_recorder(storage)
 
     # Create the sync function that will run in background
     def run_sync(job: SyncJob) -> int:
@@ -1543,6 +1545,7 @@ def update_data(
             )
             for error_message in result.errors:
                 sync_manager.add_error(source_label, result.source_name, error_message)
+            record_run(result)
 
         max_workers = resolve_max_workers(config, override=request.max_workers)
 

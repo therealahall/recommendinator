@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from src.ingestion.sync import sync_run_failed
 from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -255,11 +256,7 @@ class SyncManager:
             with self._lock:
                 job.completed_at = datetime.now()
                 job.items_processed = count
-                # A sync that produced zero items but logged errors is a
-                # failure, not a success — plugins like Epic Games catch
-                # their own exceptions and report them via add_error, and
-                # the UI banner branches on the status field.
-                if count == 0 and job.errors:
+                if sync_run_failed(count, job.errors):
                     job.status = SyncStatus.FAILED
                     job.error_message = job.errors[0].message
                 else:

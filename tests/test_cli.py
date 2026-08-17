@@ -18,6 +18,7 @@ from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import (
     back_mock_preference_store,
     back_mock_settings_store,
+    make_item,
     spec_sub_stores,
 )
 
@@ -591,6 +592,43 @@ class TestUpdateWorkersFlag:
 
         assert result.exit_code == 0, result.output
         assert captured["max_workers"] == 4
+
+
+def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    games = [
+        make_item(f"Game {index}", ContentType.VIDEO_GAME, item_id=f"g{index}")
+        for index in range(3)
+    ]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code == 0, result.output
+    (run,) = StorageManager(sqlite_path=db_path).sync_runs.list_for_source(
+        1, "steam", limit=10
+    )
+    assert run["status"] == "completed"
+    assert (run["items_added"], run["total_items"], run["errors"]) == (3, 3, [])
 
 
 def test_preferences_get(mock_components):
