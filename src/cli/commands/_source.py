@@ -19,10 +19,12 @@ from src.cli._shared import (
     require_storage,
 )
 from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.schedule import SYNC_INTERVAL_KEYS
 from src.sources.service import (
     SourceConfigError,
     build_config_view,
     build_plugins_view,
+    build_runs_view,
     build_schema_view,
     build_sources_view,
     clear_source_secret_value,
@@ -33,6 +35,7 @@ from src.sources.service import (
     migrate_source,
     resolve_source_plugin,
     set_source_enabled_state,
+    set_source_schedule,
     set_source_secret_value,
     unusable_detail,
     update_source_config_values,
@@ -73,6 +76,19 @@ def _config_view(
     )
 
 
+def _last_run_cells(ctx: click.Context, source_id: str) -> tuple[str, str]:
+    """When *source_id* last ran and how — what its config view does not carry."""
+    listing = get_available_sync_sources(
+        ctx.obj.get("config") or {},
+        storage=ctx.obj.get("storage"),
+        user_id=_SOURCE_DEFAULT_USER_ID,
+    )
+    entry = next((info for info in listing if info.id == source_id), None)
+    if entry is None:
+        return "—", "—"
+    return entry.last_run_at or "—", entry.last_run_status or "—"
+
+
 @click.group()
 def source() -> None:
     """Manage data source configuration."""
@@ -107,13 +123,24 @@ def source_list(ctx: click.Context, output_format: str) -> None:
     # load. The JSON key stays unconditional — a machine reader needs the
     # shape to hold whether or not today's run has anything to put in it.
     any_unusable = any(entry.plugin_not_loaded is not None for entry in sources)
-    headers = ["ID", "Display Name", "Plugin", "Enabled"]
+    headers = [
+        "ID",
+        "Display Name",
+        "Plugin",
+        "Enabled",
+        "Cadence",
+        "Last Run",
+        "Outcome",
+    ]
     rows = [
         [
             entry.id,
             entry.display_name,
             entry.plugin_display_name,
             "yes" if entry.enabled else "no",
+            entry.sync_interval,
+            entry.last_run_at or "—",
+            entry.last_run_status or "—",
         ]
         for entry in sources
     ]
@@ -154,11 +181,15 @@ def source_show(ctx: click.Context, source_id: str, output_format: str) -> None:
         click.echo(json.dumps(view, indent=2))
         return
 
+    last_run_at, last_run_status = _last_run_cells(ctx, source_id)
     rows: list[list[str]] = [
         ["plugin", view["plugin"]],
         ["enabled", str(view["enabled"])],
         ["migrated", str(view["migrated"])],
         ["migrated_at", str(view["migrated_at"] or "—")],
+        ["sync_interval", view["sync_interval"]],
+        ["last_run_at", last_run_at],
+        ["last_run_status", last_run_status],
     ]
     for name, value in view["field_values"].items():
         rows.append([name, json.dumps(value)])
@@ -292,6 +323,107 @@ def source_disable(ctx: click.Context, source_id: str, output_format: str) -> No
         output_format,
         lambda: _config_view(ctx, source_id, plugin),
         f"Disabled source '{source_id}'.",
+    )
+
+
+@source.command("schedule")
+@click.argument("source_id")
+@click.argument("interval", type=click.Choice(SYNC_INTERVAL_KEYS))
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_schedule(
+    ctx: click.Context, source_id: str, interval: str, output_format: str
+) -> None:
+    """Set a migrated source's cadence (mirrors PUT /api/sync/sources/<id>/schedule).
+
+    Read the cadence back from ``source show`` or ``source list``.
+    """
+    plugin = _resolve_cli_plugin(ctx, source_id)
+    storage = require_storage(ctx)
+    try:
+        set_source_schedule(
+            source_id, storage, interval, user_id=_SOURCE_DEFAULT_USER_ID
+        )
+    except SourceConfigError as error:
+        abort_with(error.message)
+    emit_view(
+        output_format,
+        lambda: _config_view(ctx, source_id, plugin),
+        f"Source '{source_id}' now syncs on the '{interval}' cadence.",
+    )
+
+
+@source.command("history")
+@click.argument("source_id", required=False)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, 100),
+    default=20,
+    help="Maximum runs to return",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def source_history(
+    ctx: click.Context, source_id: str | None, limit: int, output_format: str
+) -> None:
+    """Recorded sync runs, newest first (mirrors GET /api/sync/runs).
+
+    Spans every source unless SOURCE_ID names one.
+    """
+    storage = require_storage(ctx)
+    runs = (
+        storage.sync_runs.list_for_source(_SOURCE_DEFAULT_USER_ID, source_id, limit)
+        if source_id is not None
+        else storage.sync_runs.list_recent(_SOURCE_DEFAULT_USER_ID, limit)
+    )
+    view = build_runs_view(runs)
+
+    if output_format == "json":
+        click.echo(json.dumps(view, indent=2))
+        return
+
+    if not view:
+        click.echo("No sync runs recorded.")
+        return
+
+    rows = [
+        [
+            run["source_id"],
+            run["started_at"],
+            run["finished_at"] or "—",
+            run["status"],
+            f"{run['items_added']}/{run['items_updated']}/{run['items_unchanged']}",
+            str(run["total_items"]),
+            "; ".join(run["errors"]),
+        ]
+        for run in view
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=[
+                "Source",
+                "Started",
+                "Finished",
+                "Status",
+                "Added/Updated/Unchanged",
+                "Total",
+                "Errors",
+            ],
+            tablefmt="grid",
+        )
     )
 
 
