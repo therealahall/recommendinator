@@ -50,12 +50,6 @@ def secret_ref(key: str) -> tuple[str, str]:
     e.g. ``"enrichment.providers.tmdb.api_key"`` →
     ``("settings:enrichment.providers.tmdb", "api_key")``.
 
-    Args:
-        key: Dotted registry leaf key (must contain at least one dot).
-
-    Returns:
-        The ``(source_id, credential_key)`` credentials-table coordinates.
-
     Raises:
         ValueError: If *key* is not a dotted key.
     """
@@ -127,12 +121,6 @@ def migrate_config_secrets(
 
     Safe to call on every startup and on config hot-reload. **Mutates *config*
     in place.**
-
-    Args:
-        config: Full application config dict (from ``load_config``). Mutated in
-            place — sensitive leaves are removed after migration.
-        storage: StorageManager instance (provides encrypted DB access).
-        user_id: User ID to associate secrets with (default 1).
     """
     for entry in all_entries():
         if not entry.sensitive:
@@ -188,7 +176,6 @@ def migrate_config_secrets(
                 )
             continue
 
-        # No DB row at all — migrate from config when a value is present.
         if has_config_value:
             storage.credentials.save(
                 user_id, source_id, credential_key, str(config_value)

@@ -16,12 +16,8 @@ _SECURE_PERMISSIONS = stat.S_IRUSR | stat.S_IWUSR  # 0o600
 class CredentialEncryptor:
     """Encrypt and decrypt credential values using Fernet symmetric encryption.
 
-    The encryption key is stored in a file with restricted permissions (0600).
-    On first use, a new key is auto-generated if the key file does not exist.
-    On subsequent uses, the key file's permissions are verified before loading.
-
-    Args:
-        key_path: Path to the Fernet key file (e.g. ``data/.credential_key``).
+    The key file is generated on first use and must stay owner-only (0600); a
+    wider mode is refused rather than repaired.
     """
 
     def __init__(self, key_path: Path) -> None:
@@ -39,7 +35,8 @@ class CredentialEncryptor:
         else:
             key = Fernet.generate_key()
             self._key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            # Write with restrictive permissions: owner read/write only
+            # os.open with the mode rather than write-then-chmod: the key must
+            # never exist on disk at the umask's permissions, not even briefly.
             fd = os.open(
                 str(self._key_path),
                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
@@ -69,25 +66,11 @@ class CredentialEncryptor:
             )
 
     def encrypt(self, plaintext: str) -> str:
-        """Encrypt a plaintext string, returning a base64-encoded ciphertext.
-
-        Args:
-            plaintext: The value to encrypt.
-
-        Returns:
-            Fernet-encrypted, base64-encoded string.
-        """
+        """Encrypt a plaintext string, returning a base64-encoded ciphertext."""
         fernet = self._ensure_key()
         return fernet.encrypt(plaintext.encode()).decode()
 
     def decrypt(self, ciphertext: str) -> str:
-        """Decrypt a Fernet-encrypted, base64-encoded ciphertext.
-
-        Args:
-            ciphertext: The encrypted value.
-
-        Returns:
-            Decrypted plaintext string.
-        """
+        """Decrypt a Fernet-encrypted, base64-encoded ciphertext."""
         fernet = self._ensure_key()
         return fernet.decrypt(ciphertext.encode()).decode()
