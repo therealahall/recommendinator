@@ -467,16 +467,25 @@ class TestScheduleEndpoint:
 
 
 class TestSourceListingReportsTheSchedule:
-    def test_an_unscheduled_source_reports_the_plugin_default_and_is_due_now(
+    def test_a_yaml_only_source_is_off_until_it_is_migrated(
         self, client: TestClient
     ) -> None:
         entry = _listing_entry(client, "my_books")
 
-        assert entry["sync_interval"] == "daily"
+        assert entry["sync_interval"] == "off"
         assert entry["sync_interval_default"] == "daily"
         assert entry["last_run_at"] is None
+        assert entry["next_run_at"] is None
+
+    def test_a_migrated_source_takes_the_plugin_default_and_is_due_now(
+        self, client: TestClient
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+
+        entry = _listing_entry(client, "my_books")
+
+        assert entry["sync_interval"] == "daily"
         assert entry["last_run_status"] is None
-        assert entry["next_run_at"] is not None
         assert datetime.fromisoformat(entry["next_run_at"]) <= datetime.now(UTC)
 
     def test_a_source_switched_off_reports_no_next_run(
@@ -498,6 +507,19 @@ class TestSourceListingReportsTheSchedule:
         assert entry["last_run_at"].startswith("2026-03-01T12:00:30")
         assert entry["last_run_status"] == "failed"
         assert entry["next_run_at"] is not None
+
+    def test_removing_a_source_leaves_a_namesake_no_history(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        _record_run(storage, status="failed")
+
+        client.delete("/api/sync/sources/my_books")
+        client.post("/api/sync/sources/my_books/migrate")
+
+        entry = _listing_entry(client, "my_books")
+        assert entry["last_run_at"] is None
+        assert entry["last_run_status"] is None
 
 
 class TestPluginsEndpoint:

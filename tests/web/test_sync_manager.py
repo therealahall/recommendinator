@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi import FastAPI
 
 from src.ingestion.sync import ALL_SOURCES_LABEL
 from src.storage.manager import StorageManager
+from src.storage.schema import SyncRunStatus
 from src.utils.dates import utc_now
 from src.web.app import lifespan
 from src.web.scheduler import SyncScheduler, dispatch_due_syncs
@@ -712,20 +714,25 @@ class TestSyncManagerLogInjectionRegression:
 SCHEDULER_LOGGER = "src.web.scheduler"
 STEAM_LABEL = "Steam"
 
+# No source_configs row, so neither interface can switch its cadence off.
+_YAML_ONLY_STEAM = {"inputs": {"steam": {"plugin": "steam", "enabled": True}}}
+
 
 def _steam_source(storage: StorageManager, interval: str) -> None:
     storage.sources.upsert(1, "steam", "steam", {"steam_id": "7656119"}, enabled=True)
     storage.sources.set_schedule(1, "steam", interval)
 
 
-def _completed_run(storage: StorageManager, ago: timedelta) -> int:
+def _recorded_run(
+    storage: StorageManager, ago: timedelta, status: SyncRunStatus = "completed"
+) -> int:
     finished_at = utc_now() - ago
     return storage.sync_runs.record(
         1,
         "steam",
         started_at=finished_at - timedelta(seconds=10),
         finished_at=finished_at,
-        status="completed",
+        status=status,
     )
 
 
@@ -744,15 +751,19 @@ class TestScheduledSyncDispatch:
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     @staticmethod
-    def _tick(storage: StorageManager, manager: MagicMock) -> None:
+    def _tick(
+        storage: StorageManager,
+        manager: MagicMock,
+        config: dict[str, Any] | None = None,
+    ) -> None:
         with patch("src.web.scheduler.get_sync_manager", return_value=manager):
-            dispatch_due_syncs(storage, {})
+            dispatch_due_syncs(storage, config or {})
 
     def test_an_hourly_source_last_run_two_hours_ago_is_dispatched(
         self, storage: StorageManager
     ) -> None:
         _steam_source(storage, "hourly")
-        _completed_run(storage, timedelta(hours=2))
+        _recorded_run(storage, timedelta(hours=2))
         manager = _accepting_manager()
 
         self._tick(storage, manager)
@@ -771,10 +782,30 @@ class TestScheduledSyncDispatch:
         self, storage: StorageManager
     ) -> None:
         _steam_source(storage, "hourly")
-        _completed_run(storage, timedelta(seconds=50))
+        _recorded_run(storage, timedelta(seconds=50))
         manager = _accepting_manager()
 
         self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+    def test_a_failed_run_backs_an_hourly_source_off_past_the_hour(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _recorded_run(storage, timedelta(minutes=61), "failed")
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+    def test_a_source_with_no_database_row_is_never_dispatched(
+        self, storage: StorageManager
+    ) -> None:
+        manager = _accepting_manager()
+
+        self._tick(storage, manager, _YAML_ONLY_STEAM)
 
         manager.start_sync.assert_not_called()
 
@@ -782,7 +813,7 @@ class TestScheduledSyncDispatch:
         self, storage: StorageManager
     ) -> None:
         _steam_source(storage, "hourly")
-        run_id = _completed_run(storage, timedelta(hours=2))
+        run_id = _recorded_run(storage, timedelta(hours=2))
         manager = _accepting_manager()
         manager.is_running.return_value = True
 
@@ -812,7 +843,7 @@ class TestScheduledSyncDispatch:
         manager.start_sync.assert_not_called()
 
         # The umbrella's own Steam run lands while that tick is declining.
-        run_id = _completed_run(storage, timedelta(seconds=50))
+        run_id = _recorded_run(storage, timedelta(seconds=50))
         manager.is_running.return_value = False
         self._tick(storage, manager)
 

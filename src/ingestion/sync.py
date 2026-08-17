@@ -47,7 +47,7 @@ class SyncResult:
     total_items: int = 0
     errors: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=utc_now)
-    finished_at: datetime | None = None
+    finished_at: datetime = field(default_factory=utc_now)
 
 
 # Called with each source's result as that source finishes, rather than once

@@ -6,9 +6,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from src.ingestion.schedule import is_due, resolve_interval
+from src.ingestion.schedule import is_due
 from src.ingestion.sync import ALL_SOURCES_LABEL
-from src.sources.service import resolve_inputs
+from src.sources.service import resolve_inputs, resolve_source_interval
 from src.utils.dates import parse_iso_timestamp, utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
 from src.web.state import get_config, get_storage
@@ -28,8 +28,7 @@ def dispatch_due_syncs(
 ) -> None:
     sync_manager = get_sync_manager()
     # ``start_sync``'s per-label refusal cannot see a source syncing under the
-    # umbrella label, so that half of the overlap check is asked here. A skip
-    # records nothing: it attempted nothing, so it is not an outcome.
+    # umbrella label, so that half of the overlap check is asked here.
     if sync_manager.is_running(ALL_SOURCES_LABEL):
         logger.debug("Skipping scheduler tick: a run over every source is in flight")
         return
@@ -39,10 +38,7 @@ def dispatch_due_syncs(
     now = utc_now()
 
     for entry in resolve_inputs(config, storage=storage, user_id=user_id):
-        row = rows.get(entry.source_id)
-        interval = resolve_interval(
-            row["sync_interval"] if row is not None else None, entry.plugin
-        )
+        interval = resolve_source_interval(rows.get(entry.source_id), entry.plugin)
         latest_run = latest_runs.get(entry.source_id)
         failures = (
             storage.sync_runs.consecutive_failures(user_id, entry.source_id)
@@ -63,12 +59,12 @@ def dispatch_due_syncs(
             label, dispatch.run, on_complete=dispatch.on_complete
         )
         # No config validation before dispatch, unlike the single-source POST:
-        # nobody is here to read a refusal, while the failed run a broken
-        # source records backs it off and shows in its history.
+        # nobody is here to read a refusal, and the failed run backs it off.
         if started:
             logger.info("Scheduled sync started for %s", sanitize_for_log(label))
-        else:
-            logger.info("Scheduled sync declined: %s", sanitize_for_log(message))
+            # One start a tick, so the rest stagger over the minutes after it.
+            break
+        logger.info("Scheduled sync declined: %s", sanitize_for_log(message))
 
 
 class SyncScheduler:
