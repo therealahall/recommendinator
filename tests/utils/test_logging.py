@@ -216,7 +216,7 @@ class TestConfigureLoggingContainment:
         """
         monkeypatch.chdir(tmp_path)
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.set_setting("logging.file", "logs/../../evil.log")
+        storage.settings.set("logging.file", "logs/../../evil.log")
 
         config: dict[str, Any] = {"logging": {"level": "INFO", "file": "logs/app.log"}}
         migrate_config_settings(config, storage)

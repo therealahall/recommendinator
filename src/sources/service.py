@@ -208,9 +208,7 @@ def _configured_source(
     user_id: int,
 ) -> ConfiguredSource | None:
     """``_authoritative_source`` for one id, reading the DB row it needs."""
-    db_row = (
-        storage.get_source_config(user_id, source_id) if storage is not None else None
-    )
+    db_row = storage.sources.get(user_id, source_id) if storage is not None else None
     return _authoritative_source(
         source_id, db_row, (config or {}).get("inputs", {}).get(source_id)
     )
@@ -253,7 +251,7 @@ def resolve_inputs(
 
     db_configs: dict[str, SourceConfigDict] = {}
     if storage is not None:
-        for db_row in storage.list_source_configs(user_id):
+        for db_row in storage.sources.list(user_id):
             db_configs[db_row["source_id"]] = db_row
 
     source_ids = set(inputs_config.keys()) | set(db_configs.keys())
@@ -296,7 +294,7 @@ def configured_source_plugins(
             if isinstance(entry, dict) and entry.get("plugin"):
                 sources[str(source_id)] = str(entry["plugin"])
     # A DB row wins over YAML for the same id, as ``resolve_inputs`` has it.
-    for row in storage.list_source_configs(user_id):
+    for row in storage.sources.list(user_id):
         sources[row["source_id"]] = row["plugin"]
     return sources
 
@@ -373,7 +371,7 @@ def get_available_sync_sources(
 
     db_configs: dict[str, SourceConfigDict] = {}
     if storage is not None:
-        for db_row in storage.list_source_configs(user_id):
+        for db_row in storage.sources.list(user_id):
             db_configs[db_row["source_id"]] = db_row
 
     sources: list[SyncSourceInfo] = []
@@ -417,9 +415,7 @@ def source_plugin_not_loaded(
     user_id: int = 1,
 ) -> PluginNotLoaded | None:
     """The missing plugin that makes *source_id* unusable, if that is why."""
-    db_row = (
-        storage.get_source_config(user_id, source_id) if storage is not None else None
-    )
+    db_row = storage.sources.get(user_id, source_id) if storage is not None else None
     yaml_entry = (config or {}).get("inputs", {}).get(source_id)
     return _plugin_not_loaded(_declared_plugin_name(db_row, yaml_entry))
 
@@ -665,9 +661,7 @@ def build_config_view(
     sensitive_names = {f.name for f in schema if f.sensitive}
     non_sensitive_names = {f.name for f in schema if not f.sensitive}
 
-    db_row = (
-        storage.get_source_config(user_id, source_id) if storage is not None else None
-    )
+    db_row = storage.sources.get(user_id, source_id) if storage is not None else None
     yaml_entry = _yaml_entry_for(source_id, config)
 
     migrated = db_row is not None
@@ -744,7 +738,7 @@ def migrate_source(
     sensitive_names = [f.name for f in schema if f.sensitive]
     non_sensitive_names = [f.name for f in schema if not f.sensitive]
 
-    existing_row = storage.get_source_config(user_id, source_id)
+    existing_row = storage.sources.get(user_id, source_id)
     if existing_row is not None:
         return {
             "source_id": source_id,
@@ -770,7 +764,7 @@ def migrate_source(
         if is_nonempty_secret_value(value):
             storage.credentials.save(user_id, source_id, name, value.strip())
 
-    storage.upsert_source_config(
+    storage.sources.upsert(
         user_id,
         source_id,
         plugin.name,
@@ -778,7 +772,7 @@ def migrate_source(
         enabled=yaml_enabled,
     )
 
-    row = storage.get_source_config(user_id, source_id)
+    row = storage.sources.get(user_id, source_id)
     if row is None:  # extremely unlikely (concurrent delete), but never assume
         raise SourceConfigError(
             "not_migrated",
@@ -1030,7 +1024,7 @@ def update_source_config_values(
     Raises ``SourceConfigError`` — ``not_migrated``, ``invalid_field``,
     ``invalid_values``, ``sensitive_in_config``, ``credential_move``.
     """
-    db_row = storage.get_source_config(user_id, source_id)
+    db_row = storage.sources.get(user_id, source_id)
     if db_row is None:
         raise SourceConfigError(
             "not_migrated",
@@ -1056,7 +1050,7 @@ def update_source_config_values(
         source_id, schema, storage, db_row["config"], values, user_id
     )
 
-    storage.upsert_source_config(
+    storage.sources.upsert(
         user_id, source_id, plugin.name, new_config, enabled=db_row["enabled"]
     )
 
@@ -1117,7 +1111,7 @@ def set_source_enabled_state(
 
     Raises ``SourceConfigError("not_migrated", …)`` if no DB row exists.
     """
-    updated = storage.set_source_config_enabled(user_id, source_id, enabled)
+    updated = storage.sources.set_enabled(user_id, source_id, enabled)
     if not updated:
         raise SourceConfigError(
             "not_migrated",
@@ -1228,7 +1222,7 @@ def create_source(
     if not is_valid_source_id(source_id):
         raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")
 
-    if storage.get_source_config(user_id, source_id) is not None:
+    if storage.sources.get(user_id, source_id) is not None:
         raise SourceConfigError("conflict", f"Source '{source_id}' already exists")
 
     if config is not None:
@@ -1266,7 +1260,7 @@ def create_source(
     # A new source must not inherit a secret an older one left under this id:
     # that secret would go to whatever host these values name.
     storage.credentials.delete_for_source(user_id, source_id)
-    storage.upsert_source_config(
+    storage.sources.upsert(
         user_id, source_id, plugin.name, dict(values), enabled=enabled
     )
     return build_config_view(source_id, plugin, config, storage, user_id=user_id)
@@ -1288,7 +1282,7 @@ def delete_source(
     if not is_valid_source_id(source_id):
         raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")
 
-    db_row = storage.get_source_config(user_id, source_id)
+    db_row = storage.sources.get(user_id, source_id)
     if db_row is None:
         raise SourceConfigError(
             "not_migrated",
@@ -1296,7 +1290,7 @@ def delete_source(
         )
 
     storage.credentials.delete_for_source(user_id, source_id)
-    storage.delete_source_config(user_id, source_id)
+    storage.sources.delete(user_id, source_id)
 
     # Read after the row is gone, so "who is left" reads as it now is. *config*
     # is required rather than defaulted: half a source list would read a

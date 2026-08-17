@@ -28,7 +28,7 @@ class TestProfileShow:
             "generated_at": "2026-01-01T00:00:00",
         }
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_preference_profile.return_value = profile_record
+        mock_storage.profiles.get.return_value = profile_record
         result = _invoke_with_mocks(
             cli_runner,
             ["profile", "show", "--format", "json"],
@@ -51,7 +51,7 @@ class TestProfileShow:
         on the web side see a consistent shape.
         """
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_preference_profile.return_value = None
+        mock_storage.profiles.get.return_value = None
         result = _invoke_with_mocks(
             cli_runner,
             ["profile", "show", "--format", "json"],

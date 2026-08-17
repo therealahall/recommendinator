@@ -106,7 +106,7 @@ def test_the_log_level_comes_from_the_settings_table(
 ) -> None:
     """``logging.level`` is DB-backed, so the overlay has to run first."""
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
-    storage.set_setting("logging.level", "DEBUG")
+    storage.settings.set("logging.level", "DEBUG")
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(

@@ -209,7 +209,7 @@ def execute_sync(
             # Mark for enrichment if enabled
             if mark_for_enrichment:
                 try:
-                    storage_manager.mark_item_needs_enrichment(saved.db_id)
+                    storage_manager.enrichment.mark_needed(saved.db_id)
                 except Exception as enrich_error:
                     enrichment_queue_failures += 1
                     logger.warning(

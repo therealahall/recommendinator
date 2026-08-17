@@ -94,11 +94,6 @@ def migrate_config_settings(
     **Mutates *config* in place:** each in-scope section is replaced with the
     assembled result so existing ``config[section][key]`` read sites resolve the
     layered value. Out-of-scope sections (``storage``, ``inputs``) are untouched.
-
-    Args:
-        config: Full application config dict (from ``load_config``).
-            Mutated in place — in-scope sections are rebuilt from the layers.
-        storage: StorageManager instance (provides the settings store).
     """
     # Deferred import: the metadata registry imports IN_SCOPE_SECTIONS /
     # SENSITIVE_LEAF_KEYS from this module, so importing it at module top would
@@ -106,7 +101,7 @@ def migrate_config_settings(
     from src.settings.metadata import default_config
 
     defaults = default_config()
-    db_settings = storage.list_settings()
+    db_settings = storage.settings.list()
 
     for section in IN_SCOPE_SECTIONS:
         section_defaults = defaults.get(section, {})

@@ -143,7 +143,7 @@ def enrichment_status(ctx: click.Context, user_id: int, output_format: str) -> N
     config = ctx.obj["config"]
     storage = ctx.obj["storage"]
 
-    raw_stats = storage.get_enrichment_stats(user_id=user_id)
+    raw_stats = storage.enrichment.stats(user_id=user_id)
     enrichment_enabled = config.get("enrichment", {}).get("enabled", False)
     # Shape matches web API EnrichmentStatsResponse
     stats = {"enabled": enrichment_enabled, **raw_stats}
@@ -231,7 +231,7 @@ def enrichment_reset(
             click.echo("Aborted.")
             return
 
-    count = storage.reset_enrichment_status(
+    count = storage.enrichment.reset(
         provider=provider_filter,
         content_type=content_type,
         user_id=user_id,

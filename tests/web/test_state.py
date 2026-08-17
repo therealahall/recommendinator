@@ -87,7 +87,7 @@ class TestReloadConfig:
         # A DB leaf the operator edited must win over the reloaded YAML value.
         # All three layers differ (const 5 < YAML 11 < DB 9), so 9 can only
         # reach the running config through the overlay.
-        storage.set_setting("recommendations.default_count", 9)
+        storage.settings.set("recommendations.default_count", 9)
 
         app_state.config_path = str(config_file)
         app_state.storage = storage

@@ -155,7 +155,7 @@ class TestSourceMigrate:
         # The reported symptom: counting what this call moved printed no
         # Secrets line at all, because startup had emptied the YAML entry.
         assert "Secrets: api_key" in result.output
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert row["plugin"] == "fake_api"
         assert row["config"]["user_id"] == "yaml_user"
@@ -183,7 +183,7 @@ class TestSourceMigrate:
         )
         assert first.exit_code == 0
         assert second.exit_code == 0
-        rows = storage.list_source_configs(1)
+        rows = storage.sources.list(1)
         assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
 
 
@@ -195,9 +195,7 @@ class TestSourceEnableDisable:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(
-            1, "my_books", "fake_file", {"path": "/x"}, enabled=True
-        )
+        storage.sources.upsert(1, "my_books", "fake_file", {"path": "/x"}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "disable", "my_books"],
@@ -205,7 +203,7 @@ class TestSourceEnableDisable:
             config=base_config,
         )
         assert result.exit_code == 0
-        row = storage.get_source_config(1, "my_books")
+        row = storage.sources.get(1, "my_books")
         assert row is not None and row["enabled"] is False
 
     def test_enable_when_not_migrated_returns_error(
@@ -233,7 +231,7 @@ class TestSourceSet:
         base_config: dict[str, Any],
     ) -> None:
         """List fields accept ``"a,b,c"`` and store ``["a", "b", "c"]``."""
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "tags", "rpg, indie ,strategy"],
@@ -241,7 +239,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code == 0
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert row["config"]["tags"] == ["rpg", "indie", "strategy"]
 
@@ -254,7 +252,7 @@ class TestSourceSet:
         keyword: str,
     ) -> None:
         """``"yes"`` / ``"on"`` / ``"true"`` all coerce to ``True``."""
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "active", keyword],
@@ -262,7 +260,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code == 0
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None and row["config"]["active"] is True
 
     def test_set_updates_non_sensitive_field(
@@ -271,7 +269,7 @@ class TestSourceSet:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "my_games", "fake_api", {"min_minutes": 30}, enabled=True
         )
         result = _invoke_with_mocks(
@@ -281,7 +279,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code == 0
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None and row["config"]["min_minutes"] == 60
 
     def test_set_when_not_migrated_returns_error(
@@ -298,7 +296,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code != 0
-        assert storage.get_source_config(1, "my_games") is None
+        assert storage.sources.get(1, "my_games") is None
 
     def test_set_rejects_unknown_field(
         self,
@@ -307,7 +305,7 @@ class TestSourceSet:
         base_config: dict[str, Any],
     ) -> None:
         """A field not in the plugin schema aborts before any DB write."""
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "no_such_field", "x"],
@@ -315,7 +313,7 @@ class TestSourceSet:
             config=base_config,
         )
         assert result.exit_code != 0
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert "no_such_field" not in row["config"]
 
@@ -325,7 +323,7 @@ class TestSourceSet:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "api_key", "leaked"],
@@ -346,7 +344,7 @@ class TestSourceApply:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         payload = json.dumps(
             {"user_id": "new", "min_minutes": 90, "tags": ["rpg"], "active": False}
         )
@@ -359,7 +357,7 @@ class TestSourceApply:
         )
         assert result.exit_code == 0
         assert "Applied" in result.output
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None
         assert row["config"] == {
             "user_id": "new",
@@ -384,7 +382,7 @@ class TestSourceApply:
         )
         assert result.exit_code != 0
         # Guard fired before any DB write — no source_configs row created.
-        assert storage.get_source_config(1, "my_books") is None
+        assert storage.sources.get(1, "my_books") is None
 
     def test_apply_from_file(
         self,
@@ -393,7 +391,7 @@ class TestSourceApply:
         base_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         payload_file = tmp_path / "values.json"
         payload_file.write_text(json.dumps({"user_id": "from_file"}))
         result = _invoke_with_mocks(
@@ -403,7 +401,7 @@ class TestSourceApply:
             config=base_config,
         )
         assert result.exit_code == 0
-        row = storage.get_source_config(1, "my_games")
+        row = storage.sources.get(1, "my_games")
         assert row is not None and row["config"]["user_id"] == "from_file"
 
     def test_apply_rejects_sensitive_field(
@@ -412,7 +410,7 @@ class TestSourceApply:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "apply", "my_games", "--from-json", "-"],
@@ -436,7 +434,7 @@ class TestSourceApply:
         surface as a Python traceback instead of the friendly error
         path every other CLI failure goes through.
         """
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         missing = tmp_path / "does_not_exist.json"
         result = _invoke_with_mocks(
             cli_runner,
@@ -456,7 +454,7 @@ class TestSourceSecrets:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set-secret", "my_games", "api_key"],
@@ -479,7 +477,7 @@ class TestSourceSecrets:
         It must skip the hidden prompt entirely so headless pipelines never
         hang on stdin, and it must store exactly the env-var value.
         """
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         monkeypatch.setenv("RECOMMENDINATOR_SECRET_VALUE", "env_secret")
         result = _invoke_with_mocks(
             cli_runner,
@@ -496,7 +494,7 @@ class TestSourceSecrets:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "to_be_cleared")
         result = _invoke_with_mocks(
             cli_runner,
@@ -513,7 +511,7 @@ class TestSourceSecrets:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(1, "my_games", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set-secret", "my_games", "user_id"],
@@ -566,7 +564,7 @@ class TestSourceCreate:
             "content_type": "book",
         }
         assert body["secret_status"] == {}
-        row = storage.get_source_config(1, "fresh_books")
+        row = storage.sources.get(1, "fresh_books")
         assert row is not None
         assert row["plugin"] == "fake_file"
         assert row["enabled"] is True
@@ -598,7 +596,7 @@ class TestSourceCreate:
             config=base_config,
         )
         assert result.exit_code != 0
-        assert storage.get_source_config(1, "no_such") is None
+        assert storage.sources.get(1, "no_such") is None
 
     def test_create_rejects_invalid_id(
         self,
@@ -635,7 +633,7 @@ class TestSourceCreate:
             input_text=json.dumps({"api_key": "leaked"}),
         )
         assert result.exit_code != 0
-        assert storage.get_source_config(1, "leaky") is None
+        assert storage.sources.get(1, "leaky") is None
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -646,7 +644,7 @@ class TestSourceRemove:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1, "to_remove", "fake_api", {"user_id": "x"}, enabled=True
         )
         storage.credentials.save(1, "to_remove", "api_key", "secret_value")
@@ -658,7 +656,7 @@ class TestSourceRemove:
             config=base_config,
         )
         assert result.exit_code == 0
-        assert storage.get_source_config(1, "to_remove") is None
+        assert storage.sources.get(1, "to_remove") is None
         assert storage.credentials.get(1, "to_remove", "api_key") is None
 
     def test_remove_aborts_when_user_declines_confirmation(
@@ -667,9 +665,7 @@ class TestSourceRemove:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        storage.upsert_source_config(
-            1, "keep_me", "fake_file", {"path": "/x"}, enabled=True
-        )
+        storage.sources.upsert(1, "keep_me", "fake_file", {"path": "/x"}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "remove", "keep_me"],
@@ -678,7 +674,7 @@ class TestSourceRemove:
             input_text="n\n",
         )
         assert result.exit_code == 0
-        assert storage.get_source_config(1, "keep_me") is not None
+        assert storage.sources.get(1, "keep_me") is not None
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
@@ -691,7 +687,7 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
 
     @pytest.fixture()
     def stranded(self, storage: StorageManager) -> StorageManager:
-        storage.upsert_source_config(1, "games_work", "fake_api", {}, enabled=True)
+        storage.sources.upsert(1, "games_work", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
         return storage
 
@@ -742,7 +738,7 @@ class TestSourceSetGuardsBoundCredentials:
 
     @pytest.fixture()
     def migrated(self, storage: StorageManager) -> StorageManager:
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "calibre",
             "calibre_web",
@@ -770,7 +766,7 @@ class TestSourceSetGuardsBoundCredentials:
         assert result.exit_code != 0
         assert "Changing 'url' points this source at a different host." in result.output
         assert "Clear its stored 'password' first" in result.output
-        row = migrated.get_source_config(1, "calibre")
+        row = migrated.sources.get(1, "calibre")
         assert row is not None and row["config"]["url"] == "http://localhost:8083"
         assert migrated.credentials.get(1, "calibre", "password") == "hunter2"
 
@@ -780,6 +776,6 @@ class TestSourceSetGuardsBoundCredentials:
         result = self._set(cli_runner, migrated, "url", "https://localhost:8083")
 
         assert result.exit_code == 0
-        row = migrated.get_source_config(1, "calibre")
+        row = migrated.sources.get(1, "calibre")
         assert row is not None and row["config"]["url"] == "https://localhost:8083"
         assert migrated.credentials.get(1, "calibre", "password") == "hunter2"

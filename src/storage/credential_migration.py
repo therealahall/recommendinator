@@ -40,14 +40,6 @@ def migrate_config_credentials(
 ) -> None:
     """Migrate sensitive credentials from config to the database.
 
-    For each enabled source in ``config["inputs"]``, looks up the plugin's
-    config schema and migrates any ``sensitive=True`` fields that have a
-    non-empty value in config but no existing readable DB entry.
-
-    Also purges stale credentials that exist in the DB but can't be
-    decrypted (e.g., after an encryption key change), then re-encrypts
-    from the config value if available.
-
     **A source with a ``source_configs`` row is skipped**, its file-held
     secrets discarded rather than read. Otherwise clearing a secret through
     ``DELETE /api/sync/sources/{id}/secret/{key}`` — what an operator does
@@ -66,12 +58,6 @@ def migrate_config_credentials(
     the database — or superseded by a credential already stored there — its
     plaintext value is removed from the in-memory config dict so it does not
     linger in ``app_state.config`` for the process lifetime.
-
-    Args:
-        config: Full application config dict (from ``load_config``).
-            Mutated in place — sensitive fields are removed after migration.
-        storage: StorageManager instance (provides encrypted DB access).
-        user_id: User ID to associate credentials with (default 1).
     """
     registry = get_registry()
     inputs_config = config.get("inputs")
@@ -95,7 +81,7 @@ def migrate_config_credentials(
         if plugin is None:
             continue
 
-        if storage.get_source_config(user_id, source_id) is not None:
+        if storage.sources.get(user_id, source_id) is not None:
             _discard_file_secrets(entry, plugin, source_id)
             continue
 
@@ -106,7 +92,6 @@ def migrate_config_credentials(
             config_value = entry.get(field.name)
             has_config_value = bool(config_value and str(config_value).strip())
 
-            # Check if a readable DB entry already exists
             existing = storage.credentials.get(user_id, source_id, field.name)
             if existing is not None:
                 if has_config_value:
@@ -130,10 +115,8 @@ def migrate_config_credentials(
                 entry.pop(field.name, None)
                 continue
 
-            # Check if a stale (unreadable) row exists in the DB
             if storage.credentials.exists(user_id, source_id, field.name):
                 if has_config_value:
-                    # Re-encrypt from config value (UPSERT overwrites stale row)
                     storage.credentials.save(
                         user_id, source_id, field.name, str(config_value)
                     )
@@ -160,7 +143,6 @@ def migrate_config_credentials(
                     )
                 continue
 
-            # No DB row at all — migrate from config if available
             if has_config_value:
                 storage.credentials.save(
                     user_id, source_id, field.name, str(config_value)

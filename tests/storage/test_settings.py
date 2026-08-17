@@ -14,7 +14,7 @@ from src.storage.manager import StorageManager
 
 
 class TestStorageManagerSettings:
-    """Tests for StorageManager settings methods (JSON value serialization)."""
+    """Tests for the SettingsStore (JSON value serialization)."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -27,9 +27,9 @@ class TestStorageManagerSettings:
             "scorer_weights": {"genre_match": 2.0, "tags": [1, 2, 3]},
             "default_count": 5,
         }
-        storage.set_setting("recommendations", value)
+        storage.settings.set("recommendations", value)
 
-        assert storage.get_setting("recommendations") == value
+        assert storage.settings.get("recommendations") == value
 
     def test_stored_null_reads_as_none_but_appears_in_list(
         self, storage: StorageManager
@@ -40,26 +40,26 @@ class TestStorageManagerSettings:
         the null-valued leaf is only observable via list_settings — which the
         config overlay relies on to apply a deliberately-nulled leaf.
         """
-        storage.set_setting("logging.file", None)
+        storage.settings.set("logging.file", None)
 
-        assert storage.get_setting("logging.file") is None
-        assert storage.list_settings() == {"logging.file": None}
+        assert storage.settings.get("logging.file") is None
+        assert storage.settings.list() == {"logging.file": None}
 
     def test_falsy_values_round_trip(self, storage: StorageManager) -> None:
         """Falsy scalars (False, 0) round-trip without being lost or coerced."""
-        storage.set_setting("enrichment.enabled", False)
-        storage.set_setting("sync.max_workers", 0)
+        storage.settings.set("enrichment.enabled", False)
+        storage.settings.set("sync.max_workers", 0)
 
-        assert storage.get_setting("enrichment.enabled") is False
-        assert storage.get_setting("sync.max_workers") == 0
+        assert storage.settings.get("enrichment.enabled") is False
+        assert storage.settings.get("sync.max_workers") == 0
 
     def test_delete_setting_falls_back_to_missing(
         self, storage: StorageManager
     ) -> None:
         """delete_setting removes an override so the leaf reads back as unset."""
-        storage.set_setting("web.port", 65000)
+        storage.settings.set("web.port", 65000)
 
-        storage.delete_setting("web.port")
+        storage.settings.delete("web.port")
 
-        assert storage.get_setting("web.port") is None
-        assert storage.list_settings() == {}
+        assert storage.settings.get("web.port") is None
+        assert storage.settings.list() == {}

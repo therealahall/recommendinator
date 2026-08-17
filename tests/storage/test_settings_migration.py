@@ -47,7 +47,7 @@ class TestMigrateConfigSettings:
         for section in IN_SCOPE_SECTIONS:
             assert config[section] == defaults[section]
         # Nothing was written to the database on boot.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_db_leaf_resolves_section_absent_from_yaml(
         self, storage: StorageManager
@@ -58,7 +58,7 @@ class TestMigrateConfigSettings:
         so a stored leaf in an omitted section never resolved. It must now win
         over the const default regardless of the YAML shape.
         """
-        storage.set_setting("enrichment.enabled", True)
+        storage.settings.set("enrichment.enabled", True)
         config: dict[str, Any] = {}
 
         migrate_config_settings(config, storage)
@@ -88,7 +88,7 @@ class TestMigrateConfigSettings:
         All three layers differ for ``default_count`` (const 5 < YAML 11 < DB 9),
         so the stored value can only survive if the DB overlay is applied last.
         """
-        storage.set_setting("recommendations.default_count", 9)
+        storage.settings.set("recommendations.default_count", 9)
         config: dict[str, Any] = {
             "recommendations": {"default_count": 11, "max_count": 30}
         }
@@ -98,7 +98,7 @@ class TestMigrateConfigSettings:
         assert config["recommendations"]["default_count"] == 9
         assert config["recommendations"]["max_count"] == 30
         # Still no writes — only the pre-existing leaf lives in the DB.
-        assert storage.list_settings() == {"recommendations.default_count": 9}
+        assert storage.settings.list() == {"recommendations.default_count": 9}
 
     def test_out_of_scope_sections_untouched(self, storage: StorageManager) -> None:
         """The ``storage`` and ``inputs`` sections are left exactly as-is."""
@@ -111,7 +111,7 @@ class TestMigrateConfigSettings:
 
         assert config["storage"] == {"database_path": "data/recommendations.db"}
         assert config["inputs"] == {"steam": {"plugin": "steam"}}
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_does_not_mutate_shared_default_config(
         self, storage: StorageManager
@@ -159,7 +159,7 @@ class TestSensitiveLeafHandling:
         migrate_config_settings(config, storage)
 
         # Nothing was written — no secret can reach the plaintext table.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
         # The api_key values survive in the running config (YAML-sourced).
         providers = config["enrichment"]["providers"]

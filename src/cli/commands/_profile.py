@@ -27,7 +27,7 @@ def profile() -> None:
 def profile_show(ctx: click.Context, output_format: str, user_id: int) -> None:
     """Show your preference profile."""
     storage = ctx.obj["storage"]
-    profile_record = storage.get_preference_profile(user_id)
+    profile_record = storage.profiles.get(user_id)
 
     if profile_record is None:
         if output_format == "json":
@@ -51,7 +51,7 @@ def profile_show(ctx: click.Context, output_format: str, user_id: int) -> None:
             )
         return
 
-    # StorageManager.get_preference_profile wraps the profile in a record:
+    # ProfileStore.get wraps the profile in a record:
     # {"id", "user_id", "profile": {...actual data...}, "generated_at"}.
     # Unwrap to match the web API's ProfileResponse shape.
     profile = profile_record.get("profile", {})

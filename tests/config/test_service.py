@@ -78,7 +78,7 @@ class TestLoadConfigDefaults:
     def test_db_overlay_wins_over_loaded_defaults(self, tmp_path: Path) -> None:
         """End to end: DB overlay wins over the const-defaulted, loaded config."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        storage.set_setting("recommendations.default_count", 9)
+        storage.settings.set("recommendations.default_count", 9)
 
         config = load_config(Path("config/example.yaml"))
         # Const layer resolved the leaf to the registry default (no DB yet).

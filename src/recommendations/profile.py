@@ -587,5 +587,5 @@ class ProfileGenerator:
             profile_dict["generated_at"] = profile_dict["generated_at"].isoformat()
         profile_json = json.dumps(profile_dict)
 
-        self.storage.save_preference_profile(user_id, profile_json)
+        self.storage.profiles.save(user_id, profile_json)
         return profile

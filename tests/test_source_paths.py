@@ -357,5 +357,5 @@ class TestTheAllowlistIsNotASetting:
         )
 
         assert result.exit_code != 0
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert get_allowed_source_roots() == before

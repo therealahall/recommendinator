@@ -334,7 +334,7 @@ class TestRegenerateAndSave:
         assert profile.user_id == 1
 
         # Verify it was saved
-        saved_profile = storage_manager.get_preference_profile(user_id=1)
+        saved_profile = storage_manager.profiles.get(user_id=1)
         assert saved_profile is not None
 
 

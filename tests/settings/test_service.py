@@ -367,7 +367,7 @@ class TestApplySettings:
     ) -> None:
         apply_settings(config, storage, {_INT_KEY: 9})
 
-        assert storage.get_setting(_INT_KEY) == 9
+        assert storage.settings.get(_INT_KEY) == 9
         assert config["recommendations"]["default_count"] == 9
 
     def test_restart_required_persists_without_live_apply(
@@ -375,7 +375,7 @@ class TestApplySettings:
     ) -> None:
         apply_settings(config, storage, {"logging.level": "DEBUG"})
 
-        assert storage.get_setting("logging.level") == "DEBUG"
+        assert storage.settings.get("logging.level") == "DEBUG"
         # logging.level is restart_required — the value is persisted for the
         # next boot but the RUNNING value is left as it was.
         assert config["logging"]["level"] == "INFO"
@@ -386,7 +386,7 @@ class TestApplySettings:
         with pytest.raises(SettingsValidationError):
             apply_settings(config, storage, {_SECRET_KEY: "leak"})
 
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_all_or_nothing_no_partial_write(
         self, storage: StorageManager, config: dict[str, Any]
@@ -399,7 +399,7 @@ class TestApplySettings:
                 {_INT_KEY: 9, "recommendations.max_count": 0},
             )
 
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert config["recommendations"]["default_count"] == 5
 
 
@@ -411,7 +411,7 @@ class TestResetSetting:
 
         reset_setting(config, storage, _INT_KEY)
 
-        assert storage.get_setting(_INT_KEY) is None
+        assert storage.settings.get(_INT_KEY) is None
         # Non-restart leaf is live-applied back to the const default.
         assert config["recommendations"]["default_count"] == 5
 
@@ -425,11 +425,11 @@ class TestResetSetting:
         restart_required branch exists, proving nothing.
         """
         config["logging"]["level"] = "WARNING"
-        storage.set_setting("logging.level", "DEBUG")
+        storage.settings.set("logging.level", "DEBUG")
 
         reset_setting(config, storage, "logging.level")
 
-        assert storage.get_setting("logging.level") is None
+        assert storage.settings.get("logging.level") is None
         # Not live-applied: the running value is left as it was, NOT reset to
         # the const default of INFO.
         assert config["logging"]["level"] == "WARNING"
@@ -479,7 +479,7 @@ class TestSecretGating:
 
         assert storage.secrets.has(_SECRET_KEY) is True
         # The secret never lands in the plaintext settings table.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_clear_secret_removes_it(self, storage: StorageManager) -> None:
         set_secret(storage, _SECRET_KEY, "tmdb-key")

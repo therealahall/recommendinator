@@ -107,8 +107,8 @@ def mock_components(mock_config):
 
     mock_storage_manager = Mock(spec=StorageManager)
     mock_storage_manager.credentials.get_for_source.return_value = {}
-    mock_storage_manager.list_source_configs.return_value = []
-    mock_storage_manager.get_source_config.return_value = None
+    mock_storage_manager.sources.list.return_value = []
+    mock_storage_manager.sources.get.return_value = None
 
     mock_engine_instance = Mock(spec=RecommendationEngine)
     mock_engine_instance.storage = mock_storage_manager
@@ -172,12 +172,12 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # A stored DB leaf must win over the YAML value on boot.
-        storage_manager.set_setting("recommendations.default_count", 9)
+        storage_manager.settings.set("recommendations.default_count", 9)
         with booted_web_app(storage_manager, mock_config):
             # Real hook overlaid the DB leaf onto the in-memory config.
             assert app_state.config["recommendations"]["default_count"] == 9
             # Boot seeded nothing: only the pre-existing leaf remains in the DB.
-            assert storage_manager.list_settings() == {
+            assert storage_manager.settings.list() == {
                 "recommendations.default_count": 9
             }
         reset_sync_manager()
@@ -196,7 +196,7 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # Write the row directly: the settings API would reject this key now.
-        storage_manager.set_setting("web.debug", True)
+        storage_manager.settings.set("web.debug", True)
         with booted_web_app(storage_manager, mock_config) as app:
             # mock_config carries no web.debug, so the bootstrap default (False)
             # applies and the docs stay closed despite the stored row.
@@ -3296,7 +3296,7 @@ class TestSettingsEndpoints:
         response = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 7}})
 
         assert response.status_code == 200
-        assert storage.get_setting(_SETTINGS_INT_KEY) == 7
+        assert storage.settings.get(_SETTINGS_INT_KEY) == 7
         # Live-applied to the running config held in app_state.
         assert config["recommendations"]["default_count"] == 7
         setting = self._find(response.json(), _SETTINGS_INT_KEY)
@@ -3314,7 +3314,7 @@ class TestSettingsEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"]["key"] == "recommendations.max_count"
         # Nothing persisted and the running config is untouched.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert config["recommendations"]["default_count"] == 5
 
     def test_a_rejected_update_leaves_the_next_one_writable(self, settings_env) -> None:
@@ -3335,7 +3335,7 @@ class TestSettingsEndpoints:
 
         assert rejected.status_code == 422
         assert accepted.status_code == 200
-        assert storage.get_setting(_SETTINGS_INT_KEY) == 7
+        assert storage.settings.get(_SETTINGS_INT_KEY) == 7
 
     def test_put_restart_required_persists_but_flagged(self, settings_env) -> None:
         client, storage, config = settings_env
@@ -3345,7 +3345,7 @@ class TestSettingsEndpoints:
         )
 
         assert response.status_code == 200
-        assert storage.get_setting("logging.level") == "DEBUG"
+        assert storage.settings.get("logging.level") == "DEBUG"
         # Restart-required: persisted but the running config is unchanged.
         assert config["logging"]["level"] == "INFO"
         setting = self._find(response.json(), "logging.level")
@@ -3360,7 +3360,7 @@ class TestSettingsEndpoints:
         response = client.delete(f"/api/settings/{_SETTINGS_INT_KEY}")
 
         assert response.status_code == 200
-        assert storage.get_setting(_SETTINGS_INT_KEY) is None
+        assert storage.settings.get(_SETTINGS_INT_KEY) is None
         assert config["recommendations"]["default_count"] == 5
         setting = self._find(response.json(), _SETTINGS_INT_KEY)
         assert setting["db_overridden"] is False
@@ -3394,7 +3394,7 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 422
         assert response.json()["detail"] == {"key": key, "reason": "unknown setting"}
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         assert get_allowed_source_roots() == before
 
     def test_a_malformed_cors_origin_is_refused_over_http(self, settings_env) -> None:
@@ -3408,7 +3408,7 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 422
         assert response.json()["detail"]["key"] == "web.allowed_origins"
-        assert storage.get_setting("web.allowed_origins") is None
+        assert storage.settings.get("web.allowed_origins") is None
 
     def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
         """DELETE /api/settings/{key} on a sensitive key must not 500.
@@ -3461,7 +3461,7 @@ class TestSettingsEndpoints:
         assert put.status_code == 204
         assert storage.secrets.has(_SETTINGS_SECRET_KEY) is True
         # The secret is never persisted in the plaintext settings table.
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
         # And it surfaces only as has_secret, never as a value.
         secret = self._find(client.get("/api/settings").json(), _SETTINGS_SECRET_KEY)
         assert secret["has_secret"] is True
@@ -3481,7 +3481,7 @@ class TestSettingsEndpoints:
         )
 
         assert response.status_code == 400
-        assert storage.list_settings() == {}
+        assert storage.settings.list() == {}
 
     def test_secret_delete_rejects_non_sensitive_key(self, settings_env) -> None:
         client, _storage, _config = settings_env
@@ -3508,7 +3508,7 @@ class TestSettingsEndpoints:
         # assertions look for — so a broken arrangement reads as a pass.
         arrange = client.put("/api/settings", json={"updates": {_SETTINGS_INT_KEY: 11}})
         assert arrange.status_code == 200
-        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+        assert storage.settings.get(_SETTINGS_INT_KEY) == 11
         reset_holds_its_config = threading.Event()
         reload_finished = threading.Event()
 
@@ -3530,7 +3530,7 @@ class TestSettingsEndpoints:
             reload_finished.set()
             assert reset.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
 
-        assert storage.get_setting(_SETTINGS_INT_KEY) is None
+        assert storage.settings.get(_SETTINGS_INT_KEY) is None
         assert get_leaf(
             app_state.config, tuple(_SETTINGS_INT_KEY.split("."))
         ) == default_of(
@@ -4111,7 +4111,7 @@ class TestSourceReadGuardsRegression:
         nothing could resolve: with it the lookup succeeds, so the 503 is the
         guard firing and nothing else.
         """
-        mock_components["storage"].get_source_config.return_value = {
+        mock_components["storage"].sources.get.return_value = {
             "source_id": "my_books",
             "plugin": "goodreads_csv",
             "enabled": 1,
@@ -4240,7 +4240,7 @@ class TestSourceCreateReadsBothHalvesRegression:
     ) -> None:
         """With config down the create is refused, and nothing is written."""
         storage = mock_components["storage"]
-        storage.get_source_config.return_value = None
+        storage.sources.get.return_value = None
         app_state.config = None
 
         response = client.post(
@@ -4249,14 +4249,14 @@ class TestSourceCreateReadsBothHalvesRegression:
 
         assert response.status_code == 503
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-        storage.upsert_source_config.assert_not_called()
+        storage.sources.upsert.assert_not_called()
 
     def test_delete_refuses_rather_than_sweeping_off_half_a_source_list(
         self, client, mock_components
     ) -> None:
         """Config down, a YAML source on the plugin reads as no source at all."""
         storage = mock_components["storage"]
-        storage.get_source_config.return_value = {
+        storage.sources.get.return_value = {
             "source_id": "my_books",
             "plugin": "goodreads_csv",
             "enabled": 1,
@@ -4269,7 +4269,7 @@ class TestSourceCreateReadsBothHalvesRegression:
 
         assert response.status_code == 503
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
-        storage.delete_source_config.assert_not_called()
+        storage.sources.delete.assert_not_called()
         storage.credentials.delete_for_source.assert_not_called()
 
 
@@ -4300,7 +4300,7 @@ class TestPluginLookupVersusRequestValidation:
         self, client, mock_components, url
     ) -> None:
         """Bad body plus unknown id answers 404 for the id, not 422 for the body."""
-        mock_components["storage"].get_source_config.return_value = None
+        mock_components["storage"].sources.get.return_value = None
 
         response = client.put(url, json={})
 
@@ -4514,7 +4514,7 @@ class TestConfigReloadRacingASettingsSaveRegression:
             reload_finished.set()
             assert save.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
 
-        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+        assert storage.settings.get(_SETTINGS_INT_KEY) == 11
         assert (
             get_leaf(app_state.config, tuple(_SETTINGS_INT_KEY.split("."))) == 11
         ), "the database and the running config disagree about a saved setting"
@@ -4569,7 +4569,7 @@ class TestConfigReloadRacingASettingsSaveRegression:
             assert reload.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
             assert reload_read_yaml.call_count == 1
 
-        assert storage.get_setting(_SETTINGS_INT_KEY) == 11
+        assert storage.settings.get(_SETTINGS_INT_KEY) == 11
 
 
 class TestOverlappingPreferenceWritesRegression:

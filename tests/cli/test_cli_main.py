@@ -26,7 +26,7 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
     not exist.
     """
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
-    storage.upsert_source_config(
+    storage.sources.upsert(
         1, "goodreads", "goodreads_csv", {"path": "inputs/library.csv"}, enabled=True
     )
     with storage.connection() as conn:
@@ -89,7 +89,7 @@ class TestUpdateDbOnlySourceRegression:
         regression test. It has no config.yaml entry: the row and its secret
         live only in the database.
         """
-        storage.upsert_source_config(
+        storage.sources.upsert(
             1,
             "calibre-web",
             "fake_api",
@@ -288,7 +288,7 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
     # A DB leaf the operator set must win over the YAML value on boot. All three
     # layers differ (const 5 < YAML 11 < DB 9), so 9 can only come from the DB.
-    storage.set_setting("recommendations.default_count", 9)
+    storage.settings.set("recommendations.default_count", 9)
 
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -301,7 +301,7 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
     # Real hook overlaid the DB leaf onto the in-memory config (DB wins).
     assert config["recommendations"]["default_count"] == 9
     # Boot seeded nothing: only the pre-existing leaf remains in the DB.
-    assert storage.list_settings() == {"recommendations.default_count": 9}
+    assert storage.settings.list() == {"recommendations.default_count": 9}
 
 
 #: Both boot exits, and the prefix each one prints.

@@ -158,7 +158,7 @@ class TestEnrichmentStats:
     def test_get_stats(self) -> None:
         """Test getting enrichment statistics."""
         storage = MagicMock(spec=StorageManager)
-        storage.get_enrichment_stats.return_value = {
+        storage.enrichment.stats.return_value = {
             "total": 100,
             "enriched": 80,
             "pending": 15,
@@ -186,7 +186,7 @@ class TestEnrichmentReset:
     def test_reset_all(self) -> None:
         """Test resetting all enrichment status."""
         storage = MagicMock(spec=StorageManager)
-        storage.reset_enrichment_status.return_value = 50
+        storage.enrichment.reset.return_value = 50
 
         with _client(storage, {}) as client:
             response = client.post("/api/enrichment/reset", json={})

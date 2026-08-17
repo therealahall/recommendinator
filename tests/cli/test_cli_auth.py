@@ -103,7 +103,7 @@ class TestAuthStatusSeesADatabaseBackedSourceRegression:
         source_id: str,
         plugin: str,
     ) -> None:
-        storage.upsert_source_config(USER_ID, source_id, plugin, {}, enabled=True)
+        storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=True)
         storage.credentials.save(USER_ID, source_id, "refresh_token", "token")
 
         result = _invoke_with_mocks(cli_runner, ["auth", "status"], storage)
@@ -295,7 +295,7 @@ class TestConnectingASourceTheWebCanConnectRegression:
     def test_a_db_only_source_can_be_connected(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        storage.upsert_source_config(USER_ID, "gog", "gog", {}, enabled=True)
+        storage.sources.upsert(USER_ID, "gog", "gog", {}, enabled=True)
 
         result = self._connect(cli_runner, storage, {})
 
@@ -673,7 +673,7 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
         config = self._yaml_held(storage, source_id, plugin)
         # The row shadows the file entry wholesale, and Trakt's enabled half is
         # its client id — which would otherwise move with the token.
-        storage.upsert_source_config(
+        storage.sources.upsert(
             USER_ID, source_id, plugin, {"client_id": "cid"}, enabled=True
         )
 
