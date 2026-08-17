@@ -227,6 +227,10 @@ class RomScannerPlugin(SourcePlugin):
     ``extra_strip_patterns``.
     """
 
+    # A local directory walk costs nothing and a new ROM should show up the
+    # hour it lands, not the next day.
+    default_sync_interval = "hourly"
+
     @property
     def name(self) -> str:
         return "roms"
