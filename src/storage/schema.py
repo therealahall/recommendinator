@@ -118,21 +118,13 @@ _ORPHANED_SETTING_PREFIXES: tuple[str, ...] = (
 def create_schema(conn: sqlite3.Connection) -> None:
     """Create the database schema.
 
-    Includes:
-    - Users table for multi-user support
-    - Content items with user_id foreign key
-    - Type-specific detail tables (books, movies, TV shows, games)
-
-    Args:
-        conn: SQLite database connection. ``row_factory`` is set to
-              ``sqlite3.Row`` unconditionally — required by migration dedup.
+    Sets ``conn.row_factory`` on the caller's connection unconditionally.
     """
     # Required by merge_scalar_columns which uses named column access
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     stored_version = _stored_schema_version(cursor)
 
-    # Users table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -145,7 +137,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Create default user
     cursor.execute(
         """
         INSERT OR IGNORE INTO users (id, username, display_name)
@@ -174,7 +165,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
 
-    # Base content items table with user_id
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS content_items (
@@ -200,7 +190,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Book-specific details
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS book_details (
@@ -217,7 +206,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Movie-specific details
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS movie_details (
@@ -232,7 +220,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # TV Show-specific details
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS tv_show_details (
@@ -248,7 +235,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Video Game-specific details
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS video_game_details (
@@ -263,7 +249,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Create indexes for common queries
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)"
     )
@@ -283,7 +268,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_user_status ON content_items(user_id, status)"
     )
 
-    # Indexes for type-specific fields
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_movie_director ON movie_details(director)"
@@ -292,7 +276,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_game_developer ON video_game_details(developer)"
     )
 
-    # Enrichment status tracking
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS enrichment_status (
@@ -307,14 +290,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Index for finding items that need enrichment
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_enrichment_needs "
         "ON enrichment_status(needs_enrichment)"
     )
 
-    # Add tags and description columns to detail tables if they don't exist
-    # Use safe ALTER TABLE that checks for column existence
     _add_column_if_not_exists(cursor, "book_details", "tags", "TEXT")
     _add_column_if_not_exists(cursor, "book_details", "description", "TEXT")
     _add_column_if_not_exists(cursor, "movie_details", "tags", "TEXT")
@@ -544,8 +524,6 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 
     The initial migration backfill uses SQL ``lower(title)`` which misses
     punctuation stripping, article removal, edition suffix removal, etc.
-    This updates every row with a non-NULL title to use the canonical
-    normalization.
     """
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
@@ -560,9 +538,8 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
     """Merge duplicate rows exposed by re-normalization.
 
-    Finds groups sharing (user_id, content_type, normalized_title) and
-    keeps the oldest row (lowest id), merging data from duplicates.
-    Runs inside the schema migration transaction.
+    Keeps the oldest row of each group and runs inside the schema migration
+    transaction.
     """
     cursor.execute(
         """SELECT user_id, content_type, normalized_title
@@ -595,11 +572,8 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge all data from duplicate into kept row, then delete duplicate.
 
-    Uses the shared ``merge_scalar_columns`` and ``merge_detail_tables``
-    functions from ``merge`` for the merge rules.  This ensures that
-    migration-time dedup preserves user-owned state (rating, review, status,
-    ignored, completion date) and detail table data (genres, tags, etc.)
-    the same way as the runtime ``_merge_duplicate_into`` method.
+    Shares ``merge``'s rules with the runtime ``_merge_duplicate_into``, so
+    migration-time dedup preserves user-owned state the same way.
     """
     merge_scalar_columns(cursor, keep_id, delete_id)
     merge_detail_tables(cursor, keep_id, delete_id)
@@ -798,14 +772,7 @@ def _add_column_if_not_exists(
 
 
 def _row_to_user_dict(row: tuple) -> UserDict:
-    """Convert a user row tuple to a user dict.
-
-    Args:
-        row: Tuple of (id, username, display_name, created_at, settings)
-
-    Returns:
-        User dict with parsed settings
-    """
+    """Convert a user row tuple to a user dict."""
     settings = None
     if row[4]:
         try:
@@ -822,15 +789,7 @@ def _row_to_user_dict(row: tuple) -> UserDict:
 
 
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> UserDict | None:
-    """Get a user by ID.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-
-    Returns:
-        User dict or None if not found
-    """
+    """Get a user by ID."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users WHERE id = ?",
@@ -841,15 +800,7 @@ def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> UserDict | None:
 
 
 def get_user_by_username(conn: sqlite3.Connection, username: str) -> UserDict | None:
-    """Get a user by username.
-
-    Args:
-        conn: SQLite database connection
-        username: Username
-
-    Returns:
-        User dict or None if not found
-    """
+    """Get a user by username."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users WHERE username = ?",
@@ -865,17 +816,7 @@ def create_user(
     display_name: str | None = None,
     settings: dict | None = None,
 ) -> int:
-    """Create a new user.
-
-    Args:
-        conn: SQLite database connection
-        username: Unique username
-        display_name: Optional display name
-        settings: Optional settings dict
-
-    Returns:
-        New user ID
-    """
+    """Create a new user, returning its id."""
     cursor = conn.cursor()
     settings_json = json.dumps(settings) if settings else None
     cursor.execute(
@@ -896,8 +837,6 @@ def update_user_settings(
         that landed from one naming a user that does not exist.
     """
     cursor = conn.cursor()
-
-    # Get existing settings
     cursor.execute("SELECT settings FROM users WHERE id = ?", (user_id,))
     row = cursor.fetchone()
     if row and row[0]:
@@ -908,7 +847,6 @@ def update_user_settings(
     else:
         existing = {}
 
-    # Merge settings
     existing.update(settings)
 
     cursor.execute(
@@ -944,14 +882,7 @@ def update_user_identity(
 
 
 def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
-    """Get all users.
-
-    Args:
-        conn: SQLite database connection
-
-    Returns:
-        List of user dicts ordered by id
-    """
+    """Get all users, ordered by id."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users ORDER BY id"
@@ -960,11 +891,7 @@ def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
 
 
 def get_default_user_id() -> int:
-    """Get the default user ID.
-
-    Returns:
-        Default user ID (always 1)
-    """
+    """Get the default user ID."""
     return 1
 
 
@@ -974,15 +901,7 @@ def get_default_user_id() -> int:
 def get_enrichment_status(
     conn: sqlite3.Connection, content_item_id: int
 ) -> EnrichmentStatusDict | None:
-    """Get enrichment status for a content item.
-
-    Args:
-        conn: SQLite database connection
-        content_item_id: Content item database ID
-
-    Returns:
-        Enrichment status dict or None if not found
-    """
+    """Get enrichment status for a content item."""
     cursor = conn.cursor()
     cursor.execute(
         """SELECT content_item_id, last_enriched_at, enrichment_provider,
@@ -1014,12 +933,6 @@ def write_enrichment_complete(
     Lets a caller fold the write into its own transaction and control the
     single commit point. ``mark_enrichment_complete`` wraps this for callers
     that own the connection and want an immediate commit.
-
-    Args:
-        cursor: Cursor on the caller's open transaction
-        content_item_id: Content item database ID
-        provider: Name of the provider that enriched the item
-        quality: Match quality ("high", "medium", "not_found")
     """
     cursor.execute(
         """INSERT OR REPLACE INTO enrichment_status
@@ -1036,14 +949,7 @@ def mark_enrichment_complete(
     provider: str,
     quality: str,
 ) -> None:
-    """Mark an item as successfully enriched and commit.
-
-    Args:
-        conn: SQLite database connection
-        content_item_id: Content item database ID
-        provider: Name of the provider that enriched the item
-        quality: Match quality ("high", "medium", "not_found")
-    """
+    """Mark an item as successfully enriched and commit."""
     write_enrichment_complete(conn.cursor(), content_item_id, provider, quality)
     conn.commit()
 
@@ -1060,11 +966,6 @@ def mark_enrichment_failed(
     next enrichment run retries the item. Contrast ``mark_enrichment_complete``
     with quality ``not_found``, which records a settled miss and retires the
     item from the queue.
-
-    Args:
-        conn: SQLite database connection
-        content_item_id: Content item database ID
-        error: Error message describing the failure
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -1081,12 +982,7 @@ def mark_item_needs_enrichment(
     conn: sqlite3.Connection,
     content_item_id: int,
 ) -> None:
-    """Mark an item as needing enrichment.
-
-    Args:
-        conn: SQLite database connection
-        content_item_id: Content item database ID
-    """
+    """Mark an item as needing enrichment."""
     cursor = conn.cursor()
     cursor.execute(
         """INSERT OR IGNORE INTO enrichment_status
@@ -1105,15 +1001,8 @@ def reset_enrichment_status(
 ) -> int:
     """Reset enrichment status for items to allow re-enrichment.
 
-    Args:
-        conn: SQLite database connection
-        provider: If specified, only reset items enriched by this provider.
-                  If None, reset all items.
-        content_type: If specified, only reset items of this content type.
-        user_id: If specified, only reset items for this user.
-
-    Returns:
-        Number of items reset
+    Each filter left as ``None`` widens the reset; all three unset resets
+    every tracked item. Returns the number of rows reset.
     """
     cursor = conn.cursor()
     params: list[str | int] = []
@@ -1203,13 +1092,6 @@ def get_enrichment_stats(
     re-queued by :func:`reset_enrichment_status` — which clears the error but
     leaves the quality alone — is counted under both ``pending`` and
     ``not_found``. The four buckets therefore need not sum to ``total``.
-
-    Args:
-        conn: SQLite database connection
-        user_id: If specified, only count items for this user.
-
-    Returns:
-        Dict with enrichment statistics
     """
     cursor = conn.cursor()
 
@@ -1275,15 +1157,7 @@ def get_enrichment_stats(
 
 
 def get_preference_profile(conn: sqlite3.Connection, user_id: int) -> dict | None:
-    """Get the preference profile for a user.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-
-    Returns:
-        Profile dict or None if not found
-    """
+    """Get the preference profile for a user."""
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -1313,18 +1187,7 @@ def save_preference_profile(
     user_id: int,
     profile_json: str,
 ) -> int:
-    """Save or update a preference profile.
-
-    Uses UPSERT to replace existing profile for the user.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        profile_json: JSON string of the profile
-
-    Returns:
-        Profile ID
-    """
+    """Save or update the user's single preference profile, returning its id."""
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -1349,17 +1212,7 @@ def get_credential(
     source_id: str,
     credential_key: str,
 ) -> str | None:
-    """Get a single credential value (raw/encrypted).
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier (e.g. "gog", "steam")
-        credential_key: Credential field name (e.g. "refresh_token")
-
-    Returns:
-        Raw (encrypted) credential value, or None if not found.
-    """
+    """Get a single credential value (raw/encrypted)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT credential_value FROM credentials "
@@ -1379,12 +1232,7 @@ def save_credential(
 ) -> None:
     """Save or update a credential (UPSERT).
 
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier
-        credential_key: Credential field name
-        credential_value: Value to store (should be pre-encrypted)
+    *credential_value* is stored verbatim; encrypting it is the caller's job.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -1406,17 +1254,7 @@ def delete_credential(
     source_id: str,
     credential_key: str,
 ) -> bool:
-    """Delete a credential row.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier
-        credential_key: Credential field name
-
-    Returns:
-        True if a row was deleted, False if not found.
-    """
+    """Delete a credential row, reporting whether one was there."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM credentials "
@@ -1432,16 +1270,7 @@ def delete_credentials_for_source(
     user_id: int,
     source_id: str,
 ) -> int:
-    """Delete every credential row for a source.
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier
-
-    Returns:
-        Number of rows deleted.
-    """
+    """Delete every credential row for a source, returning the row count."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM credentials WHERE user_id = ? AND source_id = ?",
@@ -1457,17 +1286,7 @@ def credential_row_exists(
     source_id: str,
     credential_key: str,
 ) -> bool:
-    """Check if a credential row exists (without decrypting).
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier
-        credential_key: Credential field name
-
-    Returns:
-        True if a row exists in the credentials table.
-    """
+    """Check if a credential row exists (without decrypting)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT 1 FROM credentials "
@@ -1482,16 +1301,7 @@ def get_credentials_for_source(
     user_id: int,
     source_id: str,
 ) -> dict[str, str]:
-    """Get all credential key-value pairs for a source (raw/encrypted).
-
-    Args:
-        conn: SQLite database connection
-        user_id: User ID
-        source_id: Source identifier
-
-    Returns:
-        Dict mapping credential_key to raw (encrypted) credential_value.
-    """
+    """Get all credential key-value pairs for a source (raw/encrypted)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT credential_key, credential_value FROM credentials "
@@ -1601,10 +1411,7 @@ def delete_source_config(
     user_id: int,
     source_id: str,
 ) -> bool:
-    """Delete a migrated source config row.
-
-    Returns ``True`` if a row was deleted, ``False`` if not found.
-    """
+    """Delete a migrated source config row, reporting whether one was there."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM source_configs WHERE user_id = ? AND source_id = ?",
