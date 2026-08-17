@@ -177,8 +177,9 @@ python3.11 -m src.cli source schedule goodreads_csv weekly
 
 `source schedule` takes a migrated source and one of those five keys. The web
 server syncs each source on its cadence while it is running; `off` leaves it to
-`update`. A source you never scheduled uses its plugin's default, and one that
-has never synced is due on the next tick.
+`update`. A migrated source you never scheduled uses its plugin's default, and
+one that has never synced is due on the next tick. A source still living in
+`config.yaml` stays off: only a migrated source can be switched off again.
 
 Every `source` subcommand except `set-secret` and `clear-secret` accepts
 `--format json`.
