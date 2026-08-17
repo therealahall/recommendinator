@@ -11,18 +11,24 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.registry import get_registry
+from src.ingestion.schedule import (
+    SYNC_INTERVAL_PRESETS,
+    next_due,
+    resolve_interval,
+)
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
 from src.utils.text import humanize_source_id, sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
-    from src.storage.schema import SourceConfigDict
+    from src.storage.schema import SourceConfigDict, SyncRunDict
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,12 @@ class SyncSourceInfo:
     plugin_display_name: str
     enabled: bool
     plugin_not_loaded: PluginNotLoaded | None = None
+    #: Resolved, never the stored ``None``: a caller must not need the default.
+    sync_interval: str = "off"
+    sync_interval_default: str = "off"
+    last_run_at: str | None = None
+    last_run_status: str | None = None
+    next_run_at: str | None = None
 
 
 @dataclass
@@ -343,6 +355,20 @@ def assemble_plugin_config(
     return assembled
 
 
+def _last_run_at(run: SyncRunDict | None) -> str | None:
+    """A run still going has a time worth showing: when it began."""
+    if run is None:
+        return None
+    return run["finished_at"] or run["started_at"]
+
+
+def _next_run_at(interval: str, run: SyncRunDict | None, failures: int) -> str | None:
+    if run is None or run["finished_at"] is None:
+        return None
+    due = next_due(datetime.fromisoformat(run["finished_at"]), interval, failures)
+    return due.isoformat() if due is not None else None
+
+
 def get_available_sync_sources(
     config: dict[str, Any],
     storage: StorageManager | None = None,
@@ -370,9 +396,12 @@ def get_available_sync_sources(
     inputs_config = config.get("inputs", {})
 
     db_configs: dict[str, SourceConfigDict] = {}
+    latest_runs: dict[str, SyncRunDict] = {}
     if storage is not None:
         for db_row in storage.sources.list(user_id):
             db_configs[db_row["source_id"]] = db_row
+        # One read for the whole listing, not a query per source.
+        latest_runs = storage.sync_runs.latest_per_source(user_id)
 
     sources: list[SyncSourceInfo] = []
     for source_id in sorted(set(inputs_config.keys()) | set(db_configs.keys())):
@@ -397,12 +426,29 @@ def get_available_sync_sources(
             )
             continue
 
+        stored_interval = (
+            configured_row["sync_interval"] if configured_row is not None else None
+        )
+        interval = resolve_interval(stored_interval, source.plugin)
+        latest_run = latest_runs.get(source_id)
+        failures = (
+            storage.sync_runs.consecutive_failures(user_id, source_id)
+            if storage is not None and latest_run is not None
+            else 0
+        )
         sources.append(
             SyncSourceInfo(
                 id=source_id,
                 display_name=humanize_source_id(source_id),
                 plugin_display_name=source.plugin.display_name,
                 enabled=source.enabled,
+                sync_interval=interval,
+                sync_interval_default=source.plugin.default_sync_interval,
+                last_run_at=_last_run_at(latest_run),
+                last_run_status=(
+                    latest_run["status"] if latest_run is not None else None
+                ),
+                next_run_at=_next_run_at(interval, latest_run, failures),
             )
         )
     return sources
@@ -612,8 +658,34 @@ def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
                 if entry.plugin_not_loaded is not None
                 else None
             ),
+            "sync_interval": entry.sync_interval,
+            "sync_interval_default": entry.sync_interval_default,
+            "last_run_at": entry.last_run_at,
+            "last_run_status": entry.last_run_status,
+            "next_run_at": entry.next_run_at,
         }
         for entry in sources
+    ]
+
+
+def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
+    """Return the run-history shape, matching ``SyncRunResponse``.
+
+    The row id is dropped: nothing addresses a run on its own.
+    """
+    return [
+        {
+            "source_id": run["source_id"],
+            "started_at": run["started_at"],
+            "finished_at": run["finished_at"],
+            "status": run["status"],
+            "items_added": run["items_added"],
+            "items_updated": run["items_updated"],
+            "items_unchanged": run["items_unchanged"],
+            "total_items": run["total_items"],
+            "errors": run["errors"],
+        }
+        for run in runs
     ]
 
 
@@ -630,6 +702,11 @@ def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
         "source_id": source_id,
         "plugin": plugin.name,
         "plugin_display_name": plugin.display_name,
+        # The cadence select's options, so no interface retypes the preset list.
+        "sync_intervals": [
+            {"key": preset.key, "label": preset.label}
+            for preset in SYNC_INTERVAL_PRESETS
+        ],
         "fields": [
             {
                 "name": field.name,
@@ -696,6 +773,10 @@ def build_config_view(
         "migrated_at": migrated_at,
         "field_values": field_values,
         "secret_status": secret_status,
+        "sync_interval": resolve_interval(
+            db_row["sync_interval"] if db_row is not None else None, plugin
+        ),
+        "sync_interval_default": plugin.default_sync_interval,
     }
 
 
@@ -1113,6 +1194,23 @@ def set_source_enabled_state(
     """
     updated = storage.sources.set_enabled(user_id, source_id, enabled)
     if not updated:
+        raise SourceConfigError(
+            "not_migrated",
+            f"Source '{source_id}' is not migrated to the database",
+        )
+
+
+def set_source_schedule(
+    source_id: str,
+    storage: StorageManager,
+    interval: str,
+    user_id: int = 1,
+) -> None:
+    """Store a ``SYNC_INTERVAL_KEYS`` cadence on an already-migrated source.
+
+    Raises ``SourceConfigError("not_migrated", …)`` if no DB row exists.
+    """
+    if not storage.sources.set_schedule(user_id, source_id, interval):
         raise SourceConfigError(
             "not_migrated",
             f"Source '{source_id}' is not migrated to the database",

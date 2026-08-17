@@ -141,6 +141,7 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     _default_return(storage.credentials.exists, False)
     _default_return(storage.secrets.has, False)
     _default_return(storage.sources.get, None)
+    _default_return(storage.sync_runs.latest_per_source, {})
     return store
 
 

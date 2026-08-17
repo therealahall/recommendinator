@@ -48,6 +48,7 @@ from src.auth.trakt import (
     start_device_auth_flow,
 )
 from src.ingestion.plugin_base import SourcePlugin
+from src.ingestion.schedule import SYNC_INTERVAL_KEYS
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
@@ -86,6 +87,7 @@ from src.sources.service import (
     SourceConfigError,
     build_config_view,
     build_plugins_view,
+    build_runs_view,
     build_schema_view,
     clear_source_secret_value,
     create_source,
@@ -97,6 +99,7 @@ from src.sources.service import (
     resolve_inputs,
     resolve_source_plugin,
     set_source_enabled_state,
+    set_source_schedule,
     set_source_secret_value,
     source_plugin_not_loaded,
     unusable_detail,
@@ -337,7 +340,8 @@ class SyncSourceResponse(BaseModel):
     """Response model for a sync source.
 
     ``plugin_not_loaded`` is set when the source's plugin is missing; it is
-    listed anyway, and still cannot sync.
+    listed anyway, and still cannot sync. ``sync_interval`` is resolved, so a
+    client never has to know the plugin's default to render the cadence.
     """
 
     id: str
@@ -345,6 +349,11 @@ class SyncSourceResponse(BaseModel):
     plugin_display_name: str
     enabled: bool
     plugin_not_loaded: PluginNotLoadedResponse | None = None
+    sync_interval: str
+    sync_interval_default: str
+    last_run_at: str | None
+    last_run_status: str | None
+    next_run_at: str | None
 
 
 class UserResponse(BaseModel):
@@ -529,6 +538,20 @@ class SyncStatusResponse(BaseModel):
     jobs: list[SyncJobResponse] = []
 
 
+class SyncRunResponse(BaseModel):
+    """One recorded sync run, as the history endpoint reports it."""
+
+    source_id: str
+    started_at: str
+    finished_at: str | None
+    status: str
+    items_added: int
+    items_updated: int
+    items_unchanged: int
+    total_items: int
+    errors: list[str]
+
+
 class UserPreferenceUpdateRequest(BaseModel):
     """Request model for updating user preferences (partial merge).
 
@@ -691,6 +714,13 @@ class SourceFieldSchema(BaseModel):
     sensitive: bool = False
 
 
+class SyncIntervalOption(BaseModel):
+    """One cadence preset the client offers, key and its label."""
+
+    key: str
+    label: str
+
+
 class SourceSchemaResponse(BaseModel):
     """Plugin config schema for a single source (drives autogen UI/CLI)."""
 
@@ -698,6 +728,7 @@ class SourceSchemaResponse(BaseModel):
     plugin: str
     plugin_display_name: str
     fields: list[SourceFieldSchema]
+    sync_intervals: list[SyncIntervalOption]
 
 
 class SourceConfigResponse(BaseModel):
@@ -711,6 +742,8 @@ class SourceConfigResponse(BaseModel):
     migrated_at: str | None
     field_values: dict[str, Any]
     secret_status: dict[str, bool]
+    sync_interval: str
+    sync_interval_default: str
 
 
 class SourceConfigUpdateRequest(BaseModel):
@@ -729,6 +762,12 @@ class SourceEnabledUpdateRequest(BaseModel):
     """Toggle the enabled flag for a migrated source."""
 
     enabled: bool
+
+
+class SourceScheduleUpdateRequest(BaseModel):
+    """Set the sync cadence for a migrated source."""
+
+    interval: str
 
 
 class SourceMigrationResponse(BaseModel):
@@ -1691,9 +1730,30 @@ def get_sync_sources(
                 if source.plugin_not_loaded is not None
                 else None
             ),
+            sync_interval=source.sync_interval,
+            sync_interval_default=source.sync_interval_default,
+            last_run_at=source.last_run_at,
+            last_run_status=source.last_run_status,
+            next_run_at=source.next_run_at,
         )
         for source in sources
     ]
+
+
+@router.get("/sync/runs", response_model=list[SyncRunResponse])
+def get_sync_runs(
+    storage: RequiredStorage,
+    source_id: str | None = Query(None, description="Only this source's runs"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum runs to return"),
+    user_id: int = Query(1, ge=1, description="User ID"),
+) -> list[SyncRunResponse]:
+    """Recorded sync runs, newest first, for one source or every source."""
+    runs = (
+        storage.sync_runs.list_for_source(user_id, source_id, limit)
+        if source_id is not None
+        else storage.sync_runs.list_recent(user_id, limit)
+    )
+    return [SyncRunResponse(**view) for view in build_runs_view(runs)]
 
 
 @router.get("/plugins", response_model=PluginListResponse)
@@ -1917,6 +1977,27 @@ def set_source_enabled_endpoint(
     """Toggle the enabled flag on a migrated source."""
     try:
         set_source_enabled_state(source_id, storage, payload.enabled)
+    except SourceConfigError as error:
+        raise _config_error_to_http(error) from error
+    return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))
+
+
+@router.put("/sync/sources/{source_id}/schedule", response_model=SourceConfigResponse)
+def set_source_schedule_endpoint(
+    source_id: str,
+    payload: SourceScheduleUpdateRequest,
+    plugin: ResolvedPlugin,
+    config: RequiredConfig,
+    storage: RequiredStorage,
+) -> SourceConfigResponse:
+    """Set the sync cadence on a migrated source."""
+    if payload.interval not in SYNC_INTERVAL_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Interval must be one of: {', '.join(SYNC_INTERVAL_KEYS)}.",
+        )
+    try:
+        set_source_schedule(source_id, storage, payload.interval)
     except SourceConfigError as error:
         raise _config_error_to_http(error) from error
     return SourceConfigResponse(**build_config_view(source_id, plugin, config, storage))

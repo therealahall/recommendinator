@@ -2,8 +2,9 @@
 
 These endpoints back the data-source accordions in the web UI: schema
 introspection, current values (with secrets stripped), one-shot
-migration of a YAML entry into the database, and incremental updates of
-non-sensitive fields, secrets, and the enabled flag.
+migration of a YAML entry into the database, incremental updates of
+non-sensitive fields, secrets, the enabled flag and the sync cadence, and the
+recorded run history behind each accordion's header.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -18,10 +20,12 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.schedule import SYNC_INTERVAL_KEYS
 from src.ingestion.sync import SyncResult
 from src.recommendations.engine import RecommendationEngine
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
 from src.storage.manager import StorageManager
+from src.storage.schema import SyncRunStatus
 from tests.factories import authenticated_client, booted_web_app
 from tests.fakes.source_plugins import (
     FAILED_PLUGIN_MODULE,
@@ -94,6 +98,16 @@ class TestSchemaEndpoint:
         assert path_field["field_type"] == "str"
         assert path_field["required"] is True
         assert path_field["sensitive"] is False
+
+    def test_carries_every_cadence_preset_with_a_label(
+        self, client: TestClient
+    ) -> None:
+        options = client.get("/api/sync/sources/my_books/schema").json()[
+            "sync_intervals"
+        ]
+
+        assert [option["key"] for option in options] == list(SYNC_INTERVAL_KEYS)
+        assert all(option["label"] for option in options)
 
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
         response = client.get("/api/sync/sources/missing/schema")
@@ -394,6 +408,137 @@ class TestEnabledEndpoint:
             "/api/sync/sources/my_books/enabled", json={"enabled": False}
         )
         assert response.status_code == 404
+
+
+_RUN_START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+
+
+def _record_run(
+    storage: StorageManager,
+    *,
+    source_id: str = "my_books",
+    status: SyncRunStatus = "completed",
+    minute: int = 0,
+    errors: tuple[str, ...] = (),
+) -> None:
+    started_at = _RUN_START + timedelta(minutes=minute)
+    storage.sync_runs.record(
+        1,
+        source_id,
+        started_at=started_at,
+        finished_at=started_at + timedelta(seconds=30),
+        status=status,
+        errors=errors,
+    )
+
+
+def _listing_entry(client: TestClient, source_id: str) -> dict[str, Any]:
+    body = client.get("/api/sync/sources").json()
+    return next(entry for entry in body if entry["id"] == source_id)
+
+
+class TestScheduleEndpoint:
+    def test_stores_the_interval_and_the_listing_reports_it(
+        self, client: TestClient
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+
+        response = client.put(
+            "/api/sync/sources/my_books/schedule", json={"interval": "6h"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["sync_interval"] == "6h"
+        entry = _listing_entry(client, "my_books")
+        assert entry["sync_interval"] == "6h"
+        assert entry["sync_interval_default"] == "daily"
+
+    def test_an_interval_outside_the_presets_is_refused_and_stores_nothing(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        client.put("/api/sync/sources/my_books/schedule", json={"interval": "6h"})
+
+        response = client.put(
+            "/api/sync/sources/my_books/schedule", json={"interval": "fortnightly"}
+        )
+
+        assert response.status_code == 400
+        row = storage.sources.get(1, "my_books")
+        assert row is not None
+        assert row["sync_interval"] == "6h"
+
+    def test_returns_404_when_not_migrated(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/sync/sources/my_books/schedule", json={"interval": "daily"}
+        )
+        assert response.status_code == 404
+
+
+class TestSourceListingReportsTheSchedule:
+    def test_an_unscheduled_source_reports_the_plugin_default_and_no_runs(
+        self, client: TestClient
+    ) -> None:
+        entry = _listing_entry(client, "my_books")
+
+        assert entry["sync_interval"] == "daily"
+        assert entry["sync_interval_default"] == "daily"
+        assert entry["last_run_at"] is None
+        assert entry["last_run_status"] is None
+        assert entry["next_run_at"] is None
+
+    def test_a_source_switched_off_reports_a_last_run_but_no_next_run(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        client.put("/api/sync/sources/my_books/schedule", json={"interval": "off"})
+        _record_run(storage)
+
+        entry = _listing_entry(client, "my_books")
+
+        assert entry["sync_interval"] == "off"
+        assert entry["last_run_status"] == "completed"
+        assert entry["next_run_at"] is None
+
+    def test_next_run_at_widens_with_the_failure_streak(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        client.post("/api/sync/sources/my_books/migrate")
+        client.put("/api/sync/sources/my_books/schedule", json={"interval": "hourly"})
+        for minute in (0, 10, 20):
+            _record_run(storage, status="failed", minute=minute)
+
+        entry = _listing_entry(client, "my_books")
+
+        last_finished = _RUN_START + timedelta(minutes=20, seconds=30)
+        assert entry["last_run_at"].startswith("2026-03-01T12:20:30")
+        assert entry["last_run_status"] == "failed"
+        assert entry["next_run_at"] == (last_finished + timedelta(hours=8)).isoformat()
+
+
+class TestSyncRunsEndpoint:
+    def test_reports_runs_newest_first_with_a_failure_error(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        _record_run(storage, minute=0)
+        _record_run(storage, minute=10, status="failed", errors=("429 from the API",))
+
+        body = client.get("/api/sync/runs").json()
+
+        assert [run["status"] for run in body] == ["failed", "completed"]
+        assert body[0]["source_id"] == "my_books"
+        assert body[0]["errors"] == ["429 from the API"]
+        assert body[0]["finished_at"] is not None
+
+    def test_source_id_keeps_another_sources_runs_out(
+        self, client: TestClient, storage: StorageManager
+    ) -> None:
+        _record_run(storage, source_id="my_books", minute=0)
+        _record_run(storage, source_id="my_games", minute=10)
+
+        body = client.get("/api/sync/runs", params={"source_id": "my_books"}).json()
+
+        assert [run["source_id"] for run in body] == ["my_books"]
 
 
 class TestPluginsEndpoint:
