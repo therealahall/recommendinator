@@ -24,10 +24,9 @@ takes a list, `1,2,5,6`, or a count integer.
 
 Reported with the file line they were on:
 
-| Reason | What it means |
-|---|---|
-| `no title` | The `title` cell was empty. |
-| `N fields short of the header` | The row has fewer fields than the header. |
+- `no title`
+- `N fields short of the header`
+- `N fields more than the header`, usually an unquoted comma inside a value
 
 ### Which columns win
 

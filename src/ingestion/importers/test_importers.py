@@ -62,6 +62,19 @@ def test_the_guard_above_rejects_a_module_that_reads_a_file(
     assert _names_used(module) & FILESYSTEM_NAMES
 
 
+def test_the_registry_offers_exactly_the_five_formats() -> None:
+    """The operator's picker is rendered from this list, so an entry that quietly
+    goes missing is a file format nobody can choose any more.
+    """
+    assert [importer.name for importer in IMPORTERS] == [
+        "goodreads_csv",
+        "storygraph_csv",
+        "csv_import",
+        "json_import",
+        "markdown_import",
+    ]
+
+
 def test_every_importer_answers_to_the_name_it_publishes() -> None:
     """Two importers sharing a name would silently shadow one another."""
     assert [get_importer(importer.name) for importer in IMPORTERS] == list(IMPORTERS)
