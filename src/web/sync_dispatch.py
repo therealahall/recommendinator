@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from src.config.service import auto_enrich_enabled
 from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
@@ -50,18 +51,6 @@ def _enrichment_content_type(resolved: list[ResolvedInput]) -> ContentType | Non
             sanitize_for_log(resolved[0].source_id),
         )
         return None
-
-
-def auto_enrich_enabled(config: dict[str, Any]) -> bool:
-    """Whether newly written items are queued for enrichment.
-
-    Shared with the import route so an upload and a sync read one gate.
-    """
-    enrichment_config = config.get("enrichment", {})
-    return bool(
-        enrichment_config.get("enabled", False)
-        and enrichment_config.get("auto_enrich_on_sync", False)
-    )
 
 
 def build_sync_job(

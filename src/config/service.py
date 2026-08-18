@@ -251,6 +251,20 @@ def create_storage_manager(config: dict[str, Any]) -> StorageManager:
     return StorageManager(sqlite_path=db_path)
 
 
+def auto_enrich_enabled(config: dict[str, Any]) -> bool:
+    """Whether newly written items are queued for enrichment.
+
+    The one gate for every writer — web sync, web import, ``update`` and
+    ``import`` — so a condition added here cannot reach some of them and not
+    others.
+    """
+    enrichment_config = config.get("enrichment", {})
+    return bool(
+        enrichment_config.get("enabled", False)
+        and enrichment_config.get("auto_enrich_on_sync", False)
+    )
+
+
 _SCORER_CONFIG_MAP: dict[str, type[Scorer]] = {
     "genre_match": GenreMatchScorer,
     "creator_match": CreatorMatchScorer,
