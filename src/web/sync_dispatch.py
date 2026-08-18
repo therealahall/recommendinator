@@ -52,6 +52,18 @@ def _enrichment_content_type(resolved: list[ResolvedInput]) -> ContentType | Non
         return None
 
 
+def auto_enrich_enabled(config: dict[str, Any]) -> bool:
+    """Whether newly written items are queued for enrichment.
+
+    Shared with the import route so an upload and a sync read one gate.
+    """
+    enrichment_config = config.get("enrichment", {})
+    return bool(
+        enrichment_config.get("enabled", False)
+        and enrichment_config.get("auto_enrich_on_sync", False)
+    )
+
+
 def build_sync_job(
     sync_manager: SyncManager,
     source_label: str,
@@ -60,10 +72,7 @@ def build_sync_job(
     config: dict[str, Any],
     max_workers: int | None = None,
 ) -> SyncDispatch:
-    enrichment_config = config.get("enrichment", {})
-    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
-        "auto_enrich_on_sync", False
-    )
+    auto_enrich = auto_enrich_enabled(config)
     source_pairs = [(entry.plugin, entry.config) for entry in resolved]
     record_run = sync_run_recorder(storage)
     enrichment_content_type = _enrichment_content_type(resolved)
