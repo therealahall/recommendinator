@@ -1,0 +1,308 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
+import ImportPanel from './ImportPanel.vue'
+import type { ImportResponse } from '@/types/api'
+
+const mockGet = vi.fn()
+const mockUpload = vi.fn()
+
+vi.mock('@/composables/useApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useApi')>()),
+  useApi: () => ({
+    get: (...args: unknown[]) => mockGet(...args),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+    upload: (...args: unknown[]) => mockUpload(...args),
+  }),
+}))
+
+const IMPORTERS = [
+  {
+    name: 'goodreads_csv',
+    display_name: 'Goodreads export',
+    description: 'A Goodreads library export, as Goodreads writes it.',
+    requires_content_type: false,
+  },
+  {
+    name: 'csv_import',
+    display_name: 'CSV Import',
+    description: 'A generic CSV with the template columns.',
+    requires_content_type: true,
+  },
+]
+
+const TEMPLATES = [
+  { importer: 'csv_import', content_type: 'book', filename: 'books.csv' },
+  { importer: 'csv_import', content_type: 'video_game', filename: 'video_games.csv' },
+]
+
+/** Worked example 2 of the epic, the numbers the CLI prints for the same file. */
+const RESULT: ImportResponse = {
+  importer: 'goodreads_csv',
+  content_type: 'book',
+  filename: 'goodreads_library_export.csv',
+  added: 12,
+  updated: 3,
+  unchanged: 240,
+  skipped: 2,
+  failed: 0,
+  total_rows: 257,
+  errors: [
+    'Skipped line 14: no title',
+    'Skipped line 88: 6 fields short of the header',
+  ],
+}
+
+const SUMMARY =
+  'Imported goodreads_library_export.csv: added 12, updated 3, ' +
+  'unchanged 240, skipped 2, failed 0. 257 rows read. 2 lines are listed below.'
+
+function exportFile(): File {
+  return new File(['title,author\n'], 'goodreads_library_export.csv', {
+    type: 'text/csv',
+  })
+}
+
+async function mountPanel() {
+  const wrapper = mount(ImportPanel, { attachTo: document.body })
+  await flushPromises()
+  return wrapper
+}
+
+async function chooseFile(wrapper: VueWrapper, file: File): Promise<void> {
+  const input = wrapper.get('input[type="file"]')
+  Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+  await input.trigger('change')
+}
+
+async function dropFile(wrapper: VueWrapper, file: File): Promise<void> {
+  await wrapper.get('.drop-zone').trigger('drop', { dataTransfer: { files: [file] } })
+}
+
+function uploadedForm(): FormData {
+  return mockUpload.mock.calls[0][1] as FormData
+}
+
+describe('ImportPanel', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+    mockUpload.mockReset()
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/importers') return Promise.resolve(IMPORTERS)
+      if (path === '/import/templates') return Promise.resolve(TEMPLATES)
+      return Promise.resolve({})
+    })
+    mockUpload.mockResolvedValue(RESULT)
+  })
+
+  /** A region inserted already populated is read as page content and skipped
+   *  (WCAG 4.1.3) — the bug this repo has hit in three components. */
+  it('mounts the live region empty, before an import gives it anything to say', async () => {
+    const wrapper = await mountPanel()
+
+    const region = wrapper.get('[data-testid="import-status"]')
+    expect(region.attributes('aria-live')).toBe('polite')
+    expect(region.text()).toBe('')
+    wrapper.unmount()
+  })
+
+  it('announces the five counts through the live region it already mounted', async () => {
+    const wrapper = await mountPanel()
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe(SUMMARY)
+    wrapper.unmount()
+  })
+
+  /** Re-importing the same file to the same counts leaves the summary text
+   *  identical, and a region whose text does not change announces nothing. */
+  it('announces the file in flight, so a repeat import is not silent', async () => {
+    const wrapper = await mountPanel()
+    let settle: (value: ImportResponse) => void = () => {}
+    mockUpload.mockReturnValue(
+      new Promise<ImportResponse>((resolve) => {
+        settle = resolve
+      }),
+    )
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
+      'Importing goodreads_library_export.csv…',
+    )
+    settle(RESULT)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('shows the same result whether the file was dropped or chosen from the input', async () => {
+    const chosen = await mountPanel()
+    await chooseFile(chosen, exportFile())
+    await chosen.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    const dropped = await mountPanel()
+    await dropFile(dropped, exportFile())
+    await dropped.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(dropped.get('[data-testid="import-result"]').text()).toBe(
+      chosen.get('[data-testid="import-result"]').text(),
+    )
+    expect(dropped.get('[data-testid="import-status"]').text()).toBe(SUMMARY)
+    chosen.unmount()
+    dropped.unmount()
+  })
+
+  it('posts the file and the chosen format as one multipart upload', async () => {
+    const wrapper = await mountPanel()
+    const file = exportFile()
+
+    await chooseFile(wrapper, file)
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mockUpload.mock.calls[0][0]).toBe('/import')
+    expect(uploadedForm().get('file')).toBe(file)
+    expect(uploadedForm().get('importer')).toBe('goodreads_csv')
+    wrapper.unmount()
+  })
+
+  /** A site export decides its own content type. Sending one anyway would have
+   *  the response echo the operator's guess instead of what the format chose. */
+  it('omits content_type for a format that decides its own', async () => {
+    const wrapper = await mountPanel()
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('#import-content-type').exists()).toBe(false)
+    expect(uploadedForm().has('content_type')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('sends the picked content type for a format that needs one', async () => {
+    const wrapper = await mountPanel()
+
+    await wrapper.get('#import-format').setValue('csv_import')
+    await wrapper.get('#import-content-type').setValue('video_game')
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(uploadedForm().get('importer')).toBe('csv_import')
+    expect(uploadedForm().get('content_type')).toBe('video_game')
+    wrapper.unmount()
+  })
+
+  /** A Docker operator has no shell and templates/ ships inside the image, so
+   *  the link has to follow the pair currently picked. */
+  it('links to the template for the format and content type currently chosen', async () => {
+    const wrapper = await mountPanel()
+
+    expect(wrapper.find('[data-testid="import-template-link"]').exists()).toBe(false)
+
+    await wrapper.get('#import-format').setValue('csv_import')
+    const link = wrapper.get('[data-testid="import-template-link"]')
+    expect(link.attributes('href')).toBe(
+      '/api/import/templates/download?importer=csv_import&content_type=book',
+    )
+    expect(link.text()).toBe('Download the books.csv template')
+
+    await wrapper.get('#import-content-type').setValue('video_game')
+    expect(
+      wrapper.get('[data-testid="import-template-link"]').attributes('href'),
+    ).toBe('/api/import/templates/download?importer=csv_import&content_type=video_game')
+    wrapper.unmount()
+  })
+
+  /** qs5i.2.34's class: natively disabling the focused button drops the
+   *  keyboard user to <body> (WCAG 2.4.3). */
+  it('keeps the Import button focused while the upload is in flight', async () => {
+    const wrapper = await mountPanel()
+    let settle: (value: ImportResponse) => void = () => {}
+    mockUpload.mockReturnValue(
+      new Promise<ImportResponse>((resolve) => {
+        settle = resolve
+      }),
+    )
+
+    await chooseFile(wrapper, exportFile())
+    const button = wrapper.get('[data-testid="import-submit"]')
+    ;(button.element as HTMLButtonElement).focus()
+    await button.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(document.activeElement).toBe(button.element)
+
+    await button.trigger('click')
+    expect(mockUpload).toHaveBeenCalledTimes(1)
+    settle(RESULT)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  /** An upload creates no source_configs row, so re-reading the accordion after
+   *  one would imply a source that does not exist. */
+  it('does not reload the sync source list after an import', async () => {
+    const wrapper = await mountPanel()
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mockGet.mock.calls.map(([path]) => path)).toEqual([
+      '/importers',
+      '/import/templates',
+    ])
+    wrapper.unmount()
+  })
+
+  it('shows the refusal message when the server rejects the file', async () => {
+    const wrapper = await mountPanel()
+    mockUpload.mockRejectedValue(new Error('CSV Import needs a content type.'))
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="import-error"]').text()).toBe(
+      'CSV Import needs a content type.',
+    )
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
+      'Import failed. CSV Import needs a content type.',
+    )
+    expect(wrapper.find('[data-testid="import-result"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  /** Some installs ship no templates directory. Losing the link is survivable;
+   *  losing the panel that imports the file is not. */
+  it('still imports when the template listing is unavailable', async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/importers') return Promise.resolve(IMPORTERS)
+      return Promise.reject(new Error('No import templates directory'))
+    })
+    const wrapper = await mountPanel()
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="import-template-link"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="import-result"]').text()).toContain('240')
+    wrapper.unmount()
+  })
+})

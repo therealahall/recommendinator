@@ -137,6 +137,42 @@ function contrast(text: Rgba, backdrop: Rgba): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
+const DROP_ZONE = 'resources/js/components/atoms/FileDropZone.vue'
+const RESULT_SUMMARY = 'resources/js/components/molecules/ImportResultSummary.vue'
+const IMPORT_PANEL = 'resources/js/components/organisms/ImportPanel.vue'
+
+/** The import panel's own surfaces, none of them the plain card: text, the rule
+ *  that colours it, and the rule declaring what it sits on. */
+const IMPORT_SURFACES: [string, string, string, string][] = [
+  ['the refusal notice', IMPORT_PANEL, '.import-error', '.import-error'],
+  ['a count', RESULT_SUMMARY, '.import-count dd', '.import-counts'],
+  ['a count label', RESULT_SUMMARY, '.import-count dt', '.import-counts'],
+  ['a skipped line', RESULT_SUMMARY, '.import-misses-list', '.import-misses'],
+  ['the misses heading', RESULT_SUMMARY, '.import-misses-title', '.import-misses'],
+  ['the drop hint', DROP_ZONE, '.drop-zone-hint', '.drop-zone'],
+  ['the chosen file', DROP_ZONE, '.drop-zone-selection', '.drop-zone'],
+  ['the file label', DROP_ZONE, '.drop-zone-label', '.drop-zone'],
+]
+
+describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
+  const base = read('resources/css/base.css')
+  const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
+  const card = toRgba('var(--bg-card)', vars)
+
+  it.each(IMPORT_SURFACES)(
+    '%s carries readable text',
+    (_label, componentPath, textSelector, surfaceSelector) => {
+      const component = read(componentPath)
+      const text = declaration(ruleBody(component, textSelector), 'color')
+      const surface = declaration(ruleBody(component, surfaceSelector), 'background')
+
+      expect(
+        contrast(toRgba(text, vars), over(toRgba(surface, vars), card)),
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    },
+  )
+})
+
 describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, themePath) => {
   const base = read('resources/css/base.css')
   const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])

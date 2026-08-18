@@ -17,6 +17,9 @@ import type {
   PluginInfoResponse,
   PluginListResponse,
   SourceCreateRequest,
+  ImporterResponse,
+  ImportTemplateResponse,
+  ImportResponse,
   OAuthStatusResponse,
   TraktDeviceFlowResponse,
   TraktPollResponse,
@@ -721,6 +724,38 @@ export const useDataStore = defineStore('data', () => {
     oauthMessages.value = remainingMessages
   }
 
+  // One-shot file imports. An upload is not a source: it writes no
+  // source_configs row and gets no cadence, so nothing here touches
+  // syncSources and no action below refreshes it.
+
+  const importers = ref<ImporterResponse[]>([])
+  const importTemplates = ref<ImportTemplateResponse[]>([])
+
+  async function loadImporters(): Promise<ImporterResponse[]> {
+    importers.value = await api.get<ImporterResponse[]>('/importers')
+    return importers.value
+  }
+
+  async function loadImportTemplates(): Promise<ImportTemplateResponse[]> {
+    importTemplates.value =
+      await api.get<ImportTemplateResponse[]>('/import/templates')
+    return importTemplates.value
+  }
+
+  async function importFile(
+    file: File,
+    importer: string,
+    contentType?: string,
+  ): Promise<ImportResponse> {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('importer', importer)
+    // Omitted rather than sent empty, so a format that decides its own content
+    // type answers with the one it chose instead of echoing a blank back.
+    if (contentType) form.append('content_type', contentType)
+    return api.upload<ImportResponse>('/import', form)
+  }
+
   return {
     // State
     syncSources,
@@ -743,6 +778,8 @@ export const useDataStore = defineStore('data', () => {
     sourceConfigs,
     availablePlugins,
     pluginImportErrors,
+    importers,
+    importTemplates,
     // Actions
     loadSyncSources,
     triggerSync,
@@ -772,6 +809,9 @@ export const useDataStore = defineStore('data', () => {
     loadAvailablePlugins,
     createSource,
     deleteSource,
+    loadImporters,
+    loadImportTemplates,
+    importFile,
     cleanup,
   }
 })

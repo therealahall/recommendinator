@@ -98,6 +98,33 @@ describe('useApi query parameters', () => {
   })
 })
 
+describe('useApi upload', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('leaves the Content-Type of a multipart body to the browser', async () => {
+    // Naming it here drops the boundary only the browser knows, and the server
+    // then finds no part at all in a body that looks well formed.
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { added: 1 }))
+    const form = new FormData()
+    form.append('importer', 'goodreads_csv')
+
+    await useApi().upload('/import', form)
+
+    const init = vi.mocked(fetch).mock.calls[0][1]
+    expect(init?.headers).toEqual({})
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBe(form)
+  })
+})
+
 /** Put the store where a live session leaves it, without a boot round trip. */
 function signedIn() {
   const auth = useAuthStore()

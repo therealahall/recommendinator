@@ -247,6 +247,38 @@ export interface UpdateResponse {
   sources?: string[]
 }
 
+// --- Import ---
+
+export interface ImporterResponse {
+  name: string
+  display_name: string
+  description: string
+  /** False where the format itself decides, as a book-site export does. */
+  requires_content_type: boolean
+}
+
+export interface ImportTemplateResponse {
+  importer: string
+  content_type: string
+  filename: string
+}
+
+/** What one upload did. ``import --format json`` emits this key set field for
+ *  field, so neither interface may add, drop or rename one alone. */
+export interface ImportResponse {
+  importer: string
+  content_type: string | null
+  filename: string | null
+  added: number
+  updated: number
+  unchanged: number
+  skipped: number
+  failed: number
+  total_rows: number
+  /** One line per row that missed, each naming the file line and the reason. */
+  errors: string[]
+}
+
 // --- Enrichment ---
 
 export interface EnrichmentJobStatusResponse {

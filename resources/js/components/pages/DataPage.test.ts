@@ -103,7 +103,7 @@ describe('DataPage rows during a Sync All', () => {
     })
 
     const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
     })
     await flushPromises()
 
@@ -123,6 +123,27 @@ describe('DataPage rows during a Sync All', () => {
     expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([
       ['/update', { source: 'all' }],
     ])
+    wrapper.unmount()
+  })
+
+  /** The upload panel is the only route to importing a file, and the Data page
+   *  is where the epic puts it. */
+  it('places the import panel ahead of the sync sources', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') return Promise.resolve([enabledSource])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
+    })
+    await flushPromises()
+
+    const panel = wrapper.get('import-panel-stub').element
+    const sources = wrapper.get('[data-testid="sync-sources-panel"]').element
+    expect(
+      panel.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
     wrapper.unmount()
   })
 
@@ -153,7 +174,7 @@ describe('DataPage rows during a Sync All', () => {
     })
 
     const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
     })
     await flushPromises()
 
@@ -182,7 +203,7 @@ describe('DataPage rows during a Sync All', () => {
       })
 
       const wrapper = mount(DataPage, {
-        global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+        global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
         attachTo: document.body,
       })
       await flushPromises()
