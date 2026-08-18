@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.ingestion.import_templates import TEMPLATES_DIR
 from src.storage.manager import StorageManager
 from tests.factories import authenticated_client, booted_web_app
 
@@ -189,6 +190,77 @@ def test_the_config_gate_decides_whether_imported_items_are_queued(
     item = storage.get_content_items(user_id=1)[0]
     assert item.db_id is not None
     assert (storage.enrichment.status(item.db_id) is not None) is auto_enrich
+
+
+class TestTheTemplateAnOperatorFillsIn:
+    """In Docker ``templates/`` is inside the image, with no shell to copy from."""
+
+    def test_a_template_downloads_byte_for_byte_as_it_ships(
+        self, client: TestClient
+    ) -> None:
+        response = client.get(
+            "/api/import/templates/download",
+            params={"importer": "csv_import", "content_type": "book"},
+        )
+
+        assert response.status_code == 200
+        assert response.content == (TEMPLATES_DIR / "books.csv").read_bytes()
+        assert (
+            response.headers["content-disposition"]
+            == 'attachment; filename="books.csv"'
+        )
+        assert response.headers["content-type"].startswith("text/csv")
+
+    def test_the_listing_names_every_template_the_install_ships(
+        self, client: TestClient
+    ) -> None:
+        """The picker renders from this, so a name hardcoded beside it is drift."""
+        payload = client.get("/api/import/templates").json()
+
+        assert {frozenset(entry) for entry in payload} == {
+            frozenset({"importer", "content_type", "filename"})
+        }
+        assert len(payload) == 12
+        assert {
+            "importer": "markdown_import",
+            "content_type": "tv_show",
+            "filename": "tv_shows.md",
+        } in payload
+
+    @pytest.mark.parametrize(
+        ("importer", "content_type"),
+        [
+            ("goodreads_csv", "book"),
+            ("../../../etc/passwd", "book"),
+            ("csv_import", "../../config/config.yaml"),
+        ],
+        ids=["a format with no template", "traversal as the format", "as the type"],
+    )
+    def test_a_template_that_is_not_ours_is_refused_rather_than_resolved(
+        self, client: TestClient, importer: str, content_type: str
+    ) -> None:
+        """Neither parameter is a path segment, so neither can name a file."""
+        response = client.get(
+            "/api/import/templates/download",
+            params={"importer": importer, "content_type": content_type},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"].startswith("No template for that import")
+
+    def test_a_missing_templates_directory_says_where_it_looked(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty list reads as an install that ships none, and a 500 as a bug
+        in the route rather than the directory that is not there.
+        """
+        absent = tmp_path / "absent"
+        monkeypatch.setattr("src.ingestion.import_templates.TEMPLATES_DIR", absent)
+
+        response = client.get("/api/import/templates")
+
+        assert response.status_code == 503
+        assert str(absent) in response.json()["detail"]
 
 
 def test_the_format_list_says_which_ones_need_a_content_type(

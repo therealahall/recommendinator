@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.ingestion.import_templates import TEMPLATE_IMPORTERS
 from src.ingestion.importers.registry import IMPORTERS, get_importer
 
 # An importer that could open a file would be a second way to read the disk,
@@ -73,6 +74,11 @@ def test_the_registry_offers_exactly_the_five_formats() -> None:
         "json_import",
         "markdown_import",
     ]
+
+
+def test_every_template_names_a_format_the_registry_offers() -> None:
+    """A renamed importer would leave its template unreachable from either door."""
+    assert set(TEMPLATE_IMPORTERS) <= {importer.name for importer in IMPORTERS}
 
 
 def test_every_importer_answers_to_the_name_it_publishes() -> None:

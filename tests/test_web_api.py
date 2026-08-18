@@ -3843,6 +3843,12 @@ _DEPENDENCY_FREE_ENDPOINTS = [
     _Endpoint("POST", "/api/config/reload"),
     _Endpoint("GET", "/api/plugins"),
     _Endpoint("GET", "/api/importers"),
+    _Endpoint("GET", "/api/import/templates"),
+    _Endpoint(
+        "GET",
+        "/api/import/templates/download",
+        url="/api/import/templates/download?importer=csv_import&content_type=book",
+    ),
     _Endpoint("GET", "/api/sync/status"),
     _Endpoint("POST", "/api/enrichment/stop"),
     _Endpoint("GET", "/api/enrichment/status"),
