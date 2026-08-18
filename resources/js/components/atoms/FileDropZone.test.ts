@@ -40,10 +40,12 @@ describe('FileDropZone', () => {
     })
     await input.trigger('change')
 
-    expect(wrapper.emitted('update:file')).toEqual([[chosen]])
+    expect(wrapper.emitted('update:file')).toEqual([[chosen, false]])
     wrapper.unmount()
   })
 
+  /** The flag is how the panel tells the two apart: only a drop needs
+   *  announcing, the input speaks its own value. */
   it('emits the dropped file, so a drop and a keyboard pick agree', async () => {
     const wrapper = mountZone()
     const dropped = exportFile()
@@ -52,7 +54,7 @@ describe('FileDropZone', () => {
       .get('.drop-zone')
       .trigger('drop', { dataTransfer: { files: [dropped] } })
 
-    expect(wrapper.emitted('update:file')).toEqual([[dropped]])
+    expect(wrapper.emitted('update:file')).toEqual([[dropped, true]])
     wrapper.unmount()
   })
 
