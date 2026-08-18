@@ -120,8 +120,8 @@ def _template_id(template: ImportTemplate) -> str:
 def test_every_shipped_template_imports_through_the_format_it_names(
     template: ImportTemplate,
 ) -> None:
-    """A template is downloaded, filled in and uploaded back, and nothing else
-    in the suite ties ``templates/`` to the parsers: one whose example row
+    """A template is downloaded, filled in and uploaded back, and this is the
+    only thing tying ``templates/`` to the parsers: one whose example row
     stopped parsing ships as a file whose every line is skipped.
     """
     importer = get_importer(template.importer)
