@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.ingestion.importers.base import Importer, SkippedRow
+from src.ingestion.importers.base import Importer, ImporterError, SkippedRow
 from src.models.content import ContentType
 from src.storage.manager import SaveCounts
 from src.utils.text import exception_for_log, sanitize_for_log
@@ -49,6 +49,21 @@ class ImportResult:
     @property
     def unchanged(self) -> int:
         return self.counts.unchanged
+
+
+def decode_import_text(data: bytes) -> str:
+    """Decode an uploaded export, or refuse it naming the byte that is not.
+
+    ``utf-8-sig``: a spreadsheet writes the export with a BOM, which left in
+    place becomes part of the first column's name, so every row loses its title.
+    """
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ImporterError(
+            f"File is not UTF-8 text (byte {error.start} is not). "
+            "Re-save the export as UTF-8 and upload it again."
+        ) from error
 
 
 def import_file(

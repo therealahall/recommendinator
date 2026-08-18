@@ -3673,6 +3673,9 @@ _GUARDED_ENDPOINTS = [
         ("storage",),
         url="/api/items/export?type=book",
     ),
+    # No body: the upload is multipart, and both guards answer before the form
+    # is parsed, which is the order this asserts.
+    _Endpoint("POST", "/api/import", ("storage", "config")),
     _Endpoint(
         "PATCH",
         "/api/items/{db_id}/ignore",
@@ -3839,6 +3842,7 @@ _DEPENDENCY_FREE_ENDPOINTS = [
     # ``create_app`` sets that field, and it sets it or raises.
     _Endpoint("POST", "/api/config/reload"),
     _Endpoint("GET", "/api/plugins"),
+    _Endpoint("GET", "/api/importers"),
     _Endpoint("GET", "/api/sync/status"),
     _Endpoint("POST", "/api/enrichment/stop"),
     _Endpoint("GET", "/api/enrichment/status"),
