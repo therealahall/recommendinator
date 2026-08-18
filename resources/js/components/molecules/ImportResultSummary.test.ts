@@ -58,7 +58,7 @@ describe('ImportResultSummary', () => {
     wrapper.unmount()
   })
 
-  it('drops the misses block when every line imported', () => {
+  it('drops the misses block when every row imported', () => {
     const wrapper = mount(ImportResultSummary, {
       props: {
         result: { ...partlySuccessful, skipped: 0, total_rows: 255, errors: [] },
@@ -66,6 +66,24 @@ describe('ImportResultSummary', () => {
     })
 
     expect(wrapper.find('[data-testid="import-errors"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  /** Each message names its own unit, so a heading that picks one is wrong for
+   *  the other: entry 2 of a JSON array is not file line 2. */
+  it('heads the misses without presuming they are lines', () => {
+    const wrapper = mount(ImportResultSummary, {
+      props: {
+        result: {
+          ...partlySuccessful,
+          importer: 'json_import',
+          errors: ['Skipped entry 2: no title'],
+        },
+      },
+    })
+
+    const heading = wrapper.get('.import-misses-title').text()
+    expect(heading).toBe('Rows that did not import (1)')
     wrapper.unmount()
   })
 })

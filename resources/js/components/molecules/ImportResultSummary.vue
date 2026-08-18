@@ -31,11 +31,13 @@ const counts = computed(() => [
       </div>
     </dl>
 
-    <!-- Not an error state and not styled as one. A file where most lines
-         imported and two did not is a success that lists two lines. -->
+    <!-- Not an error state and not styled as one. A file where most rows
+         imported and two did not is a success that lists two rows. -->
     <div v-if="result.errors.length" class="import-misses">
+      <!-- "Rows", because each message names its own unit: a JSON array
+           entry is not a file line, and the heading cannot know which. -->
       <h5 class="import-misses-title">
-        Lines that did not import ({{ result.errors.length }})
+        Rows that did not import ({{ result.errors.length }})
       </h5>
       <ul class="import-misses-list" data-testid="import-errors" role="list">
         <li v-for="message in result.errors" :key="message">{{ message }}</li>
