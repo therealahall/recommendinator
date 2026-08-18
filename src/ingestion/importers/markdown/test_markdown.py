@@ -101,6 +101,21 @@ class TestSections:
 
         assert parsed[0].status == ConsumptionStatus.CURRENTLY_CONSUMING.value
 
+    def test_a_backlog_heading_is_recognised_and_does_not_inherit(self) -> None:
+        """Losing the keyword would leave everything under it marked completed."""
+        parsed = items(
+            "## Completed\n"
+            "- **Hades** by Supergiant\n\n"
+            "## Backlog\n"
+            "- **Hollow Knight** by Team Cherry\n",
+            ContentType.VIDEO_GAME,
+        )
+
+        assert [item.status for item in parsed] == [
+            ConsumptionStatus.COMPLETED.value,
+            ConsumptionStatus.UNREAD.value,
+        ]
+
     def test_an_unrecognised_heading_leaves_the_status_alone(self) -> None:
         parsed = items(
             "## Completed\n"

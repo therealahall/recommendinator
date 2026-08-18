@@ -1009,3 +1009,59 @@ class TestASyncSaysWhatItChangedRegression:
             0,
             40,
         )
+
+
+CSV_PLUGIN_LOGGER = "src.ingestion.sources.generic_csv.generic_csv"
+
+
+class TestAShortRowNoLongerTakesTheImportDown:
+    """Reported: one short row in a hand-edited CSV lost the whole import.
+
+    Cause: DictReader leaves a missing field None and .strip() raised on it.
+    Fix: the importer reports the row, the plugin logs it and carries on.
+    """
+
+    HAND_EDITED = (
+        "title,author,rating,status\n"
+        "Dune,Frank Herbert,5,read\n"
+        "Neuromancer,William Gibson\n"
+        "Ubik,Philip K. Dick,4,read\n"
+    )
+
+    def _sync(self, tmp_path: Path, storage: StorageManager) -> SyncResult:
+        csv_path = tmp_path / "books.csv"
+        csv_path.write_text(self.HAND_EDITED, encoding="utf-8")
+        return execute_sync(
+            plugin=CsvImportPlugin(),
+            plugin_config={"path": str(csv_path), "content_type": "book"},
+            storage_manager=storage,
+        )
+
+    def test_the_rows_around_the_short_one_still_reach_storage(
+        self, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        result = self._sync(tmp_path, storage)
+
+        assert result.errors == []
+        assert result.total_items == 2
+        assert sorted(item.title for item in storage.get_content_items(user_id=1)) == [
+            "Dune",
+            "Ubik",
+        ]
+
+    def test_the_operator_is_told_which_row_went(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A skip nobody is told about is the silent data loss all over again."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        with caplog.at_level(logging.WARNING, logger=CSV_PLUGIN_LOGGER):
+            self._sync(tmp_path, storage)
+
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == CSV_PLUGIN_LOGGER
+        ] == ["Skipped row 3: 2 fields short of the header"]
