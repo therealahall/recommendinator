@@ -31,7 +31,7 @@ CLAUDE.md, `docs/`), commit atomically in conventional format.
 
 ## Adding a data source
 
-1. Create the plugin in `src/ingestion/sources/`, following `goodreads_csv.py` or
+1. Create the plugin in `src/ingestion/sources/`, following `roms.py` or
    `steam.py`, yielding `ContentItem` objects.
 2. Add tests with mocked APIs.
 3. Wire CLI and web.

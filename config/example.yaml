@@ -55,7 +55,7 @@ storage:
   # Cache directory
   cache_dir: "data/cache"
 
-# Where file-based sources (CSV/JSON/Markdown import, ROM scan) may read.
+# Where a directory-scanning source (the ROM library) may read.
 # BOOTSTRAP: source config is writable over the API, so this list is
 # deliberately NOT manageable from the Settings page — a caller who could widen
 # it could make the server read any file and import it into your library.

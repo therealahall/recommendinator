@@ -1,15 +1,13 @@
 # Data Sources
 
 Every source has its own setup guide, linked below. This page covers what they
-share: managing sources, parallel sync, and library export.
+share: managing sources, importing a file, parallel sync, and library export.
 
 ## Available sources
 
 | Source | Type | Setup guide | Import method |
 |--------|------|-------------|---------------|
-| **Goodreads** | Books | [goodreads_csv](../src/ingestion/sources/goodreads_csv/README.md) | CSV export |
 | **Goodreads (RSS)** | Books | [goodreads_rss](../src/ingestion/sources/goodreads_rss/README.md) | Public shelves, no CSV export needed |
-| **The StoryGraph** | Books | [storygraph_csv](../src/ingestion/sources/storygraph_csv/README.md) | CSV export |
 | **Calibre-Web** | Books | [calibre_web](../src/ingestion/sources/calibre_web/README.md) | OPDS |
 | **Steam** | Games | [steam](../src/ingestion/sources/steam/README.md) | Steam Web API |
 | **GOG** | Games | [gog](../src/ingestion/sources/gog/README.md) | OAuth, library and wishlist |
@@ -18,13 +16,14 @@ share: managing sources, parallel sync, and library export.
 | **Radarr** | Movies | [radarr](../src/ingestion/sources/radarr/README.md) | Radarr API |
 | **Trakt** | TV Shows / Movies | [trakt](../src/ingestion/sources/trakt/README.md) | OAuth device code: watched history, ratings, watchlist |
 | **ROM Library** | Games | [roms](../src/ingestion/sources/roms/README.md) | Scans emulator ROM directories |
-| **CSV** | Any | [generic_csv](../src/ingestion/sources/generic_csv/README.md) | Mappable columns |
-| **JSON** | Any | [generic_json](../src/ingestion/sources/generic_json/README.md) | JSON or JSONL |
-| **Markdown** | Any | [markdown](../src/ingestion/sources/markdown/README.md) | Readable lists |
 
-`templates/` holds an example file per content type and format. Templates carry
-`ignored` for excluding items from recommendations, and the TV templates carry
-`seasons_watched` (`1,2,5,6` in CSV, `[1,2,5,6]` in JSON).
+## Importing a file
+
+A one-off export is read once and dropped: it creates no source and takes no
+cadence. The **Data** tab's **Import a file** panel and the `import` command
+([CLI.md](CLI.md#import)) are peers, both reporting added, updated, unchanged,
+skipped and failed rows and naming each one they refused. The template link
+beside the format picker is how a Docker install gets a blank file to fill in.
 
 ## Adding, editing and removing sources in the UI
 
@@ -55,10 +54,10 @@ put and a re-added source syncs straight back into them.
 Sensitive values are never returned by the API. The UI shows a "set" / "unset"
 badge with **Replace** and **Clear** actions.
 
-**A file-based source may only read under `security.allowed_source_roots`**
+**A scanning source may only read under `security.allowed_source_roots`**
 (`inputs/` by default). A path outside it fails validation naming the key to add
 it to, in `config.yaml` — see
-[SECURITY.md](SECURITY.md#where-file-imports-may-read).
+[SECURITY.md](SECURITY.md#where-a-source-may-read).
 
 Each panel also carries an **Automatic sync** select, the peer of
 `source schedule <id> <interval>`. Only a migrated source is offered one; a
@@ -117,13 +116,9 @@ One thing does move a status backward, and it is not a status rule. A completed
 TV show whose season checklist you have filled in returns to in-progress when an
 import raises its `total_seasons` above the seasons you have watched.
 
-> **An export is a snapshot, not a patch.** Every row this app exports carries a
-> real `true` or `false` in `ignored`, never a blank cell, so re-importing an
-> export replaces your entire ignore list with the state it had at export time.
-> Everything you have ignored since is un-ignored. That is how you un-ignore
-> items in bulk, and it is why you **must not leave a one-off export configured
-> as a standing source**. Left configured, it re-asserts that stale snapshot on
-> every sync. Import it, then remove or disable the source.
+Every row this app exports carries a real `true` or `false` in `ignored`, never
+a blank cell, so re-importing an export replaces your entire ignore list with
+the state it had at export time. That is how you un-ignore items in bulk.
 
 `year`, `runtime_minutes`, `total_seasons`, `platform`, `hours_played` and the
 creator columns (`director`, `creator`, `developer`) used to export blank and now
@@ -144,12 +139,12 @@ file. Three things still need care:
   GOG named both in the free-form metadata rather than the columns, so they
   exported blank. Starting the app folds the names onto the columns, keeping
   anything already there, and the item stops failing enrichment.
-- **`hours_played` on a video game a generic CSV or JSON import brought in
-  before that column was renamed** to the library's own `playtime_hours`. Those
-  rows still carry the old key and export blank. The number is not lost, and
-  syncing that source again writes the new key. Nothing but the export is
-  affected: the [length scorer](SCORING.md#content-length-preferences) reads
-  RAWG's average playtime, never your own hours.
+- **`hours_played` on a video game a CSV or JSON import brought in before that
+  column was renamed** to the library's own `playtime_hours`. Those rows still
+  carry the old key and export blank. The number is not lost, and importing the
+  file again writes the new key. Nothing but the export is affected: the
+  [length scorer](SCORING.md#content-length-preferences) reads RAWG's average
+  playtime, never your own hours.
 
 ## Credential storage
 

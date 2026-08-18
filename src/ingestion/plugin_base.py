@@ -92,10 +92,11 @@ class SourcePlugin(ABC):
             def get_config_schema(self) -> list[ConfigField]:
                 return [
                     ConfigField(
-                        name="path",
-                        field_type=str,
+                        name="paths",
+                        field_type=list,
                         required=True,
-                        description="Path to data file"
+                        reads_path=True,
+                        description="Directories to scan"
                     ),
                 ]
 
@@ -106,8 +107,8 @@ class SourcePlugin(ABC):
                 user_id: int = 1,
             ) -> list[str]:
                 errors = []
-                if not config.get("path"):
-                    errors.append("'path' is required")
+                if not config.get("paths"):
+                    errors.append("'paths' is required")
                 return errors
 
             def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
@@ -124,7 +125,7 @@ class SourcePlugin(ABC):
         """Unique identifier for this plugin.
 
         Used in config as inputs.<name>.* and in CLI as --source <name>.
-        Should be lowercase with underscores (e.g., "goodreads_csv", "steam", "generic_csv").
+        Should be lowercase with underscores (e.g., "goodreads_rss", "steam", "roms").
 
         Returns:
             Plugin identifier string

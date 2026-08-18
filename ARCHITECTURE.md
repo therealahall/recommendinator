@@ -10,16 +10,16 @@ arithmetic a reader can follow back to the library it came from.
 
 ### 1. Data Ingestion (`src/ingestion/`)
 
-Parses and normalizes data from external sources.
+Parses and normalizes data from external sources, plus one-off files through
+`src/ingestion/importers/`.
 
 | Sources | Content |
 |---------|---------|
-| Goodreads CSV, Goodreads RSS shelves, The StoryGraph CSV, Calibre-Web OPDS | Books |
+| Goodreads RSS shelves, Calibre-Web OPDS | Books |
 | Steam Web API, GOG OAuth, Epic via Legendary, ROM library scanner | Video games |
 | Sonarr | TV shows |
 | Radarr | Movies |
 | Trakt device-code OAuth | TV shows and movies |
-| Generic CSV, JSON, Markdown | Any |
 
 - Plugins subclass `SourcePlugin` (`plugin_base.py`), auto-discovered from
   `src/ingestion/sources/` by `PluginRegistry`. Each validates its own config,
@@ -35,7 +35,7 @@ Parses and normalizes data from external sources.
   files each error under the source that produced it, so the Data tab shows a
   plugin's own wording on that source's row.
 - Source config is writable over HTTP, so two field kinds are constrained rather
-  than trusted. `paths.py` contains a file plugin's path inside
+  than trusted. `paths.py` contains a scanner's path inside
   `security.allowed_source_roots`, a config.yaml key the settings API cannot
   reach; `urls.py` checks a base URL's shape. A `credential_bound` `ConfigField`
   (a plugin's `url`) names the host its secrets are sent to.
@@ -82,7 +82,7 @@ count that is unknown or zero gives it nothing to compare against, so no
 regression happens there either.
 
 A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
-(`parse_ignored_field`, `src/ingestion/sources/generic_csv/generic_csv.py`). That
+(`parse_ignored_field`, `src/ingestion/importers/rows.py`). That
 protects a hand-maintained file, not this project's exports.
 `_item_to_export_dict` (`src/utils/export.py`) states `true` or `false` on every
 row, so re-importing an export replaces the ignore list wholesale with the state
@@ -565,10 +565,9 @@ shape, which the `source_configs` table now expresses:
 
 ```yaml
 inputs:
-  my_books:
-    plugin: json_import
-    path: "inputs/books.json"
-    content_type: "book"
+  my_roms:
+    plugin: roms
+    paths: ["inputs/roms"]
     enabled: true
 ```
 

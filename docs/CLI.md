@@ -38,18 +38,29 @@ file to send anyone to.
 
 ### `update`
 
-Imports from one source or all of them.
+Syncs one source or all of them.
 
 ```bash
-python3.11 -m src.cli update --source goodreads_csv
 python3.11 -m src.cli update --source all
 python3.11 -m src.cli update --source roms --format json
 ```
 
 Each source reports how many items the plugin found, how many were saved, and
 how those split into added, updated and unchanged — so a second run of the same
-import reads as 40 unchanged rather than as another 40 items. `--format json`
+sync reads as 40 unchanged rather than as another 40 items. `--format json`
 emits the document `GET /api/sync/status` serves for the same run.
+
+### `import`
+
+Reads one file: no source, no cadence, no sync run. `--importer` picks the
+format and `--content-type` the type where the format decides none.
+`--format json` emits what `POST /api/import` answers: five counts,
+`total_rows` and a line per refused row. `import-formats` lists the formats;
+`import-template` writes one to `--output` or stdout, or lists them.
+
+```bash
+python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
+```
 
 ### `recommend`
 
@@ -156,23 +167,12 @@ python3.11 -m src.cli library export --type book --format csv --output books.csv
 Add, edit, enable, disable and remove data sources without touching YAML.
 
 ```bash
-# Create one directly in the database
-python3.11 -m src.cli source plugins             # available plugin types
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
-
-# Or move an existing YAML source in (one-time, idempotent)
-python3.11 -m src.cli source migrate goodreads_csv
-
-# Inspect and edit
-python3.11 -m src.cli source show goodreads_csv
-python3.11 -m src.cli source schema goodreads_csv           # editable fields
-python3.11 -m src.cli source disable goodreads_csv          # skipped during sync
-python3.11 -m src.cli source enable goodreads_csv
-python3.11 -m src.cli source remove my_books                # clears its secrets too
-
-# Cadence: off, hourly, 6h, daily or weekly
-python3.11 -m src.cli source schedule goodreads_csv weekly
+python3.11 -m src.cli source plugins            # available plugin types
+python3.11 -m src.cli source create my_roms roms
+python3.11 -m src.cli source set my_roms paths inputs/roms
+python3.11 -m src.cli source migrate my_roms    # or move a YAML source in, once
+python3.11 -m src.cli source show my_roms       # also schema, enable, disable, remove
+python3.11 -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
 ```
 
 `source schedule` takes a migrated source and one of those five keys. The web
@@ -187,8 +187,8 @@ Every `source` subcommand except `set-secret` and `clear-secret` accepts
 `PUT /api/sync/sources/<id>/config`. It reads a JSON dict from a file or stdin:
 
 ```bash
-echo '{"path": "inputs/new.csv", "content_type": "book"}' \
-  | python3.11 -m src.cli source apply my_csv --from-json -
+echo '{"paths": ["inputs/roms"]}' \
+  | python3.11 -m src.cli source apply my_roms --from-json -
 ```
 
 `source set-secret` prompts with hidden input. For Docker entrypoints and CI, set

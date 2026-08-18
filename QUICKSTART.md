@@ -113,9 +113,9 @@ step. Full guide: [docs/ENRICHMENT_SETUP.md](docs/ENRICHMENT_SETUP.md).
 
 ## Import your data
 
-Plugins cover Goodreads, The StoryGraph, Calibre-Web, Steam, GOG, Epic Games,
-Sonarr, Radarr, Trakt, a ROM library, and generic CSV, JSON and Markdown files.
-[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) lists them all.
+Plugins cover Goodreads shelves, Calibre-Web, Steam, GOG, Epic Games, Sonarr,
+Radarr, Trakt and a ROM library; [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
+lists them all. A one-off export is imported instead.
 
 ### Add a source
 
@@ -123,53 +123,42 @@ From the **Data** tab, **+ Add source** builds the form from the plugin's own
 field list and takes any secret up front. The same from the CLI:
 
 ```bash
-# A file source needs no credentials
-python3.11 -m src.cli source create my_books goodreads_csv
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
-
 # A secret is set separately, through a hidden prompt
 python3.11 -m src.cli source create my_steam steam
 python3.11 -m src.cli source set my_steam steam_id 76561198000000000
 python3.11 -m src.cli source set-secret my_steam api_key
 ```
 
-Sources live in the database, so there is nothing to edit by hand and no restart.
-Later on, `source show`, `source set`, `source enable`, `source disable` and
-`source remove` do the rest, and the **Data** tab does all of it too.
+Sources live in the database, so there is nothing to edit by hand and no
+restart. `source show`, `set`, `enable`, `disable` and `remove` do the rest, as
+does the **Data** tab.
 
 GOG, Epic Games and Trakt need OAuth. Follow that plugin's guide:
 [GOG](src/ingestion/sources/gog/README.md),
 [Epic Games](src/ingestion/sources/epic_games/README.md),
 [Trakt](src/ingestion/sources/trakt/README.md).
 
-### Generic CSV, JSON and Markdown
+### Import a file
 
-For anything without a dedicated plugin. `templates/` has a starter file per
-content type:
+A Goodreads or StoryGraph export, or a CSV, JSON or Markdown file of your own,
+is read once rather than configured as a source. The **Data** tab's **Import a
+file** panel does the same, blank template included:
 
 ```bash
-cp templates/movies.csv inputs/my_movies.csv
-
-python3.11 -m src.cli source create my_movies csv_import
-python3.11 -m src.cli source set my_movies path inputs/my_movies.csv
-python3.11 -m src.cli source set my_movies content_type movie
+python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
 ```
-
-Give each source a unique id and you can run as many of the same plugin as you
-like.
 
 ### Sync
 
 ```bash
 python3.11 -m src.cli update --source list      # what is configured
-python3.11 -m src.cli update --source my_books
 python3.11 -m src.cli update --source all       # every enabled source
 ```
 
 Or give a source a cadence, here or on the Data page, and let the server run it:
 
 ```bash
-python3.11 -m src.cli source schedule my_books weekly   # off, hourly, 6h, daily, weekly
+python3.11 -m src.cli source schedule my_steam weekly   # off, hourly, 6h, daily, weekly
 ```
 
 Without `auto_enrich_on_sync`, run enrichment yourself:

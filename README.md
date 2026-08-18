@@ -61,9 +61,7 @@ Each source has its own setup guide. Pick the ones you use.
 
 | Source | Type | Setup |
 |--------|------|-------|
-| **Goodreads (CSV export)** | Books | [goodreads_csv](src/ingestion/sources/goodreads_csv/README.md) |
 | **Goodreads (public shelves via RSS)** | Books | [goodreads_rss](src/ingestion/sources/goodreads_rss/README.md) |
-| **The StoryGraph** | Books | [storygraph_csv](src/ingestion/sources/storygraph_csv/README.md) |
 | **Calibre-Web** | Books | [calibre_web](src/ingestion/sources/calibre_web/README.md) |
 | **Steam** | Games | [steam](src/ingestion/sources/steam/README.md) |
 | **GOG** | Games | [gog](src/ingestion/sources/gog/README.md) |
@@ -72,10 +70,10 @@ Each source has its own setup guide. Pick the ones you use.
 | **Radarr** | Movies | [radarr](src/ingestion/sources/radarr/README.md) |
 | **Trakt** | TV Shows / Movies | [trakt](src/ingestion/sources/trakt/README.md) |
 | **ROM Library** | Games | [roms](src/ingestion/sources/roms/README.md) |
-| **CSV / JSON / Markdown** | Any | [generic_csv](src/ingestion/sources/generic_csv/README.md) · [generic_json](src/ingestion/sources/generic_json/README.md) · [markdown](src/ingestion/sources/markdown/README.md) |
 
-For adding, editing and removing sources in the UI, parallel sync, and library
-export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
+A one-off export — a Goodreads or StoryGraph CSV, or a CSV, JSON or Markdown
+file of your own — is imported once instead. For that, managing sources,
+parallel sync and library export, see **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**.
 
 ## Features
 
@@ -110,9 +108,9 @@ Under Docker `host` and `port` are inert, because the image passes `--host` and
 different port with `APP_PORT` instead. See [docs/DOCKER.md](docs/DOCKER.md).
 
 `security.allowed_source_roots` optionally belongs here too — the directories a
-file-based source may read, `inputs/` by default, and deliberately unreachable
+scanning source may read, `inputs/` by default, and deliberately unreachable
 from the Settings API. See
-[docs/SECURITY.md](docs/SECURITY.md#where-file-imports-may-read).
+[docs/SECURITY.md](docs/SECURITY.md#where-a-source-may-read).
 
 Everything else lives in the database and is set from the app. Data sources come
 from the **Data** tab or the `source` CLI. Global settings, from scorer weights
@@ -142,9 +140,7 @@ Your own edits win outright, and any field you do not mention is left alone. The
 
 **An export is a snapshot, not a patch.** Every row it writes states whether that
 item is ignored, so re-importing one replaces your whole ignore list with the one
-you had on the day you exported. That is how you un-ignore things in bulk, and it
-is why you import an export once and remove it rather than leaving it configured
-as a source.
+you had on the day you exported. That is how you un-ignore things in bulk.
 
 ### Upgrading
 
@@ -157,10 +153,10 @@ visitor to reach it claims it. Claim yours before anything else — especially i
 you widened `APP_BIND_PREFIX` or `web.host` past loopback, where until you do
 the whole network can.
 
-The Goodreads CSV plugin was renamed from `goodreads` to `goodreads_csv`.
-Existing items and DB-stored source configs are relabeled automatically on first
-startup. If you configure Goodreads through `config.yaml`, rename
-`plugin: goodreads` to `plugin: goodreads_csv`.
+**From 0.36.0 or earlier.** The CSV, JSON, Markdown, Goodreads and StoryGraph
+plugins are gone: those files are imported once now. Sources on them are deleted
+on first boot and named in the log, and an `inputs:` block naming one is
+ignored — delete it.
 
 ## CLI usage
 

@@ -78,10 +78,10 @@ src/
 │   │                 # security.allowed_source_roots allowlist; urls.py the
 │   │                 # source-URL shape check; schedule.py the cadence presets,
 │   │                 # failure backoff and due computation
+│   ├── importers/    # One-off file formats, reached only by import
 │   └── sources/      # Source plugins (folder-per-plugin: <name>/<name>.py + README.md + test_<name>.py).
-│                     # One exception: _isolation/ is not a plugin. It holds the test proving
-│                     # plugin-local tests get the root conftest's isolation, and its leading
-│                     # underscore is what keeps the plugin registry from importing it.
+│                     # _isolation/ is not a plugin: it holds the test proving plugin-local
+│                     # tests get the conftest's isolation; its underscore keeps the registry out.
 ├── storage/          # SQLite. manager.py is the facade: content items, users and
 │                     # preference config directly, everything else through a typed
 │                     # store (credentials, secrets, accounts, enrichment, settings,
