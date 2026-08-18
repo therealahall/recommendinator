@@ -227,8 +227,6 @@ class RomScannerPlugin(SourcePlugin):
     ``extra_strip_patterns``.
     """
 
-    default_sync_interval = "hourly"
-
     @property
     def name(self) -> str:
         return "roms"
