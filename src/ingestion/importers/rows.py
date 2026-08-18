@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -23,12 +23,12 @@ class CsvRow:
 
     number: int
     fields: dict[str, Any]
-    #: Header columns the record never supplied — a hand-edited short row.
-    missing: int
+    #: Why the record does not fit its header, or None when it does.
+    mismatch: str | None
 
 
 def read_csv_rows(text: str) -> tuple[tuple[str, ...], list[CsvRow]]:
-    """Read every record up front, with its line number and how short it is."""
+    """Read every record up front, with its line number and how it misfits."""
     # Universal newlines, as the open() this replaced used, so a CRLF export
     # parses the same whichever machine wrote it.
     reader = csv.DictReader(io.StringIO(text, newline=None))
@@ -37,17 +37,33 @@ def read_csv_rows(text: str) -> tuple[tuple[str, ...], list[CsvRow]]:
             CsvRow(
                 number=reader.line_num,
                 fields=dict(record),
-                missing=sum(
-                    1
-                    for column in reader.fieldnames or ()
-                    if record.get(column) is None
-                ),
+                mismatch=_header_mismatch(record, reader.fieldnames or ()),
             )
             for record in reader
         ]
     except csv.Error as error:
         raise ImporterError(f"Failed to parse CSV: {error}") from error
     return tuple(reader.fieldnames or ()), rows
+
+
+def _header_mismatch(record: Mapping[Any, Any], columns: Sequence[str]) -> str | None:
+    """Name a hand-edited row that lost or gained a field, so it can be fixed."""
+    missing = sum(1 for column in columns if record.get(column) is None)
+    if missing:
+        return f"{_fields(missing)} short of the header"
+
+    # The long row is the silent one: an unquoted comma inside a value shifts
+    # every later cell a column left and parks the leftovers under the None
+    # restkey, so the row imports mangled rather than crashing.
+    extra = len(record.get(None) or ())
+    if extra:
+        return f"{_fields(extra)} more than the header"
+
+    return None
+
+
+def _fields(count: int) -> str:
+    return f"{count} field" if count == 1 else f"{count} fields"
 
 
 def csv_field(row: Mapping[str, Any], column: str) -> str:

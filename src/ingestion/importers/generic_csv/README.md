@@ -20,10 +20,9 @@ logged and ignored.
 Boolean fields accept `true`/`false`, `1`/`0` and `yes`/`no`. `seasons_watched`
 takes a list, `1,2,5,6`, or a count integer.
 
-## Skipped rows
+## Skipped lines
 
-Reported with the file line they were on, so a spreadsheet's own row numbers
-match:
+Reported with the file line they were on:
 
 | Reason | What it means |
 |---|---|
