@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
+from src.ingestion.importers.base import ImportedRow, Importer
+from src.ingestion.importers.generic_csv.generic_csv import CsvImporter
+from src.ingestion.importers.generic_json.generic_json import JsonImporter
 from src.ingestion.sources.arr_base import ArrPlugin
-from src.ingestion.sources.generic_csv import CsvImportPlugin
-from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sources.gog.gog import GogPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
@@ -118,6 +119,17 @@ class TestExportSerialization:
         assert len(entries) == 1
         assert entries[0]["title"] == "Unrated Book"
         assert entries[0]["rating"] is None
+
+
+def _reimport(
+    importer: Importer, text: str, content_type: ContentType
+) -> list[ContentItem]:
+    """Read *text* back the way an upload does, skipped lines dropped."""
+    return [
+        row.item
+        for row in importer.parse(text, content_type)
+        if isinstance(row, ImportedRow)
+    ]
 
 
 def _store_and_read_back(tmp_path: Path, item: ContentItem) -> ContentItem:
@@ -332,16 +344,11 @@ class TestCreatorSurvivesStorage:
         creator: str,
     ) -> None:
         """A template row's creator survives import, storage and export."""
-        csv_path = tmp_path / f"{content_type.value}.csv"
-        csv_path.write_text(
+        imported = _reimport(
+            CsvImporter(),
             f"title,{creator_column},status\nRound Trip,{creator},unread\n",
-            encoding="utf-8",
-        )
-        imported = next(
-            CsvImportPlugin().fetch(
-                {"path": str(csv_path), "content_type": content_type.value}
-            )
-        )
+            content_type,
+        )[0]
 
         stored = _store_and_read_back(tmp_path, imported)
 
@@ -441,13 +448,11 @@ class TestCreatorExportEdges:
         )
         assert stored.author == "Joel Coen, Ethan Coen"
 
-        exported = tmp_path / "movies.csv"
-        exported.write_text(
-            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
-        )
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "movie"})
-        )
+        reimported = _reimport(
+            CsvImporter(),
+            export_items_csv([stored], ContentType.MOVIE),
+            ContentType.MOVIE,
+        )[0]
 
         assert reimported.author == "Joel Coen, Ethan Coen"
 
@@ -466,13 +471,11 @@ class TestCreatorExportEdges:
             ),
         )
 
-        exported = tmp_path / "movie.csv"
-        exported.write_text(
-            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
-        )
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "movie"})
-        )
+        reimported = _reimport(
+            CsvImporter(),
+            export_items_csv([stored], ContentType.MOVIE),
+            ContentType.MOVIE,
+        )[0]
 
         entries = json.loads(export_items_json([stored], ContentType.MOVIE))
 
@@ -487,8 +490,8 @@ class TestCreatorExportEdges:
         The JSON door reads the same declaration as the CSV one, so a type
         whose creator only worked on one of them would be half-fixed.
         """
-        json_path = tmp_path / "tv_show.json"
-        json_path.write_text(
+        imported = _reimport(
+            JsonImporter(),
             json.dumps(
                 [
                     {
@@ -498,13 +501,8 @@ class TestCreatorExportEdges:
                     }
                 ]
             ),
-            encoding="utf-8",
-        )
-        imported = next(
-            JsonImportPlugin().fetch(
-                {"path": str(json_path), "content_type": "tv_show"}
-            )
-        )
+            ContentType.TV_SHOW,
+        )[0]
 
         stored = _store_and_read_back(tmp_path, imported)
 
@@ -642,16 +640,11 @@ class TestCsvFormulaGuard:
         assert rows[0]["genre"] == '\'=WEBSERVICE("http://evil")'
         assert rows[0]["platform"] == "'@PC"
 
-    def test_a_hand_written_csv_keeps_its_leading_formula_character(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_hand_written_csv_keeps_its_leading_formula_character(self) -> None:
         """The strip undoes a guard; it never invents one."""
-        source = tmp_path / "books.csv"
-        source.write_text("title,status\n=1+1,unread\n", encoding="utf-8")
-
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(source), "content_type": "book"})
-        )
+        reimported = _reimport(
+            CsvImporter(), "title,status\n=1+1,unread\n", ContentType.BOOK
+        )[0]
 
         assert reimported.title == "=1+1"
 
@@ -659,7 +652,7 @@ class TestCsvFormulaGuard:
         "content_type", [ContentType.BOOK, ContentType.TV_SHOW], ids=["book", "tv_show"]
     )
     def test_each_content_type_round_trips_a_formula_in_every_text_column_regression(
-        self, content_type: ContentType, tmp_path: Path
+        self, content_type: ContentType
     ) -> None:
         """The creator column is the one that differs per type.
 
@@ -676,15 +669,10 @@ class TestCsvFormulaGuard:
             review="@SUM(A1)",
             metadata={"notes": "-1+1", "genres": ["=Action"]},
         )
-        exported = tmp_path / f"{content_type.value}.csv"
-        exported.write_text(export_items_csv([item], content_type), encoding="utf-8")
+        exported = export_items_csv([item], content_type)
 
-        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
-        reimported = next(
-            CsvImportPlugin().fetch(
-                {"path": str(exported), "content_type": content_type.value}
-            )
-        )
+        rows = list(csv.DictReader(io.StringIO(exported)))
+        reimported = _reimport(CsvImporter(), exported, content_type)[0]
 
         assert rows[0]["title"] == "'=1+1"
         assert rows[0][creator_column] == "'+2+2"
@@ -697,9 +685,7 @@ class TestCsvFormulaGuard:
         assert reimported.metadata["notes"] == "-1+1"
         assert reimported.metadata["genres"] == ["=Action"]
 
-    def test_a_second_export_of_a_re_imported_row_is_byte_identical(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_second_export_of_a_re_imported_row_is_byte_identical(self) -> None:
         """A strip that missed a case would leave the second file carrying
         ``''=1+1``, and every later cycle would add another apostrophe.
         """
@@ -711,12 +697,8 @@ class TestCsvFormulaGuard:
             status=ConsumptionStatus.UNREAD,
         )
         first = export_items_csv([item], ContentType.BOOK)
-        exported = tmp_path / "first.csv"
-        exported.write_text(first, encoding="utf-8")
 
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
-        )
+        reimported = _reimport(CsvImporter(), first, ContentType.BOOK)[0]
 
         assert export_items_csv([reimported], ContentType.BOOK) == first
 
@@ -730,7 +712,7 @@ class TestCsvFormulaGuard:
         ],
     )
     def test_a_value_the_guard_does_not_own_is_written_and_read_verbatim(
-        self, title: str, tmp_path: Path
+        self, title: str
     ) -> None:
         """A curly apostrophe is the near miss: a spreadsheet evaluates
         nothing behind it, so widening the check would rewrite ordinary text.
@@ -741,15 +723,10 @@ class TestCsvFormulaGuard:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
         )
-        exported = tmp_path / "books.csv"
-        exported.write_text(
-            export_items_csv([item], ContentType.BOOK), encoding="utf-8"
-        )
+        exported = export_items_csv([item], ContentType.BOOK)
 
-        rows = list(csv.DictReader(io.StringIO(exported.read_text(encoding="utf-8"))))
-        reimported = next(
-            CsvImportPlugin().fetch({"path": str(exported), "content_type": "book"})
-        )
+        rows = list(csv.DictReader(io.StringIO(exported)))
+        reimported = _reimport(CsvImporter(), exported, ContentType.BOOK)[0]
 
         assert rows[0]["title"] == title
         assert reimported.title == title
@@ -758,7 +735,7 @@ class TestCsvFormulaGuard:
 class TestExportRoundtrip:
     """Tests that exported data can be re-imported identically."""
 
-    def test_csv_roundtrip_book(self, tmp_path: Path) -> None:
+    def test_csv_roundtrip_book(self) -> None:
         """Export a book to CSV, re-import it, verify fields match."""
         original = ContentItem(
             id="rt1",
@@ -773,13 +750,7 @@ class TestExportRoundtrip:
 
         csv_content = export_items_csv([original], ContentType.BOOK)
 
-        temp_path = tmp_path / "roundtrip.csv"
-        temp_path.write_text(csv_content)
-
-        plugin = CsvImportPlugin()
-        reimported = list(
-            plugin.fetch({"path": str(temp_path), "content_type": "book"})
-        )
+        reimported = _reimport(CsvImporter(), csv_content, ContentType.BOOK)
 
         assert len(reimported) == 1
         assert reimported[0].title == original.title
@@ -787,7 +758,7 @@ class TestExportRoundtrip:
         assert reimported[0].rating == original.rating
         assert reimported[0].ignored is True
 
-    def test_json_roundtrip_tv_show_with_seasons(self, tmp_path: Path) -> None:
+    def test_json_roundtrip_tv_show_with_seasons(self) -> None:
         """Export a TV show with seasons_watched to JSON, re-import, verify."""
         original = ContentItem(
             id="rt2",
@@ -806,13 +777,7 @@ class TestExportRoundtrip:
 
         json_content = export_items_json([original], ContentType.TV_SHOW)
 
-        temp_path = tmp_path / "roundtrip.json"
-        temp_path.write_text(json_content)
-
-        plugin = JsonImportPlugin()
-        reimported = list(
-            plugin.fetch({"path": str(temp_path), "content_type": "tv_show"})
-        )
+        reimported = _reimport(JsonImporter(), json_content, ContentType.TV_SHOW)
 
         assert len(reimported) == 1
         assert reimported[0].title == original.title
@@ -843,13 +808,10 @@ class TestExportRoundtrip:
                 },
             ),
         )
-        csv_path = tmp_path / "movies.csv"
-        csv_path.write_text(
-            export_items_csv([stored], ContentType.MOVIE), encoding="utf-8"
-        )
-
-        reimported = list(
-            CsvImportPlugin().fetch({"path": str(csv_path), "content_type": "movie"})
+        reimported = _reimport(
+            CsvImporter(),
+            export_items_csv([stored], ContentType.MOVIE),
+            ContentType.MOVIE,
         )
         assert len(reimported) == 1
 

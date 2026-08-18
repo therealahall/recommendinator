@@ -1,6 +1,5 @@
 """Tests for the shared sync executor."""
 
-import json
 import logging
 import threading
 from collections.abc import Iterator
@@ -13,8 +12,6 @@ import pytest
 import requests
 
 from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
-from src.ingestion.sources.generic_csv import CsvImportPlugin
-from src.ingestion.sources.generic_json import JsonImportPlugin
 from src.ingestion.sync import (
     MAX_WORKERS_CEILING,
     SyncResult,
@@ -279,7 +276,7 @@ class TestExecuteMultiSourceSync:
 
 
 class TestEverySyncLeavesARun:
-    _SOURCE_ID = "goodreads_csv"
+    _SOURCE_ID = "goodreads_rss"
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -295,8 +292,8 @@ class TestEverySyncLeavesARun:
     @staticmethod
     def _plugin(items: int) -> MagicMock:
         plugin = MagicMock(spec=SourcePlugin)
-        plugin.name = "goodreads_csv"
-        plugin.display_name = "Goodreads CSV"
+        plugin.name = "goodreads_rss"
+        plugin.display_name = "Goodreads RSS"
         plugin.fetch.return_value = iter(
             [make_item(f"Book {index}", item_id=f"b{index}") for index in range(items)]
         )
@@ -321,15 +318,15 @@ class TestEverySyncLeavesARun:
     def test_each_source_of_one_run_lands_its_own_row(
         self, storage: StorageManager
     ) -> None:
-        remedy = "Export the library again: the file has no 'Title' column."
+        remedy = "Make the Goodreads profile public, then sync again."
         failing = self._plugin(0)
-        failing.name = "storygraph_csv"
-        failing.fetch.side_effect = SourceError("storygraph_csv", remedy)
+        failing.name = "calibre_web"
+        failing.fetch.side_effect = SourceError("calibre_web", remedy)
 
         execute_multi_source_sync(
             sources=[
                 (self._plugin(1), {"_source_id": self._SOURCE_ID}),
-                (failing, {"_source_id": "storygraph_csv"}),
+                (failing, {"_source_id": "calibre_web"}),
             ],
             storage_manager=storage,
             result_callback=sync_run_recorder(storage),
@@ -340,8 +337,8 @@ class TestEverySyncLeavesARun:
             (run["source_id"], run["status"], tuple(run["errors"]))
             for run in storage.sync_runs.latest_per_source(1).values()
         } == {
-            ("goodreads_csv", "completed", ()),
-            ("storygraph_csv", "failed", (remedy,)),
+            ("goodreads_rss", "completed", ()),
+            ("calibre_web", "failed", (remedy,)),
         }
 
     def test_a_partial_failure_that_still_saved_items_is_recorded_completed(
@@ -810,166 +807,6 @@ class TestAnUndecodableTitleCannotAbortTheRunRegression:
         assert result.errors == [f"Failed to process '{_ESCAPED_SURROGATE_TITLE}'"]
 
 
-class TestARefusedTextValueCostsOneRow:
-    """A value no text column can hold fails its own row and nothing else.
-
-    ``isbn`` is the one text column the import templates expose, and
-    ``generic_json`` forwards whatever the file gives for it, so a
-    hand-written file can hand storage an object. ``to_text`` refuses it
-    rather than writing a Python repr into a fill-only column, and the
-    executor's per-item guard is what keeps that refusal from taking the
-    rest of the file down with it.
-    """
-
-    def test_the_rest_of_the_file_still_imports(self, tmp_path: Path) -> None:
-        """The bad entry is reported, the good ones are stored."""
-        json_path = tmp_path / "books.json"
-        json_path.write_text(
-            json.dumps(
-                [
-                    {"title": "Dune", "author": "Frank Herbert", "status": "read"},
-                    {"title": "Neuromancer", "isbn": {"value": "9780441569595"}},
-                    {"title": "Ubik", "author": "Philip K. Dick", "status": "read"},
-                ]
-            )
-        )
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        result = execute_sync(
-            plugin=JsonImportPlugin(),
-            plugin_config={"path": str(json_path), "content_type": "book"},
-            storage_manager=storage,
-        )
-
-        assert result.items_synced == 2
-        assert result.errors == ["Failed to process 'Neuromancer'"]
-        assert sorted(item.title for item in storage.get_content_items(user_id=1)) == [
-            "Dune",
-            "Ubik",
-        ]
-
-    def test_a_list_of_names_in_the_same_field_still_imports(
-        self, tmp_path: Path
-    ) -> None:
-        """The refusal stops at containers with no name in them.
-
-        A file listing two ISBNs is the shape a text column already flattens,
-        and it has to keep doing so or the guard has cost a real import.
-        """
-        json_path = tmp_path / "books.json"
-        json_path.write_text(
-            json.dumps([{"title": "Dune", "isbn": ["9780441013593", "9780441172719"]}])
-        )
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        result = execute_sync(
-            plugin=JsonImportPlugin(),
-            plugin_config={"path": str(json_path), "content_type": "book"},
-            storage_manager=storage,
-        )
-
-        assert result.errors == []
-        items = storage.get_content_items(user_id=1)
-        assert items[0].metadata["isbn"] == "9780441013593, 9780441172719"
-
-
-class TestIgnoreFlagSurvivesReimport:
-    """Regression tests for a re-import un-ignoring items the user ignored.
-
-    Bug reported: after ignoring an item in the app, re-running the sync for
-    the CSV/JSON file it came from silently cleared the ignore flag, so the
-    item came back as a recommendation candidate and back into the taste
-    signal, even though the file said nothing about ignoring.
-    Root cause: both generic importers called ``parse_boolean_field`` on a
-    missing key, which returns False, so every item carried a concrete
-    ``ignored=False`` that storage dutifully wrote over the user's flag.
-    Fix: ``parse_ignored_field`` returns None when the column/field is absent,
-    which is ContentItem's "not specified by this source" contract, and
-    storage preserves the stored value.
-    """
-
-    def _sync(self, plugin: SourcePlugin, path: Path, storage: StorageManager) -> None:
-        """Run one import of *path* as a book source through the real sync."""
-        execute_sync(
-            plugin=plugin,
-            plugin_config={"path": str(path), "content_type": "book"},
-            storage_manager=storage,
-        )
-
-    def _only_item(self, storage: StorageManager) -> ContentItem:
-        """Return the single stored item, failing loudly if there is not one."""
-        items = storage.get_content_items(user_id=1)
-        assert len(items) == 1
-        return items[0]
-
-    def test_reimport_without_ignored_column_preserves_ignore_regression(
-        self, tmp_path: Path
-    ) -> None:
-        """A CSV with no ignored column does not clear the user's ignore."""
-        csv_path = tmp_path / "books.csv"
-        csv_path.write_text("title,author,rating,status\nDune,Frank Herbert,5,read\n")
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        plugin = CsvImportPlugin()
-
-        self._sync(plugin, csv_path, storage)
-        db_id = self._only_item(storage).db_id
-        assert db_id is not None
-        assert storage.set_item_ignored(db_id, True) is True
-
-        self._sync(plugin, csv_path, storage)
-
-        stored = self._only_item(storage)
-        assert stored.db_id == db_id
-        assert stored.ignored is True
-
-    def test_explicit_ignored_false_still_clears_the_flag(self, tmp_path: Path) -> None:
-        """The column is not inert: a file that says ignored=false still clears."""
-        csv_path = tmp_path / "books.csv"
-        csv_path.write_text("title,status,ignored\nDune,read,false\n")
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        plugin = CsvImportPlugin()
-
-        self._sync(plugin, csv_path, storage)
-        db_id = self._only_item(storage).db_id
-        assert db_id is not None
-        storage.set_item_ignored(db_id, True)
-
-        self._sync(plugin, csv_path, storage)
-
-        stored = self._only_item(storage)
-        assert stored.db_id == db_id
-        assert stored.ignored is False
-
-    def test_reimport_preserves_rating_review_and_status(self, tmp_path: Path) -> None:
-        """A re-import never overwrites the other user-owned fields either.
-
-        The file carries a weaker status and a different rating and review
-        than the user set in the app; the stored values win.
-        """
-        csv_path = tmp_path / "books.csv"
-        csv_path.write_text(
-            "title,author,rating,status,review\n"
-            "Dune,Frank Herbert,2,to-read,Imported note\n"
-        )
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        plugin = CsvImportPlugin()
-
-        self._sync(plugin, csv_path, storage)
-        db_id = self._only_item(storage).db_id
-        assert db_id is not None
-        storage.update_item_from_ui(
-            db_id=db_id, status="completed", rating=5, review="Loved it"
-        )
-
-        self._sync(plugin, csv_path, storage)
-
-        stored = self._only_item(storage)
-        assert stored.db_id == db_id
-        assert stored.rating == 5
-        assert stored.review == "Loved it"
-        assert stored.status == ConsumptionStatus.COMPLETED
-
-
 class TestASyncSaysWhatItChangedRegression:
     """Reported: two runs of ``update --source roms`` read identically.
 
@@ -978,30 +815,23 @@ class TestASyncSaysWhatItChangedRegression:
     Fix: it compares stored values and reports added/updated/unchanged.
     """
 
-    def _import(self, csv_path: Path, storage: StorageManager) -> SyncResult:
-        return execute_sync(
-            plugin=CsvImportPlugin(),
-            plugin_config={"path": str(csv_path), "content_type": "book"},
-            storage_manager=storage,
+    def _sync(self, storage: StorageManager) -> SyncResult:
+        """Forty items, identical between the two runs."""
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "Roms"
+        plugin.fetch.return_value = iter(
+            [make_item(f"Game {number}", item_id=f"g{number}") for number in range(40)]
         )
+        return execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
 
-    def _library_csv(self, tmp_path: Path) -> Path:
-        """Forty books, unchanged between the two runs."""
-        books = [(f"Book {number}", "to-read") for number in range(1, 41)]
-        rows = "".join(f"{title},{status}\n" for title, status in books)
-        csv_path = tmp_path / "books.csv"
-        csv_path.write_text(f"title,status\n{rows}", encoding="utf-8")
-        return csv_path
-
-    def test_running_the_same_import_again_reports_forty_unchanged(
+    def test_running_the_same_sync_again_reports_forty_unchanged(
         self, tmp_path: Path
     ) -> None:
         """The acceptance criterion: a second identical run changed nothing."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        csv_path = self._library_csv(tmp_path)
-        self._import(csv_path, storage)
+        self._sync(storage)
 
-        result = self._import(csv_path, storage)
+        result = self._sync(storage)
 
         assert result.items_synced == 40
         assert (result.items_added, result.items_updated, result.items_unchanged) == (
@@ -1009,59 +839,3 @@ class TestASyncSaysWhatItChangedRegression:
             0,
             40,
         )
-
-
-CSV_PLUGIN_LOGGER = "src.ingestion.sources.generic_csv.generic_csv"
-
-
-class TestAShortRowNoLongerTakesTheImportDown:
-    """Reported: one short row in a hand-edited CSV lost the whole import.
-
-    Cause: DictReader leaves a missing field None and .strip() raised on it.
-    Fix: the importer reports the row, the plugin logs it and carries on.
-    """
-
-    HAND_EDITED = (
-        "title,author,rating,status\n"
-        "Dune,Frank Herbert,5,read\n"
-        "Neuromancer,William Gibson\n"
-        "Ubik,Philip K. Dick,4,read\n"
-    )
-
-    def _sync(self, tmp_path: Path, storage: StorageManager) -> SyncResult:
-        csv_path = tmp_path / "books.csv"
-        csv_path.write_text(self.HAND_EDITED, encoding="utf-8")
-        return execute_sync(
-            plugin=CsvImportPlugin(),
-            plugin_config={"path": str(csv_path), "content_type": "book"},
-            storage_manager=storage,
-        )
-
-    def test_the_rows_around_the_short_one_still_reach_storage(
-        self, tmp_path: Path
-    ) -> None:
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        result = self._sync(tmp_path, storage)
-
-        assert result.errors == []
-        assert result.total_items == 2
-        assert sorted(item.title for item in storage.get_content_items(user_id=1)) == [
-            "Dune",
-            "Ubik",
-        ]
-
-    def test_the_operator_is_told_which_line_went(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A skip nobody is told about is the silent data loss all over again."""
-        storage = StorageManager(sqlite_path=tmp_path / "test.db")
-
-        with caplog.at_level(logging.WARNING, logger=CSV_PLUGIN_LOGGER):
-            self._sync(tmp_path, storage)
-
-        assert [
-            record.getMessage()
-            for record in caplog.records
-            if record.name == CSV_PLUGIN_LOGGER
-        ] == ["Skipped line 3: 2 fields short of the header"]

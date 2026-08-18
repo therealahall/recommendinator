@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from src.ingestion.sync import SyncResult
-from src.storage.manager import StorageManager
+from src.storage.manager import SaveCounts, StorageManager
 
 from .conftest import _invoke_with_mocks
 
@@ -34,7 +34,7 @@ class TestUpdateProgressIsOffTheDataChannel:
                 SyncResult(
                     source_name="books",
                     items_synced=3,
-                    items_added=3,
+                    counts=SaveCounts(added=3),
                     total_items=3,
                 )
             ]

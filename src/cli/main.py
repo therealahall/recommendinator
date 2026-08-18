@@ -28,6 +28,7 @@ from src.config.service import (
 )
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
+from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
 from src.utils.text import exception_for_log, strip_lone_surrogates
@@ -121,6 +122,7 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
         migrate_config_secrets(ctx.obj["config"], ctx.obj["storage"])
+        drop_sources_replaced_by_upload(ctx.obj["storage"])
         ctx.obj["engine"] = create_recommendation_engine(
             ctx.obj["storage"], ctx.obj["config"]
         )
