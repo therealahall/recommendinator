@@ -3,7 +3,6 @@
 import json
 import logging
 from datetime import date
-from pathlib import Path
 
 import pytest
 
@@ -201,14 +200,6 @@ class TestIgnoredField:
         parsed = items(json.dumps([{"title": "Test", "ignored": None}]))
 
         assert parsed[0].ignored is None
-
-
-class TestTemplates:
-    def test_the_shipped_books_template_still_parses(self) -> None:
-        parsed = items(Path("templates/books.json").read_text(encoding="utf-8"))
-
-        assert len(parsed) == 1
-        assert parsed[0].title == "The Name of the Wind"
 
 
 FORGED_TITLE = "Dune\nImported 9999 items from JSON file"

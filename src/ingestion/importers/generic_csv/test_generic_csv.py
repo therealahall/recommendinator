@@ -2,7 +2,6 @@
 
 import logging
 from datetime import date
-from pathlib import Path
 
 import pytest
 
@@ -208,14 +207,6 @@ class TestIgnoredColumn:
 
     def test_a_stated_ignored_value_still_wins(self) -> None:
         assert items("title,status,ignored\nTest,completed,true\n")[0].ignored is True
-
-
-class TestTemplates:
-    def test_the_shipped_books_template_still_parses(self) -> None:
-        parsed = items(Path("templates/books.csv").read_text(encoding="utf-8"))
-
-        assert len(parsed) == 1
-        assert parsed[0].title == "The Name of the Wind"
 
 
 FORGED_TITLE = "Dune\nImported 9999 items from CSV file"

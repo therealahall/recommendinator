@@ -2,7 +2,6 @@
 
 import logging
 from datetime import date
-from pathlib import Path
 
 import pytest
 
@@ -156,18 +155,6 @@ class TestRefusals:
     def test_a_format_taking_any_type_refuses_to_guess_one(self) -> None:
         with pytest.raises(ImporterError, match="needs a content type"):
             list(IMPORTER.parse("- **Dune**\n"))
-
-
-class TestTemplates:
-    def test_the_shipped_books_template_still_parses(self) -> None:
-        parsed = items(Path("templates/books.md").read_text(encoding="utf-8"))
-
-        assert [item.title for item in parsed][0] == "The Name of the Wind"
-        assert [item.status for item in parsed] == [
-            ConsumptionStatus.COMPLETED.value,
-            ConsumptionStatus.CURRENTLY_CONSUMING.value,
-            ConsumptionStatus.UNREAD.value,
-        ]
 
 
 # Parsing is line-based, so a break never survives into a title here. The

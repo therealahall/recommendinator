@@ -106,6 +106,13 @@ requires a session on a single-user instance.
 reason — a broken install is fixed from that path, and the route needs a
 session.
 
+**The third: a file the chosen format cannot parse.** The 400 from `POST
+/api/import` repeats the parser's own words — the byte that is not UTF-8, the
+line the JSON broke on — because nothing else says which row to fix. The file
+is the operator's own upload, and the route needs a session. The per-row
+`errors` in a 200 are not this carve-out: a row that fails to save is named by
+exception class, never quoted.
+
 ## Web sign-in
 
 **One account, username and password, and a session cookie.** A fresh instance
@@ -275,7 +282,7 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the two carve-outs above as the only exceptions
+  forbidden), with the three carve-outs above as the only exceptions
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values
