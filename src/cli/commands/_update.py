@@ -11,6 +11,7 @@ from typing import Any
 import click
 
 from src.cli._shared import abort_after_failure
+from src.config.service import auto_enrich_enabled
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
@@ -192,11 +193,7 @@ def update(
             )
         return
 
-    # Check if auto-enrichment is enabled
-    enrichment_config = config.get("enrichment", {})
-    auto_enrich = enrichment_config.get("enabled", False) and enrichment_config.get(
-        "auto_enrich_on_sync", False
-    )
+    auto_enrich = auto_enrich_enabled(config)
 
     # Determine which sources to sync
     if source == "all":

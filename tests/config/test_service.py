@@ -29,6 +29,9 @@ from src.utils.dotted_path import get_leaf
 # _SCORER_CONFIG_MAP, which cannot construct it generically.
 _ENGINE_MANAGED_SCORERS = {"custom_preference"}
 
+# parents[2] resolves /tests/config/test_service.py -> repo root.
+_SRC = Path(__file__).resolve().parents[2] / "src"
+
 
 @pytest.fixture()
 def example_config() -> dict[str, Any]:
@@ -255,6 +258,24 @@ class TestBuildScorersFromConfig:
 
         assert by_name["genre_match"].weight == 5.0
         assert by_name["continuation"].weight == 0.5
+
+
+class TestTheAutoEnrichGate:
+    """Web sync, web import, ``update`` and ``import`` all queue new items."""
+
+    def test_only_the_shared_gate_reads_the_setting(self) -> None:
+        """A fourth hand-rolled copy is how the CLI drifted from the web: a
+        condition added to the gate would reach two callers and miss two.
+        """
+        readers = sorted(
+            path.relative_to(_SRC).as_posix()
+            for path in _SRC.rglob("*.py")
+            if not path.name.startswith("test_")
+            and "auto_enrich_on_sync" in path.read_text(encoding="utf-8")
+        )
+
+        # The gate, and the registry declaring the setting it reads.
+        assert readers == ["config/service.py", "settings/metadata.py"]
 
 
 class TestARetiredAiConfigBlockIsIgnored:
