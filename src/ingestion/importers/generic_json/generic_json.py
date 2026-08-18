@@ -11,6 +11,7 @@ from src.ingestion.importers.base import (
     Importer,
     ImporterError,
     ParsedRow,
+    RowUnit,
     SkippedRow,
 )
 from src.ingestion.importers.rows import (
@@ -43,14 +44,16 @@ class JsonImporter(Importer):
         resolved = self.required_content_type(content_type)
         creator_field = CREATOR_FIELD[resolved.value]
 
-        for number, entry in _load_entries(text):
+        unit, entries = _load_entries(text)
+
+        for number, entry in entries:
             if not isinstance(entry, dict):
-                yield SkippedRow(number, "not a JSON object")
+                yield SkippedRow(number, "not a JSON object", unit)
                 continue
 
             title = str(entry.get("title", "")).strip()
             if not title:
-                yield SkippedRow(number, "no title")
+                yield SkippedRow(number, "no title", unit)
                 continue
 
             notes = str(entry.get("notes", "")).strip() or None
@@ -81,21 +84,22 @@ class JsonImporter(Importer):
                     metadata=metadata,
                     source=self.name,
                 ),
+                unit,
             )
 
 
-def _load_entries(text: str) -> list[tuple[int, Any]]:
+def _load_entries(text: str) -> tuple[RowUnit, list[tuple[int, Any]]]:
     """Numbered by position in an array, by line in a JSONL file."""
     content = text.strip()
     if not content:
-        return []
+        return "line", []
 
     try:
         if content.startswith("["):
             data = json.loads(content)
             if not isinstance(data, list):
                 raise ValueError("JSON file must contain an array of objects")
-            return list(enumerate(data, start=1))
+            return "entry", list(enumerate(data, start=1))
 
         entries: list[tuple[int, Any]] = []
         for number, line in enumerate(content.splitlines(), start=1):
@@ -106,7 +110,7 @@ def _load_entries(text: str) -> list[tuple[int, Any]]:
                 entries.append((number, json.loads(line)))
             except json.JSONDecodeError as error:
                 raise ValueError(f"Invalid JSON on line {number}: {error}") from error
-        return entries
+        return "line", entries
     except (json.JSONDecodeError, ValueError) as error:
         raise ImporterError(f"Failed to parse JSON: {error}") from error
 
