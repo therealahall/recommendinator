@@ -29,9 +29,9 @@ def mock_config():
     return {
         "storage": {"database_path": "data/test.db"},
         "inputs": {
-            "goodreads_csv": {
-                "plugin": "goodreads_csv",
-                "path": "inputs/goodreads_library_export.csv",
+            "goodreads_rss": {
+                "plugin": "goodreads_rss",
+                "user_id": "12345",
                 "enabled": True,
             }
         },
@@ -472,9 +472,9 @@ class TestUpdateWorkersFlag:
                     "steam_id": "76561198000000000",
                     "enabled": True,
                 },
-                "goodreads_csv": {
-                    "plugin": "goodreads_csv",
-                    "path": "/tmp/goodreads.csv",
+                "goodreads_rss": {
+                    "plugin": "goodreads_rss",
+                    "user_id": "12345",
                     "enabled": True,
                 },
             },
@@ -513,7 +513,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -548,7 +548,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
                 return_value=[],
             ),
         ):
@@ -583,7 +583,7 @@ class TestUpdateWorkersFlag:
                 return_value=[],
             ),
             patch(
-                "src.ingestion.sources.goodreads_csv.GoodreadsCsvPlugin.validate_config",
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
                 return_value=[],
             ),
         ):

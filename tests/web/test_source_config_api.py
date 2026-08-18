@@ -748,23 +748,7 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         with booted_web_app(storage, config) as app:
             yield authenticated_client(app)
 
-    def test_a_created_path_outside_the_allowed_roots_is_refused_with_the_reason(
-        self, client: TestClient, storage: StorageManager
-    ) -> None:
-        response = client.post(
-            "/api/sync/sources",
-            json={
-                "id": "leaky",
-                "plugin": "csv_import",
-                "values": {"path": "/etc/passwd", "content_type": "book"},
-            },
-        )
-
-        assert response.status_code == 400
-        assert "outside the allowed source roots" in response.json()["detail"]
-        assert storage.sources.get(1, "leaky") is None
-
-    def test_a_missing_file_is_refused_without_saying_it_is_missing(
+    def test_a_missing_directory_is_refused_without_saying_it_is_missing(
         self, client: TestClient, storage: StorageManager, tmp_path: Path
     ) -> None:
         """The oracle left open after the sync door closed.
@@ -772,20 +756,20 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         Inside the allowed roots, only a stat separates this path from a real
         one, so the plugin's "not found" makes the endpoint a disk probe.
         """
-        missing = tmp_path / "no-such-library.csv"
+        missing = tmp_path / "no-such-library"
 
         response = client.post(
             "/api/sync/sources",
             json={
                 "id": "ghost",
-                "plugin": "csv_import",
-                "values": {"path": str(missing), "content_type": "book"},
+                "plugin": "roms",
+                "values": {"paths": [str(missing)]},
             },
         )
 
         assert response.status_code == 400
         detail = response.json()["detail"]
-        assert "'path'" in detail
+        assert "'paths'" in detail
         assert "not found" not in detail.lower()
         assert str(missing) not in detail
         assert missing.name not in detail
@@ -812,49 +796,59 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_only_the_field_the_write_broke_is_named(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """A create writes every field, so blaming all of them says nothing."""
-        readable = tmp_path / "books.csv"
-        readable.write_text("title\n")
-
-        response = client.post(
+        """An edit resends every field, so blaming all of them says nothing."""
+        created = client.post(
             "/api/sync/sources",
             json={
                 "id": "mixed",
-                "plugin": "csv_import",
-                "values": {"path": str(readable), "content_type": "not_a_type"},
+                "plugin": "roms",
+                "values": {"paths": [str(tmp_path)]},
             },
         )
 
+        response = client.put(
+            "/api/sync/sources/mixed/config",
+            json={"values": {"paths": [str(tmp_path)], "extra_strip_patterns": ["("]}},
+        )
+
+        assert created.status_code == 201
         assert response.status_code == 400
         detail = response.json()["detail"]
-        assert "'content_type'" in detail
-        assert "'path'" not in detail
+        assert "'extra_strip_patterns'" in detail
+        assert "'paths'" not in detail
 
-    def test_two_jointly_bad_values_name_both_rather_than_neither(
+    def test_two_bad_values_name_both_fields_rather_than_neither(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """Reverting either one alone still leaves the write refused.
-
-        Nothing is individually to blame, so the fallback answers with the
-        whole write — silence here would refuse without saying anything.
+        """Reverting either one alone still leaves the write refused, so the
+        answer has to carry both names or the operator fixes half of it.
         """
-        missing = tmp_path / "no-such-library.csv"
-
-        response = client.post(
+        created = client.post(
             "/api/sync/sources",
             json={
                 "id": "doubly",
-                "plugin": "csv_import",
-                "values": {"path": str(missing), "content_type": "not_a_type"},
+                "plugin": "roms",
+                "values": {"paths": [str(tmp_path)]},
             },
         )
 
+        response = client.put(
+            "/api/sync/sources/doubly/config",
+            json={
+                "values": {
+                    "paths": [str(tmp_path)],
+                    "include_extensions": [7],
+                    "exclude_extensions": [7],
+                }
+            },
+        )
+
+        assert created.status_code == 201
         assert response.status_code == 400
         detail = response.json()["detail"]
-        assert "'path'" in detail
-        assert "'content_type'" in detail
-        assert str(missing) not in detail
-        assert "not_a_type" not in detail
+        assert "'include_extensions'" in detail
+        assert "'exclude_extensions'" in detail
+        assert "must be strings" not in detail
 
     def test_a_path_field_holding_a_list_is_contained_entry_by_entry(
         self, client: TestClient, storage: StorageManager
@@ -878,15 +872,15 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
         self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Refusing with the reason nowhere at all would be unusable."""
-        missing = tmp_path / "no-such-library.csv"
+        missing = tmp_path / "no-such-library"
 
         with caplog.at_level(logging.WARNING, logger="src.sources.service"):
             client.post(
                 "/api/sync/sources",
                 json={
                     "id": "ghost",
-                    "plugin": "csv_import",
-                    "values": {"path": str(missing), "content_type": "book"},
+                    "plugin": "roms",
+                    "values": {"paths": [str(missing)]},
                 },
             )
 
@@ -959,31 +953,31 @@ class TestSyncLogsTheReasonItRefused:
     ) -> None:
         """The write was valid, so no edit will ever refuse this one.
 
-        Containment runs before existence in all six file plugins, so a
-        surviving "not found" names a path inside the allowed roots.
+        Containment runs before existence, so a surviving "not found" names a
+        path inside the allowed roots.
         """
-        readable = tmp_path / "books.csv"
-        readable.write_text("title\n")
+        readable = tmp_path / "games"
+        readable.mkdir()
         created = client.post(
             "/api/sync/sources",
             json={
-                "id": "books",
-                "plugin": "csv_import",
-                "values": {"path": str(readable), "content_type": "book"},
+                "id": "games",
+                "plugin": "roms",
+                "values": {"paths": [str(readable)]},
             },
         )
-        readable.unlink()
+        readable.rmdir()
 
         with caplog.at_level(logging.WARNING, logger="src.web.api"):
-            sync = client.post("/api/update", json={"source": "books"})
+            sync = client.post("/api/update", json={"source": "games"})
 
         assert created.status_code == 201
         assert sync.status_code == 400
         assert sync.json()["detail"] == SOURCE_MISCONFIGURED_DETAIL
         assert str(readable) not in sync.text
         assert "not found" not in sync.text
-        assert "books" in caplog.text
-        assert f"CSV file not found: {readable}" in caplog.text
+        assert "games" in caplog.text
+        assert f"Scan path not found: {readable}" in caplog.text
 
     def _steam_source_with_a_stored_key(self, client: TestClient) -> None:
         """A steam source whose api_key exists only in the credential store."""

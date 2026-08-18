@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from src.ingestion import registry as registry_module
+from src.ingestion.importers.registry import IMPORTERS
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry, _registry_lock, get_registry
 from src.ingestion.sources.arr_base import ArrPlugin
@@ -359,28 +360,21 @@ class TestPluginImportFailureRegression:
             "goodreads_rss": "ModuleNotFoundError: No module named 'defusedxml'"
         }
         assert "goodreads_rss" not in clean_registry.get_all_plugins()
-        assert "goodreads_csv" in clean_registry.get_all_plugins()
+        assert "steam" in clean_registry.get_all_plugins()
 
 
-class TestGoodreadsPluginRename:
-    """Real-discovery tests locking in the goodreads -> goodreads_csv rename.
+def test_no_import_format_is_also_a_source_plugin(
+    clean_registry: PluginRegistry,
+) -> None:
+    """A one-shot export is uploaded, never configured.
 
-    These exercise the actual built-in plugin discovery (no fakes) so they
-    prove the rename is a true hard rename: the new identifier resolves and
-    the old one does not silently fall back to anything.
+    Reinstating one of these as a source would give it a cadence and a path
+    on disk, which is the pair the upload path replaced.
     """
+    clean_registry.discover_plugins()
 
-    def test_goodreads_csv_resolves_to_renamed_class(
-        self, clean_registry: PluginRegistry
-    ) -> None:
-        """The renamed plugin resolves under 'goodreads_csv' with correct metadata."""
-        from src.ingestion.sources.goodreads_csv.goodreads_csv import (
-            GoodreadsCsvPlugin,
-        )
-
-        clean_registry.discover_plugins()
-        plugin = clean_registry.get_plugin("goodreads_csv")
-
-        assert isinstance(plugin, GoodreadsCsvPlugin)
-        assert plugin.name == "goodreads_csv"
-        assert plugin.display_name == "Goodreads (CSV Export)"
+    assert (
+        set(clean_registry.get_all_plugins())
+        & {importer.name for importer in IMPORTERS}
+        == set()
+    )

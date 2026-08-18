@@ -141,18 +141,18 @@ class FakeApiPlugin(SourcePlugin):
         )
 
 
-#: A shipped mismatch, so no interface can pass by matching the two names:
-#: module ``generic_csv`` is what fails, plugin ``csv_import`` is what a
-#: source asks for.
-FAILED_PLUGIN_MODULE = "generic_csv"
+#: A deliberate mismatch, so no interface can pass by matching the two names:
+#: module ``goodreads_rss`` is what fails, plugin ``goodreads_rss_shelves`` is
+#: what a source asks for.
+FAILED_PLUGIN_MODULE = "goodreads_rss"
 FAILED_PLUGIN_REASON = "ModuleNotFoundError: No module named 'nonesuch'"
-UNLOADED_PLUGIN = "csv_import"
+UNLOADED_PLUGIN = "goodreads_rss_shelves"
 
 #: The wording every interface refuses such a source with, spelled out here so
 #: a change to it fails rather than following the code.
 UNLOADED_PLUGIN_DETAIL = (
-    "Plugin 'csv_import' is not loaded. Modules that failed to import: "
-    "generic_csv: ModuleNotFoundError: No module named 'nonesuch'"
+    "Plugin 'goodreads_rss_shelves' is not loaded. Modules that failed to "
+    "import: goodreads_rss: ModuleNotFoundError: No module named 'nonesuch'"
 )
 
 

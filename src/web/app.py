@@ -29,6 +29,7 @@ from src.config.service import (
 from src.settings.metadata import default_of
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
+from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
 from src.utils.text import exception_for_log
@@ -186,6 +187,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # Relocate global provider secrets (api keys) into encrypted storage,
         # stripping them from the in-memory plaintext config.
         migrate_config_secrets(config, storage)
+
+        drop_sources_replaced_by_upload(storage)
 
         # Store in app state
         app_state.config = config

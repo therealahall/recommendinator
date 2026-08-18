@@ -19,14 +19,9 @@ from src.ingestion.paths import (
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.ingestion.sources.calibre_web.calibre_web import CalibreWebPlugin
-from src.ingestion.sources.generic_csv.generic_csv import CsvImportPlugin
-from src.ingestion.sources.generic_json.generic_json import JsonImportPlugin
-from src.ingestion.sources.goodreads_csv.goodreads_csv import GoodreadsCsvPlugin
-from src.ingestion.sources.markdown.markdown import MarkdownImportPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.ingestion.sources.roms.roms import RomScannerPlugin
 from src.ingestion.sources.sonarr.sonarr import SonarrPlugin
-from src.ingestion.sources.storygraph_csv.storygraph_csv import StorygraphCsvPlugin
 from src.models.config_field import ConfigField
 from src.settings.metadata import get_entry
 from src.storage.manager import StorageManager
@@ -98,16 +93,7 @@ def _params(plugins: list[SourcePlugin]) -> list[Any]:
     return [pytest.param(plugin, id=plugin.name) for plugin in plugins]
 
 
-_FILE_BASED_PLUGINS = _params(
-    [
-        CsvImportPlugin(),
-        JsonImportPlugin(),
-        MarkdownImportPlugin(),
-        RomScannerPlugin(),
-        GoodreadsCsvPlugin(),
-        StorygraphCsvPlugin(),
-    ]
-)
+_FILE_BASED_PLUGINS = _params([RomScannerPlugin()])
 
 _URL_PLUGINS = _params([CalibreWebPlugin(), RadarrPlugin(), SonarrPlugin()])
 
@@ -132,14 +118,10 @@ def _builtin_plugins() -> dict[str, SourcePlugin]:
 
 
 def _escaping_config(plugin: SourcePlugin, target: Path) -> dict[str, Any]:
-    """Point *plugin* at *target*.
-
-    ``content_type`` is unconditional: the plugins without it ignore the key,
-    and the ones with it fail validation for another reason when it is absent.
-    """
-    if _declared_path_fields(plugin)[0].name == "paths":
-        return {"paths": [str(target)]}
-    return {"path": str(target), "content_type": "book"}
+    """Point *plugin* at *target*, through whichever field declares the read."""
+    field = _declared_path_fields(plugin)[0]
+    value: Any = [str(target)] if field.field_type is list else str(target)
+    return {field.name: value}
 
 
 @pytest.fixture()
@@ -153,7 +135,7 @@ def outside(tmp_path: Path) -> Path:
 
 def _outside_target(plugin: SourcePlugin, outside: Path) -> Path:
     """The out-of-bounds thing this plugin reads — a directory or a file."""
-    reads_a_directory = _declared_path_fields(plugin)[0].name == "paths"
+    reads_a_directory = _declared_path_fields(plugin)[0].field_type is list
     return outside if reads_a_directory else outside / "secret.csv"
 
 
