@@ -5,16 +5,19 @@ were missing from _SCORER_CONFIG_MAP, so they never ran in production even
 though they were listed in SCORER_NAME_MAP and DEFAULT_SCORERS.
 """
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import src.settings
 from src.config.service import (
     _SCORER_CONFIG_MAP,
     BOOTSTRAP_WEB_HOST,
     BOOTSTRAP_WEB_PORT,
+    auto_enrich_enabled,
     build_scorers_from_config,
     load_config,
     resolve_bootstrap_web,
@@ -267,15 +270,24 @@ class TestTheAutoEnrichGate:
         """A fourth hand-rolled copy is how the CLI drifted from the web: a
         condition added to the gate would reach two callers and miss two.
         """
-        readers = sorted(
-            path.relative_to(_SRC).as_posix()
+        gate = Path(str(inspect.getsourcefile(auto_enrich_enabled))).resolve()
+        registry = Path(src.settings.__file__).resolve().parent
+        readers = {
+            path
             for path in _SRC.rglob("*.py")
             if not path.name.startswith("test_")
             and "auto_enrich_on_sync" in path.read_text(encoding="utf-8")
-        )
+        }
 
-        # The gate, and the registry declaring the setting it reads.
-        assert readers == ["config/service.py", "settings/metadata.py"]
+        assert gate in readers, "the scan read no gate, so this proves nothing"
+        assert (
+            sorted(
+                path.relative_to(_SRC).as_posix()
+                for path in readers
+                if path != gate and not path.is_relative_to(registry)
+            )
+            == []
+        )
 
 
 class TestARetiredAiConfigBlockIsIgnored:

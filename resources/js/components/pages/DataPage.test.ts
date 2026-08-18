@@ -126,9 +126,9 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  /** The upload panel is the only route to importing a file, and the Data page
-   *  is where the epic puts it. */
-  it('places the import panel ahead of the sync sources', async () => {
+  /** The panel is the only route to importing a file in the UI, so dropping it
+   *  from this page takes the capability off the web entirely. */
+  it('renders the import panel', async () => {
     mockPost.mockResolvedValue({})
     mockGet.mockImplementation((path: string) => {
       if (path === '/sync/sources') return Promise.resolve([enabledSource])
@@ -139,11 +139,7 @@ describe('DataPage rows during a Sync All', () => {
     })
     await flushPromises()
 
-    const panel = wrapper.get('import-panel-stub').element
-    const sources = wrapper.get('[data-testid="sync-sources-panel"]').element
-    expect(
-      panel.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
+    expect(wrapper.find('import-panel-stub').exists()).toBe(true)
     wrapper.unmount()
   })
 

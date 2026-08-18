@@ -6,7 +6,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,8 +14,7 @@ from src.ingestion.importers.generic_json.generic_json import JsonImporter
 from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImporter
 from src.ingestion.importers.service import ImportResult, import_file
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.enrichment_status import EnrichmentStore
-from src.storage.manager import SavedItem, SaveOutcome, StorageManager
+from src.storage.manager import StorageManager
 
 SERVICE_LOGGER = "src.ingestion.importers.service"
 
@@ -260,15 +258,13 @@ class TestUserOwnedFieldsSurviveAReimport:
 
 @pytest.mark.parametrize("mark_for_enrichment", [True, False])
 def test_enrichment_is_queued_only_when_the_caller_opens_the_gate(
-    mark_for_enrichment: bool,
+    storage: StorageManager, mark_for_enrichment: bool
 ) -> None:
-    """The gate is ``enrichment.auto_enrich_on_sync``, resolved by the caller."""
-    storage = MagicMock(spec=StorageManager)
-    storage.enrichment = MagicMock(spec=EnrichmentStore)
-    storage.save_content_item_outcome.return_value = SavedItem(
-        db_id=7, outcome=SaveOutcome.ADDED
-    )
+    """The gate is ``enrichment.auto_enrich_on_sync``, resolved by the caller.
 
+    The queue row is what the gate leaves behind: ``items_needing`` counts an
+    untracked item as queued too, so it reads the same either way.
+    """
     import_file(
         storage,
         1,
@@ -278,4 +274,7 @@ def test_enrichment_is_queued_only_when_the_caller_opens_the_gate(
         mark_for_enrichment=mark_for_enrichment,
     )
 
-    assert storage.enrichment.mark_needed.called is mark_for_enrichment
+    db_id = storage.get_content_items(user_id=1)[0].db_id
+    assert db_id is not None
+    status = storage.enrichment.status(db_id)
+    assert (status is not None and status["needs_enrichment"]) is mark_for_enrichment
