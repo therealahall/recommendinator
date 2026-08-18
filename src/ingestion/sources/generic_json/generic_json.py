@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator
-from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.importers.base import ImporterError, SkippedRow
+from src.ingestion.importers.generic_json.generic_json import JsonImporter
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import (
     ConfigField,
@@ -16,27 +15,18 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.ingestion.sources.generic_csv import (
-    parse_ignored_field,
-    parse_seasons_watched,
-)
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.templates import (
-    CONTENT_TYPE_COLUMNS,
-    CREATOR_COLUMNS,
-    CREATOR_FIELD,
-    LIST_VALUED_COLUMNS,
-    STATUS_MAP,
-)
+from src.models.content import ContentItem, ContentType
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
 
-# Without this, the package's star re-export would republish the shared tables above.
+# Without this, the package's star re-export would republish every import above.
 __all__ = ["JsonImportPlugin"]
 
 logger = logging.getLogger(__name__)
+
+_IMPORTER = JsonImporter()
 
 
 class JsonImportPlugin(SourcePlugin):
@@ -134,14 +124,7 @@ class JsonImportPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch content items from a JSON or JSONL file.
-
-        Args:
-            config: Must contain 'json_path' and 'content_type'
-            progress_callback: Optional callback for progress updates
-
-        Yields:
-            ContentItem for each entry in the file
+        """Read the configured file and hand its text to the importer.
 
         Raises:
             SourceError: If the file cannot be read or parsed
@@ -161,209 +144,21 @@ class JsonImportPlugin(SourcePlugin):
         except PathNotAllowed as error:
             raise SourceError(self.name, str(error)) from error
 
-        file_format = "JSONL" if file_path.suffix == ".jsonl" else "JSON"
-        logger.info(
-            "Parsing %s file: %s", file_format, sanitize_for_log(str(file_path))
-        )
-
+        logger.info("Parsing JSON file: %s", sanitize_for_log(str(file_path)))
         try:
-            entries = _load_json_or_jsonl(file_path)
+            text = file_path.read_text(encoding="utf-8")
         except FileNotFoundError as error:
             raise SourceError(self.name, f"JSON file not found: {file_path}") from error
-        except (json.JSONDecodeError, ValueError) as error:
-            raise SourceError(self.name, f"Failed to parse JSON: {error}") from error
 
-        logger.info("Found %d entries in %s file", len(entries), file_format)
-
-        yield from _parse_entries(
-            entries,
-            content_type,
-            self.get_source_identifier(config),
-            progress_callback,
-        )
-
-
-def _load_json_or_jsonl(file_path: Path) -> list[dict[str, Any]]:
-    """Load entries from a JSON array or JSONL file.
-
-    Args:
-        file_path: Path to the file
-
-    Returns:
-        List of entry dictionaries
-
-    Raises:
-        FileNotFoundError: If file doesn't exist
-        json.JSONDecodeError: If JSON is malformed
-        ValueError: If file format is invalid
-    """
-    content = file_path.read_text(encoding="utf-8").strip()
-
-    if not content:
-        return []
-
-    # Try JSON array first
-    if content.startswith("["):
-        data = json.loads(content)
-        if not isinstance(data, list):
-            raise ValueError("JSON file must contain an array of objects")
-        return list(data)
-
-    # Try JSONL (one object per line)
-    entries: list[dict[str, Any]] = []
-    for line_number, line in enumerate(content.splitlines(), start=1):
-        line = line.strip()
-        if not line:
-            continue
+        source = self.get_source_identifier(config)
         try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"Invalid JSON on line {line_number}: {error}") from error
-        if not isinstance(entry, dict):
-            raise ValueError(
-                f"Line {line_number} must be a JSON object, not {type(entry).__name__}"
-            )
-        entries.append(entry)
-
-    return entries
-
-
-def _parse_entries(
-    entries: list[dict[str, Any]],
-    content_type: ContentType,
-    source: str,
-    progress_callback: ProgressCallback | None = None,
-) -> Iterator[ContentItem]:
-    """Parse JSON entries into ContentItem objects.
-
-    Args:
-        entries: List of entry dictionaries
-        content_type: The content type to parse as
-        source: Source identifier for the items
-        progress_callback: Optional callback for progress updates
-
-    Yields:
-        ContentItem objects
-    """
-    creator_field = CREATOR_FIELD[content_type.value]
-    total = len(entries)
-    count = 0
-
-    for entry in entries:
-        title = str(entry.get("title", "")).strip()
-        if not title:
-            continue
-
-        if progress_callback:
-            progress_callback(count, total, title)
-
-        # Parse rating
-        raw_rating = entry.get("rating")
-        rating = _normalize_json_rating(raw_rating)
-
-        # Parse status
-        status_str = str(entry.get("status", "")).strip().lower()
-        status = STATUS_MAP.get(status_str, ConsumptionStatus.UNREAD)
-
-        # Parse date completed
-        date_completed = None
-        date_str = str(entry.get("date_completed", "")).strip()
-        if date_str:
-            try:
-                date_completed = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                logger.warning(
-                    "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    sanitize_for_log(title),
-                    sanitize_for_log(date_str),
-                )
-
-        # Parse review and notes
-        review = str(entry.get("review", "")).strip() or None
-        notes = str(entry.get("notes", "")).strip() or None
-
-        # Get creator
-        author = str(entry.get(creator_field, "")).strip() or None
-
-        # Parse ignored flag (absent or null leaves the stored flag alone)
-        ignored = parse_ignored_field(entry)
-
-        # Build metadata from type-specific fields
-        metadata = _build_json_metadata(entry, content_type)
-        if notes:
-            metadata["notes"] = notes
-
-        # Post-process seasons_watched for TV shows
-        if content_type == ContentType.TV_SHOW and "seasons_watched" in metadata:
-            metadata["seasons_watched"] = parse_seasons_watched(
-                metadata["seasons_watched"]
-            )
-
-        yield ContentItem(
-            title=title,
-            author=author,
-            content_type=content_type,
-            rating=rating,
-            review=review,
-            status=status,
-            date_completed=date_completed,
-            ignored=ignored,
-            metadata=metadata,
-            source=source,
-        )
-        count += 1
-
-    logger.info("Imported %d items from JSON file", count)
-
-
-def _normalize_json_rating(raw_rating: Any) -> int | None:
-    """Normalize a JSON rating value to 1-5 or None.
-
-    Args:
-        raw_rating: Raw rating from JSON (int, float, str, or None)
-
-    Returns:
-        Normalized rating (1-5) or None
-    """
-    if raw_rating is None:
-        return None
-
-    try:
-        rating = int(raw_rating)
-        if rating == 0:
-            return None
-        return max(1, min(5, rating))
-    except (ValueError, TypeError):
-        return None
-
-
-def _build_json_metadata(
-    entry: dict[str, Any], content_type: ContentType
-) -> dict[str, Any]:
-    """Build metadata dict from type-specific JSON fields.
-
-    Each field is stored under the metadata key the rest of the library uses
-    for it, so an imported value reaches its detail-table column instead of
-    the free-form metadata blob. An absent or empty field says nothing about
-    the value and is left out entirely.
-
-    Args:
-        entry: JSON entry dict
-        content_type: Content type for determining which fields to extract
-
-    Returns:
-        Metadata dictionary with non-empty values
-    """
-    metadata: dict[str, Any] = {}
-    type_columns = CONTENT_TYPE_COLUMNS[content_type.value]
-
-    for column, metadata_key in type_columns.items():
-        if column in CREATOR_COLUMNS:
-            continue
-        value = entry.get(column)
-        if value is not None and str(value).strip():
-            if column in LIST_VALUED_COLUMNS and not isinstance(value, list):
-                value = [value]
-            metadata[metadata_key] = value
-
-    return metadata
+            for row in _IMPORTER.parse(text, content_type):
+                if isinstance(row, SkippedRow):
+                    logger.warning(
+                        "Skipped row %d: %s", row.number, sanitize_for_log(row.reason)
+                    )
+                    continue
+                row.item.source = source
+                yield row.item
+        except ImporterError as error:
+            raise SourceError(self.name, str(error)) from error
