@@ -25,9 +25,8 @@ logger = logging.getLogger(__name__)
 class ImportResult:
     """Five counts, and a line per row that missed.
 
-    Every message says "line", never "row": the number is the file line a
-    record ends on, which a quoted newline makes different from a
-    spreadsheet's row.
+    Each miss names its number in the importer's own unit: a file line, or an
+    entry of a JSON array, which does not sit one per line.
     """
 
     importer: str
@@ -94,7 +93,7 @@ def import_file(
         if isinstance(row, SkippedRow):
             result.skipped += 1
             result.errors.append(
-                f"Skipped line {row.number}: {sanitize_for_log(row.reason)}"
+                f"Skipped {row.unit} {row.number}: {sanitize_for_log(row.reason)}"
             )
             continue
 
@@ -107,15 +106,16 @@ def import_file(
         except Exception as error:
             result.failed += 1
             logger.warning(
-                "[IMPORT] %s: line %d failed: %s",
+                "[IMPORT] %s: %s %d failed: %s",
                 importer.name,
+                row.unit,
                 row.number,
                 exception_for_log(error),
             )
             # Named by class rather than quoted: a storage fault's words repeat
             # the parameters it was handed, and this list reaches the browser.
             result.errors.append(
-                f"Failed line {row.number}: {type(error).__name__} "
+                f"Failed {row.unit} {row.number}: {type(error).__name__} "
                 f"saving '{safe_title}'"
             )
             continue
@@ -142,7 +142,7 @@ def import_file(
         )
 
     logger.info(
-        "[IMPORT] %s: %d line(s) read — %d added, %d updated, %d unchanged, "
+        "[IMPORT] %s: %d row(s) read — %d added, %d updated, %d unchanged, "
         "%d skipped, %d failed",
         importer.name,
         result.total_rows,

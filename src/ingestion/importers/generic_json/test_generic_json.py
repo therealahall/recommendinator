@@ -33,7 +33,7 @@ def items(text: str, content_type: ContentType = ContentType.BOOK) -> list[Conte
 
 def reported(text: str, content_type: ContentType = ContentType.BOOK) -> list[tuple]:
     return [
-        (row.number, row.reason)
+        (row.unit, row.number, row.reason)
         for row in parse(text, content_type)
         if isinstance(row, SkippedRow)
     ]
@@ -167,7 +167,7 @@ class TestSkippedRows:
         text = json.dumps([{"title": "First"}, {"title": ""}, {"title": "Third"}])
 
         assert [item.title for item in items(text)] == ["First", "Third"]
-        assert reported(text) == [(2, "no title")]
+        assert reported(text) == [("entry", 2, "no title")]
 
     def test_an_array_element_that_is_not_an_object_is_skipped_not_a_crash(
         self,
@@ -176,13 +176,13 @@ class TestSkippedRows:
         text = json.dumps([{"title": "First"}, "just a string", {"title": "Third"}])
 
         assert [item.title for item in items(text)] == ["First", "Third"]
-        assert reported(text) == [(2, "not a JSON object")]
+        assert reported(text) == [("entry", 2, "not a JSON object")]
 
     def test_a_jsonl_skip_names_the_line_it_was_on(self) -> None:
         text = '{"title": "First"}\n\n{"title": ""}\n{"title": "Fourth"}\n'
 
         assert [item.title for item in items(text)] == ["First", "Fourth"]
-        assert reported(text) == [(3, "no title")]
+        assert reported(text) == [("line", 3, "no title")]
 
 
 class TestIgnoredField:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,6 +17,8 @@ from src.ingestion.importers.service import ImportResult, import_file
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import SavedItem, SaveOutcome, StorageManager
+
+SERVICE_LOGGER = "src.ingestion.importers.service"
 
 _BOOKS_CSV = (
     "title,author,status,rating\n"
@@ -76,6 +79,20 @@ def test_both_kinds_of_malformed_line_are_named_and_the_file_still_imports(
     assert len(storage.get_content_items(user_id=1)) == 10
 
 
+def test_a_skip_in_a_pretty_printed_json_array_names_an_entry_not_a_line(
+    storage: StorageManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Entry 2 sits nowhere near file line 2, and the total counts neither."""
+    text = json.dumps([{"title": "Dune"}, {"title": ""}, {"title": "Ubik"}], indent=2)
+    assert len(text.splitlines()) > 3, "the entries must not sit one per line"
+
+    with caplog.at_level(logging.INFO, logger=SERVICE_LOGGER):
+        result = import_file(storage, 1, text, JsonImporter(), ContentType.BOOK)
+
+    assert result.errors == ["Skipped entry 2: no title"]
+    assert "3 row(s) read" in caplog.text
+
+
 def test_importing_the_same_file_twice_reports_unchanged_rather_than_added(
     storage: StorageManager,
 ) -> None:
@@ -134,15 +151,17 @@ def test_a_format_that_owns_its_content_type_reports_it_unasked(
     assert result.added == 1
 
 
-class TestARefusedValueCostsOneLine:
-    """A value no text column can hold fails its own line, not the file.
+class TestARefusedValueCostsOneEntry:
+    """A value no text column can hold fails its own entry, not the file.
 
     The JSON importer forwards whatever the file gives for ``isbn``, so
     storage can be handed an object. ``to_text`` refuses it rather than
     storing a repr.
     """
 
-    def test_the_rest_of_the_file_still_imports(self, storage: StorageManager) -> None:
+    def test_the_rest_of_the_file_still_imports(
+        self, storage: StorageManager, caplog: pytest.LogCaptureFixture
+    ) -> None:
         text = json.dumps(
             [
                 {"title": "Dune", "author": "Frank Herbert", "status": "read"},
@@ -151,11 +170,13 @@ class TestARefusedValueCostsOneLine:
             ]
         )
 
-        result = import_file(storage, 1, text, JsonImporter(), ContentType.BOOK)
+        with caplog.at_level(logging.WARNING, logger=SERVICE_LOGGER):
+            result = import_file(storage, 1, text, JsonImporter(), ContentType.BOOK)
 
         assert (result.added, result.failed, result.total_rows) == (2, 1, 3)
-        assert result.errors[0].startswith("Failed line 2: ")
+        assert result.errors[0].startswith("Failed entry 2: ")
         assert result.errors[0].endswith("saving 'Neuromancer'")
+        assert "json_import: entry 2 failed" in caplog.text
         assert sorted(item.title for item in storage.get_content_items(user_id=1)) == [
             "Dune",
             "Ubik",

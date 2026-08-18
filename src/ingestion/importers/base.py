@@ -9,9 +9,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from src.models.content import ContentItem, ContentType
+
+#: What a row's number counts, since only the importer knows. A JSON array's
+#: entries do not sit one per line, so calling entry 2 "line 2" names neither.
+RowUnit = Literal["line", "entry"]
 
 
 class ImporterError(Exception):
@@ -20,10 +24,11 @@ class ImporterError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ImportedRow:
-    """An item, and the 1-based row of the file it was read from."""
+    """An item, and the 1-based line or entry it was read from."""
 
     number: int
     item: ContentItem
+    unit: RowUnit = "line"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +37,7 @@ class SkippedRow:
 
     number: int
     reason: str
+    unit: RowUnit = "line"
 
 
 #: One row of an import: an item, or the reason there is none.
