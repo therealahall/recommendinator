@@ -17,7 +17,7 @@ from src.ingestion.import_templates import (
     find_template,
     read_template,
 )
-from src.ingestion.importers.base import ImporterError
+from src.ingestion.importers.base import Importer, ImporterError
 from src.ingestion.importers.registry import IMPORTERS
 from src.ingestion.importers.service import (
     ImportResult,
@@ -117,6 +117,38 @@ def import_command(
         click.echo(message)
 
 
+def _importer_view(importer: Importer) -> dict[str, Any]:
+    """One import format, shaped as ``ImporterResponse``."""
+    return {
+        "name": importer.name,
+        "display_name": importer.display_name,
+        "description": importer.description,
+        "requires_content_type": not importer.content_types,
+    }
+
+
+@click.command("import-formats")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+def import_formats(output_format: str) -> None:
+    """List every import format (mirrors GET /api/importers)."""
+    if output_format == "json":
+        click.echo(json.dumps([_importer_view(entry) for entry in IMPORTERS], indent=2))
+        return
+
+    click.echo("Available import formats:")
+    for entry in IMPORTERS:
+        needs = "" if entry.content_types else " (needs --content-type)"
+        click.echo(
+            f"  {entry.name:16s} {entry.display_name:28s} {entry.description}{needs}"
+        )
+
+
 def _template_view(template: ImportTemplate) -> dict[str, Any]:
     """One template, shaped as ``ImportTemplateResponse``."""
     return {
@@ -172,24 +204,29 @@ def _list_templates(output_format: str) -> None:
     "--format",
     "output_format",
     type=click.Choice(["table", "json"], case_sensitive=False),
-    default="table",
-    help="Output format for the listing",
+    # Unset rather than "table", so ``--format json`` named while writing a
+    # template is refused instead of dropped, answering raw bytes to a caller
+    # that asked for JSON.
+    default=None,
+    help="Output format for the listing (default: table)",
 )
 def import_template(
     importer_name: str | None,
     content_type_str: str | None,
     output_path: Path | None,
-    output_format: str,
+    output_format: str | None,
 ) -> None:
     """Write an import template, or list them (mirrors GET /api/import/templates)."""
-    if importer_name is None and content_type_str is None:
-        _list_templates(output_format)
+    if importer_name is None and content_type_str is None and output_path is None:
+        _list_templates(output_format or "table")
         return
     if importer_name is None or content_type_str is None:
         abort_with(
             "Name both --importer and --content-type, or neither to list "
             "the templates available."
         )
+    if output_format is not None:
+        abort_with("--format describes the template listing. Drop it to write one.")
 
     try:
         template = find_template(importer_name, content_type_str)

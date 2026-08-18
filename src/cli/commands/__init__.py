@@ -8,7 +8,7 @@ from src.cli.commands._account import account
 from src.cli.commands._auth import auth
 from src.cli.commands._complete import complete
 from src.cli.commands._enrichment import enrichment
-from src.cli.commands._import import import_command, import_template
+from src.cli.commands._import import import_command, import_formats, import_template
 from src.cli.commands._library import library
 from src.cli.commands._preferences import preferences
 from src.cli.commands._profile import profile
@@ -24,6 +24,7 @@ __all__ = [
     "complete",
     "enrichment",
     "import_command",
+    "import_formats",
     "import_template",
     "library",
     "preferences",

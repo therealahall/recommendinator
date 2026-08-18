@@ -802,7 +802,10 @@ class SourceCreateRequest(BaseModel):
 
 
 class ImporterResponse(BaseModel):
-    """One import format, for the upload panel's picker."""
+    """One import format, for the upload panel's picker.
+
+    ``import-formats`` emits this key set field for field.
+    """
 
     name: str
     display_name: str
