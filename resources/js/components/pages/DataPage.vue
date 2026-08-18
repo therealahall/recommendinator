@@ -4,6 +4,7 @@ import { useDataStore } from '@/stores/data'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
+import ImportPanel from '@/components/organisms/ImportPanel.vue'
 
 const data = useDataStore()
 const showAddSourceModal = ref(false)
@@ -75,8 +76,12 @@ const orderedSources = computed(() => {
   <div>
     <div class="page-header">
       <h2>Data</h2>
-      <p class="page-description">Sync sources and enrich metadata from external APIs.</p>
+      <p class="page-description">
+        Import a file, sync sources, and enrich metadata from external APIs.
+      </p>
     </div>
+
+    <ImportPanel />
 
     <!-- Named and focusable, because a successful retry sends focus here. -->
     <div

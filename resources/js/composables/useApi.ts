@@ -80,7 +80,10 @@ async function apiFetch(path: string, options: ApiOptions): Promise<Response> {
 
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const headers = { ...options.headers }
-  if (options.body !== undefined) {
+  // FormData is excluded deliberately: only the browser knows the multipart
+  // boundary it generated, and naming the type here drops it, leaving the
+  // server unable to find any part.
+  if (options.body !== undefined && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
 
@@ -118,6 +121,10 @@ export function useApi() {
         method: 'PUT',
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
+    },
+
+    upload<T>(path: string, body: FormData) {
+      return request<T>(path, { method: 'POST', body })
     },
 
     patch<T>(path: string, body?: unknown) {
