@@ -7,8 +7,10 @@ const props = defineProps<{
   file: File | null
 }>()
 
+// The second argument says the file arrived by drop. A drop is the one path
+// with nothing to announce it: the native input keeps the name it was given.
 const emit = defineEmits<{
-  'update:file': [file: File | null]
+  'update:file': [file: File | null, dropped: boolean]
 }>()
 
 const dragging = ref(false)
@@ -30,12 +32,12 @@ function onDrop(event: DragEvent): void {
   dragDepth = 0
   dragging.value = false
   const dropped = event.dataTransfer?.files?.[0]
-  if (dropped) emit('update:file', dropped)
+  if (dropped) emit('update:file', dropped, true)
 }
 
 function onChange(event: Event): void {
   const chosen = (event.target as HTMLInputElement).files?.[0] ?? null
-  emit('update:file', chosen)
+  emit('update:file', chosen, false)
 }
 
 // The drop never reaches the native input — assigning a FileList to it is not

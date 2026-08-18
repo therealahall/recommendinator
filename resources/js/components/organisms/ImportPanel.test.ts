@@ -165,6 +165,23 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
+  /** A drop leaves the input's own value untouched, so without this the first
+   *  a screen reader hears of the file is "Importing …", after the commit. */
+  it('announces a dropped file, and leaves a picked one to the input', async () => {
+    const wrapper = await mountPanel()
+
+    await dropFile(wrapper, exportFile())
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
+      'Selected file: goodreads_library_export.csv',
+    )
+
+    const picked = await mountPanel()
+    await chooseFile(picked, exportFile())
+    expect(picked.get('[data-testid="import-status"]').text()).toBe('')
+    wrapper.unmount()
+    picked.unmount()
+  })
+
   it('shows the same result whether the file was dropped or chosen from the input', async () => {
     const chosen = await mountPanel()
     await chooseFile(chosen, exportFile())

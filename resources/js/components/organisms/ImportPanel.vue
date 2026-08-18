@@ -66,10 +66,13 @@ const templateUrl = computed(() => {
 
 const canImport = computed(() => file.value !== null && importerName.value !== '')
 
-function onFileChosen(chosen: File | null): void {
+function onFileChosen(chosen: File | null, dropped: boolean): void {
   file.value = chosen
   result.value = null
   errorMessage.value = ''
+  // Only a drop. The picker path is already spoken by the input's own value,
+  // and announcing both would say the filename twice (WCAG 4.1.3).
+  if (dropped && chosen) status.value = `Selected file: ${chosen.name}`
 }
 
 function summarise(imported: ImportResponse): string {

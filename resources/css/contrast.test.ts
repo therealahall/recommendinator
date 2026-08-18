@@ -174,13 +174,13 @@ describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
     },
   )
 
-  // --bg-active is a transparent mix, so it lands on --bg-elevated, not the card.
+  // .drop-zone-over sets background on the same element as .drop-zone, at equal
+  // specificity, so --bg-active replaces --bg-elevated instead of sitting on it.
   it.each(DRAGGED_OVER)('%s stays readable with a file over the zone', (textSelector) => {
     const component = read(DROP_ZONE)
     const background = (selector: string): string =>
       declaration(ruleBody(component, selector), 'background')
-    const resting = over(toRgba(background('.drop-zone'), vars), card)
-    const dragged = over(toRgba(background('.drop-zone-over'), vars), resting)
+    const dragged = over(toRgba(background('.drop-zone-over'), vars), card)
     const text = declaration(ruleBody(component, textSelector), 'color')
 
     expect(contrast(toRgba(text, vars), dragged)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
