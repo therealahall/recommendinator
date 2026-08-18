@@ -25,11 +25,8 @@ time — as long as every row matches the header the file declares.
 
 ## Skipped lines
 
-Reported with the file line they were on:
-
-- `no title`
-- `N fields short of the header`
-- `N fields more than the header`, usually an unquoted comma inside a value
+The [generic CSV importer's](../generic_csv/README.md#skipped-lines), reported
+with the file line they were on.
 
 ## Development
 

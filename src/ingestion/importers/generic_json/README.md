@@ -13,9 +13,8 @@ included: omit it or send `null` and the stored flag is left alone, send a real
 Unlike a CSV cell, a JSON field can hold a list directly, so `genre` and
 `platform` accept either one value or an array.
 
-A JSON file this app exported carries a real value on every entry, so
-re-importing one replaces your whole ignore list with its state at export time.
-[The same snapshot warning](../generic_csv/README.md#ignored) applies.
+[The same snapshot warning](../generic_csv/README.md#ignored) applies: a file
+this app exported states `ignored` on every entry.
 
 ## Skipped entries
 

@@ -67,11 +67,11 @@ Rules bias scoring. They do not override it.
 
 ### Goodreads import fails
 
-Export from Goodreads (My Books → Import/Export → Export Library), drop the file
-in `inputs/`, and point the source at it. The CSV needs Title and Author columns.
+Export from Goodreads (My Books → Import/Export → Export Library) and import
+that file. The CSV needs Title and Author columns.
 
 ```bash
-python3.11 -m src.cli source set my_books path inputs/goodreads_library_export.csv
+python3.11 -m src.cli import goodreads_library_export.csv --importer goodreads_csv
 ```
 
 ### Steam import fails

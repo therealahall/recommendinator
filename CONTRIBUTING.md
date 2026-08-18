@@ -237,6 +237,7 @@ src/
 ├── sources/          # service.py: configured-source CRUD
 ├── auth/             # GOG/Epic/Trakt OAuth flows
 ├── ingestion/        # Data ingestion
+│   ├── importers/    # One-off file formats
 │   └── sources/      # Source plugins (<name>/<name>.py + README.md + test_<name>.py)
 ├── storage/          # SQLite
 ├── recommendations/  # Scoring pipeline and engine
@@ -249,14 +250,14 @@ conftest.py           # Five autouse fixtures for every test in every tree: real
                       # logs and credentials isolated, timezone pinned to UTC,
                       # reads confined to tmp_path, network limited to loopback
 config/               # Configuration files
-templates/            # Import file templates (CSV, JSON, Markdown)
+templates/            # Blank import templates
 docs/                 # Additional documentation
 .claude/agents/       # The native parity-review agent
 ```
 
 `src/ingestion/sources/_isolation/` is not a plugin. It holds the test proving
-plugin-local tests get the root conftest's isolation, and its leading underscore
-keeps the registry from importing it.
+plugin-local tests get the conftest's isolation; its underscore keeps the
+registry out.
 
 ## UI themes
 

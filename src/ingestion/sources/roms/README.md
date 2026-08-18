@@ -29,7 +29,7 @@ see the table below for what each one does.
 | `extra_strip_patterns` | list[str] | no | Extra Python regex patterns appended to the title cleaner. At most 32 patterns of 200 characters each. Run time is not capped, so avoid unbounded repetition that could backtrack catastrophically. |
 
 Allowed roots default to `inputs/` and are set in `config.yaml` — see
-[SECURITY.md](../../../../docs/SECURITY.md#where-file-imports-may-read).
+[SECURITY.md](../../../../docs/SECURITY.md#where-a-source-may-read).
 
 ## Notes
 - Title cleanup (`Game (USA) [!].zip` → `Game`) is performed by the [`_rom_title`](_rom_title.py) helper.

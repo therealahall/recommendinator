@@ -159,12 +159,12 @@ cookie cross your network in cleartext — the app never serves TLS itself. Do n
 expose it to the public internet without the proxy. Under Docker, services talk
 over an internal network isolated from the host by default.
 
-## Where file imports may read
+## Where a source may read
 
-Source config is writable over the API, so every plugin whose config names a
-filesystem path (`csv_import`, `json_import`, `markdown_import`, `roms`,
-`goodreads_csv`, `storygraph_csv`) refuses any path resolving outside
-`security.allowed_source_roots`. Both `validate_config` and `fetch` check.
+Source config is writable over the API, so a plugin whose config names a
+filesystem path (`roms`, and private scanners) refuses one resolving outside
+`security.allowed_source_roots`; `validate_config` and `fetch` both check. An
+import is outside it, never touching disk.
 
 ```yaml
 # config/config.yaml — defaults to ["inputs"] when absent.

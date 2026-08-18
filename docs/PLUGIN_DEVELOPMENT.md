@@ -110,7 +110,7 @@ of the name — `csv_path` yes, `filepath` no. Anything else is on you. The flag
 is declarative, so the plugin must itself call
 `src.ingestion.paths.resolve_source_path`, in `validate_config` *and* in
 `fetch`, or the path is never contained (see
-[SECURITY.md](SECURITY.md#where-file-imports-may-read)):
+[SECURITY.md](SECURITY.md#where-a-source-may-read)):
 
 ```python
 try:
@@ -357,20 +357,16 @@ the same shape most compactly:
 
 ```yaml
 inputs:
-  my_books:
-    plugin: csv_import
-    path: "inputs/books.csv"
-    content_type: "book"
+  my_roms:
+    plugin: roms
+    paths: ["inputs/roms"]
     enabled: true
 
-  classic_movies:
-    plugin: csv_import
-    path: "inputs/classic_movies.csv"
-    content_type: "movie"
+  handhelds:
+    plugin: roms
+    paths: ["inputs/gba"]
     enabled: true
 ```
-
-File-based plugins use `path`, never `csv_path`, `json_path` or `markdown_path`.
 
 `fetch()` receives a `_source_id` key holding the user-defined name.
 `get_source_identifier(config)` returns it, and it is what lands in
@@ -429,20 +425,19 @@ app. `None`, the default, means this source has no opinion, and the stored flag
 is left alone. Storage receives a boolean or nothing, so it cannot tell a file's
 explicit `false` from a `False` you defaulted to, and **a defaulted `False`
 silently clears the user's ignore list on every sync**. If your source carries
-the flag, read it with `parse_ignored_field()` from `generic_csv`: it returns
-`None` for an absent key, a blank CSV cell or a JSON `null`, and a boolean only
-when a value was stated. Do not reach for the lower-level
-`parse_boolean_field()`, which returns `False` for a missing value.
+the flag, read it with `parse_ignored_field()` from `importers.rows`: it
+returns `None` for an absent key, a blank cell or a JSON `null`, and a boolean
+only when stated. Do not reach for the lower-level `parse_boolean_field()`,
+which returns `False` for a missing value.
 
 The library exporter (`src/utils/export.py`) is the one deliberate exception, not a
 precedent. It states `ignored` on every row, because re-importing an edited
 export is the supported bulk un-ignore. That is why a re-imported export replaces
-the whole ignore list with its state at export time, and why
-[DATA_SOURCES.md](DATA_SOURCES.md#library-export) warns against leaving one
-configured as a standing source.
+the whole ignore list with its state at export time — see
+[DATA_SOURCES.md](DATA_SOURCES.md#library-export).
 
 **`seasons_watched` is a list of season numbers**, `[1, 2, 5, 6]`, not a count.
-Use `parse_seasons_watched()` from `generic_csv` to convert string input. A bare
+Use `parse_seasons_watched()` from `importers.rows` to convert a string. A bare
 integer is read as a count for backward compatibility, so `5` becomes
 `[1, 2, 3, 4, 5]`.
 
@@ -580,13 +575,11 @@ enrichment:
 
 | Plugin | Pattern |
 |---|---|
-| `goodreads_csv` | File-based CSV parser |
 | `goodreads_rss` | Simple GET plus pagination, no auth |
 | `steam` | API-based with rate limiting |
 | `gog` | OAuth API with token refresh |
 | `epic_games` | OAuth API via Legendary |
 | `radarr`, `sonarr` | API-based movie and TV libraries |
-| `generic_csv`, `generic_json`, `markdown` | Flexible file importers |
 | `roms` | Directory scanner, with a No-Intro/Redump/TOSEC title cleaner in `_rom_title.py` |
 
 Each lives at `src/ingestion/sources/<name>/<name>.py`. Enrichment providers:
