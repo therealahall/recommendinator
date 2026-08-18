@@ -839,3 +839,32 @@ class TestASyncSaysWhatItChangedRegression:
             0,
             40,
         )
+
+    def test_an_item_the_source_renamed_is_reported_updated(
+        self, tmp_path: Path
+    ) -> None:
+        """The only leg of the tally no other test reaches.
+
+        Folding ``updated`` into either neighbour still leaves the added and
+        unchanged tests green, while the CLI, ``/api/sync/status`` and the
+        ``sync_runs`` column all quietly stop showing the operator any edit.
+        """
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        def sync_titled(title: str) -> SyncResult:
+            plugin = MagicMock(spec=SourcePlugin)
+            plugin.display_name = "Roms"
+            plugin.fetch.return_value = iter([make_item(title, item_id="g1")])
+            return execute_sync(
+                plugin=plugin, plugin_config={}, storage_manager=storage
+            )
+
+        assert sync_titled("Chrono Trigger").items_added == 1
+
+        result = sync_titled("Chrono Trigger (USA)")
+
+        assert (result.items_added, result.items_updated, result.items_unchanged) == (
+            0,
+            1,
+            0,
+        )
