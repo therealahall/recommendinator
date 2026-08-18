@@ -77,7 +77,7 @@ function summarise(imported: ImportResponse): string {
   const listed =
     missed === 0
       ? ''
-      : ` ${missed} ${missed === 1 ? 'line is' : 'lines are'} listed below.`
+      : ` ${missed} ${missed === 1 ? 'row is' : 'rows are'} listed below.`
   return (
     `Imported ${imported.filename ?? 'the file'}: added ${imported.added}, ` +
     `updated ${imported.updated}, unchanged ${imported.unchanged}, ` +

@@ -58,7 +58,7 @@ const RESULT: ImportResponse = {
 
 const SUMMARY =
   'Imported goodreads_library_export.csv: added 12, updated 3, ' +
-  'unchanged 240, skipped 2, failed 0. 257 rows read. 2 lines are listed below.'
+  'unchanged 240, skipped 2, failed 0. 257 rows read. 2 rows are listed below.'
 
 function exportFile(): File {
   return new File(['title,author\n'], 'goodreads_library_export.csv', {
@@ -118,6 +118,27 @@ describe('ImportPanel', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="import-status"]').text()).toBe(SUMMARY)
+    wrapper.unmount()
+  })
+
+  /** Each message names its own unit, so the announcement cannot: entry 2 of a
+   *  JSON array is not file line 2, and the heading already says rows. */
+  it('announces the misses without presuming they are lines', async () => {
+    const wrapper = await mountPanel()
+    mockUpload.mockResolvedValue({
+      ...RESULT,
+      importer: 'json_import',
+      skipped: 1,
+      errors: ['Skipped entry 2: no title'],
+    })
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="import-status"]').text()).toContain(
+      '1 row is listed below.',
+    )
     wrapper.unmount()
   })
 

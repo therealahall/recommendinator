@@ -86,4 +86,13 @@ describe('ImportResultSummary', () => {
     expect(heading).toBe('Rows that did not import (1)')
     wrapper.unmount()
   })
+
+  /** The panel around this heads itself with an h3, so an h5 here skips a
+   *  level and implies a section that does not exist (WCAG 1.3.1). */
+  it('heads the misses one level under the panel, not two', () => {
+    const wrapper = mount(ImportResultSummary, { props: { result: partlySuccessful } })
+
+    expect(wrapper.get('.import-misses-title').element.tagName).toBe('H4')
+    wrapper.unmount()
+  })
 })

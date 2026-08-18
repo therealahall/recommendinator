@@ -154,6 +154,8 @@ const IMPORT_SURFACES: [string, string, string, string][] = [
   ['the file label', DROP_ZONE, '.drop-zone-label', '.drop-zone'],
 ]
 
+const DRAGGED_OVER = ['.drop-zone-hint', '.drop-zone-selection']
+
 describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
   const base = read('resources/css/base.css')
   const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
@@ -171,6 +173,18 @@ describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
       ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
     },
   )
+
+  // --bg-active is a transparent mix, so it lands on --bg-elevated, not the card.
+  it.each(DRAGGED_OVER)('%s stays readable with a file over the zone', (textSelector) => {
+    const component = read(DROP_ZONE)
+    const background = (selector: string): string =>
+      declaration(ruleBody(component, selector), 'background')
+    const resting = over(toRgba(background('.drop-zone'), vars), card)
+    const dragged = over(toRgba(background('.drop-zone-over'), vars), resting)
+    const text = declaration(ruleBody(component, textSelector), 'color')
+
+    expect(contrast(toRgba(text, vars), dragged)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
 })
 
 describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, themePath) => {

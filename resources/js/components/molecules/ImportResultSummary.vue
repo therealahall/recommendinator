@@ -36,9 +36,9 @@ const counts = computed(() => [
     <div v-if="result.errors.length" class="import-misses">
       <!-- "Rows", because each message names its own unit: a JSON array
            entry is not a file line, and the heading cannot know which. -->
-      <h5 class="import-misses-title">
+      <h4 class="import-misses-title">
         Rows that did not import ({{ result.errors.length }})
-      </h5>
+      </h4>
       <ul class="import-misses-list" data-testid="import-errors" role="list">
         <li v-for="message in result.errors" :key="message">{{ message }}</li>
       </ul>
