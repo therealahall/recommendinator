@@ -3,6 +3,8 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 from src.ingestion.importers.registry import IMPORTERS, get_importer
 
 # An importer that could open a file would be a second way to read the disk,
@@ -38,6 +40,26 @@ def test_no_importer_module_can_reach_the_filesystem() -> None:
 
     assert len(modules) > len(IMPORTERS), "no modules were read, so this proves nothing"
     assert {name: sorted(found) for name, found in used.items() if found} == {}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def read(path):\n    return open(path).read()\n",
+        "from pathlib import Path\n\n\ndef read(name):\n    return Path(name).read_text()\n",
+        "import os\n\n\ndef read(name):\n    return os.stat(name)\n",
+        "import io\n\n\ndef read(name):\n    return io.open(name).read()\n",
+    ],
+    ids=["open", "pathlib", "os", "io.open"],
+)
+def test_the_guard_above_rejects_a_module_that_reads_a_file(
+    source: str, tmp_path: Path
+) -> None:
+    """Trimming the names or the walk would leave that guard passing vacuously."""
+    module = tmp_path / "leaky.py"
+    module.write_text(source, encoding="utf-8")
+
+    assert _names_used(module) & FILESYSTEM_NAMES
 
 
 def test_every_importer_answers_to_the_name_it_publishes() -> None:
