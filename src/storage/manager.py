@@ -39,6 +39,7 @@ from src.storage.sqlite_db import VALID_SORT_OPTIONS as VALID_SORT_OPTIONS
 from src.storage.sqlite_db import (
     FutureCompletionDateError as FutureCompletionDateError,
 )
+from src.storage.sqlite_db import SaveCounts as SaveCounts
 from src.storage.sqlite_db import SavedItem as SavedItem
 from src.storage.sqlite_db import SaveOutcome as SaveOutcome
 from src.storage.sqlite_db import SQLiteDB

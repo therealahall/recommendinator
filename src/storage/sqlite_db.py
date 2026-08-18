@@ -168,6 +168,28 @@ class SavedItem:
     outcome: SaveOutcome
 
 
+@dataclass
+class SaveCounts:
+    """A run of writes, split by what each one did.
+
+    One definition because a sync and an import both report these three numbers,
+    and two tallies of the same enum would eventually disagree about which
+    outcome is which.
+    """
+
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+
+    def record(self, outcome: SaveOutcome) -> None:
+        if outcome is SaveOutcome.ADDED:
+            self.added += 1
+        elif outcome is SaveOutcome.UPDATED:
+            self.updated += 1
+        else:
+            self.unchanged += 1
+
+
 _T = TypeVar("_T")
 
 

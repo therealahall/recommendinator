@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
-from src.storage.manager import SaveOutcome
+from src.storage.manager import SaveCounts
 from src.storage.schema import SyncRunStatus
 from src.utils.dates import utc_now
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
@@ -41,13 +41,23 @@ class SyncResult:
     source_name: str
     source_id: str = ""
     items_synced: int = 0
-    items_added: int = 0
-    items_updated: int = 0
-    items_unchanged: int = 0
+    counts: SaveCounts = field(default_factory=SaveCounts)
     total_items: int = 0
     errors: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=utc_now)
     finished_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def items_added(self) -> int:
+        return self.counts.added
+
+    @property
+    def items_updated(self) -> int:
+        return self.counts.updated
+
+    @property
+    def items_unchanged(self) -> int:
+        return self.counts.unchanged
 
 
 # Called with each source's result as that source finishes, rather than once
@@ -242,12 +252,7 @@ def execute_sync(
 
             saved = storage_manager.save_content_item_outcome(item)
             result.items_synced += 1
-            if saved.outcome is SaveOutcome.ADDED:
-                result.items_added += 1
-            elif saved.outcome is SaveOutcome.UPDATED:
-                result.items_updated += 1
-            else:
-                result.items_unchanged += 1
+            result.counts.record(saved.outcome)
 
             # Mark for enrichment if enabled
             if mark_for_enrichment:
