@@ -12,6 +12,7 @@ from src.cli.commands import (
     auth,
     complete,
     enrichment,
+    import_command,
     library,
     preferences,
     profile,
@@ -141,6 +142,7 @@ cli.add_command(auth)
 cli.add_command(status)
 cli.add_command(recommend)
 cli.add_command(update)
+cli.add_command(import_command)
 cli.add_command(complete)
 cli.add_command(preferences)
 cli.add_command(enrichment)
