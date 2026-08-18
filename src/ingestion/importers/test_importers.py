@@ -1,13 +1,26 @@
 """Tests for the importer package as a whole."""
 
 import ast
+import csv
+import io
+import json
 from pathlib import Path
 
 import pytest
 
 import src
-from src.ingestion.import_templates import TEMPLATE_IMPORTERS, TEMPLATES_DIR
+from src.ingestion.import_templates import (
+    TEMPLATE_IMPORTERS,
+    TEMPLATES_DIR,
+    ImportTemplate,
+    available_templates,
+    read_template,
+)
+from src.ingestion.importers.base import SkippedRow
 from src.ingestion.importers.registry import IMPORTERS, get_importer
+from src.ingestion.importers.service import decode_import_text
+from src.models.content import ContentType
+from src.models.templates import COMMON_COLUMNS, CONTENT_TYPE_COLUMNS
 
 # An importer that could open a file would be a second way to read the disk,
 # reached from an upload that never gave it a path.
@@ -97,3 +110,56 @@ def test_every_importer_answers_to_the_name_it_publishes() -> None:
 
 def test_a_format_nobody_implements_is_not_guessed_at() -> None:
     assert get_importer("goodreads") is None
+
+
+def _template_id(template: ImportTemplate) -> str:
+    return f"{template.importer}-{template.filename}"
+
+
+@pytest.mark.parametrize("template", available_templates(), ids=_template_id)
+def test_every_shipped_template_imports_through_the_format_it_names(
+    template: ImportTemplate,
+) -> None:
+    """A template is downloaded, filled in and uploaded back, and nothing else
+    in the suite ties ``templates/`` to the parsers: one whose example row
+    stopped parsing ships as a file whose every line is skipped.
+    """
+    importer = get_importer(template.importer)
+    assert importer is not None
+
+    rows = list(
+        importer.parse(
+            decode_import_text(read_template(template)),
+            ContentType(template.content_type),
+        )
+    )
+
+    assert rows, "the template ships no example row, so this proves nothing"
+    assert [row for row in rows if isinstance(row, SkippedRow)] == []
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        template
+        for template in available_templates()
+        if template.importer in {"csv_import", "json_import"}
+    ],
+    ids=_template_id,
+)
+def test_no_tabular_template_offers_a_column_the_importer_drops(
+    template: ImportTemplate,
+) -> None:
+    """A column the importer does not know is warned about and ignored, never
+    skipped, so a template naming one loses whatever the operator typed into it
+    with nothing said on either interface.
+    """
+    text = decode_import_text(read_template(template))
+    offered = (
+        set(json.loads(text)[0])
+        if template.importer == "json_import"
+        else set(next(csv.reader(io.StringIO(text))))
+    )
+    consumed = COMMON_COLUMNS | set(CONTENT_TYPE_COLUMNS[template.content_type])
+
+    assert offered - consumed == set()
