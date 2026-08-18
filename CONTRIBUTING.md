@@ -12,10 +12,11 @@ change, get the checks green, open a PR.
 
 ## Local development with Docker
 
-Layer the dev override on the production compose file for hot reload:
+Copy the dev override into place once, then bring the stack up for hot reload:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+cp docker-compose.override.yml.example docker-compose.override.yml
+docker compose up
 ```
 
 The override builds locally instead of pulling from GHCR, bind-mounts `./src`,
@@ -45,8 +46,9 @@ The HMR *host* is deliberately not configurable. Unset, the browser reuses the
 hostname it loaded the page from, the only behaviour that works when one dev
 server is reached under more than one name.
 
-Your gitignored `docker-compose.override.yml` merges alongside both, so all three
-compose with one command.
+`docker-compose.override.yml` is gitignored, so your own mounts belong in it too.
+Compose only picks it up when the command names no file, so run it without `-f`
+or those mounts disappear with nothing said.
 
 ## Quality checks
 

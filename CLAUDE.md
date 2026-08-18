@@ -117,8 +117,8 @@ config/               # Configuration files (example.yaml for tests)
 docker/               # Container helpers
 └── entrypoint.sh         # First-run config.yaml bootstrap
 docker-compose.yml         # Production: pulls from GHCR
-docker-compose.dev.yml     # Dev override: bind-mount + --reload (committed)
-docker-compose.override.yml  # Personal mounts (gitignored)
+docker-compose.override.yml.example  # Dev override to copy: bind-mount + --reload
+docker-compose.override.yml  # The copy, plus personal mounts (gitignored)
 .claude/agents/       # The native parity-review agent
 private/              # Gitignored — private plugins NOT in the open source repo
 └── plugins/          # Private source plugins and enrichment providers, both
@@ -192,7 +192,7 @@ config = load_config(Path("config/config.yaml"))
 - **CLI**: Click
 - **Testing**: pytest (Python), Vitest (frontend)
 - **Quality**: Black, MyPy (strict), Ruff, vue-tsc
-- **Container**: Docker — production deployment pulls from GHCR via `docker-compose.yml`; local dev layers `docker-compose.dev.yml` for hot reload (bind-mount `src/` + uvicorn `--reload`). The `recommendinator` image is published multi-arch (`linux/amd64`, `linux/arm64`). See [docs/DOCKER.md](docs/DOCKER.md).
+- **Container**: Docker — production deployment pulls from GHCR via `docker-compose.yml`; local dev copies `docker-compose.override.yml.example` to `docker-compose.override.yml` for hot reload (bind-mount `src/` + uvicorn `--reload`), which compose merges in without any `-f`. The `recommendinator` image is published multi-arch (`linux/amd64`, `linux/arm64`). See [docs/DOCKER.md](docs/DOCKER.md).
 
 ## Versioning & Releases
 

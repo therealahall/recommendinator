@@ -28,8 +28,8 @@
 #                             cross the network in cleartext: put a reverse
 #                             proxy that terminates HTTPS in front of it.
 #
-# For local development with hot reload, layer docker-compose.dev.yml on top:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# For local development with hot reload, copy docker-compose.override.yml.example
+# to docker-compose.override.yml; compose merges it into the command above.
 
 services:
   app:
