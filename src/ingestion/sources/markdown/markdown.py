@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterator
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from src.ingestion.importers.base import ImporterError, SkippedRow
+from src.ingestion.importers.markdown.markdown import MarkdownImporter
 from src.ingestion.paths import PathNotAllowed, resolve_source_path
 from src.ingestion.plugin_base import (
     ConfigField,
@@ -15,7 +15,7 @@ from src.ingestion.plugin_base import (
     SourceError,
     SourcePlugin,
 )
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import ContentItem, ContentType
 from src.utils.text import sanitize_for_log
 
 if TYPE_CHECKING:
@@ -23,32 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Map section headings to consumption status
-SECTION_STATUS_MAP: dict[str, ConsumptionStatus] = {
-    "completed": ConsumptionStatus.COMPLETED,
-    "in progress": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "currently reading": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "currently watching": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "currently playing": ConsumptionStatus.CURRENTLY_CONSUMING,
-    "to read": ConsumptionStatus.UNREAD,
-    "to watch": ConsumptionStatus.UNREAD,
-    "to play": ConsumptionStatus.UNREAD,
-    "wishlist": ConsumptionStatus.UNREAD,
-    "backlog": ConsumptionStatus.UNREAD,
-}
-
-# Regex for parsing list items:
-# - **Title** by Creator | Rating: N | Date: YYYY-MM-DD
-_ITEM_PATTERN = re.compile(
-    r"^[-*]\s+"  # List marker (- or *)
-    r"\*\*(.+?)\*\*"  # **Title** (required)
-    r"(?:\s+by\s+(.+?))??"  # by Creator (optional, lazy)
-    r"(?:\s*\|\s*(.+))?"  # | metadata tail (optional)
-    r"\s*$"
-)
-
-# Pattern for extracting key:value pairs from the metadata tail
-_METADATA_PAIR_PATTERN = re.compile(r"(\w+)\s*:\s*(.+)")
+_IMPORTER = MarkdownImporter()
 
 
 class MarkdownImportPlugin(SourcePlugin):
@@ -154,14 +129,7 @@ class MarkdownImportPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch content items from a Markdown file.
-
-        Args:
-            config: Must contain 'markdown_path' and 'content_type'
-            progress_callback: Optional callback for progress updates
-
-        Yields:
-            ContentItem for each list entry in the file
+        """Read the configured file and hand its text to the importer.
 
         Raises:
             SourceError: If the file cannot be read or parsed
@@ -182,155 +150,22 @@ class MarkdownImportPlugin(SourcePlugin):
             raise SourceError(self.name, str(error)) from error
 
         logger.info("Parsing Markdown file: %s", sanitize_for_log(str(file_path)))
-
         try:
-            content = file_path.read_text(encoding="utf-8")
+            text = file_path.read_text(encoding="utf-8")
         except FileNotFoundError as error:
             raise SourceError(
                 self.name, f"Markdown file not found: {file_path}"
             ) from error
 
-        yield from _parse_markdown(
-            content, content_type, self.get_source_identifier(config), progress_callback
-        )
-
-
-def _parse_markdown(
-    content: str,
-    content_type: ContentType,
-    source: str,
-    progress_callback: ProgressCallback | None = None,
-) -> Iterator[ContentItem]:
-    """Parse a Markdown file into ContentItem objects.
-
-    Args:
-        content: Full markdown content
-        content_type: Content type to assign to all items
-        source: Source identifier
-        progress_callback: Optional callback for progress updates
-
-    Yields:
-        ContentItem objects
-    """
-    # Pre-scan to count items so we can report a real total
-    total = sum(1 for line in content.splitlines() if _ITEM_PATTERN.match(line.strip()))
-    logger.info("Found %d entries in Markdown file", total)
-
-    current_status = ConsumptionStatus.UNREAD
-    count = 0
-
-    for line in content.splitlines():
-        stripped = line.strip()
-
-        # Check for ## heading (status section)
-        if stripped.startswith("## "):
-            heading_text = stripped[3:].strip().lower()
-            matched_status = _match_section_status(heading_text)
-            if matched_status is not None:
-                current_status = matched_status
-            continue
-
-        # Check for list item
-        if not stripped.startswith(("- ", "* ")):
-            continue
-
-        match = _ITEM_PATTERN.match(stripped)
-        if not match:
-            continue
-
-        title = match.group(1).strip()
-        if not title:
-            continue
-
-        creator = match.group(2)
-        if creator:
-            creator = creator.strip()
-
-        # Parse metadata from the tail (everything after the first |)
-        metadata_tail = match.group(3) or ""
-        parsed_metadata = _parse_metadata_tail(metadata_tail)
-
-        # Extract rating
-        rating = None
-        rating_str = parsed_metadata.pop("rating", None)
-        if rating_str:
-            try:
-                rating_val = int(rating_str)
-                if rating_val == 0:
-                    rating = None
-                else:
-                    rating = max(1, min(5, rating_val))
-            except ValueError:
-                pass
-
-        # Extract date
-        date_completed = None
-        date_str = parsed_metadata.pop("date", None)
-        if date_str:
-            try:
-                date_completed = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
-            except ValueError:
-                logger.warning(
-                    "Invalid date format for '%s': %s. Expected YYYY-MM-DD.",
-                    sanitize_for_log(title),
-                    sanitize_for_log(date_str),
-                )
-
-        if progress_callback:
-            progress_callback(count, total, title)
-
-        yield ContentItem(
-            title=title,
-            author=creator or None,
-            content_type=content_type,
-            rating=rating,
-            status=current_status,
-            date_completed=date_completed,
-            metadata=parsed_metadata if parsed_metadata else {},
-            source=source,
-        )
-        count += 1
-
-    logger.info("Imported %d items from Markdown file", count)
-
-
-def _match_section_status(heading_text: str) -> ConsumptionStatus | None:
-    """Match a section heading to a consumption status.
-
-    Args:
-        heading_text: Lowercase heading text (without ##)
-
-    Returns:
-        Matched ConsumptionStatus or None if not recognized
-    """
-    for keyword, status in SECTION_STATUS_MAP.items():
-        if keyword in heading_text:
-            return status
-    return None
-
-
-def _parse_metadata_tail(tail: str) -> dict[str, str]:
-    """Parse the pipe-separated metadata tail of a list item.
-
-    Format: Rating: 5 | Date: 2024-06-15 | Key: Value
-
-    Args:
-        tail: The metadata string after the first pipe
-
-    Returns:
-        Dict of key-value pairs (keys lowercased)
-    """
-    result: dict[str, str] = {}
-    if not tail:
-        return result
-
-    parts = tail.split("|")
-    for raw_part in parts:
-        part = raw_part.strip()
-        match = _METADATA_PAIR_PATTERN.match(part)
-        if match:
-            key = match.group(1).strip().lower()
-            value = match.group(2).strip()
-            result[key] = value
-
-    return result
+        source = self.get_source_identifier(config)
+        try:
+            for row in _IMPORTER.parse(text, content_type):
+                if isinstance(row, SkippedRow):
+                    logger.warning(
+                        "Skipped row %d: %s", row.number, sanitize_for_log(row.reason)
+                    )
+                    continue
+                row.item.source = source
+                yield row.item
+        except ImporterError as error:
+            raise SourceError(self.name, str(error)) from error

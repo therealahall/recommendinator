@@ -1,7 +1,11 @@
-"""Tests for the Goodreads CSV plugin."""
+"""Tests for the Goodreads CSV plugin.
+
+Parsing is the importer's, and is tested next to it in
+``src/ingestion/importers/goodreads_csv/``. What is left here is the plugin's
+own job: resolving a configured path and reporting what went wrong with it.
+"""
 
 import logging
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -38,69 +42,37 @@ class TestGoodreadsCsvPluginValidation:
 
 
 class TestGoodreadsCsvPluginFetch:
-    """Tests for GoodreadsCsvPlugin.fetch()."""
+    """Tests for the file the plugin reads and the items it attributes."""
 
-    def test_fetch_basic(self, plugin: GoodreadsCsvPlugin, tmp_path: Path) -> None:
-        """Test basic CSV parsing through the plugin interface."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf,Date Read,My Review
-123,Test Book,Test Author,4,read,2025/01/15,Great book!
-456,Another Book,Another Author,0,to-read,,
-"""
+    def test_fetch_reads_the_configured_file(
+        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
+    ) -> None:
         csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
+        csv_file.write_text(
+            "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
+            "123,Test Book,Test Author,4,read\n"
+        )
 
         items = list(plugin.fetch({"path": str(csv_file)}))
 
-        assert len(items) == 2
-
-        # First item (completed)
+        assert len(items) == 1
         assert items[0].title == "Test Book"
         assert items[0].author == "Test Author"
         assert items[0].rating == 4
         assert items[0].status == ConsumptionStatus.COMPLETED
-        assert items[0].date_completed == date(2025, 1, 15)
-        assert items[0].review == "Great book!"
         assert items[0].content_type == ContentType.BOOK
         assert items[0].source == "goodreads_csv"
 
-        # Second item (unread)
-        assert items[1].title == "Another Book"
-        assert items[1].author == "Another Author"
-        assert items[1].rating is None
-        assert items[1].status == ConsumptionStatus.UNREAD
-        assert items[1].date_completed is None
-        assert items[1].review is None
-
-    def test_fetch_currently_reading(
+    def test_fetch_attributes_items_to_the_source_id(
         self, plugin: GoodreadsCsvPlugin, tmp_path: Path
     ) -> None:
-        """Test parsing of currently-reading status."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf,Date Read
-789,Reading Now,Author Name,0,currently-reading,
-"""
+        """The id the user gave the source owns the items, not the plugin name."""
         csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
+        csv_file.write_text("Title\nDune\n")
 
-        items = list(plugin.fetch({"path": str(csv_file)}))
+        items = list(plugin.fetch({"path": str(csv_file), "_source_id": "my_shelf"}))
 
-        assert len(items) == 1
-        assert items[0].status == ConsumptionStatus.CURRENTLY_CONSUMING
-
-    def test_fetch_empty_title_skipped(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that rows with empty titles are skipped."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf
-123,,Test Author,4,read
-456,Valid Book,Author,4,read
-"""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert len(items) == 1
-        assert items[0].title == "Valid Book"
+        assert [item.source for item in items] == ["my_shelf"]
 
     def test_fetch_file_not_found_raises_source_error(
         self, plugin: GoodreadsCsvPlugin, tmp_path: Path
@@ -111,39 +83,6 @@ class TestGoodreadsCsvPluginFetch:
 
         assert exc_info.value.plugin_name == "goodreads_csv"
 
-    def test_fetch_metadata(self, plugin: GoodreadsCsvPlugin, tmp_path: Path) -> None:
-        """Test that metadata fields are populated correctly."""
-        csv_content = (
-            "Book Id,Title,Author,My Rating,Exclusive Shelf,"
-            "ISBN,ISBN13,Number of Pages,Year Published,Publisher\n"
-            '123,Test Book,Test Author,4,read,"=""1234567890=""","=""9781234567890=""",'
-            "350,2020,Test Publisher\n"
-        )
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert len(items) == 1
-        assert items[0].metadata["book_id"] == "123"
-        assert items[0].metadata["pages"] == "350"
-        assert items[0].metadata["year_published"] == "2020"
-        assert items[0].metadata["publisher"] == "Test Publisher"
-
-    def test_fetch_invalid_date(
-        self, plugin: GoodreadsCsvPlugin, tmp_path: Path
-    ) -> None:
-        """Test that invalid dates are treated as None."""
-        csv_content = """Book Id,Title,Author,My Rating,Exclusive Shelf,Date Read
-123,Test Book,Test Author,4,read,not-a-date
-"""
-        csv_file = tmp_path / "books.csv"
-        csv_file.write_text(csv_content)
-
-        items = list(plugin.fetch({"path": str(csv_file)}))
-
-        assert items[0].date_completed is None
-
 
 GOODREADS_CSV_LOGGER = "src.ingestion.sources.goodreads_csv.goodreads_csv"
 
@@ -151,8 +90,8 @@ GOODREADS_CSV_LOGGER = "src.ingestion.sources.goodreads_csv.goodreads_csv"
 class TestGoodreadsCsvLogInjectionRegression:
     """Regression: the configured file path forged log entries.
 
-    Bug: ``_parse_csv`` interpolates the resolved path raw. Cause: the
-    sanitiser pass covered ``csv_import`` alone. Fix: ``sanitize_for_log``.
+    Bug: the plugin interpolates the resolved path raw. Cause: the sanitiser
+    pass covered ``csv_import`` alone. Fix: ``sanitize_for_log``.
     """
 
     def test_a_newline_in_the_file_name_cannot_forge_a_log_entry(
