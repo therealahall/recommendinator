@@ -1,4 +1,4 @@
-"""The ``import`` command, mirroring POST /api/import."""
+"""The ``import`` command and its templates, mirroring the upload endpoints."""
 
 from __future__ import annotations
 
@@ -9,6 +9,14 @@ from typing import Any
 import click
 
 from src.cli._shared import abort_with, require_storage
+from src.ingestion.import_templates import (
+    TEMPLATE_IMPORTERS,
+    ImportTemplate,
+    TemplatesUnavailable,
+    available_templates,
+    find_template,
+    read_template,
+)
 from src.ingestion.importers.base import ImporterError
 from src.ingestion.importers.registry import IMPORTERS
 from src.ingestion.importers.service import (
@@ -98,13 +106,101 @@ def import_command(
         click.echo(json.dumps(_import_view(result, path.name), indent=2))
         return
 
-    # stderr for the prose, as the sync progress lines do it: stdout is the
-    # data channel ``--format json`` writes, and a caller may read both.
+    # stdout, as ``update`` puts its counts there: in table mode the counts and
+    # the lines that missed are the output, not progress chatter about it.
     click.echo(
         f"Added {result.added}, updated {result.updated}, "
         f"unchanged {result.unchanged}, skipped {result.skipped}, "
-        f"failed {result.failed}. {result.total_rows} rows read.",
-        err=True,
+        f"failed {result.failed}. {result.total_rows} rows read."
     )
     for message in result.errors:
-        click.echo(message, err=True)
+        click.echo(message)
+
+
+def _template_view(template: ImportTemplate) -> dict[str, Any]:
+    """One template, shaped as ``ImportTemplateResponse``."""
+    return {
+        "importer": template.importer,
+        "content_type": template.content_type,
+        "filename": template.filename,
+    }
+
+
+def _list_templates(output_format: str) -> None:
+    """Answer as ``GET /api/import/templates`` does, in the asked-for format."""
+    try:
+        templates = available_templates()
+    except TemplatesUnavailable as error:
+        abort_with(str(error))
+
+    if output_format == "json":
+        click.echo(json.dumps([_template_view(entry) for entry in templates], indent=2))
+        return
+
+    if not templates:
+        click.echo("No import templates found.")
+        return
+
+    click.echo("Available import templates:")
+    for entry in templates:
+        click.echo(f"  {entry.importer:16s} {entry.content_type:12s} {entry.filename}")
+
+
+@click.command("import-template")
+@click.option(
+    "--importer",
+    "importer_name",
+    type=click.Choice(TEMPLATE_IMPORTERS),
+    default=None,
+    help="Format to write a template for",
+)
+@click.option(
+    "--content-type",
+    "content_type_str",
+    type=click.Choice([member.value for member in ContentType]),
+    default=None,
+    help="Content type the template holds",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),  # type: ignore[type-var]
+    default=None,
+    help="Output file path (default: stdout)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format for the listing",
+)
+def import_template(
+    importer_name: str | None,
+    content_type_str: str | None,
+    output_path: Path | None,
+    output_format: str,
+) -> None:
+    """Write an import template, or list them (mirrors GET /api/import/templates)."""
+    if importer_name is None and content_type_str is None:
+        _list_templates(output_format)
+        return
+    if importer_name is None or content_type_str is None:
+        abort_with(
+            "Name both --importer and --content-type, or neither to list "
+            "the templates available."
+        )
+
+    try:
+        template = find_template(importer_name, content_type_str)
+    except TemplatesUnavailable as error:
+        abort_with(str(error))
+    if template is None:
+        abort_with(f"No import template for {importer_name} and {content_type_str}.")
+
+    data = read_template(template)
+    if output_path:
+        output_path.write_bytes(data)
+        click.echo(f"Wrote {template.filename} to {output_path}")
+    else:
+        click.echo(data, nl=False)

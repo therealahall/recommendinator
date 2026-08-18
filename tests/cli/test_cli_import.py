@@ -13,8 +13,9 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from src.ingestion.import_templates import TEMPLATES_DIR
 from src.storage.manager import StorageManager
-from src.web.api import ImportResponse
+from src.web.api import ImportResponse, ImportTemplateResponse
 from tests.cli.conftest import _invoke_with_mocks
 
 #: One row that imports and one with no title, byte for byte what the web's
@@ -50,16 +51,27 @@ def _import(
     )
 
 
-def test_a_file_at_a_path_imports_and_names_the_line_it_skipped(
+def _template(storage: StorageManager, *args: str) -> Any:
+    """Run ``import-template`` with the streams kept apart, as a shell pipe sees."""
+    return _invoke_with_mocks(
+        CliRunner(mix_stderr=False),
+        ["import-template", *args],
+        mock_storage=storage,
+    )
+
+
+def test_a_file_at_a_path_imports_and_names_the_line_it_skipped_on_stdout(
     storage: StorageManager, books_csv: Path
 ) -> None:
+    """On stderr, as they were, ``--format table`` printed nothing at all."""
     result = _import(storage, books_csv)
 
     assert result.exit_code == 0
-    assert result.stderr == (
+    assert result.stdout == (
         "Added 1, updated 0, unchanged 0, skipped 1, failed 0. 2 rows read.\n"
         "Skipped line 3: no title\n"
     )
+    assert result.stderr == ""
     assert [item.title for item in storage.get_content_items(user_id=1)] == ["Dune"]
 
 
@@ -174,3 +186,86 @@ class TestARefusedImport:
 
         assert result.exit_code == 2
         assert "goodreads_csv" in result.stderr
+
+
+class TestTheTemplateAnOperatorFillsIn:
+    """In Docker ``templates/`` is inside the image, with no shell to copy from."""
+
+    def test_a_named_template_goes_to_stdout_byte_for_byte(
+        self, storage: StorageManager
+    ) -> None:
+        """It is piped into the file that gets filled in and uploaded back, so a
+        byte added on the way out is a template that no longer parses.
+        """
+        result = _template(
+            storage, "--importer", "csv_import", "--content-type", "book"
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout_bytes == (TEMPLATES_DIR / "books.csv").read_bytes()
+
+    def test_output_writes_the_shipped_file_to_that_path(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        destination = tmp_path / "filled_in.json"
+
+        result = _template(
+            storage,
+            "--importer",
+            "json_import",
+            "--content-type",
+            "video_game",
+            "--output",
+            str(destination),
+        )
+
+        assert result.exit_code == 0
+        assert (
+            destination.read_bytes()
+            == (TEMPLATES_DIR / "video_games.json").read_bytes()
+        )
+        assert "video_games.json" in result.stdout
+
+    def test_the_listing_carries_the_endpoint_key_set_and_no_other(
+        self, storage: StorageManager
+    ) -> None:
+        """A key added to ``ImportTemplateResponse`` alone is drift the web hides."""
+        payload = json.loads(_template(storage, "--format", "json").stdout)
+
+        assert {frozenset(entry) for entry in payload} == {
+            frozenset(ImportTemplateResponse.model_fields)
+        }
+        assert {(entry["importer"], entry["content_type"]) for entry in payload} == {
+            (importer, content_type)
+            for importer in ("csv_import", "json_import", "markdown_import")
+            for content_type in ("book", "movie", "tv_show", "video_game")
+        }
+
+    def test_the_table_listing_names_each_template_on_stdout(
+        self, storage: StorageManager
+    ) -> None:
+        """The listing is this command's data, so an empty stdout is the whole bug."""
+        result = _template(storage)
+
+        assert "books.csv" in result.stdout
+        assert "video_games.md" in result.stdout
+
+    def test_naming_one_half_of_the_pair_is_refused_rather_than_guessed(
+        self, storage: StorageManager
+    ) -> None:
+        result = _template(storage, "--importer", "csv_import")
+
+        assert result.exit_code != 0
+        assert "Name both --importer and --content-type" in result.stderr
+
+    def test_a_missing_templates_directory_says_where_it_looked(
+        self, storage: StorageManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty listing would read as an install that ships no templates."""
+        absent = tmp_path / "absent"
+        monkeypatch.setattr("src.ingestion.import_templates.TEMPLATES_DIR", absent)
+
+        result = _template(storage, "--format", "json")
+
+        assert result.exit_code != 0
+        assert str(absent) in result.stderr

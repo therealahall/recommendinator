@@ -47,6 +47,12 @@ from src.auth.trakt import (
     save_trakt_token,
     start_device_auth_flow,
 )
+from src.ingestion.import_templates import (
+    TemplatesUnavailable,
+    available_templates,
+    find_template,
+    read_template,
+)
 from src.ingestion.importers.base import ImporterError
 from src.ingestion.importers.registry import IMPORTERS, get_importer
 from src.ingestion.importers.service import decode_import_text, import_file
@@ -805,6 +811,17 @@ class ImporterResponse(BaseModel):
     requires_content_type: bool
 
 
+class ImportTemplateResponse(BaseModel):
+    """One blank file the operator can fill in and upload back.
+
+    ``import-template`` emits this key set field for field.
+    """
+
+    importer: str
+    content_type: str
+    filename: str
+
+
 class ImportResponse(BaseModel):
     """What one upload did: five counts, and a line per row that missed.
 
@@ -1249,6 +1266,56 @@ def list_importers() -> list[ImporterResponse]:
         )
         for importer in IMPORTERS
     ]
+
+
+@router.get("/import/templates", response_model=list[ImportTemplateResponse])
+def list_import_templates() -> list[ImportTemplateResponse]:
+    """List every template this install ships, keyed as the picker is."""
+    try:
+        templates = available_templates()
+    except TemplatesUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    return [
+        ImportTemplateResponse(
+            importer=template.importer,
+            content_type=template.content_type,
+            filename=template.filename,
+        )
+        for template in templates
+    ]
+
+
+@router.get("/import/templates/download")
+def download_import_template(
+    importer: str = Query(..., description="Import format name"),
+    content_type: str = Query(
+        ..., description="Content type (book, movie, tv_show, video_game)"
+    ),
+) -> Response:
+    """Serve one template as a download, byte for byte as it ships.
+
+    Both parameters are looked up as dictionary keys, never joined onto a path.
+    """
+    try:
+        template = find_template(importer, content_type)
+    except TemplatesUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if template is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No template for that import format and content type. "
+                "GET /api/import/templates lists the ones this install ships."
+            ),
+        )
+
+    return SurrogateSafeResponse(
+        content=read_template(template),
+        media_type=template.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{template.filename}"'},
+    )
 
 
 @router.post("/import", response_model=ImportResponse)

@@ -13,6 +13,7 @@ from src.cli.commands import (
     complete,
     enrichment,
     import_command,
+    import_template,
     library,
     preferences,
     profile,
@@ -143,6 +144,7 @@ cli.add_command(status)
 cli.add_command(recommend)
 cli.add_command(update)
 cli.add_command(import_command)
+cli.add_command(import_template)
 cli.add_command(complete)
 cli.add_command(preferences)
 cli.add_command(enrichment)
