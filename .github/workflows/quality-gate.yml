@@ -55,9 +55,9 @@ jobs:
         with:
           scandir: docker
 
-      # Both invocations docker-compose.yml documents: the deployment on its
-      # own, and the dev override layered on top.
+      # The deployment on its own, then the override contributors copy — named
+      # with -f because the .example suffix is not one compose picks up itself.
       - name: Validate compose files
         run: |
           docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.override.yml.example config --quiet

@@ -1,0 +1,45 @@
+# Recommendinator — local development override.
+#
+# Copy this to docker-compose.override.yml; `docker compose up -d` is then the
+# whole command. Compose loads that filename automatically, and naming files
+# with -f suppresses it — which is how a private-plugin mount goes missing
+# without anything saying so.
+#
+# It builds locally instead of pulling from GHCR, bind-mounts the source so
+# uvicorn's --reload picks up Python edits in ~1s, and renames the image so it
+# doesn't shadow the GHCR cache. Frontend hot reload runs on the host with
+# `pnpm dev` — see CONTRIBUTING.md.
+
+services:
+  app:
+    build:
+      context: .
+    image: recommendinator:dev
+    volumes:
+      - ./src:/app/src
+      # The image builds the Vue bundle into this path and the host's copy is
+      # gitignored, so the mount above would otherwise serve a blank page. An
+      # anonymous volume keeps the image's copy; it outlives a rebuild, so pass
+      # --renew-anon-volumes when the frontend has changed.
+      - /app/src/web/static/dist
+      - ./templates:/app/templates
+      # Keeps the runtime __version__ in step with semantic-release bumps
+      # without a rebuild. See src/__init__.py:_read_source_version.
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      # Plugins kept outside the repository, replacing the ./private mount the
+      # deployment compose file makes:
+      # - /path/to/your/plugins:/app/private:ro
+      # Anything a file-reading source scans. The path a source is configured
+      # with is the one inside the container, so mount it before configuring:
+      # - /path/to/your/roms:/app/external/roms:ro
+    command:
+      - python
+      - -m
+      - src.web
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+    environment:
+      - PYTHONUNBUFFERED=1

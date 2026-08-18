@@ -237,10 +237,14 @@ it. Chown it as above.
 ## Local development
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+cp docker-compose.override.yml.example docker-compose.override.yml
+docker compose up -d
 ```
 
-The dev override builds locally instead of pulling, bind-mounts `./src`,
+Compose merges `docker-compose.override.yml` in on its own, and passing `-f`
+suppresses it — including any mounts you added to it — so leave the flag off.
+
+The override builds locally instead of pulling, bind-mounts `./src`,
 `./templates` and `./pyproject.toml`, and runs uvicorn with `--reload`. Mounting
 `pyproject.toml` keeps the runtime `__version__` in step with semantic-release
 bumps without a rebuild. For frontend hot reload, run `pnpm dev` on the host:
