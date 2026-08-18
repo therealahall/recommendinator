@@ -181,7 +181,7 @@ class TestSkippedRows:
         assert [item.title for item in items(text)] == ["Valid Book"]
         assert reported(text) == [(2, "no title")]
 
-    def test_a_quoted_newline_does_not_shift_the_row_numbers(self) -> None:
+    def test_a_quoted_newline_does_not_shift_the_line_numbers(self) -> None:
         """The number is the file line, so a multi-line cell has to be counted.
 
         A review with a line break is ordinary, and numbering rows by position

@@ -27,10 +27,9 @@ time — as long as every row matches the header the file declares.
 
 Reported with the file line they were on:
 
-| Reason | What it means |
-|---|---|
-| `no title` | The `Title` cell was empty. |
-| `N fields short of the header` | The row has fewer fields than the header. |
+- `no title`
+- `N fields short of the header`
+- `N fields more than the header`, usually an unquoted comma inside a value
 
 ## Development
 

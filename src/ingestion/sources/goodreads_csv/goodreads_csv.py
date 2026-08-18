@@ -122,7 +122,7 @@ class GoodreadsCsvPlugin(SourcePlugin):
             for row in _IMPORTER.parse(text):
                 if isinstance(row, SkippedRow):
                     logger.warning(
-                        "Skipped row %d: %s", row.number, sanitize_for_log(row.reason)
+                        "Skipped line %d: %s", row.number, sanitize_for_log(row.reason)
                     )
                     continue
                 row.item.source = source

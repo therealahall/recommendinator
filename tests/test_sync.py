@@ -1051,7 +1051,7 @@ class TestAShortRowNoLongerTakesTheImportDown:
             "Ubik",
         ]
 
-    def test_the_operator_is_told_which_row_went(
+    def test_the_operator_is_told_which_line_went(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A skip nobody is told about is the silent data loss all over again."""
@@ -1064,4 +1064,4 @@ class TestAShortRowNoLongerTakesTheImportDown:
             record.getMessage()
             for record in caplog.records
             if record.name == CSV_PLUGIN_LOGGER
-        ] == ["Skipped row 3: 2 fields short of the header"]
+        ] == ["Skipped line 3: 2 fields short of the header"]

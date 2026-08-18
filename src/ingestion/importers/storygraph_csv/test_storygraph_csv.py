@@ -166,7 +166,21 @@ class TestQuarterStarRatings:
 
 
 class TestSkippedRows:
-    def test_a_row_with_no_title_is_skipped_with_its_row_number(self) -> None:
+    def test_a_row_longer_than_its_header_is_skipped_not_imported_mangled(self) -> None:
+        """An unquoted comma in a title imported silently shifted.
+
+        Every cell after it moved a column left, so the book landed with the
+        wrong author and status, and nothing was reported.
+        """
+        rows = (
+            "Dune, Part Two,Frank Herbert,,,,read," + "," * 16 + "\n"
+            "Real Book,Real Author,,,,read," + "," * 16 + "\n"
+        )
+
+        assert [item.title for item in items(rows)] == ["Real Book"]
+        assert reported(rows) == [(2, "1 field more than the header")]
+
+    def test_a_row_with_no_title_is_skipped_with_its_line_number(self) -> None:
         rows = (
             ",Ghost Author,,,,read," + "," * 16 + "\n"
             "Real Book,Real Author,,,,read," + "," * 16 + "\n"
