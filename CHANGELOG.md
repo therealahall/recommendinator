@@ -1,6 +1,201 @@
 # CHANGELOG
 
 
+## v0.36.0 (2026-08-18)
+
+### Bug Fixes
+
+- **roms**: Sync the ROM library daily like everything else
+  ([`b8446be`](https://github.com/therealahall/recommendinator/commit/b8446beb29c2e7702d015d1c87c2d3917e0d0842))
+
+- **sync**: A cadence is something only a migrated source has
+  ([`50586ef`](https://github.com/therealahall/recommendinator/commit/50586efc572ad648baad8e0f02de572c399a3233))
+
+- **sync**: Report a never-run source as due now rather than undated
+  ([`f6c7297`](https://github.com/therealahall/recommendinator/commit/f6c72977573e21dd9c70ba3ef09bdb77e58a0d7d))
+
+- **sync**: Stop a disabled source advertising a run it will never get
+  ([`37ec548`](https://github.com/therealahall/recommendinator/commit/37ec548b7444bb1fc113d41d5e9af69cd986dfb8))
+
+- **sync**: Stop two unvalidated inputs taking the sync surface down
+  ([`d37620f`](https://github.com/therealahall/recommendinator/commit/d37620fd75a8fad4f3872948df1a8ac9c8879a89))
+
+- **web**: Keep a cadence refusal that landed while the row was collapsed
+  ([`71c0108`](https://github.com/therealahall/recommendinator/commit/71c0108cd4b98042c34411d74808e58052c48d17))
+
+- **web**: Keep the chosen cadence on screen while the save is in flight
+  ([`5857769`](https://github.com/therealahall/recommendinator/commit/5857769f444afe65f6068cb53e2b63e09553da84))
+
+- **web**: Keep the umbrella job's sentinel out of the operator's view
+  ([`f2cf917`](https://github.com/therealahall/recommendinator/commit/f2cf9171984abc3ce1a1e05d9e00abcfd8e69870))
+
+- **web**: Refuse a single-source sync while every source is syncing
+  ([`72fa311`](https://github.com/therealahall/recommendinator/commit/72fa311698797116f24748832c703d7fdbdbc265))
+
+- **web**: Say why Sync All is disabled, and tighten the new doc prose
+  ([`8f0d90b`](https://github.com/therealahall/recommendinator/commit/8f0d90bd08c3bb637c3650d2123767ee509032ab))
+
+- **web**: Stop the cadence select dropping keyboard-driven changes
+  ([`06ab6a7`](https://github.com/therealahall/recommendinator/commit/06ab6a7b7f317509909c38099bd4f42bb98ec3fb))
+
+### Chores
+
+- **agents**: Close two gaps the parity agent found in itself
+  ([`192ec7d`](https://github.com/therealahall/recommendinator/commit/192ec7dca2657072d198f3c0848e74f4e8e08292))
+
+- **agents**: Give parity-review the frontend half of the invariant
+  ([`426f91c`](https://github.com/therealahall/recommendinator/commit/426f91c5dcd85d89b4e85a19748a3a24c86e9e98))
+
+### Documentation
+
+- Correct the cadence rules the review pass changed
+  ([`7f3d09a`](https://github.com/therealahall/recommendinator/commit/7f3d09a0f7214225a8cb1a1d178d2766c15f16f4))
+
+- Describe automated per-source syncing
+  ([`928bf51`](https://github.com/therealahall/recommendinator/commit/928bf518a96db4e9145ceabd9f99f63c590475cc))
+
+- Describe storage as a facade over typed stores
+  ([`72fc94b`](https://github.com/therealahall/recommendinator/commit/72fc94b69c2baaf358a56c79b84e7d64ca7ed7b1))
+
+- Drop the marker syntax nothing adjudicates any more
+  ([`34199dd`](https://github.com/therealahall/recommendinator/commit/34199dd30e8a3dab0a2bbb663c7159f083f5cd5e))
+
+- Drop the regression-test docstring template
+  ([`5629395`](https://github.com/therealahall/recommendinator/commit/5629395db8ba1f7a622c579c94e1714f00d369da))
+
+- Stop promising enforcement by tests that are gone
+  ([`4ddedf0`](https://github.com/therealahall/recommendinator/commit/4ddedf0586042faa48ddd8db809885bd1afd948f))
+
+- **storage**: Put back the caveats the debloat took with it
+  ([`1cbd1c0`](https://github.com/therealahall/recommendinator/commit/1cbd1c0cb9d42bb2f311827f89db40901d894080))
+
+### Features
+
+- Defer run history browsing to its own change
+  ([`9f4a240`](https://github.com/therealahall/recommendinator/commit/9f4a240e58392497a7e95c6171baea56c13724a5))
+
+- **cli**: Add source schedule and source history
+  ([`4c91d42`](https://github.com/therealahall/recommendinator/commit/4c91d42c00e6f5c69187f224d0a33eb4a95f104a))
+
+- **ingestion**: Add sync cadence presets and failure backoff
+  ([`63e7436`](https://github.com/therealahall/recommendinator/commit/63e74363267a68e8369f2d2127b6ae4d68524bdf))
+
+- **storage**: Persist sync cadence and sync run history
+  ([`282a93b`](https://github.com/therealahall/recommendinator/commit/282a93b83c06c12f6ea559767f0b40f114eb1b14))
+
+- **sync**: Record every sync run from both interfaces
+  ([`a31c4e1`](https://github.com/therealahall/recommendinator/commit/a31c4e1ea7cbe883c8fc17262669322c03c5a9bc))
+
+- **web**: Expose the sync schedule and run history over the API
+  ([`a3154e9`](https://github.com/therealahall/recommendinator/commit/a3154e9a76f48b4c2c7db4f57a1e98ba880f84c3))
+
+- **web**: Show each source's cadence, last sync and run history
+  ([`ba5fe49`](https://github.com/therealahall/recommendinator/commit/ba5fe49f95fd9e5385f13e407d7441a3fe1db9ed))
+
+- **web**: Sync each source automatically on its own cadence
+  ([`34ba033`](https://github.com/therealahall/recommendinator/commit/34ba0336c833a9a47e97634729d1c8d9101542b3))
+
+### Refactoring
+
+- Concatenate the two short SQL blocks and cut the repeated prose
+  ([`64f48be`](https://github.com/therealahall/recommendinator/commit/64f48bee72d34185752a6104cad3d2379552a8ab))
+
+- Delete sync_interval_default and keep a save in flight on re-expand
+  ([`aa01492`](https://github.com/therealahall/recommendinator/commit/aa014923782a52f9f3407c0867dc7fa0614914be))
+
+- **cli**: Drop the last-run rows source show could not serialise
+  ([`cf1a209`](https://github.com/therealahall/recommendinator/commit/cf1a209964a32387dd42bafe824f8d2815f81248))
+
+- **docker**: Collapse the dev compose file into the override
+  ([`9d49fcc`](https://github.com/therealahall/recommendinator/commit/9d49fcc6af8e7997c937868a667f2a71ad0f2e11))
+
+- **storage**: Collapse the credential, secret and account surface onto typed stores
+  ([`2355a85`](https://github.com/therealahall/recommendinator/commit/2355a85ec7489deaad3a50bcfe40fe19e1d42a35))
+
+- **storage**: Cut the signature narration from schema
+  ([`46b868d`](https://github.com/therealahall/recommendinator/commit/46b868dcc9fa23b04016c5733c801321959fef40))
+
+- **storage**: Cut the signature narration from sqlite_db
+  ([`0735144`](https://github.com/therealahall/recommendinator/commit/0735144563987d1f2240ea49ab8de31d7aa304d8))
+
+- **storage**: Cut the signature narration from the remaining modules
+  ([`68b31c0`](https://github.com/therealahall/recommendinator/commit/68b31c0d112fa8a82e4961fddf7acbc82173c98e))
+
+- **storage**: Move enrichment, settings, source configs and profiles onto stores
+  ([`d20c9fd`](https://github.com/therealahall/recommendinator/commit/d20c9fd061385241dfa793bea212ce9d42802834))
+
+- **sync**: Cut the docstrings that restated their own signature
+  ([`48e366e`](https://github.com/therealahall/recommendinator/commit/48e366eefdc342fca67318dbe4cbe629670a8122))
+
+- **sync**: Tighten the comments on the new schedule and run modules
+  ([`bdf4223`](https://github.com/therealahall/recommendinator/commit/bdf4223deff44ca908d0fe73c867f193cb26f72f))
+
+- **web**: Lift the sync job builder out of the update endpoint
+  ([`01f2080`](https://github.com/therealahall/recommendinator/commit/01f2080f82c8be63e2e7b97edcc5b2e51442c384))
+
+### Testing
+
+- Assert two controls the sweep left implemented but unchecked
+  ([`461af2e`](https://github.com/therealahall/recommendinator/commit/461af2e0d8dbc758bb556db30be34437274d8776))
+
+- Clear what the sweep left dangling
+  ([`1b9c4e2`](https://github.com/therealahall/recommendinator/commit/1b9c4e2d0491c968f45bce5aec8e1561f41f2f34))
+
+- Cut the cross-layer duplication in the auto-sync suites
+  ([`33a426b`](https://github.com/therealahall/recommendinator/commit/33a426b61ab5a4eacbbd2024c52ca965f6453c0e))
+
+- Cut the restorations that did not survive an audit
+  ([`36b1fe6`](https://github.com/therealahall/recommendinator/commit/36b1fe6a011995e34953a3d2db333f11dc6f6ba2))
+
+- Delete the helpers whose last callers went with the sweep
+  ([`cd32960`](https://github.com/therealahall/recommendinator/commit/cd32960eee06714c3d2cf330420a3f77424850e8))
+
+- Delete the meta-tests pinning tooling, docs and layout
+  ([`5084861`](https://github.com/therealahall/recommendinator/commit/5084861572d9bf3e069f305c19e5a7976fe220eb))
+
+- Make three restored assertions actually hold
+  ([`c4d1123`](https://github.com/therealahall/recommendinator/commit/c4d112351e2a186802db6ef4c68fe7d265873fd4))
+
+- Put back the eight regressions the sweep should not have cut
+  ([`b6e1b76`](https://github.com/therealahall/recommendinator/commit/b6e1b76e1db668744afc10234898d2c5d709c12c))
+
+- Re-anchor what the sweep left pointing at deleted tests
+  ([`409f1fb`](https://github.com/therealahall/recommendinator/commit/409f1fb2da13edd70862b2afff26966c2a48f340))
+
+- Restore the password-save focus guard at its own component
+  ([`bda6c09`](https://github.com/therealahall/recommendinator/commit/bda6c09ae625bb9c85b46b6eb6188cfe50ca494f))
+
+- **cli**: Drop the parity mirror and the disclosure sweeps
+  ([`db8da25`](https://github.com/therealahall/recommendinator/commit/db8da256cb0dd5362606444641b36eb2c08bf22a))
+
+- **docker**: Hold the entrypoint to leaving an existing config alone
+  ([`f6e36a4`](https://github.com/therealahall/recommendinator/commit/f6e36a440cc8bc0e63d4ff243a634681c9aa2e76))
+
+- **docker**: Put back the deployment guards, not the compose sweeps
+  ([`b08cc38`](https://github.com/therealahall/recommendinator/commit/b08cc38e787eb88f9a271fb425c47e98cc934803))
+
+- **factories**: Spec the sub-store mocks
+  ([`81f7cc7`](https://github.com/therealahall/recommendinator/commit/81f7cc7066b3e6d0105c8dd0641f0de83fa80e74))
+
+- **ingestion**: Stop testing against hostile plugin authors
+  ([`efb5c81`](https://github.com/therealahall/recommendinator/commit/efb5c81bd1a7c22ab70ba12e01fd66054aa18b76))
+
+- **plugins**: Keep one test per parse path, not one per field
+  ([`412af15`](https://github.com/therealahall/recommendinator/commit/412af15b20a129063bb07db6392f8aa82124cab5))
+
+- **recommendations**: Retire the characterisation pins
+  ([`8742a35`](https://github.com/therealahall/recommendinator/commit/8742a35b92f1ac8620c3126210bf87c513b30daa))
+
+- **storage**: Cut the storage tests that mirror the schema
+  ([`0df6ef2`](https://github.com/therealahall/recommendinator/commit/0df6ef2c4e16a4ccef3192349f0e4096cb426c82))
+
+- **web**: Keep one endpoint test per behaviour, drop the rest
+  ([`84ad5a7`](https://github.com/therealahall/recommendinator/commit/84ad5a78fdaa86060df652edae86fec2c70ace56))
+
+- **web**: Shrink a frontend suite that outgrew the app
+  ([`ee8fcff`](https://github.com/therealahall/recommendinator/commit/ee8fcff4ec40d39cb28fa88af7fe05c4942b76dc))
+
+
 ## v0.35.1 (2026-08-15)
 
 ### Bug Fixes
