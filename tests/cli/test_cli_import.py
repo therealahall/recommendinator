@@ -14,8 +14,14 @@ import pytest
 from click.testing import CliRunner
 
 from src.ingestion.import_templates import TEMPLATES_DIR
+from src.ingestion.importers.registry import IMPORTERS
 from src.storage.manager import StorageManager
-from src.web.api import ImportResponse, ImportTemplateResponse
+from src.web.api import (
+    ImporterResponse,
+    ImportResponse,
+    ImportTemplateResponse,
+    list_importers,
+)
 from tests.cli.conftest import _invoke_with_mocks
 
 #: One row that imports and one with no title, byte for byte what the web's
@@ -48,6 +54,15 @@ def _import(
         + list(args),
         mock_storage=storage,
         config=config,
+    )
+
+
+def _formats(storage: StorageManager, *args: str) -> Any:
+    """Run ``import-formats`` with the streams kept apart, as a shell pipe sees."""
+    return _invoke_with_mocks(
+        CliRunner(mix_stderr=False),
+        ["import-formats", *args],
+        mock_storage=storage,
     )
 
 
@@ -154,6 +169,19 @@ class TestARefusedImport:
 
         assert result.exit_code == 2
         assert "is a directory" in result.stderr
+
+    def test_a_file_the_operator_cannot_read_is_refused_before_it_is_parsed(
+        self, storage: StorageManager, books_csv: Path
+    ) -> None:
+        """Without ``readable=True`` the permission fault surfaces as a
+        traceback out of ``read_bytes`` instead of a refusal.
+        """
+        books_csv.chmod(0o000)
+
+        result = _import(storage, books_csv)
+
+        assert result.exit_code == 2
+        assert "is not readable" in result.stderr
 
     def test_a_file_the_chosen_format_cannot_parse_says_what_refused_it(
         self, storage: StorageManager, books_csv: Path
@@ -269,3 +297,71 @@ class TestTheTemplateAnOperatorFillsIn:
 
         assert result.exit_code != 0
         assert str(absent) in result.stderr
+
+    def test_an_output_path_with_neither_half_named_is_refused_not_ignored(
+        self, storage: StorageManager, tmp_path: Path
+    ) -> None:
+        """Reported: ``--output`` alone prints the listing and exits 0, writing
+        no file, so a script's next step opens one that was never created.
+        """
+        destination = tmp_path / "books.csv"
+
+        result = _template(storage, "--output", str(destination))
+
+        assert result.exit_code != 0
+        assert not destination.exists()
+
+    def test_a_listing_format_named_beside_a_template_is_refused_not_ignored(
+        self, storage: StorageManager
+    ) -> None:
+        """The same defect on the other option: ``--format json`` was dropped and
+        the raw template written to the stdout a caller was about to parse.
+        """
+        result = _template(
+            storage,
+            "--importer",
+            "csv_import",
+            "--content-type",
+            "book",
+            "--format",
+            "json",
+        )
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert "--format describes the template listing" in result.stderr
+
+
+class TestTheFormatsOnOffer:
+    """The web picker is built from GET /api/importers; a shell has only this."""
+
+    def test_the_json_is_the_importers_endpoint_answer_field_for_field(
+        self, storage: StorageManager
+    ) -> None:
+        """An importer added, renamed or re-described reaches the picker for
+        free and the CLI only through this, so the two are compared whole.
+        """
+        payload = json.loads(_formats(storage, "--format", "json").stdout)
+
+        assert {frozenset(entry) for entry in payload} == {
+            frozenset(ImporterResponse.model_fields)
+        }
+        assert payload == [entry.model_dump() for entry in list_importers()]
+
+    def test_the_table_listing_names_every_format_and_which_needs_a_type(
+        self, storage: StorageManager
+    ) -> None:
+        """The listing is this command's data, so an empty stdout is the whole
+        bug, and a format's content type is what the next command needs.
+        """
+        result = _formats(storage)
+
+        assert result.exit_code == 0
+        listed = {
+            line.split()[0]: line
+            for line in result.stdout.splitlines()
+            if line.startswith("  ")
+        }
+        assert set(listed) == {entry.name for entry in IMPORTERS}
+        assert "--content-type" in listed["csv_import"]
+        assert "--content-type" not in listed["goodreads_csv"]
