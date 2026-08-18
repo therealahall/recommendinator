@@ -55,10 +55,8 @@ class CsvImporter(Importer):
         creator_column = CREATOR_FIELD[resolved.value]
 
         for row in rows:
-            if row.missing:
-                yield SkippedRow(
-                    row.number, f"{row.missing} fields short of the header"
-                )
+            if row.mismatch:
+                yield SkippedRow(row.number, row.mismatch)
                 continue
 
             cells = {

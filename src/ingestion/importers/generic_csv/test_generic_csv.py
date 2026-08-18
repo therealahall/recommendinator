@@ -156,7 +156,22 @@ class TestSkippedRows:
         assert [item.title for item in items(text)] == ["Dune", "Ubik"]
         assert reported(text) == [(3, "3 fields short of the header")]
 
-    def test_a_blank_title_is_skipped_with_its_row_number(self) -> None:
+    def test_a_row_longer_than_its_header_is_skipped_not_imported_mangled(self) -> None:
+        """An unquoted comma in a title imported silently shifted.
+
+        ``csv.DictReader`` read the author out of the title's tail and the
+        rating out of the author, landing an unrated book nobody was told about.
+        """
+        text = (
+            "title,author,rating\n"
+            "Dune, Part Two,Frank Herbert,5\n"
+            "Ubik,Philip K. Dick,4\n"
+        )
+
+        assert [item.title for item in items(text)] == ["Ubik"]
+        assert reported(text) == [(2, "1 field more than the header")]
+
+    def test_a_blank_title_is_skipped_with_its_line_number(self) -> None:
         text = (
             "title,author,rating,status\n"
             ",Author A,5,completed\n"

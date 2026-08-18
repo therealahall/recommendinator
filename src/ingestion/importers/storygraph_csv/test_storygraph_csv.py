@@ -71,21 +71,21 @@ class TestExport:
         It scores as completed, and the true StoryGraph status stays in
         metadata so nothing is lost.
         """
-        parsed = items("Gave Up,Some Author,,,,did-not-finish," + "," * 17 + "\n")
+        parsed = items("Gave Up,Some Author,,,,did-not-finish," + "," * 16 + "\n")
 
         assert parsed[0].status == ConsumptionStatus.COMPLETED
         assert parsed[0].metadata["read_status"] == "did-not-finish"
 
     def test_an_unknown_read_status_falls_back_to_unread(self) -> None:
-        parsed = items("Mystery Status,Some Author,,,,wishlist," + "," * 17 + "\n")
+        parsed = items("Mystery Status,Some Author,,,,wishlist," + "," * 16 + "\n")
 
         assert parsed[0].status == ConsumptionStatus.UNREAD
 
     def test_the_read_status_is_matched_case_insensitively(self) -> None:
         parsed = items(
-            "Shouty Read,Author,,,,READ," + "," * 17 + "\n"
-            "Mixed Case,Author,,,,Currently-Reading," + "," * 17 + "\n"
-            "Title Case,Author,,,,To-Read," + "," * 17 + "\n"
+            "Shouty Read,Author,,,,READ," + "," * 16 + "\n"
+            "Mixed Case,Author,,,,Currently-Reading," + "," * 16 + "\n"
+            "Title Case,Author,,,,To-Read," + "," * 16 + "\n"
         )
 
         assert [item.status for item in parsed] == [
@@ -96,7 +96,7 @@ class TestExport:
 
     def test_an_unparseable_date_keeps_the_row(self) -> None:
         parsed = items(
-            "Bad Date,Some Author,,,,read,2024/01/01,not-a-date," + "," * 15 + "\n"
+            "Bad Date,Some Author,,,,read,2024/01/01,not-a-date," + "," * 14 + "\n"
         )
 
         assert parsed[0].date_completed is None
@@ -168,8 +168,8 @@ class TestQuarterStarRatings:
 class TestSkippedRows:
     def test_a_row_with_no_title_is_skipped_with_its_row_number(self) -> None:
         rows = (
-            ",Ghost Author,,,,read," + "," * 17 + "\n"
-            "Real Book,Real Author,,,,read," + "," * 17 + "\n"
+            ",Ghost Author,,,,read," + "," * 16 + "\n"
+            "Real Book,Real Author,,,,read," + "," * 16 + "\n"
         )
 
         assert [item.title for item in items(rows)] == ["Real Book"]
@@ -183,7 +183,7 @@ class TestSkippedRows:
         """
         rows = (
             "Short Row,Terse Author,,,,read\n"
-            "Real Book,Real Author,,,,read," + "," * 17 + "\n"
+            "Real Book,Real Author,,,,read," + "," * 16 + "\n"
         )
 
         assert [item.title for item in items(rows)] == ["Real Book"]

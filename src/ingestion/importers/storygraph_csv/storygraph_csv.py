@@ -38,10 +38,8 @@ class StorygraphCsvImporter(Importer):
         _columns, rows = read_csv_rows(text)
 
         for row in rows:
-            if row.missing:
-                yield SkippedRow(
-                    row.number, f"{row.missing} fields short of the header"
-                )
+            if row.mismatch:
+                yield SkippedRow(row.number, row.mismatch)
                 continue
 
             cells = row.fields

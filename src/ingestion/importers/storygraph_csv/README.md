@@ -23,10 +23,9 @@ time — as long as every row matches the header the file declares.
   (`4.5` → 5, `3.25` → 3). A `0`, blank or unparseable rating is unrated.
 - `ISBN/UID` becomes the item's external id.
 
-## Skipped rows
+## Skipped lines
 
-Reported with the file line they were on, so a spreadsheet's own row numbers
-match:
+Reported with the file line they were on:
 
 | Reason | What it means |
 |---|---|

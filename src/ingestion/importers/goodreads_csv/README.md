@@ -14,10 +14,9 @@ https://www.goodreads.com/review/import. Books only.
 - `Date Read` is `YYYY/MM/DD`; anything else reads as no date.
 - `Book Id` becomes the item's external id.
 
-## Skipped rows
+## Skipped lines
 
-Reported with the file line they were on, so a spreadsheet's own row numbers
-match:
+Reported with the file line they were on:
 
 | Reason | What it means |
 |---|---|
