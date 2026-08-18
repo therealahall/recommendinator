@@ -48,6 +48,34 @@ def test_an_import_saves_the_rows_that_parsed_and_names_the_line_it_skipped(
     ]
 
 
+def test_both_kinds_of_malformed_line_are_named_and_the_file_still_imports(
+    storage: StorageManager,
+) -> None:
+    """The short line used to raise on ``None.strip()`` and take the import
+    down; the long one shifted every cell a column left and imported silently.
+    """
+    columns = "title,author,isbn,pages,year_published,genre,rating,status,review"
+    rows = [f"Book {n},Author {n},978{n},300,1990,sf,4,read,Fine" for n in range(1, 13)]
+    rows[5] = "Short Book,Author S,9781"
+    rows[10] = "Long, Book,Author L,9782,300,1990,sf,4,read,Ten fields"
+
+    result = import_file(
+        storage, 1, "\n".join([columns, *rows]) + "\n", CsvImporter(), ContentType.BOOK
+    )
+
+    assert (result.added, result.skipped, result.failed, result.total_rows) == (
+        10,
+        2,
+        0,
+        12,
+    )
+    assert result.errors == [
+        "Skipped line 7: 6 fields short of the header",
+        "Skipped line 12: 1 field more than the header",
+    ]
+    assert len(storage.get_content_items(user_id=1)) == 10
+
+
 def test_importing_the_same_file_twice_reports_unchanged_rather_than_added(
     storage: StorageManager,
 ) -> None:
