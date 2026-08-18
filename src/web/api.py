@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field
@@ -47,6 +47,9 @@ from src.auth.trakt import (
     save_trakt_token,
     start_device_auth_flow,
 )
+from src.ingestion.importers.base import ImporterError
+from src.ingestion.importers.registry import IMPORTERS, get_importer
+from src.ingestion.importers.service import decode_import_text, import_file
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
 from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
@@ -133,7 +136,7 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.sync_dispatch import build_sync_job
+from src.web.sync_dispatch import auto_enrich_enabled, build_sync_job
 from src.web.sync_manager import get_sync_manager
 
 logger = logging.getLogger(__name__)
@@ -792,6 +795,35 @@ class SourceCreateRequest(BaseModel):
     enabled: bool = True
 
 
+class ImporterResponse(BaseModel):
+    """One import format, for the upload panel's picker."""
+
+    name: str
+    display_name: str
+    description: str
+    #: False where the format itself decides, as a book-site export does.
+    requires_content_type: bool
+
+
+class ImportResponse(BaseModel):
+    """What one upload did: five counts, and a line per row that missed.
+
+    The ``import`` command's ``--format json`` emits this key set field for
+    field, so neither interface may add, drop or rename one alone.
+    """
+
+    importer: str
+    content_type: str | None
+    filename: str | None
+    added: int
+    updated: int
+    unchanged: int
+    skipped: int
+    failed: int
+    total_rows: int
+    errors: list[str]
+
+
 class SettingValidationView(BaseModel):
     """Validation constraints for a setting (any field may be null)."""
 
@@ -1202,6 +1234,84 @@ def export_items(
         content=content,
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/importers", response_model=list[ImporterResponse])
+def list_importers() -> list[ImporterResponse]:
+    """List every import format, in the order the picker offers them."""
+    return [
+        ImporterResponse(
+            name=importer.name,
+            display_name=importer.display_name,
+            description=importer.description,
+            requires_content_type=not importer.content_types,
+        )
+        for importer in IMPORTERS
+    ]
+
+
+@router.post("/import", response_model=ImportResponse)
+def import_upload(
+    storage: RequiredStorage,
+    config: RequiredConfig,
+    user: CurrentUser,
+    file: UploadFile,
+    importer: Annotated[str, Form(description="Import format name")],
+    content_type: Annotated[str | None, Form()] = None,
+) -> ImportResponse:
+    """Import an uploaded export in one shot.
+
+    The bytes are parsed in memory and dropped: an upload creates no source, no
+    cadence and no sync run, and nothing it carried reaches the filesystem.
+    """
+    chosen = get_importer(importer)
+    if chosen is None:
+        offered = ", ".join(candidate.name for candidate in IMPORTERS)
+        raise HTTPException(
+            status_code=400, detail=f"Unknown import format. Valid options: {offered}"
+        )
+
+    resolved_type = None
+    if content_type:
+        try:
+            resolved_type = ContentType.from_string(content_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
+            ) from None
+
+    try:
+        result = import_file(
+            storage,
+            user["id"],
+            decode_import_text(file.file.read()),
+            chosen,
+            resolved_type,
+            mark_for_enrichment=auto_enrich_enabled(config),
+        )
+    except ImporterError as error:
+        logger.info(
+            "[IMPORT] %s refused the file: %s", chosen.name, exception_for_log(error)
+        )
+        # Answered verbatim, unlike the source-config refusals: the message
+        # quotes the operator's own file, which is what makes it actionable.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return ImportResponse(
+        importer=result.importer,
+        content_type=(
+            get_enum_value(result.content_type) if result.content_type else None
+        ),
+        filename=file.filename,
+        added=result.added,
+        updated=result.updated,
+        unchanged=result.unchanged,
+        skipped=result.skipped,
+        failed=result.failed,
+        total_rows=result.total_rows,
+        errors=result.errors,
     )
 
 
