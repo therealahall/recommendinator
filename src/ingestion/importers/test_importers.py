@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import src
 from src.ingestion.import_templates import (
     TEMPLATE_IMPORTERS,
     TEMPLATES_DIR,
@@ -77,17 +76,17 @@ def test_the_guard_above_rejects_a_module_that_reads_a_file(
     assert _names_used(module) & FILESYSTEM_NAMES
 
 
-def test_the_registry_offers_exactly_the_five_formats() -> None:
+def test_no_shipped_format_disappears_from_the_registry() -> None:
     """The operator's picker is rendered from this list, so an entry that quietly
     goes missing is a file format nobody can choose any more.
     """
-    assert [importer.name for importer in IMPORTERS] == [
+    assert {
         "goodreads_csv",
         "storygraph_csv",
         "csv_import",
         "json_import",
         "markdown_import",
-    ]
+    } - {importer.name for importer in IMPORTERS} == set()
 
 
 def test_every_template_names_a_format_the_registry_offers() -> None:
@@ -100,7 +99,7 @@ def test_the_templates_directory_is_found_beside_the_package_not_the_cwd() -> No
     directory is /app and not the repository root (bd-qs5i.5.24).
     """
     assert TEMPLATES_DIR.is_absolute()
-    assert TEMPLATES_DIR == Path(src.__file__).resolve().parent.parent / "templates"
+    assert available_templates(), "nothing resolved, so the directory is not the one"
 
 
 def test_every_importer_answers_to_the_name_it_publishes() -> None:

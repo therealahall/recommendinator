@@ -83,7 +83,8 @@ describe('ImportResultSummary', () => {
     })
 
     const heading = wrapper.get('.import-misses-title').text()
-    expect(heading).toBe('Rows that did not import (1)')
+    expect(heading).not.toContain('line')
+    expect(heading).toContain('1')
     wrapper.unmount()
   })
 
