@@ -101,6 +101,11 @@ carry the module name and the exception that lost it, because "No module named
 'defusedxml'" is the answer the operator needs and every one of those routes
 requires a session on a single-user instance.
 
+**The second: templates that are not installed.** The 503 from both
+`/api/import/templates` routes names the directory it looked in, for the same
+reason — a broken install is fixed from that path, and the route needs a
+session.
+
 ## Web sign-in
 
 **One account, username and password, and a session cookie.** A fresh instance
@@ -164,7 +169,9 @@ over an internal network isolated from the host by default.
 Source config is writable over the API, so a plugin whose config names a
 filesystem path (`roms`, and private scanners) refuses one resolving outside
 `security.allowed_source_roots`; `validate_config` and `fetch` both check. An
-import is outside it, never touching disk.
+import is outside it because no importer opens a path at all. The upload itself
+is Starlette's: a part over 1 MiB spools into the system temp directory,
+unnamed and unlinked when the request's form closes.
 
 ```yaml
 # config/config.yaml — defaults to ["inputs"] when absent.
@@ -268,7 +275,7 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the plugin-import carve-out above as the one exception
+  forbidden), with the two carve-outs above as the only exceptions
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values

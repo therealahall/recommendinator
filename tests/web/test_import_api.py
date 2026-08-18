@@ -1,8 +1,4 @@
-"""The upload door: POST /api/import and the picker's format list.
-
-An upload is one shot: no source row, no cadence, no sync run, and nothing
-left on disk for the operator to clean up afterwards.
-"""
+"""The upload door: POST /api/import and the picker's format list."""
 
 from __future__ import annotations
 
@@ -14,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.formparsers import MultiPartParser
 
 from src.ingestion.import_templates import TEMPLATES_DIR
 from src.storage.manager import StorageManager
@@ -129,24 +126,34 @@ class TestARefusedFile:
         assert "book, movie, tv_show, video_game" in response.json()["detail"]
 
 
-def test_nothing_the_upload_carried_is_written_to_disk(client: TestClient) -> None:
-    """No path guard runs on this route because the route has no path. A save
-    added later would sit outside ``security.allowed_source_roots`` entirely.
+def test_an_upload_past_the_spool_threshold_writes_nothing_under_a_name(
+    client: TestClient,
+) -> None:
+    """A library export runs past ``spool_max_size``, where Starlette rolls the
+    part out of memory — the size the old 70-byte body never reached. The
+    rollover is an unnamed descriptor, and the import opens no path of its own.
     """
-    opened_to_write: list[str] = []
+    opened_to_write: list[Any] = []
     real_open = builtins.open
 
     def record(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
-        if set(mode) & set("wxa+"):
-            opened_to_write.append(str(file))
+        # The rollover opens the temp directory through an opener that unlinks
+        # the descriptor it returns. A save of ours would open a plain path.
+        if set(mode) & set("wxa+") and "opener" not in kwargs:
+            opened_to_write.append(file)
         return real_open(file, mode, *args, **kwargs)
+
+    # A JSON string, not a CSV field: csv caps one field at 128KB.
+    padding = b"H" * MultiPartParser.spool_max_size
+    body = b'[{"title": "Dune", "author": "%s"}]' % padding
 
     # Both names: a bare ``open()`` resolves to the builtin, and ``Path.open``
     # — what a save would most likely be written as — calls ``io.open``.
     with patch("builtins.open", record), patch("io.open", record):
-        response = _upload(client)
+        response = _upload(client, body, importer="json_import")
 
-    assert response.status_code == 200
+    # Added, so the rolled-over part was read back whole.
+    assert response.json()["added"] == 1
     assert opened_to_write == []
 
 
