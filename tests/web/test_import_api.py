@@ -21,21 +21,6 @@ from tests.factories import authenticated_client, booted_web_app
 
 _BOOKS_CSV = b"title,author,status,rating\nDune,Frank Herbert,read,5\n,Nobody,read,3\n"
 
-#: The key set the ``import`` command's ``--format json`` mirrors field for
-#: field. Neither interface may add, drop or rename one on its own.
-_RESPONSE_KEYS = {
-    "importer",
-    "content_type",
-    "filename",
-    "added",
-    "updated",
-    "unchanged",
-    "skipped",
-    "failed",
-    "total_rows",
-    "errors",
-}
-
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
@@ -86,13 +71,6 @@ def test_an_upload_imports_the_file_and_reports_the_line_it_skipped(
         "errors": ["Skipped line 3: no title"],
     }
     assert [item.title for item in storage.get_content_items(user_id=1)] == ["Dune"]
-
-
-def test_the_response_carries_the_key_set_the_cli_mirrors_and_no_other(
-    client: TestClient,
-) -> None:
-    """A key added here silently is a key the CLI's JSON no longer matches."""
-    assert set(_upload(client).json()) == _RESPONSE_KEYS
 
 
 def test_a_clean_file_still_carries_an_empty_errors_list(client: TestClient) -> None:
@@ -233,8 +211,18 @@ class TestTheTemplateAnOperatorFillsIn:
             ("goodreads_csv", "book"),
             ("../../../etc/passwd", "book"),
             ("csv_import", "../../config/config.yaml"),
+            ("csv_import", "../templates/book"),
+            ("csv_import", "/etc/passwd"),
+            ("csv_import", "book\x00"),
         ],
-        ids=["a format with no template", "traversal as the format", "as the type"],
+        ids=[
+            "a format with no template",
+            "traversal as the format",
+            "as the type",
+            "a traversal that would land back on a real template",
+            "an absolute path as the type",
+            "a null byte as the type",
+        ],
     )
     def test_a_template_that_is_not_ours_is_refused_rather_than_resolved(
         self, client: TestClient, importer: str, content_type: str
@@ -248,16 +236,28 @@ class TestTheTemplateAnOperatorFillsIn:
         assert response.status_code == 404
         assert response.json()["detail"].startswith("No template for that import")
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "/api/import/templates",
+            "/api/import/templates/download?importer=csv_import&content_type=book",
+        ],
+        ids=["the listing", "the download"],
+    )
     def test_a_missing_templates_directory_says_where_it_looked(
-        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        url: str,
     ) -> None:
-        """An empty list reads as an install that ships none, and a 500 as a bug
-        in the route rather than the directory that is not there.
+        """An empty list, or a 404 on the download, reads as an install that
+        ships no templates rather than a directory that is not there.
         """
         absent = tmp_path / "absent"
         monkeypatch.setattr("src.ingestion.import_templates.TEMPLATES_DIR", absent)
 
-        response = client.get("/api/import/templates")
+        response = client.get(url)
 
         assert response.status_code == 503
         assert str(absent) in response.json()["detail"]
