@@ -3,7 +3,7 @@
 Sources are discovered from PluginRegistry - each entry in config['inputs']
 must have a ``plugin`` field identifying the plugin type. The config key is
 the user-defined source identifier, allowing multiple instances of the same
-plugin (e.g. two json_import sources for books and TV shows).
+plugin (e.g. two roms sources for two libraries).
 """
 
 from __future__ import annotations

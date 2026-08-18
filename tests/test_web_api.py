@@ -1011,7 +1011,6 @@ def _sync_a_source_typed(client, content_type):
     app_state.config["enrichment"] = {"enabled": True, "auto_enrich_on_sync": True}
     app_state.config["inputs"]["typed"] = {
         "plugin": "goodreads_rss",
-        "path": "inputs/books.csv",
         "content_type": content_type,
         "enabled": True,
     }

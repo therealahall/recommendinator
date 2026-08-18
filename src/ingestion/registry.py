@@ -38,7 +38,7 @@ class PluginRegistry:
         registry.discover_plugins()
 
         # Get a specific plugin
-        plugin = registry.get_plugin("goodreads_csv")
+        plugin = registry.get_plugin("goodreads_rss")
 
         # List all available plugins
         for name, plugin in registry.get_all_plugins().items():

@@ -9,6 +9,7 @@ from typing import Any
 import click
 
 from src.cli._shared import abort_with, require_storage
+from src.config.service import auto_enrich_enabled
 from src.ingestion.import_templates import (
     TEMPLATE_IMPORTERS,
     ImportTemplate,
@@ -84,7 +85,6 @@ def import_command(
 ) -> None:
     """Import a file in one shot (mirrors POST /api/import)."""
     storage = require_storage(ctx)
-    enrichment_config = ctx.obj["config"].get("enrichment", {})
     importer = next(entry for entry in IMPORTERS if entry.name == importer_name)
 
     try:
@@ -94,8 +94,7 @@ def import_command(
             decode_import_text(path.read_bytes()),
             importer,
             ContentType(content_type_str) if content_type_str else None,
-            mark_for_enrichment=enrichment_config.get("enabled", False)
-            and enrichment_config.get("auto_enrich_on_sync", False),
+            mark_for_enrichment=auto_enrich_enabled(ctx.obj["config"]),
         )
     except ImporterError as error:
         # Verbatim, as the import endpoint answers it: the message quotes the
