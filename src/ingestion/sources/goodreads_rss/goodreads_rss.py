@@ -4,12 +4,12 @@ Goodreads exposes every *public* profile's shelves as RSS feeds at
 ``https://www.goodreads.com/review/list_rss/<user_id>?shelf=<shelf>``. This
 plugin fetches one feed per requested shelf, paginates through all results,
 and maps each ``<item>`` to a :class:`ContentItem`. The ``metadata`` dict
-shares ``book_id``/``isbn``/``pages``/``year_published`` with the sibling
-:mod:`goodreads_csv` plugin and additionally carries ``average_rating``,
+shares ``book_id``/``isbn``/``pages``/``year_published`` with the
+``goodreads_csv`` importer and additionally carries ``average_rating``,
 ``description``, and ``shelf``. RSS cannot supply ``isbn13`` or ``publisher``,
 so those keys are absent.
 
-Unlike the CSV plugin there is no manual export step — the profile just has to
+Unlike that importer there is no manual export step — the profile just has to
 be public. The three default shelves (``read``, ``currently-reading``,
 ``to-read``) are mutually exclusive, but users may add custom shelves that
 overlap them, so :meth:`GoodreadsRssPlugin.fetch` deduplicates within a single
@@ -431,10 +431,11 @@ class GoodreadsRssPlugin(SourcePlugin):
         """Build a ContentItem from an RSS ``<item>`` element.
 
         Returns ``None`` for items without a title. The ``metadata`` dict shares
-        ``book_id``/``isbn``/``pages``/``year_published`` with the goodreads_csv
-        plugin and additionally carries ``average_rating``, ``description``, and
-        ``shelf``. RSS cannot supply ``isbn13`` or ``publisher``, so those keys
-        are omitted entirely rather than set to ``None``.
+        ``book_id``/``isbn``/``pages``/``year_published`` with the
+        ``goodreads_csv`` importer and additionally carries ``average_rating``,
+        ``description``, and ``shelf``. RSS cannot supply ``isbn13`` or
+        ``publisher``, so those keys are omitted entirely rather than set to
+        ``None``.
         """
         title = _child_text(element, "title")
         if not title:

@@ -47,6 +47,7 @@ from src.auth.trakt import (
     save_trakt_token,
     start_device_auth_flow,
 )
+from src.config.service import auto_enrich_enabled
 from src.ingestion.import_templates import (
     TemplatesUnavailable,
     available_templates,
@@ -142,7 +143,7 @@ from src.web.state import (
     get_storage,
     reload_config,
 )
-from src.web.sync_dispatch import auto_enrich_enabled, build_sync_job
+from src.web.sync_dispatch import build_sync_job
 from src.web.sync_manager import get_sync_manager
 
 logger = logging.getLogger(__name__)
@@ -308,7 +309,10 @@ class UpdateRequest(BaseModel):
 
     source: str = Field(
         ...,
-        description="Data source (e.g. goodreads_csv, steam, sonarr, radarr, or 'all')",
+        description=(
+            "Source id, or 'all' for every enabled source. "
+            "GET /api/sync/sources lists the ones this install has."
+        ),
     )
     max_workers: int | None = Field(
         None,
@@ -1332,8 +1336,9 @@ def import_upload(
 ) -> ImportResponse:
     """Import an uploaded export in one shot.
 
-    The bytes are parsed in memory and dropped: an upload creates no source, no
-    cadence and no sync run, and nothing it carried reaches the filesystem.
+    No source, no cadence, no sync run, and no importer opens a path. Starlette
+    spools a part over ``spool_max_size`` into the temp directory, unnamed and
+    gone when the form closes.
     """
     chosen = get_importer(importer)
     if chosen is None:
