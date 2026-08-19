@@ -55,8 +55,10 @@ emits the document `GET /api/sync/status` serves for the same run.
 Reads one file: no source, no cadence, no sync run. `--importer` picks the
 format and `--content-type` the type where the format decides none.
 `--format json` emits what `POST /api/import` answers: five counts,
-`total_rows` and a line per refused row. `import-formats` lists the formats;
-`import-template` writes one to `--output` or stdout, or lists them.
+`total_rows` and a line per refused row, capped at the first 200 with a
+`… and N more` tally after them, plus `notes` for what happened to the file.
+`import-formats` lists the formats; `import-template` writes one to
+`--output` or stdout, or lists them.
 
 ```bash
 python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
