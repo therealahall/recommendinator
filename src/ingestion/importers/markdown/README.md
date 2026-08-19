@@ -1,4 +1,4 @@
-# Markdown Import
+# Markdown
 
 Reads a Markdown file of one content type, which you pick when you upload it.
 

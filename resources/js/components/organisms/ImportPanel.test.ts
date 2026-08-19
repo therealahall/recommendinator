@@ -28,7 +28,7 @@ const IMPORTERS = [
   },
   {
     name: 'csv_import',
-    display_name: 'CSV Import',
+    display_name: 'CSV',
     description: 'A generic CSV with the template columns.',
     requires_content_type: true,
   },
@@ -72,6 +72,22 @@ async function mountPanel() {
   return wrapper
 }
 
+function disclosure(wrapper: VueWrapper) {
+  return wrapper.get('button[aria-expanded]')
+}
+
+async function toggle(wrapper: VueWrapper): Promise<void> {
+  await disclosure(wrapper).trigger('click')
+  await flushPromises()
+}
+
+/** The form lives behind the disclosure, so every test that drives it opens. */
+async function openPanel() {
+  const opening = await mountPanel()
+  await toggle(opening)
+  return opening
+}
+
 async function chooseFile(wrapper: VueWrapper, file: File): Promise<void> {
   const input = wrapper.get('input[type="file"]')
   Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
@@ -110,8 +126,26 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
+  /** The disclosure sets `hidden` on the panel, and `hidden` takes everything
+   *  under it out of the accessibility tree. A region parked in there would go
+   *  silent for the rest of the session the first time the panel was shut. */
+  it('keeps the live region announcing after the panel is collapsed', async () => {
+    const wrapper = await openPanel()
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+    await toggle(wrapper)
+
+    const region = wrapper.get('[data-testid="import-status"]')
+    expect(region.element.isConnected).toBe(true)
+    expect(region.element.closest('[hidden]')).toBeNull()
+    expect(region.text()).toBe(SUMMARY)
+    wrapper.unmount()
+  })
+
   it('announces the five counts through the live region it already mounted', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await chooseFile(wrapper, exportFile())
     await wrapper.get('[data-testid="import-submit"]').trigger('click')
@@ -124,7 +158,7 @@ describe('ImportPanel', () => {
   /** Each message names its own unit, so the announcement cannot: entry 2 of a
    *  JSON array is not file line 2, and the heading already says rows. */
   it('announces the misses without presuming they are lines', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
     mockUpload.mockResolvedValue({
       ...RESULT,
       importer: 'json_import',
@@ -145,7 +179,7 @@ describe('ImportPanel', () => {
   /** Re-importing the same file to the same counts leaves the summary text
    *  identical, and a region whose text does not change announces nothing. */
   it('announces the file in flight, so a repeat import is not silent', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
     let settle: (value: ImportResponse) => void = () => {}
     mockUpload.mockReturnValue(
       new Promise<ImportResponse>((resolve) => {
@@ -168,14 +202,14 @@ describe('ImportPanel', () => {
   /** A drop leaves the input's own value untouched, so without this the first
    *  a screen reader hears of the file is "Importing …", after the commit. */
   it('announces a dropped file, and leaves a picked one to the input', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await dropFile(wrapper, exportFile())
     expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
       'Selected file: goodreads_library_export.csv',
     )
 
-    const picked = await mountPanel()
+    const picked = await openPanel()
     await chooseFile(picked, exportFile())
     expect(picked.get('[data-testid="import-status"]').text()).toBe('')
     wrapper.unmount()
@@ -183,12 +217,12 @@ describe('ImportPanel', () => {
   })
 
   it('shows the same result whether the file was dropped or chosen from the input', async () => {
-    const chosen = await mountPanel()
+    const chosen = await openPanel()
     await chooseFile(chosen, exportFile())
     await chosen.get('[data-testid="import-submit"]').trigger('click')
     await flushPromises()
 
-    const dropped = await mountPanel()
+    const dropped = await openPanel()
     await dropFile(dropped, exportFile())
     await dropped.get('[data-testid="import-submit"]').trigger('click')
     await flushPromises()
@@ -202,7 +236,7 @@ describe('ImportPanel', () => {
   })
 
   it('posts the file and the chosen format as one multipart upload', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
     const file = exportFile()
 
     await chooseFile(wrapper, file)
@@ -218,7 +252,7 @@ describe('ImportPanel', () => {
   /** A site export decides its own content type. Sending one anyway would have
    *  the response echo the operator's guess instead of what the format chose. */
   it('omits content_type for a format that decides its own', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await chooseFile(wrapper, exportFile())
     await wrapper.get('[data-testid="import-submit"]').trigger('click')
@@ -230,7 +264,7 @@ describe('ImportPanel', () => {
   })
 
   it('sends the picked content type for a format that needs one', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await wrapper.get('#import-format').setValue('csv_import')
     await wrapper.get('#import-content-type').setValue('video_game')
@@ -246,7 +280,7 @@ describe('ImportPanel', () => {
   /** A Docker operator has no shell and templates/ ships inside the image, so
    *  the link has to follow the pair currently picked. */
   it('links to the template for the format and content type currently chosen', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     expect(wrapper.find('[data-testid="import-template-link"]').exists()).toBe(false)
 
@@ -267,7 +301,7 @@ describe('ImportPanel', () => {
   /** qs5i.2.34's class: natively disabling the focused button drops the
    *  keyboard user to <body> (WCAG 2.4.3). */
   it('keeps the Import button focused while the upload is in flight', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
     let settle: (value: ImportResponse) => void = () => {}
     mockUpload.mockReturnValue(
       new Promise<ImportResponse>((resolve) => {
@@ -295,7 +329,7 @@ describe('ImportPanel', () => {
   /** An upload creates no source_configs row, so re-reading the accordion after
    *  one would imply a source that does not exist. */
   it('does not reload the sync source list after an import', async () => {
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await chooseFile(wrapper, exportFile())
     await wrapper.get('[data-testid="import-submit"]').trigger('click')
@@ -309,18 +343,18 @@ describe('ImportPanel', () => {
   })
 
   it('shows the refusal message when the server rejects the file', async () => {
-    const wrapper = await mountPanel()
-    mockUpload.mockRejectedValue(new Error('CSV Import needs a content type.'))
+    const wrapper = await openPanel()
+    mockUpload.mockRejectedValue(new Error('CSV needs a content type.'))
 
     await chooseFile(wrapper, exportFile())
     await wrapper.get('[data-testid="import-submit"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.get('[data-testid="import-error"]').text()).toBe(
-      'CSV Import needs a content type.',
+      'CSV needs a content type.',
     )
     expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
-      'Import failed. CSV Import needs a content type.',
+      'Import failed. CSV needs a content type.',
     )
     expect(wrapper.find('[data-testid="import-result"]').exists()).toBe(false)
     wrapper.unmount()
@@ -333,7 +367,7 @@ describe('ImportPanel', () => {
       if (path === '/importers') return Promise.resolve(IMPORTERS)
       return Promise.reject(new Error('No import templates directory'))
     })
-    const wrapper = await mountPanel()
+    const wrapper = await openPanel()
 
     await chooseFile(wrapper, exportFile())
     await wrapper.get('[data-testid="import-submit"]').trigger('click')

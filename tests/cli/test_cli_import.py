@@ -202,7 +202,7 @@ class TestARefusedImport:
 
         assert result.exit_code != 0
         assert result.stderr.startswith(
-            "Error: CSV Import needs a content type. "
+            "Error: CSV needs a content type. "
             "One of: book, movie, tv_show, video_game"
         )
 

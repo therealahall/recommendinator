@@ -114,7 +114,7 @@ class TestARefusedFile:
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
-            "CSV Import needs a content type. One of: book, movie, tv_show, video_game"
+            "CSV needs a content type. One of: book, movie, tv_show, video_game"
         )
 
     def test_a_content_type_that_is_not_one_of_ours_lists_them(

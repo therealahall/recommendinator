@@ -34,7 +34,7 @@ class JsonImporter(Importer):
     """A JSON array of objects, or one object per line."""
 
     name = "json_import"
-    display_name = "JSON Import"
+    display_name = "JSON"
     description = "Import from JSON/JSONL file"
     content_types = ()
 
