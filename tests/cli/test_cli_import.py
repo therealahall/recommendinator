@@ -108,6 +108,7 @@ def test_the_json_carries_the_import_endpoint_key_set_and_no_other(
         "failed": 0,
         "total_rows": 2,
         "errors": ["Skipped line 3: no title"],
+        "notes": [],
     }
 
 
@@ -148,6 +149,34 @@ def test_the_config_gate_decides_whether_imported_items_are_queued(
     item = storage.get_content_items(user_id=1)[0]
     assert item.db_id is not None
     assert (storage.enrichment.status(item.db_id) is not None) is auto_enrich
+
+
+def test_a_queue_fault_is_reported_as_a_note_rather_than_a_refused_row(
+    storage: StorageManager, books_csv: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listed with the misses it reads as one of them, and every count that
+    heads them covers rows, not the file.
+    """
+
+    def refuse(db_id: int) -> None:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(storage.enrichment, "mark_needed", refuse)
+    config = {"enrichment": {"enabled": True, "auto_enrich_on_sync": True}}
+
+    assert _import(storage, books_csv, config=config).stdout == (
+        "Added 1, updated 0, unchanged 0, skipped 1, failed 0. 2 rows read.\n"
+        "Saved 1 item(s) but could not queue them for enrichment\n"
+        "Skipped line 3: no title\n"
+    )
+
+    payload = json.loads(
+        _import(storage, books_csv, "--format", "json", config=config).stdout
+    )
+    assert (payload["notes"], payload["errors"]) == (
+        ["Saved 1 item(s) but could not queue them for enrichment"],
+        ["Skipped line 3: no title"],
+    )
 
 
 class TestARefusedImport:

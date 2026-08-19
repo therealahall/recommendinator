@@ -830,7 +830,8 @@ class ImportTemplateResponse(BaseModel):
 
 
 class ImportResponse(BaseModel):
-    """What one upload did: five counts, and a line per row that missed.
+    """What one upload did: five counts, capped per-row misses with a tally,
+    and file-level notes.
 
     The ``import`` command's ``--format json`` emits this key set field for
     field, so neither interface may add, drop or rename one alone.
@@ -846,6 +847,7 @@ class ImportResponse(BaseModel):
     failed: int
     total_rows: int
     errors: list[str]
+    notes: list[str]
 
 
 class SettingValidationView(BaseModel):
@@ -1387,6 +1389,7 @@ def import_upload(
         failed=result.failed,
         total_rows=result.total_rows,
         errors=result.errors,
+        notes=result.notes,
     )
 
 
