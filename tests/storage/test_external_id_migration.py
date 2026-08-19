@@ -4,10 +4,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.sources.service import is_valid_source_id
 from src.storage.merge import normalize_title_for_matching
-from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
+from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE, _rebuild_content_items
 from src.storage.sqlite_db import SQLiteDB
 
 # Written out rather than derived: the point is a build this one is not.
@@ -196,6 +198,29 @@ def test_the_rebuild_carries_the_columns_only_the_operator_could_have_written(
             (_LIBRARY[0][0],),
         ).fetchone()
     assert dict(row) == _OPERATOR_OWNED
+
+
+def test_a_rebuild_whose_children_followed_the_rename_raises_before_committing(
+    tmp_path: Path,
+) -> None:
+    """Without ``legacy_alter_table`` — a pragma any open transaction silences —
+    SQLite repoints every child at the scratch table the rebuild then drops,
+    and each of them refuses every write from that moment on."""
+    db_path = tmp_path / "library.db"
+    _stand_up_a_version_seven_library(db_path)
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("BEGIN")
+        with pytest.raises(RuntimeError):
+            _rebuild_content_items(conn.cursor())
+        conn.rollback()
+    finally:
+        conn.close()
+
+    assert _creators_by_title(db_path) == {
+        title: creator for title, _, _, _, _, _, creator in _LIBRARY
+    }
 
 
 def test_a_sync_after_the_upgrade_lands_on_the_row_holding_the_legacy_id(

@@ -2,6 +2,8 @@
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
@@ -155,6 +157,78 @@ _EXTERNAL_IDS_TABLE = """
 # config.yaml, could collide.
 _LEGACY_EXTERNAL_ID_SOURCE = "(legacy)"
 
+# Declared once because the guard on the content_items rebuild and the repair
+# for what a bad one leaves behind both need to know which tables follow it.
+_CONTENT_ITEM_CHILDREN: dict[str, str] = {
+    "content_item_external_ids": _EXTERNAL_IDS_TABLE,
+    "book_details": """
+        CREATE TABLE IF NOT EXISTS book_details (
+            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
+            author TEXT,
+            pages INTEGER,
+            isbn TEXT,
+            isbn13 TEXT,
+            publisher TEXT,
+            year_published INTEGER,
+            genres TEXT,  -- JSON array of genres
+            metadata TEXT,  -- JSON for additional fields
+            tags TEXT,
+            description TEXT
+        )
+    """,
+    "movie_details": """
+        CREATE TABLE IF NOT EXISTS movie_details (
+            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
+            director TEXT,
+            runtime INTEGER,  -- minutes
+            release_year INTEGER,
+            genres TEXT,  -- JSON array of genres
+            studio TEXT,
+            metadata TEXT,
+            tags TEXT,
+            description TEXT
+        )
+    """,
+    "tv_show_details": """
+        CREATE TABLE IF NOT EXISTS tv_show_details (
+            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
+            creators TEXT,
+            seasons INTEGER,
+            episodes INTEGER,
+            network TEXT,
+            release_year INTEGER,
+            genres TEXT,  -- JSON array of genres
+            metadata TEXT,
+            tags TEXT,
+            description TEXT
+        )
+    """,
+    "video_game_details": """
+        CREATE TABLE IF NOT EXISTS video_game_details (
+            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
+            developer TEXT,
+            publisher TEXT,
+            platforms TEXT,  -- JSON array of platforms
+            genres TEXT,  -- JSON array of genres
+            release_year INTEGER,
+            metadata TEXT,
+            tags TEXT,
+            description TEXT
+        )
+    """,
+    "enrichment_status": """
+        CREATE TABLE IF NOT EXISTS enrichment_status (
+            content_item_id INTEGER PRIMARY KEY
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            last_enriched_at TIMESTAMP,
+            enrichment_provider TEXT,
+            enrichment_quality TEXT,
+            needs_enrichment BOOLEAN DEFAULT 1,
+            enrichment_error TEXT
+        )
+    """,
+}
+
 _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)",
@@ -216,16 +290,20 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     cursor.execute(_CONTENT_ITEMS_TABLE)
 
-    cursor.execute(_EXTERNAL_IDS_TABLE)
+    for child_statement in _CONTENT_ITEM_CHILDREN.values():
+        cursor.execute(child_statement)
 
-    # Both repairs run ahead of every write below, because neither can open a
-    # transaction while one is already open. This one runs first: the move
+    # All three rebuilds run ahead of every write below, because none can open
+    # a transaction while one is already open. This one runs first: the move
     # writes the table it rebuilds.
     _rebuild_external_ids_if_stale(conn)
     # It commits before the version stamp, so the guard is the column — a
     # version guard would rebuild a table with no external_id.
     if _has_column(cursor, "content_items", "external_id"):
         _move_external_ids_off_content_items(conn)
+    # Last, so it sees what the two above left: only a rebuild rewrites a
+    # REFERENCES clause, so a dangling one survives every open until this runs.
+    _repair_dangling_foreign_keys(conn)
     for index_statement in _CONTENT_ITEM_INDEXES:
         cursor.execute(index_statement)
 
@@ -236,85 +314,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS book_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            author TEXT,
-            pages INTEGER,
-            isbn TEXT,
-            isbn13 TEXT,
-            publisher TEXT,
-            year_published INTEGER,
-            genres TEXT,  -- JSON array of genres
-            metadata TEXT  -- JSON for additional fields
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS movie_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            director TEXT,
-            runtime INTEGER,  -- minutes
-            release_year INTEGER,
-            genres TEXT,  -- JSON array of genres
-            studio TEXT,
-            metadata TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tv_show_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            creators TEXT,
-            seasons INTEGER,
-            episodes INTEGER,
-            network TEXT,
-            release_year INTEGER,
-            genres TEXT,  -- JSON array of genres
-            metadata TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS video_game_details (
-            content_item_id INTEGER PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
-            developer TEXT,
-            publisher TEXT,
-            platforms TEXT,  -- JSON array of platforms
-            genres TEXT,  -- JSON array of genres
-            release_year INTEGER,
-            metadata TEXT
-        )
-        """
-    )
-
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_movie_director ON movie_details(director)"
     )
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_game_developer ON video_game_details(developer)"
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS enrichment_status (
-            content_item_id INTEGER PRIMARY KEY
-                REFERENCES content_items(id) ON DELETE CASCADE,
-            last_enriched_at TIMESTAMP,
-            enrichment_provider TEXT,
-            enrichment_quality TEXT,
-            needs_enrichment BOOLEAN DEFAULT 1,
-            enrichment_error TEXT
-        )
-        """
     )
 
     cursor.execute(
@@ -573,19 +578,105 @@ def _rebuild_external_ids_if_stale(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
-    # Five tables cascade off it: without legacy renaming their REFERENCES
-    # follow the old table, and without foreign keys off the drop takes them.
+@contextmanager
+def _rebuilding(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold the connection where a rebuild is safe, and commit its transaction.
+
+    Foreign keys off so the drop ending a rebuild cannot cascade; legacy
+    renaming on so it leaves the children's REFERENCES alone. Neither pragma
+    survives inside a transaction.
+    """
     enforced = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("PRAGMA legacy_alter_table = ON")
     try:
         conn.execute("BEGIN")
-        _rebuild_content_items(conn.cursor())
+        yield
         conn.commit()
     finally:
+        # Restoring a pragma is a silent no-op while a transaction is open, so
+        # a rebuild that raised has to be rolled back before they go back.
+        if conn.in_transaction:
+            conn.rollback()
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute(f"PRAGMA foreign_keys = {int(enforced)}")
+
+
+def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
+    with _rebuilding(conn):
+        _rebuild_content_items(conn.cursor())
+
+
+def _repair_dangling_foreign_keys(conn: sqlite3.Connection) -> None:
+    """Rebuild every child whose foreign key names a table that is gone.
+
+    The content_items rebuild whose legacy_alter_table missed repointed each
+    clause at the scratch table it dropped, so every write to that child
+    raises. Only a rebuild rewrites one.
+    """
+    cursor = conn.cursor()
+    dangling = [
+        table
+        for table in _CONTENT_ITEM_CHILDREN
+        if any(
+            not _table_exists(cursor, parent)
+            for parent in _foreign_key_parents(cursor, table)
+        )
+    ]
+    if not dangling:
+        return
+
+    with _rebuilding(conn):
+        for table in dangling:
+            _rebuild_from_declaration(cursor, table)
+
+
+def _rebuild_from_declaration(cursor: sqlite3.Cursor, table: str) -> None:
+    """Recreate *table* as this module declares it, carrying its rows across.
+
+    A column reached only by ``_add_column_if_not_exists`` and missing from the
+    declaration would be dropped here, so every one of them is declared.
+    """
+    cursor.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    cursor.execute(_CONTENT_ITEM_CHILDREN[table])
+    old_columns = set(_column_names(cursor, f"{table}_old"))
+    carried = ", ".join(
+        column for column in _column_names(cursor, table) if column in old_columns
+    )
+    cursor.execute(f"INSERT INTO {table} ({carried}) SELECT {carried} FROM {table}_old")
+    cursor.execute(f"DROP TABLE {table}_old")
+
+
+def _foreign_key_parents(cursor: sqlite3.Cursor, table: str) -> set[str]:
+    """The tables *table* declares a foreign key to; empty when it has none."""
+    cursor.execute(f"PRAGMA foreign_key_list({table})")
+    return {row["table"] for row in cursor.fetchall()}
+
+
+def _table_exists(cursor: sqlite3.Cursor, table: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    )
+    return cursor.fetchone() is not None
+
+
+def _assert_no_child_followed(cursor: sqlite3.Cursor, scratch: str) -> None:
+    """Refuse a rename that dragged the children onto *scratch*.
+
+    A pragma is a no-op inside a transaction, so only the caller's ordering
+    keeps these clauses on content_items — and an unchecked rebuild commits a
+    database no write can use.
+    """
+    followed = sorted(
+        table
+        for table in _CONTENT_ITEM_CHILDREN
+        if scratch in _foreign_key_parents(cursor, table)
+    )
+    if followed:
+        raise RuntimeError(
+            f"Renaming content_items rewrote the foreign keys of {', '.join(followed)}:"
+            " the legacy_alter_table pragma did not take effect."
+        )
 
 
 def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
@@ -593,6 +684,7 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
     ``external_id`` holds. Filing legacy ids under a name no source can claim
     keeps every source's next sync on the title path instead of a duplicate."""
     cursor.execute("ALTER TABLE content_items RENAME TO content_items_old")
+    _assert_no_child_followed(cursor, "content_items_old")
     cursor.execute(_CONTENT_ITEMS_TABLE)
     # Read off the two tables rather than a written-down list: the rebuild is
     # irreversible and drops the old table, so a column the list forgot would
