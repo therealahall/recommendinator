@@ -1,10 +1,10 @@
 """SQLite database manager for content items.
 
 Rating, review, status, ``date_completed`` and ``ignored`` are user-owned, and
-every write to them goes through one of four doors — one sync door and three
-explicit-user-action doors. The sync door's rules are not uniform across the
-five fields, so read the field you care about rather than a summary of the
-door:
+every write to them goes through one of five doors — one sync door, one
+enrichment door and three explicit-user-action doors. The sync door's rules are
+not uniform across the five fields, so read the field you care about rather
+than a summary of the door:
 
 - :meth:`SQLiteDB.save_content_item` is the ingestion/sync door. ``rating``
   and ``review`` are fill-only, written only while the stored value is empty,
@@ -16,9 +16,7 @@ door:
   resolution: after the upsert, :meth:`_handle_tv_season_change` regresses a
   completed TV show to currently_consuming when the sync raises its season
   count above the seasons the user has checked off, because new seasons mean
-  the show is not finished. :meth:`SQLiteDB.save_enrichment_metadata` runs
-  that same pass over the count a provider filled in, and writes nothing else
-  a user owns.
+  the show is not finished.
   ``date_completed`` is later-date-wins. ``ignored`` counts only a stated
   value, where a real ``True`` or ``False`` wins in either direction, so an
   exported, edited, re-imported library round-trips, while ``None`` — what a
@@ -31,6 +29,11 @@ door:
   replaces the ignore list with the state it had at export time. The
   blank-cell rule protects a hand-maintained file; it protects nothing about
   this project's own exports.
+- :meth:`SQLiteDB.save_enrichment_metadata` is the enrichment door. A
+  provider's metadata reaches the detail table and the derived columns; of the
+  user-owned fields it writes only ``status``, and only through the same
+  :meth:`_handle_tv_season_change` pass, over the season count the provider
+  filled in.
 - The explicit-user-action doors write exactly the fields the caller supplied
   and may overwrite them freely: :meth:`SQLiteDB.update_item_from_ui` for an
   edit (web UI, CLI), :meth:`SQLiteDB.complete_content_item` for a

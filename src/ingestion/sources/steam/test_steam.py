@@ -274,7 +274,6 @@ class TestSteamPluginFetch:
 
         assert len(items) == 1
         assert items[0].title == "Test Game"
-        assert items[0].source == "steam"
 
 
 class TestSteamTwoPassRegression:

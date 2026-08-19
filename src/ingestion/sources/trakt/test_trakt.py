@@ -177,7 +177,6 @@ class TestTraktPluginFetch:
         assert item.content_type == ContentType.MOVIE
         assert item.status == ConsumptionStatus.COMPLETED
         assert item.id == "trakt:1"
-        assert item.source == "trakt"
         assert item.date_completed == date(2021, 5, 1)
         assert item.metadata["trakt_id"] == 1
         assert item.metadata["slug"] == "inception-2020"

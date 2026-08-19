@@ -383,7 +383,6 @@ class GogPlugin(SourcePlugin):
                 refresh_token=config.get("refresh_token", "").strip(),
                 include_wishlist=config.get("include_wishlist", True),
                 enrich_wishlist=config.get("enrich_wishlist", True),
-                source=self.get_source_identifier(config),
                 progress_callback=gog_internal_callback,
                 on_credential_rotated=(
                     config.get("_on_credential_rotated")
@@ -399,7 +398,6 @@ def _fetch_gog_games(
     refresh_token: str,
     include_wishlist: bool = True,
     enrich_wishlist: bool = True,
-    source: str = "gog",
     progress_callback: Callable[[int, int, str], None] | None = None,
     on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
@@ -409,7 +407,6 @@ def _fetch_gog_games(
         refresh_token: GOG OAuth refresh token.
         include_wishlist: Whether to import wishlisted games.
         enrich_wishlist: Whether to fetch detailed metadata for wishlist items.
-        source: Source identifier for ContentItems.
         progress_callback: Optional callback(current, total, phase).
         on_credential_rotated: Optional callback(key, value) called when the
             refresh token is rotated by the OAuth server.
@@ -501,7 +498,6 @@ def _fetch_gog_games(
             status=ConsumptionStatus.UNREAD,
             date_completed=None,
             metadata=metadata,
-            source=source,
         )
 
     # Phase 4: Wishlist (if enabled)
@@ -589,5 +585,4 @@ def _fetch_gog_games(
             status=ConsumptionStatus.UNREAD,
             date_completed=None,
             metadata=metadata,
-            source=source,
         )

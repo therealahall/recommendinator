@@ -221,7 +221,6 @@ class ArrPlugin(SourcePlugin):
                 f"Failed to connect to {self.display_name} at {base_url}: {error}",
             ) from error
 
-        source = self.get_source_identifier(config)
         total = len(item_list)
         processed_count = 0
 
@@ -248,7 +247,6 @@ class ArrPlugin(SourcePlugin):
                 rating=None,
                 status=ConsumptionStatus.UNREAD,
                 metadata=metadata,
-                source=source,
             )
 
         logger.info("Imported %d items from %s", processed_count, self.display_name)

@@ -218,7 +218,6 @@ class SteamPlugin(SourcePlugin):
                 steam_id=steam_id,
                 vanity_url=vanity_url,
                 min_playtime_minutes=min_playtime_minutes,
-                source=self.get_source_identifier(config),
                 progress_callback=steam_internal_callback,
             )
         except SteamAPIError as error:
@@ -232,7 +231,6 @@ def _fetch_steam_games(
     steam_id: str | None = None,
     vanity_url: str | None = None,
     min_playtime_minutes: int = 0,
-    source: str = "steam",
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> Iterator[ContentItem]:
     """Fetch and parse Steam game library.
@@ -247,7 +245,6 @@ def _fetch_steam_games(
         steam_id: Steam ID (64-bit)
         vanity_url: Steam vanity URL
         min_playtime_minutes: Minimum playtime filter
-        source: Source identifier for ContentItems
         progress_callback: Optional callback(fetched_count, total, phase) for
             progress reporting. Phase is "owned_games" or a per-item title.
 
@@ -322,5 +319,4 @@ def _fetch_steam_games(
             status=status,
             date_completed=None,
             metadata=metadata,
-            source=source,
         )
