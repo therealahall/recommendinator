@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.37.1 (2026-08-19)
+
+### Bug Fixes
+
+- **ingestion**: Bound the reported import errors, and keep file notes out of them
+  ([`3f41fab`](https://github.com/therealahall/recommendinator/commit/3f41fabd7ca3a143ca073e784b662553d8492e3e))
+
+- **web**: Carry import notes to both interfaces
+  ([`10a63e1`](https://github.com/therealahall/recommendinator/commit/10a63e1995cd6b10834ed83825b43005029b51da))
+
+- **web**: Count the rows that missed, not the ones listed
+  ([`bb60883`](https://github.com/therealahall/recommendinator/commit/bb60883e36a203655bafadb96b6740b3dbace29c))
+
+- **web**: Keep the import panel's spoken and visible states in agreement
+  ([`e42031d`](https://github.com/therealahall/recommendinator/commit/e42031d146a4b45f3a77ee6be8ea1376e4dbabd0))
+
+### Documentation
+
+- **cli**: Describe the capped error list and the notes field
+  ([`ce35b89`](https://github.com/therealahall/recommendinator/commit/ce35b8982e7242e9acdbd63d80c1d43f721d10a2))
+
+
 ## v0.37.0 (2026-08-19)
 
 ### Bug Fixes
