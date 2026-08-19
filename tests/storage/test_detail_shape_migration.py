@@ -124,7 +124,6 @@ def _write_show_metadata(
 def _insert_show_row(
     cursor: sqlite3.Cursor,
     *,
-    external_id: str,
     title: str,
     seasons: int | None,
     metadata: str | None,
@@ -136,9 +135,9 @@ def _insert_show_row(
     """
     cursor.execute(
         "INSERT INTO content_items"
-        " (user_id, external_id, title, content_type, status, source)"
-        " VALUES (1, ?, ?, 'tv_show', 'currently_consuming', 'trakt')",
-        (external_id, title),
+        " (user_id, title, content_type, status, source)"
+        " VALUES (1, ?, 'tv_show', 'currently_consuming', 'trakt')",
+        (title,),
     )
     db_id = cursor.lastrowid
     assert db_id is not None
@@ -223,7 +222,6 @@ def _game_companies(db: SQLiteDB, db_id: int) -> tuple[Any, Any, Any]:
 def _insert_legacy_game_row(
     db_path: Path,
     *,
-    external_id: str,
     title: str,
     metadata: str,
     developer: str | None = None,
@@ -241,9 +239,9 @@ def _insert_legacy_game_row(
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO content_items"
-            " (user_id, external_id, title, content_type, status, source)"
-            " VALUES (1, ?, ?, 'video_game', 'unread', 'gog')",
-            (external_id, title),
+            " (user_id, title, content_type, status, source)"
+            " VALUES (1, ?, 'video_game', 'unread', 'gog')",
+            (title,),
         )
         db_id = cursor.lastrowid
         assert db_id is not None
@@ -656,7 +654,6 @@ class TestALegacyGogRowSurvivesTheUpgrade:
         }
         db_id = _insert_legacy_game_row(
             db_path,
-            external_id="1207658924",
             title="The Witcher",
             metadata=json.dumps(legacy_blob),
         )
@@ -692,7 +689,6 @@ class TestALegacyGogRowSurvivesTheUpgrade:
         SQLiteDB(db_path)
         db_id = _insert_legacy_game_row(
             db_path,
-            external_id="1207658924",
             title="The Witcher",
             platforms=_FLAGS_WINDOWS_AND_LINUX,
             metadata=json.dumps({"developers": ["CD Projekt Red"]}),
@@ -894,14 +890,12 @@ class TestRepairRunsBeforeDeduplication:
             cursor = conn.cursor()
             keep_id = _insert_show_row(
                 cursor,
-                external_id="trakt:1",
                 title="The Wire",
                 seasons=None,
                 metadata=json.dumps({"total_seasons": 1}),
             )
             _insert_show_row(
                 cursor,
-                external_id="sonarr:1",
                 title="Wire",
                 seasons=None,
                 metadata=json.dumps({"total_seasons": 5}),
@@ -945,14 +939,12 @@ class TestRepairRunsBeforeDeduplication:
                 cursor = conn.cursor()
                 keep_id = _insert_show_row(
                     cursor,
-                    external_id="trakt:1",
                     title="The Wire",
                     seasons=None,
                     metadata=json.dumps({"total_seasons": 1}),
                 )
                 _insert_show_row(
                     cursor,
-                    external_id="sonarr:1",
                     title="Wire",
                     seasons=None,
                     metadata=json.dumps({"total_seasons": 5}),
@@ -983,14 +975,12 @@ class TestRepairRunsBeforeDeduplication:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO content_items"
-                " (user_id, external_id, title, content_type, status, source)"
-                " VALUES (1, 'trakt:1', 'The Wire', 'tv_show',"
-                " 'currently_consuming', 'trakt')"
+                " (user_id, title, content_type, status, source)"
+                " VALUES (1, 'The Wire', 'tv_show', 'currently_consuming', 'trakt')"
             )
             keep_id = cursor.lastrowid
             _insert_show_row(
                 cursor,
-                external_id="sonarr:1",
                 title="Wire",
                 seasons=None,
                 metadata=json.dumps({"total_seasons": 5, "trakt_id": 222}),

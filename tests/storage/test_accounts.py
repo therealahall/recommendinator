@@ -73,7 +73,7 @@ _CONTENT_ITEMS_BEFORE_THE_PASSWORD_COLUMNS = """
     )
 """
 
-_THE_LIBRARY = [("goodreads-1", "The Dispossessed"), ("steam-2", "Disco Elysium")]
+_THE_LIBRARY = [("The Dispossessed",), ("Disco Elysium",)]
 
 
 def _open(db_path: Path) -> None:
@@ -89,8 +89,8 @@ def _seed_the_library(conn: sqlite3.Connection) -> None:
     """Write ``_THE_LIBRARY`` under user 1, the id every content row carries."""
     conn.executemany(
         """INSERT INTO content_items
-               (user_id, external_id, title, content_type, status)
-           VALUES (1, ?, ?, 'book', 'completed')""",
+               (user_id, title, content_type, status)
+           VALUES (1, ?, 'book', 'completed')""",
         _THE_LIBRARY,
     )
     conn.commit()

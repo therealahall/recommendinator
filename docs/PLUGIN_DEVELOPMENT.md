@@ -128,7 +128,7 @@ sync of *every* source never calls `validate_config`.
 
 ```python
 ContentItem(
-    id="unique-external-id",             # required, unique within content type
+    id="unique-external-id",             # required, unique within your source
     title="Item Title",                  # required
     content_type=ContentType.BOOK,       # BOOK, MOVIE, TV_SHOW, VIDEO_GAME
     status=ConsumptionStatus.COMPLETED,  # COMPLETED, CURRENTLY_CONSUMING, UNREAD

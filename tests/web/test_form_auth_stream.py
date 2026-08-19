@@ -32,7 +32,7 @@ _RETIRED_KEY = "api_token"
 _RETIRED_VALUE = "9f" * 32
 
 #: An 0.32.0 library: rows keyed to user 1, the id everything hangs off.
-_THE_LIBRARY = [("goodreads-1", "The Dispossessed"), ("steam-2", "Disco Elysium")]
+_THE_LIBRARY = [("goodreads_csv", "The Dispossessed"), ("steam", "Disco Elysium")]
 
 _SETUP_BODY = {
     "username": _USERNAME,
@@ -64,7 +64,7 @@ def upgrading_db(tmp_path: Path) -> Path:
     try:
         conn.executemany(
             """INSERT INTO content_items
-                   (user_id, external_id, title, content_type, status)
+                   (user_id, source, title, content_type, status)
                VALUES (1, ?, ?, 'book', 'completed')""",
             _THE_LIBRARY,
         )

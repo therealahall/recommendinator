@@ -268,7 +268,8 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
         )
         with storage.connection() as conn:
             rows = conn.execute(
-                "SELECT title, external_id FROM content_items"
+                "SELECT ci.title, x.external_id FROM content_items ci"
+                " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
             ).fetchall()
         assert {row["title"] for row in rows} == {
             "Metr\\udcffoid",

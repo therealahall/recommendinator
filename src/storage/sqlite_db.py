@@ -298,13 +298,31 @@ def _build_content_item_from() -> str:
 _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
+# A subquery rather than a join: a second id for an item would otherwise
+# duplicate its row through every read in the file. ``ContentItem`` carries one
+# id, and ordering by source makes which one it is repeatable.
+_EXTERNAL_ID_TERM = (
+    "(SELECT x.external_id FROM content_item_external_ids x"
+    " WHERE x.content_item_id = ci.id"
+    " ORDER BY x.source LIMIT 1) as external_id"
+)
+
+# Every lookup of an item by an id a source gave it. Source-blind, as the
+# column it replaces was.
+_ITEM_ID_BY_EXTERNAL_ID = """
+    SELECT ci.id FROM content_items ci
+    JOIN content_item_external_ids x ON x.content_item_id = ci.id
+    WHERE ci.user_id = ? AND x.external_id = ? AND ci.content_type = ?
+"""
+
+
 def _build_content_item_select() -> str:
     """Build the content-item read query from the field declaration.
 
     Used by get_content_item, _items_by_db_ids and _fetch_page. Callers append
     their own WHERE clause.
     """
-    terms = ["ci.*"]
+    terms = ["ci.*", _EXTERNAL_ID_TERM]
     for spec in DETAIL_FIELDS.values():
         terms.extend(_detail_select_terms(spec))
     terms.extend(_ENRICHMENT_SELECT_TERMS)
@@ -537,8 +555,7 @@ class SQLiteDB:
         existing_id: int | None = None
         if item.id:
             cursor.execute(
-                """SELECT id FROM content_items
-                   WHERE user_id = ? AND external_id = ? AND content_type = ?""",
+                _ITEM_ID_BY_EXTERNAL_ID,
                 (effective_user_id, item.id, content_type_value),
             )
             row = cursor.fetchone()
@@ -654,13 +671,12 @@ class SQLiteDB:
             cursor.execute(
                 """
                 INSERT INTO content_items
-                (user_id, external_id, title, normalized_title, content_type,
+                (user_id, title, normalized_title, content_type,
                  status, rating, review, date_completed, source, ignored)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     effective_user_id,
-                    item.id,
                     item.title,
                     normalized_title,
                     content_type_value,
@@ -677,6 +693,15 @@ class SQLiteDB:
                 raise RuntimeError("INSERT did not return a row ID")
             db_id = lastrowid
             row_changed = True
+            # An id with no source to scope it identifies nothing, so it is
+            # not recorded — a file import and a hand-completed item have none.
+            if item.id and item.source:
+                cursor.execute(
+                    """INSERT INTO content_item_external_ids
+                       (content_item_id, user_id, source, external_id)
+                       VALUES (?, ?, ?, ?)""",
+                    (db_id, effective_user_id, item.source, item.id),
+                )
 
         detail_changed = self._save_detail_table(
             cursor, db_id, item, content_type_value
@@ -990,8 +1015,8 @@ class SQLiteDB:
     ) -> list[ContentItem]:
         """Get multiple content items by their external IDs in a single query.
 
-        Rows are unique per ``(user, external id, content type)``, so one
-        external id may name a row of each type. Results are unordered.
+        An id is unique per source, so one may name an item of each type.
+        Results are unordered, and an item named twice comes back once.
         """
         if not external_ids:
             return []
@@ -1007,8 +1032,11 @@ class SQLiteDB:
                 chunk = external_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
                 placeholders = ", ".join("?" for _ in chunk)
                 cursor.execute(
-                    f"{_CONTENT_ITEM_SELECT} WHERE ci.user_id = ?"
-                    f" AND ci.external_id IN ({placeholders}){type_clause}",
+                    f"{_CONTENT_ITEM_SELECT} WHERE ci.user_id = ? AND EXISTS ("
+                    "  SELECT 1 FROM content_item_external_ids x"
+                    "   WHERE x.content_item_id = ci.id"
+                    f"    AND x.external_id IN ({placeholders}))"
+                    f"{type_clause}",
                     [effective_user_id, *chunk, *type_params],
                 )
                 items.extend(
@@ -1718,8 +1746,7 @@ class SQLiteDB:
             cursor = conn.cursor()
             content_type_value = get_enum_value(content_type)
             cursor.execute(
-                """SELECT id FROM content_items
-                   WHERE user_id = ? AND external_id = ? AND content_type = ?""",
+                _ITEM_ID_BY_EXTERNAL_ID,
                 (effective_user_id, external_id, content_type_value),
             )
             row = cursor.fetchone()
@@ -1850,8 +1877,7 @@ class SQLiteDB:
             cursor = conn.cursor()
             content_type_value = get_enum_value(content_type)
             cursor.execute(
-                """SELECT id FROM content_items
-                   WHERE user_id = ? AND external_id = ? AND content_type = ?""",
+                _ITEM_ID_BY_EXTERNAL_ID,
                 (effective_user_id, external_id, content_type_value),
             )
             row = cursor.fetchone()

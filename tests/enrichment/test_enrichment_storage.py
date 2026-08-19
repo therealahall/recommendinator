@@ -405,6 +405,7 @@ class TestTagsAndDescriptionStorage:
             title="Test Movie",
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
+            source="radarr",
         )
 
         db_id = storage_manager.save_content_item(item)
