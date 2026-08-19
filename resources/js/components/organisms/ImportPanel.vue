@@ -87,22 +87,27 @@ function onFileChosen(chosen: File | null, dropped: boolean): void {
   file.value = chosen
   result.value = null
   errorMessage.value = ''
-  // Only a drop. The picker path is already spoken by the input's own value,
-  // and announcing both would say the filename twice (WCAG 4.1.3).
-  if (dropped && chosen) status.value = `Selected file: ${chosen.name}`
+  // Announced for a drop only: the picker path is already spoken by the input's
+  // own value, and both would say the filename twice (WCAG 4.1.3). Cleared
+  // otherwise, so a failed import cannot outlive the error text beside it.
+  status.value = dropped && chosen ? `Selected file: ${chosen.name}` : ''
 }
 
 function summarise(imported: ImportResponse): string {
-  const missed = imported.errors.length
-  const listed =
-    missed === 0
-      ? ''
-      : ` ${missed} ${missed === 1 ? 'row is' : 'rows are'} listed below.`
+  // From the counts, not from the list: the list caps at 200 plus a tally, and
+  // "200 rows did not import" for a refused 10,000-row export is worse than
+  // silence.
+  const missed = imported.skipped + imported.failed
+  const misses =
+    missed === 0 ? '' : ` ${missed} ${missed === 1 ? 'row' : 'rows'} did not import.`
+  // Spoken, not just rendered: no count covers a note, so a screen-reader user
+  // is otherwise never told the block beside the counts appeared at all.
+  const notes = imported.notes.map((note) => ` ${note}.`).join('')
   return (
     `Imported ${imported.filename ?? 'the file'}: added ${imported.added}, ` +
     `updated ${imported.updated}, unchanged ${imported.unchanged}, ` +
     `skipped ${imported.skipped}, failed ${imported.failed}. ` +
-    `${imported.total_rows} rows read.${listed}`
+    `${imported.total_rows} rows read.${misses}${notes}`
   )
 }
 
@@ -209,6 +214,13 @@ async function submit(): Promise<void> {
               data-testid="import-submit"
               :disabled="!canImport"
               :aria-disabled="importing || undefined"
+              :aria-label="
+                canImport
+                  ? undefined
+                  : file === null
+                  ? 'Import — choose a file first'
+                  : 'Import — import formats could not be loaded'
+              "
               @click="submit"
             >{{ importing ? 'Importing…' : 'Import' }}</button>
           </div>

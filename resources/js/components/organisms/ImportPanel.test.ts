@@ -54,11 +54,12 @@ const RESULT: ImportResponse = {
     'Skipped line 14: no title',
     'Skipped line 88: 6 fields short of the header',
   ],
+  notes: [],
 }
 
 const SUMMARY =
   'Imported goodreads_library_export.csv: added 12, updated 3, ' +
-  'unchanged 240, skipped 2, failed 0. 257 rows read. 2 rows are listed below.'
+  'unchanged 240, skipped 2, failed 0. 257 rows read. 2 rows did not import.'
 
 function exportFile(): File {
   return new File(['title,author\n'], 'goodreads_library_export.csv', {
@@ -171,7 +172,7 @@ describe('ImportPanel', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="import-status"]').text()).toContain(
-      '1 row is listed below.',
+      '1 row did not import.',
     )
     wrapper.unmount()
   })
@@ -201,19 +202,102 @@ describe('ImportPanel', () => {
 
   /** A drop leaves the input's own value untouched, so without this the first
    *  a screen reader hears of the file is "Importing …", after the commit. */
-  it('announces a dropped file, and leaves a picked one to the input', async () => {
+  it('announces a dropped file, which no input value speaks', async () => {
     const wrapper = await openPanel()
 
     await dropFile(wrapper, exportFile())
+
     expect(wrapper.get('[data-testid="import-status"]').text()).toBe(
       'Selected file: goodreads_library_export.csv',
     )
-
-    const picked = await openPanel()
-    await chooseFile(picked, exportFile())
-    expect(picked.get('[data-testid="import-status"]').text()).toBe('')
     wrapper.unmount()
-    picked.unmount()
+  })
+
+  /** The visible error goes on the same pick, so a region still reading the old
+   *  failure describes a panel that no longer says it (WCAG 1.3.1). */
+  it('drops a failed import from the live region when a replacement file is picked', async () => {
+    const wrapper = await openPanel()
+    mockUpload.mockRejectedValue(new Error('CSV needs a content type.'))
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="import-status"]').text()).toContain('failed')
+
+    await chooseFile(wrapper, exportFile())
+
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe('')
+    wrapper.unmount()
+  })
+
+  /** The sibling Sync All button names its reason too: a control announcing
+   *  only "unavailable" leaves the operator nothing to act on — and naming the
+   *  file when a file is already picked sends them after the wrong thing. */
+  it('names whichever of the two conditions is refusing the Import button', async () => {
+    const wrapper = await openPanel()
+    const button = wrapper.get('[data-testid="import-submit"]')
+
+    expect(button.attributes('aria-label')).toBe('Import — choose a file first')
+
+    await chooseFile(wrapper, exportFile())
+
+    expect(button.attributes('aria-label')).toBeUndefined()
+    wrapper.unmount()
+
+    mockGet.mockImplementation((path: string) =>
+      path === '/importers'
+        ? Promise.reject(new Error('Service Unavailable'))
+        : Promise.resolve([]),
+    )
+    const unloaded = await openPanel()
+    await chooseFile(unloaded, exportFile())
+
+    expect(
+      unloaded.get('[data-testid="import-submit"]').attributes('aria-label'),
+    ).toBe('Import — import formats could not be loaded')
+    unloaded.unmount()
+  })
+
+  /** The server caps the list and tallies the rest, so a count taken from it
+   *  reports a handful of refused rows beside a Skipped tile reading 10000. */
+  it('counts the refused rows the file actually had, not the ones it lists', async () => {
+    const wrapper = await openPanel()
+    mockUpload.mockResolvedValue({
+      ...RESULT,
+      added: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: 10000,
+      total_rows: 10000,
+      errors: ['Skipped line 2: no title', '… and 9999 more'],
+    })
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.import-misses-title').text()).toContain('10000')
+    expect(wrapper.get('[data-testid="import-status"]').text()).toContain(
+      '10000 rows did not import.',
+    )
+    wrapper.unmount()
+  })
+
+  /** A note is not a row, so no count covers it: listed with the misses it sat
+   *  under "Rows that did not import (0)", and the region announced nothing
+   *  about it at all (WCAG 4.1.3). */
+  it('shows and announces a file-level note when every row imported', async () => {
+    const wrapper = await openPanel()
+    const note = 'Saved 255 item(s) but could not queue them for enrichment'
+    mockUpload.mockResolvedValue({ ...RESULT, skipped: 0, errors: [], notes: [note] })
+
+    await chooseFile(wrapper, exportFile())
+    await wrapper.get('[data-testid="import-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="import-note"]').text()).toBe(note)
+    expect(wrapper.get('[data-testid="import-status"]').text()).toContain(note)
+    wrapper.unmount()
   })
 
   it('shows the same result whether the file was dropped or chosen from the input', async () => {
