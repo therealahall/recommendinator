@@ -1,6 +1,100 @@
 # CHANGELOG
 
 
+## v0.37.0 (2026-08-19)
+
+### Bug Fixes
+
+- **cli**: Refuse an option import-template would otherwise discard
+  ([`e0c11dc`](https://github.com/therealahall/recommendinator/commit/e0c11dcb7061f8d15d3cee847593608f0559cae8))
+
+- **ingestion**: A JSON array skip names an entry, not a line
+  ([`a53480c`](https://github.com/therealahall/recommendinator/commit/a53480c9adcb01526d86c8904c562eb33e9e275b))
+
+- **ingestion**: Parse import files from text, and report the rows dropped
+  ([`f2e956b`](https://github.com/therealahall/recommendinator/commit/f2e956b6d8f59598e79330e7bdaeb8179c3d99e4))
+
+- **ingestion**: Say "line" for a skipped row, not "row"
+  ([`427c5c4`](https://github.com/therealahall/recommendinator/commit/427c5c45a0dec613fe2c78c0d4654ce9f79994c4))
+
+- **ingestion**: Skip a CSV row longer than its header instead of importing it mangled
+  ([`cee9d4d`](https://github.com/therealahall/recommendinator/commit/cee9d4da3182088fc66537ff9fcbd8b014005993))
+
+- **web**: Announce a dropped file, and measure the backdrop that renders
+  ([`e2b2e9f`](https://github.com/therealahall/recommendinator/commit/e2b2e9f40fd62e519e13d73c7611dad943e300b4))
+
+- **web**: The import panel skipped a heading level, and still said lines
+  ([`585e410`](https://github.com/therealahall/recommendinator/commit/585e410a9d38d1ea2b1cb15d323e4f71ce186416))
+
+- **web**: The misses heading cannot presume its rows are lines
+  ([`67c7ca5`](https://github.com/therealahall/recommendinator/commit/67c7ca5bb3301444b25ea2c8321d75c4dce76761))
+
+### Documentation
+
+- Stop offering deleted plugins as sources
+  ([`f53e19e`](https://github.com/therealahall/recommendinator/commit/f53e19e045c5d478b6d09c8f65c94d567c3e41b3))
+
+- Uploads in, the five file-path sources out
+  ([`ed120b3`](https://github.com/therealahall/recommendinator/commit/ed120b37de13a104375bd9e57384f4d155c3ac00))
+
+- **security**: An upload does touch disk above a megabyte
+  ([`19f6e9d`](https://github.com/therealahall/recommendinator/commit/19f6e9d71a3ecfd4c8b245580214e5c976c2a3f2))
+
+- **security**: Name the third place an exception's text is answered
+  ([`a7dab61`](https://github.com/therealahall/recommendinator/commit/a7dab61f58e59258e36bc20516e40684e5b0b3d1))
+
+### Features
+
+- Download an import template from either interface
+  ([`71a93b5`](https://github.com/therealahall/recommendinator/commit/71a93b57926abde046bb17554d57d57fd84c83e2))
+
+- **cli**: Import a file from a path
+  ([`8909f51`](https://github.com/therealahall/recommendinator/commit/8909f510803afea6e1a4ccc6f9a2e8d26d5ed032))
+
+- **ingestion**: Drop the five file-path import sources
+  ([`f6cabfa`](https://github.com/therealahall/recommendinator/commit/f6cabfac0a2ac6e539e978692b79ca7745f5e168))
+
+- **ingestion**: Import a file in one shot, without making it a source
+  ([`7714240`](https://github.com/therealahall/recommendinator/commit/77142407d90135ce6e47713ec5f193430d33f404))
+
+- **web**: An Import a file panel on the Data page
+  ([`fb27710`](https://github.com/therealahall/recommendinator/commit/fb277105a4aacd757855c19127ec3bbdf7a14f2c))
+
+- **web**: Collapse the import panel into an accordion
+  ([`f350c7c`](https://github.com/therealahall/recommendinator/commit/f350c7c199679452a5d3a3276c6b2a5ee64cfa2a))
+
+- **web**: Upload a file to import it
+  ([`7a3c30f`](https://github.com/therealahall/recommendinator/commit/7a3c30f9c059a65410bc36e1c958d028181ac342))
+
+### Refactoring
+
+- **config**: One auto-enrich gate, reachable from both interfaces
+  ([`a66e50c`](https://github.com/therealahall/recommendinator/commit/a66e50cb0a95426423c36815d2c781d6405859e0))
+
+- **storage**: One tally of SaveOutcome, shared by sync and import
+  ([`ab6deba`](https://github.com/therealahall/recommendinator/commit/ab6debad4105b2ee8fe8090bcdba243dfc68c801))
+
+- **web**: One auto-enrich gate, not a copy per caller
+  ([`46e95fc`](https://github.com/therealahall/recommendinator/commit/46e95fc5c86a19742c3a6f95193208aa6c18970b))
+
+### Testing
+
+- Attack the template routes and pin where templates are found
+  ([`1c4dd6a`](https://github.com/therealahall/recommendinator/commit/1c4dd6a2be76f87d89f08f31a3d8943fa080096c))
+
+- Pin what the code guarantees, not the shape it currently has
+  ([`7cf43c4`](https://github.com/therealahall/recommendinator/commit/7cf43c45675482e38673511e784c5cd715359636))
+
+- **ingestion**: Cover the updated count and the boot sweep's wiring
+  ([`af8109f`](https://github.com/therealahall/recommendinator/commit/af8109f792310074ae5f07da84ab73c901ace8f6))
+
+- **ingestion**: Pin the short-row skip and give the no-filesystem guard teeth
+  ([`0d4628b`](https://github.com/therealahall/recommendinator/commit/0d4628b56522bd719d9e4b2dcaa3ad61bf602801))
+
+- **ingestion**: Prove every shipped template still imports
+  ([`5d96253`](https://github.com/therealahall/recommendinator/commit/5d96253795ea4bae2b46d332096ee3abedd7a17a))
+
+
 ## v0.36.0 (2026-08-18)
 
 ### Bug Fixes

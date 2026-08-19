@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recommendinator"
-version = "0.36.0"
+version = "0.37.0"
 description = "Privacy-focused recommendation engine for books, movies, TV shows, and video games"
 # A CI matrix was declined, so 3.11 is the only minor anything here runs on and
 # the only one claimed.
