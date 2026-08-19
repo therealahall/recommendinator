@@ -20,10 +20,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A header the operator edited refuses every row, so an uncapped list would
+# report one line per row of the export. The cap lives in the shared service,
+# not the web layer, so both interfaces list the same misses.
+MAX_REPORTED_ERRORS = 200
+
 
 @dataclass
 class ImportResult:
-    """Five counts, and a line per row that missed.
+    """Five counts, capped per-row misses with a tally, and file-level notes.
 
     Each miss names its number in the importer's own unit: a file line, or an
     entry of a JSON array, which does not sit one per line.
@@ -36,6 +41,15 @@ class ImportResult:
     failed: int = 0
     total_rows: int = 0
     errors: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    omitted_errors: int = 0
+
+    def record_row_error(self, message: str) -> None:
+        """Report a miss, or count it once the list is full."""
+        if len(self.errors) < MAX_REPORTED_ERRORS:
+            self.errors.append(message)
+        else:
+            self.omitted_errors += 1
 
     @property
     def added(self) -> int:
@@ -92,7 +106,7 @@ def import_file(
 
         if isinstance(row, SkippedRow):
             result.skipped += 1
-            result.errors.append(
+            result.record_row_error(
                 f"Skipped {row.unit} {row.number}: {sanitize_for_log(row.reason)}"
             )
             continue
@@ -114,7 +128,7 @@ def import_file(
             )
             # Named by class rather than quoted: a storage fault's words repeat
             # the parameters it was handed, and this list reaches the browser.
-            result.errors.append(
+            result.record_row_error(
                 f"Failed {row.unit} {row.number}: {type(error).__name__} "
                 f"saving '{safe_title}'"
             )
@@ -133,10 +147,14 @@ def import_file(
                     exception_for_log(error),
                 )
 
-    # Once, not per item: the queue write is the same row for every item, so a
-    # fault that hits one hits all and would otherwise report thousands.
+    if result.omitted_errors:
+        result.errors.append(f"… and {result.omitted_errors} more")
+
+    # A note, not an error: no row was refused, so listing it with the misses
+    # heads a count of rows the file does not have. Once, not per item: the
+    # queue write is the same row for every item.
     if enrichment_queue_failures:
-        result.errors.append(
+        result.notes.append(
             f"Saved {enrichment_queue_failures} item(s) but could not queue them"
             " for enrichment"
         )
