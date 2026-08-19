@@ -1,4 +1,4 @@
-# Generic JSON / JSONL Import
+# Generic JSON / JSONL
 
 Reads a JSON array of objects, or one object per line. The text decides which:
 anything starting with `[` is an array, everything else is line-delimited.

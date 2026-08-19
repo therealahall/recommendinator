@@ -1,4 +1,4 @@
-# Generic CSV Import
+# Generic CSV
 
 Reads a CSV of one content type, which you pick when you upload the file.
 

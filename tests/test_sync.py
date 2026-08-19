@@ -663,7 +663,7 @@ def _sync_one_forged_title(
 ) -> SyncResult:
     """Sync one item whose title carries a whole second log entry."""
     plugin = MagicMock(spec=SourcePlugin)
-    plugin.display_name = "CSV Import"
+    plugin.display_name = "CSV"
     plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
 
     storage = MagicMock(spec=StorageManager)
@@ -737,7 +737,7 @@ class TestTheOtherSyncSinksEscapeTheirValuesToo:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         plugin = MagicMock(spec=SourcePlugin)
-        plugin.display_name = "CSV Import"
+        plugin.display_name = "CSV"
         plugin.fetch.return_value = iter([])
         storage = MagicMock(spec=StorageManager)
 

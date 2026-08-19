@@ -40,7 +40,7 @@ class CsvImporter(Importer):
     """A CSV matching the template for one content type."""
 
     name = "csv_import"
-    display_name = "CSV Import"
+    display_name = "CSV"
     description = "Import from CSV file"
     content_types = ()
 

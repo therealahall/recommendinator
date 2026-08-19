@@ -43,7 +43,7 @@ class MarkdownImporter(Importer):
     """``## Status`` headings over ``- **Title** by Creator`` list items."""
 
     name = "markdown_import"
-    display_name = "Markdown Import"
+    display_name = "Markdown"
     description = "Import from Markdown file"
     content_types = ()
 
