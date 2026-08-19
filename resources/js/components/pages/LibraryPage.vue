@@ -97,7 +97,7 @@ onUnmounted(() => {
     <div v-if="lib.items.length > 0" class="library-grid">
       <LibraryCard
         v-for="(item, index) in lib.items"
-        :key="item.db_id ?? item.id ?? index"
+        :key="item.db_id ?? index"
         :item="item"
         @edit="onEdit"
         @toggle-ignore="(dbId: number, ignored: boolean) => lib.toggleIgnore(dbId, ignored)"

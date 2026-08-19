@@ -13,7 +13,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import to_json_array
 from src.storage import sqlite_db
 from src.storage.merge import normalize_title_for_matching
-from src.storage.schema import create_schema, create_user, write_enrichment_complete
+from src.storage.schema import create_schema, write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.sorting import build_search_text, get_sort_title
@@ -639,73 +639,11 @@ class TestGetContentItemsByDbIds:
         assert [item.db_id for item in results] == [db_id, db_id]
 
 
-class TestGetContentItemsByExternalIds:
-    """Tests for SQLiteDB.get_content_items_by_external_ids batch lookup."""
-
-    @staticmethod
-    def _save_game(db: SQLiteDB, external_id: str, title: str, user_id: int = 1) -> int:
-        return db.save_content_item(
-            ContentItem(
-                user_id=user_id,
-                id=external_id,
-                title=title,
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.COMPLETED,
-                source="steam",
-            ),
-            user_id=user_id,
-        )
-
-    def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
-        """An id naming no row is skipped rather than raising."""
-        self._save_game(temp_db, "game-1", "Portal")
-
-        results = temp_db.get_content_items_by_external_ids(["game-1", "nope"])
-
-        assert [item.title for item in results] == ["Portal"]
-
-    def test_scopes_to_the_requested_user(self, temp_db: SQLiteDB) -> None:
-        """Another user's row is never returned for the same external id."""
-        with temp_db.connection() as conn:
-            second_user_id = create_user(conn, "second")
-        self._save_game(temp_db, "shared", "Portal", user_id=second_user_id)
-
-        assert temp_db.get_content_items_by_external_ids(["shared"], user_id=1) == []
-        assert [
-            item.title
-            for item in temp_db.get_content_items_by_external_ids(
-                ["shared"], user_id=second_user_id
-            )
-        ] == ["Portal"]
-
-    def test_filters_by_content_type(self, temp_db: SQLiteDB) -> None:
-        """One external id naming two types returns only the type asked for."""
-        self._save_game(temp_db, "shared", "Portal")
-        temp_db.save_content_item(
-            ContentItem(
-                id="shared",
-                title="Portal",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.COMPLETED,
-                source="steam",
-            )
-        )
-
-        results = temp_db.get_content_items_by_external_ids(
-            ["shared"], content_type=ContentType.MOVIE
-        )
-
-        assert [item.content_type for item in results] == [ContentType.MOVIE]
-
-
 def test_one_source_may_know_a_movie_and_a_show_by_the_same_id(
     temp_db: SQLiteDB,
 ) -> None:
     """Trakt numbers each type from one, so movie 1 and show 1 both exist."""
-    for content_type, title in (
-        (ContentType.MOVIE, "Heat"),
-        (ContentType.TV_SHOW, "Andor"),
-    ):
+    db_ids = [
         temp_db.save_content_item(
             ContentItem(
                 id="trakt:1",
@@ -715,10 +653,15 @@ def test_one_source_may_know_a_movie_and_a_show_by_the_same_id(
                 source="trakt",
             )
         )
+        for content_type, title in (
+            (ContentType.MOVIE, "Heat"),
+            (ContentType.TV_SHOW, "Andor"),
+        )
+    ]
 
     assert {
         (item.title, item.content_type)
-        for item in temp_db.get_content_items_by_external_ids(["trakt:1"])
+        for item in temp_db.get_content_items_by_db_ids(db_ids)
     } == {("Heat", ContentType.MOVIE), ("Andor", ContentType.TV_SHOW)}
 
 
@@ -3763,6 +3706,65 @@ class TestEachSourceHoldsItsOwnExternalId:
         temp_db.save_content_item(stored)
 
         assert _external_ids(temp_db, db_id) == [("gog", "doom-gog")]
+
+    def test_a_read_reports_the_ids_other_sources_attached(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Both interfaces showed null for an item holding an id, because the
+        read carried only the id belonging to the row's own source."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                title="Doom",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="generic_csv",
+            )
+        )
+        temp_db.save_content_item(self._game("gog", "doom-gog", "Doom"))
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert item_to_dict(stored)["external_ids"] == [
+            {"source": "gog", "external_id": "doom-gog"}
+        ]
+
+    def test_an_item_no_source_named_reads_back_with_an_empty_list(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A hand-typed completion holds no id at all, and the read parses the
+        id list unconditionally — an aggregate over no rows must be ``[]``."""
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                title="Doom",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+                source="generic_csv",
+            )
+        )
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.id is None
+        assert item_to_dict(stored)["external_ids"] == []
+
+    def test_an_id_carrying_json_punctuation_survives_the_round_trip(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """An imported id is whatever the file's column held, so the read
+        cannot pack the pairs into a delimited string: a quote, a backslash, a
+        comma or a newline would split one pair into garbage."""
+        awkward = 'a"b\\c,d\ne'
+        db_id = temp_db.save_content_item(self._game("generic_csv", awkward, "Doom"))
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.id == awkward
+        assert item_to_dict(stored)["external_ids"] == [
+            {"source": "generic_csv", "external_id": awkward}
+        ]
 
 
 class TestCrossSourceDuplicateDetectionRegression:

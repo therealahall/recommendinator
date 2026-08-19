@@ -70,6 +70,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
     EnrichmentFilter,
+    ExternalId,
     get_enum_value,
 )
 from src.models.user_preferences import UserPreferenceConfig
@@ -410,7 +411,8 @@ class PasswordChangeRequest(BaseModel):
 class ContentItemResponse(BaseModel):
     """Response model for content item listing."""
 
-    id: str | None
+    # Which source contributed which id, one entry per source that named it.
+    external_ids: list[ExternalId] = Field(default_factory=list)
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None

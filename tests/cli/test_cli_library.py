@@ -18,6 +18,7 @@ from src.models.content import (
     ConsumptionStatus,
     ContentItem,
     ContentType,
+    ExternalId,
 )
 from src.storage.manager import StorageManager
 from src.utils.series import MAX_SEASONS
@@ -39,6 +40,7 @@ def _make_item(
     """Create a ContentItem for testing."""
     item = ContentItem(
         id=f"ext-{db_id}",
+        external_ids=[ExternalId(source="goodreads_csv", external_id=f"ext-{db_id}")],
         title=title,
         author=author,
         content_type=content_type,
@@ -87,7 +89,7 @@ class TestLibraryList:
         item = parsed[0]
         # Full field set matches web API ContentItemResponse
         assert set(item.keys()) == {
-            "id",
+            "external_ids",
             "db_id",
             "title",
             "author",
@@ -295,7 +297,7 @@ class TestLibraryShow:
         parsed = json.loads(result.output)
         # Full field set matches web API ContentItemResponse
         assert set(parsed.keys()) == {
-            "id",
+            "external_ids",
             "db_id",
             "title",
             "author",
@@ -322,6 +324,27 @@ class TestLibraryShow:
         assert parsed["ignored"] is False
         assert parsed["review"] == "Masterpiece"
         assert parsed["date_completed"] is None
+        assert parsed["external_ids"] == [
+            {"source": "goodreads_csv", "external_id": "ext-42"}
+        ]
+
+    def test_show_table_names_the_source_behind_each_id(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """An item holds one id per source, so the table has to say which
+        source contributed which — the web response names both."""
+        item = _make_item(db_id=42)
+        item.external_ids.append(ExternalId(source="steam", external_id="440"))
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "42"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert "goodreads_csv: ext-42" in result.output
+        assert "steam: 440" in result.output
 
     def test_show_json_tv_show_with_seasons(self, cli_runner: CliRunner) -> None:
         """Test that TV show metadata populates seasons_watched and total_seasons."""

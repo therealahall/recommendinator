@@ -33,7 +33,12 @@ from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+    ExternalId,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
@@ -1668,6 +1673,7 @@ def test_get_single_item(client, mock_components):
     """GET /api/items/{db_id} returns a single content item."""
     mock_item = ContentItem(
         id="ext_1",
+        external_ids=[ExternalId(source="goodreads_csv", external_id="ext_1")],
         db_id=42,
         title="Test Book",
         author="Author",
@@ -1682,6 +1688,7 @@ def test_get_single_item(client, mock_components):
     assert response.status_code == 200
     data = response.json()
     assert data["db_id"] == 42
+    assert data["external_ids"] == [{"source": "goodreads_csv", "external_id": "ext_1"}]
     assert data["title"] == "Test Book"
     assert data["rating"] == 4
     assert data["review"] == "Great"

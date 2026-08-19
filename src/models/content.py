@@ -89,6 +89,13 @@ class ConsumptionStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class ExternalId(BaseModel):
+    """One source's id for an item, as ``content_item_external_ids`` holds it."""
+
+    source: str
+    external_id: str
+
+
 class ContentItem(BaseModel):
     """Represents a piece of content (book, movie, etc.)."""
 
@@ -98,7 +105,10 @@ class ContentItem(BaseModel):
     user_id: int = DEFAULT_USER_ID
 
     # Core fields
-    id: str | None = None  # External ID from source (Goodreads ID, Steam app ID, etc.)
+    # The id of the source that is saving or saved this item — a save keys on
+    # ``(source, id)``. An item collects other sources' ids too; ``external_ids``
+    # is the whole set, and is what a reader should report.
+    id: str | None = None
     db_id: int | None = None  # Internal database ID (populated when loaded from DB)
     title: str
     content_type: ContentType
@@ -115,6 +125,10 @@ class ContentItem(BaseModel):
 
     # Source tracking - which plugin/source this came from
     source: str | None = None  # e.g., "goodreads_csv", "steam", "manual"
+
+    # Runtime-only: every source's id for this item, populated on read. Empty
+    # for an item that has not come back from storage.
+    external_ids: list[ExternalId] = Field(default_factory=list)
 
     # Runtime-only: parent item ID (e.g., TV show ID for a season item).
     # Set during recommendation expansion, not persisted.

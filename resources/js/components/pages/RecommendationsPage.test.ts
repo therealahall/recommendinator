@@ -7,7 +7,7 @@ import type { ContentItemResponse } from '@/types/api'
 
 function makeFullItem(overrides: Partial<ContentItemResponse> = {}): ContentItemResponse {
   return {
-    id: 'test-1',
+    external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
     db_id: 1,
     title: 'A',
     author: 'Author',

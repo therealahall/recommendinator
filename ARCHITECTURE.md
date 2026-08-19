@@ -247,8 +247,10 @@ source's next sync.
 The version-3 migration re-normalizes titles and merges what that exposes: the
 one path that deletes a row, run once.
 
-`content_items.source` is display provenance, no sync overwrites it, and it
-names the source whose id a read reports.
+`content_items.source` is display provenance and no sync overwrites it. A read
+reports every `(source, external_id)` pair the item holds, which both interfaces
+carry as `external_ids`; `ContentItem.id` stays the id of the item's own source,
+because a save keys on it.
 
 The version-8 migration rebuilds `content_items` to drop the id column and the
 `(user_id, external_id, content_type)` key it sat under.

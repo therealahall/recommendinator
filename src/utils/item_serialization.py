@@ -40,7 +40,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
     seasons_watched, total_seasons = extract_tv_season_fields(item)
     metadata = item.metadata
     return {
-        "id": item.id,
+        "external_ids": [pair.model_dump() for pair in item.external_ids],
         "db_id": item.db_id,
         "title": item.title,
         "author": item.author,
