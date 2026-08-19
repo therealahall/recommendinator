@@ -3686,11 +3686,12 @@ class TestEachSourceHoldsItsOwnExternalId:
 
         assert landed == oldest
 
-    def test_a_read_carries_no_id_its_own_source_does_not_hold(
+    def test_a_read_lists_the_ids_other_sources_hold_and_invents_none(
         self, temp_db: SQLiteDB
     ) -> None:
         """A source emitting no id leaves its row unnamed in the id table, and
-        reading a later source's id beside that source name fabricated a pair."""
+        reading a later source's id beside that source name fabricated a pair,
+        which both interfaces then showed as the row's own."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 title="Doom",
@@ -3701,33 +3702,14 @@ class TestEachSourceHoldsItsOwnExternalId:
         )
         temp_db.save_content_item(self._game("gog", "doom-gog", "Doom"))
         stored = temp_db.get_content_item(db_id)
-        assert stored is not None
-
-        temp_db.save_content_item(stored)
-
-        assert _external_ids(temp_db, db_id) == [("gog", "doom-gog")]
-
-    def test_a_read_reports_the_ids_other_sources_attached(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        """Both interfaces showed null for an item holding an id, because the
-        read carried only the id belonging to the row's own source."""
-        db_id = temp_db.save_content_item(
-            ContentItem(
-                title="Doom",
-                content_type=ContentType.VIDEO_GAME,
-                status=ConsumptionStatus.UNREAD,
-                source="generic_csv",
-            )
-        )
-        temp_db.save_content_item(self._game("gog", "doom-gog", "Doom"))
-
-        stored = temp_db.get_content_item(db_id)
-
         assert stored is not None
         assert item_to_dict(stored)["external_ids"] == [
             {"source": "gog", "external_id": "doom-gog"}
         ]
+
+        temp_db.save_content_item(stored)
+
+        assert _external_ids(temp_db, db_id) == [("gog", "doom-gog")]
 
     def test_an_item_no_source_named_reads_back_with_an_empty_list(
         self, temp_db: SQLiteDB

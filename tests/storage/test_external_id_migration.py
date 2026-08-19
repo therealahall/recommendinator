@@ -4,6 +4,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.sources.service import is_valid_source_id
+from src.storage.merge import normalize_title_for_matching
+from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 from src.storage.sqlite_db import SQLiteDB
 
 # Written out rather than derived: the point is a build this one is not.
@@ -29,12 +33,13 @@ _CONTENT_ITEMS_AT_VERSION_SEVEN = """
 """
 
 # One per content type, so every detail table rides the rebuild. Trakt's pair
-# shares an id; the last row is sourceless, as a file import leaves it.
+# shares an id, the last row is sourceless as a file import leaves it, and TF2
+# holds Steam's app id under the name GOG's later sync stamped.
 _LIBRARY: tuple[tuple[str, str, str, str | None, str, str, str], ...] = (
     ("Darkness", "book", "12345", "goodreads_csv", "book_details", "author", "Guin"),
     ("Heat", "movie", "1", "trakt", "movie_details", "director", "Mann"),
     ("Andor", "tv_show", "1", "trakt", "tv_show_details", "creators", "Gilroy"),
-    ("TF2", "video_game", "440", "steam", "video_game_details", "developer", "Valve"),
+    ("TF2", "video_game", "440", "gog", "video_game_details", "developer", "Valve"),
     ("Typed", "book", "csv-1", None, "book_details", "author", "Nobody"),
 )
 
@@ -53,11 +58,12 @@ def _stand_up_a_version_seven_library(db_path: Path) -> None:
         conn.execute(_CONTENT_ITEMS_AT_VERSION_SEVEN)
         conn.execute("ALTER TABLE content_items ADD COLUMN ignored BOOLEAN DEFAULT 0")
         for title, kind, external_id, source, table, column, creator in _LIBRARY:
+            normalized = normalize_title_for_matching(title)
             cursor = conn.execute(
-                "INSERT INTO content_items"
-                " (user_id, external_id, title, content_type, status, source)"
-                " VALUES (1, ?, ?, ?, 'completed', ?)",
-                (external_id, title, kind, source),
+                "INSERT INTO content_items (user_id, external_id, title,"
+                " normalized_title, content_type, status, source)"
+                " VALUES (1, ?, ?, ?, ?, 'completed', ?)",
+                (external_id, title, normalized, kind, source),
             )
             conn.execute(
                 f"INSERT INTO {table} (content_item_id, {column}) VALUES (?, ?)",
@@ -89,6 +95,20 @@ def _ids_by_title(db_path: Path) -> dict[str, tuple[str, str]]:
             " JOIN content_items ci ON ci.id = x.content_item_id"
         ).fetchall()
         return {row["title"]: (row["source"], row["external_id"]) for row in rows}
+    finally:
+        conn.close()
+
+
+def _rows_titled(db_path: Path, title: str) -> list[tuple[int, str, str]]:
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ci.id, x.source, x.external_id FROM content_items ci"
+            " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+            " WHERE ci.title = ? ORDER BY ci.id, x.source",
+            (title,),
+        ).fetchall()
+        return [(int(r["id"]), r["source"], r["external_id"]) for r in rows]
     finally:
         conn.close()
 
@@ -125,19 +145,47 @@ def test_a_version_seven_database_reaches_the_fresh_schema_and_stays_there(
     assert _ids_by_title(upgraded) == ids_after_the_upgrade
 
 
-def test_the_rebuild_carries_every_id_and_every_detail_row(tmp_path: Path) -> None:
-    """A sourceless id is dropped; one a source gave two types is kept twice."""
+def test_the_rebuild_files_every_id_under_a_source_no_operator_can_configure(
+    tmp_path: Path,
+) -> None:
+    """The source column names the last syncer, not the id's owner."""
     db_path = tmp_path / "library.db"
     _stand_up_a_version_seven_library(db_path)
 
     SQLiteDB(db_path)
 
+    assert not is_valid_source_id(_LEGACY_EXTERNAL_ID_SOURCE)
     assert _ids_by_title(db_path) == {
-        "Darkness": ("goodreads_csv", "12345"),
-        "Heat": ("trakt", "1"),
-        "Andor": ("trakt", "1"),
-        "TF2": ("steam", "440"),
+        "Darkness": (_LEGACY_EXTERNAL_ID_SOURCE, "12345"),
+        "Heat": (_LEGACY_EXTERNAL_ID_SOURCE, "1"),
+        "Andor": (_LEGACY_EXTERNAL_ID_SOURCE, "1"),
+        "TF2": (_LEGACY_EXTERNAL_ID_SOURCE, "440"),
+        "Typed": (_LEGACY_EXTERNAL_ID_SOURCE, "csv-1"),
     }
     assert _creators_by_title(db_path) == {
         title: creator for title, _, _, _, _, _, creator in _LIBRARY
     }
+
+
+def test_a_sync_after_the_upgrade_lands_on_the_row_holding_the_legacy_id(
+    tmp_path: Path,
+) -> None:
+    """The row wears GOG's name over Steam's app id, and GOG syncs its own."""
+    db_path = tmp_path / "library.db"
+    _stand_up_a_version_seven_library(db_path)
+    upgraded = SQLiteDB(db_path)
+
+    db_id = upgraded.save_content_item(
+        ContentItem(
+            id="1470669032",
+            title="TF2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="gog",
+        )
+    )
+
+    assert _rows_titled(db_path, "TF2") == [
+        (db_id, _LEGACY_EXTERNAL_ID_SOURCE, "440"),
+        (db_id, "gog", "1470669032"),
+    ]
