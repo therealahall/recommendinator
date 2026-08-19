@@ -253,7 +253,10 @@ carry as `external_ids`; `ContentItem.id` stays the id of the item's own source,
 because a save keys on it.
 
 The version-8 migration rebuilds `content_items` to drop the id column and the
-`(user_id, external_id, content_type)` key it sat under.
+`(user_id, external_id, content_type)` key it sat under. Every id it held is
+filed under the source `(legacy)`, which no source id can spell: the column
+beside those ids named the last source to sync the row, not the id's owner, so
+each source attaches its own on its next sync and matches by title until then.
 
 The rules that migration merges by:
 

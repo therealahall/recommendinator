@@ -316,6 +316,10 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
 
 # A title-match candidate: a row holding another id from the incoming source is
 # that source's other item, not this one. No incoming id compares against NULL.
+
+# The accepted cost: a source that changes an item's own id, a re-imported
+# Goodreads book on a new edition say, lands a second row. Nothing here tells
+# that from a genuine second edition, and guessing wrong merges two real books.
 _TITLE_MATCH_CANDIDATES = """
     SELECT ci.id FROM content_items ci
     WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?

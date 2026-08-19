@@ -134,6 +134,10 @@ _CONTENT_ITEMS_TABLE = """
     )
 """
 
+# Parenthesised so no configured source can be named it: an id must match
+# ``SOURCE_ID_PATTERN``, a lowercase letter then letters, digits, _ and -.
+_LEGACY_EXTERNAL_ID_SOURCE = "(legacy)"
+
 _CONTENT_ITEM_COLUMNS = (
     "id",
     "user_id",
@@ -544,6 +548,9 @@ def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
 
 
 def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
+    """``source`` names the last source to sync the row, not the one whose id
+    ``external_id`` holds. Filing legacy ids under a name no source can claim
+    keeps every source's next sync on the title path instead of a duplicate."""
     carried = ", ".join(
         column
         for column in _CONTENT_ITEM_COLUMNS
@@ -559,9 +566,10 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         """INSERT INTO content_item_external_ids
                (content_item_id, user_id, source, external_id, content_type)
-           SELECT id, user_id, source, external_id, content_type
+           SELECT id, user_id, ?, external_id, content_type
              FROM content_items_old
-            WHERE external_id IS NOT NULL AND source IS NOT NULL"""
+            WHERE external_id IS NOT NULL""",
+        (_LEGACY_EXTERNAL_ID_SOURCE,),
     )
 
     cursor.execute("DROP TABLE content_items_old")
