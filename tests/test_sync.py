@@ -854,7 +854,9 @@ class TestASyncSaysWhatItChangedRegression:
         def sync_titled(title: str) -> SyncResult:
             plugin = MagicMock(spec=SourcePlugin)
             plugin.display_name = "Roms"
-            plugin.fetch.return_value = iter([make_item(title, item_id="g1")])
+            plugin.fetch.return_value = iter(
+                [make_item(title, item_id="g1", source="roms")]
+            )
             return execute_sync(
                 plugin=plugin, plugin_config={}, storage_manager=storage
             )

@@ -56,11 +56,10 @@ def _insert_raw_item(
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
+               (user_id, title, normalized_title, content_type,
                 status, rating, review, date_completed, source, ignored)
-               VALUES (1, ?, ?, ?, 'video_game', ?, ?, ?, ?, ?, ?)""",
+               VALUES (1, ?, ?, 'video_game', ?, ?, ?, ?, ?, ?)""",
             (
-                external_id,
                 title,
                 normalized_title,
                 status,
@@ -71,10 +70,22 @@ def _insert_raw_item(
                 1 if ignored else 0,
             ),
         )
-        conn.commit()
         db_id = cursor.lastrowid
         assert db_id is not None
+        _record_raw_external_id(cursor, db_id, source, external_id)
+        conn.commit()
         return db_id
+
+
+def _record_raw_external_id(
+    cursor: sqlite3.Cursor, db_id: int, source: str, external_id: str
+) -> None:
+    """Give a raw row the id its source knows it by."""
+    cursor.execute(
+        "INSERT INTO content_item_external_ids"
+        " (content_item_id, user_id, source, external_id) VALUES (?, 1, ?, ?)",
+        (db_id, source, external_id),
+    )
 
 
 def _mark_written_before_the_repair(conn: sqlite3.Connection) -> None:
@@ -101,14 +112,15 @@ def _insert_raw_book(temp_db: SQLiteDB, external_id: str, author: str | None) ->
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
-                status)
-               VALUES (1, ?, 'The Hobbit', 'hobbit', 'book', 'completed')""",
-            (external_id,),
+               (user_id, title, normalized_title, content_type, status, source)
+               VALUES (1, 'The Hobbit', 'hobbit', 'book', 'completed', 'test')"""
         )
+        db_id = cursor.lastrowid
+        assert db_id is not None
+        _record_raw_external_id(cursor, db_id, "test", external_id)
         cursor.execute(
             "INSERT INTO book_details (content_item_id, author) VALUES (?, ?)",
-            (cursor.lastrowid, author),
+            (db_id, author),
         )
         conn.commit()
 
@@ -235,6 +247,7 @@ def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=5,
+            source="calibre_web",
         ),
         ContentItem(
             id="completed_unrated",
@@ -242,6 +255,7 @@ def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
             rating=None,
+            source="calibre_web",
         ),
         ContentItem(
             id="unread_unrated",
@@ -249,6 +263,7 @@ def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
             content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
             rating=None,
+            source="radarr",
         ),
     ]
     for item in items:
@@ -286,6 +301,7 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
         status=ConsumptionStatus.COMPLETED,
         rating=None,
         ignored=False,
+        source="calibre_web",
     )
     hidden = ContentItem(
         id="ignored_unrated",
@@ -294,6 +310,7 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
         status=ConsumptionStatus.COMPLETED,
         rating=None,
         ignored=True,
+        source="calibre_web",
     )
     temp_db.save_content_item(visible)
     temp_db.save_content_item(hidden)
@@ -562,10 +579,10 @@ class TestGetContentItemsByDbIds:
             for index in range(502):
                 cursor.execute(
                     """INSERT INTO content_items
-                       (user_id, external_id, title, normalized_title,
+                       (user_id, title, normalized_title,
                         content_type, status, source)
-                       VALUES (1, ?, ?, ?, 'video_game', 'completed', 'test')""",
-                    (f"ordered-{index}", f"Game {index}", f"game {index}"),
+                       VALUES (1, ?, ?, 'video_game', 'completed', 'test')""",
+                    (f"Game {index}", f"game {index}"),
                 )
                 assert cursor.lastrowid is not None
                 db_ids.append(cursor.lastrowid)
@@ -606,6 +623,7 @@ class TestGetContentItemsByExternalIds:
                 title=title,
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.COMPLETED,
+                source="steam",
             ),
             user_id=user_id,
         )
@@ -633,7 +651,11 @@ class TestGetContentItemsByExternalIds:
         ] == ["Portal"]
 
     def test_filters_by_content_type(self, temp_db: SQLiteDB) -> None:
-        """One external id naming two types returns only the type asked for."""
+        """One external id naming two types returns only the type asked for.
+
+        Two sources, because one issuing the same id twice is the collision
+        the id table refuses.
+        """
         self._save_game(temp_db, "shared", "Portal")
         temp_db.save_content_item(
             ContentItem(
@@ -641,6 +663,7 @@ class TestGetContentItemsByExternalIds:
                 title="Portal",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
+                source="radarr",
             )
         )
 
@@ -734,6 +757,7 @@ class TestNormalizedTitleLookup:
             title="Old Title",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
+            source="calibre_web",
         )
         db_id = temp_db.save_content_item(item)
 
@@ -743,6 +767,7 @@ class TestNormalizedTitleLookup:
             title="New Title: Remastered",
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.COMPLETED,
+            source="calibre_web",
         )
         db_id_2 = temp_db.save_content_item(updated)
         assert db_id == db_id_2
@@ -1025,6 +1050,7 @@ class TestGetContentItemsSearch:
                     title=title,
                     content_type=ContentType.MOVIE,
                     status=ConsumptionStatus.COMPLETED,
+                    source="radarr",
                 )
             )
             for external_id, title in (
@@ -1092,6 +1118,7 @@ class TestGetContentItemsSearch:
                     content_type=ContentType.MOVIE,
                     status=ConsumptionStatus.COMPLETED,
                     rating=rating,
+                    source="radarr",
                 )
             )
 
@@ -1171,14 +1198,16 @@ class TestPaginationWithoutLimit:
                     content_type=ContentType.BOOK,
                     status=ConsumptionStatus.COMPLETED,
                     rating=rating,
+                    source="calibre_web",
                 )
             )
         with temp_db.connection() as conn:
             cursor = conn.cursor()
             for external_id, (_, updated_at, created_at, _) in cls._ROWS.items():
                 cursor.execute(
-                    "UPDATE content_items SET updated_at = ?, created_at = ? "
-                    "WHERE external_id = ?",
+                    "UPDATE content_items SET updated_at = ?, created_at = ?"
+                    " WHERE id = (SELECT content_item_id"
+                    " FROM content_item_external_ids WHERE external_id = ?)",
                     (updated_at, created_at, external_id),
                 )
             conn.commit()
@@ -1333,6 +1362,7 @@ class TestTheDerivedSearchColumns:
                     title=title,
                     content_type=ContentType.MOVIE,
                     status=ConsumptionStatus.COMPLETED,
+                    source="radarr",
                 )
             )
 
@@ -1342,6 +1372,7 @@ class TestTheDerivedSearchColumns:
                 title="Zeppelin",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
+                source="radarr",
             )
         )
 
@@ -1469,6 +1500,7 @@ class TestSearchPagesPartitionTheMatchedSet:
                     author=author,
                     content_type=ContentType.BOOK,
                     status=ConsumptionStatus.COMPLETED,
+                    source="calibre_web",
                 )
             )
 
@@ -1547,6 +1579,7 @@ class TestPagesPartitionALibraryOfTies:
                         content_type=content_type,
                         status=ConsumptionStatus.COMPLETED,
                         rating=cls._SHARED_RATING,
+                        source="bulk_import",
                     )
                 )
         with temp_db.connection() as conn:
@@ -1683,6 +1716,7 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
             author=author,
             content_type=ContentType.BOOK,
             status=ConsumptionStatus.UNREAD,
+            source="calibre_web",
         )
 
     def test_the_sync_door_creating_and_then_rewriting_a_row(
@@ -1755,14 +1789,13 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
     """
 
     @staticmethod
-    def _derived_columns(db: SQLiteDB, external_id: str) -> tuple[str | None, ...]:
+    def _derived_columns(db: SQLiteDB, title: str) -> tuple[str | None, ...]:
         """The stored sort key and search text of one row."""
         with db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT sort_title, search_text FROM content_items"
-                " WHERE external_id = ?",
-                (external_id,),
+                "SELECT sort_title, search_text FROM content_items WHERE title = ?",
+                (title,),
             )
             row = cursor.fetchone()
         return (row["sort_title"], row["search_text"])
@@ -1784,10 +1817,8 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status)
-                   VALUES (1, 'neuromancer', 'Neuromancer', 'neuromancer',
-                           'book', 'completed')"""
+                   (user_id, title, normalized_title, content_type, status)
+                   VALUES (1, 'Neuromancer', 'neuromancer', 'book', 'completed')"""
             )
             cursor.execute(
                 "INSERT INTO book_details (content_item_id, author)"
@@ -1795,11 +1826,11 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
                 (cursor.lastrowid,),
             )
             conn.commit()
-        assert self._derived_columns(db, "neuromancer") == (None, None)
+        assert self._derived_columns(db, "Neuromancer") == (None, None)
 
         reopened = SQLiteDB(db_path)
 
-        assert self._derived_columns(reopened, "neuromancer") == (
+        assert self._derived_columns(reopened, "Neuromancer") == (
             get_sort_title("Neuromancer"),
             build_search_text("Neuromancer", "William Gibson"),
         )
@@ -3763,13 +3794,15 @@ class TestCrossSourceDuplicateDetectionRegression:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title,
+                   (user_id, title, normalized_title,
                     content_type, status, source)
-                   VALUES (1, 'sonarr-show', 'Regression Show',
+                   VALUES (1, 'Regression Show',
                            'regression show', 'tv_show',
                            'currently_consuming', 'sonarr')""",
             )
             dup_id = cursor.lastrowid
+            assert dup_id is not None
+            _record_raw_external_id(cursor, dup_id, "sonarr", "sonarr-show")
             cursor.execute(
                 """INSERT INTO tv_show_details (content_item_id, metadata)
                    VALUES (?, ?)""",
@@ -3971,12 +4004,14 @@ class TestCrossSourceDuplicateDetectionRegression:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
+                   (user_id, title, normalized_title, content_type,
                     status, source)
-                   VALUES (1, 'blog-hollow', 'Hollow Knight', 'hollow knight',
+                   VALUES (1, 'Hollow Knight', 'hollow knight',
                            'video_game', 'completed', 'blog')""",
             )
             dup_id = cursor.lastrowid
+            assert dup_id is not None
+            _record_raw_external_id(cursor, dup_id, "blog", "blog-hollow")
             cursor.execute(
                 """INSERT INTO video_game_details
                    (content_item_id, developer, genres)
@@ -4017,16 +4052,16 @@ class TestCrossSourceDuplicateDetectionRegression:
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
+               (user_id, title, normalized_title, content_type,
                 status, rating, source)
-               VALUES (1, 'steam-207170', 'Fable Anniversary',
+               VALUES (1, 'Fable Anniversary',
                        'fable anniversary', 'video_game', 'completed', 4, 'steam')"""
         )
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
+               (user_id, title, normalized_title, content_type,
                 status, review, source)
-               VALUES (1, 'blog-fable', 'Fable: Anniversary',
+               VALUES (1, 'Fable: Anniversary',
                        'fable: anniversary', 'video_game', 'completed',
                        'Great game', 'personal_site')"""
         )
@@ -4046,7 +4081,7 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         cursor.execute(
             "SELECT rating, review, normalized_title"
-            " FROM content_items WHERE external_id = 'steam-207170'"
+            " FROM content_items WHERE title = 'Fable Anniversary'"
         )
         row = cursor.fetchone()
         assert row is not None
@@ -4130,12 +4165,14 @@ class TestCrossSourceDuplicateDetectionRegression:
             # Insert kept row: seasons=2, episodes=20
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
+                   (user_id, title, normalized_title, content_type,
                     status, source)
-                   VALUES (1, 'sonarr-bb', 'Breaking Bad', 'breaking bad',
+                   VALUES (1, 'Breaking Bad', 'breaking bad',
                            'tv_show', 'completed', 'sonarr')""",
             )
             keep_id = cursor.lastrowid
+            assert keep_id is not None
+            _record_raw_external_id(cursor, keep_id, "sonarr", "sonarr-bb")
             cursor.execute(
                 """INSERT INTO tv_show_details
                    (content_item_id, seasons, episodes)
@@ -4145,12 +4182,14 @@ class TestCrossSourceDuplicateDetectionRegression:
             # Insert duplicate row: seasons=4, episodes=15
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
+                   (user_id, title, normalized_title, content_type,
                     status, source)
-                   VALUES (1, 'blog-bb', 'Breaking Bad', 'breaking bad',
+                   VALUES (1, 'Breaking Bad', 'breaking bad',
                            'tv_show', 'completed', 'blog')""",
             )
             dup_id = cursor.lastrowid
+            assert dup_id is not None
+            _record_raw_external_id(cursor, dup_id, "blog", "blog-bb")
             cursor.execute(
                 """INSERT INTO tv_show_details
                    (content_item_id, seasons, episodes)
@@ -4185,12 +4224,14 @@ class TestCrossSourceDuplicateDetectionRegression:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
+                   (user_id, title, normalized_title, content_type,
                     status, source)
-                   VALUES (1, 'blog-witcher', 'The Witcher 3', 'witcher 3',
+                   VALUES (1, 'The Witcher 3', 'witcher 3',
                            'video_game', 'completed', 'blog')""",
             )
             dup_id = cursor.lastrowid
+            assert dup_id is not None
+            _record_raw_external_id(cursor, dup_id, "blog", "blog-witcher")
             cursor.execute(
                 """INSERT INTO video_game_details
                    (content_item_id, genres, metadata)
@@ -4238,13 +4279,14 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Insert kept row with some detail data
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
+               (user_id, title, normalized_title, content_type,
                 status, rating, source)
-               VALUES (1, 'steam-dishonored', 'Dishonored',
+               VALUES (1, 'Dishonored',
                        'dishonored', 'video_game', 'completed', 5, 'steam')"""
         )
         keep_id = cursor.lastrowid
         assert keep_id is not None
+        _record_raw_external_id(cursor, keep_id, "steam", "steam-dishonored")
         cursor.execute(
             """INSERT INTO video_game_details
                (content_item_id, developer, genres, tags, metadata)
@@ -4256,14 +4298,15 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Insert duplicate row with complementary detail data
         cursor.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
+               (user_id, title, normalized_title, content_type,
                 status, review, source)
-               VALUES (1, 'blog-dishonored', 'Dishonored',
+               VALUES (1, 'Dishonored',
                        'dishonored', 'video_game', 'completed',
                        'Masterpiece of level design', 'blog')"""
         )
         dup_id = cursor.lastrowid
         assert dup_id is not None
+        _record_raw_external_id(cursor, dup_id, "blog", "blog-dishonored")
         cursor.execute(
             """INSERT INTO video_game_details
                (content_item_id, developer, publisher, genres, tags, metadata)

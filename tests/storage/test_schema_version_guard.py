@@ -135,16 +135,30 @@ def _seed_the_duplicate_pair(db_path: Path) -> None:
     """Write ``_THE_DUPLICATE_PAIR`` into an existing schema."""
     conn = sqlite3.connect(db_path)
     try:
-        conn.executemany(
-            """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type,
-                status, rating, review, source)
-               VALUES (1, ?, ?, ?, 'video_game', 'completed', ?, ?, 'legacy')""",
-            _THE_DUPLICATE_PAIR,
-        )
+        for external_id, title, normalized_title, rating, review in _THE_DUPLICATE_PAIR:
+            cursor = conn.execute(
+                """INSERT INTO content_items
+                   (user_id, title, normalized_title, content_type,
+                    status, rating, review, source)
+                   VALUES (1, ?, ?, 'video_game', 'completed', ?, ?, 'legacy')""",
+                (title, normalized_title, rating, review),
+            )
+            _record_external_id(conn, cursor.lastrowid, external_id)
         conn.commit()
     finally:
         conn.close()
+
+
+def _record_external_id(
+    conn: sqlite3.Connection, db_id: int | None, external_id: str, user_id: int = 1
+) -> None:
+    """Give a seeded row the id its source knows it by."""
+    conn.execute(
+        "INSERT INTO content_item_external_ids"
+        " (content_item_id, user_id, source, external_id)"
+        " VALUES (?, ?, 'legacy', ?)",
+        (db_id, user_id, external_id),
+    )
 
 
 def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
@@ -156,8 +170,10 @@ def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
     conn = sqlite3.connect(db_path)
     try:
         return conn.execute(
-            "SELECT external_id, normalized_title, rating, review"
-            " FROM content_items ORDER BY id"
+            "SELECT x.external_id, ci.normalized_title, ci.rating, ci.review"
+            " FROM content_items ci"
+            " LEFT JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+            " ORDER BY ci.id"
         ).fetchall()
     finally:
         conn.close()
@@ -509,12 +525,14 @@ class TestWhatTheDeduplicationPassRefusesToGroup:
             conn.execute(
                 "INSERT OR IGNORE INTO users (id, username) VALUES (2, 'second')"
             )
-            conn.executemany(
-                """INSERT INTO content_items
-                   (user_id, external_id, title, content_type, status, source)
-                   VALUES (?, ?, ?, ?, 'completed', 'legacy')""",
-                rows,
-            )
+            for user_id, external_id, title, content_type in rows:
+                cursor = conn.execute(
+                    """INSERT INTO content_items
+                       (user_id, title, content_type, status, source)
+                       VALUES (?, ?, ?, 'completed', 'legacy')""",
+                    (user_id, title, content_type),
+                )
+                _record_external_id(conn, cursor.lastrowid, external_id, user_id)
             conn.execute("PRAGMA user_version = 0")
             conn.commit()
         finally:

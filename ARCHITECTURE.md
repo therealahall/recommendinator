@@ -48,6 +48,7 @@ SQLite holds everything.
 |-------|-------|
 | `users` | Per-user settings (JSON) |
 | `content_items` | Library items, scoped by `user_id` |
+| `content_item_external_ids` | The id each source knows an item by, unique per `(user_id, source, external_id)` |
 | `book_details`, `movie_details`, `tv_show_details`, `video_game_details` | Per-type detail |
 | `credentials` | Encrypted OAuth tokens and API keys, per-source and global |
 | `source_configs` | Non-sensitive per-source config |
@@ -230,11 +231,18 @@ title/creator boundary.
 
 #### Cross-source deduplication
 
-Items are deduplicated by normalized title. A save looks up
-`(user_id, external_id, content_type)`, then merges any *different* row sharing
-`(user_id, content_type, normalized_title)`. With no external_id match it falls
-back to a direct normalized-title lookup. The version-3 migration re-normalizes
-every title once and merges whatever that exposes.
+Items are deduplicated by normalized title. A save looks up the item carrying
+that external id under this user and content type, then merges any *different*
+row sharing `(user_id, content_type, normalized_title)`. With no external-id
+match it falls back to a direct normalized-title lookup. The version-3 migration
+re-normalizes every title once and merges whatever that exposes.
+
+External ids live in `content_item_external_ids`, one row per source per item,
+because they are source-native: Steam's app 440 and GOG's product 440 are
+different games. An item created with an id records it under the source that
+issued it; an item with no source records none. The version-8 migration rebuilds
+`content_items` to drop the column and the `(user_id, external_id, content_type)`
+key it sat under.
 
 Merge rules:
 

@@ -109,7 +109,10 @@ class SyncRunDict(TypedDict):
 #
 # The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
 # and run unconditionally; only version-guarded steps consult this.
-_SCHEMA_VERSION = 7
+# Version 8 records the external ids' move onto ``content_item_external_ids``,
+# and guards nothing: its rebuild runs while the column it drops is still
+# there, so it skips a database already rebuilt.
+_SCHEMA_VERSION = 8
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -132,6 +135,69 @@ _ORPHANED_SETTING_PREFIXES: tuple[str, ...] = (
     "features.",
     "ollama.",
     "conversation.",
+)
+
+# Issued both by the fresh create and by the version-8 rebuild, so a database
+# that reaches this shape by upgrade and one created at it are the same schema
+# down to the stored DDL text.
+_CONTENT_ITEMS_TABLE = """
+    CREATE TABLE IF NOT EXISTS content_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        normalized_title TEXT,
+        sort_title TEXT,
+        search_text TEXT,
+        content_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+        review TEXT,
+        date_completed DATE,
+        ignored BOOLEAN DEFAULT 0,
+        -- Source id, never a plugin name: two sources on one plugin must
+        -- stay tellable apart.
+        source TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+# Named rather than copied with ``*``: the old table's column order is not the
+# new one's, so an unnamed copy would slide values into the wrong columns. The
+# ``id`` is carried because every child row references it.
+_CONTENT_ITEM_COLUMNS = (
+    "id",
+    "user_id",
+    "title",
+    "normalized_title",
+    "sort_title",
+    "search_text",
+    "content_type",
+    "status",
+    "rating",
+    "review",
+    "date_completed",
+    "ignored",
+    "source",
+    "created_at",
+    "updated_at",
+)
+
+# Created after the rebuild, which drops the table they belong to and takes
+# them with it.
+_CONTENT_ITEM_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)",
+    "CREATE INDEX IF NOT EXISTS idx_status ON content_items(status)",
+    "CREATE INDEX IF NOT EXISTS idx_rating ON content_items(rating)",
+    "CREATE INDEX IF NOT EXISTS idx_date_completed ON content_items(date_completed)",
+    "CREATE INDEX IF NOT EXISTS idx_source ON content_items(source)",
+    "CREATE INDEX IF NOT EXISTS idx_user_type ON content_items(user_id, content_type)",
+    "CREATE INDEX IF NOT EXISTS idx_user_status ON content_items(user_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title"
+    " ON content_items(user_id, content_type, normalized_title)",
+    "CREATE INDEX IF NOT EXISTS idx_ci_sort_title"
+    " ON content_items(user_id, sort_title, id)",
 )
 
 
@@ -157,13 +223,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO users (id, username, display_name)
-        VALUES (1, 'default', 'Default User')
-        """
-    )
-
     # Login credentials for that row, NULL until someone claims the instance —
     # which is how the web layer tells a fresh install from a claimed one.
     _add_column_if_not_exists(cursor, "users", "password_hash", "TEXT")
@@ -185,28 +244,40 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
 
+    cursor.execute(_CONTENT_ITEMS_TABLE)
+
+    # Source-scoped because the ids are source-native: Steam's app 440 and
+    # GOG's product 440 are different games. One row per source per item, so an
+    # item that absorbs another source's row keeps both ids.
     cursor.execute(
         """
-        CREATE TABLE IF NOT EXISTS content_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id) ON DELETE CASCADE,
-            external_id TEXT,
-            title TEXT NOT NULL,
-            normalized_title TEXT,
-            sort_title TEXT,
-            search_text TEXT,
-            content_type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            rating INTEGER CHECK (rating >= 1 AND rating <= 5),
-            review TEXT,
-            date_completed DATE,
-            -- Source id, never a plugin name: two sources on one plugin must
-            -- stay tellable apart.
-            source TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, external_id, content_type)
+        CREATE TABLE IF NOT EXISTS content_item_external_ids (
+            content_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            PRIMARY KEY (content_item_id, source),
+            UNIQUE (user_id, source, external_id)
         )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_id_lookup "
+        "ON content_item_external_ids(user_id, external_id)"
+    )
+
+    # Ahead of every write below, because the rebuild needs a pragma that is a
+    # no-op once a statement has opened a transaction, and it commits its own.
+    if _has_column(cursor, "content_items", "external_id"):
+        _move_external_ids_off_content_items(conn)
+    for index_statement in _CONTENT_ITEM_INDEXES:
+        cursor.execute(index_statement)
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO users (id, username, display_name)
+        VALUES (1, 'default', 'Default User')
         """
     )
 
@@ -269,25 +340,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)"
-    )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON content_items(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rating ON content_items(rating)")
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_date_completed ON content_items(date_completed)"
-    )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_source ON content_items(source)")
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_user_type ON content_items(user_id, content_type)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_user_status ON content_items(user_id, status)"
-    )
-
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_movie_director ON movie_details(director)"
@@ -331,11 +383,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    # Index must be created *after* the migration adds the column
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ci_normalized_title "
-        "ON content_items(user_id, content_type, normalized_title)"
-    )
 
     # Columns derived from the title and the creator, so the library list is
     # ordered and searched in SQL (see src/storage/derived.py). Filled after
@@ -347,10 +394,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "sort_title", "TEXT")
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     backfill_derived_columns(cursor)
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ci_sort_title "
-        "ON content_items(user_id, sort_title, id)"
-    )
 
     # Preference profile snapshots (regenerated periodically)
     cursor.execute(
@@ -515,6 +558,55 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     _migrate_stranded_detail_shapes(cursor)
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
+
+
+def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
+    """Rebuild ``content_items`` without ``external_id``, keeping every child row."""
+    # Five tables cascade off it: the rename repoints their REFERENCES at the
+    # old table unless renaming is legacy, and the drop deletes their rows
+    # unless foreign keys are off, a pragma that is a no-op in a transaction.
+    enforced = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("BEGIN")
+        _rebuild_content_items(conn.cursor())
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute(f"PRAGMA foreign_keys = {int(enforced)}")
+
+
+def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
+    """Copy the rows onto a fresh table, and their ids onto their own."""
+    # Only the columns the old table has: a database predating one the current
+    # shape declares would otherwise take the open down, and the steps after
+    # this fill it as they always have.
+    carried = ", ".join(
+        column
+        for column in _CONTENT_ITEM_COLUMNS
+        if _has_column(cursor, "content_items", column)
+    )
+    cursor.execute("ALTER TABLE content_items RENAME TO content_items_old")
+    cursor.execute(_CONTENT_ITEMS_TABLE)
+    cursor.execute(
+        f"INSERT INTO content_items ({carried})"
+        f" SELECT {carried} FROM content_items_old"
+    )
+
+    # A row with no source keeps no id: an id with nothing to scope it
+    # identifies nothing. Grouped because the old key admitted one id per
+    # content type per source, so the older row keeps a colliding one.
+    cursor.execute(
+        """INSERT INTO content_item_external_ids
+               (content_item_id, user_id, source, external_id)
+           SELECT MIN(id), user_id, source, external_id
+             FROM content_items_old
+            WHERE external_id IS NOT NULL AND source IS NOT NULL
+            GROUP BY user_id, source, external_id"""
+    )
+
+    cursor.execute("DROP TABLE content_items_old")
 
 
 def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None:
@@ -804,14 +896,17 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
     return [str(name).capitalize() for name, supported in stored.items() if supported]
 
 
+def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
+    """Whether *table* already carries *column*."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    return any(row["name"] == column for row in cursor.fetchall())
+
+
 def _add_column_if_not_exists(
     cursor: sqlite3.Cursor, table: str, column: str, column_type: str
 ) -> None:
     """Add a column to a table if it doesn't already exist."""
-    cursor.execute(f"PRAGMA table_info({table})")
-    columns = [row["name"] for row in cursor.fetchall()]
-
-    if column not in columns:
+    if not _has_column(cursor, table, column):
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 

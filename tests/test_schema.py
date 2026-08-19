@@ -155,17 +155,15 @@ def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     cursor.execute(
         """INSERT INTO content_items
-           (user_id, external_id, title, normalized_title, content_type,
-            status, rating, source)
-           VALUES (1, 'steam-witcher', 'The Witcher III: Wild Hunt',
+           (user_id, title, normalized_title, content_type, status, rating, source)
+           VALUES (1, 'The Witcher III: Wild Hunt',
                    'the witcher iii: wild hunt', 'video_game', 'completed',
                    5, 'steam')"""
     )
     cursor.execute(
         """INSERT INTO content_items
-           (user_id, external_id, title, normalized_title, content_type,
-            status, review, source)
-           VALUES (1, 'blog-witcher', 'Witcher 3 - Wild Hunt',
+           (user_id, title, normalized_title, content_type, status, review, source)
+           VALUES (1, 'Witcher 3 - Wild Hunt',
                    'witcher 3 - wild hunt', 'video_game', 'completed',
                    'Great writing', 'blog')"""
     )
@@ -177,7 +175,7 @@ def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return every content row, oldest first."""
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT external_id, normalized_title, rating, review FROM content_items"
+        "SELECT title, normalized_title, rating, review FROM content_items"
         " ORDER BY id"
     )
     return cursor.fetchall()
@@ -216,7 +214,7 @@ class TestTheOneTimeContentRepair:
         create_schema(temp_db)
 
         rows = _content_rows(temp_db)
-        assert [row["external_id"] for row in rows] == ["steam-witcher"]
+        assert [row["title"] for row in rows] == ["The Witcher III: Wild Hunt"]
         assert (rows[0]["rating"], rows[0]["review"]) == (5, "Great writing")
 
     def test_a_second_open_runs_none_of_the_passes(
@@ -253,9 +251,8 @@ def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     cursor.execute(
         """INSERT INTO content_items
-           (user_id, external_id, title, normalized_title, content_type, status)
-           VALUES (1, 'steam-witcher', 'The Witcher 3', 'witcher 3',
-                   'video_game', 'completed')"""
+           (user_id, title, normalized_title, content_type, status)
+           VALUES (1, 'The Witcher 3', 'witcher 3', 'video_game', 'completed')"""
     )
     cursor.execute(
         "INSERT INTO video_game_details (content_item_id, developer)"
@@ -322,24 +319,21 @@ class TestTheDerivedColumnBackfill:
             build_search_text("The Witcher 3", "CD Projekt Red"),
         )
 
-    # external_id -> (title, content_type, detail table, creator column, creator).
-    # One row per content type, because each keeps its creator in a column of
-    # its own and the fill selects between them on the content type. The titles
-    # carry a leading article and non-Latin letters, which SQL's own lower()
-    # could not normalize the way the key function does.
+    # title -> (content_type, detail table, creator column, creator). One row
+    # per type, because each keeps its creator in a column of its own. The
+    # titles carry a leading article and non-Latin letters, which SQL's own
+    # lower() cannot normalize.
     _LIBRARY_OF_EVERY_TYPE = (
         (
-            "gr-1",
             "The Left Hand of Darkness",
             "book",
             "book_details",
             "author",
             "Le Guin",
         ),
-        ("tmdb-1", "Ångström", "movie", "movie_details", "director", "Roy Andersson"),
-        ("tvdb-1", "進撃の巨人", "tv_show", "tv_show_details", "creators", "諫山創"),
+        ("Ångström", "movie", "movie_details", "director", "Roy Andersson"),
+        ("進撃の巨人", "tv_show", "tv_show_details", "creators", "諫山創"),
         (
-            "steam-1",
             "The Witcher 3",
             "video_game",
             "video_game_details",
@@ -353,7 +347,6 @@ class TestTheDerivedColumnBackfill:
         """Write one row per content type, each missing the derived columns."""
         cursor = conn.cursor()
         for (
-            external_id,
             title,
             content_type,
             table,
@@ -362,10 +355,9 @@ class TestTheDerivedColumnBackfill:
         ) in cls._LIBRARY_OF_EVERY_TYPE:
             cursor.execute(
                 """INSERT INTO content_items
-                   (user_id, external_id, title, normalized_title, content_type,
-                    status)
-                   VALUES (1, ?, ?, ?, ?, 'completed')""",
-                (external_id, title, title.lower(), content_type),
+                   (user_id, title, normalized_title, content_type, status)
+                   VALUES (1, ?, ?, ?, 'completed')""",
+                (title, title.lower(), content_type),
             )
             cursor.execute(
                 f"INSERT INTO {table} (content_item_id, {column}) VALUES (?, ?)",
@@ -388,17 +380,17 @@ class TestTheDerivedColumnBackfill:
         create_schema(temp_db)
 
         cursor = temp_db.cursor()
-        cursor.execute("SELECT external_id, sort_title, search_text FROM content_items")
+        cursor.execute("SELECT title, sort_title, search_text FROM content_items")
         stored = {
-            row["external_id"]: (row["sort_title"], row["search_text"])
+            row["title"]: (row["sort_title"], row["search_text"])
             for row in cursor.fetchall()
         }
         assert stored == {
-            external_id: (
+            title: (
                 get_sort_title(title),
                 build_search_text(title, creator),
             )
-            for external_id, title, _, _, _, creator in self._LIBRARY_OF_EVERY_TYPE
+            for title, _, _, _, creator in self._LIBRARY_OF_EVERY_TYPE
         }
 
     def test_a_row_with_no_detail_row_fills_its_title_alone(
@@ -414,9 +406,8 @@ class TestTheDerivedColumnBackfill:
         create_schema(temp_db)
         temp_db.execute(
             """INSERT INTO content_items
-               (user_id, external_id, title, normalized_title, content_type, status)
-               VALUES (1, 'orphan', 'A Lonely Row', 'lonely row', 'book',
-                       'completed')"""
+               (user_id, title, normalized_title, content_type, status)
+               VALUES (1, 'A Lonely Row', 'lonely row', 'book', 'completed')"""
         )
         temp_db.commit()
 
@@ -484,44 +475,88 @@ def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
     assert users[2]["username"] == "bob"
 
 
-def test_content_items_unique_constraint(temp_db: sqlite3.Connection) -> None:
-    """Test that content_items has correct unique constraint."""
+def _insert_game(conn: sqlite3.Connection, title: str, user_id: int = 1) -> int:
+    """Insert a bare video-game row and return its database id."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO content_items (user_id, title, content_type, status)"
+        " VALUES (?, ?, 'video_game', 'unread')",
+        (user_id, title),
+    )
+    assert cursor.lastrowid is not None
+    return cursor.lastrowid
+
+
+def _record_external_id(
+    conn: sqlite3.Connection,
+    db_id: int,
+    source: str,
+    external_id: str,
+    user_id: int = 1,
+) -> None:
+    """Give an item the id one source knows it by."""
+    conn.execute(
+        "INSERT INTO content_item_external_ids"
+        " (content_item_id, user_id, source, external_id) VALUES (?, ?, ?, ?)",
+        (db_id, user_id, source, external_id),
+    )
+
+
+def test_two_sources_can_each_know_an_item_of_their_own_as_440(
+    temp_db: sqlite3.Connection,
+) -> None:
+    """Steam's app 440 and GOG's product 440 are different games.
+
+    The dropped UNIQUE(user_id, external_id, content_type) forbade the pair
+    outright, so the second source's game became the first's.
+    """
     create_schema(temp_db)
+    team_fortress = _insert_game(temp_db, "Team Fortress 2")
+    alien_breed = _insert_game(temp_db, "Alien Breed")
 
-    cursor = temp_db.cursor()
+    _record_external_id(temp_db, team_fortress, "steam", "440")
+    _record_external_id(temp_db, alien_breed, "gog", "440")
 
-    # Insert a content item
-    cursor.execute(
-        """
-        INSERT INTO content_items (user_id, external_id, title, content_type, status)
-        VALUES (1, 'ext123', 'Test Book', 'book', 'unread')
-        """
-    )
+    stored = temp_db.execute(
+        "SELECT source, content_item_id FROM content_item_external_ids"
+        " WHERE external_id = '440' ORDER BY source"
+    ).fetchall()
+    assert [tuple(row) for row in stored] == [
+        ("gog", alien_breed),
+        ("steam", team_fortress),
+    ]
 
-    # Same external_id for same user and type should fail
+
+def test_one_source_cannot_know_two_items_by_the_same_id(
+    temp_db: sqlite3.Connection,
+) -> None:
+    """Within a source an id is an identity, and a second claim on it is a bug.
+
+    The half of the old constraint worth keeping: without it one source's item
+    could scatter across rows nothing would reconcile.
+    """
+    create_schema(temp_db)
+    first = _insert_game(temp_db, "Team Fortress 2")
+    second = _insert_game(temp_db, "Team Fortress Classic")
+    _record_external_id(temp_db, first, "steam", "440")
+
     with pytest.raises(sqlite3.IntegrityError):
-        cursor.execute(
-            """
-            INSERT INTO content_items (user_id, external_id, title, content_type, status)
-            VALUES (1, 'ext123', 'Another Book', 'book', 'unread')
-            """
-        )
+        _record_external_id(temp_db, second, "steam", "440")
 
-    # Same external_id for different user should work
+
+def test_another_user_library_may_hold_the_same_source_id(
+    temp_db: sqlite3.Connection,
+) -> None:
+    """The key is per library: two users owning one game is not a collision."""
+    create_schema(temp_db)
     create_user(temp_db, "user2")
-    cursor.execute(
-        """
-        INSERT INTO content_items (user_id, external_id, title, content_type, status)
-        VALUES (2, 'ext123', 'Test Book', 'book', 'unread')
-        """
-    )
+    mine = _insert_game(temp_db, "Team Fortress 2")
+    theirs = _insert_game(temp_db, "Team Fortress 2", user_id=2)
 
-    # Same external_id for different content type should work
-    cursor.execute(
-        """
-        INSERT INTO content_items (user_id, external_id, title, content_type, status)
-        VALUES (1, 'ext123', 'Test Movie', 'movie', 'unread')
-        """
-    )
+    _record_external_id(temp_db, mine, "steam", "440")
+    _record_external_id(temp_db, theirs, "steam", "440", user_id=2)
 
-    temp_db.commit()
+    stored = temp_db.execute(
+        "SELECT user_id FROM content_item_external_ids ORDER BY user_id"
+    ).fetchall()
+    assert [row["user_id"] for row in stored] == [1, 2]
