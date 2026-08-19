@@ -18,6 +18,7 @@ const partlySuccessful: ImportResponse = {
     'Skipped line 14: no title',
     'Skipped line 88: 6 fields short of the header',
   ],
+  notes: [],
 }
 
 describe('ImportResultSummary', () => {
@@ -77,6 +78,7 @@ describe('ImportResultSummary', () => {
         result: {
           ...partlySuccessful,
           importer: 'json_import',
+          skipped: 1,
           errors: ['Skipped entry 2: no title'],
         },
       },

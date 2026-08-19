@@ -16,6 +16,11 @@ const counts = computed(() => [
   { key: 'failed', label: 'Failed', value: props.result.failed },
   { key: 'total_rows', label: 'Rows read', value: props.result.total_rows },
 ])
+
+// From the counts, not from the list: every miss records one line, but the list
+// caps at 200 plus a tally, so counting it under-reports the whole-file refusal
+// the cap exists for.
+const missed = computed(() => props.result.skipped + props.result.failed)
 </script>
 
 <template>
@@ -31,13 +36,22 @@ const counts = computed(() => [
       </div>
     </dl>
 
+    <!-- Its own paragraph, outside the misses: it happened to the file, so a
+         heading counting refused rows would put it under a count of zero. -->
+    <p
+      v-for="note in result.notes"
+      :key="note"
+      class="import-note"
+      data-testid="import-note"
+    >{{ note }}</p>
+
     <!-- Not an error state and not styled as one. A file where most rows
          imported and two did not is a success that lists two rows. -->
     <div v-if="result.errors.length" class="import-misses">
       <!-- "Rows", because each message names its own unit: a JSON array
            entry is not a file line, and the heading cannot know which. -->
       <h4 class="import-misses-title">
-        Rows that did not import ({{ result.errors.length }})
+        Rows that did not import ({{ missed }})
       </h4>
       <ul class="import-misses-list" data-testid="import-errors" role="list">
         <li v-for="message in result.errors" :key="message">{{ message }}</li>
@@ -97,6 +111,16 @@ const counts = computed(() => [
   border-left: 3px solid var(--color-warning);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   background: var(--bg-elevated);
+}
+
+.import-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-warning);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--bg-elevated);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
 }
 
 .import-misses-title {

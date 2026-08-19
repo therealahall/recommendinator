@@ -149,6 +149,7 @@ const IMPORT_SURFACES: [string, string, string, string][] = [
   ['a count label', RESULT_SUMMARY, '.import-count dt', '.import-counts'],
   ['a skipped line', RESULT_SUMMARY, '.import-misses-list', '.import-misses'],
   ['the misses heading', RESULT_SUMMARY, '.import-misses-title', '.import-misses'],
+  ['a file note', RESULT_SUMMARY, '.import-note', '.import-note'],
   ['the drop hint', DROP_ZONE, '.drop-zone-hint', '.drop-zone'],
   ['the chosen file', DROP_ZONE, '.drop-zone-selection', '.drop-zone'],
   ['the file label', DROP_ZONE, '.drop-zone-label', '.drop-zone'],
