@@ -134,6 +134,21 @@ _CONTENT_ITEMS_TABLE = """
     )
 """
 
+# Steam's 440 and GOG's 440 differ, and Trakt's movie 1 from its show 1, so
+# the key needs both; type is copied here because UNIQUE spans one table.
+_EXTERNAL_IDS_TABLE = """
+    CREATE TABLE IF NOT EXISTS content_item_external_ids (
+        content_item_id INTEGER NOT NULL
+            REFERENCES content_items(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        PRIMARY KEY (content_item_id, source),
+        UNIQUE (user_id, source, external_id, content_type)
+    )
+"""
+
 # Parenthesised so no source the app creates can be named it: every door
 # validates against ``SOURCE_ID_PATTERN`` (a lowercase letter, then letters,
 # digits, _ and -). Only a hand-written ``inputs`` key, taken verbatim from
@@ -201,26 +216,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     cursor.execute(_CONTENT_ITEMS_TABLE)
 
-    # Steam's 440 and GOG's 440 differ, and Trakt's movie 1 from its show 1, so
-    # the key needs both; type is copied here because UNIQUE spans one table.
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS content_item_external_ids (
-            content_item_id INTEGER NOT NULL
-                REFERENCES content_items(id) ON DELETE CASCADE,
-            user_id INTEGER NOT NULL,
-            source TEXT NOT NULL,
-            external_id TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            PRIMARY KEY (content_item_id, source),
-            UNIQUE (user_id, source, external_id, content_type)
-        )
-        """
-    )
+    cursor.execute(_EXTERNAL_IDS_TABLE)
 
-    # Ahead of every write below: its pragmas are no-ops once a transaction is
-    # open. It commits before the version stamp, so the guard is the column —
-    # a version guard would rebuild a table with no external_id.
+    # Both repairs run ahead of every write below, because neither can open a
+    # transaction while one is already open. This one runs first: the move
+    # writes the table it rebuilds.
+    _rebuild_external_ids_if_stale(conn)
+    # It commits before the version stamp, so the guard is the column — a
+    # version guard would rebuild a table with no external_id.
     if _has_column(cursor, "content_items", "external_id"):
         _move_external_ids_off_content_items(conn)
     for index_statement in _CONTENT_ITEM_INDEXES:
@@ -512,6 +515,62 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     _migrate_stranded_detail_shapes(cursor)
     # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
+
+
+_TableShape = tuple[tuple[str, ...], frozenset[tuple[str, ...]]]
+
+
+def _table_shape(cursor: sqlite3.Cursor, table: str) -> _TableShape:
+    """*table*'s columns and the column tuples its keys span.
+
+    Keys too, in order: this table's UNIQUE key gained ``content_type`` with
+    the column, and its order decides whether the id lookup seeks.
+    """
+    cursor.execute(f"PRAGMA index_list({table})")
+    # origin 'c' is a CREATE INDEX, which the CREATE TABLE does not declare.
+    key_indexes = [row["name"] for row in cursor.fetchall() if row["origin"] != "c"]
+    keys = set()
+    for index in key_indexes:
+        cursor.execute(f"PRAGMA index_info({index})")
+        keys.add(tuple(row["name"] for row in cursor.fetchall()))
+    return tuple(_column_names(cursor, table)), frozenset(keys)
+
+
+def _rebuild_external_ids_if_stale(conn: sqlite3.Connection) -> None:
+    """Bring ``content_item_external_ids`` to the shape it declares.
+
+    A database built mid-branch carries it without ``content_type`` and
+    refuses every write. Version 8 was stamped before that column, so the
+    guard is the declared shape rather than the version.
+    """
+    table = "content_item_external_ids"
+    scratch = sqlite3.connect(":memory:")
+    scratch.row_factory = sqlite3.Row
+    try:
+        scratch.execute(_EXTERNAL_IDS_TABLE)
+        declared = _table_shape(scratch.cursor(), table)
+    finally:
+        scratch.close()
+
+    cursor = conn.cursor()
+    if _table_shape(cursor, table) == declared:
+        return
+
+    conn.execute("BEGIN")
+    cursor.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    cursor.execute(_EXTERNAL_IDS_TABLE)
+    # An orphaned id row is dropped with the join: the foreign key on the
+    # rebuilt table would refuse it anyway.
+    cursor.execute(
+        f"""INSERT INTO {table}
+                (content_item_id, user_id, source, external_id, content_type)
+            SELECT x.content_item_id, x.user_id, x.source, x.external_id,
+                   ci.content_type
+              FROM {table}_old x
+              JOIN content_items ci ON ci.id = x.content_item_id"""
+    )
+    cursor.execute(f"DROP TABLE {table}_old")
+    conn.commit()
 
 
 def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
