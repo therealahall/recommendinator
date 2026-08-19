@@ -509,7 +509,6 @@ class TraktPlugin(SourcePlugin):
                 client_secret=(config.get("client_secret") or "").strip(),
                 refresh_token=(config.get("refresh_token") or "").strip(),
                 include_watchlist=config.get("include_watchlist", True),
-                source=self.get_source_identifier(config),
                 progress_callback=progress_callback,
                 on_credential_rotated=on_rotated,
             )
@@ -522,7 +521,6 @@ class TraktPlugin(SourcePlugin):
         client_secret: str,
         refresh_token: str,
         include_watchlist: bool,
-        source: str,
         progress_callback: ProgressCallback | None,
         on_credential_rotated: CredentialUpdateCallback | None,
     ) -> Iterator[ContentItem]:
@@ -541,20 +539,20 @@ class TraktPlugin(SourcePlugin):
         # watchlist; ratings attach to whichever entry exists.
         items: dict[tuple[ContentType, int], ContentItem] = {}
 
-        self._add_watched_movies(items, access_token, client_id, source)
+        self._add_watched_movies(items, access_token, client_id)
         if progress_callback:
             progress_callback(len(items), None, "Fetching watched shows...")
 
-        self._add_watched_shows(items, access_token, client_id, source)
+        self._add_watched_shows(items, access_token, client_id)
         if progress_callback:
             progress_callback(len(items), None, "Fetching ratings...")
 
-        self._apply_ratings(items, access_token, client_id, source)
+        self._apply_ratings(items, access_token, client_id)
 
         if include_watchlist:
             if progress_callback:
                 progress_callback(len(items), None, "Fetching watchlist...")
-            self._add_watchlist(items, access_token, client_id, source)
+            self._add_watchlist(items, access_token, client_id)
 
         total = len(items)
         for index, item in enumerate(items.values(), start=1):
@@ -567,7 +565,6 @@ class TraktPlugin(SourcePlugin):
         items: dict[tuple[ContentType, int], ContentItem],
         access_token: str,
         client_id: str,
-        source: str,
     ) -> None:
         for entry in fetch_list("/sync/watched/movies", access_token, client_id):
             movie = entry.get("movie") or {}
@@ -585,7 +582,6 @@ class TraktPlugin(SourcePlugin):
                     entry.get("last_watched_at")
                 ),
                 metadata=_media_metadata(movie),
-                source=source,
             )
 
     def _add_watched_shows(
@@ -593,7 +589,6 @@ class TraktPlugin(SourcePlugin):
         items: dict[tuple[ContentType, int], ContentItem],
         access_token: str,
         client_id: str,
-        source: str,
     ) -> None:
         for entry in fetch_list(
             "/sync/watched/shows", access_token, client_id, extended="full"
@@ -659,7 +654,6 @@ class TraktPlugin(SourcePlugin):
                 ),
                 rating=None,
                 metadata=metadata,
-                source=source,
             )
 
     def _apply_ratings(
@@ -667,7 +661,6 @@ class TraktPlugin(SourcePlugin):
         items: dict[tuple[ContentType, int], ContentItem],
         access_token: str,
         client_id: str,
-        source: str,
     ) -> None:
         for content_type, endpoint, media_key in (
             (ContentType.MOVIE, "/sync/ratings/movies", "movie"),
@@ -692,7 +685,6 @@ class TraktPlugin(SourcePlugin):
                     status=ConsumptionStatus.UNREAD,
                     rating=rating,
                     metadata=_media_metadata(media),
-                    source=source,
                 )
 
     def _add_watchlist(
@@ -700,7 +692,6 @@ class TraktPlugin(SourcePlugin):
         items: dict[tuple[ContentType, int], ContentItem],
         access_token: str,
         client_id: str,
-        source: str,
     ) -> None:
         for content_type, endpoint, media_key in (
             (ContentType.MOVIE, "/sync/watchlist/movies", "movie"),
@@ -722,5 +713,4 @@ class TraktPlugin(SourcePlugin):
                     status=ConsumptionStatus.UNREAD,
                     rating=None,
                     metadata=_media_metadata(media),
-                    source=source,
                 )

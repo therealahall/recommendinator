@@ -224,7 +224,6 @@ class TestEpicGamesPluginFetch:
         assert items[0].title == "Game One"
         assert items[0].content_type == ContentType.VIDEO_GAME
         assert items[0].id == "cat1"
-        assert items[0].source == "epic_games"
         assert items[0].status == ConsumptionStatus.UNREAD
         assert items[0].rating is None
         assert items[0].author is None

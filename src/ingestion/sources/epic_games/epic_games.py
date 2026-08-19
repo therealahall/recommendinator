@@ -286,7 +286,6 @@ class EpicGamesPlugin(SourcePlugin):
         try:
             yield from _fetch_epic_games(
                 refresh_token=config.get("refresh_token", "").strip(),
-                source=self.get_source_identifier(config),
                 progress_callback=progress_callback,
                 on_credential_rotated=(
                     config.get("_on_credential_rotated")
@@ -305,7 +304,6 @@ class EpicGamesPlugin(SourcePlugin):
 
 def _fetch_epic_games(
     refresh_token: str,
-    source: str = "epic_games",
     progress_callback: ProgressCallback | None = None,
     on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
@@ -313,7 +311,6 @@ def _fetch_epic_games(
 
     Args:
         refresh_token: Epic Games OAuth refresh token.
-        source: Source identifier for ContentItems.
         progress_callback: Optional callback(current, total, message).
         on_credential_rotated: Optional callback(key, value) called when the
             refresh token is rotated by the OAuth server.
@@ -408,7 +405,6 @@ def _fetch_epic_games(
             status=ConsumptionStatus.UNREAD,
             date_completed=None,
             metadata=metadata,
-            source=source,
         )
         count += 1
 

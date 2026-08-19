@@ -173,7 +173,6 @@ class TestCalibreWebFetch:
         assert item.id == "calibre:hobbit-uuid"
         assert item.content_type == ContentType.BOOK
         assert item.status == ConsumptionStatus.UNREAD
-        assert item.source == "calibre_web"
         assert item.metadata["summary"] == "A hobbit's adventure."
         assert item.metadata["publisher"] == "Allen & Unwin"
         assert item.metadata["language"] == "en"

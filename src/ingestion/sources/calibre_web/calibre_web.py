@@ -191,7 +191,6 @@ class CalibreWebPlugin(SourcePlugin):
         password = (config.get("password") or "").strip()
         verify_ssl = config.get("verify_ssl", True)
         auth = (username, password)
-        source = self.get_source_identifier(config)
 
         # A sync of every source skips validate_config, so the basic-auth
         # password would otherwise reach whatever host the config now names.
@@ -208,7 +207,7 @@ class CalibreWebPlugin(SourcePlugin):
 
             entries = root.findall("atom:entry", _NS)
             for entry in entries:
-                item = self._parse_entry(entry, read_ids, source)
+                item = self._parse_entry(entry, read_ids)
                 if item is None:
                     continue
                 processed += 1
@@ -332,14 +331,12 @@ class CalibreWebPlugin(SourcePlugin):
         self,
         entry: ElementTree.Element,
         read_ids: set[str],
-        source: str,
     ) -> ContentItem | None:
         """Build a ContentItem from a single OPDS entry.
 
         Args:
             entry: OPDS ``<entry>`` element.
             read_ids: Set of external ids on the read-books shelf.
-            source: Source identifier for the ContentItem.
 
         Returns:
             A ContentItem, or None if the entry has no usable title.
@@ -370,7 +367,6 @@ class CalibreWebPlugin(SourcePlugin):
             rating=None,
             status=status,
             metadata=metadata,
-            source=source,
         )
 
 

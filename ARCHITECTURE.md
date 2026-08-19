@@ -60,7 +60,7 @@ SQLite holds everything.
 #### User-owned fields
 
 `rating`, `review`, `status`, `date_completed` and `ignored` belong to the user.
-Four methods on `SQLiteDB` write them.
+Five methods on `SQLiteDB` write them.
 
 `save_content_item` is the sync door:
 
@@ -74,14 +74,19 @@ Four methods on `SQLiteDB` write them.
 `seasons_watched` is the one metadata key the sync door unions: a sync adds a
 season, never removes one.
 
-One exception to forward-only sits outside that resolution. After the upsert —
-and after `save_enrichment_metadata`, the door a provider's metadata goes
-through — `_handle_tv_season_change` regresses a completed TV show to
+One exception to forward-only sits outside that resolution. After the upsert,
+`_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the
 user checked off, because new seasons mean the show is not finished. It needs an
 existing `seasons_watched` list, and it skips ignored items. A stored season
 count that is unknown or zero gives it nothing to compare against, so no
 regression happens there either.
+
+The enrichment door runs that same pass:
+
+- **`save_enrichment_metadata`** writes a provider's metadata to the detail
+  table and the derived columns. Of the user-owned fields it writes only
+  `status`, and only through the season regression above.
 
 A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
 (`parse_ignored_field`, `src/ingestion/importers/rows.py`). That

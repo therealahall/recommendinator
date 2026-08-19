@@ -391,7 +391,6 @@ class RomScannerPlugin(SourcePlugin):
                 self.name, f"Invalid 'extra_strip_patterns' entry: {error}"
             ) from error
 
-        source = self.get_source_identifier(config)
         seen_paths: set[Path] = set()
         seen_titles: set[str] = set()
         candidates = _collect_entries(scan_roots, exclude_names)
@@ -466,7 +465,6 @@ class RomScannerPlugin(SourcePlugin):
                 status=ConsumptionStatus.UNREAD,
                 rating=None,
                 metadata=metadata,
-                source=source,
             )
             count += 1
 

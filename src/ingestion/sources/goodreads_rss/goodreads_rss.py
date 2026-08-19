@@ -314,7 +314,6 @@ class GoodreadsRssPlugin(SourcePlugin):
         shelves = config.get("shelves")
         if shelves is None:
             shelves = DEFAULT_SHELVES
-        source = self.get_source_identifier(config)
 
         # Accumulate before yielding: custom shelves can overlap the defaults,
         # so a book must be collapsed to its strongest status before emission.
@@ -324,7 +323,7 @@ class GoodreadsRssPlugin(SourcePlugin):
         for shelf in shelves:
             status = _status_for_shelf(shelf)
             for element in self._iter_shelf_items(user_id, shelf):
-                content = self._build_item(element, shelf, status, source)
+                content = self._build_item(element, shelf, status)
                 if content is None:
                     continue
                 key = content.id or f"{content.title}{content.author}"
@@ -426,7 +425,6 @@ class GoodreadsRssPlugin(SourcePlugin):
         element: Element,
         shelf: str,
         status: ConsumptionStatus,
-        source: str,
     ) -> ContentItem | None:
         """Build a ContentItem from an RSS ``<item>`` element.
 
@@ -465,5 +463,4 @@ class GoodreadsRssPlugin(SourcePlugin):
             status=status,
             date_completed=date_completed,
             metadata=metadata,
-            source=source,
         )

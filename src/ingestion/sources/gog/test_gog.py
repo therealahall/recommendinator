@@ -206,7 +206,6 @@ class TestGogPluginFetch:
         assert items[0].title == "The Witcher 3"
         assert items[0].content_type == ContentType.VIDEO_GAME
         assert items[0].id == "1234"
-        assert items[0].source == "gog"
         assert items[0].status == ConsumptionStatus.UNREAD
         assert items[0].rating is None
         assert items[0].author is None
