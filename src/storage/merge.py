@@ -1,9 +1,7 @@
 """Shared merge helpers for content-item deduplication.
 
-These functions are used by both ``sqlite_db.SQLiteDB._merge_duplicate_into``
-(runtime dedup) and ``schema._merge_duplicate_row`` (migration dedup).
-Extracting them into a neutral module breaks the circular import between
-``sqlite_db`` and ``schema``.
+The row-absorbing ones serve ``schema._merge_duplicate_row``, the one-time
+migration dedup. No sync path merges rows: it deleted ids other sources held.
 
 ``__all__`` is this module's contract: those names are imported by
 ``sqlite_db``, ``schema`` and ``derived`` and cannot be renamed or reshaped
@@ -28,6 +26,7 @@ __all__ = [
     "assert_known_detail_table",
     "detail_join",
     "merge_detail_tables",
+    "merge_external_ids",
     "merge_scalar_columns",
     "normalize_title_for_matching",
     "parse_json_list",
@@ -249,10 +248,6 @@ def normalize_title_for_matching(title: str) -> str:
 def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge the user-owned scalar columns from a duplicate into the kept row.
 
-    Shared by ``SQLiteDB._merge_duplicate_into`` (runtime) and
-    ``schema._merge_duplicate_row`` (migration) to avoid duplicating
-    the merge rules.
-
     The duplicate row is deleted right after this runs, so every column a
     user can own has to be carried across or it is lost for good.
 
@@ -329,6 +324,19 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
             merged_ignored,
             keep_id,
         ),
+    )
+
+
+def merge_external_ids(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
+    """Move the absorbed row's external ids onto the kept row.
+
+    OR IGNORE, because both rows may name one source by different ids under a
+    key unique per source: the kept row's own id wins, and re-attaches by id.
+    """
+    cursor.execute(
+        "UPDATE OR IGNORE content_item_external_ids SET content_item_id = ?"
+        " WHERE content_item_id = ?",
+        (keep_id, delete_id),
     )
 
 

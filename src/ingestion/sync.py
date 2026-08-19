@@ -180,13 +180,13 @@ def execute_sync(
     # attribution and the delete key agree for every id. That includes the
     # empty one a YAML ``inputs`` key can produce, which ``source_name`` reads
     # as absent.
-    credential_owner = plugin.get_source_identifier(plugin_config)
+    source_identifier = plugin.get_source_identifier(plugin_config)
 
     # Inject credential rotation callback so plugins can persist rotated tokens
     def on_credential_rotated(key: str, value: str) -> None:
         safe_key = sanitize_for_log(key)
         try:
-            storage_manager.credentials.save(user_id, credential_owner, key, value)
+            storage_manager.credentials.save(user_id, source_identifier, key, value)
             logger.info(
                 "[SYNC] %s: Persisted rotated credential '%s'",
                 safe_source_name,
@@ -249,6 +249,11 @@ def execute_sync(
                 result.total_items,
                 safe_title,
             )
+
+            # Storage keys an external id on this, so it is stamped here rather
+            # than asked of each plugin: a plugin's own answer cannot tell two
+            # configured instances of it apart, and the operator named them.
+            item.source = source_identifier
 
             saved = storage_manager.save_content_item_outcome(item)
             result.items_synced += 1

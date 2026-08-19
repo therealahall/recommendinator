@@ -243,8 +243,9 @@ class SourcePlugin(ABC):
         """Fetch content items from this source.
 
         Main entry point for retrieving data. Yields ContentItem objects
-        for each piece of content found. Should set item.source to
-        self.get_source_identifier().
+        for each piece of content found. ``execute_sync`` stamps
+        ``item.source`` with the configured source id, overwriting any the
+        plugin set.
 
         Plugins should call progress_callback(items_processed, total_items,
         current_item) during long-running operations (API fetches, file

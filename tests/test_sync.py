@@ -294,6 +294,7 @@ class TestEverySyncLeavesARun:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "goodreads_rss"
         plugin.display_name = "Goodreads RSS"
+        plugin.get_source_identifier.return_value = "goodreads_rss"
         plugin.fetch.return_value = iter(
             [make_item(f"Book {index}", item_id=f"b{index}") for index in range(items)]
         )
@@ -819,6 +820,7 @@ class TestASyncSaysWhatItChangedRegression:
         """Forty items, identical between the two runs."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "Roms"
+        plugin.get_source_identifier.return_value = "roms"
         plugin.fetch.return_value = iter(
             [make_item(f"Game {number}", item_id=f"g{number}") for number in range(40)]
         )
@@ -843,20 +845,17 @@ class TestASyncSaysWhatItChangedRegression:
     def test_an_item_the_source_renamed_is_reported_updated(
         self, tmp_path: Path
     ) -> None:
-        """The only leg of the tally no other test reaches.
-
-        Folding ``updated`` into either neighbour still leaves the added and
-        unchanged tests green, while the CLI, ``/api/sync/status`` and the
-        ``sync_runs`` column all quietly stop showing the operator any edit.
+        """The ``updated`` leg of the tally, and the id match under it. The
+        plugin leaves ``source`` to the sync, and unstamped a rename lands as a
+        second row beside the one holding the rating.
         """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
         def sync_titled(title: str) -> SyncResult:
             plugin = MagicMock(spec=SourcePlugin)
             plugin.display_name = "Roms"
-            plugin.fetch.return_value = iter(
-                [make_item(title, item_id="g1", source="roms")]
-            )
+            plugin.get_source_identifier.return_value = "roms"
+            plugin.fetch.return_value = iter([make_item(title, item_id="g1")])
             return execute_sync(
                 plugin=plugin, plugin_config={}, storage_manager=storage
             )
@@ -870,3 +869,6 @@ class TestASyncSaysWhatItChangedRegression:
             1,
             0,
         )
+        assert [item.title for item in storage.get_content_items()] == [
+            "Chrono Trigger (USA)"
+        ]

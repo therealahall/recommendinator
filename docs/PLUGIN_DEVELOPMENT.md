@@ -137,9 +137,12 @@ ContentItem(
     author="Author/Director",
     ignored=None,                        # True/False states it, None says nothing
     metadata={},
-    source="my_plugin",                  # set for you, to the user-defined source id
 )
 ```
+
+`source` is not yours to set: the sync stamps every item with the id the
+operator gave the source, overwriting anything a plugin put there. Storage files
+`id` under that name, which is why `id` need only be unique within your source.
 
 Map source statuses onto the enum, and normalize ratings to 1-5:
 

@@ -134,10 +134,8 @@ today. Dates are the host's local calendar day rather than UTC (`local_today`,
 [variety ladder](docs/SCORING.md#variety-after-completion) orders completions by
 this date.
 
-Duplicate consolidation also writes all five, under the
-[dedup rules](#cross-source-deduplication). It runs in the shared upsert, in
-`SQLiteDB.deduplicate_items` (public, no production caller today), and in the
-schema-migration merge, all through `merge_scalar_columns`
+The schema-migration merge also writes all five, under the
+[dedup rules](#cross-source-deduplication), through `merge_scalar_columns`
 (`src/storage/merge.py`).
 
 #### Source configuration precedence
@@ -212,7 +210,7 @@ password columns are NULL.
 (`src/storage/derived.py`) hold `get_sort_title(title)` and the item's
 normalized title and creator, so `get_content_items` orders in SQL under a real
 `LIMIT`/`OFFSET` and builds a `ContentItem` only for the rows it returns. Both
-are recomputed from what is stored after every save and every dedup merge — the
+are recomputed from what is stored after every save and every merge — the
 creator column is fill-only, so they are read back from the row rather than
 taken from the item being saved, and the creator is picked by content type the
 way the read picks it. Every `ORDER BY` ends in `ci.id`, because SQL ordering is
@@ -231,20 +229,31 @@ title/creator boundary.
 
 #### Cross-source deduplication
 
-Items are deduplicated by normalized title. A save looks up the item carrying
-that external id under this user and content type, then merges any *different*
-row sharing `(user_id, content_type, normalized_title)`. With no external-id
-match it falls back to a direct normalized-title lookup. The version-3 migration
-re-normalizes every title once and merges whatever that exposes.
+A save looks up the item its source knows by `(source, external_id)`, falling
+back to the normalized title, oldest row first. That fallback skips a row
+already holding another id from the incoming source: a source lists an item
+once, so two of its ids are two items.
 
-External ids live in `content_item_external_ids`, one row per source per item,
-because they are source-native: Steam's app 440 and GOG's product 440 are
-different games, and Trakt's movie 1 is not its show 1. An item created with an
-id records it under the source that issued it; an item with no source records
-none. The version-8 migration rebuilds `content_items` to drop the column and
-the `(user_id, external_id, content_type)` key it sat under.
+It is also the only dedup, and updates the matched row in place. No sync deletes
+a row to dedup one: absorbing the same-titled rows beside an id match destroyed
+ids a third source held. A pair predating both ids stays two rows — nothing on
+this tree merges one.
 
-Merge rules:
+External ids live in `content_item_external_ids`, one per source per item:
+Steam's app 440 and GOG's product 440 are different games. Either path records
+the incoming `(source, external_id)`, which makes a merge survive the losing
+source's next sync.
+
+The version-3 migration re-normalizes titles and merges what that exposes: the
+one path that deletes a row, run once.
+
+`content_items.source` is display provenance, no sync overwrites it, and it
+names the source whose id a read reports.
+
+The version-8 migration rebuilds `content_items` to drop the id column and the
+`(user_id, external_id, content_type)` key it sat under.
+
+The rules that migration merges by:
 
 - `rating` and `review` fill from the duplicate only into a null
 - `date_completed` keeps the later date
@@ -256,8 +265,8 @@ Merge rules:
   `seasons_watched_dates` merged per season keeping the later watch date, so an
   ingestion date never overrides a user date
 
-Consolidation deletes a row outright, so the `status` and `ignored` rules are
-what stop it reverting a completion or un-ignoring an item.
+It deletes a row outright, so the `status` and `ignored` rules are what stop it
+reverting a completion or un-ignoring an item.
 
 #### Detail-shape repairs
 

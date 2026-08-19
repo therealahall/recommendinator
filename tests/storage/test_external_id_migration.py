@@ -4,7 +4,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from src.storage.schema import _SCHEMA_VERSION
 from src.storage.sqlite_db import SQLiteDB
 
 # Written out rather than derived: the point is a build this one is not.
@@ -82,14 +81,6 @@ def _schema_of(db_path: Path) -> list[tuple[Any, ...]]:
         conn.close()
 
 
-def _user_version(db_path: Path) -> int:
-    conn = _connect(db_path)
-    try:
-        return int(conn.execute("PRAGMA user_version").fetchone()[0])
-    finally:
-        conn.close()
-
-
 def _ids_by_title(db_path: Path) -> dict[str, tuple[str, str]]:
     conn = _connect(db_path)
     try:
@@ -132,7 +123,6 @@ def test_a_version_seven_database_reaches_the_fresh_schema_and_stays_there(
 
     assert _schema_of(upgraded) == _schema_of(fresh)
     assert _ids_by_title(upgraded) == ids_after_the_upgrade
-    assert _user_version(upgraded) == _SCHEMA_VERSION
 
 
 def test_the_rebuild_carries_every_id_and_every_detail_row(tmp_path: Path) -> None:

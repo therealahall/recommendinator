@@ -398,21 +398,6 @@ class TestTagsAndDescriptionStorage:
         assert loaded.metadata.get("tags") == ["blockbuster", "franchise"]
         assert loaded.metadata.get("description") == "An epic space adventure."
 
-    def test_get_content_item_db_id(self, storage_manager: StorageManager) -> None:
-        """Test getting content item database ID by external ID."""
-        item = ContentItem(
-            id="movie123",
-            title="Test Movie",
-            content_type=ContentType.MOVIE,
-            status=ConsumptionStatus.UNREAD,
-            source="radarr",
-        )
-
-        db_id = storage_manager.save_content_item(item)
-        found_id = storage_manager.get_content_item_db_id("movie123", ContentType.MOVIE)
-
-        assert found_id == db_id
-
 
 class TestEnrichmentFilter:
     """Tests for the enrichment-state filter on get_content_items.
