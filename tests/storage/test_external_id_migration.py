@@ -44,6 +44,16 @@ _LIBRARY: tuple[tuple[str, str, str, str | None, str, str, str], ...] = (
 )
 
 
+# On the first row: the rebuild is the only thing carrying these across, and
+# it drops the old table, so a column it forgets is gone for good.
+_OPERATOR_OWNED: dict[str, object] = {
+    "rating": 4,
+    "review": "Read it twice",
+    "date_completed": "2019-07-04",
+    "ignored": 1,
+}
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -69,6 +79,11 @@ def _stand_up_a_version_seven_library(db_path: Path) -> None:
                 f"INSERT INTO {table} (content_item_id, {column}) VALUES (?, ?)",
                 (cursor.lastrowid, creator),
             )
+        assignments = ", ".join(f"{column} = ?" for column in _OPERATOR_OWNED)
+        conn.execute(
+            f"UPDATE content_items SET {assignments} WHERE title = ?",
+            (*_OPERATOR_OWNED.values(), _LIBRARY[0][0]),
+        )
         conn.execute("PRAGMA user_version = 7")
         conn.commit()
     finally:
@@ -165,6 +180,22 @@ def test_the_rebuild_files_every_id_under_a_source_no_operator_can_configure(
     assert _creators_by_title(db_path) == {
         title: creator for title, _, _, _, _, _, creator in _LIBRARY
     }
+
+
+def test_the_rebuild_carries_the_columns_only_the_operator_could_have_written(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "library.db"
+    _stand_up_a_version_seven_library(db_path)
+
+    upgraded = SQLiteDB(db_path)
+
+    with upgraded.connection() as conn:
+        row = conn.execute(
+            f"SELECT {', '.join(_OPERATOR_OWNED)} FROM content_items WHERE title = ?",
+            (_LIBRARY[0][0],),
+        ).fetchone()
+    assert dict(row) == _OPERATOR_OWNED
 
 
 def test_a_sync_after_the_upgrade_lands_on_the_row_holding_the_legacy_id(

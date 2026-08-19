@@ -23,6 +23,7 @@ from src.enrichment.provider_base import (
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 
 
 class MockProvider(EnrichmentProvider):
@@ -1658,6 +1659,51 @@ class TestManualEditEnrichmentProtectionRegression:
         auto = storage_manager.get_content_item(auto_id)
         assert auto.metadata.get("genres") == ["Action", "Drama"]
         assert auto.enriched is True
+
+
+class TestEnrichmentWritesTheRowItWasHandedRegression:
+    """An upgraded library files its ids under a source no plugin answers to,
+    so a run that looked its row up again wrote onto the older namesake."""
+
+    @staticmethod
+    def _dune(external_id: str) -> ContentItem:
+        return ContentItem(
+            id=external_id,
+            title="Dune",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            source="trakt",
+        )
+
+    def test_the_namesake_that_was_not_queued_keeps_its_own_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        older = storage_manager.save_content_item(self._dune("1984"))
+        newer = storage_manager.save_content_item(self._dune("2021"))
+        with storage_manager.connection() as conn:
+            conn.execute(
+                "UPDATE content_item_external_ids SET source = ?"
+                " WHERE content_item_id = ?",
+                (_LEGACY_EXTERNAL_ID_SOURCE, newer),
+            )
+            conn.commit()
+        # Leaves the queue holding the migrated row alone.
+        storage_manager.enrichment.mark_complete(older, "tmdb", "high")
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        registry.register(MockProvider())
+
+        manager = EnrichmentManager(
+            storage_manager,
+            {"enrichment": {"providers": {"mock": {"enabled": True}}}},
+            registry,
+        )
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        assert "genres" in storage_manager.get_content_item(newer).metadata
+        assert "genres" not in storage_manager.get_content_item(older).metadata
 
 
 class TestARunReachesTMDBThroughTheGlobalRegistry:
