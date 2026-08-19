@@ -3749,6 +3749,31 @@ class TestEachSourceHoldsItsOwnExternalId:
         ]
 
 
+class TestTheIdLookupCostsOneSeek:
+    def test_it_reaches_the_row_through_the_id_table_and_scans_nothing(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A sync runs this once per item, so a plan that walks the library
+        instead costs the product of the two — worst on the first sync after
+        the upgrade, where no legacy id answers to any source name."""
+        with temp_db.connection() as conn:
+            plan = [
+                row["detail"]
+                for row in conn.execute(
+                    f"EXPLAIN QUERY PLAN {sqlite_db._ITEM_ID_BY_SOURCE_EXTERNAL_ID}",
+                    {
+                        "user_id": 1,
+                        "source": "steam",
+                        "external_id": "440",
+                        "content_type": "video_game",
+                    },
+                ).fetchall()
+            ]
+
+        assert plan[0].startswith("SEARCH x")
+        assert [step for step in plan if "SCAN" in step] == []
+
+
 class TestCrossSourceDuplicateDetectionRegression:
     """The rules the upgrade dedup reconciles a duplicate pair by.
 

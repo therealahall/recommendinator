@@ -134,8 +134,10 @@ _CONTENT_ITEMS_TABLE = """
     )
 """
 
-# Parenthesised so no configured source can be named it: an id must match
-# ``SOURCE_ID_PATTERN``, a lowercase letter then letters, digits, _ and -.
+# Parenthesised so no source the app creates can be named it: every door
+# validates against ``SOURCE_ID_PATTERN`` (a lowercase letter, then letters,
+# digits, _ and -). Only a hand-written ``inputs`` key, taken verbatim from
+# config.yaml, could collide.
 _LEGACY_EXTERNAL_ID_SOURCE = "(legacy)"
 
 _CONTENT_ITEM_COLUMNS = (
@@ -232,10 +234,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             UNIQUE (user_id, source, external_id, content_type)
         )
         """
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_external_id_lookup "
-        "ON content_item_external_ids(user_id, external_id)"
     )
 
     # Ahead of every write below: its pragmas are no-ops once a transaction is
@@ -510,10 +508,12 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     for the life of the database.
 
     The passes are ordered, and the order is only safe while they share one
-    transaction: the implicit one ``create_schema``'s first write opened and
-    the commit at the end closes. Nothing may commit between them, and that
-    connection must keep implicit transactions, or a merge that fails leaves
-    the repair committed over a library the merge never finished.
+    transaction: the implicit one ``create_schema``'s ``INSERT OR IGNORE INTO
+    users`` opened and the commit at the end closes. The external-id rebuild
+    above that statement commits its own deliberately; nothing else may commit
+    between the passes, and that connection must keep implicit transactions, or
+    a merge that fails leaves the repair committed over a library the merge
+    never finished.
     """
     # Approximate normalization for a column the caller's ALTER may have just
     # added; the pass below corrects it with the full Python function, which

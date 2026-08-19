@@ -307,11 +307,14 @@ _EXTERNAL_IDS_TERM = (
 )
 
 # Steam's app 440 and GOG's product 440 are different games, hence the source.
+# ``x.user_id`` repeats ``ci.user_id`` because SQLite carries no equality
+# across a join, and an unconstrained id table has no index to seek.
 _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
     SELECT ci.id FROM content_items ci
     JOIN content_item_external_ids x ON x.content_item_id = ci.id
-    WHERE ci.user_id = ? AND x.source = ? AND x.external_id = ?
-      AND ci.content_type = ?
+    WHERE x.user_id = :user_id AND x.source = :source
+      AND x.external_id = :external_id
+      AND ci.user_id = :user_id AND ci.content_type = :content_type
 """
 
 # A title-match candidate: a row holding another id from the incoming source is
@@ -569,7 +572,12 @@ class SQLiteDB:
         if item.id and item.source:
             cursor.execute(
                 _ITEM_ID_BY_SOURCE_EXTERNAL_ID,
-                (effective_user_id, item.source, item.id, content_type_value),
+                {
+                    "user_id": effective_user_id,
+                    "source": item.source,
+                    "external_id": item.id,
+                    "content_type": content_type_value,
+                },
             )
             row = cursor.fetchone()
             if row:
