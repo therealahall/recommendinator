@@ -128,6 +128,29 @@ def test_importing_the_same_file_twice_reports_unchanged_rather_than_added(
     assert result.total_rows == 3
 
 
+def test_a_re_import_matches_on_the_id_in_the_file_rather_than_the_title(
+    storage: StorageManager,
+) -> None:
+    """An importer names a source, so the ids its rows carry are recorded like
+    a sync's. A book retitled upstream would otherwise import twice."""
+    header = "Title,Author,Book Id\n"
+    import_file(
+        storage, 1, header + "Dune,Frank Herbert,44767458\n", GoodreadsCsvImporter()
+    )
+
+    result = import_file(
+        storage,
+        1,
+        header + "Dune Messiah,Frank Herbert,44767458\n",
+        GoodreadsCsvImporter(),
+    )
+
+    assert (result.added, result.updated) == (0, 1)
+    assert [item.title for item in storage.get_content_items(user_id=1)] == [
+        "Dune Messiah"
+    ]
+
+
 def test_an_import_creates_no_source_and_records_no_sync_run(
     storage: StorageManager,
 ) -> None:

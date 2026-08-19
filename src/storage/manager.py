@@ -302,32 +302,6 @@ class StorageManager:
             user_id=user_id, content_type=content_type, status=status
         )
 
-    def get_content_item_by_external_id(
-        self,
-        external_id: str,
-        content_type: ContentType,
-        user_id: int | None = None,
-    ) -> ContentItem | None:
-        """Get a content item by external ID and content type."""
-        return self.sqlite_db.get_content_item_by_external_id(
-            external_id=external_id,
-            content_type=content_type,
-            user_id=user_id,
-        )
-
-    def get_content_item_db_id(
-        self,
-        external_id: str,
-        content_type: ContentType,
-        user_id: int | None = None,
-    ) -> int | None:
-        """Get the database ID of a content item by external ID."""
-        return self.sqlite_db.get_content_item_db_id(
-            external_id=external_id,
-            content_type=content_type,
-            user_id=user_id,
-        )
-
     def get_all_users(self) -> list[UserDict]:
         """Get all users, ordered by id."""
         with self.sqlite_db.connection() as conn:

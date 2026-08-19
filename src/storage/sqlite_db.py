@@ -94,8 +94,6 @@ from src.storage.merge import (
     MONOTONIC_DETAIL_COLUMNS,
     assert_known_detail_table,
     detail_join,
-    merge_detail_tables,
-    merge_scalar_columns,
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
@@ -298,16 +296,31 @@ def _build_content_item_from() -> str:
 _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
+# ci.source decides which id a read carries: any other source's beside that
+# name is a pair no row holds, and re-saving the item read would record it.
 _EXTERNAL_ID_TERM = (
     "(SELECT x.external_id FROM content_item_external_ids x"
-    " WHERE x.content_item_id = ci.id"
-    " ORDER BY x.source LIMIT 1) as external_id"
+    " WHERE x.content_item_id = ci.id AND x.source = ci.source) as external_id"
 )
 
-_ITEM_ID_BY_EXTERNAL_ID = """
+# Steam's app 440 and GOG's product 440 are different games, hence the source.
+_ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
     SELECT ci.id FROM content_items ci
     JOIN content_item_external_ids x ON x.content_item_id = ci.id
-    WHERE ci.user_id = ? AND x.external_id = ? AND ci.content_type = ?
+    WHERE ci.user_id = ? AND x.source = ? AND x.external_id = ?
+      AND ci.content_type = ?
+"""
+
+# A title-match candidate: a row holding another id from the incoming source is
+# that source's other item, not this one. No incoming id compares against NULL.
+_TITLE_MATCH_CANDIDATES = """
+    SELECT ci.id FROM content_items ci
+    WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?
+      AND NOT EXISTS (
+          SELECT 1 FROM content_item_external_ids x
+          WHERE x.content_item_id = ci.id
+            AND x.source = ? AND x.external_id != ?
+      )
 """
 
 
@@ -523,11 +536,9 @@ class SQLiteDB:
     ) -> SavedItem:
         """Insert or update *item*'s row and detail row under the sync rules.
 
-        The shared body of :meth:`save_content_item` and
-        :meth:`complete_content_item`: upsert by external id, cross-source
-        dedup by normalized title, and the fill-only rules for user-owned
-        fields. Runs on the caller's cursor and does not commit, so a caller
-        can add its own writes to the same transaction.
+        Shared by :meth:`save_content_item` and :meth:`complete_content_item`:
+        upsert by (source, external id), then by normalized title. Runs on the
+        caller's cursor and does not commit, so a caller can add writes to it.
         """
         # The one door every plugin's items pass, so the SQLite text guarantee
         # is taken here rather than in each of them.
@@ -548,54 +559,32 @@ class SQLiteDB:
         incoming_review = item.review if item.review and item.review.strip() else None
 
         existing_id: int | None = None
-        if item.id:
+        if item.id and item.source:
             cursor.execute(
-                _ITEM_ID_BY_EXTERNAL_ID,
-                (effective_user_id, item.id, content_type_value),
+                _ITEM_ID_BY_SOURCE_EXTERNAL_ID,
+                (effective_user_id, item.source, item.id, content_type_value),
             )
             row = cursor.fetchone()
             if row:
                 existing_id = int(row["id"])
 
-        # Compute normalized title once for both dedup paths below.
         normalized_title = (
             normalize_title_for_matching(item.title) if item.title else ""
         )
 
-        # Cross-source dedup: if we found a row by external_id, check
-        # whether a *different* row exists with the same normalized title.
-        # This happens when both sources have already been imported and
-        # each has its own row.  Merge the duplicate into the kept row.
-        merged_a_duplicate = False
-        if existing_id is not None and normalized_title:
+        # Dedup only on first contact, updating the match in place: absorbing a
+        # row this sync did not match destroyed the ids its own source held.
+        # Oldest first, so a title collision resolves the same way twice.
+        if existing_id is None and normalized_title:
             cursor.execute(
-                """SELECT id FROM content_items
-                   WHERE user_id = ? AND content_type = ?
-                     AND normalized_title = ? AND id != ?""",
+                f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id LIMIT 1",
                 (
                     effective_user_id,
                     content_type_value,
                     normalized_title,
-                    existing_id,
+                    item.source,
+                    item.id,
                 ),
-            )
-            # Normally at most one match, but loop defensively in case
-            # prior dedup ran partially and left multiple duplicates.
-            dup_rows = cursor.fetchall()
-            merged_a_duplicate = bool(dup_rows)
-            for dup_row in dup_rows:
-                dup_id = int(dup_row["id"])
-                self._merge_duplicate_into(
-                    cursor, keep_id=existing_id, delete_id=dup_id
-                )
-
-        # Fallback: check by normalized title to merge items from different sources
-        if existing_id is None and normalized_title:
-            cursor.execute(
-                """SELECT id FROM content_items
-                       WHERE user_id = ? AND content_type = ?
-                         AND normalized_title = ?""",
-                (effective_user_id, content_type_value, normalized_title),
             )
             row = cursor.fetchone()
             if row:
@@ -623,7 +612,8 @@ class SQLiteDB:
                 ),
             }
 
-            if item.source is not None:
+            # Fill-only: each sync claiming it reported every shared item updated.
+            if existing_row["source"] is None and item.source is not None:
                 offered["source"] = item.source
 
             # Rating and review: fill only — never overwrite the user's own.
@@ -661,7 +651,7 @@ class SQLiteDB:
                     [*changed.values(), existing_id],
                 )
             db_id = existing_id
-            row_changed = bool(changed) or merged_a_duplicate
+            row_changed = bool(changed)
         else:
             cursor.execute(
                 """
@@ -688,20 +678,12 @@ class SQLiteDB:
                 raise RuntimeError("INSERT did not return a row ID")
             db_id = lastrowid
             row_changed = True
-            if item.id and item.source:
-                cursor.execute(
-                    """INSERT INTO content_item_external_ids
-                       (content_item_id, user_id, source, external_id,
-                        content_type)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (
-                        db_id,
-                        effective_user_id,
-                        item.source,
-                        item.id,
-                        content_type_value,
-                    ),
-                )
+
+        # On both paths: a source that lost the dedup race would otherwise never
+        # attach its id, and take the title path again on every later sync.
+        row_changed |= self._record_external_id(
+            cursor, db_id, effective_user_id, item, content_type_value
+        )
 
         detail_changed = self._save_detail_table(
             cursor, db_id, item, content_type_value
@@ -722,6 +704,26 @@ class SQLiteDB:
         else:
             outcome = SaveOutcome.UNCHANGED
         return SavedItem(db_id=db_id, outcome=outcome)
+
+    @staticmethod
+    def _record_external_id(
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        user_id: int,
+        item: ContentItem,
+        content_type: str,
+    ) -> bool:
+        """Hold *item*'s id under its source; OR IGNORE, so a re-sync is no
+        change. The lookup above reads that key, so no other row holds it."""
+        if not (item.id and item.source):
+            return False
+        cursor.execute(
+            """INSERT OR IGNORE INTO content_item_external_ids
+               (content_item_id, user_id, source, external_id, content_type)
+               VALUES (?, ?, ?, ?, ?)""",
+            (db_id, user_id, item.source, item.id, content_type),
+        )
+        return cursor.rowcount > 0
 
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
@@ -872,28 +874,6 @@ class SQLiteDB:
             values,
         )
         return True
-
-    def _merge_duplicate_into(
-        self, cursor: sqlite3.Cursor, keep_id: int, delete_id: int
-    ) -> None:
-        """Merge data from a duplicate row into the kept row, then delete it.
-
-        Called when two rows represent the same item (same normalized title,
-        user, and content type) but have different external_ids from different
-        sources.
-
-        Delegates to the module-level ``merge_scalar_columns`` and
-        ``merge_detail_tables`` functions so that the same merge logic
-        is available to both runtime and migration paths.
-        """
-        merge_scalar_columns(cursor, keep_id, delete_id)
-        merge_detail_tables(cursor, keep_id, delete_id)
-        # The merge can fill the kept row's creator from the duplicate, and
-        # deduplicate_items runs it with no save behind it to refresh them.
-        write_derived_columns(cursor, keep_id)
-
-        # Delete the duplicate row (cascades to detail tables)
-        cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
     def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
         """Regress TV show status when new seasons arrive during sync.
@@ -1627,61 +1607,6 @@ class SQLiteDB:
             conn.commit()
             return cursor.rowcount > 0
 
-    def deduplicate_items(self, user_id: int | None = None) -> int:
-        """Find and merge duplicate items by normalized title.
-
-        Scans for groups of rows sharing the same (user_id, content_type,
-        normalized_title) and merges each group into a single row, keeping
-        the oldest row (lowest id) and merging data from duplicates.
-        """
-        merged_count = 0
-        with self.connection() as conn:
-            cursor = conn.cursor()
-
-            query = """
-                SELECT user_id, content_type, normalized_title
-                FROM content_items
-                WHERE normalized_title IS NOT NULL AND normalized_title != ''
-            """
-            params: list[Any] = []
-            if user_id is not None:
-                query += " AND user_id = ?"
-                params.append(user_id)
-            query += (
-                " GROUP BY user_id, content_type, normalized_title"
-                " HAVING COUNT(*) > 1"
-            )
-
-            cursor.execute(query, params)
-            groups = cursor.fetchall()
-
-            for group in groups:
-                g_user_id = group["user_id"]
-                g_content_type = group["content_type"]
-                g_normalized = group["normalized_title"]
-
-                cursor.execute(
-                    """SELECT id FROM content_items
-                       WHERE user_id = ? AND content_type = ?
-                         AND normalized_title = ?
-                       ORDER BY id""",
-                    (g_user_id, g_content_type, g_normalized),
-                )
-                rows = cursor.fetchall()
-                if len(rows) < 2:
-                    continue
-
-                keep_id = int(rows[0]["id"])
-                for row in rows[1:]:
-                    dup_id = int(row["id"])
-                    self._merge_duplicate_into(
-                        cursor, keep_id=keep_id, delete_id=dup_id
-                    )
-                    merged_count += 1
-
-            conn.commit()
-        return merged_count
-
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
@@ -1732,27 +1657,6 @@ class SQLiteDB:
             cursor.execute(query, params)
             result = cursor.fetchone()
             return result[0] if result else 0
-
-    def get_content_item_by_external_id(
-        self,
-        external_id: str,
-        content_type: ContentType,
-        user_id: int | None = None,
-    ) -> ContentItem | None:
-        """Get a content item by external ID and content type."""
-        effective_user_id = user_id if user_id is not None else get_default_user_id()
-
-        with self.connection() as conn:
-            cursor = conn.cursor()
-            content_type_value = get_enum_value(content_type)
-            cursor.execute(
-                _ITEM_ID_BY_EXTERNAL_ID,
-                (effective_user_id, external_id, content_type_value),
-            )
-            row = cursor.fetchone()
-            if row:
-                return self.get_content_item(row["id"], user_id=effective_user_id)
-            return None
 
     def get_items_needing_enrichment(
         self,
@@ -1863,22 +1767,3 @@ class SQLiteDB:
             query += " AND ci.id > ?"
             params.append(after_db_id)
         return query, params
-
-    def get_content_item_db_id(
-        self,
-        external_id: str,
-        content_type: ContentType,
-        user_id: int | None = None,
-    ) -> int | None:
-        """Get the database ID of a content item by external ID."""
-        effective_user_id = user_id if user_id is not None else get_default_user_id()
-
-        with self.connection() as conn:
-            cursor = conn.cursor()
-            content_type_value = get_enum_value(content_type)
-            cursor.execute(
-                _ITEM_ID_BY_EXTERNAL_ID,
-                (effective_user_id, external_id, content_type_value),
-            )
-            row = cursor.fetchone()
-            return row["id"] if row else None

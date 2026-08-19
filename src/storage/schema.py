@@ -8,6 +8,7 @@ from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
 from src.storage.merge import (
     merge_detail_tables,
+    merge_external_ids,
     merge_scalar_columns,
     normalize_title_for_matching,
 )
@@ -668,11 +669,12 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 def _merge_duplicate_row(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge all data from duplicate into kept row, then delete duplicate.
 
-    Shares ``merge``'s rules with the runtime ``_merge_duplicate_into``, so
-    migration-time dedup preserves user-owned state the same way.
+    The one path that deletes a row to dedup, and it runs once per database on
+    upgrade. Sync merges nothing: see ``SQLiteDB._upsert_content_item``.
     """
     merge_scalar_columns(cursor, keep_id, delete_id)
     merge_detail_tables(cursor, keep_id, delete_id)
+    merge_external_ids(cursor, keep_id, delete_id)
     cursor.execute("DELETE FROM content_items WHERE id = ?", (delete_id,))
 
 
