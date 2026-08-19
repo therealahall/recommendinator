@@ -79,39 +79,13 @@ class SyncRunDict(TypedDict):
     errors: list[str]
 
 
-# Schema version tracked in SQLite's ``PRAGMA user_version``. Bumped when a
-# one-time upgrade must run exactly once per database. ``create_schema`` reads
-# the stored version once per open, hands it to every guarded step, and writes
-# this value back after the last of them, so a step runs only while the stored
-# version is below the one that introduced it:
-#
-#   1: clear the ``settings`` rows an earlier seed-on-boot design wrote
-#   2: prune the ``settings`` leaves that are no longer registry entries
-#   3: repair the legacy content rows ``_repair_legacy_content_rows`` describes
-#   6: prune the ``settings`` leaves the AI removal left unreachable
-#
-# Version 4 records the derived columns ``src/storage/derived.py`` describes and
-# guards nothing: their backfill selects the rows missing them, so it repairs a
-# row a downgraded build inserted into a database already stamped 4.
-#
-# Version 5 records the ``users`` password columns and the ``sessions`` table
-# (``src/storage/accounts.py``), and guards nothing: the unconditional ALTER
-# and CREATE add both, and an unclaimed instance is exactly the NULL columns.
-#
-# Version 7 adds ``source_configs.sync_interval`` and ``sync_runs``, likewise.
-#
-# A guarded step runs once per database, so the values it wrote never follow a
-# change to the function that produced them: changing
-# ``normalize_title_for_matching``, ``get_sort_title`` or ``build_search_text``
-# needs a version bump and a new guarded step to rewrite the stored columns.
-# Without one, stored values keep the old form while new saves compute the new
-# one, and the dedup lookups stop matching — duplicates accumulate in silence.
-#
-# The plain ``CREATE TABLE IF NOT EXISTS`` / ``ALTER`` migrations stay idempotent
-# and run unconditionally; only version-guarded steps consult this.
-# Version 8 records the external ids' move onto ``content_item_external_ids``,
-# and guards nothing: its rebuild runs while the column it drops is still
-# there, so it skips a database already rebuilt.
+# One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
+# seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
+# leaves. Other versions only record a shape the CREATE/ALTER below reaches.
+
+# Changing ``normalize_title_for_matching``, ``get_sort_title`` or
+# ``build_search_text`` needs a bump and a step to rewrite what the old one
+# stored, or dedup lookups stop matching and duplicates accumulate in silence.
 _SCHEMA_VERSION = 8
 
 # Leaves that were settings-registry entries on an earlier iteration of the
@@ -137,9 +111,6 @@ _ORPHANED_SETTING_PREFIXES: tuple[str, ...] = (
     "conversation.",
 )
 
-# Issued both by the fresh create and by the version-8 rebuild, so a database
-# that reaches this shape by upgrade and one created at it are the same schema
-# down to the stored DDL text.
 _CONTENT_ITEMS_TABLE = """
     CREATE TABLE IF NOT EXISTS content_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,9 +133,6 @@ _CONTENT_ITEMS_TABLE = """
     )
 """
 
-# Named rather than copied with ``*``: the old table's column order is not the
-# new one's, so an unnamed copy would slide values into the wrong columns. The
-# ``id`` is carried because every child row references it.
 _CONTENT_ITEM_COLUMNS = (
     "id",
     "user_id",
@@ -183,8 +151,6 @@ _CONTENT_ITEM_COLUMNS = (
     "updated_at",
 )
 
-# Created after the rebuild, which drops the table they belong to and takes
-# them with it.
 _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)",
@@ -246,9 +212,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     cursor.execute(_CONTENT_ITEMS_TABLE)
 
-    # Source-scoped because the ids are source-native: Steam's app 440 and
-    # GOG's product 440 are different games. One row per source per item, so an
-    # item that absorbs another source's row keeps both ids.
+    # Steam's 440 and GOG's 440 differ, and Trakt's movie 1 from its show 1, so
+    # the key needs both; type is copied here because UNIQUE spans one table.
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS content_item_external_ids (
@@ -257,8 +222,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
             user_id INTEGER NOT NULL,
             source TEXT NOT NULL,
             external_id TEXT NOT NULL,
+            content_type TEXT NOT NULL,
             PRIMARY KEY (content_item_id, source),
-            UNIQUE (user_id, source, external_id)
+            UNIQUE (user_id, source, external_id, content_type)
         )
         """
     )
@@ -267,8 +233,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "ON content_item_external_ids(user_id, external_id)"
     )
 
-    # Ahead of every write below, because the rebuild needs a pragma that is a
-    # no-op once a statement has opened a transaction, and it commits its own.
+    # Ahead of every write below: its pragmas are no-ops once a transaction is
+    # open. It commits before the version stamp, so the guard is the column —
+    # a version guard would rebuild a table with no external_id.
     if _has_column(cursor, "content_items", "external_id"):
         _move_external_ids_off_content_items(conn)
     for index_statement in _CONTENT_ITEM_INDEXES:
@@ -561,10 +528,8 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
 
 
 def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
-    """Rebuild ``content_items`` without ``external_id``, keeping every child row."""
-    # Five tables cascade off it: the rename repoints their REFERENCES at the
-    # old table unless renaming is legacy, and the drop deletes their rows
-    # unless foreign keys are off, a pragma that is a no-op in a transaction.
+    # Five tables cascade off it: without legacy renaming their REFERENCES
+    # follow the old table, and without foreign keys off the drop takes them.
     enforced = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("PRAGMA legacy_alter_table = ON")
@@ -578,10 +543,6 @@ def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
 
 
 def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
-    """Copy the rows onto a fresh table, and their ids onto their own."""
-    # Only the columns the old table has: a database predating one the current
-    # shape declares would otherwise take the open down, and the steps after
-    # this fill it as they always have.
     carried = ", ".join(
         column
         for column in _CONTENT_ITEM_COLUMNS
@@ -594,16 +555,12 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
         f" SELECT {carried} FROM content_items_old"
     )
 
-    # A row with no source keeps no id: an id with nothing to scope it
-    # identifies nothing. Grouped because the old key admitted one id per
-    # content type per source, so the older row keeps a colliding one.
     cursor.execute(
         """INSERT INTO content_item_external_ids
-               (content_item_id, user_id, source, external_id)
-           SELECT MIN(id), user_id, source, external_id
+               (content_item_id, user_id, source, external_id, content_type)
+           SELECT id, user_id, source, external_id, content_type
              FROM content_items_old
-            WHERE external_id IS NOT NULL AND source IS NOT NULL
-            GROUP BY user_id, source, external_id"""
+            WHERE external_id IS NOT NULL AND source IS NOT NULL"""
     )
 
     cursor.execute("DROP TABLE content_items_old")
@@ -897,7 +854,6 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
 
 
 def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
-    """Whether *table* already carries *column*."""
     cursor.execute(f"PRAGMA table_info({table})")
     return any(row["name"] == column for row in cursor.fetchall())
 

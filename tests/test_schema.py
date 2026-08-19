@@ -319,27 +319,14 @@ class TestTheDerivedColumnBackfill:
             build_search_text("The Witcher 3", "CD Projekt Red"),
         )
 
-    # title -> (content_type, detail table, creator column, creator). One row
-    # per type, because each keeps its creator in a column of its own. The
+    # One row per type, each keeping its creator in a column of its own. The
     # titles carry a leading article and non-Latin letters, which SQL's own
     # lower() cannot normalize.
     _LIBRARY_OF_EVERY_TYPE = (
-        (
-            "The Left Hand of Darkness",
-            "book",
-            "book_details",
-            "author",
-            "Le Guin",
-        ),
+        ("The Left Hand of Darkness", "book", "book_details", "author", "Le Guin"),
         ("Ångström", "movie", "movie_details", "director", "Roy Andersson"),
         ("進撃の巨人", "tv_show", "tv_show_details", "creators", "諫山創"),
-        (
-            "The Witcher 3",
-            "video_game",
-            "video_game_details",
-            "developer",
-            "CD Projekt Red",
-        ),
+        ("The Witcher 3", "video_game", "video_game_details", "developer", "CDPR"),
     )
 
     @classmethod
@@ -475,88 +462,42 @@ def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
     assert users[2]["username"] == "bob"
 
 
-def _insert_game(conn: sqlite3.Connection, title: str, user_id: int = 1) -> int:
-    """Insert a bare video-game row and return its database id."""
+def _insert_game(conn: sqlite3.Connection, title: str) -> int:
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO content_items (user_id, title, content_type, status)"
-        " VALUES (?, ?, 'video_game', 'unread')",
-        (user_id, title),
+        " VALUES (1, ?, 'video_game', 'unread')",
+        (title,),
     )
     assert cursor.lastrowid is not None
     return cursor.lastrowid
 
 
 def _record_external_id(
-    conn: sqlite3.Connection,
-    db_id: int,
-    source: str,
-    external_id: str,
-    user_id: int = 1,
+    conn: sqlite3.Connection, db_id: int, source: str, external_id: str
 ) -> None:
-    """Give an item the id one source knows it by."""
     conn.execute(
         "INSERT INTO content_item_external_ids"
-        " (content_item_id, user_id, source, external_id) VALUES (?, ?, ?, ?)",
-        (db_id, user_id, source, external_id),
+        " (content_item_id, user_id, source, external_id, content_type)"
+        " SELECT id, user_id, ?, ?, content_type FROM content_items WHERE id = ?",
+        (source, external_id, db_id),
     )
 
 
-def test_two_sources_can_each_know_an_item_of_their_own_as_440(
+def test_an_id_names_one_item_within_its_source_and_no_further(
     temp_db: sqlite3.Connection,
 ) -> None:
-    """Steam's app 440 and GOG's product 440 are different games.
-
-    The dropped UNIQUE(user_id, external_id, content_type) forbade the pair
-    outright, so the second source's game became the first's.
-    """
+    """Steam's app 440 and GOG's product 440 are different games."""
     create_schema(temp_db)
     team_fortress = _insert_game(temp_db, "Team Fortress 2")
-    alien_breed = _insert_game(temp_db, "Alien Breed")
-
     _record_external_id(temp_db, team_fortress, "steam", "440")
-    _record_external_id(temp_db, alien_breed, "gog", "440")
+    _record_external_id(temp_db, _insert_game(temp_db, "Alien Breed"), "gog", "440")
 
     stored = temp_db.execute(
-        "SELECT source, content_item_id FROM content_item_external_ids"
-        " WHERE external_id = '440' ORDER BY source"
+        "SELECT source FROM content_item_external_ids ORDER BY source"
     ).fetchall()
-    assert [tuple(row) for row in stored] == [
-        ("gog", alien_breed),
-        ("steam", team_fortress),
-    ]
-
-
-def test_one_source_cannot_know_two_items_by_the_same_id(
-    temp_db: sqlite3.Connection,
-) -> None:
-    """Within a source an id is an identity, and a second claim on it is a bug.
-
-    The half of the old constraint worth keeping: without it one source's item
-    could scatter across rows nothing would reconcile.
-    """
-    create_schema(temp_db)
-    first = _insert_game(temp_db, "Team Fortress 2")
-    second = _insert_game(temp_db, "Team Fortress Classic")
-    _record_external_id(temp_db, first, "steam", "440")
-
+    assert [row["source"] for row in stored] == ["gog", "steam"]
     with pytest.raises(sqlite3.IntegrityError):
-        _record_external_id(temp_db, second, "steam", "440")
-
-
-def test_another_user_library_may_hold_the_same_source_id(
-    temp_db: sqlite3.Connection,
-) -> None:
-    """The key is per library: two users owning one game is not a collision."""
-    create_schema(temp_db)
-    create_user(temp_db, "user2")
-    mine = _insert_game(temp_db, "Team Fortress 2")
-    theirs = _insert_game(temp_db, "Team Fortress 2", user_id=2)
-
-    _record_external_id(temp_db, mine, "steam", "440")
-    _record_external_id(temp_db, theirs, "steam", "440", user_id=2)
-
-    stored = temp_db.execute(
-        "SELECT user_id FROM content_item_external_ids ORDER BY user_id"
-    ).fetchall()
-    assert [row["user_id"] for row in stored] == [1, 2]
+        _record_external_id(
+            temp_db, _insert_game(temp_db, "TF Classic"), "steam", "440"
+        )

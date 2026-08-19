@@ -150,14 +150,14 @@ def _seed_the_duplicate_pair(db_path: Path) -> None:
 
 
 def _record_external_id(
-    conn: sqlite3.Connection, db_id: int | None, external_id: str, user_id: int = 1
+    conn: sqlite3.Connection, db_id: int | None, external_id: str
 ) -> None:
-    """Give a seeded row the id its source knows it by."""
     conn.execute(
         "INSERT INTO content_item_external_ids"
-        " (content_item_id, user_id, source, external_id)"
-        " VALUES (?, ?, 'legacy', ?)",
-        (db_id, user_id, external_id),
+        " (content_item_id, user_id, source, external_id, content_type)"
+        " SELECT id, user_id, 'legacy', ?, content_type"
+        " FROM content_items WHERE id = ?",
+        (external_id, db_id),
     )
 
 
@@ -532,7 +532,7 @@ class TestWhatTheDeduplicationPassRefusesToGroup:
                        VALUES (?, ?, ?, 'completed', 'legacy')""",
                     (user_id, title, content_type),
                 )
-                _record_external_id(conn, cursor.lastrowid, external_id, user_id)
+                _record_external_id(conn, cursor.lastrowid, external_id)
             conn.execute("PRAGMA user_version = 0")
             conn.commit()
         finally:

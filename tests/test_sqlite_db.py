@@ -80,11 +80,11 @@ def _insert_raw_item(
 def _record_raw_external_id(
     cursor: sqlite3.Cursor, db_id: int, source: str, external_id: str
 ) -> None:
-    """Give a raw row the id its source knows it by."""
     cursor.execute(
         "INSERT INTO content_item_external_ids"
-        " (content_item_id, user_id, source, external_id) VALUES (?, 1, ?, ?)",
-        (db_id, source, external_id),
+        " (content_item_id, user_id, source, external_id, content_type)"
+        " SELECT id, user_id, ?, ?, content_type FROM content_items WHERE id = ?",
+        (source, external_id, db_id),
     )
 
 
@@ -651,11 +651,7 @@ class TestGetContentItemsByExternalIds:
         ] == ["Portal"]
 
     def test_filters_by_content_type(self, temp_db: SQLiteDB) -> None:
-        """One external id naming two types returns only the type asked for.
-
-        Two sources, because one issuing the same id twice is the collision
-        the id table refuses.
-        """
+        """One external id naming two types returns only the type asked for."""
         self._save_game(temp_db, "shared", "Portal")
         temp_db.save_content_item(
             ContentItem(
@@ -663,7 +659,7 @@ class TestGetContentItemsByExternalIds:
                 title="Portal",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.COMPLETED,
-                source="radarr",
+                source="steam",
             )
         )
 
@@ -672,6 +668,30 @@ class TestGetContentItemsByExternalIds:
         )
 
         assert [item.content_type for item in results] == [ContentType.MOVIE]
+
+
+def test_one_source_may_know_a_movie_and_a_show_by_the_same_id(
+    temp_db: SQLiteDB,
+) -> None:
+    """Trakt numbers each type from one, so movie 1 and show 1 both exist."""
+    for content_type, title in (
+        (ContentType.MOVIE, "Heat"),
+        (ContentType.TV_SHOW, "Andor"),
+    ):
+        temp_db.save_content_item(
+            ContentItem(
+                id="trakt:1",
+                title=title,
+                content_type=content_type,
+                status=ConsumptionStatus.COMPLETED,
+                source="trakt",
+            )
+        )
+
+    assert {
+        (item.title, item.content_type)
+        for item in temp_db.get_content_items_by_external_ids(["trakt:1"])
+    } == {("Heat", ContentType.MOVIE), ("Andor", ContentType.TV_SHOW)}
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ SQLite holds everything.
 |-------|-------|
 | `users` | Per-user settings (JSON) |
 | `content_items` | Library items, scoped by `user_id` |
-| `content_item_external_ids` | The id each source knows an item by, unique per `(user_id, source, external_id)` |
+| `content_item_external_ids` | The id each source knows an item by, unique per `(user_id, source, external_id, content_type)` |
 | `book_details`, `movie_details`, `tv_show_details`, `video_game_details` | Per-type detail |
 | `credentials` | Encrypted OAuth tokens and API keys, per-source and global |
 | `source_configs` | Non-sensitive per-source config |
@@ -239,10 +239,10 @@ re-normalizes every title once and merges whatever that exposes.
 
 External ids live in `content_item_external_ids`, one row per source per item,
 because they are source-native: Steam's app 440 and GOG's product 440 are
-different games. An item created with an id records it under the source that
-issued it; an item with no source records none. The version-8 migration rebuilds
-`content_items` to drop the column and the `(user_id, external_id, content_type)`
-key it sat under.
+different games, and Trakt's movie 1 is not its show 1. An item created with an
+id records it under the source that issued it; an item with no source records
+none. The version-8 migration rebuilds `content_items` to drop the column and
+the `(user_id, external_id, content_type)` key it sat under.
 
 Merge rules:
 

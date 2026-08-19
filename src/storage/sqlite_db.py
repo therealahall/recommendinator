@@ -298,17 +298,12 @@ def _build_content_item_from() -> str:
 _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
-# A subquery rather than a join: a second id for an item would otherwise
-# duplicate its row through every read in the file. ``ContentItem`` carries one
-# id, and ordering by source makes which one it is repeatable.
 _EXTERNAL_ID_TERM = (
     "(SELECT x.external_id FROM content_item_external_ids x"
     " WHERE x.content_item_id = ci.id"
     " ORDER BY x.source LIMIT 1) as external_id"
 )
 
-# Every lookup of an item by an id a source gave it. Source-blind, as the
-# column it replaces was.
 _ITEM_ID_BY_EXTERNAL_ID = """
     SELECT ci.id FROM content_items ci
     JOIN content_item_external_ids x ON x.content_item_id = ci.id
@@ -693,14 +688,19 @@ class SQLiteDB:
                 raise RuntimeError("INSERT did not return a row ID")
             db_id = lastrowid
             row_changed = True
-            # An id with no source to scope it identifies nothing, so it is
-            # not recorded — a file import and a hand-completed item have none.
             if item.id and item.source:
                 cursor.execute(
                     """INSERT INTO content_item_external_ids
-                       (content_item_id, user_id, source, external_id)
-                       VALUES (?, ?, ?, ?)""",
-                    (db_id, effective_user_id, item.source, item.id),
+                       (content_item_id, user_id, source, external_id,
+                        content_type)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        db_id,
+                        effective_user_id,
+                        item.source,
+                        item.id,
+                        content_type_value,
+                    ),
                 )
 
         detail_changed = self._save_detail_table(
@@ -1015,8 +1015,8 @@ class SQLiteDB:
     ) -> list[ContentItem]:
         """Get multiple content items by their external IDs in a single query.
 
-        An id is unique per source, so one may name an item of each type.
-        Results are unordered, and an item named twice comes back once.
+        An id is unique per source and type, so one may name an item of each
+        type. Results are unordered, and an item named twice comes back once.
         """
         if not external_ids:
             return []
