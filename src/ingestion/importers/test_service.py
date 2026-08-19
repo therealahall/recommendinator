@@ -12,7 +12,11 @@ import pytest
 from src.ingestion.importers.generic_csv.generic_csv import CsvImporter
 from src.ingestion.importers.generic_json.generic_json import JsonImporter
 from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImporter
-from src.ingestion.importers.service import ImportResult, import_file
+from src.ingestion.importers.service import (
+    MAX_REPORTED_ERRORS,
+    ImportResult,
+    import_file,
+)
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 
@@ -75,6 +79,28 @@ def test_both_kinds_of_malformed_line_are_named_and_the_file_still_imports(
         "Skipped line 12: 1 field more than the header",
     ]
     assert len(storage.get_content_items(user_id=1)) == 10
+
+
+def test_a_file_that_refuses_every_row_caps_the_list_and_still_counts_them_all(
+    storage: StorageManager,
+) -> None:
+    """A header missing a column skips every row, and the list crosses the wire."""
+    refused = MAX_REPORTED_ERRORS + 5
+    rows = [f"Book {n},Author {n}" for n in range(refused)]
+
+    result = import_file(
+        storage,
+        1,
+        "\n".join(["title,author,status,rating", *rows]) + "\n",
+        CsvImporter(),
+        ContentType.BOOK,
+    )
+
+    assert (result.added, result.updated, result.unchanged) == (0, 0, 0)
+    assert (result.skipped, result.failed, result.total_rows) == (refused, 0, refused)
+    assert len(result.errors) == MAX_REPORTED_ERRORS + 1
+    assert result.errors[0] == "Skipped line 2: 2 fields short of the header"
+    assert result.errors[-1] == "… and 5 more"
 
 
 def test_a_skip_in_a_pretty_printed_json_array_names_an_entry_not_a_line(
