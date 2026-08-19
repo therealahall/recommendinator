@@ -66,6 +66,7 @@ def test_an_upload_imports_the_file_and_reports_the_line_it_skipped(
         "failed": 0,
         "total_rows": 2,
         "errors": ["Skipped line 3: no title"],
+        "notes": [],
     }
     assert [item.title for item in storage.get_content_items(user_id=1)] == ["Dune"]
 

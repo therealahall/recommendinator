@@ -275,8 +275,10 @@ export interface ImportResponse {
   skipped: number
   failed: number
   total_rows: number
-  /** One line per row that missed, each naming the file line and the reason. */
+  /** One line per row that missed, capped, with a `… and N more` tally last. */
   errors: string[]
+  /** What happened to the file as a whole, which no row count covers. */
+  notes: string[]
 }
 
 // --- Enrichment ---

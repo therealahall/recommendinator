@@ -43,6 +43,7 @@ def _import_view(result: ImportResult, filename: str) -> dict[str, Any]:
         "failed": result.failed,
         "total_rows": result.total_rows,
         "errors": result.errors,
+        "notes": result.notes,
     }
 
 
@@ -112,6 +113,10 @@ def import_command(
         f"unchanged {result.unchanged}, skipped {result.skipped}, "
         f"failed {result.failed}. {result.total_rows} rows read."
     )
+    # Ahead of the misses, so the tally that closes them stays last: a note
+    # printed after "… and 5 more" reads as one of the rows it omitted.
+    for note in result.notes:
+        click.echo(note)
     for message in result.errors:
         click.echo(message)
 
