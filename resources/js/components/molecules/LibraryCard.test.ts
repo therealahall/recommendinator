@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import LibraryCard from './LibraryCard.vue'
 
 const baseItem = {
-  id: 'test-1',
+  external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
   db_id: 1,
   title: 'Test Book',
   author: 'Author',

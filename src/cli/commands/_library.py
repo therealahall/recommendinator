@@ -240,6 +240,13 @@ def library_show(
                 "Date Completed",
                 item.date_completed.isoformat() if item.date_completed else "N/A",
             ],
+            [
+                "External IDs",
+                ", ".join(
+                    f"{pair.source}: {pair.external_id}" for pair in item.external_ids
+                )
+                or "N/A",
+            ],
             ["Ignored", "Yes" if item.ignored else "No"],
             ["Enriched", "Yes" if item.enriched else "No"],
             ["Genres", ", ".join(cast(list[str], genres)) or "N/A"],

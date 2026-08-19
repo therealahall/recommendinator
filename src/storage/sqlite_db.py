@@ -79,6 +79,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
     EnrichmentFilter,
+    ExternalId,
     get_enum_value,
 )
 from src.models.detail_fields import (
@@ -296,11 +297,13 @@ def _build_content_item_from() -> str:
 _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
-# ci.source decides which id a read carries: any other source's beside that
-# name is a pair no row holds, and re-saving the item read would record it.
-_EXTERNAL_ID_TERM = (
-    "(SELECT x.external_id FROM content_item_external_ids x"
-    " WHERE x.content_item_id = ci.id AND x.source = ci.source) as external_id"
+# A JSON object rather than a delimited string, because a source name or an
+# id may contain any character.
+_EXTERNAL_IDS_TERM = (
+    "(SELECT json_group_array(json_object("
+    "'source', x.source, 'external_id', x.external_id))"
+    " FROM content_item_external_ids x"
+    " WHERE x.content_item_id = ci.id) as external_ids"
 )
 
 # Steam's app 440 and GOG's product 440 are different games, hence the source.
@@ -330,7 +333,7 @@ def _build_content_item_select() -> str:
     Used by get_content_item, _items_by_db_ids and _fetch_page. Callers append
     their own WHERE clause.
     """
-    terms = ["ci.*", _EXTERNAL_ID_TERM]
+    terms = ["ci.*", _EXTERNAL_IDS_TERM]
     for spec in DETAIL_FIELDS.values():
         terms.extend(_detail_select_terms(spec))
     terms.extend(_ENRICHMENT_SELECT_TERMS)
@@ -987,43 +990,6 @@ class SQLiteDB:
             self._row_to_content_item(rows[db_id]) for db_id in db_ids if db_id in rows
         ]
 
-    def get_content_items_by_external_ids(
-        self,
-        external_ids: list[str],
-        user_id: int | None = None,
-        content_type: ContentType | None = None,
-    ) -> list[ContentItem]:
-        """Get multiple content items by their external IDs in a single query.
-
-        An id is unique per source and type, so one may name an item of each
-        type. Results are unordered, and an item named twice comes back once.
-        """
-        if not external_ids:
-            return []
-
-        type_clause = " AND ci.content_type = ?" if content_type is not None else ""
-        type_params = [get_enum_value(content_type)] if content_type is not None else []
-        effective_user_id = user_id if user_id is not None else get_default_user_id()
-
-        items: list[ContentItem] = []
-        with self.connection() as conn:
-            cursor = conn.cursor()
-            for i in range(0, len(external_ids), _IN_CLAUSE_CHUNK_SIZE):
-                chunk = external_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
-                placeholders = ", ".join("?" for _ in chunk)
-                cursor.execute(
-                    f"{_CONTENT_ITEM_SELECT} WHERE ci.user_id = ? AND EXISTS ("
-                    "  SELECT 1 FROM content_item_external_ids x"
-                    "   WHERE x.content_item_id = ci.id"
-                    f"    AND x.external_id IN ({placeholders}))"
-                    f"{type_clause}",
-                    [effective_user_id, *chunk, *type_params],
-                )
-                items.extend(
-                    self._row_to_content_item(row) for row in cursor.fetchall()
-                )
-        return items
-
     def get_content_items(
         self,
         user_id: int | None = None,
@@ -1296,9 +1262,25 @@ class SQLiteDB:
             except (ValueError, AttributeError):
                 pass
 
+        external_ids = sorted(
+            (
+                ExternalId.model_validate(pair)
+                for pair in json.loads(row["external_ids"])
+            ),
+            key=lambda pair: (pair.source, pair.external_id),
+        )
+
+        # Re-saving what was read must not record a pair no row holds, so the
+        # save key carries this item's own source's id and no other.
+        own_id = next(
+            (pair.external_id for pair in external_ids if pair.source == row["source"]),
+            None,
+        )
+
         return ContentItem(
             user_id=row["user_id"],
-            id=row["external_id"],
+            id=own_id,
+            external_ids=external_ids,
             db_id=row["id"],
             title=row["title"],
             author=author,

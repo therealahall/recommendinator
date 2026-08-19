@@ -2,8 +2,14 @@
 
 // --- Content ---
 
+/** One source's id for an item; an item holds one per source that named it. */
+export interface ExternalId {
+  source: string
+  external_id: string
+}
+
 export interface ContentItemResponse {
-  id: string | null
+  external_ids: ExternalId[]
   db_id: number | null
   title: string
   author: string | null
