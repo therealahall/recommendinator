@@ -140,24 +140,6 @@ _CONTENT_ITEMS_TABLE = """
 # config.yaml, could collide.
 _LEGACY_EXTERNAL_ID_SOURCE = "(legacy)"
 
-_CONTENT_ITEM_COLUMNS = (
-    "id",
-    "user_id",
-    "title",
-    "normalized_title",
-    "sort_title",
-    "search_text",
-    "content_type",
-    "status",
-    "rating",
-    "review",
-    "date_completed",
-    "ignored",
-    "source",
-    "created_at",
-    "updated_at",
-)
-
 _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_content_type ON content_items(content_type)",
@@ -551,13 +533,17 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
     """``source`` names the last source to sync the row, not the one whose id
     ``external_id`` holds. Filing legacy ids under a name no source can claim
     keeps every source's next sync on the title path instead of a duplicate."""
-    carried = ", ".join(
-        column
-        for column in _CONTENT_ITEM_COLUMNS
-        if _has_column(cursor, "content_items", column)
-    )
     cursor.execute("ALTER TABLE content_items RENAME TO content_items_old")
     cursor.execute(_CONTENT_ITEMS_TABLE)
+    # Read off the two tables rather than a written-down list: the rebuild is
+    # irreversible and drops the old table, so a column the list forgot would
+    # take the operator's ratings and reviews with it, once and in silence.
+    old_columns = set(_column_names(cursor, "content_items_old"))
+    carried = ", ".join(
+        column
+        for column in _column_names(cursor, "content_items")
+        if column in old_columns
+    )
     cursor.execute(
         f"INSERT INTO content_items ({carried})"
         f" SELECT {carried} FROM content_items_old"
@@ -863,9 +849,14 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
     return [str(name).capitalize() for name, supported in stored.items() if supported]
 
 
-def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
+def _column_names(cursor: sqlite3.Cursor, table: str) -> list[str]:
+    """Return *table*'s columns, in declaration order."""
     cursor.execute(f"PRAGMA table_info({table})")
-    return any(row["name"] == column for row in cursor.fetchall())
+    return [row["name"] for row in cursor.fetchall()]
+
+
+def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
+    return column in _column_names(cursor, table)
 
 
 def _add_column_if_not_exists(

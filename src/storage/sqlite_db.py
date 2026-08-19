@@ -16,7 +16,9 @@ door:
   resolution: after the upsert, :meth:`_handle_tv_season_change` regresses a
   completed TV show to currently_consuming when the sync raises its season
   count above the seasons the user has checked off, because new seasons mean
-  the show is not finished.
+  the show is not finished. :meth:`SQLiteDB.save_enrichment_metadata` runs
+  that same pass over the count a provider filled in, and writes nothing else
+  a user owns.
   ``date_completed`` is later-date-wins. ``ignored`` counts only a stated
   value, where a real ``True`` or ``False`` wins in either direction, so an
   exported, edited, re-imported library round-trips, while ``None`` — what a
@@ -435,6 +437,32 @@ class SQLiteDB:
             saved = self._upsert_content_item(cursor, item, user_id)
             conn.commit()
             return saved
+
+    def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
+        """Merge *item*'s metadata into the detail row of *db_id*.
+
+        Keyed by row id: a migrated row has no source id, so the sync door's
+        title path lands on the oldest namesake. The UI door overwrites what
+        this fills.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content_type FROM content_items WHERE id = ?", (db_id,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return
+            content_type = row["content_type"]
+            # Provider text is as free-form as a plugin's, and SQLite refuses
+            # to bind the lone surrogate an undecodable byte leaves.
+            self._save_detail_table(cursor, db_id, _surrogate_free(item), content_type)
+            # Both read what was stored: a creator this filled belongs in the
+            # search text, and a season count it raised unfinishes the show.
+            write_derived_columns(cursor, db_id)
+            if content_type == "tv_show":
+                self._handle_tv_season_change(cursor, db_id)
+            conn.commit()
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None

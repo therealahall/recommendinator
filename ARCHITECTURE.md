@@ -74,9 +74,10 @@ Four methods on `SQLiteDB` write them.
 `seasons_watched` is the one metadata key the sync door unions: a sync adds a
 season, never removes one.
 
-One exception to forward-only sits outside that resolution. After the upsert,
-`_handle_tv_season_change` regresses a completed TV show to
-`currently_consuming` when the sync raises its season count above the seasons the
+One exception to forward-only sits outside that resolution. After the upsert —
+and after `save_enrichment_metadata`, the door a provider's metadata goes
+through — `_handle_tv_season_change` regresses a completed TV show to
+`currently_consuming` when the season count rises above the seasons the
 user checked off, because new seasons mean the show is not finished. It needs an
 existing `seasons_watched` list, and it skips ignored items. A stored season
 count that is unknown or zero gives it nothing to compare against, so no
@@ -298,7 +299,7 @@ WAL mode, and `_get_connection` sets `PRAGMA busy_timeout = 5000` so concurrent
 writers block instead of raising `SQLITE_BUSY`. A per-`StorageManager`
 `threading.Lock` serialises the read-resolve-write dedup merge against the
 parallel sync executor. `StorageManager.save_content_item`,
-`complete_content_item`, `credentials.save` and
+`complete_content_item`, `save_enrichment_metadata`, `credentials.save` and
 `merge_user_preference_config` all take it — the last because
 `PUT /api/users/{id}/preferences` is a partial merge, and two of them at once
 would otherwise each write a `users.settings` blob read before the other

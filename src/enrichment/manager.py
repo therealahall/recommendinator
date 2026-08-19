@@ -672,34 +672,17 @@ class EnrichmentManager:
         item: ContentItem,
         result: EnrichmentResult,
     ) -> None:
-        """Apply enrichment result to item using gap-filling strategy.
+        """Fill *item*'s empty metadata from *result*, on the row it came from.
 
-        Only fills in missing fields - never overwrites existing data.
-
-        Args:
-            db_id: Database ID of the item
-            item: Original ContentItem
-            result: EnrichmentResult to apply
+        Written by db_id: the queue handed one over, and finding the row again
+        by source id or title reaches a different row.
         """
-        merged_metadata = merge_enrichment(item.metadata or {}, result)
-
-        # Update the item with merged metadata
-        updated_item = ContentItem(
-            id=item.id,
-            user_id=item.user_id,
-            title=item.title,
-            author=item.author,
-            content_type=item.content_type,
-            status=item.status,
-            rating=item.rating,
-            review=item.review,
-            date_completed=item.date_completed,
-            source=item.source,
-            metadata=merged_metadata,
+        self.storage_manager.save_enrichment_metadata(
+            db_id,
+            item.model_copy(
+                update={"metadata": merge_enrichment(item.metadata, result)}
+            ),
         )
-
-        # Save back to storage
-        self.storage_manager.save_content_item(updated_item)
 
 
 def merge_enrichment(

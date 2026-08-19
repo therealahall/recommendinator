@@ -122,6 +122,15 @@ class StorageManager:
         with self._save_lock:
             return self.sqlite_db.save_content_item_outcome(item, user_id=user_id)
 
+    def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
+        """Merge a provider's metadata into one row's detail table, by row id.
+
+        Under ``_save_lock`` like the sync door: the merge reads the stored
+        detail row and writes it back.
+        """
+        with self._save_lock:
+            self.sqlite_db.save_enrichment_metadata(db_id, item)
+
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None
     ) -> int:
