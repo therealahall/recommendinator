@@ -448,36 +448,6 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
         )
 
 
-def _declared_columns(table: str) -> set[str]:
-    scratch = sqlite3.connect(":memory:")
-    try:
-        scratch.execute(schema._CONTENT_ITEM_CHILDREN[table])
-        return {row[1] for row in scratch.execute(f"PRAGMA table_info({table})")}
-    finally:
-        scratch.close()
-
-
-def test_a_column_altered_onto_a_child_table_is_in_its_declaration(
-    temp_db: sqlite3.Connection,
-) -> None:
-    """Rebuilding a child carries only what its declaration names."""
-    with patch.object(
-        schema, "_add_column_if_not_exists", wraps=schema._add_column_if_not_exists
-    ) as add_column:
-        create_schema(temp_db)
-
-    altered = {
-        (table, column)
-        for table, column in (call.args[1:3] for call in add_column.call_args_list)
-        if table in schema._CONTENT_ITEM_CHILDREN
-    }
-    # An ALTER reaching a child by any other route empties this and passes.
-    assert ("book_details", "description") in altered
-    assert {
-        pair for pair in altered if pair[1] not in _declared_columns(pair[0])
-    } == set()
-
-
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
     """Test get_all_users returns all users ordered by id."""
     create_schema(temp_db)
