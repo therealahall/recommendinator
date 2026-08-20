@@ -109,9 +109,12 @@ from src.storage.derived import (
     write_derived_columns,
 )
 from src.storage.duplicates import (
-    DuplicateSuggestion,
+    DeclinedPair,
+    SuggestionPage,
     decline_duplicate,
     find_duplicate_suggestions,
+    list_declines,
+    undecline_duplicate,
 )
 from src.storage.item_merges import (
     MergeEvidence,
@@ -1748,17 +1751,27 @@ class SQLiteDB:
             return list_merges(conn.cursor(), effective_user_id)
 
     def list_duplicate_suggestions(
-        self, user_id: int | None = None
-    ) -> list[DuplicateSuggestion]:
-        """Every undecided pair of live rows that looks like one work."""
+        self,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> SuggestionPage:
+        """Undecided pairs of live rows that look like one work, and how many."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
-            return find_duplicate_suggestions(conn.cursor(), effective_user_id)
+            return find_duplicate_suggestions(
+                conn.cursor(),
+                effective_user_id,
+                content_type=(
+                    None if content_type is None else get_enum_value(content_type)
+                ),
+                limit=limit,
+            )
 
     def decline_duplicate_suggestion(
         self, one_id: int, other_id: int, user_id: int | None = None
-    ) -> bool:
-        """Refuse a suggested pair for good, reporting whether there was one."""
+    ) -> DeclinedPair | None:
+        """Refuse a suggested pair for good, returning it, or ``None`` if none."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             declined = decline_duplicate(
@@ -1766,6 +1779,26 @@ class SQLiteDB:
             )
             conn.commit()
             return declined
+
+    def list_declined_duplicates(
+        self, user_id: int | None = None
+    ) -> list[DeclinedPair]:
+        """Every refusal in force, lowest id first."""
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        with self.connection() as conn:
+            return list_declines(conn.cursor(), effective_user_id)
+
+    def undecline_duplicate_suggestion(
+        self, one_id: int, other_id: int, user_id: int | None = None
+    ) -> DeclinedPair | None:
+        """Lift a refusal, returning the pair, or ``None`` when none was in force."""
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        with self.connection() as conn:
+            lifted = undecline_duplicate(
+                conn.cursor(), effective_user_id, one_id, other_id
+            )
+            conn.commit()
+            return lifted
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item by database ID."""

@@ -158,6 +158,28 @@ python3.11 -m src.cli library ignore --id 42
 python3.11 -m src.cli library unignore --id 42
 ```
 
+### Duplicates and merges
+
+```bash
+python3.11 -m src.cli library duplicates --type book --limit 25
+python3.11 -m src.cli library merge --survivor 42 --absorbed 77
+python3.11 -m src.cli library merges
+python3.11 -m src.cli library unmerge --merge-id 3
+python3.11 -m src.cli library decline-duplicate --one 42 --other 77
+python3.11 -m src.cli library declined-duplicates
+python3.11 -m src.cli library undecline-duplicate --one 42 --other 77
+```
+
+`duplicates` heads Evidence `same title` where the save door's own key matched
+the pair, and `same title apart from a qualifier` where only the looser key
+did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
+pairs at a time by default, saying how many are left.
+
+A merge keeps `--survivor` and folds the other row into it. Nothing is deleted,
+and `unmerge` puts the absorbed row back — newest merge first, refusing any
+other order. `decline-duplicate` keeps a pair off the list for the life of the
+library, and `undecline-duplicate` lifts that.
+
 ### `library export`
 
 ```bash

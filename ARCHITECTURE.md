@@ -509,6 +509,13 @@ Library, Data, Preferences and Settings. Internal network only.
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
 - Library export: `GET /api/items/export?type=book&format=csv`.
+- The duplicates review reaches the merge door from both sides: `/api/duplicates`
+  and `/api/merges` behind the **Duplicates** page, `library duplicates`,
+  `merge`, `unmerge`, `merges`, `decline-duplicate`, `declined-duplicates` and
+  `undecline-duplicate` on the CLI. Both serialize through
+  `src/utils/duplicate_serialization.py`. Neither offers to delete a row: every
+  id they show is one a merge can hide, and deleting a hidden row would take its
+  children with it and leave no undo.
 - `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan, ticking
   once a minute and starting one due source, so a backlog staggers instead of
   opening a thread per source. No server, no scheduled sync. It and

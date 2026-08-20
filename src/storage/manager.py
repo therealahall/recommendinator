@@ -18,9 +18,13 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import AccountStore, normalize_account_name
 from src.storage.credentials import CredentialStore
+from src.storage.duplicates import SUGGESTION_PAGE_DEFAULT as SUGGESTION_PAGE_DEFAULT
+from src.storage.duplicates import SUGGESTION_PAGE_MAX as SUGGESTION_PAGE_MAX
+from src.storage.duplicates import DeclinedPair as DeclinedPair
 from src.storage.duplicates import DuplicateSide as DuplicateSide
 from src.storage.duplicates import DuplicateSuggestion as DuplicateSuggestion
 from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
+from src.storage.duplicates import SuggestionPage as SuggestionPage
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
@@ -297,17 +301,37 @@ class StorageManager:
         return self.sqlite_db.list_content_item_merges(user_id=user_id)
 
     def list_duplicate_suggestions(
-        self, user_id: int | None = None
-    ) -> list[DuplicateSuggestion]:
-        """Every undecided pair of live rows that looks like one work."""
-        return self.sqlite_db.list_duplicate_suggestions(user_id=user_id)
+        self,
+        user_id: int | None = None,
+        content_type: ContentType | None = None,
+        limit: int | None = None,
+    ) -> SuggestionPage:
+        """Undecided pairs of live rows that look like one work, and how many."""
+        return self.sqlite_db.list_duplicate_suggestions(
+            user_id=user_id, content_type=content_type, limit=limit
+        )
 
     def decline_duplicate_suggestion(
         self, one_id: int, other_id: int, user_id: int | None = None
-    ) -> bool:
-        """Refuse a suggested pair for good, reporting whether there was one."""
+    ) -> DeclinedPair | None:
+        """Refuse a suggested pair for good, returning it, or ``None`` if none."""
         with self._save_lock:
             return self.sqlite_db.decline_duplicate_suggestion(
+                one_id, other_id, user_id=user_id
+            )
+
+    def list_declined_duplicates(
+        self, user_id: int | None = None
+    ) -> list[DeclinedPair]:
+        """Every refusal in force, lowest id first."""
+        return self.sqlite_db.list_declined_duplicates(user_id=user_id)
+
+    def undecline_duplicate_suggestion(
+        self, one_id: int, other_id: int, user_id: int | None = None
+    ) -> DeclinedPair | None:
+        """Lift a refusal, returning the pair, or ``None`` when none was in force."""
+        with self._save_lock:
+            return self.sqlite_db.undecline_duplicate_suggestion(
                 one_id, other_id, user_id=user_id
             )
 

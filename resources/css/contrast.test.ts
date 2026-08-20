@@ -215,3 +215,62 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, them
     },
   )
 })
+
+const DUP_PAIR = 'resources/js/components/molecules/DuplicatePair.vue'
+const DUP_HISTORY = 'resources/js/components/organisms/DuplicateHistory.vue'
+const DUP_QUEUE = 'resources/js/components/organisms/DuplicateQueue.vue'
+const DUP_PAGE = 'resources/js/components/pages/DuplicatesPage.vue'
+
+/** A pair card sits on the plain card and its two rows sit on the pair card,
+ *  so the backdrops stack: measuring against the card alone measures wrong. */
+const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
+  ['the save-door-key badge', DUP_PAIR, '.dup-badge-exact', ['.dup-badge-exact', '.dup-pair']],
+  ['the looser-key badge', DUP_PAIR, '.dup-badge-loose', ['.dup-badge-loose', '.dup-pair']],
+  ['the looser-key caution', DUP_PAIR, '.dup-pair-caution', ['.dup-pair']],
+  ['a row title', DUP_PAIR, '.dup-side-title', ['.dup-side', '.dup-pair']],
+  ['a row provenance', DUP_PAIR, '.dup-side-meta', ['.dup-side', '.dup-pair']],
+  ['a merge details', DUP_HISTORY, '.dup-log-meta', ['.dup-log-row']],
+  ['the reason an undo is blocked', DUP_HISTORY, '.dup-log-blocked', ['.dup-log-row']],
+]
+
+describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) => {
+  const base = read('resources/css/base.css')
+  const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
+  const card = toRgba('var(--bg-card)', vars)
+
+  function stacked(component: string, selectors: string[]): Rgba {
+    return [...selectors]
+      .reverse()
+      .reduce(
+        (backdrop, selector) =>
+          over(toRgba(declaration(ruleBody(component, selector), 'background'), vars), backdrop),
+        card,
+      )
+  }
+
+  it.each(DUPLICATE_SURFACES)(
+    '%s carries readable text',
+    (_label, componentPath, textSelector, stack) => {
+      const component = read(componentPath)
+      const text = declaration(ruleBody(component, textSelector), 'color')
+
+      expect(
+        contrast(toRgba(text, vars), stacked(component, stack)),
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    },
+  )
+
+  it('the count under the filters is readable on the card', () => {
+    const text = declaration(ruleBody(read(DUP_QUEUE), '.dup-summary'), 'color')
+
+    expect(contrast(toRgba(text, vars), card)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+
+  it('a refused merge is readable where it lands, off any card', () => {
+    const text = declaration(ruleBody(read(DUP_PAGE), '.dup-alert'), 'color')
+
+    expect(
+      contrast(toRgba(text, vars), toRgba('var(--bg-primary)', vars)),
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+})

@@ -1,8 +1,54 @@
 """Tests for the shared CLI/web ContentItem serialization helpers."""
 
+from src.storage.duplicates import (
+    DeclinedPair,
+    DuplicateSide,
+    DuplicateSuggestion,
+    SuggestionEvidence,
+    SuggestionPage,
+)
+from src.storage.item_merges import MergeEvidence, MergeRecord
+from src.utils.duplicate_serialization import (
+    declined_pair_to_dict,
+    merge_to_dict,
+    suggestion_page_to_dict,
+    suggestion_to_dict,
+)
 from src.utils.item_serialization import item_to_dict
-from src.web.api import ContentItemResponse
+from src.web.api import (
+    ContentItemResponse,
+    DeclinedPairResponse,
+    DuplicateSideResponse,
+    DuplicateSuggestionPageResponse,
+    DuplicateSuggestionResponse,
+    MergeResponse,
+)
 from tests.factories import make_item
+
+_A_SIDE = DuplicateSide(
+    db_id=3, title="Deadhouse Gates", source="calibre", creator=None, release_year=None
+)
+
+_A_SUGGESTION = DuplicateSuggestion(
+    content_type="book",
+    evidence=SuggestionEvidence.TITLE_QUALIFIER,
+    evidence_detail="deadhouse gates",
+    survivor=_A_SIDE,
+    absorbed=_A_SIDE,
+)
+
+_A_MERGE = MergeRecord(
+    id=1,
+    survivor_id=3,
+    survivor_title="Deadhouse Gates",
+    absorbed_id=4,
+    absorbed_title="Deadhouse Gates (Malazan Book 2)",
+    evidence=MergeEvidence.MANUAL,
+    evidence_detail=None,
+    merged_at="2026-08-20 00:00:00",
+)
+
+_A_DECLINE = DeclinedPair(one_id=3, one_title="One", other_id=4, other_title="Other")
 
 
 def test_unknown_enriched_serializes_as_false() -> None:
@@ -24,3 +70,19 @@ def test_the_cli_json_and_the_web_response_carry_the_same_keys() -> None:
     it into ContentItemResponse, which drops a key the model does not declare.
     """
     assert set(item_to_dict(make_item())) == set(ContentItemResponse.model_fields)
+
+
+def test_every_duplicates_payload_carries_the_web_response_model_s_keys() -> None:
+    assert set(suggestion_to_dict(_A_SUGGESTION)) == set(
+        DuplicateSuggestionResponse.model_fields
+    )
+    assert set(suggestion_to_dict(_A_SUGGESTION)["survivor"]) == set(  # type: ignore[arg-type]
+        DuplicateSideResponse.model_fields
+    )
+    assert set(suggestion_page_to_dict(SuggestionPage(total=1, suggestions=[]))) == set(
+        DuplicateSuggestionPageResponse.model_fields
+    )
+    assert set(merge_to_dict(_A_MERGE)) == set(MergeResponse.model_fields)
+    assert set(declined_pair_to_dict(_A_DECLINE)) == set(
+        DeclinedPairResponse.model_fields
+    )
