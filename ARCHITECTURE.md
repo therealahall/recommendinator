@@ -188,27 +188,22 @@ the in-memory config into `credentials`, under a reserved `settings:`
 runtime. The Settings page and `settings` CLI expose them write-only.
 
 **One-time migrations.** `create_schema` (`src/storage/schema.py`) runs on every
-database open, so the steps that cannot be repeated cheaply are guarded by
-`PRAGMA user_version`: it reads the stored version once, runs each step whose
-version the database is below, and writes `_SCHEMA_VERSION` back at the end,
-inside the same transaction. Version 1 clears every pre-existing `settings` row
-and version 2 prunes `_ORPHANED_SETTING_KEYS`, so anything a user sets
-afterwards survives. Version 3 is `_repair_legacy_content_rows` — title
-re-normalization, the stranded detail-shape repair and the duplicate merge —
-three scans of the whole library that no current write path gives anything to
-find. A database with no tables yet reports as already current, because
-`CREATE TABLE` leaves nothing for any of them to repair.
+database open. The settings and content steps are guarded by `PRAGMA
+user_version`: it reads the stored version once, runs each step the database is
+below, and stamps `_SCHEMA_VERSION` at the end, inside the same transaction. A
+database with no tables yet reports as already current.
 
-Version 4 records the derived columns below and guards nothing. Their fill
-selects the rows missing them and runs after the duplicate merge, which can
-move a creator onto the row that survives, so it repairs a row a downgraded
-build inserted into a database already stamped 4 rather than being spent on the
-first open that sees one.
+Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
+Version 3 is `_repair_legacy_content_rows`: title re-normalization, the stranded
+detail-shape repair and the duplicate merge, three scans of the whole library.
 
-Version 5 records the `users` password columns and the `sessions` table
-(`src/storage/accounts.py`) and guards nothing either: the ALTER and the CREATE
-are unconditional, and an instance nobody has claimed is exactly the one whose
-password columns are NULL.
+Versions 4, 5, 7 and 8 record a shape rather than guarding a step; the
+derived-column fill selects the rows missing them.
+
+The three table rebuilds — `_rebuild_external_ids_if_stale`,
+`_move_external_ids_off_content_items` and `_repair_dangling_foreign_keys` —
+guard on the shape they find instead, so they run on every open, each in its own
+transaction.
 
 #### Derived sort and search columns
 
