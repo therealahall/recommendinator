@@ -26,6 +26,17 @@ rm data/recommendations.db
 
 Then re-import.
 
+### `Renaming content_items rewrote the foreign keys of ...`
+
+The upgrade that moves external ids off `content_items` refused to finish, so the
+database will not open. Nothing is lost: it rolls back before dropping anything.
+SQLite ignored the `legacy_alter_table` pragma the rebuild sets. Report it with
+your SQLite version:
+
+```bash
+python3.11 -c "import sqlite3; print(sqlite3.sqlite_version)"
+```
+
 ### Items disappear after a restart
 
 The database is not where you think. Check `storage.database_path`, that `data/`

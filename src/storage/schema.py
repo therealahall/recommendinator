@@ -293,6 +293,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     for child_statement in _CONTENT_ITEM_CHILDREN.values():
         cursor.execute(child_statement)
 
+    # The lookup seeks on the UNIQUE key now; the rebuild's guard sees no index.
+    cursor.execute("DROP INDEX IF EXISTS idx_external_id_lookup")
+
     # All three rebuilds run ahead of every write below, because none can open
     # a transaction while one is already open. This one runs first: the move
     # writes the table it rebuilds.
@@ -561,21 +564,19 @@ def _rebuild_external_ids_if_stale(conn: sqlite3.Connection) -> None:
     if _table_shape(cursor, table) == declared:
         return
 
-    conn.execute("BEGIN")
-    cursor.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
-    cursor.execute(_EXTERNAL_IDS_TABLE)
-    # An orphaned id row is dropped with the join: the foreign key on the
-    # rebuilt table would refuse it anyway.
-    cursor.execute(
-        f"""INSERT INTO {table}
-                (content_item_id, user_id, source, external_id, content_type)
-            SELECT x.content_item_id, x.user_id, x.source, x.external_id,
-                   ci.content_type
-              FROM {table}_old x
-              JOIN content_items ci ON ci.id = x.content_item_id"""
-    )
-    cursor.execute(f"DROP TABLE {table}_old")
-    conn.commit()
+    with _rebuilding(conn):
+        cursor.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+        cursor.execute(_EXTERNAL_IDS_TABLE)
+        # The join is what drops an orphan: foreign keys are off in here.
+        cursor.execute(
+            f"""INSERT INTO {table}
+                    (content_item_id, user_id, source, external_id, content_type)
+                SELECT x.content_item_id, x.user_id, x.source, x.external_id,
+                       ci.content_type
+                  FROM {table}_old x
+                  JOIN content_items ci ON ci.id = x.content_item_id"""
+        )
+        cursor.execute(f"DROP TABLE {table}_old")
 
 
 @contextmanager
@@ -1001,7 +1002,6 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
 
 
 def _column_names(cursor: sqlite3.Cursor, table: str) -> list[str]:
-    """Return *table*'s columns, in declaration order."""
     cursor.execute(f"PRAGMA table_info({table})")
     return [row["name"] for row in cursor.fetchall()]
 
@@ -1013,7 +1013,6 @@ def _has_column(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
 def _add_column_if_not_exists(
     cursor: sqlite3.Cursor, table: str, column: str, column_type: str
 ) -> None:
-    """Add a column to a table if it doesn't already exist."""
     if not _has_column(cursor, table, column):
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
