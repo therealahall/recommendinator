@@ -95,6 +95,7 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.detail_fields import (
+    CREATOR_FIELDS,
     DETAIL_FIELDS,
     RELEASE_YEAR_FIELDS,
     ContentTypeFields,
@@ -123,7 +124,6 @@ from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
-    StatedYear,
     assert_known_detail_table,
     detail_join,
     normalize_title_for_matching,
@@ -329,15 +329,16 @@ def _build_content_item_from() -> str:
 _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
-# A JSON object rather than a delimited string, because a source name or an
-# id may contain any character. Absorbed rows keep their own ids, and the item
-# the user sees is the group, so the survivor reports the group's.
+# A JSON object, not a delimited string: a source name or id may hold any
+# character. The group's ids, since an absorbed row keeps its own. Two terms
+# rather than a COALESCE over ci.id, which no index can seek.
 _EXTERNAL_IDS_TERM = (
     "(SELECT json_group_array(json_object("
     "'source', x.source, 'external_id', x.external_id))"
     " FROM content_item_external_ids x"
-    " JOIN content_items owner ON owner.id = x.content_item_id"
-    " WHERE COALESCE(owner.merged_into, owner.id) = ci.id) as external_ids"
+    " WHERE x.content_item_id = ci.id"
+    " OR x.content_item_id IN (SELECT owner.id FROM content_items owner"
+    " WHERE owner.merged_into = ci.id)) as external_ids"
 )
 
 # Steam's app 440 and GOG's product 440 are different games, hence the source.
@@ -352,11 +353,8 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
 """
 
 # A row holding another id from the incoming source is that source's other
-# item, not this one; an absorbed row answers as its survivor, so a merge
-# survives a re-sync.
-
-# Accepted: a source that changes an item's own id lands a second row, and
-# nothing here tells that from a genuine second edition.
+# item; an absorbed row answers as its survivor. Accepted: a source that
+# changes an item's own id lands a second row, as a second edition would.
 _TITLE_MATCH_CANDIDATES = """
     SELECT COALESCE(ci.merged_into, ci.id) AS id, ci.title AS title
     FROM content_items ci
@@ -369,20 +367,24 @@ _TITLE_MATCH_CANDIDATES = """
 """
 
 
-def _incoming_year(item: ContentItem, content_type_value: str) -> StatedYear:
-    """The release year the item being saved states, before it is stored."""
+def _incoming_creator(item: ContentItem, content_type_value: str) -> str | None:
+    """The creator the item being saved states, by ``_save_detail_table``'s rule:
+    ``author``, or the type's creator key, which is where every game, film and
+    show plugin puts it."""
+    field = CREATOR_FIELDS.get(content_type_value)
+    if item.author or field is None:
+        return item.author
+    stated: str | None = field.store(field.value_from(item.metadata or {}))
+    return stated
+
+
+def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignals:
+    """What the item being saved states, read as the row it lands on is read."""
     field = RELEASE_YEAR_FIELDS.get(content_type_value)
     stated = field.value_from(item.metadata or {}) if field is not None else None
-    return stated_release_year(content_type_value, stated, item.title)
-
-
-def _vetoed(
-    cursor: sqlite3.Cursor, item: ContentItem, year: StatedYear, candidate_id: int
-) -> bool:
-    """Whether a candidate states a creator or year the incoming item rules out."""
-    return signals_conflict(
-        MatchSignals(creator=item.author, release_year=year),
-        read_match_signals(cursor, candidate_id),
+    return MatchSignals(
+        creator=_incoming_creator(item, content_type_value),
+        release_year=stated_release_year(content_type_value, stated, item.title),
     )
 
 
@@ -398,22 +400,23 @@ def _title_match(
     normalized_title: str,
     item: ContentItem,
 ) -> int | None:
-    """The row of this key the incoming creator and year allow.
+    """The row of this key the creator and year allow.
 
-    Two rows left means the key was lossy, so only a row spelled the same is
-    taken. A group answers to every spelling it holds.
+    Each candidate is weighed against what it states, so a spelling it rules
+    out is not answered to. Where two rows remain, only one spelled the same
+    is taken.
     """
     cursor.execute(
         f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id",
         (user_id, content_type_value, normalized_title, item.source, item.id),
     )
-    year = _incoming_year(item, content_type_value)
+    signals = _incoming_signals(item, content_type_value)
     allowed: dict[int, set[str]] = {}
     for row in cursor.fetchall():
         candidate_id = int(row["id"])
         if candidate_id in allowed:
             allowed[candidate_id].add(_spelling(row["title"]))
-        elif not _vetoed(cursor, item, year, candidate_id):
+        elif not signals_conflict(signals, read_match_signals(cursor, candidate_id)):
             allowed[candidate_id] = {_spelling(row["title"])}
     if len(allowed) < 2:
         return next(iter(allowed), None)
@@ -530,19 +533,21 @@ class SQLiteDB:
 
         Keyed by row id: a migrated row has no source id, so the sync door's
         title path lands on the oldest namesake. The UI door overwrites what
-        this fills.
+        this fills. A row absorbed since the batch read it is refused rather
+        than redirected: the survivor is enriched on its own turn.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT content_type FROM content_items WHERE id = ?", (db_id,)
+                "SELECT content_type FROM content_items"
+                " WHERE id = ? AND merged_into IS NULL",
+                (db_id,),
             )
             row = cursor.fetchone()
             if row is None:
                 return
             content_type = row["content_type"]
-            # Provider text is as free-form as a plugin's, and SQLite refuses
-            # to bind the lone surrogate an undecodable byte leaves.
+            # SQLite refuses to bind the lone surrogate an undecodable byte leaves.
             self._save_detail_table(cursor, db_id, _surrogate_free(item), content_type)
             # Both read what was stored: a creator this filled belongs in the
             # search text, and a season count it raised unfinishes the show.

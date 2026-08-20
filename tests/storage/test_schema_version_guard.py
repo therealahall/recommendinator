@@ -17,7 +17,11 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import schema
 from src.storage.item_merges import MergeEvidence, absorb_item
-from src.storage.schema import _SCHEMA_VERSION, create_schema
+from src.storage.schema import (
+    _SCHEMA_VERSION,
+    _UPGRADE_PASS_EVIDENCE,
+    create_schema,
+)
 from src.storage.sqlite_db import SQLiteDB
 
 # The upgrade the two rows below are waiting for: both carry the SQL
@@ -127,9 +131,12 @@ def _merge_by_hand(
     db_path: Path,
     survivor: str,
     absorbed: str,
-    evidence: MergeEvidence = MergeEvidence.MANUAL,
+    evidence: str = MergeEvidence.MANUAL.value,
 ) -> None:
-    """Record a merge an operator, or an older build's own pass, already made."""
+    """Record a merge an operator, or an older build's pass, already made.
+
+    A pass's evidence is the bare string it left, no enum member carrying it.
+    """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -140,11 +147,15 @@ def _merge_by_hand(
                 "SELECT external_id, content_item_id FROM content_item_external_ids"
             ).fetchall()
         }
-        absorb_item(
+        record = absorb_item(
             cursor,
             survivor_id=ids[survivor],
             absorbed_id=ids[absorbed],
-            evidence=evidence,
+            evidence=MergeEvidence.MANUAL,
+        )
+        cursor.execute(
+            "UPDATE content_item_merges SET evidence = ? WHERE id = ?",
+            (evidence, record.id),
         )
         conn.commit()
     finally:
@@ -821,13 +832,13 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         ("doom-2016", "DOOM (2016)", "doom", None),
     )
 
-    @pytest.mark.parametrize("stored_version", [11, 12, 13, 14])
+    @pytest.mark.parametrize("stored_version", [11, 12, 13, 14, _SCHEMA_VERSION])
     def test_the_upgrade_releases_the_merge_its_own_older_pass_made(
         self, tmp_path: Path, stored_version: int
     ) -> None:
         """DEFECT: version 11's own pass hid this remake, and every build since
-        stamped the library current with the row still behind ``merged_into``.
-        Nobody asked for the merge, so the release does not weigh it."""
+        stamped the library current with the row still behind ``merged_into`` —
+        the build that made it included, which is why no version guards this."""
         db_path = tmp_path / f"false-merge-stamped-at-{stored_version}.db"
         _open(db_path)
         _seed_games(db_path, self._THE_TWO_DOOMS_ON_ONE_KEY)
@@ -835,7 +846,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             db_path,
             survivor="doom-1993",
             absorbed="doom-2016",
-            evidence=MergeEvidence.NORMALIZED_TITLE,
+            evidence=_UPGRADE_PASS_EVIDENCE,
         )
         _rewind_to(db_path, stored_version)
 
@@ -856,7 +867,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             db_path,
             survivor="doom-1993",
             absorbed="doom-2016",
-            evidence=MergeEvidence.NORMALIZED_TITLE,
+            evidence=_UPGRADE_PASS_EVIDENCE,
         )
         _rate_through_the_ui_door(db_path, "doom-1993", 5, "Best of the lot")
         _rewind_to(db_path, 11)
@@ -888,7 +899,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
                 db_path,
                 survivor="doom-2016-epic",
                 absorbed=absorbed,
-                evidence=MergeEvidence.NORMALIZED_TITLE,
+                evidence=_UPGRADE_PASS_EVIDENCE,
             )
         _rewind_to(db_path, 12)
 
@@ -942,7 +953,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             db_path,
             survivor="doom-1993",
             absorbed="doom-2016",
-            evidence=MergeEvidence.NORMALIZED_TITLE,
+            evidence=_UPGRADE_PASS_EVIDENCE,
         )
         before = _row_state(db_path, "doom-1993")
         assert before["video_game_details"][0]["developer"] == "id Software"
@@ -975,7 +986,7 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             db_path,
             survivor="doom-gog",
             absorbed="doom-2016",
-            evidence=MergeEvidence.NORMALIZED_TITLE,
+            evidence=_UPGRADE_PASS_EVIDENCE,
         )
         _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
         _rewind_to(db_path, 11)

@@ -523,6 +523,14 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
 }
 
 
+#: The field each type carries its creator in, where ``author`` is not set.
+CREATOR_FIELDS: dict[str, DetailField] = {
+    content_type: field
+    for content_type, spec in DETAIL_FIELDS.items()
+    for field in spec.fields
+    if field.kind is FieldKind.CREATOR
+}
+
 #: The field each type states its work's release year in. A book declares none
 #: on purpose: ``year_published`` is the edition's year, so a 1965 Dune and a
 #: 2011 reprint would read as two works.

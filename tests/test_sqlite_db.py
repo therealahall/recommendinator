@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -886,6 +887,37 @@ class TestWhatTheSaveDoorMatchesOnTitle:
             source=source,
         )
 
+    @staticmethod
+    def _game(
+        source: str, external_id: str, title: str, **metadata: Any
+    ) -> ContentItem:
+        """A game as its plugins send one: ``author`` None, developer in metadata."""
+        return ContentItem(
+            id=external_id,
+            title=title,
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source=source,
+            metadata=metadata,
+        )
+
+    def test_the_developer_a_game_states_in_metadata_vetoes_the_match(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """DEFECT: the incoming creator was read off ``author`` alone, which no
+        game plugin sets, so GOG's Tomb Raider landed on Steam's and took its id."""
+        steam = temp_db.save_content_item(self._game("steam", "203160", "Tomb Raider"))
+        temp_db.save_enrichment_metadata(
+            steam,
+            self._game("steam", "203160", "Tomb Raider", developer="Crystal Dynamics"),
+        )
+
+        gog = temp_db.save_content_item(
+            self._game("gog", "1207658919", "Tomb Raider", developers=["Core Design"])
+        )
+
+        assert gog != steam
+
     def test_a_trakt_show_does_not_land_on_the_sonarr_row_for_another_region(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -906,13 +938,14 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_two_films_of_one_name_are_told_apart_by_the_years_they_state(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Neither title spells a year, so only the stored column can refuse."""
+        """Neither title spells a year, so only the stored column can refuse. No
+        sync source states one, so both sides are the importer that does."""
         watched = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "trakt", "trakt:841", "Dune", 1984)
+            self._dated(ContentType.MOVIE, "csv_import", "csv-841", "Dune", 1984)
         )
 
         downloaded = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "radarr", "tmdb:438631", "Dune", 2021)
+            self._dated(ContentType.MOVIE, "json_import", "json-438631", "Dune", 2021)
         )
 
         assert downloaded != watched
@@ -920,13 +953,13 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_a_year_only_one_source_states_does_not_stop_the_match(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Radarr dates a film in a field, and a source that dates none agrees."""
+        """An import dates a film in a field, and Radarr, which dates none, agrees."""
         dated = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "radarr", "tmdb:562", "Die Hard", 1988)
+            self._dated(ContentType.MOVIE, "csv_import", "csv-562", "Die Hard", 1988)
         )
 
         undated = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "trakt", "trakt:481", "Die Hard")
+            self._dated(ContentType.MOVIE, "radarr", "tmdb:481", "Die Hard")
         )
 
         assert undated == dated
@@ -4000,8 +4033,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_an_item_no_source_named_reads_back_with_an_empty_list(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A hand-typed completion holds no id at all, and the read parses the
-        id list unconditionally — an aggregate over no rows must be ``[]``."""
+        """The read parses the id list unconditionally, so an aggregate over no
+        rows must be ``[]``."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 title="Doom",
@@ -4020,9 +4053,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_an_id_carrying_json_punctuation_survives_the_round_trip(
         self, temp_db: SQLiteDB
     ) -> None:
-        """An imported id is whatever the file's column held, so the read
-        cannot pack the pairs into a delimited string: a quote, a backslash, a
-        comma or a newline would split one pair into garbage."""
+        """An imported id is whatever the file's column held, so a delimited
+        string would split one pair into garbage."""
         awkward = 'a"b\\c,d\ne'
         db_id = temp_db.save_content_item(self._game("generic_csv", awkward, "Doom"))
 
@@ -4035,7 +4067,7 @@ class TestEachSourceHoldsItsOwnExternalId:
         ]
 
 
-class TestTheIdLookupCostsOneSeek:
+class TestTheIdTableIsSeekedNotScanned:
     def test_it_reaches_the_row_through_the_id_table_and_scans_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4057,13 +4089,26 @@ class TestTheIdLookupCostsOneSeek:
         assert plan[0].startswith("SEARCH x")
         assert [step for step in plan if "SCAN" in step] == []
 
+    def test_the_library_read_seeks_the_ids_it_reports_for_each_row(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """DEFECT: a COALESCE hid the indexed column, so every row re-scanned."""
+        with temp_db.connection() as conn:
+            plan = [
+                row["detail"]
+                for row in conn.execute(
+                    f"EXPLAIN QUERY PLAN {sqlite_db._CONTENT_ITEM_SELECT}"
+                    " WHERE ci.user_id = ?",
+                    [1],
+                ).fetchall()
+            ]
+
+        assert [step for step in plan if "SCAN x" in step] == []
+        assert [step for step in plan if "SCAN owner" in step] == []
+
 
 class TestCrossSourceDuplicateDetectionRegression:
-    """The rules a merge reconciles a duplicate pair by.
-
-    The absorbed row drops out of every read, so whatever the merge fails to
-    carry onto the survivor is what the library stops showing.
-    """
+    """Whatever a merge fails to carry is what the library stops showing."""
 
     def test_merge_unions_seasons_watched_dates_with_later_date_winning_regression(
         self, temp_db: SQLiteDB
@@ -4432,31 +4477,6 @@ class TestDuplicateMergePreservesState:
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
-
-    def test_merge_keeps_ignored_flag_regression(self, temp_db: SQLiteDB) -> None:
-        """An ignore on either row survives the merge."""
-        keep_id = _insert_raw_item(
-            temp_db,
-            external_id="steam-doom",
-            title="Doom",
-            normalized_title="doom",
-            ignored=False,
-            source="steam",
-        )
-        dup_id = _insert_raw_item(
-            temp_db,
-            external_id="blog-doom",
-            title="Doom",
-            normalized_title="doom",
-            ignored=True,
-            source="personal_site",
-        )
-
-        _merged(temp_db, keep_id, dup_id)
-
-        retrieved = temp_db.get_content_item(keep_id)
-        assert retrieved is not None
-        assert retrieved.ignored is True
 
     def test_completed_and_ignored_item_survives_dedupe_regression(
         self, temp_db: SQLiteDB

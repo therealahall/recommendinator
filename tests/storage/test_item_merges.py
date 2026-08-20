@@ -1,7 +1,7 @@
 """A merge is recorded, hides rather than deletes, and undoes exactly.
 
-The absorbed row is never written, so the round trip below asserts both rows
-column for column, not the fields the merge was expected to move.
+The absorbed row is never written, so the round trips assert both rows column
+for column, not the fields the merge was expected to move.
 """
 
 import json
@@ -123,7 +123,6 @@ def test_merging_a_rated_item_into_an_unrated_one_and_unmerging_restores_both(
     assert survivor.review == "Still the best"
     assert survivor.status == ConsumptionStatus.COMPLETED
     assert survivor.date_completed == date(2024, 1, 2)
-    assert survivor.ignored is True
     assert survivor.enriched is True
     assert survivor.metadata["genres"] == ["Puzzle"]
 
@@ -131,6 +130,20 @@ def test_merging_a_rated_item_into_an_unrated_one_and_unmerging_restores_both(
 
     after = {db_id: _snapshot(db, db_id) for db_id in (survivor_id, absorbed_id)}
     assert after == before
+
+
+def test_an_ignored_absorbed_row_does_not_hide_the_survivor(db: SQLiteDB) -> None:
+    """DEFECT: the merge ORed the two flags, so absorbing the row the operator had
+    ignored to work around the duplicate hid the one row left."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two", ignored=True)
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.ignored is False
+    assert [item.db_id for item in db.get_content_items()] == [survivor_id]
 
 
 def test_an_absorbed_item_is_hidden_from_every_read_and_kept_in_the_table(
@@ -142,8 +155,7 @@ def test_an_absorbed_item_is_hidden_from_every_read_and_kept_in_the_table(
     db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
     assert [item.db_id for item in db.get_content_items()] == [survivor_id]
-    # A term matching both titles: the search page filters the candidates it
-    # scans, not only the ids it loads.
+    # A term matching both titles: search filters the candidates it scans.
     assert [item.db_id for item in db.get_content_items(search="Portal")] == [
         survivor_id
     ]
@@ -183,7 +195,6 @@ def test_a_resync_of_either_source_lands_on_the_survivor(db: SQLiteDB) -> None:
 
     assert (by_id, by_title) == (survivor_id, survivor_id)
     assert _merged_into(db, absorbed_id) == survivor_id
-    # The re-sync neither un-hides the absorbed row nor adds a third one.
     assert db.count_items() == 1
     survivor = db.get_content_item(survivor_id)
     assert survivor is not None
@@ -201,8 +212,7 @@ def test_the_survivor_reports_both_rows_ids_and_hands_them_back_on_unmerge(
     merged = db.get_content_item(survivor_id)
     assert merged is not None
     assert _id_pairs(merged) == [("gog", "1207658961"), ("steam", "620")]
-    # Its own source's id, so re-saving what was read records no pair the
-    # survivor's row does not hold.
+    # Its own source's id, so re-saving what was read records no new pair.
     assert merged.id == "620"
 
     db.unmerge_content_items(record.id)
@@ -235,13 +245,13 @@ def test_every_merge_is_listed_with_what_absorbed_what_and_on_what_evidence(
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
 
     record = db.merge_content_items(
-        survivor_id, absorbed_id, MergeEvidence.EXTERNAL_ID, "gog:1207658961"
+        survivor_id, absorbed_id, MergeEvidence.MANUAL, "gog:1207658961"
     )
 
     assert db.list_content_item_merges() == [record]
     assert (record.survivor_title, record.absorbed_title) == ("Portal 2", "Portal Two")
     assert (record.evidence, record.evidence_detail) == (
-        MergeEvidence.EXTERNAL_ID,
+        MergeEvidence.MANUAL,
         "gog:1207658961",
     )
 
@@ -346,9 +356,8 @@ def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) ->
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
     db: SQLiteDB,
 ) -> None:
-    """Each merge records the survivor as it stands, and the older record already
-    holds what the newer merge moved, so undoing them in the order they were made
-    would write an unmerged row's rating back onto the survivor."""
+    """Undone oldest first, the older record writes an unmerged row's rating back
+    onto the survivor."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     rated_id = _save(
         db, "gog", "1207658961", title="Portal Two", rating=5, review="Still the best"
@@ -370,9 +379,10 @@ def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began
     assert _snapshot(db, survivor_id) == before
 
 
-def test_neither_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
-    """Both doors select by id alone, so an id from a stale merge surface wrote a
-    row no read hands back, and the undo handed that row back carrying the write."""
+def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
+    """Each door selects by id alone, so an id held across a merge — a stale merge
+    surface, an enrichment batch — wrote a row no read hands back, and the undo
+    handed that row back carrying the write."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
     before = _snapshot(db, absorbed_id)
@@ -382,6 +392,15 @@ def test_neither_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None
     assert db.set_item_ignored(absorbed_id, True) is False
     assert (
         db.update_item_from_ui(db_id=absorbed_id, status="completed", rating=1) is False
+    )
+    db.save_enrichment_metadata(
+        absorbed_id,
+        ContentItem(
+            title="Portal Two",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"developer": "Valve", "genres": ["Puzzle"]},
+        ),
     )
 
     db.unmerge_content_items(record.id)
