@@ -19,8 +19,8 @@ export function pairKey(one: number, other: number): string {
 
 export interface MergeRow {
   record: MergeRecord
-  /** Empty when the undo is legal, else the merge to deal with first: merges
-   *  undo newest first per survivor and the server refuses any other order. */
+  /** Empty when legal, else the merge to undo first: the server sequences
+   *  them newest first per survivor and refuses any other order. */
   blocked: string
 }
 

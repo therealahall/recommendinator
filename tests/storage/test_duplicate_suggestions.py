@@ -12,6 +12,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import (
     DuplicateSuggestion,
+    MergeError,
     MergeEvidence,
     StorageManager,
     SuggestionEvidence,
@@ -148,11 +149,31 @@ def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     assert manager.decline_duplicate_suggestion(calibre, goodreads) is None
 
 
+def test_a_refusal_the_pass_cannot_offer_back_is_kept_until_the_merge_comes_off(
+    manager: StorageManager,
+) -> None:
+    """Reported: lifting a refusal over a row a later merge had hidden emptied
+    the declined list and offered nothing back, losing the decision."""
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+    assert manager.decline_duplicate_suggestion(first, third) is not None
+    merged = manager.merge_content_items(second, third, MergeEvidence.MANUAL)
+
+    with pytest.raises(MergeError, match=f"before merge {merged.id}"):
+        manager.undecline_duplicate_suggestion(first, third)
+
+    listed = manager.list_declined_duplicates()
+    assert [(pair.one_id, pair.other_id) for pair in listed] == [(first, third)]
+    assert manager.unmerge_content_items(merged.id) == merged
+    assert manager.undecline_duplicate_suggestion(first, third) is not None
+    assert (first, third) in _pairs(manager)
+
+
 def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
     manager: StorageManager,
 ) -> None:
-    """A group resolved out of order leaves the pass offering a pair whose
-    absorbed side has absorbed one of its own."""
+    """A group resolved out of order offers a pair that has absorbed its own."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")

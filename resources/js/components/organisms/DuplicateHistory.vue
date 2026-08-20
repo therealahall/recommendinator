@@ -4,12 +4,6 @@ import { pairKey, useDuplicatesStore } from '@/stores/duplicates'
 
 const store = useDuplicatesStore()
 
-// Only the operator makes a merge, and storage folds anything an older build
-// recorded back onto `manual`, so this is the whole set.
-const MERGE_EVIDENCE: Record<string, string> = {
-  manual: 'your choice',
-}
-
 const mergeRows = computed(() =>
   store.mergeRows.map(({ record, blocked }) => ({
     id: record.id,
@@ -19,7 +13,7 @@ const mergeRows = computed(() =>
     blockedId: `merge-blocked-${record.id}`,
     meta: [
       `merge ${record.id}`,
-      MERGE_EVIDENCE[record.evidence] ?? record.evidence,
+      record.evidence_label,
       `${record.merged_at.slice(0, 10)} ${record.merged_at.slice(11, 16)} UTC`,
     ].join(' · '),
     undoing: store.isPending(`undo:${record.id}`),

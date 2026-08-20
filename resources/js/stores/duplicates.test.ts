@@ -32,6 +32,7 @@ function suggestion(survivorId: number, absorbedId: number): DuplicateSuggestion
   return {
     content_type: 'book',
     evidence: 'normalized_title',
+    evidence_label: 'same title',
     evidence_detail: 'row',
     survivor: side(survivorId),
     absorbed: side(absorbedId),
@@ -46,6 +47,7 @@ function merge(id: number, survivorId: number, absorbedId: number): MergeRecord 
     absorbed_id: absorbedId,
     absorbed_title: `Row ${absorbedId}`,
     evidence: 'manual',
+    evidence_label: 'your choice',
     evidence_detail: null,
     merged_at: '2026-08-20 00:00:00',
   }
@@ -87,6 +89,20 @@ describe('useDuplicatesStore', () => {
     const blocked = store.mergeRows.find((row) => row.record.id === 1)
 
     expect(blocked!.blocked).toContain('Undo merge 2 first')
+  })
+
+  it('leaves a merge into an untouched survivor undoable however old it is', () => {
+    // Storage sequences the undo per survivor, not across the whole log, so a
+    // rule keyed on the newest merge overall disables the undo on every pair
+    // but one of a session's work while the server would take any of them.
+    const store = useDuplicatesStore()
+    store.merges = [merge(1, 10, 11), merge(2, 20, 21), merge(3, 20, 22)]
+
+    expect(store.mergeRows.map((row) => [row.record.id, row.blocked !== ''])).toEqual([
+      [3, false],
+      [2, true],
+      [1, false],
+    ])
   })
 
   it('surfaces the server’s own refusal rather than a generic failure', async () => {

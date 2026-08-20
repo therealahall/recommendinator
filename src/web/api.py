@@ -284,7 +284,6 @@ CustomRuleText = Annotated[
 #: non-positive id matches no row.
 UserIdPath = Annotated[int, PathParam(ge=1, description="User ID")]
 
-#: A rowid in a request body or a path. SQLite hands out positives only.
 ItemDbId = Annotated[int, Field(ge=1)]
 ItemIdPath = Annotated[int, PathParam(ge=1)]
 
@@ -937,6 +936,7 @@ class DuplicateSideResponse(BaseModel):
 class DuplicateSuggestionResponse(BaseModel):
     content_type: str
     evidence: str
+    evidence_label: str
     evidence_detail: str
     survivor: DuplicateSideResponse
     absorbed: DuplicateSideResponse
@@ -954,6 +954,7 @@ class MergeResponse(BaseModel):
     absorbed_id: int
     absorbed_title: str
     evidence: str
+    evidence_label: str
     evidence_detail: str | None
     merged_at: str
 
@@ -1196,8 +1197,7 @@ def _duplicate_type(type_name: str | None) -> ContentType | None:
 
 
 def _refused_merge(error: MergeError) -> HTTPException:
-    """409, not 404: the text names the row or merge to deal with first, and
-    quotes nothing but ids and content types, so it forwards whole."""
+    """409, not 404: it names the row or merge to deal with first."""
     return HTTPException(status_code=409, detail=str(error))
 
 
@@ -1671,7 +1671,10 @@ def undecline_duplicate_pair(
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> DeclinedPairResponse:
     """Offer a refused pair again."""
-    pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    try:
+        pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    except MergeError as error:
+        raise _refused_merge(error) from error
     if pair is None:
         raise HTTPException(
             status_code=404,
