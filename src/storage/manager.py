@@ -18,6 +18,9 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import AccountStore, normalize_account_name
 from src.storage.credentials import CredentialStore
+from src.storage.duplicates import DuplicateSide as DuplicateSide
+from src.storage.duplicates import DuplicateSuggestion as DuplicateSuggestion
+from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
@@ -292,6 +295,21 @@ class StorageManager:
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
         """Every merge in force, naming what absorbed what and on what evidence."""
         return self.sqlite_db.list_content_item_merges(user_id=user_id)
+
+    def list_duplicate_suggestions(
+        self, user_id: int | None = None
+    ) -> list[DuplicateSuggestion]:
+        """Every undecided pair of live rows that looks like one work."""
+        return self.sqlite_db.list_duplicate_suggestions(user_id=user_id)
+
+    def decline_duplicate_suggestion(
+        self, one_id: int, other_id: int, user_id: int | None = None
+    ) -> bool:
+        """Refuse a suggested pair for good, reporting whether there was one."""
+        with self._save_lock:
+            return self.sqlite_db.decline_duplicate_suggestion(
+                one_id, other_id, user_id=user_id
+            )
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item, reporting whether there was one."""

@@ -224,6 +224,18 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             restore_json TEXT NOT NULL
         )
     """,
+    "content_item_duplicate_declines": """
+        CREATE TABLE IF NOT EXISTS content_item_duplicate_declines (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            -- Ordered low, high so one pair is one row either way round. Ids
+            -- are AUTOINCREMENT, so no new row inherits a deleted one's refusal.
+            lower_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            higher_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            PRIMARY KEY (lower_item_id, higher_item_id)
+        )
+    """,
     "enrichment_status": """
         CREATE TABLE IF NOT EXISTS enrichment_status (
             content_item_id INTEGER PRIMARY KEY
