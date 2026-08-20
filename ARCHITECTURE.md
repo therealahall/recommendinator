@@ -200,10 +200,10 @@ detail-shape repair and the duplicate merge, three scans of the whole library.
 Versions 4, 5, 7 and 8 record a shape rather than guarding a step; the
 derived-column fill selects the rows missing them.
 
-The three table rebuilds — `_rebuild_external_ids_if_stale`,
-`_move_external_ids_off_content_items` and `_repair_dangling_foreign_keys` —
-guard on the shape they find instead, so they run on every open, each in its own
-transaction.
+The one table rebuild, `_move_external_ids_off_content_items`, guards on the
+`content_items.external_id` column rather than the version, since it commits
+before the stamp. `_assert_no_child_followed` aborts it when SQLite ignores the
+`legacy_alter_table` pragma, rather than commit a database no write can use.
 
 #### Derived sort and search columns
 
