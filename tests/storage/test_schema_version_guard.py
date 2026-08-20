@@ -72,6 +72,14 @@ _CONTENT_ITEMS_BEFORE_NORMALIZED_TITLE = """
     )
 """
 
+# Every table a game's row occupies, keyed by the column holding its id.
+_ITEM_ROW_TABLES = (
+    ("content_items", "id"),
+    ("video_game_details", "content_item_id"),
+    ("enrichment_status", "content_item_id"),
+    ("content_item_external_ids", "content_item_id"),
+)
+
 _USERS_TABLE = """
     CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +254,83 @@ def _merge_targets(db_path: Path) -> dict[str, str]:
                 "   ON live.content_item_id = COALESCE(ci.merged_into, ci.id)"
             ).fetchall()
         )
+    finally:
+        conn.close()
+
+
+def _merges_in_force(db_path: Path) -> list[tuple[str, str, str]]:
+    """Each merge still recorded, as (survivor, absorbed, evidence)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute(
+            "SELECT s.external_id, a.external_id, m.evidence"
+            " FROM content_item_merges m"
+            " JOIN content_item_external_ids s ON s.content_item_id = m.survivor_id"
+            " JOIN content_item_external_ids a ON a.content_item_id = m.absorbed_id"
+            " ORDER BY m.id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _row_state(db_path: Path, external_id: str) -> dict[str, list[dict[str, Any]]]:
+    """Every stored row of one item, read without opening the schema.
+
+    ``SELECT *`` so a column added later is compared without being named here.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        db_id = int(
+            conn.execute(
+                "SELECT content_item_id FROM content_item_external_ids"
+                " WHERE external_id = ?",
+                (external_id,),
+            ).fetchone()[0]
+        )
+        return {
+            table: [
+                dict(row)
+                for row in conn.execute(
+                    f"SELECT * FROM {table} WHERE {key} = ?", (db_id,)
+                ).fetchall()
+            ]
+            for table, key in _ITEM_ROW_TABLES
+        }
+    finally:
+        conn.close()
+
+
+def _merge_bookkeeping_faults(db_path: Path) -> list[tuple[int, str]]:
+    """Every way a row is stranded: each branch names its own.
+
+    An item is live, or hidden behind one live survivor with one record
+    saying so. Nothing else is undoable.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        return [
+            (int(row[0]), str(row[1]))
+            for row in conn.execute(
+                "SELECT ci.id, 'hidden with no record' FROM content_items ci"
+                " LEFT JOIN content_item_merges m ON m.absorbed_id = ci.id"
+                " WHERE ci.merged_into IS NOT NULL AND m.id IS NULL"
+                " UNION ALL"
+                " SELECT m.absorbed_id, 'record over a live row'"
+                " FROM content_item_merges m"
+                " JOIN content_items ci ON ci.id = m.absorbed_id"
+                " WHERE ci.merged_into IS NULL"
+                " UNION ALL"
+                " SELECT m.id, 'record over a row that is gone'"
+                " FROM content_item_merges m"
+                " LEFT JOIN content_items ci ON ci.id = m.absorbed_id"
+                " WHERE ci.id IS NULL"
+                " UNION ALL"
+                " SELECT ci.id, 'resolves to a hidden row' FROM content_items ci"
+                " JOIN content_items live ON live.id = ci.merged_into"
+                " WHERE live.merged_into IS NOT NULL"
+            ).fetchall()
+        ]
     finally:
         conn.close()
 
@@ -795,6 +880,96 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             "doom-gog": "doom-gog",
             "doom-2016-steam": "doom-2016-steam",
         }
+
+    @staticmethod
+    def _describe_and_enrich(db_path: Path, external_id: str) -> None:
+        """Give a row the metadata and enrichment its merge moves to a survivor."""
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE video_game_details SET developer = 'id Software',"
+                " genres = '[\"FPS\"]' WHERE content_item_id ="
+                " (SELECT content_item_id FROM content_item_external_ids"
+                "  WHERE external_id = ?)",
+                (external_id,),
+            )
+            conn.execute(
+                "INSERT INTO enrichment_status (content_item_id, last_enriched_at,"
+                " enrichment_provider, enrichment_quality, needs_enrichment)"
+                " SELECT content_item_id, '2026-01-01 00:00:00', 'igdb', 'high', 0"
+                " FROM content_item_external_ids WHERE external_id = ?",
+                (external_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    _THE_REMAKE_CARRYING_METADATA = (
+        ("doom-1993", "Doom", "doom", None),
+        ("doom-2016", "DOOM (2016)", "doom", 2016),
+    )
+
+    def test_the_release_leaves_every_column_of_the_survivor_where_it_stands(
+        self, tmp_path: Path
+    ) -> None:
+        """The four columns the rating case reads are not all a merge writes: an
+        undo also takes back the year, developer, genres and enrichment row the
+        absorbed row moved over, on a library the operator only opened."""
+        db_path = tmp_path / "v11-survivor-untouched.db"
+        _open(db_path)
+        _seed_games(db_path, self._THE_REMAKE_CARRYING_METADATA)
+        self._describe_and_enrich(db_path, "doom-2016")
+        _merge_by_hand(
+            db_path,
+            survivor="doom-1993",
+            absorbed="doom-2016",
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+        )
+        before = _row_state(db_path, "doom-1993")
+        assert before["video_game_details"][0]["developer"] == "id Software"
+        assert before["video_game_details"][0]["release_year"] == 2016
+        assert len(before["enrichment_status"]) == 1
+        _rewind_to(db_path, 11)
+
+        _open(db_path)
+
+        assert [row[0] for row in _content_rows(db_path)] == ["doom-1993", "doom-2016"]
+        assert _merge_bookkeeping_faults(db_path) == []
+        assert _row_state(db_path, "doom-1993") == before
+
+    _A_TITLE_MERGE_UNDER_A_MANUAL_ONE = (
+        ("doom-gog", "Doom", "doom", None),
+        ("doom-2016", "DOOM (2016)", "doom", 2016),
+        ("doom-steam", "DOOM", "doom", None),
+    )
+
+    def test_a_title_merge_the_operator_later_merged_over_is_still_released(
+        self, tmp_path: Path
+    ) -> None:
+        """Releasing newest-first and stopping at the first merge from another
+        door left this one hidden for good. Order cannot matter to a release:
+        it writes no survivor column, so no record holds what another overwrote."""
+        db_path = tmp_path / "v11-title-merge-under-a-manual-one.db"
+        _open(db_path)
+        _seed_games(db_path, self._A_TITLE_MERGE_UNDER_A_MANUAL_ONE)
+        _merge_by_hand(
+            db_path,
+            survivor="doom-gog",
+            absorbed="doom-2016",
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+        )
+        _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
+        _rewind_to(db_path, 11)
+
+        _open(db_path)
+
+        assert _merge_targets(db_path) == {
+            "doom-gog": "doom-gog",
+            "doom-2016": "doom-2016",
+            "doom-steam": "doom-gog",
+        }
+        assert _merges_in_force(db_path) == [("doom-gog", "doom-steam", "manual")]
+        assert _merge_bookkeeping_faults(db_path) == []
 
 
 class TestWhatTheRenormalizationRewrites:
