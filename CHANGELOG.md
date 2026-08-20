@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v0.38.0 (2026-08-20)
+
+### Bug Fixes
+
+- **storage**: Bring the external id table to its declared shape on open
+  ([`9ca384f`](https://github.com/therealahall/recommendinator/commit/9ca384fbe6f79b4e4544e878beb3ff486df7dbb0))
+
+- **storage**: File legacy ids under a source no operator can configure
+  ([`f27605e`](https://github.com/therealahall/recommendinator/commit/f27605e3b4d95abaa177450ccec1dddebaf03950))
+
+- **storage**: Give each source its own external id namespace
+  ([`42e892d`](https://github.com/therealahall/recommendinator/commit/42e892d9b39b71ecc45ec42160801fab0d82f8ac))
+
+- **storage**: Identify an item by the source that named it, and stop deleting duplicates on sync
+  ([`c7f6132`](https://github.com/therealahall/recommendinator/commit/c7f61328d2e7e710ef174fda83cd3c73a87bb9b9))
+
+- **storage**: Keep content type in the external id key
+  ([`a2a3f6d`](https://github.com/therealahall/recommendinator/commit/a2a3f6d8f2f24951f8db73054f6b14d74a19a9cc))
+
+- **storage**: Let the rebuild read its own columns, and let enrichment write by id
+  ([`d0dffd5`](https://github.com/therealahall/recommendinator/commit/d0dffd510a326b47a377308f7087346ef32cadd8))
+
+- **storage**: Rebuild a child whose parent the rename took away, and refuse to cause it
+  ([`850baed`](https://github.com/therealahall/recommendinator/commit/850baed22aa9957d396a39663c3b657070c1618c))
+
+- **storage**: Rebuild through the one context manager, and drop the index nothing uses
+  ([`c2a3cac`](https://github.com/therealahall/recommendinator/commit/c2a3cac8e1c2b23d2773052c7dbc4b6cea74876e))
+
+### Features
+
+- **storage**: Report every source that names an item, on both interfaces
+  ([`516bb21`](https://github.com/therealahall/recommendinator/commit/516bb2125cc6b3384a61d58b50aca853526355e2))
+
+### Performance Improvements
+
+- **storage**: Let the id lookup seek instead of scan
+  ([`1a04ef7`](https://github.com/therealahall/recommendinator/commit/1a04ef7aab5a385266596e4a9773d78d95fdfdb2))
+
+### Refactoring
+
+- **ingestion**: Stop plugins setting a source the sync overwrites
+  ([`7d12016`](https://github.com/therealahall/recommendinator/commit/7d1201680074f429b7fc856444dac7b4741b2a13))
+
+### Testing
+
+- **storage**: Anchor the declaration sweep so it cannot pass empty
+  ([`e72a5ab`](https://github.com/therealahall/recommendinator/commit/e72a5abef593129af790ed683c3a2748e556659d))
+
+
 ## v0.37.1 (2026-08-19)
 
 ### Bug Fixes
