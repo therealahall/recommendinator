@@ -12,23 +12,27 @@ module, so the underscore-prefixed names really are internal.
 import json
 import re
 import sqlite3
+from difflib import SequenceMatcher
 from typing import Any
 
 from src.models.detail_fields import ContentTypeFields
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import merge_seasons_watched
+from src.utils.sorting import FUZZY_MATCH_THRESHOLD
 
 __all__ = [
     "ALLOWED_DETAIL_TABLES",
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
     "assert_known_detail_table",
+    "creators_conflict",
     "detail_columns",
     "detail_join",
     "merge_detail_tables",
     "merge_enrichment_status",
     "merge_scalar_columns",
+    "normalize_creator_for_matching",
     "normalize_title_for_matching",
     "parse_json_list",
     "resolve_status_forward",
@@ -182,13 +186,31 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
 # ---------------------------------------------------------------------------
 
 
-def normalize_title_for_matching(title: str) -> str:
-    """Normalize a title for duplicate detection.
+# Goodreads RSS appends "(Series, #N)" where Calibre appends nothing.
+_SERIES_MARKER = re.compile(r"#\s*\d")
+# Softer: "The Office (US)" collapses onto the UK show; the veto backs it.
+_REGION_QUALIFIERS = frozenset({"us", "usa", "uk", "gb", "au", "nz", "ca", "jp", "eu"})
+# A bare year stays: "DOOM (2016)" is the remake of "Doom", not a spelling of
+# it, and the two share a developer, so no veto would catch the merge.
+_TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
 
-    Strips the variations that stop the same work matching across sources:
-    case, trademark symbols, leading articles, edition and remaster suffixes,
-    Roman numerals, punctuation and repeated whitespace.
-    """
+
+def _is_positional(inner: str) -> bool:
+    if _SERIES_MARKER.search(inner):
+        return True
+    return re.sub(r"[\W_]", "", inner) in _REGION_QUALIFIERS
+
+
+def _strip_positional_parentheticals(title: str) -> str:
+    while match := _TRAILING_PARENTHETICAL.search(title):
+        if not _is_positional(match.group(1)):
+            break
+        title = title[: match.start()]
+    return title
+
+
+def normalize_title_for_matching(title: str) -> str:
+    """Normalize a title for duplicate detection."""
     if not title:
         return ""
 
@@ -220,6 +242,8 @@ def normalize_title_for_matching(title: str) -> str:
     for suffix in suffixes_to_remove:
         normalized = re.sub(suffix, "", normalized, flags=re.IGNORECASE)
 
+    normalized = _strip_positional_parentheticals(normalized)
+
     normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
 
     # Hyphens go first so "Year-One" matches "Year One" rather than "YearOne".
@@ -236,7 +260,8 @@ def normalize_title_for_matching(title: str) -> str:
         (r"\bv\b", "5"),
         (r"\biii\b", "3"),
         (r"\bii\b", "2"),
-        (r"\bi\b", "1"),
+        # Trailing only: elsewhere "I" is the pronoun of "I Am Legend".
+        (r"\bi\s*$", "1"),
         (r"\bix\b", "9"),
         (r"\bx\b", "10"),
     ]
@@ -246,6 +271,40 @@ def normalize_title_for_matching(title: str) -> str:
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
     return normalized
+
+
+def _collapse_initials(tokens: list[str]) -> list[str]:
+    """Join each run of single-letter tokens, so "J. K." is the one token "jk"."""
+    collapsed: list[str] = []
+    following_initial = False
+    for token in tokens:
+        if following_initial and len(token) == 1:
+            collapsed[-1] += token
+        else:
+            collapsed.append(token)
+        following_initial = len(token) == 1
+    return collapsed
+
+
+def normalize_creator_for_matching(creator: str | None) -> str:
+    """The veto's key, order-free: Goodreads writes "Rowling, J.K."."""
+    if not creator:
+        return ""
+    tokens = re.sub(r"[\W_]", " ", creator.lower()).split()
+    return " ".join(sorted(_collapse_initials(tokens)))
+
+
+def creators_conflict(one: str | None, other: str | None) -> bool:
+    """Whether two creators clearly disagree, vetoing a title match.
+
+    Unstated or sharing a name is not disagreement: a source omitting the
+    author would manufacture duplicates, and "Arkane Lyon" is "Arkane Studios".
+    """
+    left = normalize_creator_for_matching(one)
+    right = normalize_creator_for_matching(other)
+    if not left or not right or set(left.split()) & set(right.split()):
+        return False
+    return SequenceMatcher(None, left, right).ratio() < FUZZY_MATCH_THRESHOLD
 
 
 # ---------------------------------------------------------------------------

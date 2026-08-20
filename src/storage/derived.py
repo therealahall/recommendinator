@@ -66,6 +66,13 @@ def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
         _write_row(cursor, row)
 
 
+def read_creator(cursor: sqlite3.Cursor, db_id: int) -> str | None:
+    """The creator stored for one row, chosen by type as a loaded item is."""
+    cursor.execute(f"{_SOURCE_SELECT} WHERE ci.id = ?", (db_id,))
+    row = cursor.fetchone()
+    return str(row["creator"]) if row is not None and row["creator"] else None
+
+
 def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
     """Fill the derived columns for every row that is missing one.
 

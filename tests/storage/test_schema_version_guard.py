@@ -29,6 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import schema
 from src.storage.schema import _SCHEMA_VERSION, create_schema
 from src.storage.sqlite_db import SQLiteDB
@@ -502,6 +503,129 @@ class TestRunningTheUpgradeTwiceOverOneLibrary:
 
         assert after_the_first_run == _THE_MERGED_SURVIVOR
         assert _content_rows(db_path) == after_the_first_run
+
+
+class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
+    """Version 10 changed the normalizer, so version 9 holds stale keys."""
+
+    #: The pair from Aaron's library, with the keys version 9 stored for them.
+    _FERAL_GODS = (
+        (
+            "goodreads_rss",
+            "57905101",
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+            "gate of the feral gods dungeon crawler carl 4",
+            "Matt Dinniman",
+        ),
+        (
+            "calibre_web",
+            "calibre:51a0e808",
+            "The Gate of the Feral Gods",
+            "gate of the feral gods",
+            None,
+        ),
+    )
+
+    #: Two books one shelf really holds: the novel and the film novelization,
+    #: kept apart under version 9 by each holding its own Goodreads id.
+    _TWO_DUNES = (
+        ("goodreads_rss", "234225", "Dune", "dune", "Frank Herbert"),
+        ("goodreads_rss", "56896284", "Dune", "dune", "Alexander Freed"),
+    )
+
+    @staticmethod
+    def _seed_books(db_path: Path, rows: tuple[tuple[Any, ...], ...]) -> None:
+        conn = sqlite3.connect(db_path)
+        try:
+            for source, external_id, title, normalized_title, author in rows:
+                cursor = conn.execute(
+                    """INSERT INTO content_items
+                       (user_id, title, normalized_title, content_type,
+                        status, source)
+                       VALUES (1, ?, ?, 'book', 'unread', ?)""",
+                    (title, normalized_title, source),
+                )
+                conn.execute(
+                    """INSERT INTO content_item_external_ids
+                       (content_item_id, user_id, source, external_id, content_type)
+                       VALUES (?, 1, ?, ?, 'book')""",
+                    (cursor.lastrowid, source, external_id),
+                )
+                conn.execute(
+                    "INSERT INTO book_details (content_item_id, author)"
+                    " VALUES (?, ?)",
+                    (cursor.lastrowid, author),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _groups(db_path: Path) -> dict[str, list[str]]:
+        """Each live item's normalized title and the ids its group holds."""
+        conn = sqlite3.connect(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT live.normalized_title, x.external_id FROM content_items ci"
+                " JOIN content_items live ON live.id = COALESCE(ci.merged_into, ci.id)"
+                " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+            ).fetchall()
+        finally:
+            conn.close()
+        grouped: dict[str, list[str]] = {}
+        for normalized_title, external_id in rows:
+            grouped.setdefault(normalized_title, []).append(external_id)
+        return {title: sorted(ids) for title, ids in grouped.items()}
+
+    def _upgraded(
+        self, tmp_path: Path, name: str, rows: tuple[tuple[Any, ...], ...]
+    ) -> Path:
+        db_path = tmp_path / name
+        _open(db_path)
+        self._seed_books(db_path, rows)
+        _rewind_to(db_path, 9)
+
+        _open(db_path)
+
+        return db_path
+
+    def _saved_fresh(
+        self, tmp_path: Path, name: str, rows: tuple[tuple[Any, ...], ...]
+    ) -> Path:
+        db = SQLiteDB(tmp_path / name)
+        for source, external_id, title, _, author in rows:
+            db.save_content_item(
+                ContentItem(
+                    id=external_id,
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                    source=source,
+                    author=author,
+                )
+            )
+        return tmp_path / name
+
+    def test_a_version_nine_library_matches_the_pairs_a_fresh_one_does(
+        self, tmp_path: Path
+    ) -> None:
+        one_book = {"gate of the feral gods": ["57905101", "calibre:51a0e808"]}
+
+        assert (
+            self._groups(self._upgraded(tmp_path, "v9-books.db", self._FERAL_GODS))
+            == one_book
+            == self._groups(
+                self._saved_fresh(tmp_path, "fresh-books.db", self._FERAL_GODS)
+            )
+        )
+
+    def test_the_upgrade_leaves_two_books_whose_authors_disagree(
+        self, tmp_path: Path
+    ) -> None:
+        """Merging these would hide one of two real books behind the other."""
+        upgraded = self._upgraded(tmp_path, "v9-dunes.db", self._TWO_DUNES)
+
+        assert len(_content_rows(upgraded)) == 2
 
 
 class TestWhatTheDeduplicationPassRefusesToGroup:
