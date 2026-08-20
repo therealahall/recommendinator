@@ -226,11 +226,13 @@ const DUP_PAGE = 'resources/js/components/pages/DuplicatesPage.vue'
 const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
   ['the save-door-key badge', DUP_PAIR, '.dup-badge-exact', ['.dup-badge-exact', '.dup-pair']],
   ['the looser-key badge', DUP_PAIR, '.dup-badge-loose', ['.dup-badge-loose', '.dup-pair']],
+  ['the content-type badge', DUP_PAIR, '.dup-badge-type', ['.dup-badge-type', '.dup-pair']],
+  ['a refused decision', DUP_PAIR, '.dup-pair-error', ['.dup-pair']],
   ['the looser-key caution', DUP_PAIR, '.dup-pair-caution', ['.dup-pair']],
   ['a row title', DUP_PAIR, '.dup-side-title', ['.dup-side', '.dup-pair']],
   ['a row provenance', DUP_PAIR, '.dup-side-meta', ['.dup-side', '.dup-pair']],
   ['a merge details', DUP_HISTORY, '.dup-log-meta', ['.dup-log-row']],
-  ['the reason an undo is blocked', DUP_HISTORY, '.dup-log-blocked', ['.dup-log-row']],
+  ['the reason a control refused', DUP_HISTORY, '.dup-log-reason', ['.dup-log-row']],
 ]
 
 describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) => {
