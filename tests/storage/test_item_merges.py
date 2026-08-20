@@ -92,6 +92,14 @@ def _merged_into(db: SQLiteDB, db_id: int) -> int | None:
     return None if row is None else row["merged_into"]
 
 
+def _hidden(db: SQLiteDB, group: tuple[int, ...]) -> set[int]:
+    return {db_id for db_id in group if _merged_into(db, db_id) is not None}
+
+
+def _named_as_absorbed(db: SQLiteDB) -> set[int]:
+    return {record.absorbed_id for record in db.list_content_item_merges()}
+
+
 def _id_pairs(item: ContentItem | None) -> list[tuple[str, str]]:
     assert item is not None
     return [(pair.source, pair.external_id) for pair in item.external_ids]
@@ -354,6 +362,26 @@ def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them
         assert db.unmerge_content_items(record.id) == record
     assert {db_id: _snapshot(db, db_id) for db_id in group} == before
     assert db.count_items() == 5
+
+
+def test_a_row_is_hidden_exactly_while_a_merge_record_names_it(db: SQLiteDB) -> None:
+    """The two refusals read the record where the listings read the flag."""
+    keeper_id = _save(db, "steam", "620", title="Portal 2")
+    middle_id = _save(db, "gog", "1207658961", title="Portal Two")
+    held_id = _save(db, "epic", "portal-2", title="Portal Zwei")
+    group = (keeper_id, middle_id, held_id)
+
+    inner = db.merge_content_items(middle_id, held_id, MergeEvidence.MANUAL)
+    assert _hidden(db, group) == _named_as_absorbed(db) == {held_id}
+
+    outer = db.merge_content_items(keeper_id, middle_id, MergeEvidence.MANUAL)
+    assert _hidden(db, group) == _named_as_absorbed(db) == {middle_id, held_id}
+
+    assert db.unmerge_content_items(outer.id) == outer
+    assert _hidden(db, group) == _named_as_absorbed(db) == {held_id}
+
+    assert db.unmerge_content_items(inner.id) == inner
+    assert _hidden(db, group) == _named_as_absorbed(db) == set()
 
 
 def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) -> None:

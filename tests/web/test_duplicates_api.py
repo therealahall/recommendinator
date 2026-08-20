@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.duplicate_serialization import merge_to_dict, suggestion_to_dict
 from tests.factories import authenticated_client, booted_web_app
 
 
@@ -56,12 +57,16 @@ def _suggestions(client: TestClient, **params: Any) -> Any:
 
 
 def test_a_pair_is_offered_with_both_sides_and_the_key_that_paired_them(
-    client: TestClient,
+    client: TestClient, storage: StorageManager
 ) -> None:
     page = _suggestions(client, type="book")
 
     assert page["total"] == 1
     (pair,) = page["suggestions"]
+    (offered,) = storage.list_duplicate_suggestions(
+        user_id=1, content_type=ContentType.BOOK
+    ).suggestions
+    assert pair == suggestion_to_dict(offered)
     assert pair["content_type"] == "book"
     assert pair["evidence"] == "title_qualifier"
     assert pair["survivor"]["title"] == "Deadhouse Gates"
@@ -92,7 +97,7 @@ def test_an_unknown_type_is_refused_by_name(client: TestClient) -> None:
 
 
 def test_a_merge_is_listed_and_the_undo_puts_the_absorbed_row_back(
-    client: TestClient,
+    client: TestClient, storage: StorageManager
 ) -> None:
     survivor = _ids(client, "Deadhouse Gates")
     absorbed = _ids(client, "Deadhouse Gates (Malazan Book 2)")
@@ -104,6 +109,8 @@ def test_a_merge_is_listed_and_the_undo_puts_the_absorbed_row_back(
 
     assert merged.status_code == 200, merged.text
     record = merged.json()
+    (stored,) = storage.list_content_item_merges(user_id=1)
+    assert record == merge_to_dict(stored)
     assert record["evidence"] == "manual"
     assert record["survivor_id"] == survivor
     assert record["absorbed_id"] == absorbed
@@ -262,37 +269,8 @@ def test_a_lift_a_merge_blocks_is_refused_in_the_storage_layer_s_own_words(
 
     assert response.status_code == 409
     assert f"before merge {merged.json()['id']}" in response.json()["detail"]
-
-
-def test_offering_a_pair_back_keeps_the_refusal_until_it_can_be_honoured(
-    trio: TestClient,
-) -> None:
-    """Reported: a dismissed pair left both lists at once and could not be got back.
-
-    Root cause: ``undecline_duplicate`` deletes the refusal on the two ids
-    alone, while ``decline_duplicate`` takes one only over two live rows. So
-    lifting a refusal whose other side a later merge has hidden throws the
-    decision away and offers nothing in its place, under an acknowledgement
-    saying the pair may be offered again. Fix: refuse the lift while the pair
-    cannot be offered, leaving the refusal listed.
-    """
-    one, two, three = sorted({db_id for pair in _offered_pairs(trio) for db_id in pair})
-    assert (
-        trio.post(
-            "/api/duplicates/declined", json={"one_id": one, "other_id": three}
-        ).status_code
-        == 200
-    )
-    assert (
-        trio.post(
-            "/api/merges", json={"survivor_id": two, "absorbed_id": three}
-        ).status_code
-        == 200
-    )
-
-    trio.delete(f"/api/duplicates/declined/{one}/{three}")
-
-    assert trio.get("/api/duplicates/declined").json() != [] or {
-        one,
-        three,
-    } in _offered_pairs(trio)
+    assert [
+        (pair["one_id"], pair["other_id"])
+        for pair in trio.get("/api/duplicates/declined").json()
+    ] == [(one, three)]
+    assert {one, three} not in _offered_pairs(trio)
