@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { pairKey, useDuplicatesStore } from './duplicates'
+import { SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from './duplicates'
 import { ApiError } from '@/composables/useApi'
 import type { DuplicateSuggestion, MergeRecord } from '@/types/api'
 
@@ -63,6 +64,15 @@ describe('useDuplicatesStore', () => {
     mockGet.mockReset()
     mockPost.mockReset()
     mockDelete.mockReset()
+  })
+
+  it('offers every page size the API will serve, up to its ceiling', () => {
+    // The CLI's --limit takes the ceiling, so a preset list short of it leaves
+    // a web operator paging through work a terminal does in one pass.
+    const source = readFileSync(`${process.cwd()}/src/storage/duplicates.py`, 'utf8')
+    const ceiling = source.match(/^SUGGESTION_PAGE_MAX = (\d+)$/m)![1]
+
+    expect(Math.max(...SUGGESTION_LIMITS)).toBe(Number(ceiling))
   })
 
   it('keys a pair the same way round either way, so one decision is one key', () => {

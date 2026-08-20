@@ -29,7 +29,13 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
 
 function mountPair(props: Partial<DuplicateSuggestion> = {}, busy = {}) {
   return mount(DuplicatePair, {
-    props: { suggestion: makeSuggestion(props), merging: false, declining: false, ...busy },
+    props: {
+      suggestion: makeSuggestion(props),
+      merging: false,
+      declining: false,
+      error: '',
+      ...busy,
+    },
   })
 }
 

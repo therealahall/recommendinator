@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { pairKey, useDuplicatesStore } from '@/stores/duplicates'
+import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
+const historyEl = ref<HTMLElement | null>(null)
+const mergesEl = ref<HTMLElement | null>(null)
+const declinedEl = ref<HTMLElement | null>(null)
 
 const mergeRows = computed(() =>
   store.mergeRows.map(({ record, blocked }) => ({
@@ -10,7 +14,8 @@ const mergeRows = computed(() =>
     absorbedTitle: record.absorbed_title,
     survivorTitle: record.survivor_title,
     blocked,
-    blockedId: `merge-blocked-${record.id}`,
+    reason: blocked || store.errorFor(`undo:${record.id}`),
+    reasonId: `merge-reason-${record.id}`,
     meta: [
       `merge ${record.id}`,
       record.evidence_label,
@@ -21,18 +26,41 @@ const mergeRows = computed(() =>
 )
 
 const declinedRows = computed(() =>
-  store.declined.map((pair) => ({
-    key: pairKey(pair.one_id, pair.other_id),
-    oneId: pair.one_id,
-    otherId: pair.other_id,
-    text: `“${pair.one_title}” (row ${pair.one_id}) and “${pair.other_title}” (row ${pair.other_id})`,
-    lifting: store.isPending(`undecline:${pairKey(pair.one_id, pair.other_id)}`),
-  })),
+  store.declined.map((pair) => {
+    const key = pairKey(pair.one_id, pair.other_id)
+    return {
+      key,
+      oneId: pair.one_id,
+      otherId: pair.other_id,
+      text: `“${pair.one_title}” (row ${pair.one_id}) and “${pair.other_title}” (row ${pair.other_id})`,
+      lifting: store.isPending(`undecline:${key}`),
+      reason: store.errorFor(`undecline:${key}`),
+      reasonId: `declined-reason-${key}`,
+    }
+  }),
 )
+
+function undo(index: number, mergeId: number): Promise<void> {
+  return keepFocusInList(mergesEl, historyEl, index, store.undoMerge(mergeId))
+}
+
+function offerAgain(index: number, oneId: number, otherId: number): Promise<void> {
+  return keepFocusInList(
+    declinedEl,
+    historyEl,
+    index,
+    store.offerAgain(oneId, otherId),
+  )
+}
 </script>
 
 <template>
-  <section class="card" aria-labelledby="dup-history-heading">
+  <section
+    ref="historyEl"
+    class="card focus-fallback"
+    aria-labelledby="dup-history-heading"
+    tabindex="-1"
+  >
     <h3 id="dup-history-heading" class="dup-heading">What you have decided</h3>
 
     <h4 id="dup-merges-heading" class="dup-subheading">Merges</h4>
@@ -41,23 +69,29 @@ const declinedRows = computed(() =>
       folded in keeps everything it had.
     </p>
     <p v-if="mergeRows.length === 0" class="empty-state">No merges yet.</p>
-    <ul v-else class="dup-log" role="list" aria-labelledby="dup-merges-heading">
-      <li v-for="row in mergeRows" :key="row.id" class="dup-log-row">
+    <ul
+      v-else
+      ref="mergesEl"
+      class="dup-log"
+      role="list"
+      aria-labelledby="dup-merges-heading"
+    >
+      <li v-for="(row, index) in mergeRows" :key="row.id" class="dup-log-row">
         <div class="dup-log-body">
           <p class="dup-log-text">
             “{{ row.absorbedTitle }}” folded into “{{ row.survivorTitle }}”
           </p>
           <p class="dup-log-meta">{{ row.meta }}</p>
-          <p v-if="row.blocked" :id="row.blockedId" class="dup-log-blocked">
-            {{ row.blocked }}
+          <p v-if="row.reason" :id="row.reasonId" class="dup-log-reason">
+            {{ row.reason }}
           </p>
         </div>
         <button
           type="button"
           class="btn btn-secondary btn-small"
           :aria-disabled="row.blocked !== '' || row.undoing || undefined"
-          :aria-describedby="row.blocked ? row.blockedId : undefined"
-          @click="row.blocked || row.undoing ? undefined : store.undoMerge(row.id)"
+          :aria-describedby="row.reason ? row.reasonId : undefined"
+          @click="row.blocked || row.undoing ? undefined : undo(index, row.id)"
         >{{ row.undoing ? 'Undoing…' : 'Undo' }}</button>
       </li>
     </ul>
@@ -66,16 +100,28 @@ const declinedRows = computed(() =>
     <p v-if="declinedRows.length === 0" class="empty-state">
       No pairs dismissed.
     </p>
-    <ul v-else class="dup-log" role="list" aria-labelledby="dup-declined-heading">
-      <li v-for="row in declinedRows" :key="row.key" class="dup-log-row">
+    <ul
+      v-else
+      ref="declinedEl"
+      class="dup-log"
+      role="list"
+      aria-labelledby="dup-declined-heading"
+    >
+      <li v-for="(row, index) in declinedRows" :key="row.key" class="dup-log-row">
         <div class="dup-log-body">
           <p class="dup-log-text">{{ row.text }}</p>
+          <p v-if="row.reason" :id="row.reasonId" class="dup-log-reason">
+            {{ row.reason }}
+          </p>
         </div>
         <button
           type="button"
           class="btn btn-secondary btn-small"
           :aria-disabled="row.lifting || undefined"
-          @click="row.lifting ? undefined : store.offerAgain(row.oneId, row.otherId)"
+          :aria-describedby="row.reason ? row.reasonId : undefined"
+          @click="
+            row.lifting ? undefined : offerAgain(index, row.oneId, row.otherId)
+          "
         >{{ row.lifting ? 'Offering…' : 'Offer again' }}</button>
       </li>
     </ul>
@@ -129,7 +175,7 @@ const declinedRows = computed(() =>
   color: var(--text-secondary);
 }
 
-.dup-log-blocked {
+.dup-log-reason {
   margin-top: var(--space-1);
   font-size: var(--text-sm);
   color: var(--color-warning);

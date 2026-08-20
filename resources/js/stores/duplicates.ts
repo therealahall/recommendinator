@@ -9,7 +9,9 @@ import type {
   MergeRecord,
 } from '@/types/api'
 
-export const SUGGESTION_LIMITS = [10, 25, 50, 100] as const
+/** Reaches SUGGESTION_PAGE_MAX, the ceiling the API and the CLI both take:
+ *  a first pass over a real library runs to hundreds of pairs. */
+export const SUGGESTION_LIMITS = [10, 25, 50, 100, 200] as const
 const DEFAULT_LIMIT = 25
 
 /** A pair in either order, so a decision on it is keyed the same way twice. */
@@ -37,6 +39,9 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
 
   const loading = ref(false)
   const error = ref('')
+  /** Which decision drew the refusal, so its own row can print it: at a full
+   *  page the page-level notice is off-screen. Empty for a failed load. */
+  const errorKey = ref('')
   const announcement = ref('')
   const pending = ref<string[]>([])
 
@@ -76,8 +81,13 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     return { user_id: useAppStore().currentUserId }
   }
 
-  function message(err: unknown, fallback: string): string {
-    return err instanceof Error && err.message ? err.message : fallback
+  function fail(err: unknown, fallback: string, key = ''): void {
+    error.value = err instanceof Error && err.message ? err.message : fallback
+    errorKey.value = key
+  }
+
+  function errorFor(key: string): string {
+    return errorKey.value === key ? error.value : ''
   }
 
   async function loadSuggestions(): Promise<void> {
@@ -92,7 +102,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
       suggestions.value = page.suggestions
       total.value = page.total
     } catch (err) {
-      error.value = message(err, 'Failed to load suspected duplicates.')
+      fail(err, 'Failed to load suspected duplicates.')
     } finally {
       loading.value = false
     }
@@ -102,7 +112,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     try {
       merges.value = await api.get<MergeRecord[]>('/merges', userParams())
     } catch (err) {
-      error.value = message(err, 'Failed to load past merges.')
+      fail(err, 'Failed to load past merges.')
     }
   }
 
@@ -110,7 +120,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     try {
       declined.value = await api.get<DeclinedPair[]>('/duplicates/declined', userParams())
     } catch (err) {
-      error.value = message(err, 'Failed to load declined pairs.')
+      fail(err, 'Failed to load declined pairs.')
     }
   }
 
@@ -126,6 +136,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     if (isPending(key)) return
     pending.value = [...pending.value, key]
     error.value = ''
+    errorKey.value = ''
     try {
       const outcome = await act()
       await reload()
@@ -133,7 +144,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     } catch (err) {
       // Storage names the row or the merge to deal with first, so its words go
       // through whole rather than into one generic failure.
-      error.value = message(err, 'That change did not go through.')
+      fail(err, 'That change did not go through.', key)
       announcement.value = ''
     } finally {
       pending.value = pending.value.filter((one) => one !== key)
@@ -211,9 +222,11 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     limit,
     loading,
     error,
+    errorKey,
     announcement,
     summary,
     mergeRows,
+    errorFor,
     isPending,
     loadAll,
     loadSuggestions,

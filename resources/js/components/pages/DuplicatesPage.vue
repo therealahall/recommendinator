@@ -22,8 +22,14 @@ onMounted(() => {
     </div>
 
     <!-- Both regions stay mounted while silent: one inserted already populated
-         is read as page content rather than a change (WCAG 4.1.3). -->
-    <p class="dup-alert" role="alert">{{ store.error }}</p>
+         is read as page content rather than a change (WCAG 4.1.3). This one
+         announces every refusal, and hides where the row prints it, so no
+         refusal reaches the screen twice. -->
+    <p
+      class="dup-alert"
+      :class="{ 'sr-only': store.errorKey !== '' }"
+      role="alert"
+    >{{ store.error }}</p>
     <p class="sr-only" role="status" aria-live="polite">{{ store.announcement }}</p>
 
     <DuplicateQueue />
