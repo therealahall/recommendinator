@@ -15,7 +15,7 @@ import sqlite3
 from difflib import SequenceMatcher
 from typing import Any
 
-from src.models.detail_fields import ContentTypeFields
+from src.models.detail_fields import RELEASE_YEAR_FIELDS, ContentTypeFields, to_int
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import merge_seasons_watched
@@ -36,6 +36,8 @@ __all__ = [
     "normalize_title_for_matching",
     "parse_json_list",
     "resolve_status_forward",
+    "stated_release_year",
+    "years_conflict",
 ]
 
 # ---------------------------------------------------------------------------
@@ -60,15 +62,10 @@ def parse_json_list(raw: str | None) -> list[str]:
 # Detail table constants
 # ---------------------------------------------------------------------------
 
-# Detail table columns for merge operations.  Deliberately an independent
-# hand-written list rather than a derivation of ``models.detail_fields``: it
-# is the source of ALLOWED_DETAIL_TABLES, which guards every SQL identifier
-# this module and sqlite_db interpolate, so it must not move with the
-# declaration it checks.  TestDetailTableColumnsConsistency proves the two
-# name the same columns; the order of the tuples below is not compared, because
-# it only reaches the order of SET clauses in merge_detail_tables.  Used by
-# merge_detail_tables so that column names are never read from the live database
-# schema at runtime.
+# Hand-written rather than derived from ``models.detail_fields``: it is the
+# source of ALLOWED_DETAIL_TABLES, which guards every SQL identifier this
+# module and sqlite_db interpolate, so it must not move with the declaration it
+# checks. TestDetailTableColumnsConsistency proves they name the same columns.
 _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "book_details": (
         "author",
@@ -188,15 +185,16 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
 
 # Goodreads RSS appends "(Series, #N)" where Calibre appends nothing.
 _SERIES_MARKER = re.compile(r"#\s*\d")
-# Softer: "The Office (US)" collapses onto the UK show; the veto backs it.
+# "The Office (US)" and "DOOM (2016)" collapse onto their namesakes; the year
+# veto below and _title_match's refusal to pick between two rows back that.
 _REGION_QUALIFIERS = frozenset({"us", "usa", "uk", "gb", "au", "nz", "ca", "jp", "eu"})
-# A bare year stays: "DOOM (2016)" is the remake of "Doom", not a spelling of
-# it, and the two share a developer, so no veto would catch the merge.
+_YEAR = re.compile(r"^\d{4}$")
 _TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
+_TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 
 
 def _is_positional(inner: str) -> bool:
-    if _SERIES_MARKER.search(inner):
+    if _SERIES_MARKER.search(inner) or _YEAR.match(inner.strip()):
         return True
     return re.sub(r"[\W_]", "", inner) in _REGION_QUALIFIERS
 
@@ -286,12 +284,18 @@ def _collapse_initials(tokens: list[str]) -> list[str]:
     return collapsed
 
 
+# Calibre-Web's OPDS names "Unknown" where a book has no author, and a veto on
+# it hides the very match it was asked about.
+_PLACEHOLDER_CREATORS = frozenset({"unknown", "author unknown"})
+
+
 def normalize_creator_for_matching(creator: str | None) -> str:
     """The veto's key, order-free: Goodreads writes "Rowling, J.K."."""
     if not creator:
         return ""
     tokens = re.sub(r"[\W_]", " ", creator.lower()).split()
-    return " ".join(sorted(_collapse_initials(tokens)))
+    normalized = " ".join(sorted(_collapse_initials(tokens)))
+    return "" if normalized in _PLACEHOLDER_CREATORS else normalized
 
 
 def creators_conflict(one: str | None, other: str | None) -> bool:
@@ -307,6 +311,31 @@ def creators_conflict(one: str | None, other: str | None) -> bool:
     return SequenceMatcher(None, left, right).ratio() < FUZZY_MATCH_THRESHOLD
 
 
+def stated_release_year(
+    content_type: str, stated: Any, title: str | None
+) -> int | None:
+    """The year a row states its work came out, taking *stated* as its field.
+
+    A title stating the year alone ("DOOM (2016)") counts: the key drops it.
+    """
+    if content_type not in RELEASE_YEAR_FIELDS:
+        return None
+    year = to_int(stated)
+    if year is not None:
+        return year
+    match = _TITLE_YEAR.search(title or "")
+    return int(match.group(1)) if match else None
+
+
+def years_conflict(one: int | None, other: int | None) -> bool:
+    """Whether two release years clearly disagree, vetoing a title match.
+
+    A year only one row states is not disagreement: "Die Hard (1988)" belongs
+    on the "Die Hard" row whose source dates nothing.
+    """
+    return one is not None and other is not None and one != other
+
+
 # ---------------------------------------------------------------------------
 # Merge operations
 # ---------------------------------------------------------------------------
@@ -316,13 +345,9 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     """Merge the user-owned scalar columns from a duplicate into the kept row.
 
     The duplicate row is hidden after this runs, so every column a user can
-    own has to be carried across or it is invisible until an unmerge.
-
-    Rules:
-    - rating/review: fill from duplicate only if kept is null
-    - date_completed: keep the later date
-    - status: keep the further-advanced status (forward-only ordering)
-    - ignored: an ignore on either row survives
+    own has to be carried across or it is invisible until an unmerge: rating
+    and review fill a null, the later date_completed and the further-advanced
+    status win, and an ignore on either row survives.
 
     Requires ``row_factory = sqlite3.Row``.
     """
@@ -358,12 +383,8 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     ):
         return
 
-    # Fully static parameterized query — no dynamic SQL construction.
-    # The CASE expressions duplicate the will_change guards intentionally:
-    # the Python guard skips the UPDATE to avoid bumping updated_at; the
-    # CASE expressions ensure correct data even if the guard logic has a bug.
-    # status/ignored are resolved in Python instead, since their rules are
-    # not expressible in SQL without restating the status ordering.
+    # The CASE expressions repeat the will_change guards on purpose: the Python
+    # guard exists to skip the UPDATE, not to decide what it writes.
     cursor.execute(
         """UPDATE content_items
            SET rating = CASE WHEN rating IS NULL THEN ? ELSE rating END,
@@ -477,15 +498,12 @@ def _merge_detail_metadata(
     if combined_seasons is not None:
         merged["seasons_watched"] = combined_seasons
 
-    # Exception: seasons_watched_dates merges per season, keeping the later
-    # watch date — a season only the duplicate has a date for is folded in,
-    # a season both have keeps whichever date is later, and the kept row's
-    # date is never overwritten by an earlier duplicate date.
+    # Exception: seasons_watched_dates keeps the later date per season, so an
+    # earlier duplicate never overwrites the kept row's. A None result — both
+    # sides unparseable — leaves the blob merge above in place.
     combined_dates = merge_seasons_watched_dates(
         keep_meta.get("seasons_watched_dates"), dup_meta.get("seasons_watched_dates")
     )
-    # A None result (e.g. both sides only had unparseable timestamps)
-    # intentionally leaves the general blob-merge result above in place.
     if combined_dates is not None:
         merged["seasons_watched_dates"] = combined_dates
 
@@ -495,25 +513,12 @@ def _merge_detail_metadata(
 def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge detail table rows from duplicate into kept row.
 
-    For each detail table (book_details, movie_details, etc.):
-    - If only the duplicate has a row, copy it, leaving the duplicate its own.
-    - If both have rows, merge genres/tags additively and fill nulls.
-    - Metadata JSON is merged additively (existing keys preserved), except
-      ``seasons_watched``, which unions both rows, and
-      ``seasons_watched_dates``, which merges per season keeping the later
-      watch date across the two rows (see ``_merge_detail_metadata``).
+    A table only the duplicate has a row in is copied, leaving the duplicate
+    its own; where both have one, genres and tags merge additively, nulls fill,
+    and the metadata blob follows ``_merge_detail_metadata``.
 
-    Column names are sourced from the compile-time ``_DETAIL_TABLE_COLUMNS``
-    constant — never from live database schema enumeration.
-
-    Note:
-        This function intentionally does not bump ``updated_at`` on the
-        ``content_items`` row.  Detail-table changes (genres, tags, metadata)
-        are internal bookkeeping from dedup — they are not user-visible edits
-        and should not alter the item's modification timestamp.
-
-    Note:
-        Requires the connection to use ``row_factory = sqlite3.Row``.
+    Leaves ``updated_at`` alone: what moves here is bookkeeping, not an edit
+    the user made. Requires ``row_factory = sqlite3.Row``.
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():
         cursor.execute(

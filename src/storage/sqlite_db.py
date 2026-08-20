@@ -96,11 +96,12 @@ from src.models.content import (
 )
 from src.models.detail_fields import (
     DETAIL_FIELDS,
+    RELEASE_YEAR_FIELDS,
     ContentTypeFields,
     FieldKind,
     to_int,
 )
-from src.storage.derived import read_creator, write_derived_columns
+from src.storage.derived import read_match_signals, write_derived_columns
 from src.storage.item_merges import (
     MergeEvidence,
     MergeRecord,
@@ -118,6 +119,8 @@ from src.storage.merge import (
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
+    stated_release_year,
+    years_conflict,
 )
 from src.storage.schema import (
     create_schema,
@@ -339,14 +342,15 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
       AND ci.user_id = :user_id AND ci.content_type = :content_type
 """
 
-# A title-match candidate: a row holding another id from the incoming source is
-# that source's other item, not this one; no incoming id compares against NULL.
-# An absorbed row answers as its survivor, so a merge survives a re-sync.
+# A row holding another id from the incoming source is that source's other
+# item, not this one; an absorbed row answers as its survivor, so a merge
+# survives a re-sync.
 
 # Accepted: a source that changes an item's own id lands a second row, and
 # nothing here tells that from a genuine second edition.
 _TITLE_MATCH_CANDIDATES = """
-    SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci
+    SELECT COALESCE(ci.merged_into, ci.id) AS id, ci.title AS title
+    FROM content_items ci
     WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?
       AND NOT EXISTS (
           SELECT 1 FROM content_item_external_ids x
@@ -356,6 +360,28 @@ _TITLE_MATCH_CANDIDATES = """
 """
 
 
+def _incoming_year(item: ContentItem, content_type_value: str) -> int | None:
+    """The release year the item being saved states, before it is stored."""
+    field = RELEASE_YEAR_FIELDS.get(content_type_value)
+    stated = field.value_from(item.metadata or {}) if field is not None else None
+    return stated_release_year(content_type_value, stated, item.title)
+
+
+def _vetoed(
+    cursor: sqlite3.Cursor, item: ContentItem, year: int | None, candidate_id: int
+) -> bool:
+    """Whether a candidate states a creator or year the incoming item rules out."""
+    signals = read_match_signals(cursor, candidate_id)
+    return creators_conflict(item.author, signals.creator) or years_conflict(
+        year, signals.release_year
+    )
+
+
+def _spelling(title: str | None) -> str:
+    """A title as written, for telling apart two rows one key names."""
+    return " ".join((title or "").split()).casefold()
+
+
 def _title_match(
     cursor: sqlite3.Cursor,
     user_id: int,
@@ -363,15 +389,29 @@ def _title_match(
     normalized_title: str,
     item: ContentItem,
 ) -> int | None:
-    """The oldest row of this title whose creator the incoming one allows."""
+    """The row of this key the incoming creator and release year allow.
+
+    Two rows left means the key was lossy, so only a row spelled the same is
+    taken: guessing points every later sync at the wrong work.
+    """
     cursor.execute(
         f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id",
         (user_id, content_type_value, normalized_title, item.source, item.id),
     )
-    for candidate_id in [int(row["id"]) for row in cursor.fetchall()]:
-        if not creators_conflict(item.author, read_creator(cursor, candidate_id)):
-            return candidate_id
-    return None
+    year = _incoming_year(item, content_type_value)
+    allowed: dict[int, str] = {}
+    for row in cursor.fetchall():
+        candidate_id = int(row["id"])
+        if candidate_id not in allowed and not _vetoed(
+            cursor, item, year, candidate_id
+        ):
+            allowed[candidate_id] = row["title"]
+    if len(allowed) < 2:
+        return next(iter(allowed), None)
+    spelled = _spelling(item.title)
+    return next(
+        (one for one, title in allowed.items() if _spelling(title) == spelled), None
+    )
 
 
 def _build_content_item_select() -> str:
@@ -805,14 +845,10 @@ class SQLiteDB:
     ) -> bool:
         """Save item to appropriate type-specific detail table.
 
-        For existing rows, enrichment is the source of truth:
-        - Genres/tags: merged additively (new + existing)
-        - All other columns: fill-only (only set if existing value is None)
-        - Remaining metadata JSON: merged additively (existing keys preserved),
-          except ``seasons_watched_dates``, which merges per season keeping
-          the later watch date (so an earlier sync date never overwrites a
-          later manual/existing date, but a genuinely newer Trakt watch does
-          update it; new seasons are added)
+        For existing rows, enrichment is the source of truth: genres and tags
+        merge additively, every other column is fill-only, and the leftover
+        metadata blob merges with existing keys winning — bar
+        ``seasons_watched_dates``, which keeps the later date per season.
 
         For new rows, all data from ingestion is used as-is. Reports whether
         the write moved any column of the detail row.

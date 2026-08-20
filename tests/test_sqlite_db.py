@@ -758,12 +758,15 @@ class TestWhichTrailingParentheticalsAreDropped:
         )
 
     def test_a_parenthetical_naming_the_work_is_kept(self) -> None:
-        """A year tells a remake from its original; an edition, two editions."""
-        assert normalize_title_for_matching("DOOM (2016)") != (
-            normalize_title_for_matching("Doom")
-        )
+        """An edition names two editions of one work, and stays in the key."""
         assert normalize_title_for_matching("Frankenstein (Unabridged)") != (
             normalize_title_for_matching("Frankenstein")
+        )
+
+    def test_a_year_leaves_the_key_for_the_veto_to_answer(self) -> None:
+        """In the key it kept "Die Hard (1988)" off a "Die Hard" stating none."""
+        assert normalize_title_for_matching("DOOM (2016)") == (
+            normalize_title_for_matching("Doom")
         )
 
 
@@ -785,11 +788,15 @@ class TestTheCreatorVeto:
 
 
 class TestWhatTheSaveDoorMatchesOnTitle:
-    """The two rules together, over the door every sync's items come through."""
+    """Title, creator veto and year veto, over the door every sync comes through."""
 
     @staticmethod
     def _book(
-        source: str, external_id: str, title: str, author: str | None = None
+        source: str,
+        external_id: str,
+        title: str,
+        author: str | None = None,
+        year_published: int | None = None,
     ) -> ContentItem:
         return ContentItem(
             id=external_id,
@@ -798,6 +805,24 @@ class TestWhatTheSaveDoorMatchesOnTitle:
             status=ConsumptionStatus.UNREAD,
             source=source,
             author=author,
+            metadata={"year_published": year_published} if year_published else {},
+        )
+
+    @staticmethod
+    def _dated(
+        content_type: ContentType,
+        source: str,
+        external_id: str,
+        title: str,
+        release_year: int | None = None,
+    ) -> ContentItem:
+        return ContentItem(
+            id=external_id,
+            title=title,
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            source=source,
+            metadata={"release_year": release_year} if release_year else {},
         )
 
     def test_a_goodreads_series_row_and_an_authorless_calibre_row_are_one_book(
@@ -830,6 +855,112 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         )
 
         assert freed != herbert
+
+    def test_a_third_source_reaches_past_the_older_row_its_author_rules_out(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        temp_db.save_content_item(
+            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert")
+        )
+        freed = temp_db.save_content_item(
+            self._book("calibre_web", "calibre:dune-novel", "Dune", "Alexander Freed")
+        )
+
+        imported = temp_db.save_content_item(
+            self._book("generic_csv", "csv-dune", "Dune", "Freed, Alexander")
+        )
+
+        assert imported == freed
+
+    @staticmethod
+    def _show(source: str, external_id: str, title: str) -> ContentItem:
+        return ContentItem(
+            id=external_id,
+            title=title,
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.UNREAD,
+            source=source,
+        )
+
+    def test_a_trakt_show_does_not_land_on_the_sonarr_row_for_another_region(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        uk = temp_db.save_content_item(
+            self._show("sonarr", "tvdb:78107", "The Office (UK)")
+        )
+        us = temp_db.save_content_item(
+            self._show("sonarr", "tvdb:73244", "The Office (US)")
+        )
+
+        trakt_us = temp_db.save_content_item(
+            self._show("trakt", "trakt:4063", "The Office")
+        )
+
+        assert us != uk
+        assert trakt_us != uk
+
+    def test_a_remake_stating_its_year_stays_off_the_original(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        original = temp_db.save_content_item(
+            self._dated(ContentType.VIDEO_GAME, "gog", "doom-1993", "Doom", 1993)
+        )
+
+        remake = temp_db.save_content_item(
+            self._dated(ContentType.VIDEO_GAME, "steam", "379720", "DOOM (2016)")
+        )
+
+        assert remake != original
+
+    def test_a_year_only_one_source_states_does_not_stop_the_match(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        dated = temp_db.save_content_item(
+            self._dated(ContentType.MOVIE, "radarr", "tmdb:562", "Die Hard (1988)")
+        )
+
+        undated = temp_db.save_content_item(
+            self._dated(ContentType.MOVIE, "trakt", "trakt:481", "Die Hard")
+        )
+
+        assert undated == dated
+
+    def test_two_editions_of_one_book_are_not_told_apart_by_their_years(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """``year_published`` is the edition's year, so a reprint is the book."""
+        first = temp_db.save_content_item(
+            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert", 1965)
+        )
+
+        reprint = temp_db.save_content_item(
+            self._book("calibre_web", "calibre:dune", "Dune", "Frank Herbert", 2011)
+        )
+
+        assert reprint == first
+
+    def test_calibres_placeholder_author_does_not_veto_the_goodreads_row(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        goodreads = temp_db.save_content_item(
+            self._book(
+                "goodreads_rss",
+                "57905101",
+                "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+                "Matt Dinniman",
+            )
+        )
+
+        calibre = temp_db.save_content_item(
+            self._book(
+                "calibre_web",
+                "calibre:51a0e808",
+                "The Gate of the Feral Gods",
+                "Unknown",
+            )
+        )
+
+        assert calibre == goodreads
 
 
 # ---------------------------------------------------------------------------
