@@ -1,7 +1,7 @@
 """Shared merge helpers for content-item deduplication.
 
-The row-absorbing ones serve ``schema._merge_duplicate_row``, the one-time
-migration dedup. No sync path merges rows: it deleted ids other sources held.
+The row-absorbing ones serve ``item_merges.absorb_item``, the one merge door.
+No sync path merges rows: it deleted ids other sources held.
 
 ``__all__`` is this module's contract: those names are imported by
 ``sqlite_db``, ``schema`` and ``derived`` and cannot be renamed or reshaped
@@ -335,10 +335,11 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
 def merge_enrichment_status(
     cursor: sqlite3.Cursor, keep_id: int, delete_id: int
 ) -> None:
-    """Carry the absorbed row's outcome onto a kept row still queued for one.
+    """Carry the absorbed row's outcome onto a kept row still queued.
 
-    A settled miss counts as settled: one work, and a provider that missed it
-    under one title will miss it under the other.
+    A settled miss counts as settled: one work, one outcome. A manual merge of
+    unlike titles can retire a survivor no provider tried;
+    ``enrichment start --retry-not-found`` requeues it.
     """
     cursor.execute(
         "SELECT * FROM enrichment_status WHERE content_item_id = ?", (delete_id,)

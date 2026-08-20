@@ -284,7 +284,8 @@ class StorageManager:
     def unmerge_content_items(
         self, merge_id: int, user_id: int | None = None
     ) -> MergeRecord | None:
-        """Undo one merge, returning it, or ``None`` when there is no such merge."""
+        """Undo one merge, newest into its survivor first; raises ``MergeError``
+        for any other order, and returns ``None`` when there is no such merge."""
         with self._save_lock:
             return self.sqlite_db.unmerge_content_items(merge_id, user_id=user_id)
 
