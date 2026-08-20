@@ -169,6 +169,21 @@ def unmerge_item(
     return _to_record(row)
 
 
+def release_merge(cursor: sqlite3.Cursor, merge_id: int) -> None:
+    """Drop one merge without restoring the survivor.
+
+    Unlike an undo: edits may have landed on the survivor since, and reverting
+    them silently costs more than the absorbed row's duplicated contributions.
+    No ordering rule — nothing here reads a record's snapshot.
+    """
+    cursor.execute(
+        "UPDATE content_items SET merged_into = NULL WHERE id ="
+        " (SELECT absorbed_id FROM content_item_merges WHERE id = ?)",
+        (merge_id,),
+    )
+    cursor.execute("DELETE FROM content_item_merges WHERE id = ?", (merge_id,))
+
+
 def list_merges(cursor: sqlite3.Cursor, user_id: int) -> list[MergeRecord]:
     """Every merge in force for *user_id*, newest first."""
     cursor.execute(

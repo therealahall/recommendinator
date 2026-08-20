@@ -92,9 +92,9 @@ ID. **Make the profile public**, or the API returns nothing.
 
 ### Duplicate items
 
-Items deduplicate by normalized title, so this is rare. When it happens the
-titles still differ after normalization. Rename one and re-sync. A schema
-upgrade re-normalizes every title but merges nothing.
+The matcher only runs when a source first names an item, so it keeps new
+duplicates out but never revisits a pair already here. Merging two that exist
+needs the merge surface, not on this build yet.
 
 ## Web interface
 
