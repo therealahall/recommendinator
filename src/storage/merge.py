@@ -4,9 +4,9 @@ The row-absorbing ones serve ``item_merges.absorb_item``, the one merge door.
 No sync path merges rows: it deleted ids other sources held.
 
 ``__all__`` is this module's contract: those names are imported by
-``sqlite_db``, ``schema`` and ``derived`` and cannot be renamed or reshaped
-without updating all three. Nothing else here is imported by another ``src``
-module, so the underscore-prefixed names really are internal.
+``sqlite_db``, ``schema``, ``derived`` and ``duplicates`` and cannot be renamed
+or reshaped without updating all four. Nothing else here is imported by another
+``src`` module, so the underscore-prefixed names really are internal.
 """
 
 import json
@@ -28,6 +28,7 @@ __all__ = [
     "MONOTONIC_DETAIL_COLUMNS",
     "StatedYear",
     "assert_known_detail_table",
+    "bare_title_key",
     "creators_conflict",
     "detail_columns",
     "detail_join",
@@ -281,6 +282,14 @@ def normalize_title_for_matching(title: str) -> str:
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
     return normalized
+
+
+def bare_title_key(title: str) -> str:
+    """The key with any trailing parenthetical dropped, qualifier or not.
+
+    Not the save door's key: "(Malazan Book 2)" may name a different work.
+    """
+    return normalize_title_for_matching(_TRAILING_PARENTHETICAL.sub("", title))
 
 
 def _collapse_initials(tokens: list[str]) -> list[str]:

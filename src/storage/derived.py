@@ -14,7 +14,13 @@ import sqlite3
 from dataclasses import dataclass
 
 from src.models.detail_fields import DETAIL_FIELDS, RELEASE_YEAR_FIELDS, FieldKind
-from src.storage.merge import StatedYear, detail_join, stated_release_year
+from src.storage.merge import (
+    StatedYear,
+    creators_conflict,
+    detail_join,
+    stated_release_year,
+    years_conflict,
+)
 from src.utils.sorting import build_search_text, get_sort_title
 
 
@@ -58,10 +64,19 @@ _SOURCE_SELECT = (
     f" FROM content_items ci {_DETAIL_JOINS}"
 )
 
+_MATCH_ROW_COLUMNS = (
+    "ci.id, ci.content_type, ci.title, ci.normalized_title, ci.source,"
+    f" {_CREATOR_EXPRESSION} AS creator, {_YEAR_EXPRESSION} AS release_year"
+)
+
 _MATCH_SIGNAL_SELECT = (
-    f"SELECT ci.content_type, ci.title, {_CREATOR_EXPRESSION} AS creator,"
-    f" {_YEAR_EXPRESSION} AS release_year"
-    f" FROM content_items ci {_DETAIL_JOINS} WHERE ci.id = ?"
+    f"SELECT {_MATCH_ROW_COLUMNS} FROM content_items ci {_DETAIL_JOINS}"
+    " WHERE ci.id = ?"
+)
+
+_LIVE_MATCH_ROWS_SELECT = (
+    f"SELECT {_MATCH_ROW_COLUMNS} FROM content_items ci {_DETAIL_JOINS}"
+    " WHERE ci.user_id = ? AND ci.merged_into IS NULL ORDER BY ci.id"
 )
 
 # The rows the backfill has anything to do. Both columns are written together,
@@ -93,12 +108,50 @@ class MatchSignals:
     release_year: StatedYear = StatedYear()
 
 
+def signals_conflict(one: MatchSignals, other: MatchSignals) -> bool:
+    """Whether either veto separates two rows a title brought together.
+
+    Shared, so an operator is never offered a pair the save door would refuse.
+    """
+    return creators_conflict(one.creator, other.creator) or years_conflict(
+        one.release_year, other.release_year
+    )
+
+
+@dataclass(frozen=True)
+class MatchRow:
+    db_id: int
+    content_type: str
+    title: str
+    normalized_title: str
+    source: str | None
+    signals: MatchSignals
+
+
 def read_match_signals(cursor: sqlite3.Cursor, db_id: int) -> MatchSignals:
     """The creator and release year one row states, chosen by its type."""
     cursor.execute(_MATCH_SIGNAL_SELECT, (db_id,))
     row = cursor.fetchone()
-    if row is None:
-        return MatchSignals()
+    return MatchSignals() if row is None else _read_signals(row)
+
+
+def read_live_match_rows(cursor: sqlite3.Cursor, user_id: int) -> list[MatchRow]:
+    """Every row the library shows for *user_id*, with what a match reads."""
+    cursor.execute(_LIVE_MATCH_ROWS_SELECT, (user_id,))
+    return [
+        MatchRow(
+            db_id=int(row["id"]),
+            content_type=row["content_type"],
+            title=row["title"],
+            normalized_title=row["normalized_title"] or "",
+            source=row["source"],
+            signals=_read_signals(row),
+        )
+        for row in cursor.fetchall()
+    ]
+
+
+def _read_signals(row: sqlite3.Row) -> MatchSignals:
     return MatchSignals(
         creator=str(row["creator"]) if row["creator"] else None,
         release_year=stated_release_year(

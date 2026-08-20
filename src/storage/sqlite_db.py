@@ -101,7 +101,17 @@ from src.models.detail_fields import (
     FieldKind,
     to_int,
 )
-from src.storage.derived import read_match_signals, write_derived_columns
+from src.storage.derived import (
+    MatchSignals,
+    read_match_signals,
+    signals_conflict,
+    write_derived_columns,
+)
+from src.storage.duplicates import (
+    DuplicateSuggestion,
+    decline_duplicate,
+    find_duplicate_suggestions,
+)
 from src.storage.item_merges import (
     MergeEvidence,
     MergeRecord,
@@ -115,13 +125,11 @@ from src.storage.merge import (
     MONOTONIC_DETAIL_COLUMNS,
     StatedYear,
     assert_known_detail_table,
-    creators_conflict,
     detail_join,
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
     stated_release_year,
-    years_conflict,
 )
 from src.storage.schema import (
     create_schema,
@@ -372,9 +380,9 @@ def _vetoed(
     cursor: sqlite3.Cursor, item: ContentItem, year: StatedYear, candidate_id: int
 ) -> bool:
     """Whether a candidate states a creator or year the incoming item rules out."""
-    signals = read_match_signals(cursor, candidate_id)
-    return creators_conflict(item.author, signals.creator) or years_conflict(
-        year, signals.release_year
+    return signals_conflict(
+        MatchSignals(creator=item.author, release_year=year),
+        read_match_signals(cursor, candidate_id),
     )
 
 
@@ -1732,6 +1740,26 @@ class SQLiteDB:
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             return list_merges(conn.cursor(), effective_user_id)
+
+    def list_duplicate_suggestions(
+        self, user_id: int | None = None
+    ) -> list[DuplicateSuggestion]:
+        """Every undecided pair of live rows that looks like one work."""
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        with self.connection() as conn:
+            return find_duplicate_suggestions(conn.cursor(), effective_user_id)
+
+    def decline_duplicate_suggestion(
+        self, one_id: int, other_id: int, user_id: int | None = None
+    ) -> bool:
+        """Refuse a suggested pair for good, reporting whether there was one."""
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        with self.connection() as conn:
+            declined = decline_duplicate(
+                conn.cursor(), effective_user_id, one_id, other_id
+            )
+            conn.commit()
+            return declined
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item by database ID."""
