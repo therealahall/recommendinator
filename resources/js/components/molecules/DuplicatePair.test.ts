@@ -7,6 +7,7 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
   return {
     content_type: 'book',
     evidence: 'normalized_title',
+    evidence_label: 'same title',
     evidence_detail: 'deadhouse gates',
     survivor: {
       db_id: 3,
@@ -81,11 +82,14 @@ describe('DuplicatePair', () => {
   it('warns on the looser key and says nothing extra on the save door’s own', () => {
     // Only the looser key drops a trailing parenthetical, so it is the one
     // that can pair two genuinely different editions.
-    const loose = mountPair({ evidence: 'title_qualifier' })
+    const loose = mountPair({
+      evidence: 'title_qualifier',
+      evidence_label: 'same title apart from a qualifier',
+    })
     const exact = mountPair()
 
     expect(loose.find('.dup-pair-caution').exists()).toBe(true)
-    expect(loose.text()).toContain('Same title apart from a qualifier')
+    expect(loose.text()).toContain('same title apart from a qualifier')
     expect(exact.find('.dup-pair-caution').exists()).toBe(false)
   })
 

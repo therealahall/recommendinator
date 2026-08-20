@@ -1,7 +1,6 @@
 """Duplicate pairs already in the library, offered rather than merged.
 
-The save door decides a pair on first contact, so two rows that already exist
-stay two. Suggestions are computed on demand; only a decline is stored.
+Suggestions are computed on demand; only a decline is stored.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from enum import Enum
 from itertools import combinations
 
 from src.storage.derived import MatchRow, read_live_match_rows, signals_conflict
+from src.storage.item_merges import MergeError, absorbing_merge_id
 from src.storage.merge import bare_title_key
 
 _DECLINE_SELECT = """
@@ -22,8 +22,7 @@ _DECLINE_SELECT = """
       JOIN content_items h ON h.id = d.higher_item_id
 """
 
-#: k copies of one work make k(k-1)/2 pairs, so a first pass over a real
-#: library runs to hundreds and no surface may offer them all at once.
+#: k copies make k(k-1)/2 pairs, so a first pass runs to hundreds of them.
 SUGGESTION_PAGE_DEFAULT = 25
 SUGGESTION_PAGE_MAX = 200
 
@@ -137,7 +136,9 @@ def list_declines(cursor: sqlite3.Cursor, user_id: int) -> list[DeclinedPair]:
 def undecline_duplicate(
     cursor: sqlite3.Cursor, user_id: int, one_id: int, other_id: int
 ) -> DeclinedPair | None:
-    """Lift a refusal; the pass recomputes per call, so the pair returns now."""
+    """Lift a refusal, unless a merge holds a side: the pass offers live rows
+    only, so lifting there would drop the decision and offer nothing back.
+    """
     stored = _ordered(one_id, other_id)
     cursor.execute(
         f"{_DECLINE_SELECT} WHERE d.user_id = ?"
@@ -147,6 +148,13 @@ def undecline_duplicate(
     row = cursor.fetchone()
     if row is None:
         return None
+    for item_id in stored:
+        hiding = absorbing_merge_id(cursor, item_id)
+        if hiding is not None:
+            raise MergeError(
+                f"The refusal on items {stored[0]} and {stored[1]} cannot be"
+                f" lifted before merge {hiding}, which absorbed item {item_id}."
+            )
     cursor.execute(
         "DELETE FROM content_item_duplicate_declines"
         " WHERE user_id = ? AND lower_item_id = ? AND higher_item_id = ?",

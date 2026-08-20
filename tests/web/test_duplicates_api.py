@@ -120,7 +120,6 @@ def test_a_merge_is_listed_and_the_undo_puts_the_absorbed_row_back(
 def test_a_refused_merge_answers_the_storage_layer_s_own_words(
     client: TestClient,
 ) -> None:
-    """A generic failure leaves the operator with no idea which row to fix."""
     book = _ids(client, "Deadhouse Gates")
     game = _ids(client, "Hades")
 
@@ -202,8 +201,7 @@ def test_lifting_a_refusal_nobody_made_refuses_by_id(client: TestClient) -> None
 
 
 def test_no_route_here_offers_to_delete_an_item(client: TestClient) -> None:
-    """Deleting a hidden middle row orphans its children with no undo, and the
-    ids this surface shows are exactly the absorbed ones."""
+    """Deleting a hidden row orphans its children, and these are those ids."""
     absorbed = _ids(client, "Deadhouse Gates (Malazan Book 2)")
 
     assert client.delete(f"/api/items/{absorbed}").status_code == 405
@@ -219,3 +217,82 @@ def test_an_empty_library_answers_an_empty_view_on_every_listing(
         assert client.get("/api/duplicates").json() == {"total": 0, "suggestions": []}
         assert client.get("/api/merges").json() == []
         assert client.get("/api/duplicates/declined").json() == []
+
+
+@pytest.fixture()
+def trio(tmp_path: Path) -> Iterator[TestClient]:
+    """Three live rows of one work: the state a group of copies is decided from."""
+    manager = StorageManager(sqlite_path=tmp_path / "trio.db")
+    rows = [
+        ("goodreads_csv", "1", "Deadhouse Gates"),
+        ("goodreads_csv", "2", "Deadhouse Gates (Malazan, #2)"),
+        ("calibre", "3", "Deadhouse Gates (Malazan Book Two)"),
+    ]
+    for source, external_id, title in rows:
+        manager.save_content_item(
+            ContentItem(
+                id=external_id,
+                source=source,
+                title=title,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+    with booted_web_app(manager, {"storage": {"database_path": "data/test.db"}}) as app:
+        yield authenticated_client(app)
+
+
+def _offered_pairs(client: TestClient) -> list[set[int]]:
+    return [
+        {pair["survivor"]["db_id"], pair["absorbed"]["db_id"]}
+        for pair in _suggestions(client)["suggestions"]
+    ]
+
+
+def test_a_lift_a_merge_blocks_is_refused_in_the_storage_layer_s_own_words(
+    trio: TestClient,
+) -> None:
+    """Uncaught, it is a 500 saying nothing about which merge to undo."""
+    one, two, three = sorted({db_id for pair in _offered_pairs(trio) for db_id in pair})
+    trio.post("/api/duplicates/declined", json={"one_id": one, "other_id": three})
+    merged = trio.post("/api/merges", json={"survivor_id": two, "absorbed_id": three})
+
+    response = trio.delete(f"/api/duplicates/declined/{one}/{three}")
+
+    assert response.status_code == 409
+    assert f"before merge {merged.json()['id']}" in response.json()["detail"]
+
+
+def test_offering_a_pair_back_keeps_the_refusal_until_it_can_be_honoured(
+    trio: TestClient,
+) -> None:
+    """Reported: a dismissed pair left both lists at once and could not be got back.
+
+    Root cause: ``undecline_duplicate`` deletes the refusal on the two ids
+    alone, while ``decline_duplicate`` takes one only over two live rows. So
+    lifting a refusal whose other side a later merge has hidden throws the
+    decision away and offers nothing in its place, under an acknowledgement
+    saying the pair may be offered again. Fix: refuse the lift while the pair
+    cannot be offered, leaving the refusal listed.
+    """
+    one, two, three = sorted({db_id for pair in _offered_pairs(trio) for db_id in pair})
+    assert (
+        trio.post(
+            "/api/duplicates/declined", json={"one_id": one, "other_id": three}
+        ).status_code
+        == 200
+    )
+    assert (
+        trio.post(
+            "/api/merges", json={"survivor_id": two, "absorbed_id": three}
+        ).status_code
+        == 200
+    )
+
+    trio.delete(f"/api/duplicates/declined/{one}/{three}")
+
+    assert trio.get("/api/duplicates/declined").json() != [] or {
+        one,
+        three,
+    } in _offered_pairs(trio)

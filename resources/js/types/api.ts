@@ -475,6 +475,7 @@ export interface DuplicateSide {
 export interface DuplicateSuggestion {
   content_type: string
   evidence: string
+  evidence_label: string
   evidence_detail: string
   survivor: DuplicateSide
   absorbed: DuplicateSide
@@ -493,6 +494,8 @@ export interface MergeRecord {
   absorbed_id: number
   absorbed_title: string
   evidence: string
+  /** Rendered as it arrives, and it carries `evidence_detail` where there is one. */
+  evidence_label: string
   evidence_detail: string | null
   merged_at: string
 }

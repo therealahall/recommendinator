@@ -14,23 +14,11 @@ const emit = defineEmits<{
   decline: [oneId: number, otherId: number]
 }>()
 
-// The words docs/CLI.md defines, so both surfaces separate the two strengths
-// the same way: the looser key drops a trailing parenthetical, and the pairs
-// only it found are the ones to look at twice.
-const EVIDENCE_LABELS: Record<string, string> = {
-  normalized_title: 'Same title',
-  title_qualifier: 'Same title apart from a qualifier',
-}
-
 const chosen = ref<number | null>(null)
 
 const busy = computed(() => props.merging || props.declining)
 
 const loose = computed(() => props.suggestion.evidence === 'title_qualifier')
-
-const evidenceLabel = computed(
-  () => EVIDENCE_LABELS[props.suggestion.evidence] ?? props.suggestion.evidence,
-)
 
 const typeLabel = computed(
   () =>
@@ -77,7 +65,7 @@ function onDecline(): void {
   <li class="dup-pair" :aria-busy="busy || undefined">
     <p class="dup-pair-evidence">
       <span class="badge" :class="loose ? 'dup-badge-loose' : 'dup-badge-exact'">
-        {{ evidenceLabel }}
+        {{ suggestion.evidence_label }}
       </span>
       <span class="badge badge-type">{{ typeLabel }}</span>
     </p>

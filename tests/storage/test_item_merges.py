@@ -333,8 +333,10 @@ def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them
     ]
     assert db.count_items() == 1
 
-    for blocked in (already, inner, also_inner):
-        with pytest.raises(MergeError):
+    # Each refusal names the merge to undo first: given an item id instead, the
+    # operator has to scan the log for the record that hid it.
+    for blocked, first in ((already, outer), (inner, also_inner), (also_inner, outer)):
+        with pytest.raises(MergeError, match=f"before merge {first.id}"):
             db.unmerge_content_items(blocked.id)
 
     assert db.unmerge_content_items(outer.id) == outer

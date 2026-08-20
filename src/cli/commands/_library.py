@@ -30,26 +30,19 @@ from src.storage.manager import (
     DuplicateSide,
     MergeError,
     MergeEvidence,
-    MergeRecord,
-    SuggestionEvidence,
     unset_if_none,
 )
 from src.utils.duplicate_serialization import (
     declined_pair_to_dict,
+    merge_evidence_label,
     merge_to_dict,
+    suggestion_evidence_label,
     suggestion_page_to_dict,
 )
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-
-# The looser key has to read as looser: it drops a trailing parenthetical, so
-# it pairs rows the save door's own key would leave alone.
-_SUGGESTION_EVIDENCE_LABELS = {
-    SuggestionEvidence.NORMALIZED_TITLE: "same title",
-    SuggestionEvidence.TITLE_QUALIFIER: "same title apart from a qualifier",
-}
 
 
 @click.group()
@@ -585,16 +578,10 @@ def _side_summary(side: DuplicateSide) -> str:
 
 
 def _pair_summary(pair: DeclinedPair) -> str:
-    """Both rows named, so a mistyped id is visible in the acknowledgement."""
     return (
         f"{pair.one_title} (#{pair.one_id}) and"
         f" {pair.other_title} (#{pair.other_id})"
     )
-
-
-def _merge_evidence(record: MergeRecord) -> str:
-    detail = f" ({record.evidence_detail})" if record.evidence_detail else ""
-    return f"{record.evidence.value}{detail}"
 
 
 @library.command("duplicates")
@@ -659,7 +646,7 @@ def library_duplicates(
             suggestion.absorbed.db_id,
             _side_summary(suggestion.absorbed),
             suggestion.content_type,
-            _SUGGESTION_EVIDENCE_LABELS[suggestion.evidence],
+            suggestion_evidence_label(suggestion.evidence),
         ]
         for suggestion in page.suggestions
     ]
@@ -709,13 +696,10 @@ def library_merge(
     storage = ctx.obj["storage"]
 
     try:
-        # MANUAL whichever list the pair came from: a person chose this merge.
         record = storage.merge_content_items(
             survivor_id, absorbed_id, MergeEvidence.MANUAL, user_id=user_id
         )
     except MergeError as error:
-        # Answered verbatim: it names the row to deal with first, and quotes
-        # nothing but ids and content types.
         abort_with(str(error))
 
     emit_view(
@@ -805,7 +789,7 @@ def library_merges(ctx: click.Context, output_format: str, user_id: int) -> None
             record.id,
             f"{record.absorbed_title} (#{record.absorbed_id})",
             f"{record.survivor_title} (#{record.survivor_id})",
-            _merge_evidence(record),
+            merge_evidence_label(record),
             record.merged_at,
         ]
         for record in records
@@ -946,7 +930,10 @@ def library_undecline_duplicate(
     """Offer a refused duplicate pair again."""
     storage = ctx.obj["storage"]
 
-    pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    try:
+        pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    except MergeError as error:
+        abort_with(str(error))
     if pair is None:
         abort_with(f"Items {one_id} and {other_id} are not a declined pair.")
 

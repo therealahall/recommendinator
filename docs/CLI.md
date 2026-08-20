@@ -178,7 +178,9 @@ pairs at a time by default, saying how many are left.
 A merge keeps `--survivor` and folds the other row into it. Nothing is deleted,
 and `unmerge` puts the absorbed row back — newest merge first, refusing any
 other order. `decline-duplicate` keeps a pair off the list for the life of the
-library, and `undecline-duplicate` lifts that.
+library. `undecline-duplicate` lifts that, and refuses while a merge holds
+either row, naming the merge to undo first: a refusal is only liftable back
+onto a pair the list can offer.
 
 ### `library export`
 

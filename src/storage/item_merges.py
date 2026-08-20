@@ -30,7 +30,7 @@ class MergeEvidence(Enum):
 
 
 class MergeError(ValueError):
-    """A merge the storage layer refuses, naming why."""
+    """A decision the storage layer refuses over a merge, naming which."""
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,6 @@ _SNAPSHOT_COLUMNS: dict[str, tuple[str, ...]] = {
 _MERGE_SELECT = """
     SELECT m.id, m.survivor_id, m.absorbed_id, m.evidence, m.evidence_detail,
            m.merged_at, m.restore_json, s.user_id AS user_id,
-           s.merged_into AS survivor_merged_into,
            s.title AS survivor_title, a.title AS absorbed_title
       FROM content_item_merges m
       JOIN content_items s ON s.id = m.survivor_id
@@ -164,10 +163,11 @@ def unmerge_item(
             f"Merge {merge_id} cannot be undone before merge {later}, made into"
             f" item {row['survivor_id']} after it."
         )
-    if row["survivor_merged_into"] is not None:
+    hiding = absorbing_merge_id(cursor, row["survivor_id"])
+    if hiding is not None:
         raise MergeError(
-            f"Merge {merge_id} cannot be undone while item {row['survivor_id']}"
-            f" is itself merged into {row['survivor_merged_into']}."
+            f"Merge {merge_id} cannot be undone before merge {hiding}, which"
+            f" absorbed item {row['survivor_id']}."
         )
     state = json.loads(row["restore_json"])
     _restore_survivor(cursor, row["survivor_id"], state)
@@ -228,6 +228,15 @@ def _mergeable(cursor: sqlite3.Cursor, db_id: int, user_id: int | None) -> sqlit
     if row["merged_into"] is not None:
         raise MergeError(f"Item {db_id} is already merged into {row['merged_into']}.")
     return row
+
+
+def absorbing_merge_id(cursor: sqlite3.Cursor, item_id: int) -> int | None:
+    """The merge holding *item_id*: a record stands only while its merge does."""
+    cursor.execute(
+        "SELECT id FROM content_item_merges WHERE absorbed_id = ?", (item_id,)
+    )
+    row = cursor.fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def _later_merge_id(
