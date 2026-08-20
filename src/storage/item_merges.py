@@ -100,6 +100,10 @@ def absorb_item(
             f"A {survivor['content_type']} cannot absorb"
             f" a {absorbed['content_type']}."
         )
+    # The enrichment doors write on their own connection, outside _save_lock, so
+    # without this a commit landing between the two reads is recorded as ours
+    # and an undo reverts it.
+    cursor.execute("BEGIN IMMEDIATE")
     before = _survivor_state(cursor, survivor_id)
     merge_scalar_columns(cursor, survivor_id, absorbed_id)
     merge_detail_tables(cursor, survivor_id, absorbed_id)
@@ -194,13 +198,19 @@ def _merge_row(cursor: sqlite3.Cursor, merge_id: int) -> sqlite3.Row | None:
 
 
 def _to_record(row: sqlite3.Row) -> MergeRecord:
+    # A build this one supersedes wrote evidence values this enum dropped, and
+    # raising here would take the whole listing down rather than one row.
+    try:
+        evidence = MergeEvidence(row["evidence"])
+    except ValueError:
+        evidence = MergeEvidence.MANUAL
     return MergeRecord(
         id=row["id"],
         survivor_id=row["survivor_id"],
         survivor_title=row["survivor_title"],
         absorbed_id=row["absorbed_id"],
         absorbed_title=row["absorbed_title"],
-        evidence=MergeEvidence(row["evidence"]),
+        evidence=evidence,
         evidence_detail=row["evidence_detail"],
         merged_at=row["merged_at"],
     )
