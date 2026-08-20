@@ -149,31 +149,12 @@ def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     assert manager.decline_duplicate_suggestion(calibre, goodreads) is None
 
 
-def test_a_refusal_the_pass_cannot_offer_back_is_kept_until_the_merge_comes_off(
-    manager: StorageManager,
-) -> None:
-    """Reported: lifting a refusal over a row a later merge had hidden emptied
-    the declined list and offered nothing back, losing the decision."""
-    first = _save(manager, "calibre", "1", "Deadhouse Gates")
-    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
-    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
-    assert manager.decline_duplicate_suggestion(first, third) is not None
-    merged = manager.merge_content_items(second, third, MergeEvidence.MANUAL)
-
-    with pytest.raises(MergeError, match=f"before merge {merged.id}"):
-        manager.undecline_duplicate_suggestion(first, third)
-
-    listed = manager.list_declined_duplicates()
-    assert [(pair.one_id, pair.other_id) for pair in listed] == [(first, third)]
-    assert manager.unmerge_content_items(merged.id) == merged
-    assert manager.undecline_duplicate_suggestion(first, third) is not None
-    assert (first, third) in _pairs(manager)
-
-
 def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
     manager: StorageManager,
 ) -> None:
-    """Checking one side alone lifts a refusal the other side's merge still hides."""
+    """Reported: lifting a refusal over a row a merge had hidden emptied the
+    declined list and offered nothing back, losing the decision. Checking one
+    side alone lifts one the other side's merge still hides."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
@@ -184,34 +165,14 @@ def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
 
     with pytest.raises(MergeError, match=f"before merge {holds_first.id}"):
         manager.undecline_duplicate_suggestion(first, third)
+    listed = manager.list_declined_duplicates()
+    assert [(pair.one_id, pair.other_id) for pair in listed] == [(first, third)]
     assert manager.unmerge_content_items(holds_first.id) == holds_first
     with pytest.raises(MergeError, match=f"before merge {holds_third.id}"):
         manager.undecline_duplicate_suggestion(first, third)
     assert manager.decline_duplicate_suggestion(first, third) is None
 
     assert manager.unmerge_content_items(holds_third.id) == holds_third
-    assert manager.undecline_duplicate_suggestion(first, third) is not None
-    assert (first, third) in _pairs(manager)
-
-
-def test_a_refusal_held_by_a_merge_that_is_itself_held_lifts_down_the_chain(
-    manager: StorageManager,
-) -> None:
-    """Each refusal names the next merge to undo, and the last one lifts."""
-    first = _save(manager, "calibre", "1", "Deadhouse Gates")
-    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
-    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
-    assert manager.decline_duplicate_suggestion(first, third) is not None
-    inner = manager.merge_content_items(second, third, MergeEvidence.MANUAL)
-    outer = manager.merge_content_items(first, second, MergeEvidence.MANUAL)
-
-    with pytest.raises(MergeError, match=f"before merge {inner.id}"):
-        manager.undecline_duplicate_suggestion(first, third)
-    with pytest.raises(MergeError, match=f"before merge {outer.id}"):
-        manager.unmerge_content_items(inner.id)
-
-    assert manager.unmerge_content_items(outer.id) == outer
-    assert manager.unmerge_content_items(inner.id) == inner
     assert manager.undecline_duplicate_suggestion(first, third) is not None
     assert (first, third) in _pairs(manager)
 

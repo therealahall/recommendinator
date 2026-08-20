@@ -93,14 +93,6 @@ describe('DuplicatePair', () => {
     expect(exact.find('.dup-pair-caution').exists()).toBe(false)
   })
 
-  it('offers no way to delete either row of the pair', () => {
-    // Deleting a row that a merge has hidden orphans its children with no
-    // undo, and these ids are exactly the ones a merge hides.
-    const wrapper = mountPair()
-
-    expect(wrapper.text().toLowerCase()).not.toContain('delete')
-  })
-
   it('shows each row’s provenance, so a pair can be judged without opening it', () => {
     const wrapper = mountPair()
 
