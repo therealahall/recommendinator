@@ -140,9 +140,9 @@ today. Dates are the host's local calendar day rather than UTC (`local_today`,
 [variety ladder](docs/SCORING.md#variety-after-completion) orders completions by
 this date.
 
-The schema-migration merge also writes all five, under the
-[dedup rules](#cross-source-deduplication), through `merge_scalar_columns`
-(`src/storage/merge.py`).
+The merge door, `merge_content_items`, also writes all five, under the
+[dedup rules](#cross-source-deduplication) and through `merge_scalar_columns`
+(`src/storage/merge.py`). It is the only door that can be undone.
 
 #### Source configuration precedence
 
@@ -235,18 +235,17 @@ back to the normalized title, oldest row first. That fallback skips a row
 already holding another id from the incoming source: a source lists an item
 once, so two of its ids are two items.
 
-It is also the only dedup, and updates the matched row in place. No sync deletes
-a row to dedup one: absorbing the same-titled rows beside an id match destroyed
-ids a third source held. A pair predating both ids stays two rows — nothing on
-this tree merges one.
+It updates the matched row in place and absorbs nothing: absorbing the
+same-titled rows beside an id match destroyed ids a third source held. A pair
+predating both ids stays two rows until the merge door below joins them.
 
 External ids live in `content_item_external_ids`, one per source per item:
 Steam's app 440 and GOG's product 440 are different games. Either path records
 the incoming `(source, external_id)`, which makes a merge survive the losing
 source's next sync.
 
-The version-3 migration re-normalizes titles and merges what that exposes: the
-one path that deletes a row, run once.
+The version-3 migration re-normalizes titles and merges what that exposes, once
+per database, through the same recorded merge as everything else.
 
 `content_items.source` is display provenance and no sync overwrites it. A read
 reports every `(source, external_id)` pair the item holds, which both interfaces
@@ -259,7 +258,7 @@ filed under the source `(legacy)`, which no source id can spell: the column
 beside those ids named the last source to sync the row, not the id's owner, so
 each source attaches its own on its next sync and matches by title until then.
 
-The rules that migration merges by:
+The rules every merge follows:
 
 - `rating` and `review` fill from the duplicate only into a null
 - `date_completed` keeps the later date
@@ -271,8 +270,19 @@ The rules that migration merges by:
   `seasons_watched_dates` merged per season keeping the later watch date, so an
   ingestion date never overrides a user date
 
-It deletes a row outright, so the `status` and `ignored` rules are what stop it
-reverting a completion or un-ignoring an item.
+Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row
+keeps every column, sets `merged_into` and drops out of every read;
+`content_item_merges` records survivor, absorbed, evidence (a matched source id,
+the normalized title, or a manual choice) and what the merge overwrote on the
+survivor. That last part is what `unmerge_content_items` writes back, so an undo
+returns both rows exactly as they were.
+
+Enrichment merges too: a survivor still queued takes the absorbed row's settled
+outcome, so absorbing an enriched item never re-queues it. External ids stay
+with the row that earned them, and both save lookups resolve one hop through
+`merged_into` — which is how a merge survives a re-sync from either source, and
+why the survivor reports the group's ids. Absorbing a row that has itself
+absorbed one is refused, keeping that hop single.
 
 #### Detail-shape repairs
 

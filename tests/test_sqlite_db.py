@@ -3909,7 +3909,7 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert survivor.rating == 5
         assert survivor.author == "Team Cherry"
         assert "Metroidvania" in (survivor.metadata.get("genres") or [])
-        assert _external_ids(temp_db, keep_id) == [
+        assert [(pair.source, pair.external_id) for pair in survivor.external_ids] == [
             ("personal_site", "blog-hollow"),
             ("steam", "steam-hollow"),
         ]
@@ -4061,8 +4061,8 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Re-run create_schema — triggers migration dedup
         create_schema(conn)
 
-        # Should now have one row
-        cursor.execute("SELECT COUNT(*) FROM content_items")
+        # Should now show one row, the other hidden behind it
+        cursor.execute("SELECT COUNT(*) FROM content_items WHERE merged_into IS NULL")
         assert cursor.fetchone()[0] == 1
 
         # Verify scalar merge: kept row's rating preserved, review from dup
@@ -4104,19 +4104,19 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert meta["playtime_hours"] == 40  # kept's value wins
         assert meta["award"] == "GOTY"  # dup's unique key added
 
-        # Verify dup's content_items row is gone
+        # The dup's row is hidden behind the survivor, not deleted
         cursor.execute(
-            "SELECT COUNT(*) FROM content_items WHERE id = ?",
+            "SELECT merged_into FROM content_items WHERE id = ?",
             (dup_id,),
         )
-        assert cursor.fetchone()[0] == 0
+        assert cursor.fetchone()["merged_into"] == keep_id
 
-        # Verify dup's detail row is gone
+        # And it keeps its own detail row for an unmerge to give back
         cursor.execute(
-            "SELECT COUNT(*) FROM video_game_details WHERE content_item_id = ?",
+            "SELECT publisher FROM video_game_details WHERE content_item_id = ?",
             (dup_id,),
         )
-        assert cursor.fetchone()[0] == 0
+        assert cursor.fetchone()["publisher"] == "Bethesda"
 
 
 class TestDuplicateMergePreservesState:

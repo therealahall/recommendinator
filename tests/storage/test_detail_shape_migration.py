@@ -907,6 +907,7 @@ class TestRepairRunsBeforeDeduplication:
         with db.connection() as conn:
             remaining = conn.execute(
                 "SELECT COUNT(*) AS total FROM content_items"
+                " WHERE merged_into IS NULL"
             ).fetchone()["total"]
         assert remaining == 1
         assert _show_detail(db, keep_id) == (5, None)
@@ -960,14 +961,13 @@ class TestRepairRunsBeforeDeduplication:
 
         assert counts == {"repair_then_dedup": 5, "dedup_then_repair": 1}
 
-    def test_a_repaired_detail_row_survives_being_moved_to_the_survivor(
+    def test_a_repaired_detail_row_survives_being_copied_to_the_survivor(
         self, tmp_path: Path
     ) -> None:
-        """The merge moves a whole detail row when the kept item has none.
+        """The merge copies a whole detail row when the kept item has none.
 
-        That leg of ``merge_detail_tables`` re-points the duplicate's row
-        rather than merging column by column, so the repair has to have
-        already run over the row being moved — nothing reads it again.
+        Copied rather than moved, so the repair must already have run over it
+        and the duplicate keeps its own for an unmerge to give back.
         """
         db_path = tmp_path / "test.db"
         db = SQLiteDB(db_path)
@@ -979,7 +979,7 @@ class TestRepairRunsBeforeDeduplication:
                 " VALUES (1, 'The Wire', 'tv_show', 'currently_consuming', 'trakt')"
             )
             keep_id = cursor.lastrowid
-            _insert_show_row(
+            absorbed_id = _insert_show_row(
                 cursor,
                 title="Wire",
                 seasons=None,
@@ -991,6 +991,7 @@ class TestRepairRunsBeforeDeduplication:
 
         assert keep_id is not None
         assert _show_detail(db, keep_id) == (5, {"trakt_id": 222})
+        assert _show_detail(db, absorbed_id) == (5, {"trakt_id": 222})
 
 
 class TestTheRepairAndTheMergeShareOneTransaction:

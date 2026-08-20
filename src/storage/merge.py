@@ -24,9 +24,10 @@ __all__ = [
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
     "assert_known_detail_table",
+    "detail_columns",
     "detail_join",
     "merge_detail_tables",
-    "merge_external_ids",
+    "merge_enrichment_status",
     "merge_scalar_columns",
     "normalize_title_for_matching",
     "parse_json_list",
@@ -111,6 +112,13 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 # builder to validate table names from the field declaration in
 # src/models/detail_fields.py before SQL identifier interpolation.
 ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
+
+
+def detail_columns(table: str) -> tuple[str, ...]:
+    """Every column of *table* but its key, for a whole-row copy or restore."""
+    if table not in _DETAIL_TABLE_COLUMNS:
+        raise ValueError(f"Unknown detail table: {table!r}")
+    return (*_DETAIL_TABLE_COLUMNS[table], "metadata")
 
 
 def assert_known_detail_table(spec: ContentTypeFields) -> None:
@@ -248,8 +256,8 @@ def normalize_title_for_matching(title: str) -> str:
 def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
     """Merge the user-owned scalar columns from a duplicate into the kept row.
 
-    The duplicate row is deleted right after this runs, so every column a
-    user can own has to be carried across or it is lost for good.
+    The duplicate row is hidden after this runs, so every column a user can
+    own has to be carried across or it is invisible until an unmerge.
 
     Rules:
     - rating/review: fill from duplicate only if kept is null
@@ -257,13 +265,10 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     - status: keep the further-advanced status (forward-only ordering)
     - ignored: an ignore on either row survives
 
-    Note:
-        Requires the connection to use ``row_factory = sqlite3.Row`` so
-        that rows can be accessed by column name.
+    Requires ``row_factory = sqlite3.Row``.
     """
-    # Fetch both rows to determine whether the merge would produce any
-    # actual data change.  We skip the UPDATE entirely when no delta exists
-    # to avoid bumping updated_at (a user-facing sort key) spuriously.
+    # Skipped entirely when no column moves, so a merge that changes nothing
+    # leaves updated_at — a user-facing sort key — alone.
     select_sql = (
         "SELECT status, rating, review, date_completed, ignored"
         " FROM content_items WHERE id = ?"
@@ -327,16 +332,40 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     )
 
 
-def merge_external_ids(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Move the absorbed row's external ids onto the kept row.
+def merge_enrichment_status(
+    cursor: sqlite3.Cursor, keep_id: int, delete_id: int
+) -> None:
+    """Carry the absorbed row's outcome onto a kept row still queued for one.
 
-    OR IGNORE, because both rows may name one source by different ids under a
-    key unique per source: the kept row's own id wins, and re-attaches by id.
+    A settled miss counts as settled: one work, and a provider that missed it
+    under one title will miss it under the other.
     """
     cursor.execute(
-        "UPDATE OR IGNORE content_item_external_ids SET content_item_id = ?"
-        " WHERE content_item_id = ?",
-        (keep_id, delete_id),
+        "SELECT * FROM enrichment_status WHERE content_item_id = ?", (delete_id,)
+    )
+    absorbed = cursor.fetchone()
+    if absorbed is None or absorbed["needs_enrichment"]:
+        return
+    cursor.execute(
+        "SELECT needs_enrichment FROM enrichment_status WHERE content_item_id = ?",
+        (keep_id,),
+    )
+    kept = cursor.fetchone()
+    if kept is not None and not kept["needs_enrichment"]:
+        return
+    cursor.execute(
+        """INSERT OR REPLACE INTO enrichment_status
+           (content_item_id, last_enriched_at, enrichment_provider,
+            enrichment_quality, needs_enrichment, enrichment_error)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            keep_id,
+            absorbed["last_enriched_at"],
+            absorbed["enrichment_provider"],
+            absorbed["enrichment_quality"],
+            absorbed["needs_enrichment"],
+            absorbed["enrichment_error"],
+        ),
     )
 
 
@@ -381,8 +410,7 @@ def _merge_detail_metadata(
     merged = {**dup_meta, **keep_meta}
 
     # Exception: seasons_watched is the union of both rows. Each row's list may
-    # hold seasons the user ticked by hand, so dropping either side's would
-    # lose watch history the dedup delete makes unrecoverable.
+    # hold seasons the user ticked by hand, and only the survivor is read.
     combined_seasons = merge_seasons_watched(
         keep_meta.get("seasons_watched"), dup_meta.get("seasons_watched")
     )
@@ -408,7 +436,7 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
     """Merge detail table rows from duplicate into kept row.
 
     For each detail table (book_details, movie_details, etc.):
-    - If only the duplicate has a row, move it to the kept item.
+    - If only the duplicate has a row, copy it, leaving the duplicate its own.
     - If both have rows, merge genres/tags additively and fill nulls.
     - Metadata JSON is merged additively (existing keys preserved), except
       ``seasons_watched``, which unions both rows, and
@@ -441,8 +469,10 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
         if dup_detail is None:
             continue
         if keep_detail is None:
+            copied = ", ".join(detail_columns(table))
             cursor.execute(
-                f"UPDATE {table} SET content_item_id = ? WHERE content_item_id = ?",
+                f"INSERT INTO {table} (content_item_id, {copied})"
+                f" SELECT ?, {copied} FROM {table} WHERE content_item_id = ?",
                 (keep_id, delete_id),
             )
             continue

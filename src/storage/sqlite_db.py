@@ -1,10 +1,10 @@
 """SQLite database manager for content items.
 
 Rating, review, status, ``date_completed`` and ``ignored`` are user-owned, and
-every write to them goes through one of five doors — one sync door, one
-enrichment door and three explicit-user-action doors. The sync door's rules are
-not uniform across the five fields, so read the field you care about rather
-than a summary of the door:
+every write to them goes through one of six doors — one sync door, one
+enrichment door, three explicit-user-action doors and the merge door. The sync
+door's rules are not uniform across the five fields, so read the field you care
+about rather than a summary of the door:
 
 - :meth:`SQLiteDB.save_content_item` is the ingestion/sync door. ``rating``
   and ``review`` are fill-only, written only while the stored value is empty,
@@ -44,6 +44,11 @@ than a summary of the door:
   required, ``rating`` and ``review`` use :data:`UNSET` because ``None`` has
   to mean "clear it", and the remaining fields use ``None``. Read that
   method's docstring for the argument you are passing.
+- :meth:`SQLiteDB.merge_content_items` is the merge door, and the only one
+  that can be undone. It writes the survivor under the sync door's own rules,
+  reading them off the absorbed row rather than off a source; the absorbed row
+  itself is hidden behind ``merged_into`` and never written, which is what
+  lets :meth:`SQLiteDB.unmerge_content_items` return both rows as they were.
 
 No door stores a blank ``review``, whichever one it arrives at, because a
 stored ``""`` is indistinguishable from one the user wrote and would refuse
@@ -94,6 +99,13 @@ from src.models.detail_fields import (
     to_int,
 )
 from src.storage.derived import write_derived_columns
+from src.storage.item_merges import (
+    MergeEvidence,
+    MergeRecord,
+    absorb_item,
+    list_merges,
+    unmerge_item,
+)
 from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     MERGEABLE_DETAIL_COLUMNS,
@@ -303,19 +315,21 @@ _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
 # A JSON object rather than a delimited string, because a source name or an
-# id may contain any character.
+# id may contain any character. Absorbed rows keep their own ids, and the item
+# the user sees is the group, so the survivor reports the group's.
 _EXTERNAL_IDS_TERM = (
     "(SELECT json_group_array(json_object("
     "'source', x.source, 'external_id', x.external_id))"
     " FROM content_item_external_ids x"
-    " WHERE x.content_item_id = ci.id) as external_ids"
+    " JOIN content_items owner ON owner.id = x.content_item_id"
+    " WHERE COALESCE(owner.merged_into, owner.id) = ci.id) as external_ids"
 )
 
 # Steam's app 440 and GOG's product 440 are different games, hence the source.
 # ``x.user_id`` repeats ``ci.user_id`` because SQLite carries no equality
 # across a join, and an unconstrained id table has no index to seek.
 _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
-    SELECT ci.id FROM content_items ci
+    SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci
     JOIN content_item_external_ids x ON x.content_item_id = ci.id
     WHERE x.user_id = :user_id AND x.source = :source
       AND x.external_id = :external_id
@@ -324,12 +338,13 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
 
 # A title-match candidate: a row holding another id from the incoming source is
 # that source's other item, not this one. No incoming id compares against NULL.
+# An absorbed row answers as its survivor, so a merge survives a re-sync.
 
 # The accepted cost: a source that changes an item's own id, a re-imported
 # Goodreads book on a new edition say, lands a second row. Nothing here tells
 # that from a genuine second edition, and guessing wrong merges two real books.
 _TITLE_MATCH_CANDIDATES = """
-    SELECT ci.id FROM content_items ci
+    SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci
     WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?
       AND NOT EXISTS (
           SELECT 1 FROM content_item_external_ids x
@@ -988,7 +1003,7 @@ class SQLiteDB:
         """Get a content item by database ID."""
         with self.connection() as conn:
             cursor = conn.cursor()
-            query = _CONTENT_ITEM_SELECT + " WHERE ci.id = ?"
+            query = _CONTENT_ITEM_SELECT + " WHERE ci.id = ? AND ci.merged_into IS NULL"
             params: list[Any] = [db_id]
 
             if user_id is not None:
@@ -1026,7 +1041,10 @@ class SQLiteDB:
         for i in range(0, len(db_ids), _IN_CLAUSE_CHUNK_SIZE):
             chunk = db_ids[i : i + _IN_CLAUSE_CHUNK_SIZE]
             placeholders = ", ".join("?" for _ in chunk)
-            query = f"{_CONTENT_ITEM_SELECT} WHERE ci.id IN ({placeholders})"
+            query = (
+                f"{_CONTENT_ITEM_SELECT} WHERE ci.id IN ({placeholders})"
+                " AND ci.merged_into IS NULL"
+            )
             cursor.execute(query, chunk)
             rows.update({row["id"]: row for row in cursor.fetchall()})
         return [
@@ -1106,7 +1124,7 @@ class SQLiteDB:
         Returned apart from the SELECT so the full read and the
         search-candidate projection page over the same filtered set.
         """
-        where = " WHERE ci.user_id = ?"
+        where = " WHERE ci.user_id = ? AND ci.merged_into IS NULL"
         params: list[Any] = [user_id]
 
         if content_type is not None:
@@ -1618,6 +1636,47 @@ class SQLiteDB:
                 [db_id, *updates.values()],
             )
 
+    def merge_content_items(
+        self,
+        survivor_id: int,
+        absorbed_id: int,
+        evidence: MergeEvidence,
+        evidence_detail: str | None = None,
+        user_id: int | None = None,
+    ) -> MergeRecord:
+        """Merge one item into another (the merge door).
+
+        Raises :class:`~src.storage.item_merges.MergeError` for a refused pair.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            record = absorb_item(
+                cursor,
+                survivor_id,
+                absorbed_id,
+                evidence,
+                evidence_detail=evidence_detail,
+                user_id=user_id,
+            )
+            conn.commit()
+            return record
+
+    def unmerge_content_items(
+        self, merge_id: int, user_id: int | None = None
+    ) -> MergeRecord | None:
+        """Undo one merge, returning it, or ``None`` when there is no such merge."""
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            record = unmerge_item(cursor, merge_id, user_id=user_id)
+            conn.commit()
+            return record
+
+    def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
+        """Every merge in force, naming what absorbed what and on what evidence."""
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+        with self.connection() as conn:
+            return list_merges(conn.cursor(), effective_user_id)
+
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item by database ID."""
         with self.connection() as conn:
@@ -1666,7 +1725,10 @@ class SQLiteDB:
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            query = "SELECT COUNT(*) FROM content_items WHERE user_id = ?"
+            query = (
+                "SELECT COUNT(*) FROM content_items"
+                " WHERE user_id = ? AND merged_into IS NULL"
+            )
             params: list[Any] = [effective_user_id]
 
             if content_type:
@@ -1780,6 +1842,7 @@ class SQLiteDB:
             FROM content_items ci
             LEFT JOIN enrichment_status es ON ci.id = es.content_item_id
             WHERE ci.user_id = ?
+              AND ci.merged_into IS NULL
               AND {status_filter}
         """
         params: list[Any] = [user_id]
