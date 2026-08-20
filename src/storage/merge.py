@@ -12,6 +12,7 @@ module, so the underscore-prefixed names really are internal.
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -25,6 +26,7 @@ __all__ = [
     "ALLOWED_DETAIL_TABLES",
     "MERGEABLE_DETAIL_COLUMNS",
     "MONOTONIC_DETAIL_COLUMNS",
+    "StatedYear",
     "assert_known_detail_table",
     "creators_conflict",
     "detail_columns",
@@ -153,8 +155,6 @@ MONOTONIC_DETAIL_COLUMNS: frozenset[str] = frozenset({"seasons", "episodes"})
 # Status ordering
 # ---------------------------------------------------------------------------
 
-# Status ordering for forward-only progression.
-# A status can only be overwritten by a status later in this sequence.
 _STATUS_ORDER: dict[str, int] = {
     "unread": 0,
     "currently_consuming": 1,
@@ -189,19 +189,24 @@ _SERIES_MARKER = re.compile(r"#\s*\d")
 # veto below and _title_match's refusal to pick between two rows back that.
 _REGION_QUALIFIERS = frozenset({"us", "usa", "uk", "gb", "au", "nz", "ca", "jp", "eu"})
 _YEAR = re.compile(r"^\d{4}$")
+# A translation and an audiobook are printings of one work. Keyed on the word
+# "edition" because a list of languages could never be complete.
+_EDITION = re.compile(r"(?:^|\s)edition$|^(?:un)?abridged$")
 _TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
 _TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 
 
-def _is_positional(inner: str) -> bool:
-    if _SERIES_MARKER.search(inner) or _YEAR.match(inner.strip()):
+def _is_qualifier(inner: str) -> bool:
+    """Whether a trailing parenthetical qualifies the work rather than names it."""
+    inner = inner.strip()
+    if _SERIES_MARKER.search(inner) or _YEAR.match(inner) or _EDITION.search(inner):
         return True
     return re.sub(r"[\W_]", "", inner) in _REGION_QUALIFIERS
 
 
-def _strip_positional_parentheticals(title: str) -> str:
+def _strip_qualifying_parentheticals(title: str) -> str:
     while match := _TRAILING_PARENTHETICAL.search(title):
-        if not _is_positional(match.group(1)):
+        if not _is_qualifier(match.group(1)):
             break
         title = title[: match.start()]
     return title
@@ -240,7 +245,7 @@ def normalize_title_for_matching(title: str) -> str:
     for suffix in suffixes_to_remove:
         normalized = re.sub(suffix, "", normalized, flags=re.IGNORECASE)
 
-    normalized = _strip_positional_parentheticals(normalized)
+    normalized = _strip_qualifying_parentheticals(normalized)
 
     normalized = re.sub(r"^(the|a|an)\s+", "", normalized)
 
@@ -311,29 +316,36 @@ def creators_conflict(one: str | None, other: str | None) -> bool:
     return SequenceMatcher(None, left, right).ratio() < FUZZY_MATCH_THRESHOLD
 
 
+@dataclass(frozen=True)
+class StatedYear:
+    """A release year one row states, and whether its title is what states it."""
+
+    value: int | None = None
+    in_title: bool = False
+
+
 def stated_release_year(
     content_type: str, stated: Any, title: str | None
-) -> int | None:
-    """The year a row states its work came out, taking *stated* as its field.
-
-    A title stating the year alone ("DOOM (2016)") counts: the key drops it.
-    """
+) -> StatedYear:
+    """The year a row states its work came out, taking *stated* as its field."""
     if content_type not in RELEASE_YEAR_FIELDS:
-        return None
+        return StatedYear()
     year = to_int(stated)
     if year is not None:
-        return year
+        return StatedYear(year)
     match = _TITLE_YEAR.search(title or "")
-    return int(match.group(1)) if match else None
+    return StatedYear(int(match.group(1)), in_title=True) if match else StatedYear()
 
 
-def years_conflict(one: int | None, other: int | None) -> bool:
-    """Whether two release years clearly disagree, vetoing a title match.
+def years_conflict(one: StatedYear, other: StatedYear) -> bool:
+    """Whether two release years disagree, vetoing a title match.
 
-    A year only one row states is not disagreement: "Die Hard (1988)" belongs
-    on the "Die Hard" row whose source dates nothing.
+    A year only one source states is not disagreement. A title spelling one
+    out is: a store writes "DOOM (2016)" because the bare name is taken.
     """
-    return one is not None and other is not None and one != other
+    if one.value is not None and other.value is not None:
+        return one.value != other.value
+    return one.in_title or other.in_title
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +486,7 @@ def _merge_detail_metadata(
     except (json.JSONDecodeError, TypeError):
         return None
     if not isinstance(dup_meta, dict) or not dup_meta:
-        return None  # Empty or non-dict metadata — nothing to merge
+        return None
 
     keep_meta: dict[str, Any] = {}
     keep_meta_raw = keep_detail["metadata"]
@@ -487,7 +499,6 @@ def _merge_detail_metadata(
             return None  # Kept metadata non-dict — skip to preserve it
         keep_meta = parsed
 
-    # Existing keys take precedence; incoming fills gaps
     merged = {**dup_meta, **keep_meta}
 
     # Exception: seasons_watched is the union of both rows. Each row's list may
@@ -563,7 +574,7 @@ def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) ->
                         detail_updates.append(f"{col} = ?")
                         detail_params.append(int(dup_val))
                 except (ValueError, TypeError):
-                    pass  # Non-integer value — skip monotonic merge
+                    pass
             elif keep_detail[col] is None and dup_detail[col] is not None:
                 detail_updates.append(f"{col} = ?")
                 detail_params.append(dup_detail[col])

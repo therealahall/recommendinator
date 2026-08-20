@@ -84,13 +84,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 and 11 re-normalize titles. Other versions only record a shape
+# leaves, 10 to 12 re-normalize titles. Other versions only record a shape
 # the CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 12
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -363,7 +363,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 11:
+    elif stored_version < 12:
         # The normalizer learned the parenthetical rules, so stored keys are
         # the old one's. The repair above writes them with this one already.
         _renormalize_titles(cursor)

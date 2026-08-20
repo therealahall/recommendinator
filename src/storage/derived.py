@@ -14,7 +14,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from src.models.detail_fields import DETAIL_FIELDS, RELEASE_YEAR_FIELDS, FieldKind
-from src.storage.merge import detail_join, stated_release_year
+from src.storage.merge import StatedYear, detail_join, stated_release_year
 from src.utils.sorting import build_search_text, get_sort_title
 
 
@@ -90,7 +90,7 @@ class MatchSignals:
     """What a title match is vetoed on, read off one stored row."""
 
     creator: str | None = None
-    release_year: int | None = None
+    release_year: StatedYear = StatedYear()
 
 
 def read_match_signals(cursor: sqlite3.Cursor, db_id: int) -> MatchSignals:

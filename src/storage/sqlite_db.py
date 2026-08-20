@@ -113,6 +113,7 @@ from src.storage.merge import (
     ALLOWED_DETAIL_TABLES,
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
+    StatedYear,
     assert_known_detail_table,
     creators_conflict,
     detail_join,
@@ -360,7 +361,7 @@ _TITLE_MATCH_CANDIDATES = """
 """
 
 
-def _incoming_year(item: ContentItem, content_type_value: str) -> int | None:
+def _incoming_year(item: ContentItem, content_type_value: str) -> StatedYear:
     """The release year the item being saved states, before it is stored."""
     field = RELEASE_YEAR_FIELDS.get(content_type_value)
     stated = field.value_from(item.metadata or {}) if field is not None else None
@@ -368,7 +369,7 @@ def _incoming_year(item: ContentItem, content_type_value: str) -> int | None:
 
 
 def _vetoed(
-    cursor: sqlite3.Cursor, item: ContentItem, year: int | None, candidate_id: int
+    cursor: sqlite3.Cursor, item: ContentItem, year: StatedYear, candidate_id: int
 ) -> bool:
     """Whether a candidate states a creator or year the incoming item rules out."""
     signals = read_match_signals(cursor, candidate_id)
@@ -389,28 +390,28 @@ def _title_match(
     normalized_title: str,
     item: ContentItem,
 ) -> int | None:
-    """The row of this key the incoming creator and release year allow.
+    """The row of this key the incoming creator and year allow.
 
     Two rows left means the key was lossy, so only a row spelled the same is
-    taken: guessing points every later sync at the wrong work.
+    taken. A group answers to every spelling it holds.
     """
     cursor.execute(
         f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id",
         (user_id, content_type_value, normalized_title, item.source, item.id),
     )
     year = _incoming_year(item, content_type_value)
-    allowed: dict[int, str] = {}
+    allowed: dict[int, set[str]] = {}
     for row in cursor.fetchall():
         candidate_id = int(row["id"])
-        if candidate_id not in allowed and not _vetoed(
-            cursor, item, year, candidate_id
-        ):
-            allowed[candidate_id] = row["title"]
+        if candidate_id in allowed:
+            allowed[candidate_id].add(_spelling(row["title"]))
+        elif not _vetoed(cursor, item, year, candidate_id):
+            allowed[candidate_id] = {_spelling(row["title"])}
     if len(allowed) < 2:
         return next(iter(allowed), None)
     spelled = _spelling(item.title)
     return next(
-        (one for one, title in allowed.items() if _spelling(title) == spelled), None
+        (one for one, spellings in allowed.items() if spelled in spellings), None
     )
 
 
