@@ -727,7 +727,6 @@ class TestNormalizeTitleForMatching:
 class TestWhichTrailingParentheticalsAreDropped:
     """Goodreads RSS appends "(Series, #N)" where Calibre appends nothing."""
 
-    #: Pairs off the operator's own shelf, where the marker is never tidy.
     _ONE_BOOK_TWO_SPELLINGS = [
         (
             "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
@@ -4040,9 +4039,7 @@ class TestTheIdLookupCostsOneSeek:
     def test_it_reaches_the_row_through_the_id_table_and_scans_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A sync runs this once per item, so a plan that walks the library
-        instead costs the product of the two — worst on the first sync after
-        the upgrade, where no legacy id answers to any source name."""
+        """A sync runs this once per item, so a scan costs the product of two."""
         with temp_db.connection() as conn:
             plan = [
                 row["detail"]

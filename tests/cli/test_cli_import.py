@@ -154,9 +154,7 @@ def test_the_config_gate_decides_whether_imported_items_are_queued(
 def test_a_queue_fault_is_reported_as_a_note_rather_than_a_refused_row(
     storage: StorageManager, books_csv: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Listed with the misses it reads as one of them, and every count that
-    heads them covers rows, not the file.
-    """
+    """Listed with the misses, and every count above them covers rows."""
 
     def refuse(db_id: int) -> None:
         raise RuntimeError("database is locked")

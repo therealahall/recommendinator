@@ -284,16 +284,16 @@ evidence (a matched source id, the normalized title, or a manual choice) and
 what the merge overwrote on the survivor.
 
 That last part is what `unmerge_content_items` writes back, so an undo returns
-both rows exactly as they were. It records the survivor whole, so several merges
-into one survivor undo newest first; `unmerge_content_items` refuses any other
-order, and `list_content_item_merges` lists them in it.
+both rows exactly as they were. It records the survivor whole, so merges undo
+newest first; `unmerge_content_items` refuses any other order, and
+`list_content_item_merges` lists them in it.
 
 Enrichment merges too: a survivor still queued takes the absorbed row's settled
 outcome, so absorbing an enriched item never re-queues it. External ids stay
 with the row that earned them, and both save lookups resolve one hop through
 `merged_into` — which is how a merge survives a re-sync from either source, and
-why the survivor reports the group's ids. Absorbing a row that has itself
-absorbed one is refused, keeping that hop single.
+why the survivor reports the group's ids. Absorbing a row that has absorbed
+one brings it up too, keeping that hop single.
 
 #### Detail-shape repairs
 

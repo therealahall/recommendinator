@@ -43,8 +43,7 @@ def _pairs(manager: StorageManager) -> list[tuple[int, int]]:
 def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
     manager: StorageManager,
 ) -> None:
-    """The save door skips a candidate already holding another of the incoming
-    source's ids, so the two rows it lands are never reconsidered on any sync."""
+    """The door skips a candidate holding another id of the incoming source."""
     first = _save(manager, "goodreads_csv", "1", "The Gate of the Feral Gods")
     second = _save(
         manager,
@@ -65,16 +64,25 @@ def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
 def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
     manager: StorageManager,
 ) -> None:
-    """The normalizer strips a series marker, and "(Malazan Book 2)" is not one,
-    so nothing but the bare title brings these two keys together."""
+    """ "(Malazan Book 2)" is no series marker, so only the bare key joins these."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
-    goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    goodreads = _save(
+        manager,
+        "goodreads_csv",
+        "2",
+        "Deadhouse Gates (Malazan Book 2)",
+        author="Steven Erikson",
+    )
 
     (suggestion,) = manager.list_duplicate_suggestions()
 
     assert (suggestion.survivor.db_id, suggestion.absorbed.db_id) == (
         calibre,
         goodreads,
+    )
+    assert (suggestion.survivor.creator, suggestion.absorbed.creator) == (
+        None,
+        "Steven Erikson",
     )
     assert suggestion.evidence is SuggestionEvidence.TITLE_QUALIFIER
     assert suggestion.evidence_detail == "deadhouse gates"
@@ -87,8 +95,7 @@ def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
 def test_a_pair_the_save_door_would_refuse_is_never_offered(
     manager: StorageManager,
 ) -> None:
-    """Both vetoes are the save door's own — a remake and another author's book are
-    two works — and a cross-type pair would be a suggestion the merge door refuses."""
+    """Both vetoes are the door's own, and the merge door refuses a cross type."""
     _save(manager, "gog", "1", "Doom", content_type=ContentType.VIDEO_GAME)
     _save(manager, "steam", "2", "DOOM (2016)", content_type=ContentType.VIDEO_GAME)
     _save(manager, "calibre", "3", "Dune", author="Frank Herbert")
@@ -102,8 +109,7 @@ def test_a_pair_the_save_door_would_refuse_is_never_offered(
 def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
     manager: StorageManager,
 ) -> None:
-    """A decline names two rows, and a re-sync lands on the rows it already has,
-    so the pair the operator refused cannot come back."""
+    """A re-sync lands on the rows it has, so a refused pair cannot come back."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
 
@@ -121,8 +127,7 @@ def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
 def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     manager: StorageManager,
 ) -> None:
-    """An id from a stale surface would insert against a foreign key, and one row
-    twice would record a refusal no pair can ever match."""
+    """A stale id would insert against a foreign key; one row twice refuses none."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     manager.merge_content_items(calibre, goodreads, MergeEvidence.MANUAL)
@@ -132,11 +137,47 @@ def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     assert manager.decline_duplicate_suggestion(calibre, goodreads) is False
 
 
+def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
+    manager: StorageManager,
+) -> None:
+    """A group resolved out of order leaves the pass offering a pair whose
+    absorbed side has absorbed one of its own."""
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+    manager.merge_content_items(second, third, MergeEvidence.MANUAL)
+
+    (offered,) = manager.list_duplicate_suggestions()
+    assert (offered.survivor.db_id, offered.absorbed.db_id) == (first, second)
+    manager.merge_content_items(
+        offered.survivor.db_id, offered.absorbed.db_id, MergeEvidence.MANUAL
+    )
+
+    assert manager.count_items() == 1
+    assert manager.list_duplicate_suggestions() == []
+
+
+def test_a_new_row_taking_a_deleted_ones_place_does_not_inherit_the_refusal(
+    manager: StorageManager,
+) -> None:
+    """An id handed out twice hides a duplicate; the DELETE lands by cascade."""
+    kept = _save(manager, "calibre", "1", "Deadhouse Gates")
+    refused = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    assert manager.decline_duplicate_suggestion(kept, refused) is True
+
+    assert manager.delete_content_item(refused) is True
+    replacement = _save(
+        manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)"
+    )
+
+    assert replacement != refused
+    assert _pairs(manager) == [(kept, replacement)]
+
+
 def test_a_group_of_three_offers_every_pair_and_drops_the_ones_a_merge_settles(
     manager: StorageManager,
 ) -> None:
-    """A group is resolved one merge at a time, so the pairs have to be offered
-    separately and the row a merge hid must not come back as half of one."""
+    """A group is resolved one merge at a time, so each pair is offered apart."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
