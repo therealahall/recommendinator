@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v0.39.0 (2026-08-20)
+
+### Bug Fixes
+
+- **storage**: A shared corporate suffix is not a shared name
+  ([`4146e15`](https://github.com/therealahall/recommendinator/commit/4146e15ef57a4d3ced5cb32b0f38c280de6a5a8a))
+
+- **storage**: Let a merge carry the rows its absorbed side had absorbed
+  ([`1687458`](https://github.com/therealahall/recommendinator/commit/1687458ccf23dbe5f38d2b1aebfef6568eee00ba))
+
+- **storage**: Let every row in a group find a keeper it agrees with
+  ([`b265fb3`](https://github.com/therealahall/recommendinator/commit/b265fb305463ab8cdf80211940261ae033d2cdc1))
+
+- **storage**: Let the year veto a match instead of splitting the key
+  ([`06240c3`](https://github.com/therealahall/recommendinator/commit/06240c35fb34f72530157bfb866f74c87936a911))
+
+- **storage**: Put back only what the merge itself wrote
+  ([`132ffd4`](https://github.com/therealahall/recommendinator/commit/132ffd46574d05581e544e3dcac9c8c60c59f04d))
+
+- **storage**: Read the incoming creator where the sources actually put it
+  ([`a6b71be`](https://github.com/therealahall/recommendinator/commit/a6b71be101507c7c4e83415d47645591c930f501))
+
+- **storage**: Record what a merge wrote, not what a merge could write
+  ([`6ac5a09`](https://github.com/therealahall/recommendinator/commit/6ac5a09bf0ffd85006469c8dccde789baa450562))
+
+- **storage**: Release an old upgrade's merges without rewinding the survivor
+  ([`161be9c`](https://github.com/therealahall/recommendinator/commit/161be9c3dce0e209dddfb077058339f8b36566a8))
+
+- **storage**: Revisit the merges this pass made under a rule it has since corrected
+  ([`47bd023`](https://github.com/therealahall/recommendinator/commit/47bd02301229570d41a33bcc2de26874cda4c0b0))
+
+- **storage**: Take the write lock before reading what a merge will change
+  ([`9de45c2`](https://github.com/therealahall/recommendinator/commit/9de45c2f40e9ae3f70836e294900fc9fa69b0567))
+
+- **storage**: Treat a year in the title as the row saying it is not the other one
+  ([`0db5628`](https://github.com/therealahall/recommendinator/commit/0db5628b7957e6d3f8488828a86df0ae6391d7b2))
+
+- **storage**: Undo merges newest first, and keep the write doors off a hidden row
+  ([`408146e`](https://github.com/therealahall/recommendinator/commit/408146e25cf5b80984ac4f5c714092af11a295b2))
+
+### Features
+
+- **storage**: Make a merge recorded, non-destructive and reversible
+  ([`cb3ee22`](https://github.com/therealahall/recommendinator/commit/cb3ee22f6d74913d696664457a5bbad418d026c2))
+
+- **storage**: Match across the naming differences sources actually have
+  ([`a18cf9d`](https://github.com/therealahall/recommendinator/commit/a18cf9d3b6fd0fe4cc43b4cb10e02ecc00dd3b50))
+
+- **storage**: Offer the duplicates already in a library, and remember a refusal
+  ([`47cb280`](https://github.com/therealahall/recommendinator/commit/47cb2808f98668366abee076a68dbb7a5922528b))
+
+### Refactoring
+
+- **storage**: Drop the repair for a state nothing can reach
+  ([`325831e`](https://github.com/therealahall/recommendinator/commit/325831ead5eab792e705d98e02835247c3ce2a71))
+
+- **storage**: Stop the upgrade merging, and release what it merged
+  ([`1f66eae`](https://github.com/therealahall/recommendinator/commit/1f66eae2f4fcad44b9271dca9c39779db80e5d54))
+
+### Testing
+
+- **storage**: Pin that a release hands back a row and moves nothing else
+  ([`e0ba13e`](https://github.com/therealahall/recommendinator/commit/e0ba13e65b7274f11b52d0e495fd46fb9b8a2c39))
+
+- **storage**: Pin the carry, its undo, and a record written before it existed
+  ([`09229b0`](https://github.com/therealahall/recommendinator/commit/09229b0aa1049fce7c4a9ddd6ad4e51eb2781f99))
+
+
 ## v0.38.0 (2026-08-20)
 
 ### Bug Fixes
