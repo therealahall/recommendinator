@@ -195,9 +195,11 @@ database with no tables yet reports as already current.
 
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
 Version 3 is `_repair_legacy_content_rows`: title re-normalization and the
-stranded detail-shape repair. Version 15 re-normalizes and releases merges.
+stranded detail-shape repair. Versions 10 to 15 re-normalize titles under one
+`stored_version < 15` guard, and the release of an earlier build's upgrade-pass
+merges beside it is unguarded: those builds stamped 15. No step merges rows.
 
-Versions 4, 5, 7 and 8 record a shape rather than guarding a step; the
+Versions 4, 5, 7 to 9 record a shape rather than guarding a step; the
 derived-column fill selects the rows missing them.
 
 The one table rebuild, `_move_external_ids_off_content_items`, guards on the
@@ -231,9 +233,9 @@ title/creator boundary.
 #### Cross-source deduplication
 
 A save looks up the item its source knows by `(source, external_id)`, falling
-back to the normalized title, oldest row first. That fallback skips a row
-already holding another id from the incoming source: a source lists an item
-once, so two of its ids are two items.
+back to the normalized title, oldest row first. It skips a row whose merge
+group holds another id from that source: a source lists an item once, so two
+of its ids are two items.
 
 The key is deliberately lossy — a series marker, a region qualifier, an edition
 and a trailing year all leave it — and two vetoes make it safe. A creator or a
@@ -250,9 +252,6 @@ External ids live in `content_item_external_ids`, one per source per item:
 Steam's app 440 and GOG's product 440 are different games. Either path records
 the incoming `(source, external_id)`, which makes a merge survive the losing
 source's next sync.
-
-A schema upgrade re-normalizes stored titles and releases what an earlier
-upgrade merged; it merges nothing itself.
 
 `content_items.source` is display provenance and no sync overwrites it. A read
 reports every `(source, external_id)` pair the item holds, which both interfaces
@@ -282,17 +281,15 @@ keeps every column, sets `merged_into` and drops out of every read, and every
 write door refuses it; `content_item_merges` records survivor, absorbed,
 evidence (so far only the operator's own choice) and what it overwrote.
 
-That last part is what `unmerge_content_items` writes back, so an undo returns
-both rows exactly as they were. It records the survivor whole, so merges undo
-newest first; `unmerge_content_items` refuses any other order, and
+`unmerge_content_items` writes that back, so an undo returns both rows as the
+merge found them, bar `ignored`, which no merge writes. It holds the survivor
+whole, so merges undo newest first, refusing any other order, and
 `list_content_item_merges` lists them in it.
 
 Enrichment merges too: a survivor still queued takes the absorbed row's settled
-outcome, so absorbing an enriched item never re-queues it. External ids stay
-with the row that earned them, and both save lookups resolve one hop through
-`merged_into` — which is how a merge survives a re-sync from either source, and
-why the survivor reports the group's ids. Absorbing a row that has absorbed
-one brings it up too, keeping that hop single.
+outcome, so absorbing an enriched item never re-queues it. Both save lookups
+resolve one hop through `merged_into`, so the survivor reports the group's ids
+and absorbing a row that has absorbed one brings it up, keeping the hop single.
 
 #### Detail-shape repairs
 

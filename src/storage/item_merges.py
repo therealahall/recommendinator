@@ -3,9 +3,6 @@
 ``merge.py`` holds the field rules. Here the survivor is written under them,
 the absorbed row is kept behind ``merged_into``, and what was overwritten is
 recorded, so an undo restores both.
-
-A record holds the survivor whole rather than the fields one merge moved, so
-merges undo newest first: :func:`unmerge_item` refuses any other order.
 """
 
 from __future__ import annotations
@@ -48,13 +45,14 @@ class MergeRecord:
     merged_at: str
 
 
-# Recorded before the merge writes them: only the absorbed row is untouched.
+# Exactly what a merge can write, so an undo puts back only what it changed.
+# ``ignored`` is absent because no merge writes it: restoring it could only take
+# back an ignore made since.
 _SURVIVOR_COLUMNS = (
     "status",
     "rating",
     "review",
     "date_completed",
-    "ignored",
     "updated_at",
 )
 

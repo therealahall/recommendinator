@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
-from src.storage.item_merges import release_merge
+from src.storage.item_merges import MergeEvidence, release_merge
 from src.storage.merge import normalize_title_for_matching
 
 
@@ -88,9 +88,14 @@ class SyncRunDict(TypedDict):
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
 _SCHEMA_VERSION = 15
 
-# An earlier build's upgrade-pass evidence. Not a ``MergeEvidence`` member: the
-# release below would then take back merges the operator asked for.
 _UPGRADE_PASS_EVIDENCE = "normalized_title"
+
+if any(member.value == _UPGRADE_PASS_EVIDENCE for member in MergeEvidence):
+    raise RuntimeError(
+        f"MergeEvidence must not spell {_UPGRADE_PASS_EVIDENCE!r}: it is an"
+        " earlier build's upgrade-pass tombstone, so _release_upgrade_merges"
+        " would drop every merge recorded on it at the next open."
+    )
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -1062,16 +1067,15 @@ def write_enrichment_complete(
 ) -> None:
     """Write the "enriched" status row without committing.
 
-    Lets a caller fold the write into its own transaction and control the
-    single commit point. ``mark_enrichment_complete`` wraps this for callers
-    that own the connection and want an immediate commit.
+    ``mark_enrichment_complete`` wraps it for a caller that wants the commit.
     """
     cursor.execute(
         """INSERT OR REPLACE INTO enrichment_status
            (content_item_id, last_enriched_at, enrichment_provider,
             enrichment_quality, needs_enrichment, enrichment_error)
-           VALUES (?, CURRENT_TIMESTAMP, ?, ?, 0, NULL)""",
-        (content_item_id, provider, quality),
+           SELECT id, CURRENT_TIMESTAMP, ?, ?, 0, NULL FROM content_items
+            WHERE id = ? AND merged_into IS NULL""",
+        (provider, quality, content_item_id),
     )
 
 
@@ -1104,8 +1108,9 @@ def mark_enrichment_failed(
         """INSERT OR REPLACE INTO enrichment_status
            (content_item_id, last_enriched_at, enrichment_provider,
             enrichment_quality, needs_enrichment, enrichment_error)
-           VALUES (?, CURRENT_TIMESTAMP, NULL, NULL, 1, ?)""",
-        (content_item_id, error),
+           SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 1, ? FROM content_items
+            WHERE id = ? AND merged_into IS NULL""",
+        (error, content_item_id),
     )
     conn.commit()
 
@@ -1119,7 +1124,8 @@ def mark_item_needs_enrichment(
     cursor.execute(
         """INSERT OR IGNORE INTO enrichment_status
            (content_item_id, needs_enrichment)
-           VALUES (?, 1)""",
+           SELECT id, 1 FROM content_items
+            WHERE id = ? AND merged_into IS NULL""",
         (content_item_id,),
     )
     conn.commit()
