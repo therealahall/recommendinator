@@ -4,6 +4,7 @@ The absorbed row is never written, so the round trip below asserts both rows
 column for column, not the fields the merge was expected to move.
 """
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,20 @@ def _merged_into(db: SQLiteDB, db_id: int) -> int | None:
 def _id_pairs(item: ContentItem | None) -> list[tuple[str, str]]:
     assert item is not None
     return [(pair.source, pair.external_id) for pair in item.external_ids]
+
+
+def _forget_the_carry(db: SQLiteDB, merge_id: int) -> None:
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT restore_json FROM content_item_merges WHERE id = ?", (merge_id,)
+        ).fetchone()
+        state = json.loads(row["restore_json"])
+        state.pop("repointed")
+        conn.execute(
+            "UPDATE content_item_merges SET restore_json = ? WHERE id = ?",
+            (json.dumps(state), merge_id),
+        )
+        conn.commit()
 
 
 def test_merging_a_rated_item_into_an_unrated_one_and_unmerging_restores_both(
@@ -253,44 +268,79 @@ def test_a_merge_is_refused_when_a_row_is_hidden_or_they_cross_content_types(
         db.merge_content_items(absorbed_id, other_id, MergeEvidence.MANUAL)
 
 
-def test_absorbing_a_row_that_has_absorbed_one_carries_the_group_and_hands_it_back(
+def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them_back(
     db: SQLiteDB,
 ) -> None:
+    """A survivor already holding one takes on a row holding two."""
     keeper_id = _save(db, "steam", "620", title="Portal 2")
+    held_id = _save(db, "humble", "portal-dos", title="Portal Dos")
     middle_id = _save(db, "gog", "1207658961", title="Portal Two")
-    tail_id = _save(db, "epic", "portal-2", title="Portal Zwei", rating=5)
+    rated_id = _save(
+        db,
+        "epic",
+        "portal-2",
+        title="Portal Zwei",
+        rating=5,
+        metadata={"genres": ["Puzzle"]},
+    )
+    reviewed_id = _save(db, "itch", "p2", title="Portal Deux", review="Still the best")
+    group = (keeper_id, held_id, middle_id, rated_id, reviewed_id)
+    _enrich(db, reviewed_id)
+    _pin_updated_at(db)
+    before = {db_id: _snapshot(db, db_id) for db_id in group}
 
-    inner = db.merge_content_items(middle_id, tail_id, MergeEvidence.MANUAL)
+    already = db.merge_content_items(keeper_id, held_id, MergeEvidence.MANUAL)
+    inner = db.merge_content_items(middle_id, rated_id, MergeEvidence.MANUAL)
+    also_inner = db.merge_content_items(middle_id, reviewed_id, MergeEvidence.MANUAL)
     outer = db.merge_content_items(keeper_id, middle_id, MergeEvidence.MANUAL)
 
     keeper = db.get_content_item(keeper_id)
     assert keeper is not None
-    assert keeper.rating == 5
+    assert (keeper.rating, keeper.review) == (5, "Still the best")
+    assert (keeper.metadata["genres"], keeper.enriched) == (["Puzzle"], True)
     assert _id_pairs(keeper) == [
         ("epic", "portal-2"),
         ("gog", "1207658961"),
+        ("humble", "portal-dos"),
+        ("itch", "p2"),
         ("steam", "620"),
     ]
     assert db.count_items() == 1
-    # Left pointing at the row it was, the tail would resolve, in the one
-    # COALESCE every lookup spends, onto a row no read hands back.
-    assert (_merged_into(db, middle_id), _merged_into(db, tail_id)) == (
-        keeper_id,
-        keeper_id,
-    )
 
-    with pytest.raises(MergeError):
-        db.unmerge_content_items(inner.id)
+    for blocked in (already, inner, also_inner):
+        with pytest.raises(MergeError):
+            db.unmerge_content_items(blocked.id)
 
     assert db.unmerge_content_items(outer.id) == outer
-    assert (_merged_into(db, middle_id), _merged_into(db, tail_id)) == (
-        None,
-        middle_id,
-    )
+    assert _id_pairs(db.get_content_item(keeper_id)) == [
+        ("humble", "portal-dos"),
+        ("steam", "620"),
+    ]
+    assert _id_pairs(db.get_content_item(middle_id)) == [
+        ("epic", "portal-2"),
+        ("gog", "1207658961"),
+        ("itch", "p2"),
+    ]
 
-    assert db.unmerge_content_items(inner.id) == inner
-    assert _merged_into(db, tail_id) is None
-    assert db.count_items() == 3
+    for record in db.list_content_item_merges():
+        assert db.unmerge_content_items(record.id) == record
+    assert {db_id: _snapshot(db, db_id) for db_id in group} == before
+    assert db.count_items() == 5
+
+
+def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) -> None:
+    """No build that wrote a record without the key could make a group to carry."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two", rating=5)
+    pair = (survivor_id, absorbed_id)
+    _pin_updated_at(db)
+    before = {db_id: _snapshot(db, db_id) for db_id in pair}
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    _forget_the_carry(db, record.id)
+
+    assert db.unmerge_content_items(record.id) == record
+    assert {db_id: _snapshot(db, db_id) for db_id in pair} == before
 
 
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
