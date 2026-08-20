@@ -552,7 +552,7 @@ class TestRunningTheUpgradeTwiceOverOneLibrary:
 
 
 class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
-    """Versions 10 and 11 changed the normalizer, so older keys are stale."""
+    """Versions 10 to 13 changed the normalizer, so older keys are stale."""
 
     _FERAL_GODS = (
         (
@@ -571,8 +571,6 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         ),
     )
 
-    #: Two books one shelf really holds: the novel and the film novelization,
-    #: kept apart under version 9 by each holding its own Goodreads id.
     _TWO_DUNES = (
         ("goodreads_rss", "234225", "Dune", "dune", "Frank Herbert"),
         ("goodreads_rss", "56896284", "Dune", "dune", "Alexander Freed"),
@@ -672,8 +670,6 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
 
         assert len(_content_rows(upgraded)) == 2
 
-    #: Goodreads re-issued the book under a second id, and the operator merged
-    #: the two rows by hand before this build ever ran.
     _FERAL_GODS_AND_A_REISSUE = (
         (
             "calibre_web",
@@ -750,6 +746,23 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
         _merge_by_hand(db_path, survivor="doom-2016-epic", absorbed="doom-2016-humble")
         _rewind_to(db_path, 10)
+
+        _open(db_path)
+
+        assert [row[0] for row in _content_rows(db_path)] == [
+            "doom-gog",
+            "doom-2016-epic",
+        ]
+
+    def test_the_originals_still_merge_when_the_remake_heads_their_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A keeper the veto refuses must not strand the rows behind it."""
+        db_path = tmp_path / "v12-remake-heads-the-group.db"
+        _open(db_path)
+        _seed_games(db_path, self._TWO_PAIRS_ALREADY_MERGED)
+        _merge_by_hand(db_path, survivor="doom-2016-epic", absorbed="doom-2016-humble")
+        _rewind_to(db_path, 12)
 
         _open(db_path)
 
