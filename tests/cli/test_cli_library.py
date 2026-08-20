@@ -4,6 +4,7 @@ import csv
 import io
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1020,3 +1021,487 @@ class TestLibraryExport:
         )
         assert result.exit_code == 0
         assert rows[0]["title"] == '\'=HYPERLINK("http://evil","x")'
+
+
+def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
+    """Two live pairs: one the exact key matches, one only the looser key does."""
+    storage = StorageManager(sqlite_path=tmp_path / "duplicates.db")
+    rows = [
+        ("goodreads_csv", "1", "The Gate of the Feral Gods", None),
+        (
+            "goodreads_csv",
+            "2",
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+            None,
+        ),
+        ("calibre", "3", "Deadhouse Gates", None),
+        ("goodreads_csv", "4", "Deadhouse Gates (Malazan Book 2)", "Steven Erikson"),
+    ]
+    db_ids = [
+        storage.save_content_item(
+            ContentItem(
+                id=external_id,
+                source=source,
+                title=title,
+                author=author,
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        for source, external_id, title, author in rows
+    ]
+    assert len(set(db_ids)) == len(rows)
+    return storage, db_ids
+
+
+def _row_containing(output: str, needle: str) -> str:
+    """The one rendered table row carrying *needle*."""
+    (row,) = [line for line in output.splitlines() if needle in line]
+    return row
+
+
+def _merge(
+    cli_runner: CliRunner,
+    storage: StorageManager,
+    survivor: int,
+    absorbed: int,
+    user: str = "1",
+    fmt: str = "table",
+) -> Any:
+    return _invoke_with_mocks(
+        cli_runner,
+        ["library", "merge", "--survivor", str(survivor), "--absorbed"]
+        + [str(absorbed), "--user", user, "--format", fmt],
+        storage,
+    )
+
+
+def _decline(
+    cli_runner: CliRunner,
+    storage: StorageManager,
+    one: int,
+    other: int,
+    user: str = "1",
+) -> Any:
+    return _invoke_with_mocks(
+        cli_runner,
+        ["library", "decline-duplicate", "--one", str(one), "--other"]
+        + [str(other), "--user", user],
+        storage,
+    )
+
+
+def _json(cli_runner: CliRunner, storage: StorageManager, args: list[str]) -> Any:
+    result = _invoke_with_mocks(cli_runner, [*args, "--format", "json"], storage)
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)
+
+
+class TestLibraryDuplicates:
+    """Suspected duplicates are offered with enough to judge them by."""
+
+    def test_each_pair_shows_both_sides_and_the_looser_key_reads_as_looser(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, _ = _duplicate_library(tmp_path)
+
+        result = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+
+        assert result.exit_code == 0, result.output
+        exact = _row_containing(result.output, "Dungeon Crawler Carl")
+        looser = _row_containing(result.output, "Malazan Book 2")
+        assert "same title" in exact
+        assert "apart from a qualifier" not in exact
+        assert "same title apart from a qualifier" in looser
+        assert "Deadhouse Gates (N/A, calibre)" in looser
+        assert "Deadhouse Gates (Malazan Book 2) (Steven Erikson, goodreads_csv)" in (
+            looser
+        )
+
+    def test_a_declined_pair_stops_being_offered(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+
+        declined = _decline(cli_runner, storage, db_ids[1], db_ids[0])
+        listed = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+
+        assert declined.exit_code == 0, declined.output
+        assert "will not be offered as duplicates again" in declined.output
+        assert "Dungeon Crawler Carl" not in listed.output
+        assert "Malazan Book 2" in listed.output
+
+    def test_a_declined_pair_is_listed_and_undeclining_it_offers_it_again(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Without both verbs a decline is unlistable and irreversible."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        pair = ["--one", str(db_ids[0]), "--other", str(db_ids[1])]
+        _invoke_with_mocks(cli_runner, ["library", "decline-duplicate", *pair], storage)
+
+        listed = _invoke_with_mocks(
+            cli_runner, ["library", "declined-duplicates"], storage
+        )
+        lifted = _invoke_with_mocks(
+            cli_runner, ["library", "undecline-duplicate", *pair], storage
+        )
+        offered = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+        again = _invoke_with_mocks(
+            cli_runner, ["library", "undecline-duplicate", *pair], storage
+        )
+
+        assert listed.exit_code == 0, listed.output
+        row = _row_containing(listed.output, "Dungeon Crawler Carl")
+        assert str(db_ids[0]) in row
+        assert str(db_ids[1]) in row
+        assert lifted.exit_code == 0, lifted.output
+        assert "may be offered as duplicates again" in lifted.output
+        assert "Dungeon Crawler Carl" in offered.output
+        assert again.exit_code != 0
+        assert f"Items {db_ids[0]} and {db_ids[1]} are not a declined pair" in (
+            again.output
+        )
+
+    def test_nothing_to_review_is_an_empty_json_view_on_every_listing(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "empty.db")
+        empty: dict[str, Any] = {
+            "duplicates": {"total": 0, "suggestions": []},
+            "merges": [],
+            "declined-duplicates": [],
+        }
+
+        for command, view in empty.items():
+            assert _json(cli_runner, storage, ["library", command]) == view
+
+    def test_a_type_filter_and_a_limit_cut_the_offer_without_hiding_the_count(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Hundreds of pairs is the first run, so a surface that offers them all
+        at once is unusable; the count is what says how much is left."""
+        storage, _ = _duplicate_library(tmp_path)
+
+        books = _json(cli_runner, storage, ["library", "duplicates", "--type", "book"])
+        games = _json(
+            cli_runner, storage, ["library", "duplicates", "--type", "video_game"]
+        )
+        capped = _json(cli_runner, storage, ["library", "duplicates", "--limit", "1"])
+        table = _invoke_with_mocks(
+            cli_runner, ["library", "duplicates", "--limit", "1"], storage
+        )
+
+        assert books["total"] == 2
+        assert len(books["suggestions"]) == 2
+        assert games == {"total": 0, "suggestions": []}
+        assert capped["total"] == 2
+        assert len(capped["suggestions"]) == 1
+        assert "Showing 1 of 2 suspected duplicates." in table.output
+
+
+class TestLibraryMerge:
+    """A merge names what absorbed what, and comes back off."""
+
+    def test_a_merge_is_listed_and_unmerge_puts_the_absorbed_row_back(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        survivor, absorbed = db_ids[0], db_ids[1]
+
+        merged = _merge(cli_runner, storage, survivor, absorbed)
+        listed = _invoke_with_mocks(cli_runner, ["library", "merges"], storage)
+        after_merge = _json(cli_runner, storage, ["library", "list"])
+
+        assert merged.exit_code == 0, merged.output
+        assert "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)" in merged.output
+        assert f"(#{absorbed}) into" in merged.output
+        assert f"The Gate of the Feral Gods (#{survivor})" in merged.output
+        merge_row = _row_containing(listed.output, "Dungeon Crawler Carl")
+        assert f"(#{survivor})" in merge_row
+        assert "manual" in merge_row
+        assert sorted(item["db_id"] for item in after_merge) == sorted(
+            db_ids[2:] + [survivor]
+        )
+
+        merge_id = _json(cli_runner, storage, ["library", "merges"])[0]["id"]
+        unmerged = _invoke_with_mocks(
+            cli_runner, ["library", "unmerge", "--merge-id", str(merge_id)], storage
+        )
+        after_unmerge = _json(cli_runner, storage, ["library", "list"])
+
+        assert unmerged.exit_code == 0, unmerged.output
+        assert f"(#{absorbed}) from" in unmerged.output
+        assert sorted(item["db_id"] for item in after_unmerge) == sorted(db_ids)
+
+    def test_an_undo_out_of_order_says_which_merge_to_deal_with_first(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        for absorbed in db_ids[1:3]:
+            merged = _merge(cli_runner, storage, db_ids[0], absorbed)
+            assert merged.exit_code == 0, merged.output
+        records = _json(cli_runner, storage, ["library", "merges"])
+        newest, oldest = records[0]["id"], records[1]["id"]
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "unmerge", "--merge-id", str(oldest)], storage
+        )
+
+        assert result.exit_code != 0
+        assert f"Merge {oldest} cannot be undone before merge {newest}" in result.output
+
+    def test_unmerging_a_merge_that_is_not_there_says_so(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, _ = _duplicate_library(tmp_path)
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "unmerge", "--merge-id", "404"], storage
+        )
+
+        assert result.exit_code != 0
+        assert "Merge 404 not found." in result.output
+
+
+class TestDuplicatesJsonParity:
+    """The payload shape the web half answers with, pinned on the CLI side.
+
+    Both build it through ``src.utils.duplicate_serialization``.
+    """
+
+    def test_a_suggestion_carries_the_pair_the_roles_and_the_evidence(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+
+        page = _json(cli_runner, storage, ["library", "duplicates"])
+
+        assert set(page) == {"total", "suggestions"}
+        assert page["total"] == len(page["suggestions"])
+        looser = next(
+            suggestion
+            for suggestion in page["suggestions"]
+            if suggestion["absorbed"]["db_id"] == db_ids[3]
+        )
+        assert set(looser) == {
+            "content_type",
+            "evidence",
+            "evidence_detail",
+            "survivor",
+            "absorbed",
+        }
+        assert set(looser["survivor"]) == {
+            "db_id",
+            "title",
+            "source",
+            "creator",
+            "release_year",
+        }
+        assert looser["content_type"] == "book"
+        assert looser["evidence"] == "title_qualifier"
+        assert looser["evidence_detail"] == "deadhouse gates"
+        assert looser["survivor"]["db_id"] == db_ids[2]
+        assert looser["absorbed"]["creator"] == "Steven Erikson"
+        assert looser["absorbed"]["source"] == "goodreads_csv"
+
+    def test_a_merge_carries_both_titles_both_ids_and_its_evidence(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+
+        result = _merge(cli_runner, storage, db_ids[0], db_ids[1], fmt="json")
+
+        assert result.exit_code == 0, result.output
+        record = json.loads(result.output)
+        assert set(record) == {
+            "id",
+            "survivor_id",
+            "survivor_title",
+            "absorbed_id",
+            "absorbed_title",
+            "evidence",
+            "evidence_detail",
+            "merged_at",
+        }
+        assert record["survivor_id"] == db_ids[0]
+        assert record["absorbed_id"] == db_ids[1]
+        assert record["survivor_title"] == "The Gate of the Feral Gods"
+        # A person chose this pair, whichever list offered it.
+        assert record["evidence"] == "manual"
+        assert record["evidence_detail"] is None
+        assert _json(cli_runner, storage, ["library", "merges"]) == [record]
+
+    def test_a_decline_its_listing_and_its_undo_carry_the_same_pair(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        pair = ["--one", str(db_ids[0]), "--other", str(db_ids[1])]
+
+        declined = _invoke_with_mocks(
+            cli_runner,
+            ["library", "decline-duplicate", *pair, "--format", "json"],
+            storage,
+        )
+        listed = _json(cli_runner, storage, ["library", "declined-duplicates"])
+        lifted = _invoke_with_mocks(
+            cli_runner,
+            ["library", "undecline-duplicate", *pair, "--format", "json"],
+            storage,
+        )
+
+        assert declined.exit_code == 0, declined.output
+        assert json.loads(declined.output) == {
+            "one_id": db_ids[0],
+            "one_title": "The Gate of the Feral Gods",
+            "other_id": db_ids[1],
+            "other_title": "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+        }
+        assert listed == [json.loads(declined.output)]
+        assert json.loads(lifted.output) == json.loads(declined.output)
+
+
+class TestDuplicatesWrongIds:
+    """Every mutating verb takes raw integers, so every wrong one must refuse."""
+
+    def test_a_merge_refuses_each_wrong_id_in_the_storage_layer_s_own_words(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A refusal quotes ids alone and is passed through, not funnelled into
+        one generic message, and none of them records a merge."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        survivor, absorbed = db_ids[0], db_ids[1]
+        first = _merge(cli_runner, storage, survivor, absorbed)
+        assert first.exit_code == 0, first.output
+        before = _json(cli_runner, storage, ["library", "merges"])
+
+        refusals = {
+            (survivor, survivor, "1"): f"Item {survivor} cannot absorb itself.",
+            (survivor, 9999, "1"): "No item with id 9999.",
+            (survivor, absorbed, "1"): (
+                f"Item {absorbed} is already merged into {survivor}."
+            ),
+            (absorbed, survivor, "1"): (
+                f"Item {absorbed} is already merged into {survivor}."
+            ),
+            (db_ids[2], db_ids[3], "2"): f"No item with id {db_ids[2]}.",
+        }
+        for (keep, absorb, user), message in refusals.items():
+            result = _merge(cli_runner, storage, keep, absorb, user=user)
+            assert result.exit_code != 0, result.output
+            assert f"Error: {message}" in result.output
+
+        assert _json(cli_runner, storage, ["library", "merges"]) == before
+
+    def test_declining_takes_only_two_live_rows_of_this_user(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A decline is for the life of the library, so one id twice, a row a
+        merge hid, and another user's rows all refuse before writing."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        survivor, absorbed = db_ids[0], db_ids[1]
+        assert _merge(cli_runner, storage, survivor, absorbed).exit_code == 0
+
+        for one, other, user in (
+            (survivor, survivor, "1"),
+            (survivor, absorbed, "1"),
+            (db_ids[2], db_ids[3], "2"),
+        ):
+            result = _decline(cli_runner, storage, one, other, user=user)
+            assert result.exit_code != 0, result.output
+            assert f"Items {one} and {other} are not a live pair" in result.output
+
+        assert _json(cli_runner, storage, ["library", "declined-duplicates"]) == []
+
+    def test_an_undo_addressed_to_another_user_finds_nothing_to_undo(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--user scopes unmerge and undecline the same way it scopes the rest:
+        neither may reach a record it does not own."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        merge_id = json.loads(
+            _merge(cli_runner, storage, db_ids[0], db_ids[1], fmt="json").output
+        )["id"]
+        _decline(cli_runner, storage, db_ids[2], db_ids[3])
+
+        unmerged = _invoke_with_mocks(
+            cli_runner,
+            ["library", "unmerge", "--merge-id", str(merge_id), "--user", "2"],
+            storage,
+        )
+        undeclined = _invoke_with_mocks(
+            cli_runner,
+            ["library", "undecline-duplicate", "--one", str(db_ids[2]), "--other"]
+            + [str(db_ids[3]), "--user", "2"],
+            storage,
+        )
+
+        assert unmerged.exit_code != 0
+        assert f"Merge {merge_id} not found." in unmerged.output
+        assert undeclined.exit_code != 0
+        assert "are not a declined pair" in undeclined.output
+        assert len(_json(cli_runner, storage, ["library", "merges"])) == 1
+        assert len(_json(cli_runner, storage, ["library", "declined-duplicates"])) == 1
+
+
+class TestDuplicatesOperatorPath:
+    """The states a real library reaches the review surface in."""
+
+    def test_merging_a_pair_the_list_offered_keeps_the_survivor_in_the_library(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Reported: merging a suggested pair took the survivor out of `library
+        list`. A row ignored before any merge verb existed is still offered, and
+        the ignore it carries does not move onto the row that absorbs it."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        survivor, absorbed = db_ids[0], db_ids[1]
+        ignored = _invoke_with_mocks(
+            cli_runner, ["library", "ignore", "--id", str(absorbed)], storage
+        )
+        assert ignored.exit_code == 0, ignored.output
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])["suggestions"]
+        # Both pairs, so a pass that withheld the ignored one fails here rather
+        # than passing an emptier version of the merge below.
+        assert {item["absorbed"]["db_id"] for item in offered} == {absorbed, db_ids[3]}
+        (pair,) = [item for item in offered if item["absorbed"]["db_id"] == absorbed]
+        merged = _merge(
+            cli_runner, storage, pair["survivor"]["db_id"], pair["absorbed"]["db_id"]
+        )
+        assert merged.exit_code == 0, merged.output
+
+        listed = _json(cli_runner, storage, ["library", "list"])
+        kept = [item for item in listed if item["db_id"] == survivor]
+        assert [item["ignored"] for item in kept] == [False]
+
+    def test_a_library_of_distinct_titles_offers_only_its_real_duplicates(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The pass pairs every member of a key's group, so a key that starts
+        collapsing distinct titles floods the operator's only cleanup tool."""
+        storage = StorageManager(sqlite_path=tmp_path / "big.db")
+        titles = [f"Chapter {number} of the Long Road" for number in range(300)]
+        # The second copy of each of five carries the series parenthetical one
+        # source appends: a separate row, which only the looser key pairs back.
+        twins = [
+            f"{title} (The Long Road, Book {index})"
+            for index, title in enumerate(titles[:5])
+        ]
+        for number, title in enumerate([*titles, *twins]):
+            storage.save_content_item(
+                ContentItem(
+                    id=str(number),
+                    source="goodreads_csv" if number < len(titles) else "calibre",
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                user_id=1,
+            )
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+
+        assert offered["total"] == 5
+        assert {item["survivor"]["title"] for item in offered["suggestions"]} == set(
+            titles[:5]
+        )

@@ -3697,6 +3697,28 @@ _GUARDED_ENDPOINTS = [
         url="/api/items/1",
         body={"status": "completed"},
     ),
+    _Endpoint("GET", "/api/duplicates", ("storage",)),
+    _Endpoint("GET", "/api/duplicates/declined", ("storage",)),
+    _Endpoint(
+        "POST",
+        "/api/duplicates/declined",
+        ("storage",),
+        body={"one_id": 1, "other_id": 2},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/duplicates/declined/{one_id}/{other_id}",
+        ("storage",),
+        url="/api/duplicates/declined/1/2",
+    ),
+    _Endpoint("GET", "/api/merges", ("storage",)),
+    _Endpoint(
+        "POST",
+        "/api/merges",
+        ("storage",),
+        body={"survivor_id": 1, "absorbed_id": 2},
+    ),
+    _Endpoint("DELETE", "/api/merges/{merge_id}", ("storage",), url="/api/merges/1"),
     _Endpoint(
         "GET",
         "/api/users/{user_id}/preferences",

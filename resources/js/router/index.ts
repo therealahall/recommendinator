@@ -19,6 +19,11 @@ const router = createRouter({
       component: () => import('@/components/pages/LibraryPage.vue'),
     },
     {
+      path: '/duplicates',
+      name: 'duplicates',
+      component: () => import('@/components/pages/DuplicatesPage.vue'),
+    },
+    {
       path: '/data',
       name: 'data',
       component: () => import('@/components/pages/DataPage.vue'),

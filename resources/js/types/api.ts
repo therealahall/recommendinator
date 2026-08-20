@@ -459,3 +459,47 @@ export interface SettingValidationError {
   key: string
   reason: string
 }
+
+// --- Duplicates ---
+
+export interface DuplicateSide {
+  db_id: number
+  title: string
+  source: string | null
+  creator: string | null
+  release_year: number | null
+}
+
+/** `evidence` is `normalized_title` (the save door's own key) or
+ *  `title_qualifier` (the looser key, which drops a trailing parenthetical). */
+export interface DuplicateSuggestion {
+  content_type: string
+  evidence: string
+  evidence_detail: string
+  survivor: DuplicateSide
+  absorbed: DuplicateSide
+}
+
+/** `total` counts the whole filtered set, not the slice `suggestions` carries. */
+export interface DuplicateSuggestionPage {
+  total: number
+  suggestions: DuplicateSuggestion[]
+}
+
+export interface MergeRecord {
+  id: number
+  survivor_id: number
+  survivor_title: string
+  absorbed_id: number
+  absorbed_title: string
+  evidence: string
+  evidence_detail: string | null
+  merged_at: string
+}
+
+export interface DeclinedPair {
+  one_id: number
+  one_title: string
+  other_id: number
+  other_title: string
+}

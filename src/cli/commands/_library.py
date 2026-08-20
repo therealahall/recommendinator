@@ -9,7 +9,7 @@ from typing import cast
 import click
 from tabulate import tabulate
 
-from src.cli._shared import is_blank_review
+from src.cli._shared import abort_with, emit_view, is_blank_review
 from src.models.content import (
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
@@ -23,11 +23,33 @@ from src.models.content import (
     get_enum_value,
 )
 from src.models.detail_fields import DETAIL_FIELDS
-from src.storage.manager import unset_if_none
+from src.storage.manager import (
+    SUGGESTION_PAGE_DEFAULT,
+    SUGGESTION_PAGE_MAX,
+    DeclinedPair,
+    DuplicateSide,
+    MergeError,
+    MergeEvidence,
+    MergeRecord,
+    SuggestionEvidence,
+    unset_if_none,
+)
+from src.utils.duplicate_serialization import (
+    declined_pair_to_dict,
+    merge_to_dict,
+    suggestion_page_to_dict,
+)
 from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
+
+# The looser key has to read as looser: it drops a trailing parenthetical, so
+# it pairs rows the save door's own key would leave alone.
+_SUGGESTION_EVIDENCE_LABELS = {
+    SuggestionEvidence.NORMALIZED_TITLE: "same title",
+    SuggestionEvidence.TITLE_QUALIFIER: "same title apart from a qualifier",
+}
 
 
 @click.group()
@@ -556,3 +578,380 @@ def library_export(
         click.echo(f"Exported {len(items)} items to {output_path}")
     else:
         click.echo(data, nl=False)
+
+
+def _side_summary(side: DuplicateSide) -> str:
+    return f"{side.title} ({side.creator or 'N/A'}, {side.source or 'N/A'})"
+
+
+def _pair_summary(pair: DeclinedPair) -> str:
+    """Both rows named, so a mistyped id is visible in the acknowledgement."""
+    return (
+        f"{pair.one_title} (#{pair.one_id}) and"
+        f" {pair.other_title} (#{pair.other_id})"
+    )
+
+
+def _merge_evidence(record: MergeRecord) -> str:
+    detail = f" ({record.evidence_detail})" if record.evidence_detail else ""
+    return f"{record.evidence.value}{detail}"
+
+
+@library.command("duplicates")
+@click.option(
+    "--type",
+    "content_type_str",
+    type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
+    default=None,
+    help="Filter by content type",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1, max=SUGGESTION_PAGE_MAX),
+    default=SUGGESTION_PAGE_DEFAULT,
+    help=f"Max pairs to offer (1-{SUGGESTION_PAGE_MAX}, matches web API)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_duplicates(
+    ctx: click.Context,
+    content_type_str: str | None,
+    limit: int,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """List suspected duplicate pairs and what matched them."""
+    storage = ctx.obj["storage"]
+
+    page = storage.list_duplicate_suggestions(
+        user_id=user_id,
+        content_type=(
+            ContentType.from_string(content_type_str) if content_type_str else None
+        ),
+        limit=limit,
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(suggestion_page_to_dict(page), indent=2))
+        return
+
+    if not page.suggestions:
+        click.echo("No suspected duplicates.")
+        return
+
+    table_data = [
+        [
+            suggestion.survivor.db_id,
+            _side_summary(suggestion.survivor),
+            suggestion.absorbed.db_id,
+            _side_summary(suggestion.absorbed),
+            suggestion.content_type,
+            _SUGGESTION_EVIDENCE_LABELS[suggestion.evidence],
+        ]
+        for suggestion in page.suggestions
+    ]
+    headers = ["Keep ID", "Keep", "Absorb ID", "Absorb", "Type", "Evidence"]
+    click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+    click.echo(f"Showing {len(page.suggestions)} of {page.total} suspected duplicates.")
+
+
+@library.command("merge")
+@click.option(
+    "--survivor",
+    "survivor_id",
+    type=int,
+    required=True,
+    help="Database ID of the item to keep",
+)
+@click.option(
+    "--absorbed",
+    "absorbed_id",
+    type=int,
+    required=True,
+    help="Database ID of the item merged into it",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_merge(
+    ctx: click.Context,
+    survivor_id: int,
+    absorbed_id: int,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """Merge one item into another, keeping --survivor."""
+    storage = ctx.obj["storage"]
+
+    try:
+        # MANUAL whichever list the pair came from: a person chose this merge.
+        record = storage.merge_content_items(
+            survivor_id, absorbed_id, MergeEvidence.MANUAL, user_id=user_id
+        )
+    except MergeError as error:
+        # Answered verbatim: it names the row to deal with first, and quotes
+        # nothing but ids and content types.
+        abort_with(str(error))
+
+    emit_view(
+        output_format,
+        lambda: merge_to_dict(record),
+        f"Merged {record.absorbed_title} (#{record.absorbed_id}) into"
+        f" {record.survivor_title} (#{record.survivor_id}) as merge {record.id}.",
+    )
+
+
+@library.command("unmerge")
+@click.option(
+    "--merge-id",
+    "merge_id",
+    type=int,
+    required=True,
+    help="Merge ID, as listed by library merges",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_unmerge(
+    ctx: click.Context, merge_id: int, output_format: str, user_id: int
+) -> None:
+    """Undo one merge, putting the absorbed item back."""
+    storage = ctx.obj["storage"]
+
+    try:
+        record = storage.unmerge_content_items(merge_id, user_id=user_id)
+    except MergeError as error:
+        abort_with(str(error))
+    if record is None:
+        abort_with(f"Merge {merge_id} not found.")
+
+    emit_view(
+        output_format,
+        lambda: merge_to_dict(record),
+        f"Unmerged {record.absorbed_title} (#{record.absorbed_id}) from"
+        f" {record.survivor_title} (#{record.survivor_id}).",
+    )
+
+
+@library.command("merges")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_merges(ctx: click.Context, output_format: str, user_id: int) -> None:
+    """List the merges in force, newest first."""
+    storage = ctx.obj["storage"]
+
+    records = storage.list_content_item_merges(user_id=user_id)
+
+    if output_format == "json":
+        click.echo(json.dumps([merge_to_dict(record) for record in records], indent=2))
+        return
+
+    if not records:
+        click.echo("No merges.")
+        return
+
+    table_data = [
+        [
+            record.id,
+            f"{record.absorbed_title} (#{record.absorbed_id})",
+            f"{record.survivor_title} (#{record.survivor_id})",
+            _merge_evidence(record),
+            record.merged_at,
+        ]
+        for record in records
+    ]
+    headers = ["Merge ID", "Absorbed", "Into", "Evidence", "Merged At"]
+    click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+
+@library.command("decline-duplicate")
+@click.option(
+    "--one",
+    "one_id",
+    type=int,
+    required=True,
+    help="Database ID of one item in the pair",
+)
+@click.option(
+    "--other",
+    "other_id",
+    type=int,
+    required=True,
+    help="Database ID of the other item in the pair",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_decline_duplicate(
+    ctx: click.Context,
+    one_id: int,
+    other_id: int,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """Keep a suspected duplicate pair off the list for good."""
+    storage = ctx.obj["storage"]
+
+    pair = storage.decline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    if pair is None:
+        abort_with(f"Items {one_id} and {other_id} are not a live pair to decline.")
+
+    emit_view(
+        output_format,
+        lambda: declined_pair_to_dict(pair),
+        f"{_pair_summary(pair)} will not be offered as duplicates again.",
+    )
+
+
+@library.command("declined-duplicates")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_declined_duplicates(
+    ctx: click.Context, output_format: str, user_id: int
+) -> None:
+    """List the duplicate pairs you have refused, and can undo."""
+    storage = ctx.obj["storage"]
+
+    pairs = storage.list_declined_duplicates(user_id=user_id)
+
+    if output_format == "json":
+        click.echo(
+            json.dumps([declined_pair_to_dict(pair) for pair in pairs], indent=2)
+        )
+        return
+
+    if not pairs:
+        click.echo("No declined duplicates.")
+        return
+
+    table_data = [
+        [pair.one_id, pair.one_title, pair.other_id, pair.other_title] for pair in pairs
+    ]
+    headers = ["One ID", "One", "Other ID", "Other"]
+    click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+
+@library.command("undecline-duplicate")
+@click.option(
+    "--one",
+    "one_id",
+    type=int,
+    required=True,
+    help="Database ID of one item in the pair",
+)
+@click.option(
+    "--other",
+    "other_id",
+    type=int,
+    required=True,
+    help="Database ID of the other item in the pair",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_undecline_duplicate(
+    ctx: click.Context,
+    one_id: int,
+    other_id: int,
+    output_format: str,
+    user_id: int,
+) -> None:
+    """Offer a refused duplicate pair again."""
+    storage = ctx.obj["storage"]
+
+    pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
+    if pair is None:
+        abort_with(f"Items {one_id} and {other_id} are not a declined pair.")
+
+    emit_view(
+        output_format,
+        lambda: declined_pair_to_dict(pair),
+        f"{_pair_summary(pair)} may be offered as duplicates again.",
+    )
