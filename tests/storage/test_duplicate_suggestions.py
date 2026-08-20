@@ -157,6 +157,37 @@ def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
     assert manager.list_duplicate_suggestions() == []
 
 
+def test_a_group_of_four_settles_from_the_pairs_the_pass_offers(
+    manager: StorageManager,
+) -> None:
+    """Two offered merges leave a pair with a row behind each side."""
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+    fourth = _save(manager, "hardcover", "4", "Deadhouse Gates (Book Two of Malazan)")
+    assert len({first, second, third, fourth}) == 4
+
+    manager.merge_content_items(first, second, MergeEvidence.MANUAL)
+    manager.merge_content_items(third, fourth, MergeEvidence.MANUAL)
+
+    (offered,) = manager.list_duplicate_suggestions()
+    assert (offered.survivor.db_id, offered.absorbed.db_id) == (first, third)
+    manager.merge_content_items(
+        offered.survivor.db_id, offered.absorbed.db_id, MergeEvidence.MANUAL
+    )
+
+    kept = manager.get_content_item(first)
+    assert kept is not None
+    assert sorted(pair.source for pair in kept.external_ids) == [
+        "calibre",
+        "goodreads_csv",
+        "hardcover",
+        "storygraph_csv",
+    ]
+    assert manager.count_items() == 1
+    assert manager.list_duplicate_suggestions() == []
+
+
 def test_a_new_row_taking_a_deleted_ones_place_does_not_inherit_the_refusal(
     manager: StorageManager,
 ) -> None:
