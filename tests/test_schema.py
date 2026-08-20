@@ -466,13 +466,16 @@ def test_a_column_altered_onto_a_child_table_is_in_its_declaration(
     ) as add_column:
         create_schema(temp_db)
 
-    undeclared = {
+    altered = {
         (table, column)
         for table, column in (call.args[1:3] for call in add_column.call_args_list)
         if table in schema._CONTENT_ITEM_CHILDREN
-        and column not in _declared_columns(table)
     }
-    assert undeclared == set()
+    # An ALTER reaching a child by any other route empties this and passes.
+    assert ("book_details", "description") in altered
+    assert {
+        pair for pair in altered if pair[1] not in _declared_columns(pair[0])
+    } == set()
 
 
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
