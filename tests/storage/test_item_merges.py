@@ -18,6 +18,7 @@ from src.storage.schema import (
     mark_enrichment_complete,
     mark_enrichment_failed,
     mark_item_needs_enrichment,
+    reset_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
 
@@ -71,6 +72,16 @@ def _snapshot(db: SQLiteDB, db_id: int) -> dict[str, list[dict[str, Any]]]:
             ]
             for table, key in _ROW_TABLES
         }
+
+
+def _enrichment_provider(db: SQLiteDB, db_id: int) -> str | None:
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT enrichment_provider FROM enrichment_status"
+            " WHERE content_item_id = ?",
+            (db_id,),
+        ).fetchone()
+    return None if row is None else str(row["enrichment_provider"])
 
 
 def _merged_into(db: SQLiteDB, db_id: int) -> int | None:
@@ -412,6 +423,87 @@ def test_an_undo_restores_what_the_merge_wrote_and_leaves_a_later_ignore_alone(
     )
     assert survivor.status == ConsumptionStatus.UNREAD
     assert survivor.ignored is True
+
+
+def test_an_undo_of_a_merge_that_carried_nothing_keeps_a_rating_written_since(
+    db: SQLiteDB,
+) -> None:
+    """DEFECT: merging two unplayed rows moves no column, and the record still
+    held the survivor's empty rating and review, so an undo cleared both."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    assert (
+        db.update_item_from_ui(db_id=survivor_id, rating=5, review="Still the best")
+        is True
+    )
+    db.unmerge_content_items(record.id)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert (survivor.rating, survivor.review) == (5, "Still the best")
+
+
+def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
+    db: SQLiteDB,
+) -> None:
+    """DEFECT: the record was taken whenever the absorbed row had a detail or
+    enrichment row of its own, not when the merge wrote the survivor's, so an
+    undo wiped a description and a provider the merge never touched."""
+    survivor_id = _save(
+        db, "steam", "620", title="Portal 2", metadata={"developer": "Valve"}
+    )
+    absorbed_id = _save(
+        db,
+        "gog",
+        "1207658961",
+        title="Portal Two",
+        metadata={"developer": "Valve Corporation"},
+    )
+    _enrich(db, survivor_id)
+    _enrich(db, absorbed_id)
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    db.save_enrichment_metadata(
+        survivor_id,
+        ContentItem(
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"description": "Aperture Science", "genres": ["Puzzle"]},
+        ),
+    )
+    with db.connection() as conn:
+        mark_enrichment_complete(conn, survivor_id, "giantbomb", "high")
+    db.unmerge_content_items(record.id)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.metadata["description"] == "Aperture Science"
+    assert survivor.metadata["genres"] == ["Puzzle"]
+    assert _enrichment_provider(db, survivor_id) == "giantbomb"
+
+
+def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
+    db: SQLiteDB,
+) -> None:
+    """DEFECT: the reset counted the absorbed row's enrichment row, so it told the
+    operator it had re-queued more items than the queue can ever hand out."""
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
+    _enrich(db, survivor_id)
+    _enrich(db, absorbed_id)
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    before = _snapshot(db, absorbed_id)
+
+    with db.connection() as conn:
+        assert reset_enrichment_status(conn) == 1
+
+    assert [db_id for db_id, _item in db.get_items_needing_enrichment()] == [
+        survivor_id
+    ]
+    assert _snapshot(db, absorbed_id) == before
 
 
 def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:

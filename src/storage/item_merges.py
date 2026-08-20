@@ -1,8 +1,8 @@
 """One content item merged into another, recorded and reversible.
 
 ``merge.py`` holds the field rules. Here the survivor is written under them,
-the absorbed row is kept behind ``merged_into``, and what was overwritten is
-recorded, so an undo restores both.
+the absorbed row is kept behind ``merged_into``, and what this merge overwrote
+is recorded, so an undo restores both and leaves every later edit standing.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ class MergeRecord:
     merged_at: str
 
 
-# Exactly what a merge can write, so an undo puts back only what it changed.
+# The columns a merge can write, and so the ones compared either side of one.
 # ``ignored`` is absent because no merge writes it: restoring it could only take
 # back an ignore made since.
 _SURVIVOR_COLUMNS = (
@@ -64,7 +64,10 @@ _ENRICHMENT_COLUMNS = (
     "enrichment_error",
 )
 
-_SNAPSHOT_TABLES = ALLOWED_DETAIL_TABLES | {"enrichment_status"}
+_SNAPSHOT_COLUMNS: dict[str, tuple[str, ...]] = {
+    **{table: detail_columns(table) for table in ALLOWED_DETAIL_TABLES},
+    "enrichment_status": _ENRICHMENT_COLUMNS,
+}
 
 _MERGE_SELECT = """
     SELECT m.id, m.survivor_id, m.absorbed_id, m.evidence, m.evidence_detail,
@@ -97,13 +100,14 @@ def absorb_item(
             f"A {survivor['content_type']} cannot absorb"
             f" a {absorbed['content_type']}."
         )
-    restore = _survivor_state(cursor, survivor_id, absorbed_id)
-    # What it absorbed comes with it: no row may hide behind a hidden row.
-    restore["repointed"] = _absorbed_by(cursor, absorbed_id)
+    before = _survivor_state(cursor, survivor_id)
     merge_scalar_columns(cursor, survivor_id, absorbed_id)
     merge_detail_tables(cursor, survivor_id, absorbed_id)
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
+    restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
+    # What it absorbed comes with it: no row may hide behind a hidden row.
+    restore["repointed"] = _absorbed_by(cursor, absorbed_id)
     cursor.execute(
         "UPDATE content_items SET merged_into = ? WHERE id = ? OR merged_into = ?",
         (survivor_id, absorbed_id, absorbed_id),
@@ -172,21 +176,6 @@ def unmerge_item(
     )
     cursor.execute("DELETE FROM content_item_merges WHERE id = ?", (merge_id,))
     return _to_record(row)
-
-
-def release_merge(cursor: sqlite3.Cursor, merge_id: int) -> None:
-    """Drop one merge without restoring the survivor.
-
-    Unlike an undo: edits may have landed on the survivor since, and reverting
-    them silently costs more than the absorbed row's duplicated contributions.
-    No ordering rule — nothing here reads a record's snapshot.
-    """
-    cursor.execute(
-        "UPDATE content_items SET merged_into = NULL WHERE id ="
-        " (SELECT absorbed_id FROM content_item_merges WHERE id = ?)",
-        (merge_id,),
-    )
-    cursor.execute("DELETE FROM content_item_merges WHERE id = ?", (merge_id,))
 
 
 def list_merges(cursor: sqlite3.Cursor, user_id: int) -> list[MergeRecord]:
@@ -266,71 +255,102 @@ def _send_back(
     )
 
 
-def _survivor_state(
-    cursor: sqlite3.Cursor, survivor_id: int, absorbed_id: int
-) -> dict[str, Any]:
+def _survivor_state(cursor: sqlite3.Cursor, survivor_id: int) -> dict[str, Any]:
+    """Every column a merge can write on the survivor, as it stands now."""
     columns = ", ".join(_SURVIVOR_COLUMNS)
     cursor.execute(f"SELECT {columns} FROM content_items WHERE id = ?", (survivor_id,))
-    state: dict[str, Any] = {"item": dict(cursor.fetchone()), "details": {}}
-    for table in sorted(ALLOWED_DETAIL_TABLES):
-        if _child_row(cursor, table, absorbed_id) is not None:
-            state["details"][table] = _child_row(cursor, table, survivor_id)
-    if _child_row(cursor, "enrichment_status", absorbed_id) is not None:
-        state["enrichment"] = _child_row(cursor, "enrichment_status", survivor_id)
-    return state
+    return {
+        "item": dict(cursor.fetchone()),
+        "children": {
+            table: _child_row(cursor, table, survivor_id) for table in _SNAPSHOT_COLUMNS
+        },
+    }
+
+
+def _what_this_merge_wrote(
+    before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    """The columns that moved, and only those.
+
+    Each of the three passes returns without writing when it finds nothing to
+    carry, so recording what one left alone takes back an edit made since.
+    """
+    return {
+        "item": {
+            column: value
+            for column, value in before["item"].items()
+            if after["item"][column] != value
+        },
+        "children": {
+            table: _child_changes(row, after["children"][table])
+            for table, row in before["children"].items()
+            if row != after["children"][table]
+        },
+    }
+
+
+def _child_changes(
+    before: dict[str, Any] | None, after: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """One child row's own values, for the columns the merge wrote.
+
+    ``None`` where it wrote the row itself, which an undo takes away again.
+    """
+    if before is None:
+        return None
+    return {
+        column: value
+        for column, value in before.items()
+        if (after or {}).get(column) != value
+    }
 
 
 def _restore_survivor(
     cursor: sqlite3.Cursor, survivor_id: int, state: dict[str, Any]
 ) -> None:
-    assignments = ", ".join(f"{column} = ?" for column in _SURVIVOR_COLUMNS)
-    cursor.execute(
-        f"UPDATE content_items SET {assignments} WHERE id = ?",
-        [*(state["item"][column] for column in _SURVIVOR_COLUMNS), survivor_id],
-    )
-    for table, row in state["details"].items():
-        _restore_child(cursor, table, detail_columns(table), survivor_id, row)
-    if "enrichment" in state:
-        _restore_child(
-            cursor,
-            "enrichment_status",
-            _ENRICHMENT_COLUMNS,
-            survivor_id,
-            state["enrichment"],
+    written = [column for column in _SURVIVOR_COLUMNS if column in state["item"]]
+    if written:
+        assignments = ", ".join(f"{column} = ?" for column in written)
+        cursor.execute(
+            f"UPDATE content_items SET {assignments} WHERE id = ?",
+            [*(state["item"][column] for column in written), survivor_id],
         )
+    for table, row in state.get("children", {}).items():
+        _restore_child(cursor, table, survivor_id, row)
     write_derived_columns(cursor, survivor_id)
 
 
 def _restore_child(
     cursor: sqlite3.Cursor,
     table: str,
-    columns: tuple[str, ...],
     survivor_id: int,
     row: dict[str, Any] | None,
 ) -> None:
-    _assert_snapshot_table(table)
+    columns = _snapshot_columns(table)
     if row is None:
         cursor.execute(f"DELETE FROM {table} WHERE content_item_id = ?", (survivor_id,))
         return
-    placeholders = ", ".join("?" for _ in range(len(columns) + 1))
+    written = [column for column in columns if column in row]
+    assignments = ", ".join(f"{column} = ?" for column in written)
     cursor.execute(
-        f"INSERT OR REPLACE INTO {table} (content_item_id, {', '.join(columns)})"
-        f" VALUES ({placeholders})",
-        [survivor_id, *(row.get(column) for column in columns)],
+        f"UPDATE {table} SET {assignments} WHERE content_item_id = ?",
+        [*(row[column] for column in written), survivor_id],
     )
 
 
 def _child_row(
     cursor: sqlite3.Cursor, table: str, content_item_id: int
 ) -> dict[str, Any] | None:
-    _assert_snapshot_table(table)
+    columns = ", ".join(_snapshot_columns(table))
     cursor.execute(
-        f"SELECT * FROM {table} WHERE content_item_id = ?", (content_item_id,)
+        f"SELECT {columns} FROM {table} WHERE content_item_id = ?", (content_item_id,)
     )
     row = cursor.fetchone()
     return dict(row) if row is not None else None
 
 
-def _assert_snapshot_table(table: str) -> None:
-    if table not in _SNAPSHOT_TABLES:
+def _snapshot_columns(table: str) -> tuple[str, ...]:
+    """The columns a merge can write on one child table; SQL takes no other name."""
+    if table not in _SNAPSHOT_COLUMNS:
         raise ValueError(f"Unknown table: {table!r}")
+    return _SNAPSHOT_COLUMNS[table]

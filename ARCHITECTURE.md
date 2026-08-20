@@ -196,8 +196,8 @@ database with no tables yet reports as already current.
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
 Version 3 is `_repair_legacy_content_rows`: title re-normalization and the
 stranded detail-shape repair. Versions 10 to 15 re-normalize titles under one
-`stored_version < 15` guard, and the release of an earlier build's upgrade-pass
-merges beside it is unguarded: those builds stamped 15. No step merges rows.
+`stored_version < 15` guard. No step merges or unmerges rows: an upgraded
+library rewrites its keys and leaves the merge door to decide the rest.
 
 Versions 4, 5, 7 to 9 record a shape rather than guarding a step; the
 derived-column fill selects the rows missing them.
@@ -281,8 +281,9 @@ keeps every column, sets `merged_into` and drops out of every read, and every
 write door refuses it; `content_item_merges` records survivor, absorbed,
 evidence (so far only the operator's own choice) and what it overwrote.
 
-`unmerge_content_items` writes that back, so an undo returns both rows as the
-merge found them, bar `ignored`, which no merge writes. It holds the survivor
+`unmerge_content_items` writes that back: a record holds the columns that merge
+itself moved, so an undo puts those back and leaves a rating, a description or
+an enrichment run that landed since where it stands. It holds the survivor
 whole, so merges undo newest first, refusing any other order, and
 `list_content_item_merges` lists them in it.
 
