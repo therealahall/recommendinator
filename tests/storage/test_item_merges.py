@@ -247,6 +247,12 @@ def test_a_merge_is_refused_when_it_would_chain_or_cross_content_types(
         with pytest.raises(MergeError):
             db.merge_content_items(other_id, refused, MergeEvidence.MANUAL)
 
+    # The other end of a chain, and what lets a released row be handed back
+    # without checking: a hidden survivor would leave what it absorbed
+    # resolving, in the one COALESCE every lookup spends, onto a hidden row.
+    with pytest.raises(MergeError):
+        db.merge_content_items(absorbed_id, other_id, MergeEvidence.MANUAL)
+
 
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
     db: SQLiteDB,
