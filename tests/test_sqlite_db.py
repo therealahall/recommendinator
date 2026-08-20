@@ -918,6 +918,20 @@ class TestWhatTheSaveDoorMatchesOnTitle:
 
         assert gog != steam
 
+    def test_two_preys_by_studios_sharing_only_a_suffix_stay_apart(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """DEFECT: a shared "Studios" landed GOG's 2017 Prey on Steam's 2006 one."""
+        steam = temp_db.save_content_item(
+            self._game("steam", "3970", "Prey", developer="Human Head Studios")
+        )
+
+        gog = temp_db.save_content_item(
+            self._game("gog", "1424216861", "Prey", developers=["Arkane Studios"])
+        )
+
+        assert gog != steam
+
     def test_a_trakt_show_does_not_land_on_the_sonarr_row_for_another_region(
         self, temp_db: SQLiteDB
     ) -> None:
