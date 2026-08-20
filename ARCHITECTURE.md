@@ -271,11 +271,15 @@ The rules every merge follows:
   ingestion date never overrides a user date
 
 Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row
-keeps every column, sets `merged_into` and drops out of every read;
-`content_item_merges` records survivor, absorbed, evidence (a matched source id,
-the normalized title, or a manual choice) and what the merge overwrote on the
-survivor. That last part is what `unmerge_content_items` writes back, so an undo
-returns both rows exactly as they were.
+keeps every column, sets `merged_into` and drops out of every read, and every
+write door refuses it; `content_item_merges` records survivor, absorbed,
+evidence (a matched source id, the normalized title, or a manual choice) and
+what the merge overwrote on the survivor.
+
+That last part is what `unmerge_content_items` writes back, so an undo returns
+both rows exactly as they were. It records the survivor whole, so several merges
+into one survivor undo newest first; `unmerge_content_items` refuses any other
+order, and `list_content_item_merges` lists them in it.
 
 Enrichment merges too: a survivor still queued takes the absorbed row's settled
 outcome, so absorbing an enriched item never re-queues it. External ids stay

@@ -47,8 +47,10 @@ about rather than a summary of the door:
 - :meth:`SQLiteDB.merge_content_items` is the merge door, and the only one
   that can be undone. It writes the survivor under the sync door's own rules,
   reading them off the absorbed row rather than off a source; the absorbed row
-  itself is hidden behind ``merged_into`` and never written, which is what
-  lets :meth:`SQLiteDB.unmerge_content_items` return both rows as they were.
+  itself is hidden behind ``merged_into`` and never written — no other door
+  reaches a hidden row either — which is what lets
+  :meth:`SQLiteDB.unmerge_content_items` return both rows as they were, in the
+  reverse of the order they were merged.
 
 No door stores a blank ``review``, whichever one it arrives at, because a
 stored ``""`` is indistinguishable from one the user wrote and would refuse
@@ -1466,12 +1468,13 @@ class SQLiteDB:
             if user_id is not None:
                 cursor.execute(
                     "SELECT id, content_type, status FROM content_items"
-                    " WHERE id = ? AND user_id = ?",
+                    " WHERE id = ? AND user_id = ? AND merged_into IS NULL",
                     (db_id, user_id),
                 )
             else:
                 cursor.execute(
-                    "SELECT id, content_type, status FROM content_items WHERE id = ?",
+                    "SELECT id, content_type, status FROM content_items"
+                    " WHERE id = ? AND merged_into IS NULL",
                     (db_id,),
                 )
             row = cursor.fetchone()
@@ -1664,7 +1667,11 @@ class SQLiteDB:
     def unmerge_content_items(
         self, merge_id: int, user_id: int | None = None
     ) -> MergeRecord | None:
-        """Undo one merge, returning it, or ``None`` when there is no such merge."""
+        """Undo one merge, returning it, or ``None`` when there is no such merge.
+
+        Raises :class:`~src.storage.item_merges.MergeError` unless it is the
+        newest merge into its survivor.
+        """
         with self.connection() as conn:
             cursor = conn.cursor()
             record = unmerge_item(cursor, merge_id, user_id=user_id)
@@ -1694,21 +1701,21 @@ class SQLiteDB:
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
-        """Set the ignored status of a content item."""
+        """Set the ignored status of a content item, reporting whether there was one."""
         with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
                 cursor.execute(
                     """UPDATE content_items
                        SET ignored = ?, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ? AND user_id = ?""",
+                       WHERE id = ? AND user_id = ? AND merged_into IS NULL""",
                     (1 if ignored else 0, db_id, user_id),
                 )
             else:
                 cursor.execute(
                     """UPDATE content_items
                        SET ignored = ?, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ?""",
+                       WHERE id = ? AND merged_into IS NULL""",
                     (1 if ignored else 0, db_id),
                 )
             conn.commit()

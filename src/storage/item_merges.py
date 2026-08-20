@@ -3,6 +3,10 @@
 ``merge.py`` holds the field rules. Here the survivor is written under them,
 the absorbed row is kept behind ``merged_into``, and what was overwritten is
 recorded, so an undo restores both.
+
+A record holds the survivor whole rather than the fields one merge moved, so
+several merges into one survivor undo newest first — :func:`unmerge_item`
+refuses any other order, and :func:`list_merges` lists them in it.
 """
 
 from __future__ import annotations
@@ -142,10 +146,20 @@ def absorb_item(
 def unmerge_item(
     cursor: sqlite3.Cursor, merge_id: int, user_id: int | None = None
 ) -> MergeRecord | None:
-    """Undo one merge, returning what it undid, or ``None`` if there was none."""
+    """Undo one merge, returning what it undid, or ``None`` if there was none.
+
+    Raises :class:`MergeError` while a later merge into the same survivor is in
+    force: it wrote over the state this record holds.
+    """
     row = _merge_row(cursor, merge_id)
     if row is None or (user_id is not None and row["user_id"] != user_id):
         return None
+    later = _later_merge_id(cursor, row["survivor_id"], merge_id)
+    if later is not None:
+        raise MergeError(
+            f"Merge {merge_id} cannot be undone before merge {later}, made into"
+            f" item {row['survivor_id']} after it."
+        )
     _restore_survivor(cursor, row["survivor_id"], json.loads(row["restore_json"]))
     cursor.execute(
         "UPDATE content_items SET merged_into = NULL WHERE id = ?",
@@ -195,6 +209,23 @@ def _mergeable(cursor: sqlite3.Cursor, db_id: int, user_id: int | None) -> sqlit
     if row["merged_into"] is not None:
         raise MergeError(f"Item {db_id} is already merged into {row['merged_into']}.")
     return row
+
+
+def _later_merge_id(
+    cursor: sqlite3.Cursor, survivor_id: int, merge_id: int
+) -> int | None:
+    """The first merge into *survivor_id* made after *merge_id*, if one is in force.
+
+    Sequenced by id, not ``merged_at``: two merges within a second share a
+    timestamp, and SQLite gives each new row a rowid above every live one.
+    """
+    cursor.execute(
+        "SELECT id FROM content_item_merges"
+        " WHERE survivor_id = ? AND id > ? ORDER BY id LIMIT 1",
+        (survivor_id, merge_id),
+    )
+    row = cursor.fetchone()
+    return int(row["id"]) if row is not None else None
 
 
 def _has_absorbed(cursor: sqlite3.Cursor, db_id: int) -> bool:
