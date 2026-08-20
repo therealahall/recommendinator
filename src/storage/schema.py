@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns, read_match_signals
-from src.storage.item_merges import MergeEvidence, absorb_item
+from src.storage.item_merges import MergeEvidence, absorb_item, unmerge_item
 from src.storage.merge import (
     creators_conflict,
     normalize_title_for_matching,
@@ -84,13 +84,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 13 re-normalize titles. Other versions only record a shape
-# the CREATE/ALTER below reaches.
+# leaves, 10 to 14 re-normalize titles and reconcile what that rewrote. Other
+# versions only record a shape the CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 13
+_SCHEMA_VERSION = 14
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -360,10 +360,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 13:
+    elif stored_version < 14:
         # The normalizer learned the parenthetical rules, so stored keys are
-        # the old one's. The repair above writes them with this one already.
+        # the old one's. The repair above writes them with this one already,
+        # over a database far too old to hold a merge to reconsider.
         _renormalize_titles(cursor)
+        _undo_stale_title_merges(cursor)
         _deduplicate_inline(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
@@ -686,6 +688,15 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
         )
 
 
+def _match_refused(cursor: sqlite3.Cursor, keeper_id: int, duplicate_id: int) -> bool:
+    """Whether the creator or the year these two rows state vetoes a title match."""
+    keeper = read_match_signals(cursor, keeper_id)
+    duplicate = read_match_signals(cursor, duplicate_id)
+    return creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
+        keeper.release_year, duplicate.release_year
+    )
+
+
 def _absorbed_by_a_keeper(
     cursor: sqlite3.Cursor,
     keeper_ids: list[int],
@@ -693,12 +704,8 @@ def _absorbed_by_a_keeper(
     normalized_title: str,
 ) -> bool:
     """Merge *row_id* into the first keeper whose creator and year allow it."""
-    duplicate = read_match_signals(cursor, row_id)
     for keeper_id in keeper_ids:
-        keeper = read_match_signals(cursor, keeper_id)
-        if creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
-            keeper.release_year, duplicate.release_year
-        ):
+        if _match_refused(cursor, keeper_id, row_id):
             continue
         absorb_item(
             cursor,
@@ -709,6 +716,59 @@ def _absorbed_by_a_keeper(
         )
         return True
     return False
+
+
+def _merge_still_stands(
+    cursor: sqlite3.Cursor, survivor_id: int, absorbed_id: int
+) -> bool:
+    """Whether the pass would make a merge it once recorded again today.
+
+    The merge cannot have talked itself out of a veto: a column moves onto the
+    survivor only where it stated nothing, and nothing stated never vetoed.
+    """
+    cursor.execute(
+        """SELECT 1 FROM content_items survivor
+             JOIN content_items absorbed
+               ON absorbed.normalized_title = survivor.normalized_title
+            WHERE survivor.id = ? AND absorbed.id = ?
+              AND survivor.normalized_title != ''""",
+        (survivor_id, absorbed_id),
+    )
+    return cursor.fetchone() is not None and not _match_refused(
+        cursor, survivor_id, absorbed_id
+    )
+
+
+def _undo_stale_title_merges(cursor: sqlite3.Cursor) -> None:
+    """Undo the merges this pass made under a rule it no longer follows.
+
+    A hidden row is one the corrected rule never reaches. One that rule still
+    makes stays, rather than roll its survivor back over every edit since.
+    """
+    cursor.execute(
+        "SELECT id, survivor_id, absorbed_id, evidence FROM content_item_merges"
+        " ORDER BY id DESC"
+    )
+    by_survivor: dict[int, list[sqlite3.Row]] = {}
+    for row in cursor.fetchall():
+        by_survivor.setdefault(row["survivor_id"], []).append(row)
+
+    for merges in by_survivor.values():
+        down_to_here: list[int] = []
+        undo: list[int] = []
+        # Newest first, and a merge stacked on a refused one goes with it:
+        # unmerge_item refuses any other order, and a merge from another door
+        # cannot be undone at all, so it ends the walk.
+        for merge in merges:
+            if merge["evidence"] != MergeEvidence.NORMALIZED_TITLE.value:
+                break
+            down_to_here.append(merge["id"])
+            if not _merge_still_stands(
+                cursor, merge["survivor_id"], merge["absorbed_id"]
+            ):
+                undo = list(down_to_here)
+        for merge_id in undo:
+            unmerge_item(cursor, merge_id)
 
 
 def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:

@@ -4,22 +4,7 @@
 number to every version-guarded step, and stamps the current version back
 after the last of them, inside the same transaction. ``tests/test_schema.py``
 and ``tests/storage/test_detail_shape_migration.py`` cover the happy path of
-that scheme. These cover its edges, and there are four:
-
-* **The versions a real database can be sitting at.** The marker used to
-  belong to the settings migration alone and stopped at 2, so an operator
-  upgrading to this build is at 0, 1 or 2 — and at 2 the settings steps must
-  stay spent while the content repair still runs.
-* **What a failed open leaves behind.** The stamp is written after every
-  guarded step and before the single commit, so an open that raises advances
-  nothing and the retry re-runs the lot.
-* **What counts as a fresh database.** "No tables at all" reads as already
-  current. A half-created database, a zero-byte file and a file that is not a
-  database at all are the three neighbours of that rule.
-* **What the passes group and what they decline.** ``_deduplicate_inline``
-  merges by ``(user_id, content_type, normalized_title)`` and skips the empty
-  title, and ``_renormalize_titles`` is what makes a non-ASCII title match at
-  all, because SQLite's ``lower()`` only folds ASCII.
+that scheme; each class below names one edge of it.
 """
 
 import sqlite3
@@ -57,12 +42,8 @@ _THE_DUPLICATE_PAIR = (
     ),
 )
 
-#: What ``_THE_DUPLICATE_PAIR`` looks like once the upgrade has run: one row,
-#: the older of the two, carrying its own rating and the review only the
-#: duplicate held.
 _THE_MERGED_SURVIVOR = [("steam-witcher", "witcher 3 wild hunt", 5, "Great writing")]
 
-#: What it looks like while the upgrade has not run: both rows, untouched.
 _THE_PAIR_UNTOUCHED = [
     ("steam-witcher", "the witcher iii: wild hunt", 5, None),
     ("blog-witcher", "witcher 3 - wild hunt", None, "Great writing"),
@@ -133,8 +114,13 @@ def _rewind_to(db_path: Path, version: int) -> None:
         conn.close()
 
 
-def _merge_by_hand(db_path: Path, survivor: str, absorbed: str) -> None:
-    """Record the merge an operator made on the build that stamped version 9."""
+def _merge_by_hand(
+    db_path: Path,
+    survivor: str,
+    absorbed: str,
+    evidence: MergeEvidence = MergeEvidence.MANUAL,
+) -> None:
+    """Record a merge an operator, or an older build's own pass, already made."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -149,7 +135,7 @@ def _merge_by_hand(db_path: Path, survivor: str, absorbed: str) -> None:
             cursor,
             survivor_id=ids[survivor],
             absorbed_id=ids[absorbed],
-            evidence=MergeEvidence.MANUAL,
+            evidence=evidence,
         )
         conn.commit()
     finally:
@@ -223,6 +209,22 @@ def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
             " WHERE ci.merged_into IS NULL"
             " ORDER BY ci.id"
         ).fetchall()
+    finally:
+        conn.close()
+
+
+def _merge_targets(db_path: Path) -> dict[str, str]:
+    """Each row's external id, mapped to that of the row it now lives as."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return dict(
+            conn.execute(
+                "SELECT x.external_id, live.external_id FROM content_items ci"
+                " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+                " JOIN content_item_external_ids live"
+                "   ON live.content_item_id = COALESCE(ci.merged_into, ci.id)"
+            ).fetchall()
+        )
     finally:
         conn.close()
 
@@ -736,23 +738,29 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         ("doom-2016-humble", "DOOM (2016)", "doom 2016", None),
     )
 
+    _TWO_MERGES_NOTHING_TELLS_APART = (
+        ("doom-gog", "Doom", "doom", None),
+        ("doom-steam", "Doom", "doom", None),
+        ("doom-epic", "Doom", "doom", None),
+        ("doom-humble", "Doom", "doom", None),
+    )
+
     def test_two_rows_already_holding_merges_both_survive_the_upgrade(
         self, tmp_path: Path
     ) -> None:
-        """Absorbing a row holding merges of its own raises out of the open."""
+        """Every keeper is offered the rows behind it, and the second of these
+        is a keeper the one-hop rule would refuse — as a failed open, not a bad
+        group."""
         db_path = tmp_path / "v10-two-merges.db"
         _open(db_path)
-        _seed_games(db_path, self._TWO_PAIRS_ALREADY_MERGED)
+        _seed_games(db_path, self._TWO_MERGES_NOTHING_TELLS_APART)
         _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
-        _merge_by_hand(db_path, survivor="doom-2016-epic", absorbed="doom-2016-humble")
+        _merge_by_hand(db_path, survivor="doom-epic", absorbed="doom-humble")
         _rewind_to(db_path, 10)
 
         _open(db_path)
 
-        assert [row[0] for row in _content_rows(db_path)] == [
-            "doom-gog",
-            "doom-2016-epic",
-        ]
+        assert [row[0] for row in _content_rows(db_path)] == ["doom-gog", "doom-epic"]
 
     def test_the_originals_still_merge_when_the_remake_heads_their_group(
         self, tmp_path: Path
@@ -770,6 +778,131 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             "doom-gog",
             "doom-2016-epic",
         ]
+
+    _FIVE_DOOMS_ON_THREE_YEARS = (
+        ("doom-1993", "Doom", "doom", 1993),
+        ("doom-2016", "Doom", "doom", 2016),
+        ("doom-2019", "Doom", "doom", 2019),
+        ("doom-2019-gog", "Doom", "doom", 2019),
+        ("doom-undated", "Doom", "doom", None),
+    )
+
+    def test_a_row_two_keepers_refuse_reaches_the_third(self, tmp_path: Path) -> None:
+        """Stopping at the first keeper, or at the first veto, leaves the 2019
+        pair apart; the undated row agrees with all three and takes the first."""
+        db_path = tmp_path / "v12-three-keepers.db"
+        _open(db_path)
+        _seed_games(db_path, self._FIVE_DOOMS_ON_THREE_YEARS)
+        _rewind_to(db_path, 12)
+
+        _open(db_path)
+
+        assert _merge_targets(db_path) == {
+            "doom-1993": "doom-1993",
+            "doom-2016": "doom-2016",
+            "doom-2019": "doom-2019",
+            "doom-2019-gog": "doom-2019",
+            "doom-undated": "doom-1993",
+        }
+
+    _THE_TWO_DOOMS_ON_ONE_KEY = (
+        ("doom-1993", "Doom", "doom", None),
+        ("doom-2016", "DOOM (2016)", "doom", None),
+    )
+
+    @pytest.mark.parametrize("stored_version", [11, 13])
+    def test_the_upgrade_undoes_the_merge_its_own_older_rule_made(
+        self, tmp_path: Path, stored_version: int
+    ) -> None:
+        """DEFECT: version 11's own pass hid this remake, and the veto that
+        would now refuse it never sees a row behind ``merged_into``. At 13 too:
+        that build stamped the library current without revisiting the row."""
+        db_path = tmp_path / f"false-merge-stamped-at-{stored_version}.db"
+        _open(db_path)
+        _seed_games(db_path, self._THE_TWO_DOOMS_ON_ONE_KEY)
+        _merge_by_hand(
+            db_path,
+            survivor="doom-1993",
+            absorbed="doom-2016",
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+        )
+        _rewind_to(db_path, stored_version)
+
+        _open(db_path)
+
+        assert [row[0] for row in _content_rows(db_path)] == ["doom-1993", "doom-2016"]
+
+    _A_TEXTBOOK_AND_ITS_THIRD_EDITION = (
+        (
+            "calibre_web",
+            "calibre:clean-code",
+            "Clean Code",
+            "clean code",
+            "Robert C. Martin",
+        ),
+        (
+            "calibre_web",
+            "calibre:clean-code-3e",
+            "Clean Code (3rd Edition)",
+            "clean code",
+            "Robert C. Martin",
+        ),
+    )
+
+    def test_the_upgrade_undoes_the_merge_that_stripped_a_counted_edition(
+        self, tmp_path: Path
+    ) -> None:
+        """DEFECT: one printing hid the other while ``(3rd Edition)`` was a
+        qualifier, and a book has no year to veto on — so the key the
+        normalizer now keeps is the only thing that can tell them apart."""
+        db_path = tmp_path / "v12-stripped-edition.db"
+        _open(db_path)
+        self._seed_books(db_path, self._A_TEXTBOOK_AND_ITS_THIRD_EDITION)
+        _merge_by_hand(
+            db_path,
+            survivor="calibre:clean-code",
+            absorbed="calibre:clean-code-3e",
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+        )
+        _rewind_to(db_path, 12)
+
+        _open(db_path)
+
+        assert self._groups(db_path) == {
+            "clean code": ["calibre:clean-code"],
+            "clean code 3rd edition": ["calibre:clean-code-3e"],
+        }
+
+    _THE_TWO_DOOMS_AND_A_THIRD_STORE = (
+        ("doom-1993", "Doom", "doom", None),
+        ("doom-2016", "DOOM (2016)", "doom", None),
+        ("doom-humble", "Doom", "doom", None),
+    )
+
+    def test_a_merge_stacked_on_a_stale_one_is_undone_with_it_and_remade(
+        self, tmp_path: Path
+    ) -> None:
+        """``unmerge_item`` refuses a merge sitting under a later one into the
+        same survivor, so taking only the stale one raises out of the open."""
+        db_path = tmp_path / "v11-stacked-merges.db"
+        _open(db_path)
+        _seed_games(db_path, self._THE_TWO_DOOMS_AND_A_THIRD_STORE)
+        for absorbed in ("doom-2016", "doom-humble"):
+            _merge_by_hand(
+                db_path,
+                survivor="doom-1993",
+                absorbed=absorbed,
+                evidence=MergeEvidence.NORMALIZED_TITLE,
+            )
+        _rewind_to(db_path, 11)
+
+        _open(db_path)
+
+        assert _merge_targets(db_path) == {
+            "doom-1993": "doom-1993",
+            "doom-2016": "doom-2016",
+            "doom-humble": "doom-1993",
+        }
 
 
 class TestWhatTheDeduplicationPassRefusesToGroup:
