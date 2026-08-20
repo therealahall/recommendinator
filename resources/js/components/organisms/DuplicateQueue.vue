@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, ref } from 'vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import DuplicatePair from '@/components/molecules/DuplicatePair.vue'
 import { SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from '@/stores/duplicates'
+import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
 const queueEl = ref<HTMLElement | null>(null)
@@ -16,6 +17,7 @@ const rows = computed(() =>
       suggestion,
       merging: store.isPending(`merge:${key}`),
       declining: store.isPending(`decline:${key}`),
+      error: store.errorFor(`merge:${key}`) || store.errorFor(`decline:${key}`),
     }
   }),
 )
@@ -26,17 +28,8 @@ const emptyMessage = computed(() =>
     : 'No suspected duplicates. Nothing looks like the same work twice.',
 )
 
-/** A decision unmounts the card holding focus, which drops a keyboard user to
- *  <body> (WCAG 2.4.3). The queue is worked top down, so the next decision is
- *  where focus belongs — and someone who tabbed away mid-request keeps theirs. */
-async function decide(run: Promise<void>): Promise<void> {
-  const focused = document.activeElement
-  await run
-  await nextTick()
-  if (!(focused instanceof HTMLElement) || focused.isConnected) return
-  if (document.activeElement !== null && document.activeElement !== document.body) return
-  const next = listEl.value?.querySelector<HTMLElement>('button')
-  ;(next ?? queueEl.value)?.focus()
+function decide(index: number, run: Promise<void>): Promise<void> {
+  return keepFocusInList(listEl, queueEl, index, run)
 }
 </script>
 
@@ -78,13 +71,14 @@ async function decide(run: Promise<void>): Promise<void> {
     <div v-else-if="rows.length === 0" class="empty-state">{{ emptyMessage }}</div>
     <ul v-else ref="listEl" class="dup-list" role="list">
       <DuplicatePair
-        v-for="row in rows"
+        v-for="(row, index) in rows"
         :key="row.key"
         :suggestion="row.suggestion"
         :merging="row.merging"
         :declining="row.declining"
-        @merge="(keep, drop) => decide(store.merge(keep, drop))"
-        @decline="(one, other) => decide(store.declinePair(one, other))"
+        :error="row.error"
+        @merge="(keep, drop) => decide(index, store.merge(keep, drop))"
+        @decline="(one, other) => decide(index, store.declinePair(one, other))"
       />
     </ul>
   </section>

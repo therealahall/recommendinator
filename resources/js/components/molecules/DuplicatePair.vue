@@ -7,6 +7,7 @@ const props = defineProps<{
   suggestion: DuplicateSuggestion
   merging: boolean
   declining: boolean
+  error: string
 }>()
 
 const emit = defineEmits<{
@@ -67,7 +68,7 @@ function onDecline(): void {
       <span class="badge" :class="loose ? 'dup-badge-loose' : 'dup-badge-exact'">
         {{ suggestion.evidence_label }}
       </span>
-      <span class="badge badge-type">{{ typeLabel }}</span>
+      <span class="badge dup-badge-type">{{ typeLabel }}</span>
     </p>
 
     <p v-if="loose" class="dup-pair-caution">
@@ -99,6 +100,9 @@ function onDecline(): void {
     </div>
 
     <p class="dup-pair-actions">
+      <!-- A refusal lands beside the control that drew it. The page's alert
+           region announces it and hides, so the words print once. -->
+      <span v-if="error" class="dup-pair-error">{{ error }}</span>
       <button
         type="button"
         class="btn btn-ghost"
@@ -122,6 +126,15 @@ function onDecline(): void {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* Not the shared .badge-type: --accent-light on its accent wash is 4.06:1 on
+   the plain card and less on this one. The type is the quieter of the two
+   labels here, so it takes a text token and the evidence keeps the colour. */
+.dup-badge-type {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-default);
 }
 
 .dup-badge-exact {
@@ -182,7 +195,15 @@ function onDecline(): void {
 
 .dup-pair-actions {
   display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
   justify-content: flex-end;
   margin-top: var(--space-3);
+}
+
+.dup-pair-error {
+  margin-right: auto;
+  font-size: var(--text-sm);
+  color: var(--color-warning);
 }
 </style>

@@ -1359,6 +1359,37 @@ class TestDuplicatesOperatorPath:
         assert f"before merge {merge_id}" in result.output
         assert len(_json(cli_runner, storage, ["library", "declined-duplicates"])) == 1
 
+    def test_a_library_of_distinct_titles_offers_only_its_real_duplicates(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A key that collapses distinct titles floods the only cleanup tool."""
+        storage = StorageManager(sqlite_path=tmp_path / "big.db")
+        titles = [f"Chapter {number} of the Long Road" for number in range(300)]
+        # The second copy of each of five carries the series parenthetical one
+        # source appends: a separate row, which only the looser key pairs back.
+        twins = [
+            f"{title} (The Long Road, Book {index})"
+            for index, title in enumerate(titles[:5])
+        ]
+        for number, title in enumerate([*titles, *twins]):
+            storage.save_content_item(
+                ContentItem(
+                    id=str(number),
+                    source="goodreads_csv" if number < len(titles) else "calibre",
+                    title=title,
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+                user_id=1,
+            )
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+
+        assert offered["total"] == 5
+        assert {item["survivor"]["title"] for item in offered["suggestions"]} == set(
+            titles[:5]
+        )
+
     def test_no_library_verb_deletes_an_item(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
