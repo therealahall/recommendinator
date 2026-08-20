@@ -100,7 +100,7 @@ from src.models.detail_fields import (
     FieldKind,
     to_int,
 )
-from src.storage.derived import write_derived_columns
+from src.storage.derived import read_creator, write_derived_columns
 from src.storage.item_merges import (
     MergeEvidence,
     MergeRecord,
@@ -113,6 +113,7 @@ from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
     assert_known_detail_table,
+    creators_conflict,
     detail_join,
     normalize_title_for_matching,
     parse_json_list,
@@ -339,12 +340,11 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
 """
 
 # A title-match candidate: a row holding another id from the incoming source is
-# that source's other item, not this one. No incoming id compares against NULL.
+# that source's other item, not this one; no incoming id compares against NULL.
 # An absorbed row answers as its survivor, so a merge survives a re-sync.
 
-# The accepted cost: a source that changes an item's own id, a re-imported
-# Goodreads book on a new edition say, lands a second row. Nothing here tells
-# that from a genuine second edition, and guessing wrong merges two real books.
+# Accepted: a source that changes an item's own id lands a second row, and
+# nothing here tells that from a genuine second edition.
 _TITLE_MATCH_CANDIDATES = """
     SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci
     WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?
@@ -354,6 +354,24 @@ _TITLE_MATCH_CANDIDATES = """
             AND x.source = ? AND x.external_id != ?
       )
 """
+
+
+def _title_match(
+    cursor: sqlite3.Cursor,
+    user_id: int,
+    content_type_value: str,
+    normalized_title: str,
+    item: ContentItem,
+) -> int | None:
+    """The oldest row of this title whose creator the incoming one allows."""
+    cursor.execute(
+        f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id",
+        (user_id, content_type_value, normalized_title, item.source, item.id),
+    )
+    for candidate_id in [int(row["id"]) for row in cursor.fetchall()]:
+        if not creators_conflict(item.author, read_creator(cursor, candidate_id)):
+            return candidate_id
+    return None
 
 
 def _build_content_item_select() -> str:
@@ -639,19 +657,13 @@ class SQLiteDB:
         # row this sync did not match destroyed the ids its own source held.
         # Oldest first, so a title collision resolves the same way twice.
         if existing_id is None and normalized_title:
-            cursor.execute(
-                f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id LIMIT 1",
-                (
-                    effective_user_id,
-                    content_type_value,
-                    normalized_title,
-                    item.source,
-                    item.id,
-                ),
+            existing_id = _title_match(
+                cursor,
+                effective_user_id,
+                content_type_value,
+                normalized_title,
+                item,
             )
-            row = cursor.fetchone()
-            if row:
-                existing_id = int(row["id"])
 
         if existing_id is not None:
             # The sync door: user-owned fields are filled only while they are

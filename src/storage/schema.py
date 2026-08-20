@@ -7,9 +7,9 @@ from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
-from src.storage.derived import backfill_derived_columns
+from src.storage.derived import backfill_derived_columns, read_creator
 from src.storage.item_merges import MergeEvidence, absorb_item
-from src.storage.merge import normalize_title_for_matching
+from src.storage.merge import creators_conflict, normalize_title_for_matching
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -80,12 +80,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves. Other versions only record a shape the CREATE/ALTER below reaches.
+# leaves, 10 re-normalizes titles. Other versions only record a shape the
+# CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -358,6 +359,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
+    elif stored_version < 10:
+        # The normalizer learned the parenthetical rules, so stored keys are
+        # the old one's. The repair above writes them with this one already.
+        _renormalize_titles(cursor)
+        _deduplicate_inline(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -686,8 +692,8 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
     """Merge duplicate rows exposed by re-normalization.
 
-    Keeps the oldest row of each group, records each merge for the operator to
-    undo, and runs inside the schema migration transaction.
+    Keeps the oldest row of each group, leaves behind one whose creator
+    disagrees, and records each merge for the operator to undo.
     """
     cursor.execute(
         """SELECT user_id, content_type, normalized_title
@@ -715,6 +721,10 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 
         keep_id = rows[0]["id"]
         for dup_row in rows[1:]:
+            if creators_conflict(
+                read_creator(cursor, keep_id), read_creator(cursor, dup_row["id"])
+            ):
+                continue
             absorb_item(
                 cursor,
                 survivor_id=keep_id,

@@ -12,7 +12,11 @@ from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import to_json_array
 from src.storage import sqlite_db
-from src.storage.merge import normalize_title_for_matching
+from src.storage.merge import (
+    creators_conflict,
+    normalize_creator_for_matching,
+    normalize_title_for_matching,
+)
 from src.storage.schema import create_schema, write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.item_serialization import item_to_dict
@@ -726,11 +730,106 @@ class TestNormalizeTitleForMatching:
 
         This prevents false conversions like "Civil" -> "C1v1l".
         """
-        # "I" inside a word should NOT be converted
-        assert "c1v1l" not in normalize_title_for_matching("Civil War")
-        # Should contain "civil" not "c1v1l"
-        normalized = normalize_title_for_matching("Civil War")
-        assert "civil" in normalized
+        assert normalize_title_for_matching("Civil War") == "civil war"
+
+    def test_a_standalone_i_is_a_numeral_at_the_end_and_a_pronoun_before(
+        self,
+    ) -> None:
+        assert normalize_title_for_matching("I Am Legend") == "i am legend"
+        assert normalize_title_for_matching("How I Met Your Mother") == (
+            "how i met your mother"
+        )
+        assert normalize_title_for_matching("Part I") == "part 1"
+
+
+class TestWhichTrailingParentheticalsAreDropped:
+    """Goodreads RSS appends "(Series, #N)" where Calibre appends nothing."""
+
+    def test_a_goodreads_series_marker_matches_the_calibre_row_beside_it(
+        self,
+    ) -> None:
+        assert normalize_title_for_matching(
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)"
+        ) == normalize_title_for_matching("The Gate of the Feral Gods")
+
+    def test_a_regional_qualifier_matches_the_same_show_without_one(self) -> None:
+        assert normalize_title_for_matching("Hell's Kitchen (US)") == (
+            normalize_title_for_matching("Hell's Kitchen")
+        )
+
+    def test_a_parenthetical_naming_the_work_is_kept(self) -> None:
+        """A year tells a remake from its original; an edition, two editions."""
+        assert normalize_title_for_matching("DOOM (2016)") != (
+            normalize_title_for_matching("Doom")
+        )
+        assert normalize_title_for_matching("Frankenstein (Unabridged)") != (
+            normalize_title_for_matching("Frankenstein")
+        )
+
+
+class TestTheCreatorVeto:
+    """Creator is no part of the match key; it only rejects a title match."""
+
+    def test_initials_and_the_goodreads_inversion_are_one_author(self) -> None:
+        spellings = ["JK Rowling", "J.K. Rowling", "J. K. Rowling", "Rowling, J.K."]
+        assert len({normalize_creator_for_matching(name) for name in spellings}) == 1
+
+    def test_dune_by_frank_herbert_and_dune_by_alexander_freed_conflict(self) -> None:
+        assert creators_conflict("Frank Herbert", "Alexander Freed")
+
+    def test_an_unstated_or_partial_creator_does_not_conflict(self) -> None:
+        assert not creators_conflict(None, "Frank Herbert")
+        assert not creators_conflict("", "Frank Herbert")
+        assert not creators_conflict("Frank Herbert", "Frank Herbert, Brian Herbert")
+        assert not creators_conflict("Arkane Studios", "Arkane Lyon")
+
+
+class TestWhatTheSaveDoorMatchesOnTitle:
+    """The two rules together, over the door every sync's items come through."""
+
+    @staticmethod
+    def _book(
+        source: str, external_id: str, title: str, author: str | None = None
+    ) -> ContentItem:
+        return ContentItem(
+            id=external_id,
+            title=title,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            source=source,
+            author=author,
+        )
+
+    def test_a_goodreads_series_row_and_an_authorless_calibre_row_are_one_book(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        goodreads = temp_db.save_content_item(
+            self._book(
+                "goodreads_rss",
+                "57905101",
+                "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+                "Matt Dinniman",
+            )
+        )
+
+        calibre = temp_db.save_content_item(
+            self._book("calibre_web", "calibre:51a0e808", "The Gate of the Feral Gods")
+        )
+
+        assert calibre == goodreads
+
+    def test_two_books_of_one_title_by_unrelated_authors_stay_apart(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        herbert = temp_db.save_content_item(
+            self._book("goodreads_rss", "234225", "Dune", "Frank Herbert")
+        )
+
+        freed = temp_db.save_content_item(
+            self._book("calibre_web", "calibre:dune-novel", "Dune", "Alexander Freed")
+        )
+
+        assert freed != herbert
 
 
 # ---------------------------------------------------------------------------
@@ -3596,15 +3695,18 @@ class TestCreatorColumnEdges:
                 title="Arrival",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.UNREAD,
+                source="radarr",
                 author="Denis Villeneuve",
             )
         )
+        # Same source and id, so the row matches its own: no creator veto.
         second = temp_db.save_content_item(
             ContentItem(
                 id="movie-fill-only",
                 title="Arrival",
                 content_type=ContentType.MOVIE,
                 status=ConsumptionStatus.UNREAD,
+                source="radarr",
                 author="Wrong Person",
             )
         )
