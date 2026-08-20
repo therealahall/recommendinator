@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
-from src.storage.item_merges import MergeEvidence, unmerge_item
+from src.storage.item_merges import MergeEvidence, release_merge
 from src.storage.merge import normalize_title_for_matching
 
 
@@ -681,23 +681,15 @@ def _release_upgrade_merges(cursor: sqlite3.Cursor) -> None:
     """Release every merge an earlier build's upgrade pass made.
 
     Nothing else writes ``normalized_title`` evidence, so each one is a merge
-    the operator never asked for. The save door decides the pair again on the
-    next sync.
+    the operator never asked for. Released rather than undone: the survivor
+    keeps every rating, review and enrichment written onto it since.
     """
     cursor.execute(
-        "SELECT id, survivor_id, evidence FROM content_item_merges ORDER BY id DESC"
+        "SELECT id FROM content_item_merges WHERE evidence = ?",
+        (MergeEvidence.NORMALIZED_TITLE.value,),
     )
-    by_survivor: dict[int, list[sqlite3.Row]] = {}
     for row in cursor.fetchall():
-        by_survivor.setdefault(row["survivor_id"], []).append(row)
-
-    for merges in by_survivor.values():
-        # Newest first, and a merge from another door ends the walk: it wrote
-        # over the state under it, and unmerge_item refuses to be skipped.
-        for merge in merges:
-            if merge["evidence"] != MergeEvidence.NORMALIZED_TITLE.value:
-                break
-            unmerge_item(cursor, merge["id"])
+        release_merge(cursor, row["id"])
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

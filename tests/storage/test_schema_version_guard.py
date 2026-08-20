@@ -214,6 +214,26 @@ def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
         conn.close()
 
 
+def _rate_through_the_ui_door(
+    db_path: Path, external_id: str, rating: int, review: str
+) -> None:
+    """Give the row what the operator would give it, after the merge was made."""
+    conn = sqlite3.connect(db_path)
+    try:
+        db_id = int(
+            conn.execute(
+                "SELECT content_item_id FROM content_item_external_ids"
+                " WHERE external_id = ?",
+                (external_id,),
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    assert SQLiteDB(db_path).update_item_from_ui(
+        db_id=db_id, rating=rating, review=review
+    )
+
+
 def _merge_targets(db_path: Path) -> dict[str, str]:
     """Each row's external id, mapped to that of the row it now lives as."""
     conn = sqlite3.connect(db_path)
@@ -597,11 +617,10 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
 
         return db_path
 
-    def _saved_fresh(
-        self, tmp_path: Path, name: str, rows: tuple[tuple[Any, ...], ...]
-    ) -> Path:
-        db = SQLiteDB(tmp_path / name)
-        for source, external_id, title, _, author in rows:
+    @staticmethod
+    def _sync_books(db: SQLiteDB, rows: tuple[tuple[Any, ...], ...]) -> list[int]:
+        """Save each row through the door every sync comes through."""
+        return [
             db.save_content_item(
                 ContentItem(
                     id=external_id,
@@ -612,7 +631,28 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
                     author=author,
                 )
             )
+            for source, external_id, title, _, author in rows
+        ]
+
+    def _saved_fresh(
+        self, tmp_path: Path, name: str, rows: tuple[tuple[Any, ...], ...]
+    ) -> Path:
+        self._sync_books(SQLiteDB(tmp_path / name), rows)
         return tmp_path / name
+
+    def test_the_re_keyed_pair_is_still_two_rows_after_both_sources_sync(
+        self, tmp_path: Path
+    ) -> None:
+        """Each row already answers to its own source's id, so the save door
+        updates it in place and absorbs nothing: an upgraded library keeps the
+        pair for a review surface rather than collapsing it on the next sync."""
+        db_path = self._upgraded(tmp_path, "v9-then-synced.db", self._FERAL_GODS)
+        db = SQLiteDB(db_path)
+
+        landed = self._sync_books(db, self._FERAL_GODS)
+
+        assert len(set(landed)) == 2
+        assert db.count_items() == 2
 
     def test_a_version_nine_library_keys_its_books_as_a_fresh_one_does(
         self, tmp_path: Path
@@ -698,6 +738,31 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         _open(db_path)
 
         assert [row[0] for row in _content_rows(db_path)] == ["doom-1993", "doom-2016"]
+
+    def test_the_release_keeps_what_the_operator_wrote_after_the_merge(
+        self, tmp_path: Path
+    ) -> None:
+        """DEFECT: the release restores the survivor as the merge found it, so a
+        rating and review given between that merge and this open go back with it —
+        silently, on a library the operator only opened."""
+        db_path = tmp_path / "v11-edited-since-the-merge.db"
+        _open(db_path)
+        _seed_games(db_path, self._THE_TWO_DOOMS_ON_ONE_KEY)
+        _merge_by_hand(
+            db_path,
+            survivor="doom-1993",
+            absorbed="doom-2016",
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+        )
+        _rate_through_the_ui_door(db_path, "doom-1993", 5, "Best of the lot")
+        _rewind_to(db_path, 11)
+
+        _open(db_path)
+
+        assert _content_rows(db_path) == [
+            ("doom-1993", "doom", 5, "Best of the lot"),
+            ("doom-2016", "doom", None, None),
+        ]
 
     _THE_REMAKE_HEADING_A_GROUP_RAWG_LATER_DATED = (
         ("doom-2016-epic", "DOOM (2016)", "doom", None),
