@@ -20,6 +20,9 @@ from src.storage.accounts import AccountStore, normalize_account_name
 from src.storage.credentials import CredentialStore
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.global_secrets import SecretStore
+from src.storage.item_merges import MergeError as MergeError
+from src.storage.item_merges import MergeEvidence as MergeEvidence
+from src.storage.item_merges import MergeRecord as MergeRecord
 from src.storage.profiles import ProfileStore
 from src.storage.schema import (
     UserDict,
@@ -259,6 +262,35 @@ class StorageManager:
             limit=limit,
             include_ignored=False,
         )
+
+    def merge_content_items(
+        self,
+        survivor_id: int,
+        absorbed_id: int,
+        evidence: MergeEvidence,
+        evidence_detail: str | None = None,
+        user_id: int | None = None,
+    ) -> MergeRecord:
+        """Merge one item into another; raises ``MergeError`` for a refused pair."""
+        with self._save_lock:
+            return self.sqlite_db.merge_content_items(
+                survivor_id,
+                absorbed_id,
+                evidence,
+                evidence_detail=evidence_detail,
+                user_id=user_id,
+            )
+
+    def unmerge_content_items(
+        self, merge_id: int, user_id: int | None = None
+    ) -> MergeRecord | None:
+        """Undo one merge, returning it, or ``None`` when there is no such merge."""
+        with self._save_lock:
+            return self.sqlite_db.unmerge_content_items(merge_id, user_id=user_id)
+
+    def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
+        """Every merge in force, naming what absorbed what and on what evidence."""
+        return self.sqlite_db.list_content_item_merges(user_id=user_id)
 
     def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
         """Delete a content item, reporting whether there was one."""

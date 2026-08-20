@@ -162,7 +162,7 @@ def _record_external_id(
 
 
 def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
-    """Every content row, oldest first, read without opening the schema.
+    """Every live content row, oldest first, read without opening the schema.
 
     Reading through ``SQLiteDB`` would run the upgrade being observed, so
     every assertion about "what the database holds now" comes through here.
@@ -173,6 +173,7 @@ def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
             "SELECT x.external_id, ci.normalized_title, ci.rating, ci.review"
             " FROM content_items ci"
             " LEFT JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+            " WHERE ci.merged_into IS NULL"
             " ORDER BY ci.id"
         ).fetchall()
     finally:
@@ -504,10 +505,10 @@ class TestRunningTheUpgradeTwiceOverOneLibrary:
 
 
 class TestWhatTheDeduplicationPassRefusesToGroup:
-    """The merge is keyed on three columns, and it deletes rows.
+    """The merge is keyed on three columns, and it hides rows.
 
     It runs once per database now, so a group it gets wrong is not a churn
-    that shows up on the next start — it is a row gone. These are the
+    that shows up on the next start — it is a row nobody sees. These are the
     neighbours of the key: the same title under another user, under another
     content type, and the empty title that every untitled row shares.
     """

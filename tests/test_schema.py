@@ -172,11 +172,11 @@ def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
 
 
 def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Return every content row, oldest first."""
+    """Return every live content row, oldest first."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT title, normalized_title, rating, review FROM content_items"
-        " ORDER BY id"
+        " WHERE merged_into IS NULL ORDER BY id"
     )
     return cursor.fetchall()
 
