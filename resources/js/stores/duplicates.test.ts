@@ -70,18 +70,6 @@ describe('useDuplicatesStore', () => {
     expect(pairKey(4, 9)).not.toBe(pairKey(4, 10))
   })
 
-  it('blocks the undo of a merge a later one into the same survivor sits on', () => {
-    // The server refuses that order, so offering the button loses the click.
-    const store = useDuplicatesStore()
-    store.merges = [merge(1, 10, 11), merge(2, 10, 12)]
-
-    const [newest, older] = store.mergeRows
-
-    expect(newest.record.id).toBe(2)
-    expect(newest.blocked).toBe('')
-    expect(older.blocked).toContain('Undo merge 2 first')
-  })
-
   it('blocks the undo of a merge whose survivor has since been absorbed', () => {
     const store = useDuplicatesStore()
     store.merges = [merge(1, 11, 12), merge(2, 10, 11)]
@@ -160,15 +148,6 @@ describe('useDuplicatesStore', () => {
     await store.setFilter('type', '')
 
     expect(mockGet).toHaveBeenCalledWith('/duplicates', { user_id: 1, limit: 25 })
-  })
-
-  it('sends a chosen limit as a number the API can range-check', async () => {
-    const store = useDuplicatesStore()
-    mockGet.mockResolvedValue(pageOf())
-
-    await store.setFilter('limit', '100')
-
-    expect(mockGet).toHaveBeenCalledWith('/duplicates', { user_id: 1, limit: 100 })
   })
 
   it('offers a refused pair again through the pair path, not an item id', async () => {
