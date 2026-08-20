@@ -203,6 +203,25 @@ def _seed_games(db_path: Path, rows: tuple[tuple[Any, ...], ...]) -> None:
         conn.close()
 
 
+def _drop_the_declines_table(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE content_item_duplicate_declines")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _a_book(source: str, external_id: str, title: str) -> ContentItem:
+    return ContentItem(
+        id=external_id,
+        title=title,
+        content_type=ContentType.BOOK,
+        status=ConsumptionStatus.UNREAD,
+        source=source,
+    )
+
+
 def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
     """Every live content row, oldest first, read without opening the schema.
 
@@ -424,6 +443,30 @@ class TestTheVersionsAnUpgradingDatabaseCanBeAt:
         assert _content_rows(db_path) == _THE_PAIR_RENORMALIZED
 
 
+class TestATableThatArrivedWithoutAVersionBump:
+    @pytest.mark.parametrize("stored_version", list(range(9, _SCHEMA_VERSION + 1)))
+    def test_a_library_stamped_before_the_declines_table_can_refuse_a_pair(
+        self, tmp_path: Path, stored_version: int
+    ) -> None:
+        db_path = tmp_path / f"stamped-at-{stored_version}.db"
+        _open(db_path)
+        _drop_the_declines_table(db_path)
+        _rewind_to(db_path, stored_version)
+
+        db = SQLiteDB(db_path)
+        kept = db.save_content_item(_a_book("calibre_web", "c:1", "Deadhouse Gates"))
+        refused = db.save_content_item(
+            _a_book("goodreads_rss", "2", "Deadhouse Gates (Malazan Book 2)")
+        )
+
+        assert [
+            (one.survivor.db_id, one.absorbed.db_id)
+            for one in db.list_duplicate_suggestions()
+        ] == [(kept, refused)]
+        assert db.decline_duplicate_suggestion(kept, refused) is True
+        assert db.list_duplicate_suggestions() == []
+
+
 class TestWhatAnOpenThatRaisedLeavesBehind:
     """The stamp is the last guarded write, and it shares their transaction.
 
@@ -485,33 +528,9 @@ class TestWhatAnOpenThatRaisedLeavesBehind:
 
 
 class TestSchemaVersionRewindRegression:
-    """Opening a newer database with this build rewinds its schema version.
+    """Rewinding a rolled-back build's stamp re-ran ``DELETE FROM settings``.
 
-    **Symptom.** A database stamped at a version above this build's — one an
-    operator wrote with a later release and then opened with an earlier one,
-    which is what rolling a container tag back does — comes away stamped at
-    this build's version instead. The later build then sees a version below
-    its own and re-runs a one-time upgrade step over a database that has
-    already had it. Those steps exist precisely because they must not run
-    twice: the version-1 step is ``DELETE FROM settings``.
-
-    **Root cause.** The stamp is guarded by ``!=`` rather than ``<``::
-
-        cursor.execute("PRAGMA user_version")
-        if cursor.fetchone()[0] != _SCHEMA_VERSION:
-            cursor.execute(f"PRAGMA user_version = {int(_SCHEMA_VERSION)}")
-
-    The guard was written to answer "would this write change anything", which
-    is the right question for the steady-state open it was added for and the
-    wrong one for a version above this build's: it changes something, and what
-    it changes is a marker that may only ever move forward. The guard it
-    replaced could not do this — ``_migrate_settings_table`` returned before
-    reaching its stamp whenever the stored version was at or above the
-    current one, so the value only ever advanced.
-
-    **Fix.** Compare with ``<``, so the stamp advances the version and never
-    lowers it. The steady-state open stays silent, because a version equal to
-    this build's is not below it either.
+    The stamp compares with ``<`` for that reason.
     """
 
     def test_a_version_above_this_build_is_left_where_it_is(

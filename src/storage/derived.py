@@ -111,7 +111,8 @@ class MatchSignals:
 def signals_conflict(one: MatchSignals, other: MatchSignals) -> bool:
     """Whether either veto separates two rows a title brought together.
 
-    Shared, so an operator is never offered a pair the save door would refuse.
+    Shared with the save door, which refuses more besides: its key keeps a
+    numbered edition apart, and where one key names two rows it takes neither.
     """
     return creators_conflict(one.creator, other.creator) or years_conflict(
         one.release_year, other.release_year

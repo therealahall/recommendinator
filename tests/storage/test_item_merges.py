@@ -1,7 +1,7 @@
 """A merge is recorded, hides rather than deletes, and undoes exactly.
 
 The absorbed row is never written, so the round trip below asserts both rows
-column for column rather than the fields the merge was expected to move.
+column for column, not the fields the merge was expected to move.
 """
 
 from datetime import date
@@ -234,7 +234,7 @@ def test_every_merge_is_listed_with_what_absorbed_what_and_on_what_evidence(
     assert db.list_content_item_merges() == []
 
 
-def test_a_merge_is_refused_when_it_would_chain_or_cross_content_types(
+def test_a_merge_is_refused_when_a_row_is_hidden_or_they_cross_content_types(
     db: SQLiteDB,
 ) -> None:
     survivor_id = _save(db, "steam", "620", title="Portal 2")
@@ -243,15 +243,54 @@ def test_a_merge_is_refused_when_it_would_chain_or_cross_content_types(
     book_id = _save(db, "calibre", "9", title="Portal", content_type=ContentType.BOOK)
     db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
-    for refused in (survivor_id, absorbed_id, book_id):
+    for refused in (absorbed_id, book_id):
         with pytest.raises(MergeError):
             db.merge_content_items(other_id, refused, MergeEvidence.MANUAL)
 
-    # The other end of a chain, and what lets a released row be handed back
-    # without checking: a hidden survivor would leave what it absorbed
-    # resolving, in the one COALESCE every lookup spends, onto a hidden row.
+    # A hidden survivor would leave what it absorbed resolving, in the one
+    # COALESCE every lookup spends, onto a hidden row.
     with pytest.raises(MergeError):
         db.merge_content_items(absorbed_id, other_id, MergeEvidence.MANUAL)
+
+
+def test_absorbing_a_row_that_has_absorbed_one_carries_the_group_and_hands_it_back(
+    db: SQLiteDB,
+) -> None:
+    keeper_id = _save(db, "steam", "620", title="Portal 2")
+    middle_id = _save(db, "gog", "1207658961", title="Portal Two")
+    tail_id = _save(db, "epic", "portal-2", title="Portal Zwei", rating=5)
+
+    inner = db.merge_content_items(middle_id, tail_id, MergeEvidence.MANUAL)
+    outer = db.merge_content_items(keeper_id, middle_id, MergeEvidence.MANUAL)
+
+    keeper = db.get_content_item(keeper_id)
+    assert keeper is not None
+    assert keeper.rating == 5
+    assert _id_pairs(keeper) == [
+        ("epic", "portal-2"),
+        ("gog", "1207658961"),
+        ("steam", "620"),
+    ]
+    assert db.count_items() == 1
+    # Left pointing at the row it was, the tail would resolve, in the one
+    # COALESCE every lookup spends, onto a row no read hands back.
+    assert (_merged_into(db, middle_id), _merged_into(db, tail_id)) == (
+        keeper_id,
+        keeper_id,
+    )
+
+    with pytest.raises(MergeError):
+        db.unmerge_content_items(inner.id)
+
+    assert db.unmerge_content_items(outer.id) == outer
+    assert (_merged_into(db, middle_id), _merged_into(db, tail_id)) == (
+        None,
+        middle_id,
+    )
+
+    assert db.unmerge_content_items(inner.id) == inner
+    assert _merged_into(db, tail_id) is None
+    assert db.count_items() == 3
 
 
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(

@@ -5,8 +5,8 @@ the absorbed row is kept behind ``merged_into``, and what was overwritten is
 recorded, so an undo restores both.
 
 A record holds the survivor whole rather than the fields one merge moved, so
-several merges into one survivor undo newest first — :func:`unmerge_item`
-refuses any other order, and :func:`list_merges` lists them in it.
+merges undo newest first — :func:`unmerge_item` refuses any other order, and
+:func:`list_merges` lists them in it.
 """
 
 from __future__ import annotations
@@ -67,12 +67,12 @@ _ENRICHMENT_COLUMNS = (
     "enrichment_error",
 )
 
-# Every table name this module interpolates, one of them read from a record.
 _SNAPSHOT_TABLES = ALLOWED_DETAIL_TABLES | {"enrichment_status"}
 
 _MERGE_SELECT = """
     SELECT m.id, m.survivor_id, m.absorbed_id, m.evidence, m.evidence_detail,
            m.merged_at, m.restore_json, s.user_id AS user_id,
+           s.merged_into AS survivor_merged_into,
            s.title AS survivor_title, a.title AS absorbed_title
       FROM content_item_merges m
       JOIN content_items s ON s.id = m.survivor_id
@@ -100,18 +100,16 @@ def absorb_item(
             f"A {survivor['content_type']} cannot absorb"
             f" a {absorbed['content_type']}."
         )
-    # One hop only: every lookup resolves an absorbed row with one COALESCE.
-    if _has_absorbed(cursor, absorbed_id):
-        raise MergeError(f"Item {absorbed_id} has absorbed items of its own.")
-
     restore = _survivor_state(cursor, survivor_id, absorbed_id)
+    # What it absorbed comes with it: no row may hide behind a hidden row.
+    restore["repointed"] = _absorbed_by(cursor, absorbed_id)
     merge_scalar_columns(cursor, survivor_id, absorbed_id)
     merge_detail_tables(cursor, survivor_id, absorbed_id)
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
     cursor.execute(
-        "UPDATE content_items SET merged_into = ? WHERE id = ?",
-        (survivor_id, absorbed_id),
+        "UPDATE content_items SET merged_into = ? WHERE id = ? OR merged_into = ?",
+        (survivor_id, absorbed_id, absorbed_id),
     )
     cursor.execute(
         """INSERT INTO content_item_merges
@@ -146,10 +144,11 @@ def absorb_item(
 def unmerge_item(
     cursor: sqlite3.Cursor, merge_id: int, user_id: int | None = None
 ) -> MergeRecord | None:
-    """Undo one merge, returning what it undid, or ``None`` if there was none.
+    """Undo one merge, returning it, or ``None`` when there is none.
 
-    Raises :class:`MergeError` while a later merge into the same survivor is in
-    force: it wrote over the state this record holds.
+    Raises :class:`MergeError` unless this is the newest merge in force over
+    its survivor's group: an undo out of that order restores state a later
+    merge has moved on.
     """
     row = _merge_row(cursor, merge_id)
     if row is None or (user_id is not None and row["user_id"] != user_id):
@@ -160,10 +159,19 @@ def unmerge_item(
             f"Merge {merge_id} cannot be undone before merge {later}, made into"
             f" item {row['survivor_id']} after it."
         )
-    _restore_survivor(cursor, row["survivor_id"], json.loads(row["restore_json"]))
+    if row["survivor_merged_into"] is not None:
+        raise MergeError(
+            f"Merge {merge_id} cannot be undone while item {row['survivor_id']}"
+            f" is itself merged into {row['survivor_merged_into']}."
+        )
+    state = json.loads(row["restore_json"])
+    _restore_survivor(cursor, row["survivor_id"], state)
     cursor.execute(
         "UPDATE content_items SET merged_into = NULL WHERE id = ?",
         (row["absorbed_id"],),
+    )
+    _send_back(
+        cursor, row["survivor_id"], row["absorbed_id"], state.get("repointed", [])
     )
     cursor.execute("DELETE FROM content_item_merges WHERE id = ?", (merge_id,))
     return _to_record(row)
@@ -243,9 +251,22 @@ def _later_merge_id(
     return int(row["id"]) if row is not None else None
 
 
-def _has_absorbed(cursor: sqlite3.Cursor, db_id: int) -> bool:
-    cursor.execute("SELECT 1 FROM content_items WHERE merged_into = ?", (db_id,))
-    return cursor.fetchone() is not None
+def _absorbed_by(cursor: sqlite3.Cursor, db_id: int) -> list[int]:
+    cursor.execute("SELECT id FROM content_items WHERE merged_into = ?", (db_id,))
+    return [int(row["id"]) for row in cursor.fetchall()]
+
+
+def _send_back(
+    cursor: sqlite3.Cursor, survivor_id: int, absorbed_id: int, repointed: list[int]
+) -> None:
+    if not repointed:
+        return
+    placeholders = ", ".join("?" for _ in repointed)
+    cursor.execute(
+        "UPDATE content_items SET merged_into = ?"
+        f" WHERE merged_into = ? AND id IN ({placeholders})",
+        (absorbed_id, survivor_id, *repointed),
+    )
 
 
 def _survivor_state(
