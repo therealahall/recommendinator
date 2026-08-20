@@ -111,10 +111,9 @@ _DETAIL_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Derived from _DETAIL_TABLE_COLUMNS so there is no independent list to keep
-# in sync.  Used by SQLiteDB._save_detail_table and by the joined SELECT
-# builder to validate table names from the field declaration in
-# src/models/detail_fields.py before SQL identifier interpolation.
+# Derived from _DETAIL_TABLE_COLUMNS so there is no independent list to keep in
+# sync. Guards every table name a caller takes from the field declaration in
+# src/models/detail_fields.py, before it reaches SQL identifier interpolation.
 ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
 
 
@@ -319,15 +318,48 @@ def normalize_creator_for_matching(creator: str | None) -> str:
     return "" if normalized in _PLACEHOLDER_CREATORS else normalized
 
 
+# Two Preys shared only "Studios", enough for the veto to read one developer and
+# bind GOG's id to Steam's game.
+_GENERIC_CREATOR_TOKENS = frozenset(
+    {
+        "ab",
+        "co",
+        "company",
+        "corp",
+        "corporation",
+        "entertainment",
+        "game",
+        "games",
+        "gmbh",
+        "inc",
+        "interactive",
+        "limited",
+        "llc",
+        "ltd",
+        "media",
+        "production",
+        "productions",
+        "sa",
+        "software",
+        "studio",
+        "studios",
+    }
+)
+
+
 def creators_conflict(one: str | None, other: str | None) -> bool:
     """Whether two creators clearly disagree, vetoing a title match.
 
     Unstated or sharing a name is not disagreement: a source omitting the
     author would manufacture duplicates, and "Arkane Lyon" is "Arkane Studios".
+    Sharing only corporate furniture is not sharing a name.
     """
     left = normalize_creator_for_matching(one)
     right = normalize_creator_for_matching(other)
-    if not left or not right or set(left.split()) & set(right.split()):
+    if not left or not right:
+        return False
+    shared = set(left.split()) & set(right.split())
+    if shared - _GENERIC_CREATOR_TOKENS:
         return False
     return SequenceMatcher(None, left, right).ratio() < FUZZY_MATCH_THRESHOLD
 
