@@ -791,6 +791,15 @@ class TestTheCreatorVeto:
         assert not creators_conflict("Frank Herbert", "Frank Herbert, Brian Herbert")
         assert not creators_conflict("Arkane Studios", "Arkane Lyon")
 
+    def test_a_creator_of_nothing_but_furniture_agrees_with_its_own_spelling(
+        self,
+    ) -> None:
+        """Sharing only furniture leaves the spelling the whole answer, so reading
+        the shared tokens alone splits a publisher off itself."""
+        assert not creators_conflict(
+            "Interactive Entertainment Ltd", "Interactive Entertainment Ltd"
+        )
+
 
 class TestWhatTheSaveDoorMatchesOnTitle:
     """Title, creator veto and year veto, over the door every sync comes through."""
@@ -4008,6 +4017,25 @@ class TestEachSourceHoldsItsOwnExternalId:
             [("gog", "doom-2016")],
             [("steam", "379720")],
         ]
+
+    def test_a_source_whose_id_the_absorbed_row_holds_lands_beside_the_group(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """The guard read one row while the SELECT answered as its survivor, so a
+        source's second item resolved onto a group already holding its first and
+        was dropped by the INSERT OR IGNORE that followed."""
+        calibre = _insert_raw_item(temp_db, "dune", "Dune", "dune", source="calibre")
+        goodreads = _insert_raw_item(
+            temp_db, "234225", "Dune", "dune", source="goodreads"
+        )
+        temp_db.merge_content_items(calibre, goodreads, MergeEvidence.MANUAL)
+
+        second_edition = temp_db.save_content_item(
+            self._game("goodreads", "44767458", "Dune")
+        )
+
+        assert second_edition != calibre
+        assert _external_ids(temp_db, second_edition) == [("goodreads", "44767458")]
 
     def test_a_title_collision_lands_on_the_oldest_row(self, temp_db: SQLiteDB) -> None:
         """Which duplicate a new source attaches to decides whose history it

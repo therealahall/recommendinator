@@ -13,7 +13,12 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.item_merges import MergeError, MergeEvidence
-from src.storage.schema import get_enrichment_stats, mark_enrichment_complete
+from src.storage.schema import (
+    get_enrichment_stats,
+    mark_enrichment_complete,
+    mark_enrichment_failed,
+    mark_item_needs_enrichment,
+)
 from src.storage.sqlite_db import SQLiteDB
 
 # Pinned so restoring a bumped ``updated_at`` is provable: CURRENT_TIMESTAMP
@@ -379,6 +384,36 @@ def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began
     assert _snapshot(db, survivor_id) == before
 
 
+def test_an_undo_restores_what_the_merge_wrote_and_leaves_a_later_ignore_alone(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(
+        db,
+        "gog",
+        "1207658961",
+        title="Portal Two",
+        status=ConsumptionStatus.COMPLETED,
+        rating=5,
+        review="Still the best",
+        date_completed=date(2024, 1, 2),
+    )
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    assert db.set_item_ignored(survivor_id, True) is True
+    db.unmerge_content_items(record.id)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert (survivor.rating, survivor.review, survivor.date_completed) == (
+        None,
+        None,
+        None,
+    )
+    assert survivor.status == ConsumptionStatus.UNREAD
+    assert survivor.ignored is True
+
+
 def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
     """Each door selects by id alone, so an id held across a merge — a stale merge
     surface, an enrichment batch — wrote a row no read hands back, and the undo
@@ -402,6 +437,10 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
             metadata={"developer": "Valve", "genres": ["Puzzle"]},
         ),
     )
+    with db.connection() as conn:
+        mark_enrichment_complete(conn, absorbed_id, "igdb", "high")
+        mark_enrichment_failed(conn, absorbed_id, "provider timed out")
+        mark_item_needs_enrichment(conn, absorbed_id)
 
     db.unmerge_content_items(record.id)
     assert _snapshot(db, absorbed_id) == before

@@ -330,8 +330,7 @@ _CONTENT_ITEM_FROM = _build_content_item_from()
 
 
 # A JSON object, not a delimited string: a source name or id may hold any
-# character. The group's ids, since an absorbed row keeps its own. Two terms
-# rather than a COALESCE over ci.id, which no index can seek.
+# character. The group's ids, as two terms rather than a COALESCE no index seeks.
 _EXTERNAL_IDS_TERM = (
     "(SELECT json_group_array(json_object("
     "'source', x.source, 'external_id', x.external_id))"
@@ -352,16 +351,18 @@ _ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
       AND ci.user_id = :user_id AND ci.content_type = :content_type
 """
 
-# A row holding another id from the incoming source is that source's other
-# item; an absorbed row answers as its survivor. Accepted: a source that
-# changes an item's own id lands a second row, as a second edition would.
+# A merge group holding another id from the incoming source is that source's
+# other item; the guard spans the group because the SELECT answers as one.
 _TITLE_MATCH_CANDIDATES = """
     SELECT COALESCE(ci.merged_into, ci.id) AS id, ci.title AS title
     FROM content_items ci
     WHERE ci.user_id = ? AND ci.content_type = ? AND ci.normalized_title = ?
       AND NOT EXISTS (
           SELECT 1 FROM content_item_external_ids x
-          WHERE x.content_item_id = ci.id
+          WHERE (x.content_item_id = COALESCE(ci.merged_into, ci.id)
+                 OR x.content_item_id IN (
+                     SELECT owner.id FROM content_items owner
+                     WHERE owner.merged_into = COALESCE(ci.merged_into, ci.id)))
             AND x.source = ? AND x.external_id != ?
       )
 """
