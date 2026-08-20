@@ -8,7 +8,6 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
-from src.storage.item_merges import MergeEvidence, release_merge
 from src.storage.merge import normalize_title_for_matching
 
 
@@ -87,15 +86,6 @@ class SyncRunDict(TypedDict):
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
 _SCHEMA_VERSION = 15
-
-_UPGRADE_PASS_EVIDENCE = "normalized_title"
-
-if any(member.value == _UPGRADE_PASS_EVIDENCE for member in MergeEvidence):
-    raise RuntimeError(
-        f"MergeEvidence must not spell {_UPGRADE_PASS_EVIDENCE!r}: it is an"
-        " earlier build's upgrade-pass tombstone, so _release_upgrade_merges"
-        " would drop every merge recorded on it at the next open."
-    )
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -382,9 +372,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
         # rewrites their keys; the save door decides each pair on the next
         # sync, and the merge door decides what that leaves.
         _renormalize_titles(cursor)
-
-    # Unguarded: nothing writes this evidence now, so a row holding it is a pass's.
-    _release_upgrade_merges(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -697,19 +684,6 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
             "UPDATE content_items SET normalized_title = ? WHERE id = ?",
             (normalized, row["id"]),
         )
-
-
-def _release_upgrade_merges(cursor: sqlite3.Cursor) -> None:
-    """Release every merge an earlier build's upgrade pass made.
-
-    Released rather than undone: the survivor keeps what was written onto it.
-    """
-    cursor.execute(
-        "SELECT id FROM content_item_merges WHERE evidence = ?",
-        (_UPGRADE_PASS_EVIDENCE,),
-    )
-    for row in cursor.fetchall():
-        release_merge(cursor, row["id"])
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
@@ -1137,49 +1111,33 @@ def reset_enrichment_status(
     content_type: str | None = None,
     user_id: int | None = None,
 ) -> int:
-    """Reset enrichment status for items to allow re-enrichment.
+    """Re-queue every tracked item a filter left as ``None`` does not exclude.
 
-    Each filter left as ``None`` widens the reset; all three unset resets
-    every tracked item. Returns the number of rows reset.
+    Returns the number reset, which is the number the queue will hand out: a
+    row behind a merge is neither reset nor counted.
     """
-    cursor = conn.cursor()
+    conditions = ["ci.merged_into IS NULL"]
     params: list[str | int] = []
+    if provider:
+        conditions.append("es.enrichment_provider = ?")
+        params.append(provider)
+    if content_type:
+        conditions.append("ci.content_type = ?")
+        params.append(content_type)
+    if user_id:
+        conditions.append("ci.user_id = ?")
+        params.append(user_id)
 
-    # Join with content_items for content_type and user_id filtering
-    if content_type or user_id:
-        base_query = """
-            UPDATE enrichment_status
-            SET needs_enrichment = 1, enrichment_error = NULL
-            WHERE content_item_id IN (
-                SELECT es.content_item_id
-                FROM enrichment_status es
-                JOIN content_items ci ON es.content_item_id = ci.id
-                WHERE 1=1
-        """
-        if provider:
-            base_query += " AND es.enrichment_provider = ?"
-            params.append(provider)
-        if content_type:
-            base_query += " AND ci.content_type = ?"
-            params.append(content_type)
-        if user_id:
-            base_query += " AND ci.user_id = ?"
-            params.append(user_id)
-        base_query += ")"
-        cursor.execute(base_query, params)
-    elif provider:
-        cursor.execute(
-            """UPDATE enrichment_status
-               SET needs_enrichment = 1, enrichment_error = NULL
-               WHERE enrichment_provider = ?""",
-            (provider,),
-        )
-    else:
-        cursor.execute(
-            """UPDATE enrichment_status
-               SET needs_enrichment = 1, enrichment_error = NULL"""
-        )
-
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE enrichment_status"
+        " SET needs_enrichment = 1, enrichment_error = NULL"
+        " WHERE content_item_id IN ("
+        "   SELECT es.content_item_id FROM enrichment_status es"
+        "   JOIN content_items ci ON es.content_item_id = ci.id"
+        f"  WHERE {' AND '.join(conditions)})",
+        params,
+    )
     updated = cursor.rowcount
     conn.commit()
     return updated

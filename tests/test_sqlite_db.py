@@ -4148,6 +4148,24 @@ class TestTheIdTableIsSeekedNotScanned:
         assert [step for step in plan if "SCAN x" in step] == []
         assert [step for step in plan if "SCAN owner" in step] == []
 
+    def test_the_title_path_seeks_the_ids_of_the_group_it_weighs(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """Flattening the OR into a join hides the indexed column, as a COALESCE
+        did above. A first sync into an existing library takes this path per
+        item, so a scan costs the product of two."""
+        with temp_db.connection() as conn:
+            plan = [
+                row["detail"]
+                for row in conn.execute(
+                    f"EXPLAIN QUERY PLAN {sqlite_db._TITLE_MATCH_CANDIDATES}",
+                    (1, "video_game", "portal 2", "steam", "620"),
+                ).fetchall()
+            ]
+
+        assert [step for step in plan if "SCAN x" in step] == []
+        assert [step for step in plan if "SEARCH x" in step] != []
+
 
 class TestCrossSourceDuplicateDetectionRegression:
     """Whatever a merge fails to carry is what the library stops showing."""

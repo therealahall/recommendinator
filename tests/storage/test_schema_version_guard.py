@@ -17,11 +17,7 @@ import pytest
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import schema
 from src.storage.item_merges import MergeEvidence, absorb_item
-from src.storage.schema import (
-    _SCHEMA_VERSION,
-    _UPGRADE_PASS_EVIDENCE,
-    create_schema,
-)
+from src.storage.schema import _SCHEMA_VERSION, create_schema
 from src.storage.sqlite_db import SQLiteDB
 
 # The upgrade the two rows below are waiting for: both carry the SQL
@@ -76,14 +72,6 @@ _CONTENT_ITEMS_BEFORE_NORMALIZED_TITLE = """
     )
 """
 
-# Every table a game's row occupies, keyed by the column holding its id.
-_ITEM_ROW_TABLES = (
-    ("content_items", "id"),
-    ("video_game_details", "content_item_id"),
-    ("enrichment_status", "content_item_id"),
-    ("content_item_external_ids", "content_item_id"),
-)
-
 _USERS_TABLE = """
     CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,16 +115,8 @@ def _rewind_to(db_path: Path, version: int) -> None:
         conn.close()
 
 
-def _merge_by_hand(
-    db_path: Path,
-    survivor: str,
-    absorbed: str,
-    evidence: str = MergeEvidence.MANUAL.value,
-) -> None:
-    """Record a merge an operator, or an older build's pass, already made.
-
-    A pass's evidence is the bare string it left, no enum member carrying it.
-    """
+def _merge_by_hand(db_path: Path, survivor: str, absorbed: str) -> None:
+    """Record a merge the operator already made."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -147,15 +127,11 @@ def _merge_by_hand(
                 "SELECT external_id, content_item_id FROM content_item_external_ids"
             ).fetchall()
         }
-        record = absorb_item(
+        absorb_item(
             cursor,
             survivor_id=ids[survivor],
             absorbed_id=ids[absorbed],
             evidence=MergeEvidence.MANUAL,
-        )
-        cursor.execute(
-            "UPDATE content_item_merges SET evidence = ? WHERE id = ?",
-            (evidence, record.id),
         )
         conn.commit()
     finally:
@@ -190,28 +166,6 @@ def _record_external_id(
         " FROM content_items WHERE id = ?",
         (external_id, db_id),
     )
-
-
-def _seed_games(db_path: Path, rows: tuple[tuple[Any, ...], ...]) -> None:
-    """Write video-game rows, each with the release year its source stated."""
-    conn = sqlite3.connect(db_path)
-    try:
-        for external_id, title, normalized_title, release_year in rows:
-            cursor = conn.execute(
-                """INSERT INTO content_items
-                   (user_id, title, normalized_title, content_type, status, source)
-                   VALUES (1, ?, ?, 'video_game', 'unread', 'legacy')""",
-                (title, normalized_title),
-            )
-            _record_external_id(conn, cursor.lastrowid, external_id)
-            conn.execute(
-                "INSERT INTO video_game_details (content_item_id, release_year)"
-                " VALUES (?, ?)",
-                (cursor.lastrowid, release_year),
-            )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _drop_the_declines_table(db_path: Path) -> None:
@@ -252,26 +206,6 @@ def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
         conn.close()
 
 
-def _rate_through_the_ui_door(
-    db_path: Path, external_id: str, rating: int, review: str
-) -> None:
-    """Give the row what the operator would give it, after the merge was made."""
-    conn = sqlite3.connect(db_path)
-    try:
-        db_id = int(
-            conn.execute(
-                "SELECT content_item_id FROM content_item_external_ids"
-                " WHERE external_id = ?",
-                (external_id,),
-            ).fetchone()[0]
-        )
-    finally:
-        conn.close()
-    assert SQLiteDB(db_path).update_item_from_ui(
-        db_id=db_id, rating=rating, review=review
-    )
-
-
 def _merge_targets(db_path: Path) -> dict[str, str]:
     """Each row's external id, mapped to that of the row it now lives as."""
     conn = sqlite3.connect(db_path)
@@ -284,83 +218,6 @@ def _merge_targets(db_path: Path) -> dict[str, str]:
                 "   ON live.content_item_id = COALESCE(ci.merged_into, ci.id)"
             ).fetchall()
         )
-    finally:
-        conn.close()
-
-
-def _merges_in_force(db_path: Path) -> list[tuple[str, str, str]]:
-    """Each merge still recorded, as (survivor, absorbed, evidence)."""
-    conn = sqlite3.connect(db_path)
-    try:
-        return conn.execute(
-            "SELECT s.external_id, a.external_id, m.evidence"
-            " FROM content_item_merges m"
-            " JOIN content_item_external_ids s ON s.content_item_id = m.survivor_id"
-            " JOIN content_item_external_ids a ON a.content_item_id = m.absorbed_id"
-            " ORDER BY m.id"
-        ).fetchall()
-    finally:
-        conn.close()
-
-
-def _row_state(db_path: Path, external_id: str) -> dict[str, list[dict[str, Any]]]:
-    """Every stored row of one item, read without opening the schema.
-
-    ``SELECT *`` so a column added later is compared without being named here.
-    """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        db_id = int(
-            conn.execute(
-                "SELECT content_item_id FROM content_item_external_ids"
-                " WHERE external_id = ?",
-                (external_id,),
-            ).fetchone()[0]
-        )
-        return {
-            table: [
-                dict(row)
-                for row in conn.execute(
-                    f"SELECT * FROM {table} WHERE {key} = ?", (db_id,)
-                ).fetchall()
-            ]
-            for table, key in _ITEM_ROW_TABLES
-        }
-    finally:
-        conn.close()
-
-
-def _merge_bookkeeping_faults(db_path: Path) -> list[tuple[int, str]]:
-    """Every way a row is stranded: each branch names its own.
-
-    An item is live, or hidden behind one live survivor with one record
-    saying so. Nothing else is undoable.
-    """
-    conn = sqlite3.connect(db_path)
-    try:
-        return [
-            (int(row[0]), str(row[1]))
-            for row in conn.execute(
-                "SELECT ci.id, 'hidden with no record' FROM content_items ci"
-                " LEFT JOIN content_item_merges m ON m.absorbed_id = ci.id"
-                " WHERE ci.merged_into IS NOT NULL AND m.id IS NULL"
-                " UNION ALL"
-                " SELECT m.absorbed_id, 'record over a live row'"
-                " FROM content_item_merges m"
-                " JOIN content_items ci ON ci.id = m.absorbed_id"
-                " WHERE ci.merged_into IS NULL"
-                " UNION ALL"
-                " SELECT m.id, 'record over a row that is gone'"
-                " FROM content_item_merges m"
-                " LEFT JOIN content_items ci ON ci.id = m.absorbed_id"
-                " WHERE ci.id IS NULL"
-                " UNION ALL"
-                " SELECT ci.id, 'resolves to a hidden row' FROM content_items ci"
-                " JOIN content_items live ON live.id = ci.merged_into"
-                " WHERE live.merged_into IS NOT NULL"
-            ).fetchall()
-        ]
     finally:
         conn.close()
 
@@ -808,11 +665,10 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         ),
     )
 
-    def test_the_upgrade_leaves_a_merge_from_another_door_in_force(
+    def test_the_upgrade_leaves_the_merge_the_operator_made_in_force(
         self, tmp_path: Path
     ) -> None:
-        """The release takes back what an upgrade pass merged, and nothing
-        else: this one is the operator's own choice."""
+        """Re-keying every title moves no row out from behind a merge."""
         db_path = tmp_path / "v9-already-merged.db"
         _open(db_path)
         self._seed_books(db_path, self._FERAL_GODS_AND_A_REISSUE)
@@ -826,180 +682,6 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             "57905102": "57905101",
             "calibre:51a0e808": "calibre:51a0e808",
         }
-
-    _THE_TWO_DOOMS_ON_ONE_KEY = (
-        ("doom-1993", "Doom", "doom", None),
-        ("doom-2016", "DOOM (2016)", "doom", None),
-    )
-
-    @pytest.mark.parametrize("stored_version", [11, 12, 13, 14, _SCHEMA_VERSION])
-    def test_the_upgrade_releases_the_merge_its_own_older_pass_made(
-        self, tmp_path: Path, stored_version: int
-    ) -> None:
-        """DEFECT: version 11's own pass hid this remake, and every build since
-        stamped the library current with the row still behind ``merged_into`` —
-        the build that made it included, which is why no version guards this."""
-        db_path = tmp_path / f"false-merge-stamped-at-{stored_version}.db"
-        _open(db_path)
-        _seed_games(db_path, self._THE_TWO_DOOMS_ON_ONE_KEY)
-        _merge_by_hand(
-            db_path,
-            survivor="doom-1993",
-            absorbed="doom-2016",
-            evidence=_UPGRADE_PASS_EVIDENCE,
-        )
-        _rewind_to(db_path, stored_version)
-
-        _open(db_path)
-
-        assert [row[0] for row in _content_rows(db_path)] == ["doom-1993", "doom-2016"]
-
-    def test_the_release_keeps_what_the_operator_wrote_after_the_merge(
-        self, tmp_path: Path
-    ) -> None:
-        """DEFECT: the release restores the survivor as the merge found it, so a
-        rating and review given between that merge and this open go back with it —
-        silently, on a library the operator only opened."""
-        db_path = tmp_path / "v11-edited-since-the-merge.db"
-        _open(db_path)
-        _seed_games(db_path, self._THE_TWO_DOOMS_ON_ONE_KEY)
-        _merge_by_hand(
-            db_path,
-            survivor="doom-1993",
-            absorbed="doom-2016",
-            evidence=_UPGRADE_PASS_EVIDENCE,
-        )
-        _rate_through_the_ui_door(db_path, "doom-1993", 5, "Best of the lot")
-        _rewind_to(db_path, 11)
-
-        _open(db_path)
-
-        assert _content_rows(db_path) == [
-            ("doom-1993", "doom", 5, "Best of the lot"),
-            ("doom-2016", "doom", None, None),
-        ]
-
-    _THE_REMAKE_HEADING_A_GROUP_RAWG_LATER_DATED = (
-        ("doom-2016-epic", "DOOM (2016)", "doom", None),
-        ("doom-gog", "Doom", "doom", None),
-        ("doom-2016-steam", "DOOM", "doom", 2016),
-    )
-
-    def test_the_original_returns_from_behind_a_remake_a_later_merge_dated(
-        self, tmp_path: Path
-    ) -> None:
-        """DEFECT: a later merge filled the survivor's empty ``release_year``,
-        and the pass that weighed these merges read it as the remake's own year
-        and kept the original hidden. The stack goes back whole."""
-        db_path = tmp_path / "v12-remake-dated-by-a-later-merge.db"
-        _open(db_path)
-        _seed_games(db_path, self._THE_REMAKE_HEADING_A_GROUP_RAWG_LATER_DATED)
-        for absorbed in ("doom-gog", "doom-2016-steam"):
-            _merge_by_hand(
-                db_path,
-                survivor="doom-2016-epic",
-                absorbed=absorbed,
-                evidence=_UPGRADE_PASS_EVIDENCE,
-            )
-        _rewind_to(db_path, 12)
-
-        _open(db_path)
-
-        assert _merge_targets(db_path) == {
-            "doom-2016-epic": "doom-2016-epic",
-            "doom-gog": "doom-gog",
-            "doom-2016-steam": "doom-2016-steam",
-        }
-
-    @staticmethod
-    def _describe_and_enrich(db_path: Path, external_id: str) -> None:
-        """Give a row the metadata and enrichment its merge moves to a survivor."""
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute(
-                "UPDATE video_game_details SET developer = 'id Software',"
-                " genres = '[\"FPS\"]' WHERE content_item_id ="
-                " (SELECT content_item_id FROM content_item_external_ids"
-                "  WHERE external_id = ?)",
-                (external_id,),
-            )
-            conn.execute(
-                "INSERT INTO enrichment_status (content_item_id, last_enriched_at,"
-                " enrichment_provider, enrichment_quality, needs_enrichment)"
-                " SELECT content_item_id, '2026-01-01 00:00:00', 'igdb', 'high', 0"
-                " FROM content_item_external_ids WHERE external_id = ?",
-                (external_id,),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    _THE_REMAKE_CARRYING_METADATA = (
-        ("doom-1993", "Doom", "doom", None),
-        ("doom-2016", "DOOM (2016)", "doom", 2016),
-    )
-
-    def test_the_release_leaves_every_column_of_the_survivor_where_it_stands(
-        self, tmp_path: Path
-    ) -> None:
-        """The four columns the rating case reads are not all a merge writes: an
-        undo also takes back the year, developer, genres and enrichment row the
-        absorbed row moved over, on a library the operator only opened."""
-        db_path = tmp_path / "v11-survivor-untouched.db"
-        _open(db_path)
-        _seed_games(db_path, self._THE_REMAKE_CARRYING_METADATA)
-        self._describe_and_enrich(db_path, "doom-2016")
-        _merge_by_hand(
-            db_path,
-            survivor="doom-1993",
-            absorbed="doom-2016",
-            evidence=_UPGRADE_PASS_EVIDENCE,
-        )
-        before = _row_state(db_path, "doom-1993")
-        assert before["video_game_details"][0]["developer"] == "id Software"
-        assert before["video_game_details"][0]["release_year"] == 2016
-        assert len(before["enrichment_status"]) == 1
-        _rewind_to(db_path, 11)
-
-        _open(db_path)
-
-        assert [row[0] for row in _content_rows(db_path)] == ["doom-1993", "doom-2016"]
-        assert _merge_bookkeeping_faults(db_path) == []
-        assert _row_state(db_path, "doom-1993") == before
-
-    _A_TITLE_MERGE_UNDER_A_MANUAL_ONE = (
-        ("doom-gog", "Doom", "doom", None),
-        ("doom-2016", "DOOM (2016)", "doom", 2016),
-        ("doom-steam", "DOOM", "doom", None),
-    )
-
-    def test_a_title_merge_the_operator_later_merged_over_is_still_released(
-        self, tmp_path: Path
-    ) -> None:
-        """Releasing newest-first and stopping at the first merge from another
-        door left this one hidden for good. Order cannot matter to a release:
-        it writes no survivor column, so no record holds what another overwrote."""
-        db_path = tmp_path / "v11-title-merge-under-a-manual-one.db"
-        _open(db_path)
-        _seed_games(db_path, self._A_TITLE_MERGE_UNDER_A_MANUAL_ONE)
-        _merge_by_hand(
-            db_path,
-            survivor="doom-gog",
-            absorbed="doom-2016",
-            evidence=_UPGRADE_PASS_EVIDENCE,
-        )
-        _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
-        _rewind_to(db_path, 11)
-
-        _open(db_path)
-
-        assert _merge_targets(db_path) == {
-            "doom-gog": "doom-gog",
-            "doom-2016": "doom-2016",
-            "doom-steam": "doom-gog",
-        }
-        assert _merges_in_force(db_path) == [("doom-gog", "doom-steam", "manual")]
-        assert _merge_bookkeeping_faults(db_path) == []
 
 
 class TestWhatTheRenormalizationRewrites:
