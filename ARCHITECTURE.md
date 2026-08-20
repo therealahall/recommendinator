@@ -194,8 +194,8 @@ below, and stamps `_SCHEMA_VERSION` at the end, inside the same transaction. A
 database with no tables yet reports as already current.
 
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
-Version 3 is `_repair_legacy_content_rows`: title re-normalization, the stranded
-detail-shape repair and the duplicate merge, three scans of the whole library.
+Version 3 is `_repair_legacy_content_rows`: title re-normalization and the
+stranded detail-shape repair. Version 15 re-normalizes and releases merges.
 
 Versions 4, 5, 7 and 8 record a shape rather than guarding a step; the
 derived-column fill selects the rows missing them.
@@ -251,8 +251,8 @@ Steam's app 440 and GOG's product 440 are different games. Either path records
 the incoming `(source, external_id)`, which makes a merge survive the losing
 source's next sync.
 
-The version-3 migration re-normalizes titles and merges what that exposes, once
-per database, through the same recorded merge as everything else.
+A schema upgrade re-normalizes stored titles and releases what an earlier
+upgrade merged; it merges nothing itself.
 
 `content_items.source` is display provenance and no sync overwrites it. A read
 reports every `(source, external_id)` pair the item holds, which both interfaces
@@ -300,11 +300,9 @@ absorbed one is refused, keeping that hop single.
 `_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
 three shapes storage no longer writes and no re-sync corrects. A `total_seasons`
 duplicated in a TV show's metadata blob moves onto the `seasons` column, taking
-the higher of the two so the count is never lowered. It runs *before*
-consolidation — inside the one transaction `create_schema` commits, so a failure
-in either discards both — so each row folds its own stranded count onto its own
-column and the merge above then weighs two real counts rather than whichever
-blob copy survived it. A GOG game's `developers`/`publishers`, stranded in the
+the higher of the two so the count is never lowered. It runs inside the one
+transaction `create_schema` commits, so a failure after it discards it.
+A GOG game's `developers`/`publishers`, stranded in the
 blob before either was an alias, fold onto the `developer` and `publisher`
 columns as names, filling only a column that is empty; without that, the objects
 GOG uses on some products make every later save of the item raise. GOG's old

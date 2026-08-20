@@ -93,8 +93,8 @@ ID. **Make the profile public**, or the API returns nothing.
 ### Duplicate items
 
 Items deduplicate by normalized title, so this is rare. When it happens the
-titles still differ after normalization. Rename one and re-sync. Schema upgrades
-re-normalize every title and merge whatever that exposes.
+titles still differ after normalization. Rename one and re-sync. A schema
+upgrade re-normalizes every title but merges nothing.
 
 ## Web interface
 

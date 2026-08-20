@@ -7,13 +7,9 @@ from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
-from src.storage.derived import backfill_derived_columns, read_match_signals
-from src.storage.item_merges import MergeEvidence, absorb_item, unmerge_item
-from src.storage.merge import (
-    creators_conflict,
-    normalize_title_for_matching,
-    years_conflict,
-)
+from src.storage.derived import backfill_derived_columns
+from src.storage.item_merges import MergeEvidence, unmerge_item
+from src.storage.merge import normalize_title_for_matching
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -84,13 +80,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 14 re-normalize titles and reconcile what that rewrote. Other
-# versions only record a shape the CREATE/ALTER below reaches.
+# leaves, 10 to 15 re-normalize titles and release an upgrade's merges.
+# Other versions record a shape the CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 14
+_SCHEMA_VERSION = 15
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -263,7 +259,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     Sets ``conn.row_factory`` on the caller's connection unconditionally.
     """
-    # Required by merge_scalar_columns which uses named column access
+    # Required by the steps below, which read columns by name.
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     stored_version = _stored_schema_version(cursor)
@@ -311,7 +307,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # the column — a version guard would rebuild a table with no external_id.
     if _has_column(cursor, "content_items", "external_id"):
         _move_external_ids_off_content_items(conn)
-    # Ahead of the indexes, one of which reads it, and of the merge below.
+    # Ahead of the indexes, one of which reads it, and of the release.
     _add_column_if_not_exists(
         cursor,
         "content_items",
@@ -355,18 +351,18 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     # Columns derived from the title and the creator, so the library list is
     # ordered and searched in SQL (see src/storage/derived.py). Added ahead of
-    # the repair, whose merge rewrites the survivor's pair.
+    # the steps below, which rewrite them.
     _add_column_if_not_exists(cursor, "content_items", "sort_title", "TEXT")
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 14:
-        # The normalizer learned the parenthetical rules, so stored keys are
-        # the old one's. The repair above writes them with this one already,
-        # over a database far too old to hold a merge to reconsider.
+    elif stored_version < 15:
+        # An upgraded library does not collapse its duplicates on open. It
+        # rewrites their keys and releases what an earlier upgrade merged;
+        # the save door decides each pair on the next sync, and the merge
+        # door decides what that leaves.
         _renormalize_titles(cursor)
-        _undo_stale_title_merges(cursor)
-        _deduplicate_inline(cursor)
+        _release_upgrade_merges(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -509,19 +505,16 @@ def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
 def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     """Rewrite the content rows left in shapes storage no longer writes.
 
-    Each pass reads the whole library, so all three are guarded to run once per
-    database: no current write path produces what any of them looks for, and a
+    Each pass reads the whole library, so both are guarded to run once per
+    database: no current write path produces what either looks for, and a
     row a pass deliberately declines to settle — a fill-only column holding
     another producer's object, say — would otherwise be re-read on every open
     for the life of the database.
 
-    The passes are ordered, and the order is only safe while they share one
-    transaction: the implicit one ``create_schema``'s ``INSERT OR IGNORE INTO
-    users`` opened and the commit at the end closes. The external-id rebuild
-    above that statement commits its own deliberately; nothing else may commit
-    between the passes, and that connection must keep implicit transactions, or
-    a merge that fails leaves the repair committed over a library the merge
-    never finished.
+    They share the transaction ``create_schema``'s ``INSERT OR IGNORE INTO
+    users`` opened and its commit closes. Nothing between them may commit, and
+    that connection must keep implicit transactions, or a step that raises
+    leaves the ones before it committed over a half-upgraded library.
     """
     # Approximate normalization for a column the caller's ALTER may have just
     # added; the pass below corrects it with the full Python function.
@@ -530,11 +523,7 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
         "WHERE normalized_title IS NULL"
     )
     _renormalize_titles(cursor)
-    # Repairing before the merge lets each row fold its own stranded season
-    # count onto its own column: the merge then takes the higher of two real
-    # counts, rather than of whichever blob copy survived it.
     _migrate_stranded_detail_shapes(cursor)
-    _deduplicate_inline(cursor)
 
 
 @contextmanager
@@ -688,130 +677,27 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
         )
 
 
-def _match_refused(cursor: sqlite3.Cursor, keeper_id: int, duplicate_id: int) -> bool:
-    """Whether the creator or the year these two rows state vetoes a title match."""
-    keeper = read_match_signals(cursor, keeper_id)
-    duplicate = read_match_signals(cursor, duplicate_id)
-    return creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
-        keeper.release_year, duplicate.release_year
-    )
+def _release_upgrade_merges(cursor: sqlite3.Cursor) -> None:
+    """Release every merge an earlier build's upgrade pass made.
 
-
-def _absorbed_by_a_keeper(
-    cursor: sqlite3.Cursor,
-    keeper_ids: list[int],
-    row_id: int,
-    normalized_title: str,
-) -> bool:
-    """Merge *row_id* into the first keeper whose creator and year allow it."""
-    for keeper_id in keeper_ids:
-        if _match_refused(cursor, keeper_id, row_id):
-            continue
-        absorb_item(
-            cursor,
-            survivor_id=keeper_id,
-            absorbed_id=row_id,
-            evidence=MergeEvidence.NORMALIZED_TITLE,
-            evidence_detail=normalized_title,
-        )
-        return True
-    return False
-
-
-def _merge_still_stands(
-    cursor: sqlite3.Cursor, survivor_id: int, absorbed_id: int
-) -> bool:
-    """Whether the pass would make a merge it once recorded again today.
-
-    The merge cannot have talked itself out of a veto: a column moves onto the
-    survivor only where it stated nothing, and nothing stated never vetoed.
+    Nothing else writes ``normalized_title`` evidence, so each one is a merge
+    the operator never asked for. The save door decides the pair again on the
+    next sync.
     """
     cursor.execute(
-        """SELECT 1 FROM content_items survivor
-             JOIN content_items absorbed
-               ON absorbed.normalized_title = survivor.normalized_title
-            WHERE survivor.id = ? AND absorbed.id = ?
-              AND survivor.normalized_title != ''""",
-        (survivor_id, absorbed_id),
-    )
-    return cursor.fetchone() is not None and not _match_refused(
-        cursor, survivor_id, absorbed_id
-    )
-
-
-def _undo_stale_title_merges(cursor: sqlite3.Cursor) -> None:
-    """Undo the merges this pass made under a rule it no longer follows.
-
-    A hidden row is one the corrected rule never reaches. One that rule still
-    makes stays, rather than roll its survivor back over every edit since.
-    """
-    cursor.execute(
-        "SELECT id, survivor_id, absorbed_id, evidence FROM content_item_merges"
-        " ORDER BY id DESC"
+        "SELECT id, survivor_id, evidence FROM content_item_merges ORDER BY id DESC"
     )
     by_survivor: dict[int, list[sqlite3.Row]] = {}
     for row in cursor.fetchall():
         by_survivor.setdefault(row["survivor_id"], []).append(row)
 
     for merges in by_survivor.values():
-        down_to_here: list[int] = []
-        undo: list[int] = []
-        # Newest first, and a merge stacked on a refused one goes with it:
-        # unmerge_item refuses any other order, and a merge from another door
-        # cannot be undone at all, so it ends the walk.
+        # Newest first, and a merge from another door ends the walk: it wrote
+        # over the state under it, and unmerge_item refuses to be skipped.
         for merge in merges:
             if merge["evidence"] != MergeEvidence.NORMALIZED_TITLE.value:
                 break
-            down_to_here.append(merge["id"])
-            if not _merge_still_stands(
-                cursor, merge["survivor_id"], merge["absorbed_id"]
-            ):
-                undo = list(down_to_here)
-        for merge_id in undo:
-            unmerge_item(cursor, merge_id)
-
-
-def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
-    """Merge duplicate rows exposed by re-normalization.
-
-    A row every keeper refuses becomes a keeper itself: one vetoed keeper
-    would otherwise strand the whole group behind it.
-    """
-    cursor.execute(
-        """SELECT user_id, content_type, normalized_title
-           FROM content_items
-           WHERE normalized_title IS NOT NULL AND normalized_title != ''
-             AND merged_into IS NULL
-           GROUP BY user_id, content_type, normalized_title
-           HAVING COUNT(*) > 1"""
-    )
-    groups = cursor.fetchall()
-    for group in groups:
-        g_user_id = group["user_id"]
-        g_content_type = group["content_type"]
-        g_normalized = group["normalized_title"]
-        cursor.execute(
-            """SELECT ci.id, EXISTS (
-                   SELECT 1 FROM content_items a WHERE a.merged_into = ci.id
-               ) AS has_absorbed
-               FROM content_items ci
-               WHERE ci.user_id = ? AND ci.content_type = ?
-                 AND ci.normalized_title = ? AND ci.merged_into IS NULL
-               ORDER BY has_absorbed DESC, ci.id""",
-            (g_user_id, g_content_type, g_normalized),
-        )
-        rows = cursor.fetchall()
-        if len(rows) < 2:
-            continue
-
-        keeper_ids: list[int] = []
-        for row in rows:
-            # A row already holding a merge cannot be absorbed — the one-hop
-            # rule — so it heads a group of its own.
-            if row["has_absorbed"] or not _absorbed_by_a_keeper(
-                cursor, keeper_ids, row["id"], g_normalized
-            ):
-                keeper_ids.append(row["id"])
+            unmerge_item(cursor, merge["id"])
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

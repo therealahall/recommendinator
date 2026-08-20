@@ -12,11 +12,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.item_merges import MergeError, MergeEvidence
-from src.storage.schema import (
-    create_schema,
-    get_enrichment_stats,
-    mark_enrichment_complete,
-)
+from src.storage.schema import get_enrichment_stats, mark_enrichment_complete
 from src.storage.sqlite_db import SQLiteDB
 
 # Pinned so restoring a bumped ``updated_at`` is provable: CURRENT_TIMESTAMP
@@ -295,42 +291,3 @@ def test_neither_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None
 
     db.unmerge_content_items(record.id)
     assert _snapshot(db, absorbed_id) == before
-
-
-def test_the_upgrade_merge_keeps_the_absorbed_row_and_records_what_it_did(
-    db: SQLiteDB,
-) -> None:
-    with db.connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO content_items (user_id, title, content_type, status)"
-            " VALUES (1, 'Portal 2', 'video_game', 'unread')"
-        )
-        keep_id = cursor.lastrowid
-        cursor.execute(
-            "INSERT INTO content_items (user_id, title, content_type, status, rating)"
-            " VALUES (1, 'Portal 2™', 'video_game', 'completed', 5)"
-        )
-        dup_id = cursor.lastrowid
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-
-    with db.connection() as conn:
-        create_schema(conn)
-
-    assert keep_id is not None and dup_id is not None
-    assert db.get_content_item(dup_id) is None
-    survivor = db.get_content_item(keep_id)
-    assert survivor is not None and survivor.rating == 5
-
-    [merge] = db.list_content_item_merges()
-    assert (merge.survivor_id, merge.absorbed_id) == (keep_id, dup_id)
-    assert merge.evidence is MergeEvidence.NORMALIZED_TITLE
-    assert merge.evidence_detail == "portal 2"
-
-    db.unmerge_content_items(merge.id)
-
-    restored = db.get_content_item(dup_id)
-    assert restored is not None and restored.rating == 5
-    survivor = db.get_content_item(keep_id)
-    assert survivor is not None and survivor.rating is None

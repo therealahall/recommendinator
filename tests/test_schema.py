@@ -110,9 +110,9 @@ class TestUpdatingAUsersIdentity:
 
 
 # The two states the one-time content repair can be in on a given open. Named
-# so a test says which it expects rather than spelling out three zeroes.
-_EVERY_PASS_ONCE = {"renormalize": 1, "detail_shapes": 1, "deduplicate": 1}
-_NO_PASS_AT_ALL = {"renormalize": 0, "detail_shapes": 0, "deduplicate": 0}
+# so a test says which it expects rather than spelling out the zeroes.
+_EVERY_PASS_ONCE = {"renormalize": 1, "detail_shapes": 1}
+_NO_PASS_AT_ALL = {"renormalize": 0, "detail_shapes": 0}
 
 
 def _repair_pass_calls(conn: sqlite3.Connection) -> dict[str, int]:
@@ -132,25 +132,19 @@ def _repair_pass_calls(conn: sqlite3.Connection) -> dict[str, int]:
             "_migrate_stranded_detail_shapes",
             wraps=schema._migrate_stranded_detail_shapes,
         ) as detail_shapes,
-        patch.object(
-            schema, "_deduplicate_inline", wraps=schema._deduplicate_inline
-        ) as deduplicate,
     ):
         create_schema(conn)
     return {
         "renormalize": renormalize.call_count,
         "detail_shapes": detail_shapes.call_count,
-        "deduplicate": deduplicate.call_count,
     }
 
 
 def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
     """Write two rows an earlier build left, at the version it left them at.
 
-    Both carry the SQL ``lower(title)`` backfill as their normalized title,
-    which is what the full Python normalization corrects: it drops the leading
-    article, the punctuation and the Roman numeral that keep these two
-    spellings of one game apart, exposing the pair the merge then reconciles.
+    Both carry the SQL ``lower(title)`` backfill, which the full Python
+    normalization corrects: one key then names both spellings.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -182,40 +176,38 @@ def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 class TestTheOneTimeContentRepair:
-    """The three passes that read every content row run once per database.
+    """The two passes that read every content row run once per database.
 
-    ``create_schema`` runs on every open, so leaving them unguarded costs the
-    library's size at every start. Idempotence is not enough on its own: a row
-    a pass deliberately declines to settle stays in a shape its prefilter
-    matches, so an unguarded scan finds it again for the life of the database.
+    Idempotence is not enough on its own: a row a pass declines to settle keeps
+    matching its prefilter, so an unguarded scan re-reads it on every open.
     """
 
     def test_a_database_written_before_the_guard_runs_each_pass_once(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The upgrade itself: one open, one run of all three."""
+        """The upgrade itself: one open, one run of both."""
         create_schema(temp_db)
         _seed_a_library_awaiting_the_repair(temp_db)
 
         assert _repair_pass_calls(temp_db) == _EVERY_PASS_ONCE
 
-    def test_the_upgrade_merges_the_duplicate_the_renormalization_exposes(
+    def test_the_upgrade_keys_both_spellings_of_one_game_the_same(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The pair only matches once both titles are normalized the same way.
-
-        The survivor is the older row, and it keeps its own rating while
-        taking the review only the duplicate held — the merge rules the pass
-        shares with runtime dedup.
-        """
+        """The stored key is what the save door matches on, so the pair only
+        reaches it once both rows normalize the same. Each keeps its own rating
+        and review until a sync decides them."""
         create_schema(temp_db)
         _seed_a_library_awaiting_the_repair(temp_db)
 
         create_schema(temp_db)
 
         rows = _content_rows(temp_db)
-        assert [row["title"] for row in rows] == ["The Witcher III: Wild Hunt"]
-        assert (rows[0]["rating"], rows[0]["review"]) == (5, "Great writing")
+        assert [row["normalized_title"] for row in rows] == ["witcher 3 wild hunt"] * 2
+        assert [(row["rating"], row["review"]) for row in rows] == [
+            (5, None),
+            (None, "Great writing"),
+        ]
 
     def test_a_second_open_runs_none_of_the_passes(
         self, temp_db: sqlite3.Connection
@@ -233,9 +225,7 @@ def _rows_backfilled(conn: sqlite3.Connection) -> int:
 
     The fill runs on every open, so counting the calls to it would say
     nothing; what matters is that it writes only rows that are missing a
-    column, and a library where none is costs no write at all. Nothing else
-    reaches ``_write_row`` during an open — the duplicate merge deliberately
-    leaves the columns to the fill that follows it.
+    column, and a library where none is costs no write at all.
     """
     with patch.object(derived, "_write_row", wraps=derived._write_row) as write_row:
         create_schema(conn)

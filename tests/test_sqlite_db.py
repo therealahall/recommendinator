@@ -18,7 +18,7 @@ from src.storage.merge import (
     normalize_creator_for_matching,
     normalize_title_for_matching,
 )
-from src.storage.schema import create_schema, write_enrichment_complete
+from src.storage.schema import write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
 from src.utils.item_serialization import item_to_dict
 from src.utils.sorting import build_search_text, get_sort_title
@@ -104,24 +104,9 @@ def _external_ids(temp_db: SQLiteDB, db_id: int) -> list[tuple[str, str]]:
     return [(row["source"], row["external_id"]) for row in rows]
 
 
-def _upgrade_merging_the_duplicates(temp_db: SQLiteDB) -> None:
-    """Re-open as an upgrade does: the only path that still absorbs a row."""
-    with temp_db.connection() as conn:
-        _mark_written_before_the_repair(conn)
-        create_schema(conn)
-
-
-def _mark_written_before_the_repair(conn: sqlite3.Connection) -> None:
-    """Rewind the stored schema version to a build that predates the repair.
-
-    ``create_schema`` re-normalizes titles and merges the duplicates that
-    exposes only while the stored ``user_version`` is below the version that
-    introduced those passes, so a test seeding the rows they exist for has to
-    seed the version they run from too. Version 2 is the one directly below
-    that repair: rewinding further would re-run the settings migrations as
-    well, which have nothing to do with the rows being seeded.
-    """
-    conn.execute("PRAGMA user_version = 2")
+def _merged(temp_db: SQLiteDB, survivor_id: int, absorbed_id: int) -> None:
+    """Merge one row into another through the door, as the operator does."""
+    temp_db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
 
 def _insert_raw_book(
@@ -4077,10 +4062,10 @@ class TestTheIdLookupCostsOneSeek:
 
 
 class TestCrossSourceDuplicateDetectionRegression:
-    """The rules the upgrade dedup reconciles a duplicate pair by.
+    """The rules a merge reconciles a duplicate pair by.
 
-    It is the only path that deletes a row to dedup, and it runs once, so
-    whatever it fails to carry onto the survivor is gone for good.
+    The absorbed row drops out of every read, so whatever the merge fails to
+    carry onto the survivor is what the library stops showing.
     """
 
     def test_merge_unions_seasons_watched_dates_with_later_date_winning_regression(
@@ -4135,7 +4120,7 @@ class TestCrossSourceDuplicateDetectionRegression:
             )
             conn.commit()
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         all_shows = temp_db.get_content_items(content_type=ContentType.TV_SHOW)
         assert len(all_shows) == 1
@@ -4153,7 +4138,7 @@ class TestCrossSourceDuplicateDetectionRegression:
         self, temp_db: SQLiteDB
     ) -> None:
         """The merge keeps the later date_completed of the two rows."""
-        _insert_raw_item(
+        keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-hades",
             title="Hades",
@@ -4161,7 +4146,7 @@ class TestCrossSourceDuplicateDetectionRegression:
             date_completed="2024-01-15",
             source="steam",
         )
-        _insert_raw_item(
+        dup_id = _insert_raw_item(
             temp_db,
             external_id="blog-hades",
             title="Hades",
@@ -4170,7 +4155,7 @@ class TestCrossSourceDuplicateDetectionRegression:
             source="personal_site",
         )
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
         assert len(all_games) == 1
@@ -4204,7 +4189,7 @@ class TestCrossSourceDuplicateDetectionRegression:
             )
             conn.commit()
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         survivor = temp_db.get_content_item(keep_id)
         assert survivor is not None
@@ -4290,7 +4275,7 @@ class TestCrossSourceDuplicateDetectionRegression:
             )
             conn.commit()
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
@@ -4300,18 +4285,18 @@ class TestCrossSourceDuplicateDetectionRegression:
         # episodes: kept (20) > dup (15), so 20 is preserved
         assert retrieved.metadata.get("episodes") == 20
 
-    def test_schema_migration_dedup_merges_detail_tables_regression(
+    def test_a_merge_carries_the_detail_tables_onto_the_survivor(
         self, tmp_path: Path
     ) -> None:
         """Genres, tags and metadata the absorbed row held reach the survivor.
 
-        The upgrade deletes that row, so anything the detail merge drops here
-        is gone with no re-sync that recovers it."""
+        That row leaves every read, so anything the detail merge drops here is
+        what the library stops showing."""
         db_path = tmp_path / "migration_detail_test.db"
+        db = SQLiteDB(db_path)
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        create_schema(conn)
 
         cursor = conn.cursor()
 
@@ -4353,15 +4338,13 @@ class TestCrossSourceDuplicateDetectionRegression:
                        '["steampunk", "immersive-sim"]', ?)""",
             (dup_id, json.dumps({"award": "GOTY", "playtime_hours": 30})),
         )
-        _mark_written_before_the_repair(conn)
         conn.commit()
 
         # Verify two rows exist
         cursor.execute("SELECT COUNT(*) FROM content_items")
         assert cursor.fetchone()[0] == 2
 
-        # Re-run create_schema — triggers migration dedup
-        create_schema(conn)
+        _merged(db, keep_id, dup_id)
 
         # Should now show one row, the other hidden behind it
         cursor.execute("SELECT COUNT(*) FROM content_items WHERE merged_into IS NULL")
@@ -4422,20 +4405,9 @@ class TestCrossSourceDuplicateDetectionRegression:
 
 
 class TestDuplicateMergePreservesState:
-    """Regression tests for a duplicate merge dropping status and ignored.
-
-    Bug reported: merging two rows for the same title carried only rating,
-    review and date_completed across before deleting the duplicate. A
-    COMPLETED duplicate merged into an UNREAD kept row silently reverted the
-    completion, and an ignored duplicate merged into a non-ignored kept row
-    silently un-ignored the item — both unrecoverable, since the duplicate row
-    is then deleted. The item came back as a recommendation candidate.
-    Root cause: ``merge_scalar_columns`` selected and updated only those three
-    columns; the forward-only status rule protecting the sync path was not
-    applied to the merge at all.
-    Fix: the merge resolves status with the same forward-only ordering and
-    ORs the ignored flags, so the strongest state on either row survives.
-    """
+    """A merge carried only rating, review and date_completed, so a completed
+    duplicate reverted the kept row to unread and an ignored one un-ignored it,
+    putting the item back among the recommendation candidates."""
 
     def test_merge_keeps_completed_status_regression(self, temp_db: SQLiteDB) -> None:
         """A completed duplicate does not revert the kept row to unread."""
@@ -4447,7 +4419,7 @@ class TestDuplicateMergePreservesState:
             status="unread",
             source="steam",
         )
-        _insert_raw_item(
+        dup_id = _insert_raw_item(
             temp_db,
             external_id="blog-portal2",
             title="Portal 2",
@@ -4456,7 +4428,7 @@ class TestDuplicateMergePreservesState:
             source="personal_site",
         )
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
         assert len(all_games) == 1
@@ -4474,7 +4446,7 @@ class TestDuplicateMergePreservesState:
             ignored=False,
             source="steam",
         )
-        _insert_raw_item(
+        dup_id = _insert_raw_item(
             temp_db,
             external_id="blog-doom",
             title="Doom",
@@ -4483,7 +4455,7 @@ class TestDuplicateMergePreservesState:
             source="personal_site",
         )
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
@@ -4492,7 +4464,8 @@ class TestDuplicateMergePreservesState:
     def test_completed_and_ignored_item_survives_dedupe_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Each row kept only its own state, so whichever the delete took was gone."""
+        """Each row held only its own state, so whichever the merge overwrote
+        was the one the library stopped showing."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="early-sync",
@@ -4502,7 +4475,7 @@ class TestDuplicateMergePreservesState:
             ignored=True,
             source="personal_site",
         )
-        _insert_raw_item(
+        dup_id = _insert_raw_item(
             temp_db,
             external_id="steam-620",
             title="Portal 2™",
@@ -4512,7 +4485,7 @@ class TestDuplicateMergePreservesState:
             source="steam",
         )
 
-        _upgrade_merging_the_duplicates(temp_db)
+        _merged(temp_db, keep_id, dup_id)
 
         retrieved = temp_db.get_content_item(keep_id)
         assert retrieved is not None
