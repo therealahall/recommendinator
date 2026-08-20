@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
 from src.storage.derived import backfill_derived_columns
-from src.storage.item_merges import MergeEvidence, release_merge
+from src.storage.item_merges import release_merge
 from src.storage.merge import normalize_title_for_matching
 
 
@@ -80,13 +80,17 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 15 re-normalize titles and release an upgrade's merges.
-# Other versions record a shape the CREATE/ALTER below reaches.
+# leaves, 10 to 15 re-normalize titles. Other versions record a shape the
+# CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
 _SCHEMA_VERSION = 15
+
+# An earlier build's upgrade-pass evidence. Not a ``MergeEvidence`` member: the
+# release below would then take back merges the operator asked for.
+_UPGRADE_PASS_EVIDENCE = "normalized_title"
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -370,11 +374,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _repair_legacy_content_rows(cursor)
     elif stored_version < 15:
         # An upgraded library does not collapse its duplicates on open. It
-        # rewrites their keys and releases what an earlier upgrade merged;
-        # the save door decides each pair on the next sync, and the merge
-        # door decides what that leaves.
+        # rewrites their keys; the save door decides each pair on the next
+        # sync, and the merge door decides what that leaves.
         _renormalize_titles(cursor)
-        _release_upgrade_merges(cursor)
+
+    # Unguarded: nothing writes this evidence now, so a row holding it is a pass's.
+    _release_upgrade_merges(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -692,13 +697,11 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 def _release_upgrade_merges(cursor: sqlite3.Cursor) -> None:
     """Release every merge an earlier build's upgrade pass made.
 
-    Nothing else writes ``normalized_title`` evidence, so each one is a merge
-    the operator never asked for. Released rather than undone: the survivor
-    keeps every rating, review and enrichment written onto it since.
+    Released rather than undone: the survivor keeps what was written onto it.
     """
     cursor.execute(
         "SELECT id FROM content_item_merges WHERE evidence = ?",
-        (MergeEvidence.NORMALIZED_TITLE.value,),
+        (_UPGRADE_PASS_EVIDENCE,),
     )
     for row in cursor.fetchall():
         release_merge(cursor, row["id"])

@@ -5,8 +5,7 @@ the absorbed row is kept behind ``merged_into``, and what was overwritten is
 recorded, so an undo restores both.
 
 A record holds the survivor whole rather than the fields one merge moved, so
-merges undo newest first — :func:`unmerge_item` refuses any other order, and
-:func:`list_merges` lists them in it.
+merges undo newest first: :func:`unmerge_item` refuses any other order.
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ from src.storage.merge import (
 
 
 class MergeEvidence(Enum):
-    EXTERNAL_ID = "external_id"
-    NORMALIZED_TITLE = "normalized_title"
+    """What a merge was made on. Only the operator makes one, so far."""
+
     MANUAL = "manual"
 
 

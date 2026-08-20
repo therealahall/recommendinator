@@ -143,8 +143,8 @@ Library or Recommendations page, from `library ignore --id <id>`, or with
 A re-import leaves the flag alone unless the file states it. A stated
 `ignored: false` un-ignores, which is what makes the export-edit-re-import round
 trip work, and also why re-importing an export replaces your whole ignore list.
-See [DATA_SOURCES.md](DATA_SOURCES.md#library-export). Consolidating an item
-with a duplicate row never un-ignores it, because an ignore on either row wins.
+See [DATA_SOURCES.md](DATA_SOURCES.md#library-export). A merge moves no ignore:
+the absorbed row's stops applying while that row is hidden.
 
 Completed-but-unrated items are excluded from the taste *signal* the same way,
 since something you finished but never rated says nothing about your taste. They

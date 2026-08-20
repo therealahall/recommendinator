@@ -270,7 +270,7 @@ The rules every merge follows:
 - `rating` and `review` fill from the duplicate only into a null
 - `date_completed` keeps the later date
 - `status` takes the further-advanced under the sync ordering
-- `ignored` is the OR of both rows
+- `ignored` moves nowhere: each row keeps its own
 - Genres and tags merge additively, monotonic columns (seasons, episodes) keep
   the higher value, and detail metadata merges existing-wins
 - `seasons_watched` is the exception, unioned across both rows, and
@@ -280,8 +280,7 @@ The rules every merge follows:
 Nothing deletes a row to dedup (`src/storage/item_merges.py`). The absorbed row
 keeps every column, sets `merged_into` and drops out of every read, and every
 write door refuses it; `content_item_merges` records survivor, absorbed,
-evidence (a matched source id, the normalized title, or a manual choice) and
-what the merge overwrote on the survivor.
+evidence (so far only the operator's own choice) and what it overwrote.
 
 That last part is what `unmerge_content_items` writes back, so an undo returns
 both rows exactly as they were. It records the survivor whole, so merges undo

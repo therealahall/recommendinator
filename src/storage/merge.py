@@ -3,10 +3,10 @@
 The row-absorbing ones serve ``item_merges.absorb_item``, the one merge door.
 No sync path merges rows: it deleted ids other sources held.
 
-``__all__`` is this module's contract: those names are imported by
-``sqlite_db``, ``schema``, ``derived`` and ``duplicates`` and cannot be renamed
-or reshaped without updating all four. Nothing else here is imported by another
-``src`` module, so the underscore-prefixed names really are internal.
+``__all__`` is this module's contract: every name in it is read from outside —
+``sqlite_db``, ``schema``, ``derived`` and ``duplicates`` between them import
+all but ``normalize_creator_for_matching``, which the veto's own tests read —
+so none can be renamed or reshaped without following its readers.
 """
 
 import json
@@ -374,16 +374,16 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
 
     The duplicate row is hidden after this runs, so every column a user can
     own has to be carried across or it is invisible until an unmerge: rating
-    and review fill a null, the later date_completed and the further-advanced
-    status win, and an ignore on either row survives.
+    and review fill a null, and the later date_completed and further-advanced
+    status win. ``ignored`` is not read here at all: each row keeps its own,
+    because carrying it hides the survivor behind the duplicate's ignore.
 
     Requires ``row_factory = sqlite3.Row``.
     """
     # Skipped entirely when no column moves, so a merge that changes nothing
     # leaves updated_at — a user-facing sort key — alone.
     select_sql = (
-        "SELECT status, rating, review, date_completed, ignored"
-        " FROM content_items WHERE id = ?"
+        "SELECT status, rating, review, date_completed FROM content_items WHERE id = ?"
     )
     cursor.execute(select_sql, (keep_id,))
     keep_row = cursor.fetchone()
@@ -393,8 +393,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         return
 
     merged_status = resolve_status_forward(keep_row["status"], dup_row["status"])
-    keep_ignored = 1 if keep_row["ignored"] else 0
-    merged_ignored = 1 if (keep_ignored or dup_row["ignored"]) else 0
 
     will_change_rating = keep_row["rating"] is None and dup_row["rating"] is not None
     will_change_review = keep_row["review"] is None and dup_row["review"] is not None
@@ -407,7 +405,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         or will_change_review
         or will_change_date
         or merged_status != keep_row["status"]
-        or merged_ignored != keep_ignored
     ):
         return
 
@@ -423,7 +420,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
                    ELSE date_completed
                END,
                status = ?,
-               ignored = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?""",
         (
@@ -434,7 +430,6 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
             dup_row["date_completed"],
             dup_row["date_completed"],
             merged_status,
-            merged_ignored,
             keep_id,
         ),
     )
