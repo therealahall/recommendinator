@@ -121,35 +121,6 @@ def _write_show_metadata(
         conn.commit()
 
 
-def _insert_show_row(
-    cursor: sqlite3.Cursor,
-    *,
-    title: str,
-    seasons: int | None,
-    metadata: str | None,
-) -> int:
-    """Insert a show and its detail row directly, bypassing runtime dedup.
-
-    ``save_content_item`` merges a title-matching row on the way in, so two
-    rows the migration's dedup pass will merge can only be created in SQL.
-    """
-    cursor.execute(
-        "INSERT INTO content_items"
-        " (user_id, title, content_type, status, source)"
-        " VALUES (1, ?, 'tv_show', 'currently_consuming', 'trakt')",
-        (title,),
-    )
-    db_id = cursor.lastrowid
-    assert db_id is not None
-    cursor.execute(
-        "INSERT INTO tv_show_details (content_item_id, seasons, metadata)"
-        " VALUES (?, ?, ?)",
-        (db_id, seasons, metadata),
-    )
-    _mark_written_before_the_repair(cursor)
-    return db_id
-
-
 def _seed_game(
     db: SQLiteDB,
     *,
@@ -869,143 +840,14 @@ class TestASecondOpenRewritesNothing:
         assert _open_counting_the_repair(db_path) == 0
 
 
-class TestRepairRunsBeforeDeduplication:
-    """Each row folds its own stranded count before the merge weighs them.
+class TestTheRepairSharesOneTransactionWithTheOpen:
+    """A step failing after the repair discards it rather than committing it.
 
-    Both rows of a duplicate pair can have been written before ``seasons``
-    accepted ``total_seasons``, leaving each row's only count in its own blob.
-    ``_merge_detail_metadata`` merges the two blobs with the kept row's keys
-    winning outright, so repairing after the merge throws the duplicate's
-    count away and folds the kept row's onto the column — lowering a count the
-    library held, which is exactly what the repair promises never to do.
+    ``create_schema`` commits once, at the end. A commit added between the
+    steps would leave a half-upgraded database with nothing to say so.
     """
 
-    def test_the_survivor_keeps_the_higher_of_two_stranded_counts(
-        self, tmp_path: Path
-    ) -> None:
-        """The kept row holds the lower count, and the higher one still wins."""
-        db_path = tmp_path / "test.db"
-        db = SQLiteDB(db_path)
-        with db.connection() as conn:
-            cursor = conn.cursor()
-            keep_id = _insert_show_row(
-                cursor,
-                title="The Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 1}),
-            )
-            _insert_show_row(
-                cursor,
-                title="Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 5}),
-            )
-            conn.commit()
-
-        db = SQLiteDB(db_path)
-
-        with db.connection() as conn:
-            remaining = conn.execute(
-                "SELECT COUNT(*) AS total FROM content_items"
-                " WHERE merged_into IS NULL"
-            ).fetchone()["total"]
-        assert remaining == 1
-        assert _show_detail(db, keep_id) == (5, None)
-
-    def test_the_other_order_round_lowers_the_count_on_the_same_two_rows(
-        self, tmp_path: Path
-    ) -> None:
-        """The ordering itself decides the count, on one fixture, both ways.
-
-        The assertion above reads the whole open, so it can only show that
-        the order shipped today is right — not that the other one is wrong,
-        which is the claim the class docstring makes. Driving the two passes
-        by hand over the same pair shows both outcomes: repair first keeps
-        the 5 the library held, dedup first keeps the survivor's own 1.
-        """
-        counts: dict[str, Any] = {}
-        orders = {
-            "repair_then_dedup": (
-                schema._migrate_stranded_detail_shapes,
-                schema._deduplicate_inline,
-            ),
-            "dedup_then_repair": (
-                schema._deduplicate_inline,
-                schema._migrate_stranded_detail_shapes,
-            ),
-        }
-        for name, passes in orders.items():
-            db = SQLiteDB(tmp_path / f"{name}.db")
-            with db.connection() as conn:
-                cursor = conn.cursor()
-                keep_id = _insert_show_row(
-                    cursor,
-                    title="The Wire",
-                    seasons=None,
-                    metadata=json.dumps({"total_seasons": 1}),
-                )
-                _insert_show_row(
-                    cursor,
-                    title="Wire",
-                    seasons=None,
-                    metadata=json.dumps({"total_seasons": 5}),
-                )
-                # Dedup matches on the normalized title, which a direct
-                # INSERT leaves NULL, so the pass that fills it runs first
-                # here exactly as it does in ``create_schema``.
-                schema._renormalize_titles(cursor)
-                for run_pass in passes:
-                    run_pass(cursor)
-                conn.commit()
-            counts[name] = _show_detail(db, keep_id)[0]
-
-        assert counts == {"repair_then_dedup": 5, "dedup_then_repair": 1}
-
-    def test_a_repaired_detail_row_survives_being_copied_to_the_survivor(
-        self, tmp_path: Path
-    ) -> None:
-        """The merge copies a whole detail row when the kept item has none.
-
-        Copied rather than moved, so the repair must already have run over it
-        and the duplicate keeps its own for an unmerge to give back.
-        """
-        db_path = tmp_path / "test.db"
-        db = SQLiteDB(db_path)
-        with db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO content_items"
-                " (user_id, title, content_type, status, source)"
-                " VALUES (1, 'The Wire', 'tv_show', 'currently_consuming', 'trakt')"
-            )
-            keep_id = cursor.lastrowid
-            absorbed_id = _insert_show_row(
-                cursor,
-                title="Wire",
-                seasons=None,
-                metadata=json.dumps({"total_seasons": 5, "trakt_id": 222}),
-            )
-            conn.commit()
-
-        db = SQLiteDB(db_path)
-
-        assert keep_id is not None
-        assert _show_detail(db, keep_id) == (5, {"trakt_id": 222})
-        assert _show_detail(db, absorbed_id) == (5, {"trakt_id": 222})
-
-
-class TestTheRepairAndTheMergeShareOneTransaction:
-    """A failure in the merge discards the repair rather than committing it.
-
-    Repairing before the merge is only correct while the two are one unit of
-    work: ``create_schema`` opens an implicit transaction on its first write
-    and commits once at the end, and any exception closes the connection with
-    nothing committed. A commit added between the passes — or a connection
-    running without implicit transactions — would leave a database repaired
-    but unmerged, and nothing would say so.
-    """
-
-    def test_a_failure_in_the_merge_leaves_the_repair_unapplied(
+    def test_a_failure_after_the_repair_leaves_it_unapplied(
         self, tmp_path: Path
     ) -> None:
         """The stranded row is exactly as it was before the open that raised."""
@@ -1014,7 +856,7 @@ class TestTheRepairAndTheMergeShareOneTransaction:
 
         with (
             patch.object(
-                schema, "_deduplicate_inline", side_effect=OSError("disk failure")
+                schema, "backfill_derived_columns", side_effect=OSError("disk failure")
             ),
             pytest.raises(OSError),
         ):
