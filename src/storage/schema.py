@@ -84,13 +84,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 12 re-normalize titles. Other versions only record a shape
+# leaves, 10 to 13 re-normalize titles. Other versions only record a shape
 # the CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 13
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -350,10 +350,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "video_game_details", "tags", "TEXT")
     _add_column_if_not_exists(cursor, "video_game_details", "description", "TEXT")
 
-    # Add ignored column to content_items for filtering from recommendations
     _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
-
-    # Add normalized_title column for O(1) title-matching lookups
     _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
 
     # Columns derived from the title and the creator, so the library list is
@@ -363,7 +360,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 12:
+    elif stored_version < 13:
         # The normalizer learned the parenthetical rules, so stored keys are
         # the old one's. The repair above writes them with this one already.
         _renormalize_titles(cursor)
@@ -535,7 +532,6 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     # count onto its own column: the merge then takes the higher of two real
     # counts, rather than of whichever blob copy survived it.
     _migrate_stranded_detail_shapes(cursor)
-    # Merge any duplicates exposed by the corrected normalization
     _deduplicate_inline(cursor)
 
 
@@ -690,11 +686,36 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
         )
 
 
+def _absorbed_by_a_keeper(
+    cursor: sqlite3.Cursor,
+    keeper_ids: list[int],
+    row_id: int,
+    normalized_title: str,
+) -> bool:
+    """Merge *row_id* into the first keeper whose creator and year allow it."""
+    duplicate = read_match_signals(cursor, row_id)
+    for keeper_id in keeper_ids:
+        keeper = read_match_signals(cursor, keeper_id)
+        if creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
+            keeper.release_year, duplicate.release_year
+        ):
+            continue
+        absorb_item(
+            cursor,
+            survivor_id=keeper_id,
+            absorbed_id=row_id,
+            evidence=MergeEvidence.NORMALIZED_TITLE,
+            evidence_detail=normalized_title,
+        )
+        return True
+    return False
+
+
 def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
     """Merge duplicate rows exposed by re-normalization.
 
-    The keeper is the oldest row, or one already holding a merge, which the
-    one-hop rule forbids absorbing. A disagreeing creator or year is left.
+    A row every keeper refuses becomes a keeper itself: one vetoed keeper
+    would otherwise strand the whole group behind it.
     """
     cursor.execute(
         """SELECT user_id, content_type, normalized_title
@@ -723,23 +744,14 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
         if len(rows) < 2:
             continue
 
-        keep_id = rows[0]["id"]
-        for dup_row in rows[1:]:
-            if dup_row["has_absorbed"]:
-                continue
-            keeper = read_match_signals(cursor, keep_id)
-            duplicate = read_match_signals(cursor, dup_row["id"])
-            if creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
-                keeper.release_year, duplicate.release_year
+        keeper_ids: list[int] = []
+        for row in rows:
+            # A row already holding a merge cannot be absorbed — the one-hop
+            # rule — so it heads a group of its own.
+            if row["has_absorbed"] or not _absorbed_by_a_keeper(
+                cursor, keeper_ids, row["id"], g_normalized
             ):
-                continue
-            absorb_item(
-                cursor,
-                survivor_id=keep_id,
-                absorbed_id=dup_row["id"],
-                evidence=MergeEvidence.NORMALIZED_TITLE,
-                evidence_detail=g_normalized,
-            )
+                keeper_ids.append(row["id"])
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

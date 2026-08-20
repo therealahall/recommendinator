@@ -776,6 +776,13 @@ class TestWhichTrailingParentheticalsAreDropped:
             normalize_title_for_matching("Frankenstein")
         )
 
+    @pytest.mark.parametrize(("one", "two"), [("3rd", "4th"), ("Second", "Third")])
+    def test_a_counted_edition_stays_in_the_key(self, one: str, two: str) -> None:
+        """Books get no year veto, so stripping this hides one textbook."""
+        assert normalize_title_for_matching(
+            f"Introduction to Algorithms ({one} Edition)"
+        ) != normalize_title_for_matching(f"Introduction to Algorithms ({two} Edition)")
+
     def test_a_year_leaves_the_key_for_the_veto_to_answer(self) -> None:
         """In the key it kept "Die Hard (1988)" off a "Die Hard" stating none."""
         assert normalize_title_for_matching("DOOM (2016)") == (
@@ -912,18 +919,19 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         assert us != uk
         assert trakt_us != uk
 
-    def test_a_remake_stating_its_year_stays_off_the_original(
+    def test_two_films_of_one_name_are_told_apart_by_the_years_they_state(
         self, temp_db: SQLiteDB
     ) -> None:
-        original = temp_db.save_content_item(
-            self._dated(ContentType.VIDEO_GAME, "gog", "doom-1993", "Doom", 1993)
+        """Neither title spells a year, so only the stored column can refuse."""
+        watched = temp_db.save_content_item(
+            self._dated(ContentType.MOVIE, "trakt", "trakt:841", "Dune", 1984)
         )
 
-        remake = temp_db.save_content_item(
-            self._dated(ContentType.VIDEO_GAME, "steam", "379720", "DOOM (2016)")
+        downloaded = temp_db.save_content_item(
+            self._dated(ContentType.MOVIE, "radarr", "tmdb:438631", "Dune", 2021)
         )
 
-        assert remake != original
+        assert downloaded != watched
 
     def test_a_year_only_one_source_states_does_not_stop_the_match(
         self, temp_db: SQLiteDB

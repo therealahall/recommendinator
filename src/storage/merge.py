@@ -192,6 +192,11 @@ _YEAR = re.compile(r"^\d{4}$")
 # A translation and an audiobook are printings of one work. Keyed on the word
 # "edition" because a list of languages could never be complete.
 _EDITION = re.compile(r"(?:^|\s)edition$|^(?:un)?abridged$")
+# Books get no year veto, so a stripped "(3rd Edition)" hides a second textbook.
+_NUMBERED = re.compile(
+    r"\d|\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth"
+    r"|eleventh|twelfth)\b"
+)
 _TRAILING_PARENTHETICAL = re.compile(r"\s*\(([^()]*)\)\s*$")
 _TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 
@@ -199,7 +204,9 @@ _TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 def _is_qualifier(inner: str) -> bool:
     """Whether a trailing parenthetical qualifies the work rather than names it."""
     inner = inner.strip()
-    if _SERIES_MARKER.search(inner) or _YEAR.match(inner) or _EDITION.search(inner):
+    if _SERIES_MARKER.search(inner) or _YEAR.match(inner):
+        return True
+    if _EDITION.search(inner) and not _NUMBERED.search(inner):
         return True
     return re.sub(r"[\W_]", "", inner) in _REGION_QUALIFIERS
 
