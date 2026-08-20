@@ -11,20 +11,19 @@ whatever row reaches an open without them.
 """
 
 import sqlite3
+from dataclasses import dataclass
 
-from src.models.detail_fields import DETAIL_FIELDS, FieldKind
-from src.storage.merge import detail_join
+from src.models.detail_fields import DETAIL_FIELDS, RELEASE_YEAR_FIELDS, FieldKind
+from src.storage.merge import detail_join, stated_release_year
 from src.utils.sorting import build_search_text, get_sort_title
 
 
 def _build_creator_source() -> tuple[str, str]:
     """Build the creator expression and the joins it reads from.
 
-    The creator is chosen by content type, the way
-    ``SQLiteDB._row_to_content_item`` chooses it, so the column stores the
-    name the loaded item shows. A COALESCE over every table would instead
-    take whichever table happened to hold a row for that id, which is the
-    same value only while nothing has left a detail row behind.
+    By content type, as ``SQLiteDB._row_to_content_item`` chooses it: a
+    COALESCE over every table would take whichever table held a row for that
+    id, once anything had left a detail row behind.
     """
     branches: list[str] = []
     joins: list[str] = []
@@ -38,11 +37,31 @@ def _build_creator_source() -> tuple[str, str]:
     return f"CASE ci.content_type {' '.join(branches)} END", " ".join(joins)
 
 
+def _build_year_expression() -> str:
+    """The release-year expression, by content type.
+
+    Books have no branch, so theirs reads NULL: see ``RELEASE_YEAR_FIELDS``.
+    """
+    branches = [
+        f"WHEN '{content_type}' THEN {spec.table_alias}.{field.column}"
+        for content_type, spec in DETAIL_FIELDS.items()
+        if (field := RELEASE_YEAR_FIELDS.get(content_type)) is not None
+    ]
+    return f"CASE ci.content_type {' '.join(branches)} END"
+
+
 _CREATOR_EXPRESSION, _DETAIL_JOINS = _build_creator_source()
+_YEAR_EXPRESSION = _build_year_expression()
 
 _SOURCE_SELECT = (
     f"SELECT ci.id, ci.title, {_CREATOR_EXPRESSION} AS creator"
     f" FROM content_items ci {_DETAIL_JOINS}"
+)
+
+_MATCH_SIGNAL_SELECT = (
+    f"SELECT ci.content_type, ci.title, {_CREATOR_EXPRESSION} AS creator,"
+    f" {_YEAR_EXPRESSION} AS release_year"
+    f" FROM content_items ci {_DETAIL_JOINS} WHERE ci.id = ?"
 )
 
 # The rows the backfill has anything to do. Both columns are written together,
@@ -66,11 +85,26 @@ def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
         _write_row(cursor, row)
 
 
-def read_creator(cursor: sqlite3.Cursor, db_id: int) -> str | None:
-    """The creator stored for one row, chosen by type as a loaded item is."""
-    cursor.execute(f"{_SOURCE_SELECT} WHERE ci.id = ?", (db_id,))
+@dataclass(frozen=True)
+class MatchSignals:
+    """What a title match is vetoed on, read off one stored row."""
+
+    creator: str | None = None
+    release_year: int | None = None
+
+
+def read_match_signals(cursor: sqlite3.Cursor, db_id: int) -> MatchSignals:
+    """The creator and release year one row states, chosen by its type."""
+    cursor.execute(_MATCH_SIGNAL_SELECT, (db_id,))
     row = cursor.fetchone()
-    return str(row["creator"]) if row is not None and row["creator"] else None
+    if row is None:
+        return MatchSignals()
+    return MatchSignals(
+        creator=str(row["creator"]) if row["creator"] else None,
+        release_year=stated_release_year(
+            row["content_type"], row["release_year"], row["title"]
+        ),
+    )
 
 
 def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:

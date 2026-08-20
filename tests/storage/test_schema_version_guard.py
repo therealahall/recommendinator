@@ -31,6 +31,7 @@ import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import schema
+from src.storage.item_merges import MergeEvidence, absorb_item
 from src.storage.schema import _SCHEMA_VERSION, create_schema
 from src.storage.sqlite_db import SQLiteDB
 
@@ -132,6 +133,29 @@ def _rewind_to(db_path: Path, version: int) -> None:
         conn.close()
 
 
+def _merge_by_hand(db_path: Path, survivor: str, absorbed: str) -> None:
+    """Record the merge an operator made on the build that stamped version 9."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        ids = {
+            row["external_id"]: int(row["content_item_id"])
+            for row in cursor.execute(
+                "SELECT external_id, content_item_id FROM content_item_external_ids"
+            ).fetchall()
+        }
+        absorb_item(
+            cursor,
+            survivor_id=ids[survivor],
+            absorbed_id=ids[absorbed],
+            evidence=MergeEvidence.MANUAL,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _seed_the_duplicate_pair(db_path: Path) -> None:
     """Write ``_THE_DUPLICATE_PAIR`` into an existing schema."""
     conn = sqlite3.connect(db_path)
@@ -160,6 +184,28 @@ def _record_external_id(
         " FROM content_items WHERE id = ?",
         (external_id, db_id),
     )
+
+
+def _seed_games(db_path: Path, rows: tuple[tuple[Any, ...], ...]) -> None:
+    """Write video-game rows, each with the release year its source stated."""
+    conn = sqlite3.connect(db_path)
+    try:
+        for external_id, title, normalized_title, release_year in rows:
+            cursor = conn.execute(
+                """INSERT INTO content_items
+                   (user_id, title, normalized_title, content_type, status, source)
+                   VALUES (1, ?, ?, 'video_game', 'unread', 'legacy')""",
+                (title, normalized_title),
+            )
+            _record_external_id(conn, cursor.lastrowid, external_id)
+            conn.execute(
+                "INSERT INTO video_game_details (content_item_id, release_year)"
+                " VALUES (?, ?)",
+                (cursor.lastrowid, release_year),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _content_rows(db_path: Path) -> list[tuple[Any, ...]]:
@@ -506,9 +552,8 @@ class TestRunningTheUpgradeTwiceOverOneLibrary:
 
 
 class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
-    """Version 10 changed the normalizer, so version 9 holds stale keys."""
+    """Versions 10 and 11 changed the normalizer, so older keys are stale."""
 
-    #: The pair from Aaron's library, with the keys version 9 stored for them.
     _FERAL_GODS = (
         (
             "goodreads_rss",
@@ -626,6 +671,67 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         upgraded = self._upgraded(tmp_path, "v9-dunes.db", self._TWO_DUNES)
 
         assert len(_content_rows(upgraded)) == 2
+
+    #: Goodreads re-issued the book under a second id, and the operator merged
+    #: the two rows by hand before this build ever ran.
+    _FERAL_GODS_AND_A_REISSUE = (
+        (
+            "calibre_web",
+            "calibre:51a0e808",
+            "The Gate of the Feral Gods",
+            "gate of the feral gods",
+            None,
+        ),
+        (
+            "goodreads_rss",
+            "57905101",
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+            "gate of the feral gods dungeon crawler carl 4",
+            "Matt Dinniman",
+        ),
+        (
+            "goodreads_rss",
+            "57905102",
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+            "gate of the feral gods dungeon crawler carl 4",
+            "Matt Dinniman",
+        ),
+    )
+
+    def test_a_library_already_holding_a_merge_still_opens(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v9-already-merged.db"
+        _open(db_path)
+        self._seed_books(db_path, self._FERAL_GODS_AND_A_REISSUE)
+        _merge_by_hand(db_path, survivor="57905101", absorbed="57905102")
+        _rewind_to(db_path, 9)
+
+        _open(db_path)
+
+        assert self._groups(db_path) == {
+            "gate of the feral gods": ["57905101", "57905102", "calibre:51a0e808"]
+        }
+
+    #: The pair from Aaron's library, with the keys version 10 stored: the year
+    #: was in the key then, and the release-year veto is all that separates
+    #: them once version 11 takes it out.
+    _THE_TWO_DOOMS = (
+        ("doom-1993", "Doom", "doom", 1993),
+        ("doom-2016", "DOOM (2016)", "doom 2016", None),
+    )
+
+    def test_the_upgrade_leaves_a_remake_beside_the_game_it_remade(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v10-dooms.db"
+        _open(db_path)
+        _seed_games(db_path, self._THE_TWO_DOOMS)
+        _rewind_to(db_path, 10)
+
+        _open(db_path)
+
+        assert len(_content_rows(db_path)) == 2
 
 
 class TestWhatTheDeduplicationPassRefusesToGroup:

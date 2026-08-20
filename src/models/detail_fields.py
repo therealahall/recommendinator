@@ -523,6 +523,17 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
 }
 
 
+#: The field each type states its work's release year in. A book declares none
+#: on purpose: ``year_published`` is the edition's year, so a 1965 Dune and a
+#: 2011 reprint would read as two works.
+RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
+    content_type: field
+    for content_type, spec in DETAIL_FIELDS.items()
+    for field in spec.fields
+    if field.metadata_key == "release_year"
+}
+
+
 def _assert_select_aliases_are_unique() -> None:
     """Fail at import when two detail tables would share a SELECT alias.
 

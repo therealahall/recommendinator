@@ -7,9 +7,13 @@ from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
 from src.models.detail_fields import text_names, to_text
-from src.storage.derived import backfill_derived_columns, read_creator
+from src.storage.derived import backfill_derived_columns, read_match_signals
 from src.storage.item_merges import MergeEvidence, absorb_item
-from src.storage.merge import creators_conflict, normalize_title_for_matching
+from src.storage.merge import (
+    creators_conflict,
+    normalize_title_for_matching,
+    years_conflict,
+)
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -80,13 +84,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 re-normalizes titles. Other versions only record a shape the
-# CREATE/ALTER below reaches.
+# leaves, 10 and 11 re-normalize titles. Other versions only record a shape
+# the CREATE/ALTER below reaches.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -359,7 +363,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 10:
+    elif stored_version < 11:
         # The normalizer learned the parenthetical rules, so stored keys are
         # the old one's. The repair above writes them with this one already.
         _renormalize_titles(cursor)
@@ -521,9 +525,7 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     never finished.
     """
     # Approximate normalization for a column the caller's ALTER may have just
-    # added; the pass below corrects it with the full Python function, which
-    # SQL's lower() cannot match — it strips no punctuation, article or
-    # edition suffix.
+    # added; the pass below corrects it with the full Python function.
     cursor.execute(
         "UPDATE content_items SET normalized_title = lower(title) "
         "WHERE normalized_title IS NULL"
@@ -676,8 +678,7 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
 def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
     """Re-normalize all content_items titles using the full Python function.
 
-    The initial migration backfill uses SQL ``lower(title)`` which misses
-    punctuation stripping, article removal, edition suffix removal, etc.
+    SQL's ``lower(title)`` backfill strips no punctuation, article or suffix.
     """
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
@@ -692,8 +693,8 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
     """Merge duplicate rows exposed by re-normalization.
 
-    Keeps the oldest row of each group, leaves behind one whose creator
-    disagrees, and records each merge for the operator to undo.
+    The keeper is the oldest row, or one already holding a merge, which the
+    one-hop rule forbids absorbing. A disagreeing creator or year is left.
     """
     cursor.execute(
         """SELECT user_id, content_type, normalized_title
@@ -709,10 +710,13 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
         g_content_type = group["content_type"]
         g_normalized = group["normalized_title"]
         cursor.execute(
-            """SELECT id FROM content_items
-               WHERE user_id = ? AND content_type = ? AND normalized_title = ?
-                 AND merged_into IS NULL
-               ORDER BY id""",
+            """SELECT ci.id, EXISTS (
+                   SELECT 1 FROM content_items a WHERE a.merged_into = ci.id
+               ) AS has_absorbed
+               FROM content_items ci
+               WHERE ci.user_id = ? AND ci.content_type = ?
+                 AND ci.normalized_title = ? AND ci.merged_into IS NULL
+               ORDER BY has_absorbed DESC, ci.id""",
             (g_user_id, g_content_type, g_normalized),
         )
         rows = cursor.fetchall()
@@ -721,8 +725,12 @@ def _deduplicate_inline(cursor: sqlite3.Cursor) -> None:
 
         keep_id = rows[0]["id"]
         for dup_row in rows[1:]:
-            if creators_conflict(
-                read_creator(cursor, keep_id), read_creator(cursor, dup_row["id"])
+            if dup_row["has_absorbed"]:
+                continue
+            keeper = read_match_signals(cursor, keep_id)
+            duplicate = read_match_signals(cursor, dup_row["id"])
+            if creators_conflict(keeper.creator, duplicate.creator) or years_conflict(
+                keeper.release_year, duplicate.release_year
             ):
                 continue
             absorb_item(

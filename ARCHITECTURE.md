@@ -235,6 +235,13 @@ back to the normalized title, oldest row first. That fallback skips a row
 already holding another id from the incoming source: a source lists an item
 once, so two of its ids are two items.
 
+The key is deliberately lossy — a series marker, a region qualifier and a
+trailing year all come out of it — and two vetoes make that safe. A creator or
+release year both rows state and disagree on refuses the match: "Dune" by two
+authors, "Doom" against "DOOM (2016)". Books are exempt from the year, whose
+`year_published` is the edition's. Where the key still names two rows, only one
+spelled as the incoming title is taken.
+
 It updates the matched row in place and absorbs nothing: absorbing the
 same-titled rows beside an id match destroyed ids a third source held. A pair
 predating both ids stays two rows until the merge door below joins them.
