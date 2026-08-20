@@ -293,7 +293,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     for child_statement in _CONTENT_ITEM_CHILDREN.values():
         cursor.execute(child_statement)
 
-    # The lookup seeks on the UNIQUE key now; the rebuild's guard sees no index.
+    # The lookup seeks on the UNIQUE key now.
     cursor.execute("DROP INDEX IF EXISTS idx_external_id_lookup")
 
     # All three rebuilds run ahead of every write below, because none can open
