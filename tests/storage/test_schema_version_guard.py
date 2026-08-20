@@ -713,25 +713,50 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
             "gate of the feral gods": ["57905101", "57905102", "calibre:51a0e808"]
         }
 
-    #: The pair from Aaron's library, with the keys version 10 stored: the year
-    #: was in the key then, and the release-year veto is all that separates
-    #: them once version 11 takes it out.
-    _THE_TWO_DOOMS = (
-        ("doom-1993", "Doom", "doom", 1993),
+    #: Aaron's pair, keyed as version 10 keyed it: the year was in the key
+    #: then, and no game plugin fills the ``release_year`` a veto would read.
+    _THE_TWO_DOOMS_NO_SOURCE_DATED = (
+        ("doom-1993", "Doom", "doom", None),
         ("doom-2016", "DOOM (2016)", "doom 2016", None),
     )
 
-    def test_the_upgrade_leaves_a_remake_beside_the_game_it_remade(
+    def test_the_upgrade_leaves_the_remake_no_source_dated_beside_the_original(
         self, tmp_path: Path
     ) -> None:
-        db_path = tmp_path / "v10-dooms.db"
+        """Neither plugin dates a game, so the veto never fires and a Doom goes."""
+        db_path = tmp_path / "v10-undated-dooms.db"
         _open(db_path)
-        _seed_games(db_path, self._THE_TWO_DOOMS)
+        _seed_games(db_path, self._THE_TWO_DOOMS_NO_SOURCE_DATED)
         _rewind_to(db_path, 10)
 
         _open(db_path)
 
         assert len(_content_rows(db_path)) == 2
+
+    _TWO_PAIRS_ALREADY_MERGED = (
+        ("doom-gog", "Doom", "doom", None),
+        ("doom-steam", "Doom", "doom", None),
+        ("doom-2016-epic", "DOOM (2016)", "doom 2016", None),
+        ("doom-2016-humble", "DOOM (2016)", "doom 2016", None),
+    )
+
+    def test_two_rows_already_holding_merges_both_survive_the_upgrade(
+        self, tmp_path: Path
+    ) -> None:
+        """Absorbing a row holding merges of its own raises out of the open."""
+        db_path = tmp_path / "v10-two-merges.db"
+        _open(db_path)
+        _seed_games(db_path, self._TWO_PAIRS_ALREADY_MERGED)
+        _merge_by_hand(db_path, survivor="doom-gog", absorbed="doom-steam")
+        _merge_by_hand(db_path, survivor="doom-2016-epic", absorbed="doom-2016-humble")
+        _rewind_to(db_path, 10)
+
+        _open(db_path)
+
+        assert [row[0] for row in _content_rows(db_path)] == [
+            "doom-gog",
+            "doom-2016-epic",
+        ]
 
 
 class TestWhatTheDeduplicationPassRefusesToGroup:

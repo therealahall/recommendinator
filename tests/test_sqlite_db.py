@@ -12,6 +12,7 @@ from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.detail_fields import to_json_array
 from src.storage import sqlite_db
+from src.storage.item_merges import MergeEvidence
 from src.storage.merge import (
     creators_conflict,
     normalize_creator_for_matching,
@@ -104,11 +105,7 @@ def _external_ids(temp_db: SQLiteDB, db_id: int) -> list[tuple[str, str]]:
 
 
 def _upgrade_merging_the_duplicates(temp_db: SQLiteDB) -> None:
-    """Re-open the seeded database the way an upgrade from before the repair does.
-
-    The only path that still absorbs one row into another, so it is the only
-    one the merge rules below can be asserted through.
-    """
+    """Re-open as an upgrade does: the only path that still absorbs a row."""
     with temp_db.connection() as conn:
         _mark_written_before_the_repair(conn)
         create_schema(conn)
@@ -745,21 +742,37 @@ class TestNormalizeTitleForMatching:
 class TestWhichTrailingParentheticalsAreDropped:
     """Goodreads RSS appends "(Series, #N)" where Calibre appends nothing."""
 
-    def test_a_goodreads_series_marker_matches_the_calibre_row_beside_it(
-        self,
+    #: Pairs off the operator's own shelf, where the marker is never tidy.
+    _ONE_BOOK_TWO_SPELLINGS = [
+        (
+            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
+            "The Gate of the Feral Gods",
+        ),
+        ("Burden to Bear (Spear of the Gods #1)", "Burden to Bear"),
+        ("Endgame (Doom #4)", "Endgame"),
+        ("Dawnshard (The Stormlight Archive, #3.5)", "Dawnshard"),
+        ("A Clash of Kings  (A Song of Ice and Fire, #2)", "A Clash of Kings"),
+    ]
+
+    @pytest.mark.parametrize(("shelved", "bare"), _ONE_BOOK_TWO_SPELLINGS)
+    def test_a_series_position_matches_the_calibre_row_beside_it(
+        self, shelved: str, bare: str
     ) -> None:
-        assert normalize_title_for_matching(
-            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)"
-        ) == normalize_title_for_matching("The Gate of the Feral Gods")
+        assert normalize_title_for_matching(shelved) == normalize_title_for_matching(
+            bare
+        )
 
     def test_a_regional_qualifier_matches_the_same_show_without_one(self) -> None:
         assert normalize_title_for_matching("Hell's Kitchen (US)") == (
             normalize_title_for_matching("Hell's Kitchen")
         )
 
-    def test_a_parenthetical_naming_the_work_is_kept(self) -> None:
-        """An edition names two editions of one work, and stays in the key."""
-        assert normalize_title_for_matching("Frankenstein (Unabridged)") != (
+    def test_an_edition_of_one_work_leaves_the_key(self) -> None:
+        """A translation and an audiobook are the book, as two printings are."""
+        assert normalize_title_for_matching("Brave New World (Indonesian Edition)") == (
+            normalize_title_for_matching("Brave New World")
+        )
+        assert normalize_title_for_matching("Frankenstein (Unabridged)") == (
             normalize_title_for_matching("Frankenstein")
         )
 
@@ -915,8 +928,9 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_a_year_only_one_source_states_does_not_stop_the_match(
         self, temp_db: SQLiteDB
     ) -> None:
+        """Radarr dates a film in a field, and a source that dates none agrees."""
         dated = temp_db.save_content_item(
-            self._dated(ContentType.MOVIE, "radarr", "tmdb:562", "Die Hard (1988)")
+            self._dated(ContentType.MOVIE, "radarr", "tmdb:562", "Die Hard", 1988)
         )
 
         undated = temp_db.save_content_item(
@@ -924,6 +938,20 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         )
 
         assert undated == dated
+
+    def test_a_remake_no_source_dates_stays_off_the_original(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """No game plugin fills release_year, so the title's year is all there is."""
+        original = temp_db.save_content_item(
+            self._dated(ContentType.VIDEO_GAME, "steam", "2280", "Doom")
+        )
+
+        remake = temp_db.save_content_item(
+            self._dated(ContentType.VIDEO_GAME, "epic_games", "379720", "DOOM (2016)")
+        )
+
+        assert remake != original
 
     def test_two_editions_of_one_book_are_not_told_apart_by_their_years(
         self, temp_db: SQLiteDB
@@ -938,6 +966,39 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         )
 
         assert reprint == first
+
+    def test_a_year_in_a_books_title_is_not_a_year_the_book_states(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A book states no release year, so a title year cannot split a reprint."""
+        first = temp_db.save_content_item(
+            self._book("goodreads_rss", "234225", "Dune (1965)", "Frank Herbert")
+        )
+
+        reprint = temp_db.save_content_item(
+            self._book("calibre_web", "calibre:dune", "Dune (2011)", "Frank Herbert")
+        )
+
+        assert reprint == first
+
+    def test_a_survivor_is_reachable_by_the_title_it_is_spelled_with(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A merge must not hide the survivor's own spelling from a later sync."""
+        temp_db.save_content_item(self._show("sonarr", "tvdb:78107", "The Office (UK)"))
+        us = temp_db.save_content_item(
+            self._show("sonarr", "tvdb:73244", "The Office (US)")
+        )
+        plain = temp_db.save_content_item(
+            self._show("sonarr", "tvdb:99999", "The Office")
+        )
+        temp_db.merge_content_items(plain, us, MergeEvidence.MANUAL)
+
+        landed = temp_db.save_content_item(
+            self._show("trakt", "trakt:4063", "The Office")
+        )
+
+        assert landed == plain
 
     def test_calibres_placeholder_author_does_not_veto_the_goodreads_row(
         self, temp_db: SQLiteDB
