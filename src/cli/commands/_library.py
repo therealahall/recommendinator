@@ -31,6 +31,7 @@ from src.storage.manager import (
     SUGGESTION_PAGE_MAX,
     DeclinedPair,
     DuplicateSide,
+    DuplicateSuggestion,
     MergeError,
     MergeEvidence,
     UncorrectableFieldError,
@@ -610,6 +611,17 @@ def _side_summary(side: DuplicateSide) -> str:
     return f"{side.title} ({side.creator or 'N/A'}, {side.source or 'N/A'})"
 
 
+def _proposed(suggestion: DuplicateSuggestion) -> DuplicateSide:
+    return next(
+        side for side in suggestion.copies if side.db_id == suggestion.survivor_id
+    )
+
+
+def _not_live_message(one_id: int, other_ids: tuple[int, ...]) -> str:
+    others = ", ".join(str(other_id) for other_id in other_ids)
+    return f"Items {one_id} and {others} are not a live pair to decline."
+
+
 def _pair_summary(pair: DeclinedPair) -> str:
     return (
         f"{pair.one_title} (#{pair.one_id}) and"
@@ -629,7 +641,7 @@ def _pair_summary(pair: DeclinedPair) -> str:
     "--limit",
     type=click.IntRange(min=1, max=SUGGESTION_PAGE_MAX),
     default=SUGGESTION_PAGE_DEFAULT,
-    help=f"Max pairs to offer (1-{SUGGESTION_PAGE_MAX}, matches web API)",
+    help=f"Max works to offer (1-{SUGGESTION_PAGE_MAX}, matches web API)",
 )
 @click.option(
     "--format",
@@ -653,7 +665,7 @@ def library_duplicates(
     output_format: str,
     user_id: int,
 ) -> None:
-    """List suspected duplicate pairs and what matched them."""
+    """List each work's suspected copies and what matched them."""
     storage = ctx.obj["storage"]
 
     page = storage.list_duplicate_suggestions(
@@ -674,16 +686,19 @@ def library_duplicates(
 
     table_data = [
         [
-            suggestion.survivor.db_id,
-            _side_summary(suggestion.survivor),
-            suggestion.absorbed.db_id,
-            _side_summary(suggestion.absorbed),
+            suggestion.survivor_id,
+            _side_summary(_proposed(suggestion)),
+            "\n".join(
+                f"#{side.db_id} {_side_summary(side)}"
+                for side in suggestion.copies
+                if side.db_id != suggestion.survivor_id
+            ),
             suggestion.content_type,
             suggestion_evidence_label(suggestion.evidence),
         ]
         for suggestion in page.suggestions
     ]
-    headers = ["Keep ID", "Keep", "Absorb ID", "Absorb", "Type", "Evidence"]
+    headers = ["Keep ID", "Keep", "Other copies", "Type", "Evidence"]
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
     click.echo(f"Showing {len(page.suggestions)} of {page.total} suspected duplicates.")
 
@@ -837,14 +852,15 @@ def library_merges(ctx: click.Context, output_format: str, user_id: int) -> None
     "one_id",
     type=int,
     required=True,
-    help="Database ID of one item in the pair",
+    help="Database ID of the copy that is a different work",
 )
 @click.option(
     "--other",
-    "other_id",
+    "other_ids",
     type=int,
     required=True,
-    help="Database ID of the other item in the pair",
+    multiple=True,
+    help="Database ID of a copy it is not, repeated for a whole block",
 )
 @click.option(
     "--format",
@@ -864,22 +880,24 @@ def library_merges(ctx: click.Context, output_format: str, user_id: int) -> None
 def library_decline_duplicate(
     ctx: click.Context,
     one_id: int,
-    other_id: int,
+    other_ids: tuple[int, ...],
     output_format: str,
     user_id: int,
 ) -> None:
-    """Keep a suspected duplicate pair off the list for good."""
+    """Keep one copy off the list for good, against every --other named."""
     storage = ctx.obj["storage"]
 
-    pair = storage.decline_duplicate_suggestion(one_id, other_id, user_id=user_id)
-    if pair is None:
-        abort_with(f"Items {one_id} and {other_id} are not a live pair to decline.")
+    pairs = storage.decline_duplicate_suggestion(one_id, other_ids, user_id=user_id)
+    if not pairs:
+        abort_with(_not_live_message(one_id, other_ids))
 
-    emit_view(
-        output_format,
-        lambda: declined_pair_to_dict(pair),
-        f"{_pair_summary(pair)} will not be offered as duplicates again.",
-    )
+    if output_format == "json":
+        click.echo(
+            json.dumps([declined_pair_to_dict(pair) for pair in pairs], indent=2)
+        )
+        return
+    for pair in pairs:
+        click.echo(f"{_pair_summary(pair)} will not be offered as duplicates again.")
 
 
 @library.command("declined-duplicates")

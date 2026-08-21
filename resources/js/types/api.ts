@@ -473,15 +473,16 @@ export interface DuplicateSide {
   release_year: number | null
 }
 
-/** `evidence` is `normalized_title` (the save door's own key) or
+/** Every copy of one work, and `survivor_id` the copy proposed to keep.
+ *  `evidence` is `normalized_title` (the save door's own key) or
  *  `title_qualifier` (the looser key, which drops a trailing parenthetical). */
 export interface DuplicateSuggestion {
   content_type: string
   evidence: string
   evidence_label: string
   evidence_detail: string
-  survivor: DuplicateSide
-  absorbed: DuplicateSide
+  survivor_id: number
+  copies: DuplicateSide[]
 }
 
 /** `total` counts the whole filtered set, not the slice `suggestions` carries. */

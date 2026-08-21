@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import DuplicatePair from '@/components/molecules/DuplicatePair.vue'
-import { SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from '@/stores/duplicates'
+import { SUGGESTION_LIMITS, decisionKey, useDuplicatesStore } from '@/stores/duplicates'
 import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
@@ -11,7 +11,7 @@ const listEl = ref<HTMLElement | null>(null)
 
 const rows = computed(() =>
   store.suggestions.map((suggestion) => {
-    const key = pairKey(suggestion.survivor.db_id, suggestion.absorbed.db_id)
+    const key = decisionKey(suggestion.copies.map((copy) => copy.db_id))
     return {
       key,
       suggestion,
@@ -48,8 +48,8 @@ function decide(index: number, run: () => Promise<void>): Promise<void> {
   >
     <h3 id="dup-queue-heading" class="dup-heading">Suspected duplicates</h3>
     <p class="help-text">
-      Merging keeps one row and folds the other into it. Nothing is deleted, and
-      every merge can be undone. Dismissing a pair keeps it off this list until
+      Merging keeps one copy and folds the rest into it. Nothing is deleted, and
+      every merge can be undone. Dismissing a copy keeps it off this work until
       you offer it again.
     </p>
 
@@ -61,7 +61,7 @@ function decide(index: number, run: () => Promise<void>): Promise<void> {
       />
       <select
         class="toolbar-select"
-        aria-label="Pairs to offer at once"
+        aria-label="Works to offer at once"
         :value="String(store.limit)"
         @change="store.setFilter('limit', ($event.target as HTMLSelectElement).value)"
       >
@@ -88,7 +88,7 @@ function decide(index: number, run: () => Promise<void>): Promise<void> {
         :declining="row.declining"
         :error="row.error"
         @merge="(keep, drop) => decide(index, () => store.merge(keep, drop))"
-        @decline="(one, other) => decide(index, () => store.declinePair(one, other))"
+        @decline="(copy, others) => decide(index, () => store.declineCopy(copy, others))"
       />
     </ul>
   </section>

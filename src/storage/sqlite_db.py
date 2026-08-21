@@ -78,7 +78,7 @@ which is what raising from inside a sync would do.
 
 import json
 import sqlite3
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -1791,7 +1791,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> SuggestionPage:
-        """Undecided pairs of live rows that look like one work, and how many."""
+        """Undecided blocks of live rows that look like one work, and how many."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             return find_duplicate_suggestions(
@@ -1804,13 +1804,13 @@ class SQLiteDB:
             )
 
     def decline_duplicate_suggestion(
-        self, one_id: int, other_id: int, user_id: int | None = None
-    ) -> DeclinedPair | None:
-        """Refuse a suggested pair for good, returning it, or ``None`` if none."""
+        self, one_id: int, other_ids: Sequence[int], user_id: int | None = None
+    ) -> list[DeclinedPair]:
+        """Set one copy apart from the rest of its block, one pair per refusal."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             declined = decline_duplicate(
-                conn.cursor(), effective_user_id, one_id, other_id
+                conn.cursor(), effective_user_id, one_id, other_ids
             )
             conn.commit()
             return declined

@@ -39,9 +39,9 @@ def _save(
     )
 
 
-def _pairs(manager: StorageManager) -> list[tuple[int, int]]:
+def _blocks(manager: StorageManager) -> list[list[int]]:
     return [
-        (suggestion.survivor.db_id, suggestion.absorbed.db_id)
+        [copy.db_id for copy in suggestion.copies]
         for suggestion in manager.list_duplicate_suggestions().suggestions
     ]
 
@@ -65,7 +65,7 @@ def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
 
     (suggestion,) = _offered(manager)
 
-    assert (suggestion.survivor.db_id, suggestion.absorbed.db_id) == (first, second)
+    assert [copy.db_id for copy in suggestion.copies] == [first, second]
     assert suggestion.evidence is SuggestionEvidence.NORMALIZED_TITLE
     assert suggestion.evidence_detail == "gate of the feral gods"
     assert suggestion.content_type == "book"
@@ -86,20 +86,12 @@ def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
 
     (suggestion,) = _offered(manager)
 
-    assert (suggestion.survivor.db_id, suggestion.absorbed.db_id) == (
-        calibre,
-        goodreads,
-    )
-    assert (suggestion.survivor.creator, suggestion.absorbed.creator) == (
-        None,
-        "Steven Erikson",
-    )
+    assert [copy.db_id for copy in suggestion.copies] == [calibre, goodreads]
+    assert suggestion.survivor_id == calibre
+    assert [copy.creator for copy in suggestion.copies] == [None, "Steven Erikson"]
     assert suggestion.evidence is SuggestionEvidence.TITLE_QUALIFIER
     assert suggestion.evidence_detail == "deadhouse gates"
-    assert (suggestion.survivor.source, suggestion.absorbed.source) == (
-        "calibre",
-        "goodreads_csv",
-    )
+    assert [copy.source for copy in suggestion.copies] == ["calibre", "goodreads_csv"]
 
 
 def test_a_pair_the_save_door_would_refuse_is_never_offered(
@@ -116,22 +108,33 @@ def test_a_pair_the_save_door_would_refuse_is_never_offered(
     assert _offered(manager) == []
 
 
+@pytest.mark.parametrize(
+    ("work", "one_region", "other_region"),
+    [("The Traitors", "US", "AU"), ("Ghosts", "US", "UK")],
+)
 def test_two_regions_are_never_offered_though_each_pairs_with_the_bare_row(
-    manager: StorageManager,
+    manager: StorageManager, work: str, one_region: str, other_region: str
 ) -> None:
-    """The bare key gathers every Traitors, so this pass is where the operator's
-    US and AU rows meet; the row qualifying neither is still one of them."""
-    us = _save(
-        manager, "sonarr", "1", "The Traitors (US)", content_type=ContentType.TV_SHOW
+    """The bare key gathers every one of them, so this pass is where the
+    operator's two regional rows meet; the row qualifying neither is still one
+    of them, and it is the only row either may be offered against."""
+    one = _save(
+        manager,
+        "sonarr",
+        "1",
+        f"{work} ({one_region})",
+        content_type=ContentType.TV_SHOW,
     )
-    au = _save(
-        manager, "sonarr", "2", "The Traitors (AU)", content_type=ContentType.TV_SHOW
+    other = _save(
+        manager,
+        "sonarr",
+        "2",
+        f"{work} ({other_region})",
+        content_type=ContentType.TV_SHOW,
     )
-    bare = _save(
-        manager, "sonarr", "3", "The Traitors", content_type=ContentType.TV_SHOW
-    )
+    bare = _save(manager, "sonarr", "3", work, content_type=ContentType.TV_SHOW)
 
-    assert _pairs(manager) == [(us, bare), (au, bare)]
+    assert _blocks(manager) == [[one, bare], [other, bare]]
 
 
 def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
@@ -141,10 +144,9 @@ def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
 
-    refused = manager.decline_duplicate_suggestion(goodreads, calibre)
-    assert refused is not None
+    (refused,) = manager.decline_duplicate_suggestion(goodreads, [calibre])
     assert (refused.one_id, refused.other_id) == (calibre, goodreads)
-    assert manager.decline_duplicate_suggestion(calibre, goodreads) == refused
+    assert manager.decline_duplicate_suggestion(calibre, [goodreads]) == [refused]
 
     assert _save(manager, "calibre", "1", "Deadhouse Gates") == calibre
     assert (
@@ -162,9 +164,9 @@ def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     manager.merge_content_items(calibre, goodreads, MergeEvidence.MANUAL)
 
-    assert manager.decline_duplicate_suggestion(calibre, calibre) is None
-    assert manager.decline_duplicate_suggestion(calibre, 9999) is None
-    assert manager.decline_duplicate_suggestion(calibre, goodreads) is None
+    assert manager.decline_duplicate_suggestion(calibre, [calibre]) == []
+    assert manager.decline_duplicate_suggestion(calibre, [9999]) == []
+    assert manager.decline_duplicate_suggestion(calibre, [goodreads]) == []
 
 
 def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
@@ -177,7 +179,7 @@ def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
     fourth = _save(manager, "hardcover", "4", "Deadhouse Gates (Book Two of Malazan)")
-    assert manager.decline_duplicate_suggestion(first, third) is not None
+    assert manager.decline_duplicate_suggestion(first, [third]) != []
     holds_first = manager.merge_content_items(second, first, MergeEvidence.MANUAL)
     holds_third = manager.merge_content_items(fourth, third, MergeEvidence.MANUAL)
 
@@ -188,11 +190,11 @@ def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
     assert manager.unmerge_content_items(holds_first.id) == holds_first
     with pytest.raises(MergeError, match=f"before merge {holds_third.id}"):
         manager.undecline_duplicate_suggestion(first, third)
-    assert manager.decline_duplicate_suggestion(first, third) is None
+    assert manager.decline_duplicate_suggestion(first, [third]) == []
 
     assert manager.unmerge_content_items(holds_third.id) == holds_third
     assert manager.undecline_duplicate_suggestion(first, third) is not None
-    assert (first, third) in _pairs(manager)
+    assert _blocks(manager) == [[first, second, third, fourth]]
 
 
 def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
@@ -205,33 +207,32 @@ def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
     manager.merge_content_items(second, third, MergeEvidence.MANUAL)
 
     (offered,) = _offered(manager)
-    assert (offered.survivor.db_id, offered.absorbed.db_id) == (first, second)
-    manager.merge_content_items(
-        offered.survivor.db_id, offered.absorbed.db_id, MergeEvidence.MANUAL
-    )
+    assert [copy.db_id for copy in offered.copies] == [first, second]
+    manager.merge_content_items(offered.survivor_id, second, MergeEvidence.MANUAL)
 
     assert manager.count_items() == 1
     assert _offered(manager) == []
 
 
-def test_a_group_of_four_settles_from_the_pairs_the_pass_offers(
+def test_a_group_of_four_settles_from_one_listing_without_a_fresh_offer(
     manager: StorageManager,
 ) -> None:
-    """Two offered merges leave a pair with a row behind each side."""
+    """Every pair of a block stays mergeable as its copies are folded in, so a
+    bulk pass never has to re-read the offer between them."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
     fourth = _save(manager, "hardcover", "4", "Deadhouse Gates (Book Two of Malazan)")
     assert len({first, second, third, fourth}) == 4
 
-    manager.merge_content_items(first, second, MergeEvidence.MANUAL)
-    manager.merge_content_items(third, fourth, MergeEvidence.MANUAL)
-
     (offered,) = _offered(manager)
-    assert (offered.survivor.db_id, offered.absorbed.db_id) == (first, third)
-    manager.merge_content_items(
-        offered.survivor.db_id, offered.absorbed.db_id, MergeEvidence.MANUAL
-    )
+
+    assert [copy.db_id for copy in offered.copies] == [first, second, third, fourth]
+    for copy in offered.copies:
+        if copy.db_id != offered.survivor_id:
+            manager.merge_content_items(
+                offered.survivor_id, copy.db_id, MergeEvidence.MANUAL
+            )
 
     kept = manager.get_content_item(first)
     assert kept is not None
@@ -245,16 +246,85 @@ def test_a_group_of_four_settles_from_the_pairs_the_pass_offers(
     assert _offered(manager) == []
 
 
-def test_a_group_of_three_offers_every_pair_and_drops_the_ones_a_merge_settles(
+def test_a_merge_inside_a_block_leaves_the_copies_it_did_not_touch_offered(
     manager: StorageManager,
 ) -> None:
-    """A group is resolved one merge at a time, so each pair is offered apart."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
 
-    assert _pairs(manager) == [(first, second), (first, third), (second, third)]
+    assert _blocks(manager) == [[first, second, third]]
 
     manager.merge_content_items(first, second, MergeEvidence.MANUAL)
 
-    assert _pairs(manager) == [(first, third)]
+    assert _blocks(manager) == [[first, third]]
+
+
+def test_three_copies_of_one_work_are_offered_as_one_block_naming_all_three(
+    manager: StorageManager,
+) -> None:
+    first = _save(
+        manager, "goodreads_csv", "1", "The Time of Contempt (The Witcher, #2)"
+    )
+    second = _save(manager, "goodreads_csv", "2", "Time of Contempt")
+    third = _save(manager, "goodreads_csv", "3", "The Time of Contempt")
+
+    (block,) = _offered(manager)
+
+    assert [copy.db_id for copy in block.copies] == [first, second, third]
+    assert block.survivor_id == first
+    assert block.evidence is SuggestionEvidence.NORMALIZED_TITLE
+
+
+def test_a_copy_declined_out_of_a_block_leaves_the_others_pairing(
+    manager: StorageManager,
+) -> None:
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+
+    refused = manager.decline_duplicate_suggestion(third, [first, second])
+
+    assert [(pair.one_id, pair.other_id) for pair in refused] == [
+        (first, third),
+        (second, third),
+    ]
+    assert [
+        (pair.one_id, pair.other_id) for pair in manager.list_declined_duplicates()
+    ] == [(first, third), (second, third)]
+    assert _blocks(manager) == [[first, second]]
+
+    manager.merge_content_items(first, second, MergeEvidence.MANUAL)
+
+    assert _offered(manager) == []
+
+
+def test_a_decline_naming_one_dead_id_stores_none_of_the_pairs_it_named(
+    manager: StorageManager,
+) -> None:
+    """Stored pair by pair, so a refusal reported as refused must leave nothing
+    behind: a half-written one takes a pairing off the block with no row in the
+    declined list to lift it back."""
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+
+    assert manager.decline_duplicate_suggestion(third, [first, 9999]) == []
+
+    assert manager.list_declined_duplicates() == []
+    assert _blocks(manager) == [[first, second, third]]
+
+
+def test_one_refusal_inside_a_group_of_four_leaves_both_blocks_it_splits_into(
+    manager: StorageManager,
+) -> None:
+    """The refused two each still pair with the other two, so the group is two
+    overlapping blocks; a pass keeping one block per copy drops the second."""
+    first = _save(manager, "calibre", "1", "Deadhouse Gates")
+    second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
+    third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
+    fourth = _save(manager, "hardcover", "4", "Deadhouse Gates (Book Two of Malazan)")
+
+    assert manager.decline_duplicate_suggestion(first, [second]) != []
+
+    assert _blocks(manager) == [[first, third, fourth], [second, third, fourth]]

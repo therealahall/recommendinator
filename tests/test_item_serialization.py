@@ -33,8 +33,8 @@ _A_SUGGESTION = DuplicateSuggestion(
     content_type="book",
     evidence=SuggestionEvidence.TITLE_QUALIFIER,
     evidence_detail="deadhouse gates",
-    survivor=_A_SIDE,
-    absorbed=_A_SIDE,
+    survivor_id=_A_SIDE.db_id,
+    copies=(_A_SIDE, _A_SIDE),
 )
 
 _A_MERGE = MergeRecord(
@@ -76,9 +76,8 @@ def test_every_duplicates_payload_carries_the_web_response_model_s_keys() -> Non
     assert set(suggestion_to_dict(_A_SUGGESTION)) == set(
         DuplicateSuggestionResponse.model_fields
     )
-    assert set(suggestion_to_dict(_A_SUGGESTION)["survivor"]) == set(  # type: ignore[arg-type]
-        DuplicateSideResponse.model_fields
-    )
+    (copy, _) = suggestion_to_dict(_A_SUGGESTION)["copies"]  # type: ignore[misc]
+    assert set(copy) == set(DuplicateSideResponse.model_fields)
     assert set(suggestion_page_to_dict(SuggestionPage(total=1, suggestions=[]))) == set(
         DuplicateSuggestionPageResponse.model_fields
     )

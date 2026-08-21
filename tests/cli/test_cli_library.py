@@ -1072,21 +1072,31 @@ def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
         ("goodreads_csv", "4", "Deadhouse Gates (Malazan Book 2)", "Steven Erikson"),
     ]
     db_ids = [
-        storage.save_content_item(
-            ContentItem(
-                id=external_id,
-                source=source,
-                title=title,
-                author=author,
-                content_type=ContentType.BOOK,
-                status=ConsumptionStatus.UNREAD,
-            ),
-            user_id=1,
-        )
+        _save_book(storage, source, external_id, title, author)
         for source, external_id, title, author in rows
     ]
     assert len(set(db_ids)) == len(rows)
     return storage, db_ids
+
+
+def _save_book(
+    storage: StorageManager,
+    source: str,
+    external_id: str,
+    title: str,
+    author: str | None = None,
+) -> int:
+    return storage.save_content_item(
+        ContentItem(
+            id=external_id,
+            source=source,
+            title=title,
+            author=author,
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        ),
+        user_id=1,
+    )
 
 
 def _row_containing(output: str, needle: str) -> str:
@@ -1134,7 +1144,7 @@ def _json(cli_runner: CliRunner, storage: StorageManager, args: list[str]) -> An
 class TestLibraryDuplicates:
     """Suspected duplicates are offered with enough to judge them by."""
 
-    def test_each_pair_shows_both_sides_and_the_looser_key_reads_as_looser(
+    def test_each_block_shows_every_copy_and_the_looser_key_reads_as_looser(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
         storage, _ = _duplicate_library(tmp_path)
@@ -1184,6 +1194,57 @@ class TestLibraryDuplicates:
         assert f"Items {db_ids[0]} and {db_ids[1]} are not a declined pair" in (
             again.output
         )
+
+    def test_three_copies_of_one_work_are_offered_as_one_block(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "witcher.db")
+        titles = [
+            "The Time of Contempt (The Witcher, #2)",
+            "Time of Contempt",
+            "The Time of Contempt",
+        ]
+        db_ids = [
+            _save_book(storage, "goodreads_csv", str(number), title)
+            for number, title in enumerate(titles)
+        ]
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+        table = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+
+        assert offered["total"] == 1
+        (block,) = offered["suggestions"]
+        assert [copy["db_id"] for copy in block["copies"]] == db_ids
+        assert block["survivor_id"] == db_ids[0]
+        assert all(title in table.output for title in titles)
+        assert "Showing 1 of 1 suspected duplicates." in table.output
+
+    def test_declining_one_copy_leaves_the_others_offered_together(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        third = _save_book(
+            storage, "storygraph_csv", "5", "Deadhouse Gates (Malazan, Book Two)"
+        )
+
+        declined = _invoke_with_mocks(
+            cli_runner,
+            ["library", "decline-duplicate", "--one", str(third)]
+            + ["--other", str(db_ids[2]), "--other", str(db_ids[3])],
+            storage,
+        )
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+        listed = _json(cli_runner, storage, ["library", "declined-duplicates"])
+
+        assert declined.exit_code == 0, declined.output
+        assert [
+            [copy["db_id"] for copy in block["copies"]]
+            for block in offered["suggestions"]
+        ] == [[db_ids[0], db_ids[1]], [db_ids[2], db_ids[3]]]
+        assert [(pair["one_id"], pair["other_id"]) for pair in listed] == [
+            (db_ids[2], third),
+            (db_ids[3], third),
+        ]
 
     def test_a_type_filter_and_a_limit_cut_the_offer_without_hiding_the_count(
         self, cli_runner: CliRunner, tmp_path: Path
@@ -1279,7 +1340,7 @@ class TestDuplicateJsonIsTheSharedSerializer:
         lifted = _json(cli_runner, storage, ["library", "undecline-duplicate", *pair])
 
         assert offered == suggestion_page_to_dict(page)
-        assert declined == declined_pair_to_dict(stored)
+        assert declined == [declined_pair_to_dict(stored)]
         assert listed == [declined_pair_to_dict(stored)]
         assert lifted == declined_pair_to_dict(stored)
 
@@ -1398,12 +1459,15 @@ class TestDuplicatesOperatorPath:
         assert ignored.exit_code == 0, ignored.output
 
         offered = _json(cli_runner, storage, ["library", "duplicates"])["suggestions"]
-        # Both pairs, so a pass that withheld the ignored one fails here rather
+        # Both blocks, so a pass that withheld the ignored one fails here rather
         # than passing an emptier version of the merge below.
-        assert {item["absorbed"]["db_id"] for item in offered} == {absorbed, db_ids[3]}
-        (pair,) = [item for item in offered if item["absorbed"]["db_id"] == absorbed]
+        assert [[copy["db_id"] for copy in block["copies"]] for block in offered] == [
+            [survivor, absorbed],
+            [db_ids[2], db_ids[3]],
+        ]
+        (block,) = [item for item in offered if item["copies"][1]["db_id"] == absorbed]
         merged = _merge(
-            cli_runner, storage, pair["survivor"]["db_id"], pair["absorbed"]["db_id"]
+            cli_runner, storage, block["survivor_id"], block["copies"][1]["db_id"]
         )
         assert merged.exit_code == 0, merged.output
 
@@ -1460,7 +1524,7 @@ class TestDuplicatesOperatorPath:
         offered = _json(cli_runner, storage, ["library", "duplicates"])
 
         assert offered["total"] == 5
-        assert {item["survivor"]["title"] for item in offered["suggestions"]} == set(
+        assert {block["copies"][0]["title"] for block in offered["suggestions"]} == set(
             titles[:5]
         )
 

@@ -11,8 +11,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  merge: [survivorId: number, absorbedId: number]
-  decline: [oneId: number, otherId: number]
+  merge: [survivorId: number, absorbedIds: number[]]
+  decline: [copyId: number, otherIds: number[]]
 }>()
 
 const chosen = ref<number | null>(null)
@@ -27,18 +27,19 @@ const typeLabel = computed(
       ?.label ?? props.suggestion.content_type,
 )
 
-const sides = computed(() => {
-  const { survivor, absorbed } = props.suggestion
-  return [
-    view(survivor, absorbed.db_id),
-    view(absorbed, survivor.db_id),
-  ]
-})
+const sides = computed(() => props.suggestion.copies.map(view))
 
-function view(side: DuplicateSide, otherId: number) {
+function others(keepId: number): number[] {
+  return props.suggestion.copies
+    .map((copy) => copy.db_id)
+    .filter((id) => id !== keepId)
+}
+
+function view(side: DuplicateSide) {
   return {
     keepId: side.db_id,
-    dropId: otherId,
+    dropIds: others(side.db_id),
+    proposed: side.db_id === props.suggestion.survivor_id,
     title: side.title,
     creator: side.creator || 'Creator not recorded',
     source: side.source || 'Source not recorded',
@@ -47,18 +48,23 @@ function view(side: DuplicateSide, otherId: number) {
       props.merging && chosen.value === side.db_id
         ? 'Merging…'
         : `Merge, keeping “${side.title}”`,
+    apart:
+      props.declining && chosen.value === side.db_id
+        ? 'Dismissing…'
+        : `“${side.title}” is not the same work`,
   }
 }
 
-function onMerge(keepId: number, dropId: number): void {
+function onMerge(keepId: number, dropIds: number[]): void {
   if (busy.value) return
   chosen.value = keepId
-  emit('merge', keepId, dropId)
+  emit('merge', keepId, dropIds)
 }
 
-function onDecline(): void {
+function onDecline(copyId: number, otherIds: number[]): void {
   if (busy.value) return
-  emit('decline', props.suggestion.survivor.db_id, props.suggestion.absorbed.db_id)
+  chosen.value = copyId
+  emit('decline', copyId, otherIds)
 }
 </script>
 
@@ -89,25 +95,27 @@ function onDecline(): void {
           </template>
           <span aria-hidden="true">·</span>
           <span>row {{ side.keepId }}</span>
+          <template v-if="side.proposed">
+            <span aria-hidden="true">·</span>
+            <span class="dup-side-proposed">suggested to keep</span>
+          </template>
         </p>
         <button
           type="button"
           class="btn btn-secondary dup-side-keep"
           :aria-disabled="busy || undefined"
-          @click="onMerge(side.keepId, side.dropId)"
+          @click="onMerge(side.keepId, side.dropIds)"
         >{{ side.label }}</button>
+        <button
+          type="button"
+          class="btn btn-ghost dup-side-apart"
+          :aria-disabled="busy || undefined"
+          @click="onDecline(side.keepId, side.dropIds)"
+        >{{ side.apart }}</button>
       </div>
     </div>
 
-    <p class="dup-pair-actions">
-      <span v-if="error" class="dup-pair-error">{{ error }}</span>
-      <button
-        type="button"
-        class="btn btn-ghost"
-        :aria-disabled="busy || undefined"
-        @click="onDecline"
-      >{{ declining ? 'Dismissing…' : 'Not duplicates' }}</button>
-    </p>
+    <p v-if="error" class="dup-pair-error">{{ error }}</p>
   </li>
 </template>
 
@@ -195,16 +203,18 @@ function onDecline(): void {
   overflow-wrap: anywhere;
 }
 
-.dup-pair-actions {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  justify-content: flex-end;
-  margin-top: var(--space-3);
+.dup-side-proposed {
+  color: var(--text-primary);
+}
+
+.dup-side-apart {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dup-pair-error {
-  margin-right: auto;
+  margin-top: var(--space-3);
   font-size: var(--text-sm);
   color: var(--color-warning);
 }

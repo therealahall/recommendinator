@@ -1,11 +1,12 @@
-"""Duplicate pairs already in the library, offered rather than merged.
+"""The copies of one work already in the library, offered rather than merged.
 
-Suggestions are computed on demand; only a decline is stored.
-"""
+Suggestions are computed on demand; only a decline is stored, pair by pair
+however many copies a block holds."""
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
@@ -22,7 +23,7 @@ _DECLINE_SELECT = """
       JOIN content_items h ON h.id = d.higher_item_id
 """
 
-#: k copies make k(k-1)/2 pairs, so a first pass runs to hundreds of them.
+#: A library that has never been reviewed offers hundreds of works at once.
 SUGGESTION_PAGE_DEFAULT = 25
 SUGGESTION_PAGE_MAX = 200
 
@@ -53,17 +54,16 @@ class DeclinedPair:
 
 @dataclass(frozen=True)
 class DuplicateSuggestion:
-    """Two live rows that look like one work, and what says so.
+    """Live rows that look like one work, and what says so.
 
-    The roles are a proposal: the older row is offered as the survivor, as the
-    save door resolves a title collision, and either way round is a merge.
-    """
+    *survivor_id* is a proposal — the oldest copy, as the save door resolves a
+    title collision — and any copy may be kept instead."""
 
     content_type: str
     evidence: SuggestionEvidence
     evidence_detail: str
-    survivor: DuplicateSide
-    absorbed: DuplicateSide
+    survivor_id: int
+    copies: tuple[DuplicateSide, ...]
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ def find_duplicate_suggestions(
     content_type: str | None = None,
     limit: int | None = None,
 ) -> SuggestionPage:
-    """Undecided pairs of live rows that look like one work, and how many."""
+    """Undecided blocks of live rows that look like one work, and how many."""
     declined = _declined_pairs(cursor, user_id)
     groups: dict[tuple[str, str], list[MatchRow]] = {}
     for row in read_live_match_rows(cursor, user_id):
@@ -90,14 +90,11 @@ def find_duplicate_suggestions(
         if key:
             groups.setdefault((row.content_type, key), []).append(row)
 
-    suggestions: list[DuplicateSuggestion] = []
-    for (member_type, key), members in groups.items():
-        for survivor, absorbed in combinations(members, 2):
-            if _ordered(survivor.db_id, absorbed.db_id) in declined:
-                continue
-            if signals_conflict(survivor.signals, absorbed.signals):
-                continue
-            suggestions.append(_suggestion(member_type, key, survivor, absorbed))
+    suggestions = [
+        _suggestion(member_type, key, block)
+        for (member_type, key), members in groups.items()
+        for block in _blocks(members, declined)
+    ]
     return SuggestionPage(
         total=len(suggestions),
         suggestions=suggestions if limit is None else suggestions[:limit],
@@ -105,22 +102,24 @@ def find_duplicate_suggestions(
 
 
 def decline_duplicate(
-    cursor: sqlite3.Cursor, user_id: int, one_id: int, other_id: int
-) -> DeclinedPair | None:
-    """Refuse a pair for good, reporting the pair refused, or ``None`` if none.
+    cursor: sqlite3.Cursor, user_id: int, one_id: int, other_ids: Sequence[int]
+) -> list[DeclinedPair]:
+    """Set *one_id* apart from every one of *other_ids*, or from none of them.
 
-    Naming two rows is what survives a re-sync: a source reporting either item
-    again lands on the row it already has.
-    """
-    pair = _live_pair(cursor, user_id, one_id, other_id)
-    if pair is None:
-        return None
-    cursor.execute(
+    One pair per refusal, so the copies it did not name still pair with each
+    other, and a re-sync lands on the rows the refusal already named."""
+    pairs: list[DeclinedPair] = []
+    for other_id in other_ids:
+        pair = _live_pair(cursor, user_id, one_id, other_id)
+        if pair is None:
+            return []
+        pairs.append(pair)
+    cursor.executemany(
         "INSERT OR IGNORE INTO content_item_duplicate_declines"
         " (user_id, lower_item_id, higher_item_id) VALUES (?, ?, ?)",
-        (user_id, pair.one_id, pair.other_id),
+        [(user_id, pair.one_id, pair.other_id) for pair in pairs],
     )
-    return pair
+    return pairs
 
 
 def list_declines(cursor: sqlite3.Cursor, user_id: int) -> list[DeclinedPair]:
@@ -161,25 +160,6 @@ def undecline_duplicate(
         (user_id, *stored),
     )
     return _pair_from_row(row)
-
-
-def _suggestion(
-    content_type: str, key: str, survivor: MatchRow, absorbed: MatchRow
-) -> DuplicateSuggestion:
-    exact = bool(survivor.normalized_title) and (
-        survivor.normalized_title == absorbed.normalized_title
-    )
-    return DuplicateSuggestion(
-        content_type=content_type,
-        evidence=(
-            SuggestionEvidence.NORMALIZED_TITLE
-            if exact
-            else SuggestionEvidence.TITLE_QUALIFIER
-        ),
-        evidence_detail=survivor.normalized_title if exact else key,
-        survivor=_side(survivor),
-        absorbed=_side(absorbed),
-    )
 
 
 def _side(row: MatchRow) -> DuplicateSide:
@@ -235,3 +215,56 @@ def _declined_pairs(cursor: sqlite3.Cursor, user_id: int) -> set[tuple[int, int]
         (user_id,),
     )
     return {(row["lower_item_id"], row["higher_item_id"]) for row in cursor.fetchall()}
+
+
+def _blocks(
+    members: list[MatchRow], declined: set[tuple[int, int]]
+) -> list[list[MatchRow]]:
+    """The largest sets of copies that all still pair, overlapping where a veto
+    or a refusal splits the group. Bron-Kerbosch, because a pass seeded per
+    copy loses a pairing whose largest set that copy is not in."""
+    linked: dict[int, set[int]] = {index: set() for index in range(len(members))}
+    for (index, one), (other_index, other) in combinations(enumerate(members), 2):
+        if _ordered(one.db_id, other.db_id) in declined:
+            continue
+        if signals_conflict(one.signals, other.signals):
+            continue
+        linked[index].add(other_index)
+        linked[other_index].add(index)
+
+    found: list[list[int]] = []
+
+    def extend(block: list[int], candidates: set[int], excluded: set[int]) -> None:
+        if not candidates and not excluded:
+            if len(block) > 1:
+                found.append(block)
+            return
+        for index in sorted(candidates):
+            extend(
+                [*block, index],
+                candidates & linked[index],
+                excluded & linked[index],
+            )
+            candidates = candidates - {index}
+            excluded = excluded | {index}
+
+    extend([], set(linked), set())
+    return [[members[index] for index in block] for block in found]
+
+
+def _suggestion(
+    content_type: str, key: str, copies: list[MatchRow]
+) -> DuplicateSuggestion:
+    titles = {row.normalized_title for row in copies}
+    exact = len(titles) == 1 and bool(copies[0].normalized_title)
+    return DuplicateSuggestion(
+        content_type=content_type,
+        evidence=(
+            SuggestionEvidence.NORMALIZED_TITLE
+            if exact
+            else SuggestionEvidence.TITLE_QUALIFIER
+        ),
+        evidence_detail=copies[0].normalized_title if exact else key,
+        survivor_id=copies[0].db_id,
+        copies=tuple(_side(row) for row in copies),
+    )

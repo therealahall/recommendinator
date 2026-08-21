@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import sqlite3
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -307,18 +307,18 @@ class StorageManager:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> SuggestionPage:
-        """Undecided pairs of live rows that look like one work, and how many."""
+        """Undecided blocks of live rows that look like one work, and how many."""
         return self.sqlite_db.list_duplicate_suggestions(
             user_id=user_id, content_type=content_type, limit=limit
         )
 
     def decline_duplicate_suggestion(
-        self, one_id: int, other_id: int, user_id: int | None = None
-    ) -> DeclinedPair | None:
-        """Refuse a suggested pair for good, returning it, or ``None`` if none."""
+        self, one_id: int, other_ids: Sequence[int], user_id: int | None = None
+    ) -> list[DeclinedPair]:
+        """Set one copy apart from the rest of its block, one pair per refusal."""
         with self._save_lock:
             return self.sqlite_db.decline_duplicate_suggestion(
-                one_id, other_id, user_id=user_id
+                one_id, other_ids, user_id=user_id
             )
 
     def list_declined_duplicates(

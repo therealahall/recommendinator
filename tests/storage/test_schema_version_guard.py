@@ -328,10 +328,10 @@ class TestATableThatArrivedWithoutAVersionBump:
         )
 
         assert [
-            (one.survivor.db_id, one.absorbed.db_id)
+            [copy.db_id for copy in one.copies]
             for one in db.list_duplicate_suggestions().suggestions
-        ] == [(kept, refused)]
-        assert db.decline_duplicate_suggestion(kept, refused) is not None
+        ] == [[kept, refused]]
+        assert db.decline_duplicate_suggestion(kept, [refused]) != []
         assert db.list_duplicate_suggestions().suggestions == []
 
 

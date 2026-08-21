@@ -54,8 +54,8 @@ def suggestion_to_dict(suggestion: DuplicateSuggestion) -> dict[str, object]:
         "evidence": suggestion.evidence.value,
         "evidence_label": suggestion_evidence_label(suggestion.evidence),
         "evidence_detail": suggestion.evidence_detail,
-        "survivor": _side_to_dict(suggestion.survivor),
-        "absorbed": _side_to_dict(suggestion.absorbed),
+        "survivor_id": suggestion.survivor_id,
+        "copies": [_side_to_dict(side) for side in suggestion.copies],
     }
 
 
