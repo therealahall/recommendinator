@@ -163,6 +163,66 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('clearing the creator of an item that states one blocks the save', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-creator').setValue('')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+    const field = wrapper.find('#edit-creator')
+    expect(field.attributes('aria-invalid')).toBe('true')
+    const complaint = wrapper.get(`#${field.attributes('aria-describedby')}`)
+    expect(complaint.text()).toContain('Creator cannot be empty')
+    expect(complaint.attributes('role')).toBe('alert')
+    expect(document.activeElement).toBe(field.element)
+    wrapper.unmount()
+  })
+
+  it('an emptied, out-of-range or non-numeric year is refused, not discarded', async () => {
+    const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
+
+    for (const typed of ['', '20', '2016 (remaster)']) {
+      const wrapper = mount(EditModal, {
+        props: { item, saving: false },
+        attachTo: document.body,
+      })
+
+      await wrapper.find('#edit-release-year').setValue(typed)
+      await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+      expect(wrapper.emitted('save')).toBeUndefined()
+      const field = wrapper.find('#edit-release-year')
+      expect((field.element as HTMLInputElement).value).toBe(typed)
+      // A number input rolls under a stray wheel and drops the paste unread.
+      expect(field.attributes('type')).not.toBe('number')
+      expect(field.attributes('aria-invalid')).toBe('true')
+      const complaint = wrapper.get(`#${field.attributes('aria-describedby')}`)
+      expect(complaint.text()).toContain('Enter a year between 1800 and 2200')
+      expect(complaint.attributes('role')).toBe('alert')
+      expect(document.activeElement).toBe(field.element)
+      wrapper.unmount()
+    }
+  })
+
+  it('an item stating neither is saved with both boxes left empty', async () => {
+    const item = { ...defaultItem, content_type: 'movie', author: null }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    const payload = wrapper.emitted('save')![0][1] as ItemEditRequest
+    expect(payload.creator).toBeNull()
+    expect(payload).not.toHaveProperty('release_year')
+    wrapper.unmount()
+  })
+
   it('a book sends no release year, having none to correct', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false },

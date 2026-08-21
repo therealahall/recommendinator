@@ -183,6 +183,11 @@ class FutureCompletionDateError(ValueError):
         super().__init__("A completion date cannot be in the future.")
 
 
+class UncorrectableFieldError(ValueError):
+    """A correction naming a field the content type does not state — its own
+    type so a broken ``DETAIL_FIELDS`` is not answered as a bad request too."""
+
+
 class SaveOutcome(Enum):
     """What an ingestion write did to the row it landed on.
 
@@ -1494,7 +1499,7 @@ class SQLiteDB:
           stored list.
         - ``release_year`` and ``creator`` set a value and clear none. A veto
           reads each, so an emptied one widens every later match rather than
-          correcting one, and neither surface offers it.
+          correcting one, and both surfaces refuse a blank rather than send one.
 
         For a TV show, status and the season list are two views of one fact, so
         whichever the caller supplied fills in the one it did not. A supplied
@@ -1698,7 +1703,9 @@ class SQLiteDB:
             if value is None:
                 continue
             if field is None or field.column is None:
-                raise ValueError(f"A {content_type} has no {name} to correct.")
+                raise UncorrectableFieldError(
+                    f"A {content_type} has no {name} to correct."
+                )
             updates[field.column] = field.store(value)
         self._write_detail_columns(cursor, db_id, content_type, updates)
 
@@ -1709,7 +1716,9 @@ class SQLiteDB:
         content_type: str,
         updates: dict[str, Any],
     ) -> None:
-        """Write *updates* to the item's detail row, creating it if it has none."""
+        """Write *updates* to the detail row, creating one, or nothing if empty."""
+        if not updates:
+            return
         spec = DETAIL_FIELDS.get(content_type)
         if spec is None:
             raise ValueError(f"Unknown content_type: {content_type!r}")

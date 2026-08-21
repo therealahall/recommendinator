@@ -127,6 +127,7 @@ from src.storage.manager import (
     MergeEvidence,
     MergeRecord,
     StorageManager,
+    UncorrectableFieldError,
     UnknownUserError,
     Unset,
 )
@@ -1617,7 +1618,7 @@ def edit_item(
             creator=request.creator,
             user_id=user_id,
         )
-    except ValueError as error:
+    except UncorrectableFieldError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")

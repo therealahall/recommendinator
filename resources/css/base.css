@@ -1567,6 +1567,16 @@ input[type="checkbox"] {
   border-color: var(--border-focus);
 }
 
+.edit-field input[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
+.edit-field-error {
+  margin: var(--space-1) 0 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
 .edit-modal-divider {
   border: none;
   border-top: 1px solid var(--border-default);

@@ -49,7 +49,13 @@ from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import default_of
 from src.settings.service import build_settings_view
 from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
-from src.storage.manager import UNSET, SavedItem, SaveOutcome, StorageManager
+from src.storage.manager import (
+    UNSET,
+    SavedItem,
+    SaveOutcome,
+    StorageManager,
+    UncorrectableFieldError,
+)
 from src.storage.schema import update_user_settings
 from src.utils.dotted_path import get_leaf
 from src.utils.series import MAX_SEASONS
@@ -5404,7 +5410,7 @@ def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
 
 def test_edit_item_reports_a_type_that_states_no_release_year(client, mock_components):
     mock_components["storage"].update_item_from_ui = Mock(
-        side_effect=ValueError("A book has no release year to correct.")
+        side_effect=UncorrectableFieldError("A book has no release year to correct.")
     )
 
     response = client.patch("/api/items/7?user_id=1", json={"release_year": 1965})

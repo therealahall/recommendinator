@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
@@ -30,13 +30,37 @@ const genres = ref<string[]>(props.item.genres ?? [])
 const tags = ref<string[]>(props.item.tags ?? [])
 const description = ref(props.item.description ?? '')
 
+const creatorInput = ref<HTMLInputElement | null>(null)
+const yearInput = ref<HTMLInputElement | null>(null)
+const creatorError = ref('')
+const yearError = ref('')
+
+const MIN_RELEASE_YEAR = 1800
+const MAX_RELEASE_YEAR = 2200
+const CREATOR_EMPTY = 'Creator cannot be empty.'
+const YEAR_OUT_OF_RANGE = `Enter a year between ${MIN_RELEASE_YEAR} and ${MAX_RELEASE_YEAR}.`
+
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
 const hasReleaseYear = computed(() => props.item.content_type !== 'book')
 
+// Both fields set a value and clear none, so an emptied box asks for something
+// `library edit` refuses too — unless the item states none to begin with.
+function creatorComplaint(): string {
+  return !creator.value.trim() && props.item.author ? CREATOR_EMPTY : ''
+}
+
+function yearComplaint(): string {
+  if (!hasReleaseYear.value) return ''
+  const stated = releaseYear.value.trim()
+  if (!stated) return props.item.release_year === null ? '' : YEAR_OUT_OF_RANGE
+  if (!/^\d+$/.test(stated)) return YEAR_OUT_OF_RANGE
+  const year = Number(stated)
+  return year >= MIN_RELEASE_YEAR && year <= MAX_RELEASE_YEAR ? '' : YEAR_OUT_OF_RANGE
+}
+
 // Status and the checklist are two views of one fact, so each edit derives the
-// other and the payload is always self-consistent. Explicit handlers rather
-// than a watcher each way: watchers would retrigger each other.
+// other. Explicit handlers, not a watcher each way: those retrigger each other.
 function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
   if (!isTvShow.value) return
@@ -53,8 +77,7 @@ function onSeasonsChange(watched: number[]) {
 function onStatusChange(event: Event) {
   status.value = (event.target as HTMLSelectElement).value
   if (!isTvShow.value) return
-  // Only the two ends imply a checklist; "in progress" says nothing about
-  // which seasons, so it leaves them alone.
+  // "In progress" says nothing about which seasons, so it leaves them alone.
   if (status.value === 'completed') {
     seasonsWatched.value = Array.from({ length: props.item.total_seasons! }, (_, i) => i + 1)
   } else if (status.value === 'unread') {
@@ -63,20 +86,30 @@ function onStatusChange(event: Event) {
 }
 
 function save() {
+  // The only other check is the server's, and its 400 renders on the page
+  // behind this dialog's overlay, so a refusal is said here or not at all.
+  creatorError.value = creatorComplaint()
+  yearError.value = yearComplaint()
+  if (creatorError.value || yearError.value) {
+    const offending = creatorError.value ? creatorInput : yearInput
+    void nextTick(() => offending.value?.focus())
+    return
+  }
+
   const data: ItemEditRequest = {
     status: status.value,
     rating: rating.value,
-    // A blank review would store "", which reads as a review the user wrote
-    // and blocks any later import from filling one in. Blank means clear.
+    // Blank clears the review alone: a stored "" reads as one the user wrote.
+    // A blank creator was refused above, so null here means the item has none.
     review: review.value.trim() ? review.value : null,
-    creator: creator.value.trim() ? creator.value : null,
+    creator: creator.value.trim() || null,
     genres: genres.value,
     tags: tags.value,
     description: description.value || null,
   }
-  const year = Number.parseInt(releaseYear.value, 10)
-  if (hasReleaseYear.value && !Number.isNaN(year)) {
-    data.release_year = year
+  const year = releaseYear.value.trim()
+  if (hasReleaseYear.value && year) {
+    data.release_year = Number(year)
   }
   if (isTvShow.value) {
     data.seasons_watched = seasonsWatched.value
@@ -103,12 +136,37 @@ function onBackdropClick(event: MouseEvent) {
 
       <div class="edit-field">
         <label for="edit-creator">Creator</label>
-        <input id="edit-creator" v-model="creator" type="text" maxlength="500" placeholder="Author, director or developer...">
+        <input
+          id="edit-creator"
+          ref="creatorInput"
+          v-model="creator"
+          type="text"
+          maxlength="500"
+          placeholder="Author, director or developer..."
+          :aria-invalid="creatorError ? 'true' : undefined"
+          :aria-describedby="creatorError ? 'edit-creator-error' : undefined"
+        >
+        <p v-if="creatorError" id="edit-creator-error" class="edit-field-error" role="alert">
+          {{ creatorError }}
+        </p>
       </div>
 
       <div v-if="hasReleaseYear" class="edit-field">
         <label for="edit-release-year">Release year</label>
-        <input id="edit-release-year" v-model="releaseYear" type="number" inputmode="numeric" min="1800" max="2200">
+        <!-- Text, not number: a number input silently discards a pasted
+             "2016 (remaster)" and rolls the year under a stray mouse wheel. -->
+        <input
+          id="edit-release-year"
+          ref="yearInput"
+          v-model="releaseYear"
+          type="text"
+          inputmode="numeric"
+          :aria-invalid="yearError ? 'true' : undefined"
+          :aria-describedby="yearError ? 'edit-release-year-error' : undefined"
+        >
+        <p v-if="yearError" id="edit-release-year-error" class="edit-field-error" role="alert">
+          {{ yearError }}
+        </p>
       </div>
 
       <div class="edit-field">

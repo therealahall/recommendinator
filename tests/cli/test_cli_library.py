@@ -25,7 +25,11 @@ from src.models.content import (
     ContentType,
     ExternalId,
 )
-from src.storage.manager import SUGGESTION_PAGE_DEFAULT, StorageManager
+from src.storage.manager import (
+    SUGGESTION_PAGE_DEFAULT,
+    StorageManager,
+    UncorrectableFieldError,
+)
 from src.utils.duplicate_serialization import (
     declined_pair_to_dict,
     merge_to_dict,
@@ -357,6 +361,25 @@ class TestLibraryShow:
         assert result.exit_code == 0
         assert "goodreads_csv: ext-42" in result.output
         assert "steam: 440" in result.output
+
+    def test_show_table_states_the_year_a_correction_would_replace(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Reading what --release-year is about to overwrite must not cost a
+        second run in --format json."""
+        item = _make_item(db_id=42, content_type=ContentType.VIDEO_GAME)
+        item.metadata = {"release_year": 2016}
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "42"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        rows = _labelled_rows(result.output, "Release Year")
+        assert len(rows) == 1
+        assert "2016" in rows[0]
 
     def test_show_json_tv_show_with_seasons(self, cli_runner: CliRunner) -> None:
         """Test that TV show metadata populates seasons_watched and total_seasons."""
@@ -1533,7 +1556,7 @@ class TestLibraryEditCorrections:
         """Storage refuses a year on a book, and only this door turns that into
         a message instead of a traceback."""
         mock_storage = self._game_storage()
-        mock_storage.update_item_from_ui.side_effect = ValueError(
+        mock_storage.update_item_from_ui.side_effect = UncorrectableFieldError(
             "A book has no release year to correct."
         )
 
