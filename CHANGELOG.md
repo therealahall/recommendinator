@@ -1,6 +1,53 @@
 # CHANGELOG
 
 
+## v0.41.0 (2026-08-21)
+
+### Bug Fixes
+
+- **recommendations**: Read the series position Calibre actually writes
+  ([`a343562`](https://github.com/therealahall/recommendinator/commit/a343562c6042a230544ab5d7e49286070e1774bf))
+
+- **storage**: Bound what a duplicate group costs, and say when one is skipped
+  ([`ca06c84`](https://github.com/therealahall/recommendinator/commit/ca06c84cd6dc1796f27069f25739f57c5e32f28c))
+
+- **storage**: Let a region veto a match instead of vanishing into the key
+  ([`409f2c5`](https://github.com/therealahall/recommendinator/commit/409f2c56e2a21dec699b535117e1810fbfd4814a))
+
+- **web**: Keep a refused merge on the page, not on the row that vanished
+  ([`ed9a5fe`](https://github.com/therealahall/recommendinator/commit/ed9a5fed00765a66e2a7ad19356e0a0c7c868a57))
+
+- **web**: Let a refusal take focus, so it is read wherever it lands
+  ([`ea7030e`](https://github.com/therealahall/recommendinator/commit/ea7030e81f24fefd99c7324392148a6b3bdf70b0))
+
+- **web**: Say why a correction was refused, inside the dialog
+  ([`cca8972`](https://github.com/therealahall/recommendinator/commit/cca8972237609ad68484eac464c81267b418a264))
+
+- **web**: Send a correction only when it changed
+  ([`857e569`](https://github.com/therealahall/recommendinator/commit/857e569c13960bcf25ca668859ba620f5aec38cb))
+
+### Documentation
+
+- **cli**: Name both reasons a work is left out of the review
+  ([`cee6018`](https://github.com/therealahall/recommendinator/commit/cee60183c815da2ff3ca8ef9cbc576d424763bb1))
+
+- **cli**: State the creator bound beside the year's
+  ([`7f06535`](https://github.com/therealahall/recommendinator/commit/7f0653541f5d88780a17001f9de55405c896ed44))
+
+### Features
+
+- **library**: Correct a wrong release year or creator from either interface
+  ([`a373abd`](https://github.com/therealahall/recommendinator/commit/a373abd30b0a33b08e87512ad91bcca462a6c271))
+
+- **library**: Offer a work's copies as one block, not a pair per combination
+  ([`c9153c4`](https://github.com/therealahall/recommendinator/commit/c9153c44640e7e5dfe902837b067dff383a75809))
+
+### Refactoring
+
+- **storage**: Remove the only door that can unhide a merged row
+  ([`ced3bfb`](https://github.com/therealahall/recommendinator/commit/ced3bfbe22f5134425be52c9c3144c957ca353a4))
+
+
 ## v0.40.0 (2026-08-21)
 
 ### Bug Fixes
