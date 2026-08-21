@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v0.40.0 (2026-08-21)
+
+### Bug Fixes
+
+- **storage**: Keep a refusal until it can be honoured
+  ([`8d45308`](https://github.com/therealahall/recommendinator/commit/8d453083ec2a85d9e44ca6e86a845fb4e4a5dd20))
+
+- **web**: Hand focus to the pair that took the decided one's place
+  ([`a16ed9c`](https://github.com/therealahall/recommendinator/commit/a16ed9cefbec1c20d2fe3482eec6be2f2ac8ecfb))
+
+- **web**: Wrap the merge label instead of running it off the card
+  ([`d0d18e5`](https://github.com/therealahall/recommendinator/commit/d0d18e5cf65da8bf05310b51baf81ec84c1ab5fa))
+
+### Features
+
+- **web**: Review duplicates, merge a pair, and undo it from either interface
+  ([`9a58920`](https://github.com/therealahall/recommendinator/commit/9a589202a707020958b901eb1fe2e8d6cd759a4d))
+
+### Testing
+
+- Keep one pin per guarantee across the three layers
+  ([`89054e9`](https://github.com/therealahall/recommendinator/commit/89054e94f08ab7b30f541e4e4a2d0dcd7ba41f01))
+
+- Pin that a row is hidden exactly while a merge record names it
+  ([`193fd7b`](https://github.com/therealahall/recommendinator/commit/193fd7bbf814093157271f3f949c7caa4435b77d))
+
+- **cli**: Assert every duplicates verb emits what the serializer made
+  ([`7268486`](https://github.com/therealahall/recommendinator/commit/7268486743df42d6a74f038e79145776028d23dd))
+
+- **css**: Measure the surfaces the pair card actually renders
+  ([`aee0403`](https://github.com/therealahall/recommendinator/commit/aee0403af48de05876feb97cea0afadc93b6f75d))
+
+- **web**: Pin the page default across the language boundary too
+  ([`21ed610`](https://github.com/therealahall/recommendinator/commit/21ed610985ab83a303944e551d0f8f3644b0a55d))
+
+
 ## v0.39.0 (2026-08-20)
 
 ### Bug Fixes
