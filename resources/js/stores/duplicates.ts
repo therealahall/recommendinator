@@ -12,7 +12,7 @@ import type {
 /** Reaches SUGGESTION_PAGE_MAX, the ceiling the API and the CLI both take:
  *  a first pass over a real library runs to hundreds of pairs. */
 export const SUGGESTION_LIMITS = [10, 25, 50, 100, 200] as const
-const DEFAULT_LIMIT = 25
+export const DEFAULT_LIMIT = 25
 
 /** A pair in either order, so a decision on it is keyed the same way twice. */
 export function pairKey(one: number, other: number): string {
