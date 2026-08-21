@@ -189,6 +189,10 @@ function onDecline(): void {
 .dup-side-keep {
   margin-top: auto;
   text-align: left;
+  /* The label carries the whole title, which a phone cannot fit on one line,
+     and shortening it would take the survivor out of the accessible name. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .dup-pair-actions {
