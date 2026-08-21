@@ -116,6 +116,24 @@ def test_a_pair_the_save_door_would_refuse_is_never_offered(
     assert _offered(manager) == []
 
 
+def test_two_regions_are_never_offered_though_each_pairs_with_the_bare_row(
+    manager: StorageManager,
+) -> None:
+    """The bare key gathers every Traitors, so this pass is where the operator's
+    US and AU rows meet; the row qualifying neither is still one of them."""
+    us = _save(
+        manager, "sonarr", "1", "The Traitors (US)", content_type=ContentType.TV_SHOW
+    )
+    au = _save(
+        manager, "sonarr", "2", "The Traitors (AU)", content_type=ContentType.TV_SHOW
+    )
+    bare = _save(
+        manager, "sonarr", "3", "The Traitors", content_type=ContentType.TV_SHOW
+    )
+
+    assert _pairs(manager) == [(us, bare), (au, bare)]
+
+
 def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
     manager: StorageManager,
 ) -> None:

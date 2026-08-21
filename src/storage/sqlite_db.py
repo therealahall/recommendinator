@@ -132,6 +132,7 @@ from src.storage.merge import (
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
+    stated_region,
     stated_release_year,
 )
 from src.storage.schema import (
@@ -389,6 +390,7 @@ def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignal
     return MatchSignals(
         creator=_incoming_creator(item, content_type_value),
         release_year=stated_release_year(content_type_value, stated, item.title),
+        region=stated_region(item.title),
     )
 
 
@@ -404,7 +406,7 @@ def _title_match(
     normalized_title: str,
     item: ContentItem,
 ) -> int | None:
-    """The row of this key the creator and year allow.
+    """The row of this key the creator, year and region allow.
 
     Each candidate is weighed against what it states, so a spelling it rules
     out is not answered to. Where two rows remain, only one spelled the same
