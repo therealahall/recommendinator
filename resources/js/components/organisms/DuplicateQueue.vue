@@ -2,7 +2,12 @@
 import { computed, ref } from 'vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import DuplicatePair from '@/components/molecules/DuplicatePair.vue'
-import { SUGGESTION_LIMITS, decisionKey, useDuplicatesStore } from '@/stores/duplicates'
+import {
+  SUGGESTION_LIMITS,
+  decisionKey,
+  refusalAlert,
+  useDuplicatesStore,
+} from '@/stores/duplicates'
 import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
@@ -40,6 +45,7 @@ function decide(
     index,
     () => rows.value.map((row) => row.key),
     run,
+    () => refusalAlert(store.error),
     surviving,
   )
 }

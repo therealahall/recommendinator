@@ -98,8 +98,9 @@ lists them a work at a time, naming every copy it found, `library merge`
 collapses one copy into another, and `library unmerge` undoes it. The
 Duplicates page in the web UI is the same review, a block per work.
 
-A work with more than 40 copies matching is left out of both, with a warning in
-the log naming it: merge some of them and the rest are offered again.
+A work with more than 40 copies matching is left out of both, as is one whose
+copies split more ways than a page holds, with a warning in the log naming it:
+merge some of them and the rest are offered again.
 
 ## Web interface
 

@@ -1,20 +1,27 @@
 import { nextTick, type Ref } from 'vue'
 
-/** Keeps a keyboard user off <body> when a decision unmounts the row they had
- *  (WCAG 2.4.3): *preferred* where it survived, else the nearest row below.
- *  Read after the run, since a part-way failure decides what survives. */
+/** Sends focus where a decision left something to read (WCAG 2.4.3): the
+ *  *refusal* it drew, else, where it unmounted the row, *preferred* if that
+ *  survived and the nearest row below if not. Read after the run. */
 export async function keepFocusInList(
   list: Ref<HTMLElement | null>,
   fallback: Ref<HTMLElement | null>,
   index: number,
   keys: () => string[],
   run: () => Promise<void>,
+  refusal: () => HTMLElement | null = () => null,
   preferred: () => string = () => '',
 ): Promise<void> {
   const focused = document.activeElement
   const before = keys()
   await run()
   await nextTick()
+  // Above the guards: a refusal that changed nothing leaves its control focused.
+  const refused = refusal()
+  if (refused !== null) {
+    refused.focus()
+    return
+  }
   if (!(focused instanceof HTMLElement) || focused.isConnected) return
   if (document.activeElement !== null && document.activeElement !== document.body) return
   const after = keys()

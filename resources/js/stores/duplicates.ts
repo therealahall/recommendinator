@@ -19,6 +19,12 @@ export function decisionKey(ids: number[]): string {
   return [...ids].sort((one, other) => one - other).join(':')
 }
 
+export const REFUSAL_ALERT_ID = 'dup-alert'
+
+export function refusalAlert(message: string): HTMLElement | null {
+  return message ? document.getElementById(REFUSAL_ALERT_ID) : null
+}
+
 export interface MergeRow {
   record: MergeRecord
   /** Empty when legal, else the merge to undo first: the server sequences

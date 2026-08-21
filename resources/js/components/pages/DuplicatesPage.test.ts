@@ -20,10 +20,6 @@ vi.mock('@/composables/useApi', () => ({
 
 enableAutoUnmount(afterEach)
 
-// jsdom has no layout, so it implements no scrolling at all.
-const scrolledTo = vi.fn()
-Element.prototype.scrollIntoView = scrolledTo
-
 function page(blocks: DuplicateSuggestion[], skippedNote = '') {
   return { total: blocks.length, skipped_note: skippedNote, suggestions: blocks }
 }
@@ -46,10 +42,12 @@ function block(...ids: number[]): DuplicateSuggestion {
   }
 }
 
-/** What a sighted operator reads, not what only the screen reader hears. */
-function refusalOnScreen(wrapper: ReturnType<typeof mount>): string {
-  const alert = wrapper.get('[role="alert"]')
-  return alert.isVisible() ? alert.text() : ''
+function mountPage() {
+  return mount(DuplicatesPage, { attachTo: document.body })
+}
+
+function alertOf(wrapper: ReturnType<typeof mountPage>) {
+  return wrapper.get('[role="alert"]')
 }
 
 describe('DuplicatesPage', () => {
@@ -58,31 +56,48 @@ describe('DuplicatesPage', () => {
     mockGet.mockReset()
     mockPost.mockReset()
     mockDelete.mockReset()
-    scrolledTo.mockReset()
   })
 
-  it('shows the refusal a part-way merge drew, though the block it named is gone', async () => {
+  it('hands focus to the refusal a part-way merge drew, its block being gone', async () => {
     // Reported: the block silently shrank to two copies and said nothing. The
-    // reload re-keys it, so the row that would have printed the refusal is gone.
+    // reload re-keys it, so the row that would have printed the refusal is gone,
+    // and focusing the survivor instead scrolls the refusal off the screen.
     const offers = [block(10, 11, 12), block(10, 12)]
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([offers.shift() ?? block(10, 12)]) : [],
     )
     mockPost.mockResolvedValueOnce({ survivor_title: 'Row 10', absorbed_title: 'Row 11' })
     mockPost.mockRejectedValueOnce(new Error('Item 11 is already merged into 10.'))
-    const wrapper = mount(DuplicatesPage)
+    const wrapper = mountPage()
     await flushPromises()
 
     const keepFirst = wrapper
       .findAll('button')
       .find((one) => one.text().includes('keeping “Row 10”'))!
+    ;(keepFirst.element as HTMLElement).focus()
     await keepFirst.trigger('click')
     await flushPromises()
 
-    expect(refusalOnScreen(wrapper)).toContain('Item 11 is already merged into 10.')
+    expect(document.activeElement).toBe(alertOf(wrapper).element)
+    expect(alertOf(wrapper).text()).toContain('Item 11 is already merged into 10.')
     expect(wrapper.get('.dup-list').text()).not.toContain('already merged into 10.')
     expect(wrapper.get('.dup-list').text()).not.toContain('Row 11')
-    expect(scrolledTo).toHaveBeenCalled()
+  })
+
+  it('hands focus to the refusal a merge drew with its block still on the list', async () => {
+    // Nothing merged, so the block reloads keyed as it was and keeps the button.
+    const offer = page([block(10, 11)])
+    mockGet.mockImplementation(async (url) => (url === '/duplicates' ? offer : []))
+    mockPost.mockRejectedValue(new Error('Item 11 is already merged into 10.'))
+    const wrapper = mountPage()
+    await flushPromises()
+    const keep = wrapper.findAll('button').find((one) => one.text().includes('keeping'))!
+    ;(keep.element as HTMLElement).focus()
+    await keep.trigger('click')
+    await flushPromises()
+
+    expect(alertOf(wrapper).text()).toContain('already merged into 10.')
+    expect(document.activeElement).toBe(alertOf(wrapper).element)
   })
 
   it('reports a refused offer again, whose row the reload took off the list', async () => {
@@ -94,22 +109,25 @@ describe('DuplicatesPage', () => {
       return mockDelete.mock.calls.length === 0 ? [pair] : []
     })
     mockDelete.mockRejectedValue(new Error('Items 20 and 21 are not a declined pair.'))
-    const wrapper = mount(DuplicatesPage)
+    const wrapper = mountPage()
     await flushPromises()
 
-    await wrapper.findAll('button').find((one) => one.text() === 'Offer again')!.trigger('click')
+    const offer = wrapper.findAll('button').find((one) => one.text() === 'Offer again')!
+    ;(offer.element as HTMLElement).focus()
+    await offer.trigger('click')
     await flushPromises()
 
-    expect(refusalOnScreen(wrapper)).toContain('are not a declined pair.')
+    expect(document.activeElement).toBe(alertOf(wrapper).element)
+    expect(alertOf(wrapper).text()).toContain('are not a declined pair.')
   })
 
   it('says a work was left unsearched rather than showing its empty state', async () => {
     // Counted in neither number, a skipped work reads as a library with none.
-    const note = '1 work is not offered: too many ways to group its copies.'
+    const note = '1 work is not offered: too many copies to review at once.'
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([], note) : [],
     )
-    const wrapper = mount(DuplicatesPage)
+    const wrapper = mountPage()
     await flushPromises()
 
     expect(wrapper.text()).toContain(note)
@@ -122,7 +140,7 @@ describe('DuplicatesPage', () => {
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([]) : [],
     )
-    const wrapper = mount(DuplicatesPage)
+    const wrapper = mountPage()
     await flushPromises()
 
     const alert = wrapper.get('[role="alert"]')

@@ -25,7 +25,7 @@ from src.models.content import (
     ContentType,
     ExternalId,
 )
-from src.storage.duplicates import GROUP_MEMBER_MAX
+from src.storage.duplicates import GROUP_MEMBER_MAX, MAX_DECLINE_OTHERS
 from src.storage.manager import (
     SUGGESTION_PAGE_DEFAULT,
     StorageManager,
@@ -1278,6 +1278,30 @@ class TestLibraryDuplicates:
             f"Item {third} and items {db_ids[3]}, 9999 are not live pairs to decline."
             in dead.output
         )
+
+    def test_a_decline_naming_more_copies_than_a_block_holds_is_refused(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A block holds 40, so the largest list a listing offers has to be taken."""
+        storage, db_ids = _duplicate_library(tmp_path)
+
+        def decline(count: int) -> Any:
+            others: list[str] = []
+            for other_id in range(9000, 9000 + count):
+                others += ["--other", str(other_id)]
+            return _invoke_with_mocks(
+                cli_runner,
+                ["library", "decline-duplicate", "--one", str(db_ids[0]), *others],
+                storage,
+            )
+
+        taken = decline(MAX_DECLINE_OTHERS)
+        over = decline(MAX_DECLINE_OTHERS + 1)
+
+        assert taken.exit_code != 0
+        assert "are not live pairs to decline." in taken.output
+        assert over.exit_code != 0
+        assert f"--other accepts at most {MAX_DECLINE_OTHERS} values." in over.output
 
     def test_a_copy_two_blocks_both_offer_says_so_in_each_of_them(
         self, cli_runner: CliRunner, tmp_path: Path
