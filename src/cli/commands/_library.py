@@ -33,6 +33,7 @@ from src.storage.manager import (
     DuplicateSide,
     MergeError,
     MergeEvidence,
+    UncorrectableFieldError,
     unset_if_none,
 )
 from src.utils.duplicate_serialization import (
@@ -247,9 +248,11 @@ def library_show(
         # A book has an author and a movie a director, so the row is labelled
         # with the creator column the type declares: "director" as "Director".
         creator_label = DETAIL_FIELDS[content_type].creator_column.title()
+        release_year = serialized["release_year"]
         table_data = [
             ["Title", item.title],
             [creator_label, item.author or "N/A"],
+            ["Release Year", "N/A" if release_year is None else release_year],
             ["Type", content_type],
             ["Status", get_enum_value(item.status)],
             ["Rating", "N/A" if item.rating is None else item.rating],
@@ -492,7 +495,7 @@ def library_edit(
             creator=creator,
             user_id=user_id,
         )
-    except ValueError as error:
+    except UncorrectableFieldError as error:
         abort_with(str(error))
 
     if updated:

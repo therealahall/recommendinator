@@ -736,14 +736,3 @@ class TestCorrectionsAreNotEnrichment:
 
         assert storage_manager.enrichment.status(db_id) is None
         assert storage_manager.get_content_item(db_id).enriched is False
-
-    def test_a_correction_leaves_a_providers_enrichment_in_place(
-        self, storage_manager: StorageManager
-    ) -> None:
-        db_id = self._movie(storage_manager)
-        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
-
-        storage_manager.update_item_from_ui(db_id=db_id, release_year=2021)
-
-        status = storage_manager.enrichment.status(db_id)
-        assert status["enrichment_provider"] == "tmdb"

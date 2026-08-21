@@ -53,6 +53,7 @@ from src.storage.sqlite_db import SaveCounts as SaveCounts
 from src.storage.sqlite_db import SavedItem as SavedItem
 from src.storage.sqlite_db import SaveOutcome as SaveOutcome
 from src.storage.sqlite_db import SQLiteDB
+from src.storage.sqlite_db import UncorrectableFieldError as UncorrectableFieldError
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
 from src.storage.sync_runs import SyncRunStore

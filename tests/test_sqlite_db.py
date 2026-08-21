@@ -4799,6 +4799,19 @@ class TestCorrectingWhatAMatchIsVetoedOn:
         stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
         assert stated == released
 
+    def test_a_corrected_creator_reads_back_as_the_author_and_is_searchable(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._doom("gog", "1435828767", 2016))
+
+        temp_db.update_item_from_ui(db_id=db_id, creator="id Software")
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.author == "id Software"
+        found = temp_db.get_content_items(search="id Software")
+        assert [item.db_id for item in found] == [db_id]
+
     def test_the_source_that_stated_the_wrong_year_does_not_restate_it(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4825,6 +4838,18 @@ class TestCorrectingWhatAMatchIsVetoedOn:
         assert item is not None
         assert item.metadata["release_year"] == 1993
         assert item.author == "id Software"
+
+    def test_a_correction_outranks_the_year_the_title_spells_out(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        released = temp_db.save_content_item(
+            self._doom("epic_games", "379720", title="DOOM (2016)")
+        )
+
+        temp_db.update_item_from_ui(db_id=released, release_year=1993)
+
+        stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
+        assert stated == released
 
     def test_a_book_states_no_release_year_to_correct(self, temp_db: SQLiteDB) -> None:
         db_id = temp_db.save_content_item(
