@@ -444,24 +444,6 @@ def test_get_completed_items(temp_db: SQLiteDB) -> None:
     assert all(item.rating >= 4 for item in completed)
 
 
-def test_delete_content_item(temp_db: SQLiteDB) -> None:
-    """Test deleting a content item."""
-    item = ContentItem(
-        id="123",
-        title="Test Book",
-        content_type=ContentType.BOOK,
-        status=ConsumptionStatus.UNREAD,
-    )
-
-    db_id = temp_db.save_content_item(item)
-    assert temp_db.get_content_item(db_id) is not None
-
-    deleted = temp_db.delete_content_item(db_id)
-    assert deleted is True
-
-    assert temp_db.get_content_item(db_id) is None
-
-
 def test_count_items(temp_db: SQLiteDB) -> None:
     """Test counting items."""
     items = [

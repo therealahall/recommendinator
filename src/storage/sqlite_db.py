@@ -1800,20 +1800,6 @@ class SQLiteDB:
             conn.commit()
             return lifted
 
-    def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
-        """Delete a content item by database ID."""
-        with self.connection() as conn:
-            cursor = conn.cursor()
-            if user_id is not None:
-                cursor.execute(
-                    "DELETE FROM content_items WHERE id = ? AND user_id = ?",
-                    (db_id, user_id),
-                )
-            else:
-                cursor.execute("DELETE FROM content_items WHERE id = ?", (db_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:

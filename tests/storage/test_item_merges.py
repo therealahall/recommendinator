@@ -5,6 +5,7 @@ for column, not the fields the merge was expected to move.
 """
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -538,3 +539,20 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
 
     db.unmerge_content_items(record.id)
     assert _snapshot(db, absorbed_id) == before
+
+
+def test_no_door_in_src_deletes_a_content_row() -> None:
+    """A deleted row takes its children, external ids and merge record out by
+    cascade, with no undo holding them. The boundary spares the migration's
+    ``content_items_old``."""
+    doors = re.compile(r"delete\s+from\s+content_items\b", re.IGNORECASE)
+    assert doors.search("DELETE FROM content_items WHERE id = ?")
+    src = Path(__file__).resolve().parents[2] / "src"
+
+    offenders = [
+        str(module.relative_to(src))
+        for module in sorted(src.rglob("*.py"))
+        if doors.search(module.read_text(encoding="utf-8"))
+    ]
+
+    assert offenders == []

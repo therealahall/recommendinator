@@ -227,23 +227,6 @@ def test_a_group_of_four_settles_from_the_pairs_the_pass_offers(
     assert _offered(manager) == []
 
 
-def test_a_new_row_taking_a_deleted_ones_place_does_not_inherit_the_refusal(
-    manager: StorageManager,
-) -> None:
-    """An id handed out twice hides a duplicate; the DELETE lands by cascade."""
-    kept = _save(manager, "calibre", "1", "Deadhouse Gates")
-    refused = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
-    assert manager.decline_duplicate_suggestion(kept, refused) is not None
-
-    assert manager.delete_content_item(refused) is True
-    replacement = _save(
-        manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)"
-    )
-
-    assert replacement != refused
-    assert _pairs(manager) == [(kept, replacement)]
-
-
 def test_a_group_of_three_offers_every_pair_and_drops_the_ones_a_merge_settles(
     manager: StorageManager,
 ) -> None:

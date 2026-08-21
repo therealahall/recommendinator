@@ -335,10 +335,6 @@ class StorageManager:
                 one_id, other_id, user_id=user_id
             )
 
-    def delete_content_item(self, db_id: int, user_id: int | None = None) -> bool:
-        """Delete a content item, reporting whether there was one."""
-        return self.sqlite_db.delete_content_item(db_id, user_id=user_id)
-
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
