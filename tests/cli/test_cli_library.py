@@ -22,7 +22,12 @@ from src.models.content import (
     ContentType,
     ExternalId,
 )
-from src.storage.manager import StorageManager
+from src.storage.manager import SUGGESTION_PAGE_DEFAULT, StorageManager
+from src.utils.duplicate_serialization import (
+    declined_pair_to_dict,
+    merge_to_dict,
+    suggestion_page_to_dict,
+)
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 
@@ -1057,7 +1062,6 @@ def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
 
 
 def _row_containing(output: str, needle: str) -> str:
-    """The one rendered table row carrying *needle*."""
     (row,) = [line for line in output.splitlines() if needle in line]
     return row
 
@@ -1226,6 +1230,48 @@ class TestLibraryMerge:
 
         assert result.exit_code != 0
         assert f"Merge {oldest} cannot be undone before merge {newest}" in result.output
+
+
+class TestDuplicateJsonIsTheSharedSerializer:
+    """Nothing else runs a verb and checks the serializer built its json."""
+
+    def test_every_suggestion_and_refusal_verb_emits_what_it_makes(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+        pair = ["--one", str(db_ids[0]), "--other", str(db_ids[1])]
+        page = storage.list_duplicate_suggestions(
+            user_id=1, limit=SUGGESTION_PAGE_DEFAULT
+        )
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+        declined = _json(cli_runner, storage, ["library", "decline-duplicate", *pair])
+        (stored,) = storage.list_declined_duplicates(user_id=1)
+        listed = _json(cli_runner, storage, ["library", "declined-duplicates"])
+        lifted = _json(cli_runner, storage, ["library", "undecline-duplicate", *pair])
+
+        assert offered == suggestion_page_to_dict(page)
+        assert declined == declined_pair_to_dict(stored)
+        assert listed == [declined_pair_to_dict(stored)]
+        assert lifted == declined_pair_to_dict(stored)
+
+    def test_every_merge_verb_emits_what_it_makes(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage, db_ids = _duplicate_library(tmp_path)
+
+        merged = json.loads(
+            _merge(cli_runner, storage, db_ids[0], db_ids[1], fmt="json").output
+        )
+        (stored,) = storage.list_content_item_merges(user_id=1)
+        listed = _json(cli_runner, storage, ["library", "merges"])
+        undone = _json(
+            cli_runner, storage, ["library", "unmerge", "--merge-id", str(stored.id)]
+        )
+
+        assert merged == merge_to_dict(stored)
+        assert listed == [merge_to_dict(stored)]
+        assert undone == merge_to_dict(stored)
 
 
 class TestDuplicatesWrongIds:

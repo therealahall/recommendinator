@@ -41,7 +41,13 @@ const declinedRows = computed(() =>
 )
 
 function undo(index: number, mergeId: number): Promise<void> {
-  return keepFocusInList(mergesEl, historyEl, index, store.undoMerge(mergeId))
+  return keepFocusInList(
+    mergesEl,
+    historyEl,
+    index,
+    () => mergeRows.value.map((row) => String(row.id)),
+    () => store.undoMerge(mergeId),
+  )
 }
 
 function offerAgain(index: number, oneId: number, otherId: number): Promise<void> {
@@ -49,7 +55,8 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
     declinedEl,
     historyEl,
     index,
-    store.offerAgain(oneId, otherId),
+    () => declinedRows.value.map((row) => row.key),
+    () => store.offerAgain(oneId, otherId),
   )
 }
 </script>

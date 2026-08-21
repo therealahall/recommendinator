@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DuplicateQueue from './DuplicateQueue.vue'
@@ -47,7 +48,6 @@ function dismissButton(wrapper: ReturnType<typeof mountQueue>, title: string) {
     .find((one) => one.text() === 'Not duplicates')!
 }
 
-/** Decides the pair the way the store does: by taking it out of the offer. */
 function decidesPairs(store: ReturnType<typeof useDuplicatesStore>): void {
   vi.spyOn(store, 'declinePair').mockImplementation(async (oneId: number) => {
     store.suggestions = store.suggestions.filter((one) => one.survivor.db_id !== oneId)
@@ -90,6 +90,41 @@ describe('DuplicateQueue', () => {
     await flushPromises()
 
     expect(document.activeElement).toBe(wrapper.element)
+  })
+
+  it('lands on the pair that moved up, when the decision removed two of them', async () => {
+    // A merge drops every pair naming the absorbed row, so a book held by three
+    // sources loses two at once and the decided one's index overshoots.
+    const store = useDuplicatesStore()
+    store.suggestions = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map(
+      (title, position) => suggestion(title, 10 * (position + 1)),
+    )
+    vi.spyOn(store, 'declinePair').mockImplementation(async () => {
+      store.suggestions = store.suggestions.filter(
+        (one) => !['Beta', 'Gamma'].includes(one.survivor.title),
+      )
+    })
+    const wrapper = mountQueue()
+
+    const gamma = dismissButton(wrapper, 'Gamma')
+    ;(gamma.element as HTMLElement).focus()
+    await gamma.trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement?.closest('li')?.textContent).toContain('Delta')
+  })
+
+  it('leaves an operator who tabbed on mid-reload where they went', async () => {
+    const store = useDuplicatesStore()
+    store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
+    const wrapper = mountQueue()
+    const beta = dismissButton(wrapper, 'Beta')
+    ;(beta.element as HTMLElement).focus()
+
+    store.loading = true
+    await nextTick()
+
+    expect(document.activeElement).toBe(beta.element)
   })
 
   it('prints a refusal on the pair that drew it', async () => {

@@ -100,8 +100,6 @@ function onDecline(): void {
     </div>
 
     <p class="dup-pair-actions">
-      <!-- A refusal lands beside the control that drew it. The page's alert
-           region announces it and hides, so the words print once. -->
       <span v-if="error" class="dup-pair-error">{{ error }}</span>
       <button
         type="button"
