@@ -1716,9 +1716,7 @@ class SQLiteDB:
         content_type: str,
         updates: dict[str, Any],
     ) -> None:
-        """Write *updates* to the detail row, creating one, or nothing if empty."""
-        if not updates:
-            return
+        """Write *updates* to the detail row, creating one if it has none."""
         spec = DETAIL_FIELDS.get(content_type)
         if spec is None:
             raise ValueError(f"Unknown content_type: {content_type!r}")
