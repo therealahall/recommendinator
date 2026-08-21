@@ -955,8 +955,8 @@ class DuplicateSuggestionResponse(BaseModel):
     evidence: str
     evidence_label: str
     evidence_detail: str
-    survivor: DuplicateSideResponse
-    absorbed: DuplicateSideResponse
+    survivor_id: int
+    copies: list[DuplicateSideResponse]
 
 
 class DuplicateSuggestionPageResponse(BaseModel):
@@ -989,10 +989,11 @@ class MergeRequest(BaseModel):
 
 
 class DeclineDuplicateRequest(BaseModel):
-    """Either order names the same pair; storage stores it lowest id first."""
+    """*one_id* is the copy set apart, *other_ids* the copies it is not; storage
+    stores one pair per refusal, lowest id first, either order round."""
 
     one_id: ItemDbId
-    other_id: ItemDbId
+    other_ids: Annotated[list[ItemDbId], Field(min_length=1)]
 
 
 def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
@@ -1640,10 +1641,10 @@ def list_duplicates(
         SUGGESTION_PAGE_DEFAULT,
         ge=1,
         le=SUGGESTION_PAGE_MAX,
-        description="Maximum pairs to offer",
+        description="Maximum works to offer",
     ),
 ) -> DuplicateSuggestionPageResponse:
-    """List suspected duplicate pairs, with the evidence that paired them."""
+    """List each work's suspected copies, with the evidence that grouped them."""
     page = storage.list_duplicate_suggestions(
         user_id=user_id, content_type=_duplicate_type(type), limit=limit
     )
@@ -1662,25 +1663,26 @@ def list_declined_duplicates(
     ]
 
 
-@router.post("/duplicates/declined", response_model=DeclinedPairResponse)
+@router.post("/duplicates/declined", response_model=list[DeclinedPairResponse])
 def decline_duplicate_pair(
     request: DeclineDuplicateRequest,
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID"),
-) -> DeclinedPairResponse:
-    """Keep a suspected pair off the list for good."""
-    pair = storage.decline_duplicate_suggestion(
-        request.one_id, request.other_id, user_id=user_id
+) -> list[DeclinedPairResponse]:
+    """Keep one copy off the list for good, against every copy named."""
+    pairs = storage.decline_duplicate_suggestion(
+        request.one_id, request.other_ids, user_id=user_id
     )
-    if pair is None:
+    if not pairs:
+        others = ", ".join(str(other_id) for other_id in request.other_ids)
         raise HTTPException(
             status_code=404,
             detail=(
-                f"Items {request.one_id} and {request.other_id} are not a live"
-                " pair to decline."
+                f"Items {request.one_id} and {others} are not a live pair"
+                " to decline."
             ),
         )
-    return _declined_to_response(pair)
+    return [_declined_to_response(pair) for pair in pairs]
 
 
 @router.delete(

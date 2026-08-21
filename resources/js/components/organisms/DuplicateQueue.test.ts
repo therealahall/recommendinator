@@ -3,7 +3,7 @@ import { nextTick } from 'vue'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DuplicateQueue from './DuplicateQueue.vue'
-import { pairKey, useDuplicatesStore } from '@/stores/duplicates'
+import { decisionKey, useDuplicatesStore } from '@/stores/duplicates'
 import type { DuplicateSuggestion } from '@/types/api'
 
 vi.mock('@/composables/useApi', () => ({
@@ -31,8 +31,8 @@ function suggestion(title: string, survivorId: number): DuplicateSuggestion {
     evidence: 'normalized_title',
     evidence_label: 'same title',
     evidence_detail: title.toLowerCase(),
-    survivor: side(survivorId, title),
-    absorbed: side(survivorId + 1, `${title} (paperback)`),
+    survivor_id: survivorId,
+    copies: [side(survivorId, title), side(survivorId + 1, `${title} (paperback)`)],
   }
 }
 
@@ -45,12 +45,12 @@ function dismissButton(wrapper: ReturnType<typeof mountQueue>, title: string) {
     .findAll('li')
     .find((row) => row.text().includes(title))!
     .findAll('button')
-    .find((one) => one.text() === 'Not duplicates')!
+    .find((one) => one.text() === `“${title}” is not the same work`)!
 }
 
-function decidesPairs(store: ReturnType<typeof useDuplicatesStore>): void {
-  vi.spyOn(store, 'declinePair').mockImplementation(async (oneId: number) => {
-    store.suggestions = store.suggestions.filter((one) => one.survivor.db_id !== oneId)
+function decidesBlocks(store: ReturnType<typeof useDuplicatesStore>): void {
+  vi.spyOn(store, 'declineCopy').mockImplementation(async (copyId: number) => {
+    store.suggestions = store.suggestions.filter((one) => one.survivor_id !== copyId)
   })
 }
 
@@ -66,7 +66,7 @@ describe('DuplicateQueue', () => {
       suggestion('Beta', 20),
       suggestion('Gamma', 30),
     ]
-    decidesPairs(store)
+    decidesBlocks(store)
     const wrapper = mountQueue()
 
     const beta = dismissButton(wrapper, 'Beta')
@@ -81,7 +81,7 @@ describe('DuplicateQueue', () => {
   it('holds focus in the queue when the last pair leaves the list', async () => {
     const store = useDuplicatesStore()
     store.suggestions = [suggestion('Alpha', 10)]
-    decidesPairs(store)
+    decidesBlocks(store)
     const wrapper = mountQueue()
 
     const only = dismissButton(wrapper, 'Alpha')
@@ -92,16 +92,16 @@ describe('DuplicateQueue', () => {
     expect(document.activeElement).toBe(wrapper.element)
   })
 
-  it('lands on the pair that moved up, when the decision removed two of them', async () => {
-    // A merge drops every pair naming the absorbed row, so a book held by three
-    // sources loses two at once and the decided one's index overshoots.
+  it('lands on the block that moved up, when the decision removed two of them', async () => {
+    // A veto splits one work into overlapping blocks, so a decision on the copy
+    // they share drops both at once and the decided one's index overshoots.
     const store = useDuplicatesStore()
     store.suggestions = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map(
       (title, position) => suggestion(title, 10 * (position + 1)),
     )
-    vi.spyOn(store, 'declinePair').mockImplementation(async () => {
+    vi.spyOn(store, 'declineCopy').mockImplementation(async () => {
       store.suggestions = store.suggestions.filter(
-        (one) => !['Beta', 'Gamma'].includes(one.survivor.title),
+        (one) => !['Beta', 'Gamma'].includes(one.copies[0].title),
       )
     })
     const wrapper = mountQueue()
@@ -127,12 +127,12 @@ describe('DuplicateQueue', () => {
     expect(document.activeElement).toBe(beta.element)
   })
 
-  it('prints a refusal on the pair that drew it', async () => {
-    // A page of pairs runs well past the page-level alert at the top.
+  it('prints a refusal on the block that drew it', async () => {
+    // A page of blocks runs well past the page-level alert at the top.
     const store = useDuplicatesStore()
     store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
     store.error = 'A book cannot absorb a video_game.'
-    store.errorKey = `merge:${pairKey(20, 21)}`
+    store.errorKey = `merge:${decisionKey([20, 21])}`
     const wrapper = mountQueue()
 
     const card = (title: string) =>

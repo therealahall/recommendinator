@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { DEFAULT_LIMIT, SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from './duplicates'
+import {
+  DEFAULT_LIMIT,
+  SUGGESTION_LIMITS,
+  decisionKey,
+  useDuplicatesStore,
+} from './duplicates'
 import { ApiError } from '@/composables/useApi'
 import type { DuplicateSuggestion, MergeRecord } from '@/types/api'
 
@@ -22,7 +27,7 @@ vi.mock('@/composables/useApi', async (importOriginal) => ({
   }),
 }))
 
-function suggestion(survivorId: number, absorbedId: number): DuplicateSuggestion {
+function suggestion(survivorId: number, ...absorbedIds: number[]): DuplicateSuggestion {
   const side = (db_id: number) => ({
     db_id,
     title: `Row ${db_id}`,
@@ -35,8 +40,8 @@ function suggestion(survivorId: number, absorbedId: number): DuplicateSuggestion
     evidence: 'normalized_title',
     evidence_label: 'same title',
     evidence_detail: 'row',
-    survivor: side(survivorId),
-    absorbed: side(absorbedId),
+    survivor_id: survivorId,
+    copies: [side(survivorId), ...absorbedIds.map(side)],
   }
 }
 
@@ -54,8 +59,8 @@ function merge(id: number, survivorId: number, absorbedId: number): MergeRecord 
   }
 }
 
-function pageOf(...pairs: DuplicateSuggestion[]) {
-  return { total: pairs.length, suggestions: pairs }
+function pageOf(...blocks: DuplicateSuggestion[]) {
+  return { total: blocks.length, suggestions: blocks }
 }
 
 describe('useDuplicatesStore', () => {
@@ -77,9 +82,9 @@ describe('useDuplicatesStore', () => {
     expect(DEFAULT_LIMIT).toBe(Number(fallback))
   })
 
-  it('keys a pair the same way round either way, so one decision is one key', () => {
-    expect(pairKey(9, 4)).toBe(pairKey(4, 9))
-    expect(pairKey(4, 9)).not.toBe(pairKey(4, 10))
+  it('keys a block the same way whatever the order, so one decision is one key', () => {
+    expect(decisionKey([9, 4])).toBe(decisionKey([4, 9]))
+    expect(decisionKey([4, 9])).not.toBe(decisionKey([4, 9, 10]))
   })
 
   it('blocks the undo of a merge whose survivor has since been absorbed', () => {
@@ -112,25 +117,41 @@ describe('useDuplicatesStore', () => {
       new ApiError(409, 'Conflict', { detail: 'A book cannot absorb a video_game.' }),
     )
 
-    await store.merge(10, 11)
+    await store.merge(10, [11])
 
     expect(store.error).toBe('A book cannot absorb a video_game.')
     expect(store.announcement).toBe('')
   })
 
-  it('ignores a second decision on a pair already in flight', async () => {
+  it('ignores a second decision on a block already in flight', async () => {
     // Two clicks would merge, then try to merge the row the first one hid.
     const store = useDuplicatesStore()
     let settle = (): void => {}
     mockPost.mockReturnValue(new Promise((resolve) => (settle = () => resolve(merge(1, 10, 11)))))
     mockGet.mockResolvedValue(pageOf())
 
-    const first = store.merge(10, 11)
-    await store.merge(11, 10)
+    const first = store.merge(10, [11])
+    await store.merge(11, [10])
     settle()
     await first
 
     expect(mockPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('folds every copy of a block into the survivor without re-reading the offer', async () => {
+    // Each merge invalidates nothing else in the block, so a reload between
+    // them only costs the operator a page they already decided.
+    const store = useDuplicatesStore()
+    mockPost.mockResolvedValue(merge(1, 10, 11))
+    mockGet.mockResolvedValue(pageOf())
+
+    await store.merge(10, [11, 12])
+
+    expect(mockPost.mock.calls.map((call) => call[1])).toEqual([
+      { survivor_id: 10, absorbed_id: 11 },
+      { survivor_id: 10, absorbed_id: 12 },
+    ])
+    expect(mockGet).toHaveBeenCalledTimes(2)
   })
 
   it('announces what changed together with what is left to review', async () => {
@@ -138,7 +159,7 @@ describe('useDuplicatesStore', () => {
     mockPost.mockResolvedValue(merge(1, 10, 11))
     mockGet.mockResolvedValue(pageOf(suggestion(12, 13)))
 
-    await store.merge(10, 11)
+    await store.merge(10, [11])
 
     expect(store.announcement).toBe('Merged “Row 11” into “Row 10”. 1 suspected duplicate.')
   })
@@ -160,6 +181,25 @@ describe('useDuplicatesStore', () => {
     await store.setFilter('type', '')
 
     expect(mockGet).toHaveBeenCalledWith('/duplicates', { user_id: 1, limit: 25 })
+  })
+
+  it('refuses a copy against every other copy of its block in one call', async () => {
+    // Split into a call per pair, a failure part way leaves half a refusal.
+    const store = useDuplicatesStore()
+    mockPost.mockResolvedValue([
+      { one_id: 10, one_title: 'Row 10', other_id: 12, other_title: 'Row 12' },
+      { one_id: 11, one_title: 'Row 11', other_id: 12, other_title: 'Row 12' },
+    ])
+    mockGet.mockResolvedValue(pageOf())
+
+    await store.declineCopy(12, [10, 11])
+
+    expect(mockPost).toHaveBeenCalledWith(
+      '/duplicates/declined',
+      { one_id: 12, other_ids: [10, 11] },
+      { user_id: 1 },
+    )
+    expect(store.announcement).toContain('“Row 12” will not be offered')
   })
 
   it('offers a refused pair again through the pair path, not an item id', async () => {

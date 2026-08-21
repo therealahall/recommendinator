@@ -10,13 +10,13 @@ import type {
 } from '@/types/api'
 
 /** Reaches SUGGESTION_PAGE_MAX, the ceiling the API and the CLI both take:
- *  a first pass over a real library runs to hundreds of pairs. */
+ *  a first pass over a real library runs to hundreds of works. */
 export const SUGGESTION_LIMITS = [10, 25, 50, 100, 200] as const
 export const DEFAULT_LIMIT = 25
 
-/** A pair in either order, so a decision on it is keyed the same way twice. */
-export function pairKey(one: number, other: number): string {
-  return one < other ? `${one}:${other}` : `${other}:${one}`
+/** Copies in any order, so one decision on them is keyed the same way twice. */
+export function decisionKey(ids: number[]): string {
+  return [...ids].sort((one, other) => one - other).join(':')
 }
 
 export interface MergeRow {
@@ -151,31 +151,43 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     }
   }
 
-  function merge(survivorId: number, absorbedId: number): Promise<void> {
+  function merge(survivorId: number, absorbedIds: number[]): Promise<void> {
     return decide(
-      `merge:${pairKey(survivorId, absorbedId)}`,
+      `merge:${decisionKey([survivorId, ...absorbedIds])}`,
       async () => {
-        const record = await api.post<MergeRecord>(
-          '/merges',
-          { survivor_id: survivorId, absorbed_id: absorbedId },
-          userParams(),
-        )
-        return `Merged “${record.absorbed_title}” into “${record.survivor_title}”.`
+        // Sequential, and no reload between them: every copy of a block merges
+        // into the survivor whatever the ones before it did.
+        const records: MergeRecord[] = []
+        for (const absorbedId of absorbedIds) {
+          records.push(
+            await api.post<MergeRecord>(
+              '/merges',
+              { survivor_id: survivorId, absorbed_id: absorbedId },
+              userParams(),
+            ),
+          )
+        }
+        const [first] = records
+        return records.length === 1
+          ? `Merged “${first.absorbed_title}” into “${first.survivor_title}”.`
+          : `Merged ${records.length} copies into “${first.survivor_title}”.`
       },
       () => Promise.all([loadSuggestions(), loadMerges()]),
     )
   }
 
-  function declinePair(oneId: number, otherId: number): Promise<void> {
+  function declineCopy(copyId: number, otherIds: number[]): Promise<void> {
     return decide(
-      `decline:${pairKey(oneId, otherId)}`,
+      `decline:${decisionKey([copyId, ...otherIds])}`,
       async () => {
-        const pair = await api.post<DeclinedPair>(
+        const pairs = await api.post<DeclinedPair[]>(
           '/duplicates/declined',
-          { one_id: oneId, other_id: otherId },
+          { one_id: copyId, other_ids: otherIds },
           userParams(),
         )
-        return `“${pair.one_title}” and “${pair.other_title}” will not be offered again.`
+        const [pair] = pairs
+        const title = pair.one_id === copyId ? pair.one_title : pair.other_title
+        return `“${title}” will not be offered with those copies again.`
       },
       () => Promise.all([loadSuggestions(), loadDeclined()]),
     )
@@ -194,7 +206,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
 
   function offerAgain(oneId: number, otherId: number): Promise<void> {
     return decide(
-      `undecline:${pairKey(oneId, otherId)}`,
+      `undecline:${decisionKey([oneId, otherId])}`,
       async () => {
         const pair = await api.delete<DeclinedPair>(
           `/duplicates/declined/${oneId}/${otherId}`,
@@ -233,7 +245,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     loadMerges,
     loadDeclined,
     merge,
-    declinePair,
+    declineCopy,
     undoMerge,
     offerAgain,
     setFilter,

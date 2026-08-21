@@ -21,8 +21,14 @@ def storage(tmp_path: Path) -> StorageManager:
     rows = [
         ("calibre", "1", "Deadhouse Gates", ContentType.BOOK),
         ("goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)", ContentType.BOOK),
-        ("gog", "3", "Hades", ContentType.VIDEO_GAME),
-        ("steam", "4", "Hades (Supergiant)", ContentType.VIDEO_GAME),
+        (
+            "storygraph_csv",
+            "3",
+            "Deadhouse Gates (Malazan, Book Two)",
+            ContentType.BOOK,
+        ),
+        ("gog", "4", "Hades", ContentType.VIDEO_GAME),
+        ("steam", "5", "Hades (Supergiant)", ContentType.VIDEO_GAME),
     ]
     for source, external_id, title, content_type in rows:
         manager.save_content_item(
@@ -56,20 +62,31 @@ def _suggestions(client: TestClient, **params: Any) -> Any:
     return response.json()
 
 
-def test_a_pair_is_offered_with_both_sides_and_the_key_that_paired_them(
+def _blocks(client: TestClient, **params: Any) -> list[list[int]]:
+    return [
+        [copy["db_id"] for copy in block["copies"]]
+        for block in _suggestions(client, **params)["suggestions"]
+    ]
+
+
+def test_a_block_is_offered_with_every_copy_and_the_key_that_grouped_them(
     client: TestClient, storage: StorageManager
 ) -> None:
     page = _suggestions(client, type="book")
 
     assert page["total"] == 1
-    (pair,) = page["suggestions"]
+    (block,) = page["suggestions"]
     (offered,) = storage.list_duplicate_suggestions(
         user_id=1, content_type=ContentType.BOOK
     ).suggestions
-    assert pair == suggestion_to_dict(offered)
-    assert pair["evidence"] == "title_qualifier"
-    assert pair["survivor"]["title"] == "Deadhouse Gates"
-    assert pair["absorbed"]["title"] == "Deadhouse Gates (Malazan Book 2)"
+    assert block == suggestion_to_dict(offered)
+    assert block["evidence"] == "title_qualifier"
+    assert [copy["title"] for copy in block["copies"]] == [
+        "Deadhouse Gates",
+        "Deadhouse Gates (Malazan Book 2)",
+        "Deadhouse Gates (Malazan, Book Two)",
+    ]
+    assert block["survivor_id"] == block["copies"][0]["db_id"]
 
 
 def test_a_limit_cuts_the_offer_and_the_count_still_says_what_is_left(
@@ -143,38 +160,46 @@ def test_undoing_a_merge_that_is_not_there_says_so(client: TestClient) -> None:
     assert response.json()["detail"] == "Merge 404 not found."
 
 
-def test_a_declined_pair_stops_being_offered_and_lifting_it_offers_it_again(
+def test_a_copy_declined_out_of_a_block_leaves_the_rest_of_it_offered(
     client: TestClient,
 ) -> None:
     one = _ids(client, "Deadhouse Gates")
     other = _ids(client, "Deadhouse Gates (Malazan Book 2)")
+    third = _ids(client, "Deadhouse Gates (Malazan, Book Two)")
 
     declined = client.post(
-        "/api/duplicates/declined", json={"one_id": one, "other_id": other}
+        "/api/duplicates/declined", json={"one_id": third, "other_ids": [one, other]}
     )
 
     assert declined.status_code == 200, declined.text
-    assert declined.json() == {
-        "one_id": one,
-        "one_title": "Deadhouse Gates",
-        "other_id": other,
-        "other_title": "Deadhouse Gates (Malazan Book 2)",
-    }
-    assert client.get("/api/duplicates/declined").json() == [declined.json()]
-    assert _suggestions(client, type="book")["total"] == 0
+    assert declined.json() == [
+        {
+            "one_id": one,
+            "one_title": "Deadhouse Gates",
+            "other_id": third,
+            "other_title": "Deadhouse Gates (Malazan, Book Two)",
+        },
+        {
+            "one_id": other,
+            "one_title": "Deadhouse Gates (Malazan Book 2)",
+            "other_id": third,
+            "other_title": "Deadhouse Gates (Malazan, Book Two)",
+        },
+    ]
+    assert client.get("/api/duplicates/declined").json() == declined.json()
+    assert _blocks(client, type="book") == [[one, other]]
 
-    lifted = client.delete(f"/api/duplicates/declined/{one}/{other}")
+    lifted = client.delete(f"/api/duplicates/declined/{one}/{third}")
 
     assert lifted.status_code == 200, lifted.text
-    assert client.get("/api/duplicates/declined").json() == []
-    assert _suggestions(client, type="book")["total"] == 1
+    assert _blocks(client, type="book") == [[one, other], [one, third]]
 
 
 def test_declining_what_is_not_a_live_pair_refuses_by_id(client: TestClient) -> None:
     one = _ids(client, "Deadhouse Gates")
 
     response = client.post(
-        "/api/duplicates/declined", json={"one_id": one, "other_id": 9999}
+        "/api/duplicates/declined", json={"one_id": one, "other_ids": [9999]}
     )
 
     assert response.status_code == 404
@@ -213,7 +238,7 @@ def test_a_lift_a_merge_blocks_is_refused_in_the_storage_layer_s_own_words(
     """Uncaught, it is a 500 saying nothing about which merge to undo."""
     one = _ids(client, "Deadhouse Gates")
     other = _ids(client, "Deadhouse Gates (Malazan Book 2)")
-    client.post("/api/duplicates/declined", json={"one_id": one, "other_id": other})
+    client.post("/api/duplicates/declined", json={"one_id": one, "other_ids": [other]})
     merged = client.post("/api/merges", json={"survivor_id": one, "absorbed_id": other})
 
     response = client.delete(f"/api/duplicates/declined/{one}/{other}")

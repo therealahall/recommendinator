@@ -174,22 +174,27 @@ python3.11 -m src.cli library duplicates --type book --limit 25
 python3.11 -m src.cli library merge --survivor 42 --absorbed 77
 python3.11 -m src.cli library merges
 python3.11 -m src.cli library unmerge --merge-id 3
-python3.11 -m src.cli library decline-duplicate --one 42 --other 77
+python3.11 -m src.cli library decline-duplicate --one 42 --other 77 --other 91
 python3.11 -m src.cli library declined-duplicates
 python3.11 -m src.cli library undecline-duplicate --one 42 --other 77
 ```
 
-`duplicates` heads Evidence `same title` where the save door's own key matched
-the pair, and `same title apart from a qualifier` where only the looser key
+`duplicates` lists one block per work, naming every copy of it, with Keep ID
+the copy proposed to keep — the oldest — and Other copies the ones a merge
+would fold in. Evidence heads `same title` where the save door's own key
+matched them, and `same title apart from a qualifier` where only the looser key
 did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
-pairs at a time by default, saying how many are left.
+works at a time by default, saying how many are left. Two copies a creator,
+year or region veto separates are never in one block.
 
-A merge keeps `--survivor` and folds the other row into it. Nothing is deleted,
-and `unmerge` puts the absorbed row back — newest merge first, refusing any
-other order. `decline-duplicate` keeps a pair off the list for the life of the
-library. `undecline-duplicate` lifts that, and refuses while a merge holds
-either row, naming the merge to undo first: a refusal is only liftable back
-onto a pair the list can offer.
+A merge keeps `--survivor` and folds the other row into it; run it once per
+copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
+row back — newest merge first, refusing any other order. `decline-duplicate`
+sets `--one` apart from every `--other` named, for the life of the library, and
+leaves the copies it did not name still offered together.
+`undecline-duplicate` lifts one of those refusals, and refuses while a merge
+holds either row, naming the merge to undo first: a refusal is only liftable
+back onto a pair the list can offer.
 
 ### `library export`
 

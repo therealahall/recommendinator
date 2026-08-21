@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { pairKey, useDuplicatesStore } from '@/stores/duplicates'
+import { decisionKey, useDuplicatesStore } from '@/stores/duplicates'
 import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
@@ -27,7 +27,7 @@ const mergeRows = computed(() =>
 
 const declinedRows = computed(() =>
   store.declined.map((pair) => {
-    const key = pairKey(pair.one_id, pair.other_id)
+    const key = decisionKey([pair.one_id, pair.other_id])
     return {
       key,
       oneId: pair.one_id,

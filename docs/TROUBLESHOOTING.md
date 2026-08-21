@@ -94,8 +94,9 @@ ID. **Make the profile public**, or the API returns nothing.
 
 The matcher only runs when a source first names an item, so it keeps new
 duplicates out but never revisits a pair already here. `library duplicates`
-lists those, `library merge` collapses one, and `library unmerge` undoes it.
-The Duplicates page in the web UI is the same review, pair by pair.
+lists them a work at a time, naming every copy it found, `library merge`
+collapses one copy into another, and `library unmerge` undoes it. The
+Duplicates page in the web UI is the same review, a block per work.
 
 ## Web interface
 
