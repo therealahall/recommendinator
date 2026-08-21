@@ -187,8 +187,9 @@ did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
 works at a time by default, saying how many are left. Two copies a creator,
 year or region veto separates are never in one block. A copy in two blocks says
 so under its title in both, a veto or a dismissal having split the group. A
-work whose copies split more ways than a page holds is not offered at all, and
-the count line says how many are in that state.
+work carrying more than 40 copies, or whose copies split more ways than a page
+holds, is not offered at all, and the count line says how many are in that
+state.
 
 A merge keeps `--survivor` and folds the other row into it; run it once per
 copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
