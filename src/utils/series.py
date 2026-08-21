@@ -258,6 +258,8 @@ def _extract_from_metadata(
             "series_position",
             "series_number",
             "series_num",
+            # Calibre's own field name, and what the Calibre-Web plugin stores.
+            "series_index",
             "book_number",
             "book_num",
             "part",

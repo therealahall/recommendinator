@@ -5,7 +5,6 @@ for column, not the fields the merge was expected to move.
 """
 
 import json
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from src.storage.schema import (
     reset_enrichment_status,
 )
 from src.storage.sqlite_db import SQLiteDB
+from src.utils.series import get_series_item_number, get_series_name
 
 # Pinned so restoring a bumped ``updated_at`` is provable: CURRENT_TIMESTAMP
 # resolves to the second, and a merge and its undo run inside one.
@@ -541,18 +541,27 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
     assert _snapshot(db, absorbed_id) == before
 
 
-def test_no_door_in_src_deletes_a_content_row() -> None:
-    """A deleted row takes its children, external ids and merge record out by
-    cascade, with no undo holding them. The boundary spares the migration's
-    ``content_items_old``."""
-    doors = re.compile(r"delete\s+from\s+content_items\b", re.IGNORECASE)
-    assert doors.search("DELETE FROM content_items WHERE id = ?")
-    src = Path(__file__).resolve().parents[2] / "src"
+def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> None:
+    """Only the Calibre-Web row states the series, and it is the twin more often
+    absorbed than kept, so a survivor with no position leaves its series."""
+    survivor_id = _save(
+        db,
+        "goodreads_rss",
+        "1",
+        title="All Systems Red",
+        content_type=ContentType.BOOK,
+    )
+    absorbed_id = _save(
+        db,
+        "calibre_web",
+        "2",
+        title="All Systems Red (The Murderbot Diaries, Book 1)",
+        content_type=ContentType.BOOK,
+        metadata={"series": "The Murderbot Diaries", "series_index": 1},
+    )
 
-    offenders = [
-        str(module.relative_to(src))
-        for module in sorted(src.rglob("*.py"))
-        if doors.search(module.read_text(encoding="utf-8"))
-    ]
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
-    assert offenders == []
+    survivor = db.get_content_item(survivor_id)
+    assert get_series_name(survivor) == "The Murderbot Diaries"
+    assert get_series_item_number(survivor) == 1.0

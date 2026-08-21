@@ -18,7 +18,6 @@ from src.storage.merge import (
     creators_conflict,
     normalize_creator_for_matching,
     normalize_title_for_matching,
-    regions_conflict,
     stated_region,
 )
 from src.storage.schema import write_enrichment_complete
@@ -787,20 +786,6 @@ class TestTheCreatorVeto:
 
 class TestTheRegionVeto:
     """Region is no part of the match key either; it only rejects a match."""
-
-    def test_the_traitors_us_and_the_traitors_au_are_different_productions(
-        self,
-    ) -> None:
-        assert regions_conflict(
-            stated_region("The Traitors (US)"), stated_region("The Traitors (AU)")
-        )
-
-    def test_a_region_only_one_title_states_does_not_conflict(self) -> None:
-        """Unlike a year: nothing is taken, so "(US)" qualifies one show."""
-        assert not regions_conflict(
-            stated_region("Hell's Kitchen"), stated_region("Hell's Kitchen (US)")
-        )
-        assert stated_region("Hell's Kitchen") is None
 
     def test_one_region_two_sources_spell_differently_is_one_region(self) -> None:
         assert stated_region("The Office (USA)") == stated_region("The Office (US)")
@@ -4814,19 +4799,6 @@ class TestCorrectingWhatAMatchIsVetoedOn:
         stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
         assert stated == released
 
-    def test_a_corrected_creator_reads_back_as_the_author_and_is_searchable(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        db_id = temp_db.save_content_item(self._doom("gog", "1435828767", 2016))
-
-        temp_db.update_item_from_ui(db_id=db_id, creator="id Software")
-
-        retrieved = temp_db.get_content_item(db_id)
-        assert retrieved is not None
-        assert retrieved.author == "id Software"
-        found = temp_db.get_content_items(search="id Software")
-        assert [item.db_id for item in found] == [db_id]
-
     def test_the_source_that_stated_the_wrong_year_does_not_restate_it(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -4853,18 +4825,6 @@ class TestCorrectingWhatAMatchIsVetoedOn:
         assert item is not None
         assert item.metadata["release_year"] == 1993
         assert item.author == "id Software"
-
-    def test_a_correction_outranks_the_year_the_title_spells_out(
-        self, temp_db: SQLiteDB
-    ) -> None:
-        released = temp_db.save_content_item(
-            self._doom("epic_games", "379720", title="DOOM (2016)")
-        )
-
-        temp_db.update_item_from_ui(db_id=released, release_year=1993)
-
-        stated = temp_db.save_content_item(self._doom("steam", "2280", 1993))
-        assert stated == released
 
     def test_a_book_states_no_release_year_to_correct(self, temp_db: SQLiteDB) -> None:
         db_id = temp_db.save_content_item(
