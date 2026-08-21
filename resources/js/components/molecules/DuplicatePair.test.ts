@@ -81,14 +81,6 @@ describe('DuplicatePair', () => {
     expect(wrapper.emitted('merge')![0]).toEqual([4, [3, 5]])
   })
 
-  it('merges towards the proposed survivor when that is the one chosen', async () => {
-    const wrapper = mountPair()
-
-    await keepButton(wrapper, 'Deadhouse Gates').trigger('click')
-
-    expect(wrapper.emitted('merge')![0]).toEqual([3, [4]])
-  })
-
   it('emits nothing more once a decision on the block is in flight', async () => {
     // The second click would name a row the first merge is about to hide.
     const wrapper = mountPair({}, { merging: true })

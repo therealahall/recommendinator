@@ -49,12 +49,12 @@ def decline_refusal_message(one_id: int, other_ids: Sequence[int]) -> str:
 
 
 def skipped_works_note(count: int) -> str:
+    """Says copies, not groupings: a group over the size cap is left unsearched."""
     if count == 0:
         return ""
     subject = "1 work is" if count == 1 else f"{count} works are"
-    whose = "its" if count == 1 else "their"
     return (
-        f"{subject} not offered: too many ways to group {whose} copies."
+        f"{subject} not offered: too many copies to review at once."
         " Merge some of them to see the rest."
     )
 

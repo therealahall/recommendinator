@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { decisionKey, useDuplicatesStore } from '@/stores/duplicates'
+import { decisionKey, refusalAlert, useDuplicatesStore } from '@/stores/duplicates'
 import { keepFocusInList } from '@/utils/focus'
 
 const store = useDuplicatesStore()
@@ -44,6 +44,7 @@ function undo(index: number, mergeId: number): Promise<void> {
     index,
     () => mergeRows.value.map((row) => String(row.id)),
     () => store.undoMerge(mergeId),
+    () => refusalAlert(store.error),
   )
 }
 
@@ -54,6 +55,7 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
     index,
     () => declinedRows.value.map((row) => row.key),
     () => store.offerAgain(oneId, otherId),
+    () => refusalAlert(store.error),
   )
 }
 </script>
