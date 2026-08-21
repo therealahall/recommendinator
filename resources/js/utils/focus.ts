@@ -1,21 +1,25 @@
 import { nextTick, type Ref } from 'vue'
 
-/** A decision unmounts the row holding focus, dropping a keyboard user to
- *  <body> (WCAG 2.4.3). Focus goes to the row that took its place, never back
- *  to the first: skipped rows stay, so the top is far behind. */
+/** Keeps a keyboard user off <body> when a decision unmounts the row they had
+ *  (WCAG 2.4.3). It follows the nearest surviving row below by key, not index,
+ *  since one merge drops several. Someone who tabbed away keeps their place. */
 export async function keepFocusInList(
   list: Ref<HTMLElement | null>,
   fallback: Ref<HTMLElement | null>,
   index: number,
-  run: Promise<void>,
+  keys: () => string[],
+  run: () => Promise<void>,
 ): Promise<void> {
   const focused = document.activeElement
-  await run
+  const before = keys()
+  await run()
   await nextTick()
-  // Someone who tabbed away mid-request keeps their own place.
   if (!(focused instanceof HTMLElement) || focused.isConnected) return
   if (document.activeElement !== null && document.activeElement !== document.body) return
+  const after = keys()
+  const next = before.slice(index + 1).find((key) => after.includes(key))
+  const target = next === undefined ? after.length - 1 : after.indexOf(next)
   const rows = list.value?.children
-  const row = rows?.length ? rows[Math.min(index, rows.length - 1)] : undefined
+  const row = rows && target >= 0 ? rows[target] : undefined
   ;(row?.querySelector<HTMLElement>('button') ?? fallback.value)?.focus()
 }

@@ -28,8 +28,14 @@ const emptyMessage = computed(() =>
     : 'No suspected duplicates. Nothing looks like the same work twice.',
 )
 
-function decide(index: number, run: Promise<void>): Promise<void> {
-  return keepFocusInList(listEl, queueEl, index, run)
+function decide(index: number, run: () => Promise<void>): Promise<void> {
+  return keepFocusInList(
+    listEl,
+    queueEl,
+    index,
+    () => rows.value.map((row) => row.key),
+    run,
+  )
 }
 </script>
 
@@ -67,7 +73,11 @@ function decide(index: number, run: Promise<void>): Promise<void> {
 
     <p class="dup-summary">{{ store.summary }}</p>
 
-    <div v-if="store.loading" class="empty-state"><span class="spinner" /> Loading…</div>
+    <!-- Blanked only with nothing to keep: the reload a decision runs would
+         otherwise unmount the row the operator has tabbed on to. -->
+    <div v-if="store.loading && rows.length === 0" class="empty-state">
+      <span class="spinner" /> Loading…
+    </div>
     <div v-else-if="rows.length === 0" class="empty-state">{{ emptyMessage }}</div>
     <ul v-else ref="listEl" class="dup-list" role="list">
       <DuplicatePair
@@ -77,8 +87,8 @@ function decide(index: number, run: Promise<void>): Promise<void> {
         :merging="row.merging"
         :declining="row.declining"
         :error="row.error"
-        @merge="(keep, drop) => decide(index, store.merge(keep, drop))"
-        @decline="(one, other) => decide(index, store.declinePair(one, other))"
+        @merge="(keep, drop) => decide(index, () => store.merge(keep, drop))"
+        @decline="(one, other) => decide(index, () => store.declinePair(one, other))"
       />
     </ul>
   </section>
