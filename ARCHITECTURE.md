@@ -482,7 +482,7 @@ each under `src/cli/commands/`, re-exported from its `__init__` for
 **Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA,
 built by Vite from `resources/js/` and `resources/css/` into
 `src/web/static/dist/` with content-hashed filenames. Tabs are Recommendations,
-Library, Data, Preferences and Settings. Internal network only.
+Library, Duplicates, Data, Preferences and Settings. Internal network only.
 
 - The **Settings** page is the UI peer of the `settings` CLI group, over the
   shared `src/settings/service.py`. Infra and security leaves

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from './duplicates'
+import { DEFAULT_LIMIT, SUGGESTION_LIMITS, pairKey, useDuplicatesStore } from './duplicates'
 import { ApiError } from '@/composables/useApi'
 import type { DuplicateSuggestion, MergeRecord } from '@/types/api'
 
@@ -71,8 +71,10 @@ describe('useDuplicatesStore', () => {
     // a web operator paging through work a terminal does in one pass.
     const source = readFileSync(`${process.cwd()}/src/storage/duplicates.py`, 'utf8')
     const ceiling = source.match(/^SUGGESTION_PAGE_MAX = (\d+)$/m)![1]
+    const fallback = source.match(/^SUGGESTION_PAGE_DEFAULT = (\d+)$/m)![1]
 
     expect(Math.max(...SUGGESTION_LIMITS)).toBe(Number(ceiling))
+    expect(DEFAULT_LIMIT).toBe(Number(fallback))
   })
 
   it('keys a pair the same way round either way, so one decision is one key', () => {
