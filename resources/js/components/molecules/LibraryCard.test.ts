@@ -15,6 +15,7 @@ const baseItem = {
   ignored: false,
   seasons_watched: null,
   total_seasons: null,
+  release_year: null,
   enriched: true,
   genres: [],
   tags: [],

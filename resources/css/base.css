@@ -1543,6 +1543,7 @@ input[type="checkbox"] {
   margin-bottom: var(--space-1);
 }
 
+.edit-field input,
 .edit-field select,
 .edit-field textarea {
   width: 100%;
@@ -1560,6 +1561,7 @@ input[type="checkbox"] {
   resize: vertical;
 }
 
+.edit-field input:focus,
 .edit-field select:focus,
 .edit-field textarea:focus {
   border-color: var(--border-focus);

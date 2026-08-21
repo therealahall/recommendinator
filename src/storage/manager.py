@@ -351,6 +351,8 @@ class StorageManager:
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
+        release_year: int | None = None,
+        creator: str | None = None,
         user_id: int | None = None,
     ) -> bool:
         """Update a content item from an explicit user action.
@@ -368,6 +370,8 @@ class StorageManager:
             genres=genres,
             tags=tags,
             description=description,
+            release_year=release_year,
+            creator=creator,
             user_id=user_id,
         )
 

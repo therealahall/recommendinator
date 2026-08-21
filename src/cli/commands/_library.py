@@ -11,11 +11,14 @@ from tabulate import tabulate
 
 from src.cli._shared import abort_with, emit_view, is_blank_review
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
     MAX_GENRES,
+    MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -323,6 +326,17 @@ def library_show(
     help="Manual description; replaces the existing one and marks enriched",
 )
 @click.option(
+    "--release-year",
+    type=click.IntRange(min=MIN_RELEASE_YEAR, max=MAX_RELEASE_YEAR),
+    default=None,
+    help="Correct the year the work came out (books state none)",
+)
+@click.option(
+    "--creator",
+    default=None,
+    help="Correct the author, director, creators or developer",
+)
+@click.option(
     "--user",
     "user_id",
     type=int,
@@ -342,9 +356,11 @@ def library_edit(
     genres: tuple[str, ...],
     tags: tuple[str, ...],
     description: str | None,
+    release_year: int | None,
+    creator: str | None,
     user_id: int,
 ) -> None:
-    """Edit an item's status, rating, review, or manual enrichment metadata."""
+    """Edit an item's status, rating, review, release year, creator or metadata."""
     if (
         status_str is None
         and rating is None
@@ -355,11 +371,13 @@ def library_edit(
         and not genres
         and not tags
         and description is None
+        and release_year is None
+        and creator is None
     ):
         click.echo(
             "Error: Provide at least one of --status, --rating, --clear-rating, "
             "--review, --clear-review, --seasons-watched, --genre, --tag, "
-            "--description.",
+            "--description, --release-year, --creator.",
             err=True,
         )
         raise click.Abort()
@@ -380,6 +398,13 @@ def library_edit(
             err=True,
         )
         raise click.Abort()
+    if creator is not None:
+        # Stripped and refused blank for the reasons CorrectedCreator states.
+        creator = creator.strip()
+        if not creator:
+            abort_with("--creator cannot be empty.")
+        if len(creator) > MAX_CREATOR_LENGTH:
+            abort_with(f"--creator must be at most {MAX_CREATOR_LENGTH} characters.")
 
     storage = ctx.obj["storage"]
 
@@ -453,17 +478,22 @@ def library_edit(
     # An unsupplied flag leaves the stored value alone; only --clear-rating /
     # --clear-review send the None that storage writes as NULL, matching the
     # explicit null the web edit dialog sends.
-    updated = storage.update_item_from_ui(
-        db_id=item_id,
-        status=unset_if_none(status_str),
-        rating=None if clear_rating else unset_if_none(rating),
-        review=None if clear_review else unset_if_none(review),
-        seasons_watched=parsed_seasons,
-        genres=genre_list,
-        tags=tag_list,
-        description=description,
-        user_id=user_id,
-    )
+    try:
+        updated = storage.update_item_from_ui(
+            db_id=item_id,
+            status=unset_if_none(status_str),
+            rating=None if clear_rating else unset_if_none(rating),
+            review=None if clear_review else unset_if_none(review),
+            seasons_watched=parsed_seasons,
+            genres=genre_list,
+            tags=tag_list,
+            description=description,
+            release_year=release_year,
+            creator=creator,
+            user_id=user_id,
+        )
+    except ValueError as error:
+        abort_with(str(error))
 
     if updated:
         click.echo(f"Updated item {item_id} ({item.title}).")

@@ -128,6 +128,7 @@ python3.11 -m src.cli library edit --id 42 --clear-rating
 python3.11 -m src.cli library edit --id 42 --clear-review
 python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
 python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
+python3.11 -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
 ```
 
 **Only the flags you pass are written**, so a status-only edit cannot erase a
@@ -148,6 +149,13 @@ an empty string is far more often a shell accident than an intention.
 `--genre`, `--tag` or `--description` marks the item enriched through the
 `manual` provider, dropping it out of `not_enriched` and out of the automatic
 queue.
+
+`--release-year` and `--creator` correct the two fields a title match is vetoed
+on, so a row still holding a released merge's wrong year takes the next source
+stating the true one instead of growing the library another row. Neither marks
+the item enriched. A year runs 1800-2200; a book takes no `--release-year`,
+because `year_published` dates the edition rather than the work. Both set a
+value and neither clears one: pass the name or year you want stored.
 
 ### `library ignore` / `library unignore`
 

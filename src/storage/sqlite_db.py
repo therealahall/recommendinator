@@ -1457,6 +1457,8 @@ class SQLiteDB:
         genres: list[str] | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
+        release_year: int | None = None,
+        creator: str | None = None,
         user_id: int | None = None,
     ) -> bool:
         """Update a content item from an explicit user action (unrestricted).
@@ -1490,6 +1492,9 @@ class SQLiteDB:
           path rather than a corner — the web edit dialog sends ``genres`` and
           ``tags`` on every save, so removing the last one there clears the
           stored list.
+        - ``release_year`` and ``creator`` set a value and clear none. A veto
+          reads each, so an emptied one widens every later match rather than
+          correcting one, and neither surface offers it.
 
         For a TV show, status and the season list are two views of one fact, so
         whichever the caller supplied fills in the one it did not. A supplied
@@ -1552,6 +1557,13 @@ class SQLiteDB:
             content_type = row["content_type"]
             existing_status = row["status"]
             resolved_status = existing_status if status is UNSET else status
+
+            if release_year is not None or creator is not None:
+                self._write_corrections(
+                    cursor, db_id, content_type, release_year, creator
+                )
+                if creator is not None:
+                    write_derived_columns(cursor, db_id)
 
             # For a TV show, whichever of status and seasons the caller
             # supplied derives the other; supplying both writes both as given.
@@ -1661,22 +1673,6 @@ class SQLiteDB:
         tags: list[str] | None,
         description: str | None,
     ) -> None:
-        """Overwrite manual genres/tags/description in the detail table.
-
-        Only the supplied (non-None) fields are written. Genres/tags are
-        stored as JSON arrays to match the detail-table read path. The row is
-        created if the item has no detail row yet.
-
-        Raises ``ValueError`` for an unknown content_type so the caller never
-        marks an item enriched without having written any metadata.
-        """
-        spec = DETAIL_FIELDS.get(content_type)
-        if spec is None:
-            raise ValueError(f"Unknown content_type: {content_type!r}")
-        table = spec.table
-        if table not in ALLOWED_DETAIL_TABLES:
-            raise ValueError(f"Unknown detail table: {table!r}")
-
         updates: dict[str, Any] = {}
         if genres is not None:
             updates["genres"] = json.dumps(genres)
@@ -1684,16 +1680,46 @@ class SQLiteDB:
             updates["tags"] = json.dumps(tags)
         if description is not None:
             updates["description"] = description
+        self._write_detail_columns(cursor, db_id, content_type, updates)
 
-        cursor.execute(
-            f"SELECT 1 FROM {table} WHERE content_item_id = ?",
-            (db_id,),
-        )
-        row_exists = cursor.fetchone() is not None
+    def _write_corrections(
+        self,
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        content_type: str,
+        release_year: int | None,
+        creator: str | None,
+    ) -> None:
+        updates: dict[str, Any] = {}
+        for name, field, value in (
+            ("release year", RELEASE_YEAR_FIELDS.get(content_type), release_year),
+            ("creator", CREATOR_FIELDS.get(content_type), creator),
+        ):
+            if value is None:
+                continue
+            if field is None or field.column is None:
+                raise ValueError(f"A {content_type} has no {name} to correct.")
+            updates[field.column] = field.store(value)
+        self._write_detail_columns(cursor, db_id, content_type, updates)
+
+    def _write_detail_columns(
+        self,
+        cursor: sqlite3.Cursor,
+        db_id: int,
+        content_type: str,
+        updates: dict[str, Any],
+    ) -> None:
+        """Write *updates* to the item's detail row, creating it if it has none."""
+        spec = DETAIL_FIELDS.get(content_type)
+        if spec is None:
+            raise ValueError(f"Unknown content_type: {content_type!r}")
+        table = spec.table
+        if table not in ALLOWED_DETAIL_TABLES:
+            raise ValueError(f"Unknown detail table: {table!r}")
 
         columns = list(updates)
-
-        if row_exists:
+        cursor.execute(f"SELECT 1 FROM {table} WHERE content_item_id = ?", (db_id,))
+        if cursor.fetchone() is not None:
             set_clause = ", ".join(f"{name} = ?" for name in columns)
             cursor.execute(
                 f"UPDATE {table} SET {set_clause} WHERE content_item_id = ?",

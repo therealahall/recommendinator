@@ -12,11 +12,14 @@ from click.testing import CliRunner
 
 from src.cli.commands import library
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
     MAX_GENRES,
+    MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -109,6 +112,7 @@ class TestLibraryList:
             "ignored",
             "seasons_watched",
             "total_seasons",
+            "release_year",
             "enriched",
             "genres",
             "tags",
@@ -317,6 +321,7 @@ class TestLibraryShow:
             "ignored",
             "seasons_watched",
             "total_seasons",
+            "release_year",
             "enriched",
             "genres",
             "tags",
@@ -1450,3 +1455,88 @@ class TestDuplicatesOperatorPath:
         assert gone.exit_code != 0
         assert "delete" not in library.commands
         assert len(_json(cli_runner, storage, ["library", "list"])) == len(db_ids)
+
+
+class TestLibraryEditCorrections:
+    @staticmethod
+    def _game_storage() -> MagicMock:
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(
+            db_id=1, title="Doom", content_type=ContentType.VIDEO_GAME
+        )
+        mock_storage.update_item_from_ui.return_value = True
+        return mock_storage
+
+    def test_edit_forwards_the_corrected_year_and_creator(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = self._game_storage()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "edit",
+                "--id",
+                "1",
+                "--release-year",
+                "1993",
+                "--creator",
+                "id Software",
+            ],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_item_from_ui.call_args[1]
+        assert call_kwargs["release_year"] == 1993
+        assert call_kwargs["creator"] == "id Software"
+
+    def test_edit_refuses_a_blank_creator(self, cli_runner: CliRunner) -> None:
+        mock_storage = self._game_storage()
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--creator", "   "],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "--creator cannot be empty" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_refuses_a_correction_outside_the_web_bounds(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = self._game_storage()
+
+        for extra_args in (
+            ["--release-year", str(MIN_RELEASE_YEAR - 1)],
+            ["--release-year", str(MAX_RELEASE_YEAR + 1)],
+            ["--creator", "x" * (MAX_CREATOR_LENGTH + 1)],
+        ):
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["library", "edit", "--id", "1", *extra_args],
+                mock_storage,
+            )
+            assert result.exit_code != 0, extra_args
+
+        mock_storage.update_item_from_ui.assert_not_called()
+
+    def test_edit_reports_a_type_that_states_no_release_year(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = self._game_storage()
+        mock_storage.update_item_from_ui.side_effect = ValueError(
+            "A book has no release year to correct."
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", "1", "--release-year", "1965"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "no release year to correct" in result.output

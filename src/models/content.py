@@ -28,6 +28,10 @@ MAX_TAGS = 100
 MAX_GENRE_TAG_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 10000
 
+MIN_RELEASE_YEAR = 1800
+MAX_RELEASE_YEAR = 2200
+MAX_CREATOR_LENGTH = 500
+
 # Enrichment-state filter for content listings. ``None`` (no filter) returns
 # every item; the two states partition the library.
 EnrichmentFilter = Literal["enriched", "not_enriched"]

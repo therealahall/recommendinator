@@ -706,3 +706,44 @@ class TestGameLengthAfterEnrichment:
 
         assert "playtime_hours" not in loaded.metadata
         assert classify_length(loaded) == LengthPreference.LONG
+
+
+class TestCorrectionsAreNotEnrichment:
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        db_path = tmp_path / "corrections.db"
+        return StorageManager(sqlite_path=db_path)
+
+    @staticmethod
+    def _movie(storage_manager: StorageManager) -> int:
+        return storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Dune",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+
+    def test_correcting_the_year_and_creator_does_not_mark_enriched(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = self._movie(storage_manager)
+
+        storage_manager.update_item_from_ui(
+            db_id=db_id, release_year=2021, creator="Denis Villeneuve"
+        )
+
+        assert storage_manager.enrichment.status(db_id) is None
+        assert storage_manager.get_content_item(db_id).enriched is False
+
+    def test_a_correction_leaves_a_providers_enrichment_in_place(
+        self, storage_manager: StorageManager
+    ) -> None:
+        db_id = self._movie(storage_manager)
+        storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
+
+        storage_manager.update_item_from_ui(db_id=db_id, release_year=2021)
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status["enrichment_provider"] == "tmdb"
