@@ -293,8 +293,7 @@ def bare_title_key(title: str) -> str:
     return normalize_title_for_matching(_TRAILING_PARENTHETICAL.sub("", title))
 
 
-# One region two sources spell two ways, which a veto reading them apart would
-# take for two shows.
+# One region spelled two ways, which the veto would take for two shows.
 _REGION_ALIASES = {"usa": "us", "gb": "uk"}
 
 

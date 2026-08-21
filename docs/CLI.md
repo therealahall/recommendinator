@@ -153,9 +153,10 @@ queue.
 `--release-year` and `--creator` correct the two fields a title match is vetoed
 on, so a row still holding a released merge's wrong year takes the next source
 stating the true one instead of growing the library another row. Neither marks
-the item enriched. A year runs 1800-2200; a book takes no `--release-year`,
-because `year_published` dates the edition rather than the work. Both set a
-value and neither clears one: pass the name or year you want stored.
+the item enriched. A year runs 1800-2200 and a creator 500 characters; a book
+takes no `--release-year`, because `year_published` dates the edition rather
+than the work. Both set a value and neither clears one: pass the name or year
+you want stored.
 
 ### `library ignore` / `library unignore`
 
