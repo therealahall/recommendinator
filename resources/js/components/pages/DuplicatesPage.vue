@@ -17,14 +17,14 @@ onMounted(() => {
       <h2>Duplicates</h2>
       <p class="page-description">
         The same work held more than once, usually from more than one source.
-        Merge a pair keeping the row you want, or say it is not a pair.
+        Merge a work’s copies keeping the one you want, or dismiss a copy that
+        is a different work.
       </p>
     </div>
 
-    <!-- Both regions stay mounted while silent: one inserted already populated
-         is read as page content rather than a change (WCAG 4.1.3). This one
-         announces every refusal, and hides where the row prints it, so no
-         refusal reaches the screen twice. -->
+    <!-- Mounted while silent: inserted already populated it reads as page
+         content, not a change (WCAG 4.1.3). sr-only only where a history row
+         prints the words; a queue refusal shows here, its block re-keyed. -->
     <p
       class="dup-alert"
       :class="{ 'sr-only': store.errorKey !== '' }"

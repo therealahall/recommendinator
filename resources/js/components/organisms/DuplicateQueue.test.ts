@@ -3,7 +3,7 @@ import { nextTick } from 'vue'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DuplicateQueue from './DuplicateQueue.vue'
-import { decisionKey, useDuplicatesStore } from '@/stores/duplicates'
+import { useDuplicatesStore } from '@/stores/duplicates'
 import type { DuplicateSuggestion } from '@/types/api'
 
 vi.mock('@/composables/useApi', () => ({
@@ -18,21 +18,27 @@ vi.mock('@/composables/useApi', () => ({
 
 enableAutoUnmount(afterEach)
 
-function suggestion(title: string, survivorId: number): DuplicateSuggestion {
-  const side = (db_id: number, name: string) => ({
-    db_id,
-    title: name,
-    source: 'calibre',
-    creator: null,
-    release_year: null,
-  })
+const EDITIONS = ['', ' (paperback)', ' (hardback)']
+
+function suggestion(
+  title: string,
+  survivorId: number,
+  copies = 2,
+): DuplicateSuggestion {
   return {
     content_type: 'book',
     evidence: 'normalized_title',
     evidence_label: 'same title',
     evidence_detail: title.toLowerCase(),
     survivor_id: survivorId,
-    copies: [side(survivorId, title), side(survivorId + 1, `${title} (paperback)`)],
+    copies: EDITIONS.slice(0, copies).map((edition, index) => ({
+      db_id: survivorId + index,
+      title: `${title}${edition}`,
+      source: 'calibre',
+      creator: null,
+      release_year: null,
+      also_offered: '',
+    })),
   }
 }
 
@@ -45,7 +51,7 @@ function dismissButton(wrapper: ReturnType<typeof mountQueue>, title: string) {
     .findAll('li')
     .find((row) => row.text().includes(title))!
     .findAll('button')
-    .find((one) => one.text() === `“${title}” is not the same work`)!
+    .find((one) => one.text().startsWith(`“${title}” from`))!
 }
 
 function decidesBlocks(store: ReturnType<typeof useDuplicatesStore>): void {
@@ -114,6 +120,23 @@ describe('DuplicateQueue', () => {
     expect(document.activeElement?.closest('li')?.textContent).toContain('Delta')
   })
 
+  it('stays on the block a dismissed copy leaves behind, not the next work', async () => {
+    const store = useDuplicatesStore()
+    store.suggestions = [suggestion('Alpha', 10, 3), suggestion('Beta', 20)]
+    vi.spyOn(store, 'declineCopy').mockImplementation(async () => {
+      store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
+    })
+    const wrapper = mountQueue()
+
+    const dropped = dismissButton(wrapper, 'Alpha (hardback)')
+    ;(dropped.element as HTMLElement).focus()
+    await dropped.trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement?.closest('li')?.textContent).toContain('Alpha')
+    expect(document.activeElement?.closest('li')?.textContent).not.toContain('Beta')
+  })
+
   it('leaves an operator who tabbed on mid-reload where they went', async () => {
     const store = useDuplicatesStore()
     store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
@@ -127,18 +150,4 @@ describe('DuplicateQueue', () => {
     expect(document.activeElement).toBe(beta.element)
   })
 
-  it('prints a refusal on the block that drew it', async () => {
-    // A page of blocks runs well past the page-level alert at the top.
-    const store = useDuplicatesStore()
-    store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
-    store.error = 'A book cannot absorb a video_game.'
-    store.errorKey = `merge:${decisionKey([20, 21])}`
-    const wrapper = mountQueue()
-
-    const card = (title: string) =>
-      wrapper.findAll('li').find((row) => row.text().includes(title))!
-
-    expect(card('Beta').text()).toContain('A book cannot absorb a video_game.')
-    expect(card('Alpha').text()).not.toContain('A book cannot absorb a video_game.')
-  })
 })

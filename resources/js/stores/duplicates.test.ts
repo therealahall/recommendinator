@@ -34,6 +34,7 @@ function suggestion(survivorId: number, ...absorbedIds: number[]): DuplicateSugg
     source: 'calibre',
     creator: null,
     release_year: null,
+    also_offered: '',
   })
   return {
     content_type: 'book',

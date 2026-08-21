@@ -6,6 +6,7 @@ its response models.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Sequence
 from typing import TYPE_CHECKING
 
 from src.storage.duplicates import SuggestionEvidence
@@ -28,6 +29,10 @@ _SUGGESTION_EVIDENCE_LABELS = {
 
 _MERGE_EVIDENCE_LABELS = {MergeEvidence.MANUAL: "your choice"}
 
+ALSO_OFFERED_NOTE = (
+    "Also offered in another block, because a pairing here was dismissed."
+)
+
 
 def suggestion_evidence_label(evidence: SuggestionEvidence) -> str:
     return _SUGGESTION_EVIDENCE_LABELS.get(evidence, evidence.value)
@@ -39,23 +44,46 @@ def merge_evidence_label(record: MergeRecord) -> str:
     return f"{label} ({record.evidence_detail})" if record.evidence_detail else label
 
 
+def decline_refusal_message(one_id: int, other_ids: Sequence[int]) -> str:
+    others = ", ".join(str(other_id) for other_id in other_ids)
+    if len(other_ids) == 1:
+        return f"Item {one_id} and item {others} are not a live pair to decline."
+    return f"Item {one_id} and items {others} are not live pairs to decline."
+
+
+def also_offered_ids(page: SuggestionPage) -> set[int]:
+    """The copies this page offers in more than one block."""
+    seen: set[int] = set()
+    twice: set[int] = set()
+    for suggestion in page.suggestions:
+        for side in suggestion.copies:
+            if side.db_id in seen:
+                twice.add(side.db_id)
+            seen.add(side.db_id)
+    return twice
+
+
 def suggestion_page_to_dict(page: SuggestionPage) -> dict[str, object]:
+    also_offered = also_offered_ids(page)
     return {
         "total": page.total,
         "suggestions": [
-            suggestion_to_dict(suggestion) for suggestion in page.suggestions
+            suggestion_to_dict(suggestion, also_offered)
+            for suggestion in page.suggestions
         ],
     }
 
 
-def suggestion_to_dict(suggestion: DuplicateSuggestion) -> dict[str, object]:
+def suggestion_to_dict(
+    suggestion: DuplicateSuggestion, also_offered: Collection[int] = ()
+) -> dict[str, object]:
     return {
         "content_type": suggestion.content_type,
         "evidence": suggestion.evidence.value,
         "evidence_label": suggestion_evidence_label(suggestion.evidence),
         "evidence_detail": suggestion.evidence_detail,
         "survivor_id": suggestion.survivor_id,
-        "copies": [_side_to_dict(side) for side in suggestion.copies],
+        "copies": [_side_to_dict(side, also_offered) for side in suggestion.copies],
     }
 
 
@@ -82,11 +110,14 @@ def declined_pair_to_dict(pair: DeclinedPair) -> dict[str, object]:
     }
 
 
-def _side_to_dict(side: DuplicateSide) -> dict[str, object]:
+def _side_to_dict(
+    side: DuplicateSide, also_offered: Collection[int]
+) -> dict[str, object]:
     return {
         "db_id": side.db_id,
         "title": side.title,
         "source": side.source,
         "creator": side.creator,
         "release_year": side.release_year,
+        "also_offered": ALSO_OFFERED_NOTE if side.db_id in also_offered else "",
     }

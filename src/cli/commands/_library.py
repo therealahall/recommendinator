@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import cast
 
@@ -38,6 +39,9 @@ from src.storage.manager import (
     unset_if_none,
 )
 from src.utils.duplicate_serialization import (
+    ALSO_OFFERED_NOTE,
+    also_offered_ids,
+    decline_refusal_message,
     declined_pair_to_dict,
     merge_evidence_label,
     merge_to_dict,
@@ -607,19 +611,17 @@ def library_export(
         click.echo(data, nl=False)
 
 
-def _side_summary(side: DuplicateSide) -> str:
-    return f"{side.title} ({side.creator or 'N/A'}, {side.source or 'N/A'})"
+def _side_summary(side: DuplicateSide, also_offered: Collection[int] = ()) -> str:
+    summary = f"{side.title} ({side.creator or 'N/A'}, {side.source or 'N/A'})"
+    if side.db_id not in also_offered:
+        return summary
+    return f"{summary}\n{ALSO_OFFERED_NOTE}"
 
 
 def _proposed(suggestion: DuplicateSuggestion) -> DuplicateSide:
     return next(
         side for side in suggestion.copies if side.db_id == suggestion.survivor_id
     )
-
-
-def _not_live_message(one_id: int, other_ids: tuple[int, ...]) -> str:
-    others = ", ".join(str(other_id) for other_id in other_ids)
-    return f"Items {one_id} and {others} are not a live pair to decline."
 
 
 def _pair_summary(pair: DeclinedPair) -> str:
@@ -684,12 +686,13 @@ def library_duplicates(
         click.echo("No suspected duplicates.")
         return
 
+    also_offered = also_offered_ids(page)
     table_data = [
         [
             suggestion.survivor_id,
-            _side_summary(_proposed(suggestion)),
+            _side_summary(_proposed(suggestion), also_offered),
             "\n".join(
-                f"#{side.db_id} {_side_summary(side)}"
+                f"#{side.db_id} {_side_summary(side, also_offered)}"
                 for side in suggestion.copies
                 if side.db_id != suggestion.survivor_id
             ),
@@ -889,7 +892,7 @@ def library_decline_duplicate(
 
     pairs = storage.decline_duplicate_suggestion(one_id, other_ids, user_id=user_id)
     if not pairs:
-        abort_with(_not_live_message(one_id, other_ids))
+        abort_with(decline_refusal_message(one_id, other_ids))
 
     if output_format == "json":
         click.echo(

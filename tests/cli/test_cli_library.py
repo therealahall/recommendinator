@@ -31,6 +31,7 @@ from src.storage.manager import (
     UncorrectableFieldError,
 )
 from src.utils.duplicate_serialization import (
+    ALSO_OFFERED_NOTE,
     declined_pair_to_dict,
     merge_to_dict,
     suggestion_page_to_dict,
@@ -1246,6 +1247,60 @@ class TestLibraryDuplicates:
             (db_ids[3], third),
         ]
 
+    def test_one_copy_named_twice_is_refused_once_and_a_dead_id_refuses_none(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--other repeated refuses a block, so an id typed twice is one pair."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        third = _save_book(
+            storage, "storygraph_csv", "5", "Deadhouse Gates (Malazan, Book Two)"
+        )
+        twice = ["--other", str(db_ids[2]), "--other", str(db_ids[2])]
+
+        repeated = _invoke_with_mocks(
+            cli_runner,
+            ["library", "decline-duplicate", "--one", str(third), *twice],
+            storage,
+        )
+        dead = _invoke_with_mocks(
+            cli_runner,
+            ["library", "decline-duplicate", "--one", str(third)]
+            + ["--other", str(db_ids[3]), "--other", "9999"],
+            storage,
+        )
+
+        assert repeated.exit_code == 0, repeated.output
+        assert repeated.output.count("will not be offered as duplicates again") == 1
+        assert len(_json(cli_runner, storage, ["library", "declined-duplicates"])) == 1
+        assert dead.exit_code != 0
+        assert (
+            f"Item {third} and items {db_ids[3]}, 9999 are not live pairs to decline."
+            in dead.output
+        )
+
+    def test_a_copy_two_blocks_both_offer_says_so_in_each_of_them(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Overlap is the exception now, so a repeat reads as a second work."""
+        storage, db_ids = _duplicate_library(tmp_path)
+        third = _save_book(
+            storage, "storygraph_csv", "5", "Deadhouse Gates (Malazan, Book Two)"
+        )
+        fourth = _save_book(storage, "openlibrary", "6", "Deadhouse Gates (Book Two)")
+        declined = _decline(cli_runner, storage, third, db_ids[2])
+
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+        table = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+
+        assert declined.exit_code == 0, declined.output
+        assert {
+            copy["db_id"]
+            for block in offered["suggestions"]
+            for copy in block["copies"]
+            if copy["also_offered"] == ALSO_OFFERED_NOTE
+        } == {db_ids[3], fourth}
+        assert table.output.count(ALSO_OFFERED_NOTE) == 4
+
     def test_a_type_filter_and_a_limit_cut_the_offer_without_hiding_the_count(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -1409,7 +1464,10 @@ class TestDuplicatesWrongIds:
         ):
             result = _decline(cli_runner, storage, one, other, user=user)
             assert result.exit_code != 0, result.output
-            assert f"Items {one} and {other} are not a live pair" in result.output
+            assert (
+                f"Item {one} and item {other} are not a live pair to decline."
+                in result.output
+            )
 
         assert _json(cli_runner, storage, ["library", "declined-duplicates"]) == []
 

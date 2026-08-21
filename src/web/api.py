@@ -133,6 +133,7 @@ from src.storage.manager import (
 )
 from src.storage.schema import UserDict
 from src.utils.duplicate_serialization import (
+    decline_refusal_message,
     declined_pair_to_dict,
     merge_to_dict,
     suggestion_page_to_dict,
@@ -948,6 +949,7 @@ class DuplicateSideResponse(BaseModel):
     source: str | None
     creator: str | None
     release_year: int | None
+    also_offered: str
 
 
 class DuplicateSuggestionResponse(BaseModel):
@@ -1674,13 +1676,9 @@ def decline_duplicate_pair(
         request.one_id, request.other_ids, user_id=user_id
     )
     if not pairs:
-        others = ", ".join(str(other_id) for other_id in request.other_ids)
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"Items {request.one_id} and {others} are not a live pair"
-                " to decline."
-            ),
+            detail=decline_refusal_message(request.one_id, request.other_ids),
         )
     return [_declined_to_response(pair) for pair in pairs]
 

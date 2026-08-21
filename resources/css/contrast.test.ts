@@ -227,7 +227,7 @@ const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
   ['the save-door-key badge', DUP_PAIR, '.dup-badge-exact', ['.dup-badge-exact', '.dup-pair']],
   ['the looser-key badge', DUP_PAIR, '.dup-badge-loose', ['.dup-badge-loose', '.dup-pair']],
   ['the content-type badge', DUP_PAIR, '.dup-badge-type', ['.dup-badge-type', '.dup-pair']],
-  ['a refused decision', DUP_PAIR, '.dup-pair-error', ['.dup-pair']],
+  ['a copy offered twice', DUP_PAIR, '.dup-side-elsewhere', ['.dup-side', '.dup-pair']],
   ['the looser-key caution', DUP_PAIR, '.dup-pair-caution', ['.dup-pair']],
   ['a row title', DUP_PAIR, '.dup-side-title', ['.dup-side', '.dup-pair']],
   ['a row provenance', DUP_PAIR, '.dup-side-meta', ['.dup-side', '.dup-pair']],

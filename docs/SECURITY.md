@@ -113,6 +113,18 @@ is the operator's own upload, and the route needs a session. The per-row
 `errors` in a 200 are not this carve-out: a row that fails to save is named by
 exception class, never quoted.
 
+**The fourth: a correction to a field the content type does not state.** The
+400 from `PATCH /api/items/{db_id}` repeats `UncorrectableFieldError`, whose
+message is fixed over the content type and one of two field names — "A book has
+no release year to correct." — and holds nothing from the request. `library
+edit` prints those same words, so building the sentence again in the route
+would let the two surfaces drift. The route needs a session.
+
+**The fifth: a merge or an undo storage refused.** The 409 from `_refused_merge`
+repeats `MergeError`, which names the row or the merge to deal with first and is
+built from ids the request already carries. `library merge` and `library
+unmerge` abort with those same words. The route needs a session.
+
 ## Web sign-in
 
 **One account, username and password, and a session cookie.** A fresh instance
@@ -282,7 +294,7 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the three carve-outs above as the only exceptions
+  forbidden), with the five carve-outs above as the only exceptions
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values

@@ -114,6 +114,12 @@ describe('DuplicateHistory', () => {
     const store = useDuplicatesStore()
     store.declined = [declined(10, 11), declined(20, 21)]
     mockDelete.mockRejectedValue(new Error('Undo merge 7 first — it absorbed “Row 20”.'))
+    // A refusal reloads before it reports, and one that failed is still in force.
+    mockGet.mockImplementation(async (url: string) =>
+      url === '/duplicates'
+        ? { total: 0, suggestions: [] }
+        : [declined(10, 11), declined(20, 21)],
+    )
     const wrapper = mountHistory()
 
     await row(wrapper, 'Row 21').get('button').trigger('click')

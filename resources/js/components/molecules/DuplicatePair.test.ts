@@ -17,6 +17,7 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
         source: 'calibre',
         creator: null,
         release_year: null,
+        also_offered: '',
       },
       {
         db_id: 4,
@@ -24,6 +25,7 @@ function makeSuggestion(overrides: Partial<DuplicateSuggestion> = {}): Duplicate
         source: 'goodreads_csv',
         creator: 'Steven Erikson',
         release_year: 2000,
+        also_offered: '',
       },
     ],
     ...overrides,
@@ -41,6 +43,7 @@ function threeCopies(): Partial<DuplicateSuggestion> {
         source: 'storygraph_csv',
         creator: null,
         release_year: null,
+        also_offered: '',
       },
     ],
   }
@@ -52,7 +55,6 @@ function mountPair(props: Partial<DuplicateSuggestion> = {}, busy = {}) {
       suggestion: makeSuggestion(props),
       merging: false,
       declining: false,
-      error: '',
       ...busy,
     },
   })
@@ -65,7 +67,7 @@ function keepButton(wrapper: ReturnType<typeof mountPair>, title: string) {
 function dismissButton(wrapper: ReturnType<typeof mountPair>, title: string) {
   return wrapper
     .findAll('button')
-    .find((one) => one.text() === `“${title}” is not the same work`)!
+    .find((one) => one.text().startsWith(`“${title}” from`))!
 }
 
 describe('DuplicatePair', () => {
@@ -120,6 +122,44 @@ describe('DuplicatePair', () => {
     expect(wrapper.findAll('.dup-side')).toHaveLength(3)
     expect(marked.map((side) => side.text().includes('Deadhouse Gates'))).toEqual([true])
     expect(wrapper.text()).toContain('Deadhouse Gates (Malazan, Book Two)')
+  })
+
+  it('names the copy each button acts on, though two of them read the same', () => {
+    const wrapper = mountPair({
+      copies: ['calibre', 'openlibrary', 'goodreads_rss'].map((source, index) => ({
+        db_id: 3 + index,
+        title: 'Dune',
+        source,
+        creator: 'Frank Herbert',
+        release_year: null,
+        also_offered: '',
+      })),
+    })
+
+    const names = wrapper.findAll('button').map((one) => one.text())
+
+    expect(new Set(names).size).toBe(6)
+    expect(names).toContain(
+      'Merge, keeping “Dune” from calibre, row 3, suggested to keep',
+    )
+    expect(names).toContain('“Dune” from goodreads_rss, row 5 is not the same work')
+  })
+
+  it('marks the copy the page reports offering in another block as well', () => {
+    const base = makeSuggestion()
+    const wrapper = mountPair({
+      copies: [
+        base.copies[0],
+        { ...base.copies[1], also_offered: 'Offered twice, a pairing was dismissed.' },
+      ],
+    })
+
+    const marked = wrapper
+      .findAll('.dup-side')
+      .filter((side) => side.text().includes('Offered twice, a pairing was dismissed.'))
+
+    expect(marked).toHaveLength(1)
+    expect(marked[0].text()).toContain('Deadhouse Gates (Malazan Book 2)')
   })
 
   it('warns on the looser key and says nothing extra on the save door’s own', () => {

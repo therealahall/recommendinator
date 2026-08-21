@@ -185,7 +185,8 @@ would fold in. Evidence heads `same title` where the save door's own key
 matched them, and `same title apart from a qualifier` where only the looser key
 did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
 works at a time by default, saying how many are left. Two copies a creator,
-year or region veto separates are never in one block.
+year or region veto separates are never in one block. A copy in two blocks says
+so under its title in both, which is a dismissal having split a group.
 
 A merge keeps `--survivor` and folds the other row into it; run it once per
 copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
