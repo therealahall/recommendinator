@@ -161,9 +161,7 @@ function onBackdropClick(event: MouseEvent) {
           :aria-invalid="creatorError ? 'true' : undefined"
           :aria-describedby="creatorError ? 'edit-creator-error' : undefined"
         >
-        <p v-if="creatorError" id="edit-creator-error" class="edit-field-error" role="alert">
-          {{ creatorError }}
-        </p>
+        <p id="edit-creator-error" class="edit-field-error" role="alert">{{ creatorError }}</p>
       </div>
 
       <div v-if="hasReleaseYear" class="edit-field">
@@ -179,9 +177,7 @@ function onBackdropClick(event: MouseEvent) {
           :aria-invalid="yearError ? 'true' : undefined"
           :aria-describedby="yearError ? 'edit-release-year-error' : undefined"
         >
-        <p v-if="yearError" id="edit-release-year-error" class="edit-field-error" role="alert">
-          {{ yearError }}
-        </p>
+        <p id="edit-release-year-error" class="edit-field-error" role="alert">{{ yearError }}</p>
       </div>
 
       <div class="edit-field">

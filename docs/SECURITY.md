@@ -294,7 +294,12 @@ Changes are audited for the following before they are committed.
 - CORS defaults to localhost, never wildcard
 - `allow_credentials=False` when wildcard origins are used
 - Internal error detail never reaches an HTTP response (`detail=str(error)` is
-  forbidden), with the five carve-outs above as the only exceptions
+  forbidden), with the five carve-outs above as the only exceptions. Four of
+  them are the whole of `git grep -n 'detail=str(' -- src`, five call sites:
+  the templates 503 twice, the import 400, the correction 400, the merge 409.
+  The first reaches a body two ways, so grepping that one pattern misses it:
+  named response fields on the source and plugin listings, and `unusable_detail`
+  in the sync 400, which composes the failed module's own exception text
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values

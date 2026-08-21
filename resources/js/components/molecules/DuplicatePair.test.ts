@@ -111,8 +111,7 @@ describe('DuplicatePair', () => {
   })
 
   it('lists every copy of the work, marking only the one it proposes keeping', () => {
-    // Without the mark every copy reads the same, and the one-click default the
-    // API proposes is invisible.
+    // Without the mark every copy reads alike, hiding the API's one-click default.
     const wrapper = mountPair(threeCopies())
 
     const marked = wrapper

@@ -61,7 +61,7 @@ function merge(id: number, survivorId: number, absorbedId: number): MergeRecord 
 }
 
 function pageOf(...blocks: DuplicateSuggestion[]) {
-  return { total: blocks.length, suggestions: blocks }
+  return { total: blocks.length, skipped_note: '', suggestions: blocks }
 }
 
 describe('useDuplicatesStore', () => {
@@ -165,12 +165,16 @@ describe('useDuplicatesStore', () => {
     expect(store.announcement).toBe('Merged “Row 11” into “Row 10”. 1 suspected duplicate.')
   })
 
-  it('says how much of the set the limit is showing, not just how much it showed', () => {
+  it('says how much of the set the limit is showing, and what it left unsearched', () => {
     const store = useDuplicatesStore()
     store.suggestions = [suggestion(10, 11)]
     store.total = 40
 
     expect(store.summary).toBe('Showing 1 of 40 suspected duplicates.')
+
+    store.skippedNote = 'One work is not offered.'
+
+    expect(store.summary).toBe('Showing 1 of 40 suspected duplicates. One work is not offered.')
   })
 
   it('omits the type parameter entirely when no type is chosen', async () => {

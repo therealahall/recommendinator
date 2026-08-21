@@ -118,6 +118,7 @@ from src.storage.accounts import (
     normalize_account_name,
 )
 from src.storage.manager import (
+    MAX_DECLINE_OTHERS,
     SUGGESTION_PAGE_DEFAULT,
     SUGGESTION_PAGE_MAX,
     UNSET,
@@ -963,6 +964,7 @@ class DuplicateSuggestionResponse(BaseModel):
 
 class DuplicateSuggestionPageResponse(BaseModel):
     total: int
+    skipped_note: str
     suggestions: list[DuplicateSuggestionResponse]
 
 
@@ -995,7 +997,9 @@ class DeclineDuplicateRequest(BaseModel):
     stores one pair per refusal, lowest id first, either order round."""
 
     one_id: ItemDbId
-    other_ids: Annotated[list[ItemDbId], Field(min_length=1)]
+    other_ids: Annotated[
+        list[ItemDbId], Field(min_length=1, max_length=MAX_DECLINE_OTHERS)
+    ]
 
 
 def discover_themes(themes_dir: Path) -> list[ThemeResponse]:

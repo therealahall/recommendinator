@@ -488,9 +488,10 @@ export interface DuplicateSuggestion {
   copies: DuplicateSide[]
 }
 
-/** `total` counts the whole filtered set, not the slice `suggestions` carries. */
+/** `total` counts the whole filtered set; `skipped_note` is outside it. */
 export interface DuplicateSuggestionPage {
   total: number
+  skipped_note: string
   suggestions: DuplicateSuggestion[]
 }
 

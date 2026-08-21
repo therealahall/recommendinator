@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type DOMWrapper } from '@vue/test-utils'
 import EditModal from './EditModal.vue'
 import { MAX_CREATOR_LENGTH } from '@/constants/library'
 import type { ItemEditRequest } from '@/types/api'
@@ -35,6 +35,10 @@ const tvItem = {
   total_seasons: 5,
   seasons_watched: [1, 2],
   status: 'currently_consuming',
+}
+
+function complaints(regions: DOMWrapper<Element>[]): string[] {
+  return regions.map((one) => one.text()).filter(Boolean)
 }
 
 describe('EditModal', () => {
@@ -148,7 +152,7 @@ describe('EditModal', () => {
     const payload = wrapper.emitted('save')![0][1] as ItemEditRequest
     expect(payload.release_year).toBe(1993)
     expect(payload.creator).toBe(atTheBound)
-    expect(wrapper.findAll('[role="alert"]')).toHaveLength(0)
+    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
     wrapper.unmount()
   })
 
@@ -183,7 +187,7 @@ describe('EditModal', () => {
       await field.setValue('Someone Else')
 
       expect(wrapper.find('#edit-creator').attributes('aria-invalid')).toBeUndefined()
-      expect(wrapper.findAll('[role="alert"]')).toHaveLength(0)
+      expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
       wrapper.unmount()
     }
   })
@@ -232,9 +236,29 @@ describe('EditModal', () => {
       expect(payload.rating).toBe(4)
       expect(payload).not.toHaveProperty('creator')
       expect(payload).not.toHaveProperty('release_year')
-      expect(wrapper.findAll('[role="alert"]')).toHaveLength(0)
+      expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
       wrapper.unmount()
     }
+  })
+
+  it('keeps both field complaints mounted while silent, so either can announce', async () => {
+    // Inserted by v-if, the one save() does not focus may never be announced.
+    const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.findAll('[role="alert"]')).toHaveLength(2)
+    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
+    expect(wrapper.find('#edit-creator').attributes('aria-describedby')).toBeUndefined()
+
+    await wrapper.find('#edit-creator').setValue('')
+    await wrapper.find('#edit-release-year').setValue('19')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(complaints(wrapper.findAll('[role="alert"]'))).toHaveLength(2)
+    wrapper.unmount()
   })
 
   it('clears a refused year as it is retyped, not at the next save press', async () => {
@@ -250,12 +274,12 @@ describe('EditModal', () => {
     expect(wrapper.find('#edit-release-year').attributes('aria-invalid')).toBe('true')
 
     await wrapper.find('#edit-release-year').setValue('19')
-    expect(wrapper.findAll('[role="alert"]')).toHaveLength(0)
+    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
 
     await wrapper.find('#edit-release-year').setValue('1994')
 
     expect(wrapper.find('#edit-release-year').attributes('aria-invalid')).toBeUndefined()
-    expect(wrapper.findAll('[role="alert"]')).toHaveLength(0)
+    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
     wrapper.unmount()
   })
 
