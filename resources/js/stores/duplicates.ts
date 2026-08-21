@@ -39,8 +39,8 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
 
   const loading = ref(false)
   const error = ref('')
-  /** Which decision drew the refusal, so its own row can print it: at a full
-   *  page the page-level notice is off-screen. Empty for a failed load. */
+  /** Which decision's row prints the refusal itself, quieting the page notice.
+   *  Empty where the failure leaves no row to print it, page notice only. */
   const errorKey = ref('')
   const announcement = ref('')
   const pending = ref<string[]>([])
@@ -132,6 +132,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     key: string,
     act: () => Promise<string>,
     reload: () => Promise<unknown>,
+    printedByItsRow = false,
   ): Promise<void> {
     if (isPending(key)) return
     pending.value = [...pending.value, key]
@@ -142,9 +143,10 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
       await reload()
       announcement.value = `${outcome} ${summary.value}`
     } catch (err) {
-      // Storage names the row or the merge to deal with first, so its words go
-      // through whole rather than into one generic failure.
-      fail(err, 'That change did not go through.', key)
+      // One POST per absorbed copy, so a block can be part merged when this is
+      // reached: retried against the offer on screen it would fail for good.
+      await reload()
+      fail(err, 'That change did not go through.', printedByItsRow ? key : '')
       announcement.value = ''
     } finally {
       pending.value = pending.value.filter((one) => one !== key)
@@ -155,8 +157,6 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     return decide(
       `merge:${decisionKey([survivorId, ...absorbedIds])}`,
       async () => {
-        // Sequential, and no reload between them: every copy of a block merges
-        // into the survivor whatever the ones before it did.
         const records: MergeRecord[] = []
         for (const absorbedId of absorbedIds) {
           records.push(
@@ -201,6 +201,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
         return `Put “${record.absorbed_title}” back beside “${record.survivor_title}”.`
       },
       () => Promise.all([loadSuggestions(), loadMerges()]),
+      true,
     )
   }
 
@@ -215,6 +216,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
         return `“${pair.one_title}” and “${pair.other_title}” may be offered again.`
       },
       () => Promise.all([loadSuggestions(), loadDeclined()]),
+      true,
     )
   }
 

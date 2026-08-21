@@ -5,6 +5,7 @@ however many copies a block holds."""
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -26,6 +27,12 @@ _DECLINE_SELECT = """
 #: A library that has never been reviewed offers hundreds of works at once.
 SUGGESTION_PAGE_DEFAULT = 25
 SUGGESTION_PAGE_MAX = 200
+
+#: The blocks a group can hold grow as 3^(n/3) however the search is written,
+#: so a group past this is skipped rather than left to exhaust the API.
+GROUP_MEMBER_MAX = 40
+
+logger = logging.getLogger(__name__)
 
 
 class SuggestionEvidence(Enum):
@@ -93,7 +100,7 @@ def find_duplicate_suggestions(
     suggestions = [
         _suggestion(member_type, key, block)
         for (member_type, key), members in groups.items()
-        for block in _blocks(members, declined)
+        for block in _blocks(members, declined, key)
     ]
     return SuggestionPage(
         total=len(suggestions),
@@ -109,7 +116,7 @@ def decline_duplicate(
     One pair per refusal, so the copies it did not name still pair with each
     other, and a re-sync lands on the rows the refusal already named."""
     pairs: list[DeclinedPair] = []
-    for other_id in other_ids:
+    for other_id in dict.fromkeys(other_ids):
         pair = _live_pair(cursor, user_id, one_id, other_id)
         if pair is None:
             return []
@@ -218,11 +225,21 @@ def _declined_pairs(cursor: sqlite3.Cursor, user_id: int) -> set[tuple[int, int]
 
 
 def _blocks(
-    members: list[MatchRow], declined: set[tuple[int, int]]
+    members: list[MatchRow], declined: set[tuple[int, int]], key: str
 ) -> list[list[MatchRow]]:
-    """The largest sets of copies that all still pair, overlapping where a veto
-    or a refusal splits the group. Bron-Kerbosch, because a pass seeded per
-    copy loses a pairing whose largest set that copy is not in."""
+    """The largest sets of copies that all still pair, lowest ids first, and
+    overlapping where a veto or a refusal splits the group. Bron-Kerbosch: a
+    pass seeded per copy loses a set that copy is not in."""
+    if len(members) > GROUP_MEMBER_MAX:
+        logger.warning(
+            "Skipping the %d copies matching %r: a group over %d copies is not"
+            " offered for review. Merge some of them to see the rest.",
+            len(members),
+            key,
+            GROUP_MEMBER_MAX,
+        )
+        return []
+
     linked: dict[int, set[int]] = {index: set() for index in range(len(members))}
     for (index, one), (other_index, other) in combinations(enumerate(members), 2):
         if _ordered(one.db_id, other.db_id) in declined:
@@ -239,7 +256,12 @@ def _blocks(
             if len(block) > 1:
                 found.append(block)
             return
-        for index in sorted(candidates):
+        # Pivoting: a shelf of one work in five translations is a clique, and
+        # without it a clique of m copies costs 2^m calls to yield one block.
+        pivot = max(
+            candidates | excluded, key=lambda one: len(candidates & linked[one])
+        )
+        for index in sorted(candidates - linked[pivot]):
             extend(
                 [*block, index],
                 candidates & linked[index],
@@ -249,7 +271,10 @@ def _blocks(
             excluded = excluded | {index}
 
     extend([], set(linked), set())
-    return [[members[index] for index in block] for block in found]
+    return [
+        [members[index] for index in block]
+        for block in sorted(sorted(block) for block in found)
+    ]
 
 
 def _suggestion(

@@ -465,12 +465,15 @@ export interface SettingValidationError {
 
 // --- Duplicates ---
 
+/** `also_offered` carries why the page holds this copy in a second block, or
+ *  is empty where it does not. */
 export interface DuplicateSide {
   db_id: number
   title: string
   source: string | null
   creator: string | null
   release_year: number | null
+  also_offered: string
 }
 
 /** Every copy of one work, and `survivor_id` the copy proposed to keep.

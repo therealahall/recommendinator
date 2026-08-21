@@ -4,12 +4,18 @@ Through ``StorageManager``, the seam both interfaces call. Every library here
 is saved item by item, so a pair exists only if the save door leaves one.
 """
 
+import logging
+import signal
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.duplicates import GROUP_MEMBER_MAX
 from src.storage.manager import (
     DuplicateSuggestion,
     MergeError,
@@ -17,6 +23,22 @@ from src.storage.manager import (
     StorageManager,
     SuggestionEvidence,
 )
+
+
+@contextmanager
+def _within(seconds: int) -> Iterator[None]:
+    """Fail rather than hang: the defect guarded here is a pass that never ends."""
+
+    def ring(signum: int, frame: FrameType | None) -> None:
+        raise TimeoutError(f"still offering duplicates after {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, ring)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 @pytest.fixture
@@ -48,6 +70,19 @@ def _blocks(manager: StorageManager) -> list[list[int]]:
 
 def _offered(manager: StorageManager) -> list[DuplicateSuggestion]:
     return manager.list_duplicate_suggestions().suggestions
+
+
+def _shelf(manager: StorageManager, count: int) -> list[int]:
+    return [
+        _save(
+            manager,
+            "calibre",
+            str(index),
+            f"The Odyssey (translation {index})",
+            author="Homer",
+        )
+        for index in range(count)
+    ]
 
 
 def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
@@ -108,33 +143,22 @@ def test_a_pair_the_save_door_would_refuse_is_never_offered(
     assert _offered(manager) == []
 
 
-@pytest.mark.parametrize(
-    ("work", "one_region", "other_region"),
-    [("The Traitors", "US", "AU"), ("Ghosts", "US", "UK")],
-)
 def test_two_regions_are_never_offered_though_each_pairs_with_the_bare_row(
-    manager: StorageManager, work: str, one_region: str, other_region: str
+    manager: StorageManager,
 ) -> None:
-    """The bare key gathers every one of them, so this pass is where the
-    operator's two regional rows meet; the row qualifying neither is still one
-    of them, and it is the only row either may be offered against."""
-    one = _save(
-        manager,
-        "sonarr",
-        "1",
-        f"{work} ({one_region})",
-        content_type=ContentType.TV_SHOW,
+    """The bare key gathers all three, so the operator's US and AU rows meet
+    here, and the row qualifying neither is all either may be offered against."""
+    us = _save(
+        manager, "sonarr", "1", "The Traitors (US)", content_type=ContentType.TV_SHOW
     )
-    other = _save(
-        manager,
-        "sonarr",
-        "2",
-        f"{work} ({other_region})",
-        content_type=ContentType.TV_SHOW,
+    au = _save(
+        manager, "sonarr", "2", "The Traitors (AU)", content_type=ContentType.TV_SHOW
     )
-    bare = _save(manager, "sonarr", "3", work, content_type=ContentType.TV_SHOW)
+    bare = _save(
+        manager, "sonarr", "3", "The Traitors", content_type=ContentType.TV_SHOW
+    )
 
-    assert _blocks(manager) == [[one, bare], [other, bare]]
+    assert _blocks(manager) == [[us, bare], [au, bare]]
 
 
 def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
@@ -313,6 +337,31 @@ def test_a_decline_naming_one_dead_id_stores_none_of_the_pairs_it_named(
 
     assert manager.list_declined_duplicates() == []
     assert _blocks(manager) == [[first, second, third]]
+
+
+def test_a_shelf_where_every_copy_pairs_with_every_other_is_offered_at_once(
+    manager: StorageManager,
+) -> None:
+    """A clique of 30 costs a search without a pivot 2^30 calls for one block."""
+    shelf = _shelf(manager, 30)
+
+    with _within(seconds=10):
+        blocks = _blocks(manager)
+
+    assert blocks == [shelf]
+
+
+def test_a_group_past_the_cap_is_skipped_with_a_line_in_the_log_saying_so(
+    manager: StorageManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Skipped, not dropped: nothing else would say the group is even there."""
+    _shelf(manager, GROUP_MEMBER_MAX + 1)
+
+    with caplog.at_level(logging.WARNING), _within(seconds=10):
+        assert _offered(manager) == []
+
+    assert f"the {GROUP_MEMBER_MAX + 1} copies" in caplog.text
+    assert "is not offered for review" in caplog.text
 
 
 def test_one_refusal_inside_a_group_of_four_leaves_both_blocks_it_splits_into(

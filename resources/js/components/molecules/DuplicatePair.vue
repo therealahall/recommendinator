@@ -7,7 +7,6 @@ const props = defineProps<{
   suggestion: DuplicateSuggestion
   merging: boolean
   declining: boolean
-  error: string
 }>()
 
 const emit = defineEmits<{
@@ -36,10 +35,16 @@ function others(keepId: number): number[] {
 }
 
 function view(side: DuplicateSide) {
+  const proposed = side.db_id === props.suggestion.survivor_id
+  // Copies of one work often share a title, so a button names its row (4.1.2).
+  const named = `“${side.title}” from ${
+    side.source || 'source not recorded'
+  }, row ${side.db_id}`
   return {
     keepId: side.db_id,
     dropIds: others(side.db_id),
-    proposed: side.db_id === props.suggestion.survivor_id,
+    proposed,
+    elsewhere: side.also_offered,
     title: side.title,
     creator: side.creator || 'Creator not recorded',
     source: side.source || 'Source not recorded',
@@ -47,11 +52,11 @@ function view(side: DuplicateSide) {
     label:
       props.merging && chosen.value === side.db_id
         ? 'Merging…'
-        : `Merge, keeping “${side.title}”`,
+        : `Merge, keeping ${named}${proposed ? ', suggested to keep' : ''}`,
     apart:
       props.declining && chosen.value === side.db_id
         ? 'Dismissing…'
-        : `“${side.title}” is not the same work`,
+        : `${named} is not the same work`,
   }
 }
 
@@ -100,6 +105,7 @@ function onDecline(copyId: number, otherIds: number[]): void {
             <span class="dup-side-proposed">suggested to keep</span>
           </template>
         </p>
+        <p v-if="side.elsewhere" class="dup-side-elsewhere">{{ side.elsewhere }}</p>
         <button
           type="button"
           class="btn btn-secondary dup-side-keep"
@@ -114,8 +120,6 @@ function onDecline(copyId: number, otherIds: number[]): void {
         >{{ side.apart }}</button>
       </div>
     </div>
-
-    <p v-if="error" class="dup-pair-error">{{ error }}</p>
   </li>
 </template>
 
@@ -207,15 +211,14 @@ function onDecline(copyId: number, otherIds: number[]): void {
   color: var(--text-primary);
 }
 
+.dup-side-elsewhere {
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+}
+
 .dup-side-apart {
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
-}
-
-.dup-pair-error {
-  margin-top: var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--color-warning);
 }
 </style>

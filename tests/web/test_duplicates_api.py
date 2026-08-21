@@ -195,15 +195,28 @@ def test_a_copy_declined_out_of_a_block_leaves_the_rest_of_it_offered(
     assert _blocks(client, type="book") == [[one, other], [one, third]]
 
 
-def test_declining_what_is_not_a_live_pair_refuses_by_id(client: TestClient) -> None:
+def test_declining_what_is_not_a_live_pair_refuses_in_the_clis_own_words(
+    client: TestClient,
+) -> None:
     one = _ids(client, "Deadhouse Gates")
+    other = _ids(client, "Deadhouse Gates (Malazan Book 2)")
 
-    response = client.post(
+    single = client.post(
         "/api/duplicates/declined", json={"one_id": one, "other_ids": [9999]}
     )
+    several = client.post(
+        "/api/duplicates/declined", json={"one_id": one, "other_ids": [other, 9999]}
+    )
 
-    assert response.status_code == 404
-    assert f"Items {one} and 9999 are not a live pair" in response.json()["detail"]
+    assert single.status_code == 404
+    assert single.json()["detail"] == (
+        f"Item {one} and item 9999 are not a live pair to decline."
+    )
+    assert several.status_code == 404
+    assert several.json()["detail"] == (
+        f"Item {one} and items {other}, 9999 are not live pairs to decline."
+    )
+    assert client.get("/api/duplicates/declined").json() == []
 
 
 def test_lifting_a_refusal_nobody_made_refuses_by_id(client: TestClient) -> None:

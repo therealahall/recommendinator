@@ -17,7 +17,6 @@ const rows = computed(() =>
       suggestion,
       merging: store.isPending(`merge:${key}`),
       declining: store.isPending(`decline:${key}`),
-      error: store.errorFor(`merge:${key}`) || store.errorFor(`decline:${key}`),
     }
   }),
 )
@@ -28,13 +27,18 @@ const emptyMessage = computed(() =>
     : 'No suspected duplicates. Nothing looks like the same work twice.',
 )
 
-function decide(index: number, run: () => Promise<void>): Promise<void> {
+function decide(
+  index: number,
+  run: () => Promise<void>,
+  survivingKey = '',
+): Promise<void> {
   return keepFocusInList(
     listEl,
     queueEl,
     index,
     () => rows.value.map((row) => row.key),
     run,
+    survivingKey,
   )
 }
 </script>
@@ -86,9 +90,11 @@ function decide(index: number, run: () => Promise<void>): Promise<void> {
         :suggestion="row.suggestion"
         :merging="row.merging"
         :declining="row.declining"
-        :error="row.error"
         @merge="(keep, drop) => decide(index, () => store.merge(keep, drop))"
-        @decline="(copy, others) => decide(index, () => store.declineCopy(copy, others))"
+        @decline="
+          (copy, others) =>
+            decide(index, () => store.declineCopy(copy, others), decisionKey(others))
+        "
       />
     </ul>
   </section>
