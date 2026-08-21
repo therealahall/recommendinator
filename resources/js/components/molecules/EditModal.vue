@@ -23,12 +23,16 @@ useFocusTrap(modalContent, () => emit('close'))
 const status = ref(props.item.status)
 const rating = ref<number | null>(props.item.rating)
 const review = ref(props.item.review || '')
+const creator = ref(props.item.author ?? '')
+const releaseYear = ref(props.item.release_year?.toString() ?? '')
 const seasonsWatched = ref<number[]>(props.item.seasons_watched || [])
 const genres = ref<string[]>(props.item.genres ?? [])
 const tags = ref<string[]>(props.item.tags ?? [])
 const description = ref(props.item.description ?? '')
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
+
+const hasReleaseYear = computed(() => props.item.content_type !== 'book')
 
 // Status and the checklist are two views of one fact, so each edit derives the
 // other and the payload is always self-consistent. Explicit handlers rather
@@ -65,9 +69,14 @@ function save() {
     // A blank review would store "", which reads as a review the user wrote
     // and blocks any later import from filling one in. Blank means clear.
     review: review.value.trim() ? review.value : null,
+    creator: creator.value.trim() ? creator.value : null,
     genres: genres.value,
     tags: tags.value,
     description: description.value || null,
+  }
+  const year = Number.parseInt(releaseYear.value, 10)
+  if (hasReleaseYear.value && !Number.isNaN(year)) {
+    data.release_year = year
   }
   if (isTvShow.value) {
     data.seasons_watched = seasonsWatched.value
@@ -90,6 +99,16 @@ function onBackdropClick(event: MouseEvent) {
       <div class="edit-modal-subtitle">
         <span v-if="item.author">{{ item.author }} </span>
         <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
+      </div>
+
+      <div class="edit-field">
+        <label for="edit-creator">Creator</label>
+        <input id="edit-creator" v-model="creator" type="text" maxlength="500" placeholder="Author, director or developer...">
+      </div>
+
+      <div v-if="hasReleaseYear" class="edit-field">
+        <label for="edit-release-year">Release year</label>
+        <input id="edit-release-year" v-model="releaseYear" type="number" inputmode="numeric" min="1800" max="2200">
       </div>
 
       <div class="edit-field">

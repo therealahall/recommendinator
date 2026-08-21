@@ -34,6 +34,9 @@ from src.config.service import load_config
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
+    MAX_RELEASE_YEAR,
+    MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -1739,6 +1742,8 @@ def test_edit_item_status(client, mock_components):
         genres=None,
         tags=None,
         description=None,
+        release_year=None,
+        creator=None,
         user_id=1,
     )
 
@@ -1774,6 +1779,8 @@ def test_edit_tv_show_seasons(client, mock_components):
         genres=None,
         tags=None,
         description=None,
+        release_year=None,
+        creator=None,
         user_id=1,
     )
 
@@ -2046,6 +2053,8 @@ def test_edit_item_manual_metadata(client, mock_components):
         genres=["Drama"],
         tags=["slow-burn"],
         description="Hand written.",
+        release_year=None,
+        creator=None,
         user_id=1,
     )
 
@@ -5346,3 +5355,59 @@ class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
                     StarletteHTTPException(status_code=422, detail=f"nope{surrogate}"),
                 )
             )
+
+
+def test_edit_item_corrects_the_release_year_and_creator(client, mock_components):
+    corrected = ContentItem(
+        id="game_1",
+        db_id=7,
+        title="Doom",
+        author="id Software",
+        content_type=ContentType.VIDEO_GAME,
+        status=ConsumptionStatus.UNREAD,
+        metadata={"release_year": 1993},
+    )
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+    mock_components["storage"].get_content_item = Mock(return_value=corrected)
+
+    response = client.patch(
+        "/api/items/7?user_id=1",
+        json={"status": "unread", "release_year": 1993, "creator": "id Software"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["release_year"] == 1993
+    assert response.json()["author"] == "id Software"
+    call_kwargs = mock_components["storage"].update_item_from_ui.call_args[1]
+    assert call_kwargs["release_year"] == 1993
+    assert call_kwargs["creator"] == "id Software"
+
+
+def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
+    client, mock_components
+):
+    mock_components["storage"].update_item_from_ui = Mock(return_value=True)
+
+    for correction in (
+        {"release_year": MIN_RELEASE_YEAR - 1},
+        {"release_year": MAX_RELEASE_YEAR + 1},
+        {"creator": "x" * (MAX_CREATOR_LENGTH + 1)},
+        {"creator": "   "},
+    ):
+        response = client.patch(
+            "/api/items/42?user_id=1", json={"status": "unread", **correction}
+        )
+        assert response.status_code == 422, correction
+
+    mock_components["storage"].update_item_from_ui.assert_not_called()
+
+
+def test_edit_item_reports_a_type_that_states_no_release_year(client, mock_components):
+    mock_components["storage"].update_item_from_ui = Mock(
+        side_effect=ValueError("A book has no release year to correct.")
+    )
+
+    response = client.patch("/api/items/7?user_id=1", json={"release_year": 1965})
+
+    assert response.status_code == 400
+    assert "release year" in response.json()["detail"]

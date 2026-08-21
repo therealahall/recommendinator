@@ -21,6 +21,7 @@ export interface ContentItemResponse {
   ignored: boolean
   seasons_watched: number[] | null
   total_seasons: number | null
+  release_year: number | null
   enriched: boolean
   genres: string[]
   tags: string[]
@@ -381,6 +382,8 @@ export interface ItemEditRequest {
   genres?: string[]
   tags?: string[]
   description?: string | null
+  release_year?: number | null
+  creator?: string | null
 }
 
 export interface IgnoreItemRequest {

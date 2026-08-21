@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EditModal from './EditModal.vue'
+import type { ItemEditRequest } from '@/types/api'
 
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({ get: vi.fn() }),
@@ -18,6 +19,7 @@ const defaultItem = {
   author: 'Author',
   seasons_watched: null,
   total_seasons: null,
+  release_year: null,
   ignored: false,
   enriched: false,
   genres: [],
@@ -63,6 +65,7 @@ describe('EditModal', () => {
       status: 'completed',
       rating: null,
       review: null,
+      creator: 'Author',
       genres: [],
       tags: [],
       description: null,
@@ -85,6 +88,7 @@ describe('EditModal', () => {
       status: 'unread',
       rating: null,
       review: null,
+      creator: 'Author',
       genres: ['Sci-Fi'],
       tags: ['classic'],
       description: 'A tale.',
@@ -109,6 +113,7 @@ describe('EditModal', () => {
       status: 'unread',
       rating: null,
       review: null,
+      creator: 'Author',
       genres: [],
       tags: [],
       description: null,
@@ -132,11 +137,42 @@ describe('EditModal', () => {
       status: 'completed',
       rating: null,
       review: null,
+      creator: 'Author',
       genres: [],
       tags: [],
       description: null,
       seasons_watched: [1, 2, 3, 4, 5],
     })
+    wrapper.unmount()
+  })
+
+  it('save emits a corrected release year and creator', async () => {
+    const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-release-year').setValue('1993')
+    await wrapper.find('#edit-creator').setValue('id Software')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    const payload = wrapper.emitted('save')![0][1] as ItemEditRequest
+    expect(payload.release_year).toBe(1993)
+    expect(payload.creator).toBe('id Software')
+    wrapper.unmount()
+  })
+
+  it('a book sends no release year, having none to correct', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.find('#edit-release-year').exists()).toBe(false)
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).not.toHaveProperty('release_year')
     wrapper.unmount()
   })
 })

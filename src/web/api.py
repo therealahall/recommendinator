@@ -10,7 +10,7 @@ from typing import Annotated, Any, assert_never, cast
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
 from src import __version__ as APP_VERSION
 from src.auth.epic import (
@@ -61,11 +61,14 @@ from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
 from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
     MAX_GENRE_TAG_LENGTH,
     MAX_GENRES,
+    MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -206,6 +209,14 @@ CompletionReviewText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
     AfterValidator(_blank_review_validator("")),
+]
+
+#: Stripped, so a pasted trailing space is not another name to the veto.
+CorrectedCreator = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=MAX_CREATOR_LENGTH
+    ),
 ]
 
 
@@ -439,6 +450,7 @@ class ContentItemResponse(BaseModel):
     ignored: bool = False
     seasons_watched: list[int] | None = None
     total_seasons: int | None = None
+    release_year: int | None = None
     enriched: bool = False
     genres: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -610,6 +622,10 @@ class ItemEditRequest(BaseModel):
     description: str | None = Field(
         None, max_length=MAX_DESCRIPTION_LENGTH, description="Manual description"
     )
+    release_year: int | None = Field(
+        None, ge=MIN_RELEASE_YEAR, le=MAX_RELEASE_YEAR, description="Corrected year"
+    )
+    creator: CorrectedCreator | None = None
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -1587,17 +1603,22 @@ def edit_item(
             )
         status = request.status
 
-    success = storage.update_item_from_ui(
-        db_id=db_id,
-        status=status,
-        rating=request.rating if "rating" in supplied else UNSET,
-        review=request.review if "review" in supplied else UNSET,
-        seasons_watched=request.seasons_watched,
-        genres=request.genres,
-        tags=request.tags,
-        description=request.description,
-        user_id=user_id,
-    )
+    try:
+        success = storage.update_item_from_ui(
+            db_id=db_id,
+            status=status,
+            rating=request.rating if "rating" in supplied else UNSET,
+            review=request.review if "review" in supplied else UNSET,
+            seasons_watched=request.seasons_watched,
+            genres=request.genres,
+            tags=request.tags,
+            description=request.description,
+            release_year=request.release_year,
+            creator=request.creator,
+            user_id=user_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
 

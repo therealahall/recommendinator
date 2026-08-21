@@ -6,6 +6,7 @@ web ContentItemResponse must be added here so the CLI emits it too.
 """
 
 from src.models.content import ContentItem, get_enum_value
+from src.models.detail_fields import to_int
 
 
 def extract_tv_season_fields(
@@ -60,6 +61,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         # type is a non-nullable bool, so None intentionally serializes as
         # False — unknown state is presented as "not enriched".
         "enriched": bool(item.enriched),
+        "release_year": to_int(metadata.get("release_year")),
         "genres": metadata.get("genres") or [],
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),
