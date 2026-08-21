@@ -1508,6 +1508,9 @@ class TestLibraryEditCorrections:
     def test_edit_refuses_a_correction_outside_the_web_bounds(
         self, cli_runner: CliRunner
     ) -> None:
+        """Both bounds are the CLI's own: the year through Click's range and the
+        creator length by hand, so dropping either lets the CLI store what the
+        edit dialog refuses."""
         mock_storage = self._game_storage()
 
         for extra_args in (
@@ -1527,6 +1530,8 @@ class TestLibraryEditCorrections:
     def test_edit_reports_a_type_that_states_no_release_year(
         self, cli_runner: CliRunner
     ) -> None:
+        """Storage refuses a year on a book, and only this door turns that into
+        a message instead of a traceback."""
         mock_storage = self._game_storage()
         mock_storage.update_item_from_ui.side_effect = ValueError(
             "A book has no release year to correct."

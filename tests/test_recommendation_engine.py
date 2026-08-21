@@ -28,8 +28,13 @@ from src.recommendations.variety import (
     VARIETY_SERIES_CONTINUATION_FACTOR,
     VARIETY_TOP_PENALTY,
 )
+from src.storage.item_merges import MergeEvidence
 from src.storage.manager import StorageManager
-from src.utils.series import expand_tv_shows_to_seasons
+from src.utils.series import (
+    expand_tv_shows_to_seasons,
+    get_series_item_number,
+    get_series_name,
+)
 from tests.factories import make_item
 
 
@@ -118,6 +123,7 @@ def _save_book(
     ignored=False,
     genre="Science Fiction",
     date_completed=None,
+    metadata=None,
 ):
     """Persist a book, optionally marking it ignored; return its db_id."""
     db_id = storage.save_content_item(
@@ -127,7 +133,7 @@ def _save_book(
             content_type=ContentType.BOOK,
             status=status,
             rating=rating,
-            metadata={"genre": genre},
+            metadata={"genre": genre, **(metadata or {})},
             date_completed=date_completed,
         )
     )
@@ -393,81 +399,56 @@ class TestCustomRulesIntegration:
         assert titles[-1] == "Horror Book"
 
 
-class TestSeriesOrderingRegression:
-    """Regression tests for series ordering bugs.
+class TestTwinnedSeriesEntryRegression:
+    """Reported: a run offered book #2 while #1 sat unread.
 
-    These tests document and prevent regressions of bugs found in production.
+    Only the "(Series, Book N)" spelling leaves two rows to merge: the save
+    door joins a "(Series, #N)" twin at ingest, ``_is_qualifier`` stripping it.
     """
 
-    def test_series_book_2_not_recommended_when_book_1_unread_regression(
-        self, engine, mock_storage
+    @pytest.mark.parametrize("position_key", ["series_position", "series_index"])
+    def test_a_merged_twin_takes_one_place_in_its_series_regression(
+        self, real_engine, real_storage, position_key
     ):
-        """Regression test: Book #2 should not be recommended when book #1 exists but is unread.
-
-        Bug reported: "The Black Unicorn (Magic Kingdom of Landover #2)" was
-        recommended as #16 when the user had not read book #1.
-
-        Root cause: The engine fetched only 100 unconsumed items sorted by title
-        (ignoring articles). "The Black Unicorn" sorted as "Black Unicorn" (B)
-        was included, but "Magic Kingdom for Sale—Sold! #1" sorted as "Magic..."
-        (M) was position 171, outside the 100-item limit. The series filter
-        couldn't find book #1 in the limited list and incorrectly assumed it
-        didn't exist.
-
-        Fix: Removed the 100-item limit when fetching unconsumed items for
-        recommendations, ensuring all items are available for series checking.
-        """
-        consumed = ContentItem(
-            id="0",
-            title="Some Other Book",
-            content_type=ContentType.BOOK,
+        """Calibre-Web writes ``series_index``, the providers ``series_position``."""
+        _save_book(
+            real_storage,
+            item_id="taste",
+            title="Ancillary Justice",
             status=ConsumptionStatus.COMPLETED,
-            rating=4,
-            metadata={"genre": "Fantasy"},
+            rating=5,
         )
-
-        # Simulate the Landover series scenario - book #1 and #2 both unread
-        # With article-stripping sort, "The Black Unicorn" (B) comes before
-        # "Magic Kingdom for Sale—Sold!" (M)
-        book_1 = ContentItem(
-            id="1",
-            title="Magic Kingdom for Sale—Sold! (Magic Kingdom of Landover #1)",
-            content_type=ContentType.BOOK,
+        calibre_id = _save_book(
+            real_storage,
+            item_id="calibre-1",
+            title="All Systems Red",
             status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Fantasy"},
+            metadata={"series": "The Murderbot Diaries", position_key: 1},
         )
-        book_2 = ContentItem(
-            id="2",
-            title="The Black Unicorn (Magic Kingdom of Landover #2)",
-            content_type=ContentType.BOOK,
+        goodreads_id = _save_book(
+            real_storage,
+            item_id="goodreads-1",
+            title="All Systems Red (The Murderbot Diaries, Book 1)",
             status=ConsumptionStatus.UNREAD,
-            metadata={"genre": "Fantasy"},
         )
+        for position, title in ((2, "Artificial Condition"), (3, "Rogue Protocol")):
+            _save_book(
+                real_storage,
+                item_id=f"goodreads-{position}",
+                title=f"{title} (The Murderbot Diaries, #{position})",
+                status=ConsumptionStatus.UNREAD,
+            )
 
-        # Both books must be in the unconsumed list for correct series filtering
-        unconsumed_items = [book_2, book_1]  # Intentionally out of order
+        real_storage.merge_content_items(calibre_id, goodreads_id, MergeEvidence.MANUAL)
 
-        mock_storage.get_completed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: [consumed]
+        recommendations = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=100
         )
-        mock_storage.get_unconsumed_items = Mock(return_value=unconsumed_items)
-
-        recommendations = engine.generate_recommendations(
-            content_type=ContentType.BOOK,
-            count=5,
-        )
-
-        recommended_titles = [rec.item.title for rec in recommendations]
-
-        # Book #1 SHOULD be recommended (first in series, unstarted)
-        assert any(
-            "Magic Kingdom for Sale" in title for title in recommended_titles
-        ), "Book #1 should be recommended"
-
-        # Book #2 should NOT be recommended (book #1 exists but not read)
-        assert not any(
-            "Black Unicorn" in title for title in recommended_titles
-        ), "Book #2 should NOT be recommended when book #1 is unread"
+        assert [
+            get_series_item_number(rec.item)
+            for rec in recommendations
+            if get_series_name(rec.item) == "The Murderbot Diaries"
+        ] == [1.0]
 
 
 # ---------------------------------------------------------------------------
