@@ -56,12 +56,11 @@ const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.i
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Only a changed box is checked and sent: ingestion bounds neither field, so a
-// stored year of 19993 would otherwise refuse every save of an untouched one.
+// Ingestion bounds neither field: checking an untouched box would refuse every
+// save of a row stored with 19993 in it.
 function creatorComplaint(): string {
   if (!creatorChanged.value) return ''
   if (!correctedCreator.value) return CREATOR_EMPTY
-  // maxlength bounds what is typed, never the longer creator an import stored.
   return correctedCreator.value.length > MAX_CREATOR_LENGTH ? CREATOR_TOO_LONG : ''
 }
 
