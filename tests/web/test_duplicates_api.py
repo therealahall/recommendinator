@@ -10,8 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.duplicates import GROUP_MEMBER_MAX, MAX_DECLINE_OTHERS
 from src.storage.manager import StorageManager
-from src.utils.duplicate_serialization import merge_to_dict, suggestion_to_dict
+from src.utils.duplicate_serialization import (
+    merge_to_dict,
+    skipped_works_note,
+    suggestion_to_dict,
+)
 from tests.factories import authenticated_client, booted_web_app
 
 
@@ -219,6 +224,22 @@ def test_declining_what_is_not_a_live_pair_refuses_in_the_clis_own_words(
     assert client.get("/api/duplicates/declined").json() == []
 
 
+def test_a_decline_naming_more_copies_than_a_block_holds_is_refused(
+    client: TestClient,
+) -> None:
+    """A block holds 40, so the largest list a card sends has to be taken."""
+    one = _ids(client, "Deadhouse Gates")
+
+    def decline(count: int) -> int:
+        return client.post(
+            "/api/duplicates/declined",
+            json={"one_id": one, "other_ids": list(range(9000, 9000 + count))},
+        ).status_code
+
+    assert decline(MAX_DECLINE_OTHERS) == 404
+    assert decline(MAX_DECLINE_OTHERS + 1) == 422
+
+
 def test_lifting_a_refusal_nobody_made_refuses_by_id(client: TestClient) -> None:
     response = client.delete("/api/duplicates/declined/1/2")
 
@@ -240,9 +261,37 @@ def test_an_empty_library_answers_an_empty_view_on_every_listing(
     with booted_web_app(empty, {"storage": {"database_path": "data/test.db"}}) as app:
         client = authenticated_client(app)
 
-        assert client.get("/api/duplicates").json() == {"total": 0, "suggestions": []}
+        assert client.get("/api/duplicates").json() == {
+            "total": 0,
+            "skipped_note": "",
+            "suggestions": [],
+        }
         assert client.get("/api/merges").json() == []
         assert client.get("/api/duplicates/declined").json() == []
+
+
+def test_a_work_left_unsearched_is_reported_rather_than_counted_as_none(
+    tmp_path: Path,
+) -> None:
+    """Dropped from both numbers, it reads as a library with no duplicates."""
+    shelf = StorageManager(sqlite_path=tmp_path / "shelf.db")
+    for index in range(GROUP_MEMBER_MAX + 1):
+        shelf.save_content_item(
+            ContentItem(
+                id=str(index),
+                source="calibre",
+                title=f"The Wandering Inn ({index})",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+    with booted_web_app(shelf, {"storage": {"database_path": "data/test.db"}}) as app:
+        page = _suggestions(authenticated_client(app))
+
+    assert page["total"] == 0
+    assert page["suggestions"] == []
+    assert page["skipped_note"] == skipped_works_note(1)
 
 
 def test_a_lift_a_merge_blocks_is_refused_in_the_storage_layer_s_own_words(

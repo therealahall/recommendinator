@@ -28,6 +28,7 @@ from src.models.content import (
 )
 from src.models.detail_fields import DETAIL_FIELDS
 from src.storage.manager import (
+    MAX_DECLINE_OTHERS,
     SUGGESTION_PAGE_DEFAULT,
     SUGGESTION_PAGE_MAX,
     DeclinedPair,
@@ -40,11 +41,11 @@ from src.storage.manager import (
 )
 from src.utils.duplicate_serialization import (
     ALSO_OFFERED_NOTE,
-    also_offered_ids,
     decline_refusal_message,
     declined_pair_to_dict,
     merge_evidence_label,
     merge_to_dict,
+    skipped_works_note,
     suggestion_evidence_label,
     suggestion_page_to_dict,
 )
@@ -682,17 +683,17 @@ def library_duplicates(
         click.echo(json.dumps(suggestion_page_to_dict(page), indent=2))
         return
 
+    skipped = skipped_works_note(page.skipped_works)
     if not page.suggestions:
-        click.echo("No suspected duplicates.")
+        click.echo(skipped or "No suspected duplicates.")
         return
 
-    also_offered = also_offered_ids(page)
     table_data = [
         [
             suggestion.survivor_id,
-            _side_summary(_proposed(suggestion), also_offered),
+            _side_summary(_proposed(suggestion), page.also_offered),
             "\n".join(
-                f"#{side.db_id} {_side_summary(side, also_offered)}"
+                f"#{side.db_id} {_side_summary(side, page.also_offered)}"
                 for side in suggestion.copies
                 if side.db_id != suggestion.survivor_id
             ),
@@ -703,7 +704,8 @@ def library_duplicates(
     ]
     headers = ["Keep ID", "Keep", "Other copies", "Type", "Evidence"]
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
-    click.echo(f"Showing {len(page.suggestions)} of {page.total} suspected duplicates.")
+    counted = f"Showing {len(page.suggestions)} of {page.total} suspected duplicates."
+    click.echo(f"{counted} {skipped}" if skipped else counted)
 
 
 @library.command("merge")
@@ -889,6 +891,9 @@ def library_decline_duplicate(
 ) -> None:
     """Keep one copy off the list for good, against every --other named."""
     storage = ctx.obj["storage"]
+
+    if len(other_ids) > MAX_DECLINE_OTHERS:
+        abort_with(f"--other accepts at most {MAX_DECLINE_OTHERS} values.")
 
     pairs = storage.decline_duplicate_suggestion(one_id, other_ids, user_id=user_id)
     if not pairs:

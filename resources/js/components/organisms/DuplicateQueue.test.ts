@@ -120,17 +120,21 @@ describe('DuplicateQueue', () => {
     expect(document.activeElement?.closest('li')?.textContent).toContain('Delta')
   })
 
-  it('stays on the block a dismissed copy leaves behind, not the next work', async () => {
+  it('stays on the block a part-way merge left behind, not the next work', async () => {
+    // One POST per absorbed copy: the second is refused, the reload re-keys the
+    // block, and the key the click could name is not the key that survived.
     const store = useDuplicatesStore()
     store.suggestions = [suggestion('Alpha', 10, 3), suggestion('Beta', 20)]
-    vi.spyOn(store, 'declineCopy').mockImplementation(async () => {
+    vi.spyOn(store, 'merge').mockImplementation(async () => {
       store.suggestions = [suggestion('Alpha', 10), suggestion('Beta', 20)]
     })
     const wrapper = mountQueue()
 
-    const dropped = dismissButton(wrapper, 'Alpha (hardback)')
-    ;(dropped.element as HTMLElement).focus()
-    await dropped.trigger('click')
+    const keep = wrapper
+      .findAll('button')
+      .find((one) => one.text().includes('keeping “Alpha”'))!
+    ;(keep.element as HTMLElement).focus()
+    await keep.trigger('click')
     await flushPromises()
 
     expect(document.activeElement?.closest('li')?.textContent).toContain('Alpha')

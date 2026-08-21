@@ -14,7 +14,6 @@ const mergeRows = computed(() =>
     absorbedTitle: record.absorbed_title,
     survivorTitle: record.survivor_title,
     blocked,
-    reason: blocked || store.errorFor(`undo:${record.id}`),
     reasonId: `merge-reason-${record.id}`,
     meta: [
       `merge ${record.id}`,
@@ -34,8 +33,6 @@ const declinedRows = computed(() =>
       otherId: pair.other_id,
       text: `“${pair.one_title}” (row ${pair.one_id}) and “${pair.other_title}” (row ${pair.other_id})`,
       lifting: store.isPending(`undecline:${key}`),
-      reason: store.errorFor(`undecline:${key}`),
-      reasonId: `declined-reason-${key}`,
     }
   }),
 )
@@ -89,15 +86,15 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
             “{{ row.absorbedTitle }}” folded into “{{ row.survivorTitle }}”
           </p>
           <p class="dup-log-meta">{{ row.meta }}</p>
-          <p v-if="row.reason" :id="row.reasonId" class="dup-log-reason">
-            {{ row.reason }}
+          <p v-if="row.blocked" :id="row.reasonId" class="dup-log-reason">
+            {{ row.blocked }}
           </p>
         </div>
         <button
           type="button"
           class="btn btn-secondary btn-small"
           :aria-disabled="row.blocked !== '' || row.undoing || undefined"
-          :aria-describedby="row.reason ? row.reasonId : undefined"
+          :aria-describedby="row.blocked ? row.reasonId : undefined"
           @click="row.blocked || row.undoing ? undefined : undo(index, row.id)"
         >{{ row.undoing ? 'Undoing…' : 'Undo' }}</button>
       </li>
@@ -117,15 +114,11 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
       <li v-for="(row, index) in declinedRows" :key="row.key" class="dup-log-row">
         <div class="dup-log-body">
           <p class="dup-log-text">{{ row.text }}</p>
-          <p v-if="row.reason" :id="row.reasonId" class="dup-log-reason">
-            {{ row.reason }}
-          </p>
         </div>
         <button
           type="button"
           class="btn btn-secondary btn-small"
           :aria-disabled="row.lifting || undefined"
-          :aria-describedby="row.reason ? row.reasonId : undefined"
           @click="
             row.lifting ? undefined : offerAgain(index, row.oneId, row.otherId)
           "

@@ -1,8 +1,5 @@
-"""Shared serialization for the duplicates review surface.
-
-The CLI emits these dicts as ``--format json`` and the web validates them into
-its response models.
-"""
+"""Shared serialization for the duplicates review surface: the CLI emits these
+dicts as ``--format json``, the web validates them into its response models."""
 
 from __future__ import annotations
 
@@ -30,7 +27,7 @@ _SUGGESTION_EVIDENCE_LABELS = {
 _MERGE_EVIDENCE_LABELS = {MergeEvidence.MANUAL: "your choice"}
 
 ALSO_OFFERED_NOTE = (
-    "Also offered in another block, because a pairing here was dismissed."
+    "Also offered in another block: a veto or a dismissal splits this work."
 )
 
 
@@ -51,24 +48,23 @@ def decline_refusal_message(one_id: int, other_ids: Sequence[int]) -> str:
     return f"Item {one_id} and items {others} are not live pairs to decline."
 
 
-def also_offered_ids(page: SuggestionPage) -> set[int]:
-    """The copies this page offers in more than one block."""
-    seen: set[int] = set()
-    twice: set[int] = set()
-    for suggestion in page.suggestions:
-        for side in suggestion.copies:
-            if side.db_id in seen:
-                twice.add(side.db_id)
-            seen.add(side.db_id)
-    return twice
+def skipped_works_note(count: int) -> str:
+    if count == 0:
+        return ""
+    subject = "1 work is" if count == 1 else f"{count} works are"
+    whose = "its" if count == 1 else "their"
+    return (
+        f"{subject} not offered: too many ways to group {whose} copies."
+        " Merge some of them to see the rest."
+    )
 
 
 def suggestion_page_to_dict(page: SuggestionPage) -> dict[str, object]:
-    also_offered = also_offered_ids(page)
     return {
         "total": page.total,
+        "skipped_note": skipped_works_note(page.skipped_works),
         "suggestions": [
-            suggestion_to_dict(suggestion, also_offered)
+            suggestion_to_dict(suggestion, page.also_offered)
             for suggestion in page.suggestions
         ],
     }

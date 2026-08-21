@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import DuplicateHistory from '@/components/organisms/DuplicateHistory.vue'
 import DuplicateQueue from '@/components/organisms/DuplicateQueue.vue'
 import { useDuplicatesStore } from '@/stores/duplicates'
 
 const store = useDuplicatesStore()
+const alertEl = ref<HTMLElement | null>(null)
+
+// A refused block sits screens below the one region that explains it.
+watch(
+  () => store.error,
+  (message) => {
+    if (message) alertEl.value?.scrollIntoView({ block: 'center' })
+  },
+  { flush: 'post' },
+)
 
 onMounted(() => {
   store.loadAll()
@@ -22,14 +32,8 @@ onMounted(() => {
       </p>
     </div>
 
-    <!-- Mounted while silent: inserted already populated it reads as page
-         content, not a change (WCAG 4.1.3). sr-only only where a history row
-         prints the words; a queue refusal shows here, its block re-keyed. -->
-    <p
-      class="dup-alert"
-      :class="{ 'sr-only': store.errorKey !== '' }"
-      role="alert"
-    >{{ store.error }}</p>
+    <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+    <p ref="alertEl" class="dup-alert" role="alert">{{ store.error }}</p>
     <p class="sr-only" role="status" aria-live="polite">{{ store.announcement }}</p>
 
     <DuplicateQueue />

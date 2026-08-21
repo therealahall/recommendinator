@@ -31,8 +31,16 @@ SUGGESTION_PAGE_MAX = 200
 #: The blocks a group can hold grow as 3^(n/3) however the search is written,
 #: so a group past this is skipped rather than left to exhaust the API.
 GROUP_MEMBER_MAX = 40
+MAX_DECLINE_OTHERS = GROUP_MEMBER_MAX - 1
+
+#: d disjoint refusals inside a linked group make 2^d blocks, at any size.
+GROUP_BLOCK_MAX = SUGGESTION_PAGE_MAX
 
 logger = logging.getLogger(__name__)
+
+
+class _TooManyBlocks(Exception):
+    """Abandons the search rather than the recursion unwinding a level at a time."""
 
 
 class SuggestionEvidence(Enum):
@@ -79,6 +87,8 @@ class SuggestionPage:
 
     total: int
     suggestions: list[DuplicateSuggestion]
+    also_offered: frozenset[int] = frozenset()
+    skipped_works: int = 0
 
 
 def find_duplicate_suggestions(
@@ -97,14 +107,20 @@ def find_duplicate_suggestions(
         if key:
             groups.setdefault((row.content_type, key), []).append(row)
 
-    suggestions = [
-        _suggestion(member_type, key, block)
-        for (member_type, key), members in groups.items()
-        for block in _blocks(members, declined, key)
-    ]
+    suggestions: list[DuplicateSuggestion] = []
+    skipped = 0
+    for (member_type, key), members in groups.items():
+        blocks = _blocks(members, declined, key)
+        if blocks is None:
+            skipped += 1
+            continue
+        suggestions += [_suggestion(member_type, key, block) for block in blocks]
+
     return SuggestionPage(
         total=len(suggestions),
         suggestions=suggestions if limit is None else suggestions[:limit],
+        also_offered=_offered_twice(suggestions),
+        skipped_works=skipped,
     )
 
 
@@ -215,6 +231,18 @@ def _pair_from_row(row: sqlite3.Row) -> DeclinedPair:
     )
 
 
+def _offered_twice(suggestions: list[DuplicateSuggestion]) -> frozenset[int]:
+    """Read before the limit slices, so a copy still says so where it is cut."""
+    seen: set[int] = set()
+    twice: set[int] = set()
+    for suggestion in suggestions:
+        for side in suggestion.copies:
+            if side.db_id in seen:
+                twice.add(side.db_id)
+            seen.add(side.db_id)
+    return frozenset(twice)
+
+
 def _declined_pairs(cursor: sqlite3.Cursor, user_id: int) -> set[tuple[int, int]]:
     cursor.execute(
         "SELECT lower_item_id, higher_item_id FROM content_item_duplicate_declines"
@@ -226,10 +254,10 @@ def _declined_pairs(cursor: sqlite3.Cursor, user_id: int) -> set[tuple[int, int]
 
 def _blocks(
     members: list[MatchRow], declined: set[tuple[int, int]], key: str
-) -> list[list[MatchRow]]:
-    """The largest sets of copies that all still pair, lowest ids first, and
-    overlapping where a veto or a refusal splits the group. Bron-Kerbosch: a
-    pass seeded per copy loses a set that copy is not in."""
+) -> list[list[MatchRow]] | None:
+    """The largest sets that all still pair, lowest ids first, overlapping
+    where a veto or a refusal splits the group; None where skipped. A pass
+    seeded per copy would lose a set that copy is not in, so Bron-Kerbosch."""
     if len(members) > GROUP_MEMBER_MAX:
         logger.warning(
             "Skipping the %d copies matching %r: a group over %d copies is not"
@@ -238,7 +266,7 @@ def _blocks(
             key,
             GROUP_MEMBER_MAX,
         )
-        return []
+        return None
 
     linked: dict[int, set[int]] = {index: set() for index in range(len(members))}
     for (index, one), (other_index, other) in combinations(enumerate(members), 2):
@@ -255,6 +283,8 @@ def _blocks(
         if not candidates and not excluded:
             if len(block) > 1:
                 found.append(block)
+                if len(found) > GROUP_BLOCK_MAX:
+                    raise _TooManyBlocks
             return
         # Pivoting: a shelf of one work in five translations is a clique, and
         # without it a clique of m copies costs 2^m calls to yield one block.
@@ -270,7 +300,18 @@ def _blocks(
             candidates = candidates - {index}
             excluded = excluded | {index}
 
-    extend([], set(linked), set())
+    try:
+        extend([], set(linked), set())
+    except _TooManyBlocks:
+        logger.warning(
+            "Skipping the %d copies matching %r: they split into more than %d"
+            " blocks. Merge some of them to see the rest.",
+            len(members),
+            key,
+            GROUP_BLOCK_MAX,
+        )
+        return None
+
     return [
         [members[index] for index in block]
         for block in sorted(sorted(block) for block in found)

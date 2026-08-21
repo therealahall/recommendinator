@@ -25,6 +25,7 @@ from src.models.content import (
     ContentType,
     ExternalId,
 )
+from src.storage.duplicates import GROUP_MEMBER_MAX
 from src.storage.manager import (
     SUGGESTION_PAGE_DEFAULT,
     StorageManager,
@@ -34,6 +35,7 @@ from src.utils.duplicate_serialization import (
     ALSO_OFFERED_NOTE,
     declined_pair_to_dict,
     merge_to_dict,
+    skipped_works_note,
     suggestion_page_to_dict,
 )
 from src.utils.series import MAX_SEASONS
@@ -1268,7 +1270,6 @@ class TestLibraryDuplicates:
             + ["--other", str(db_ids[3]), "--other", "9999"],
             storage,
         )
-
         assert repeated.exit_code == 0, repeated.output
         assert repeated.output.count("will not be offered as duplicates again") == 1
         assert len(_json(cli_runner, storage, ["library", "declined-duplicates"])) == 1
@@ -1290,9 +1291,13 @@ class TestLibraryDuplicates:
         declined = _decline(cli_runner, storage, third, db_ids[2])
 
         offered = _json(cli_runner, storage, ["library", "duplicates"])
+        cut = _json(cli_runner, storage, ["library", "duplicates", "--limit", "2"])
         table = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
 
         assert declined.exit_code == 0, declined.output
+        _, cut_short = cut["suggestions"]
+        notes = [copy["also_offered"] for copy in cut_short["copies"]]
+        assert notes.count(ALSO_OFFERED_NOTE) == 2
         assert {
             copy["db_id"]
             for block in offered["suggestions"]
@@ -1318,10 +1323,35 @@ class TestLibraryDuplicates:
 
         assert books["total"] == 2
         assert len(books["suggestions"]) == 2
-        assert games == {"total": 0, "suggestions": []}
+        assert games == {"total": 0, "skipped_note": "", "suggestions": []}
         assert capped["total"] == 2
         assert len(capped["suggestions"]) == 1
         assert "Showing 1 of 2 suspected duplicates." in table.output
+
+    def test_a_work_left_unsearched_is_reported_rather_than_counted_as_none(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A shelf of volumes collapses to one key, so this is reachable."""
+        storage = StorageManager(sqlite_path=tmp_path / "shelf.db")
+        for index in range(GROUP_MEMBER_MAX + 1):
+            _save_book(storage, "calibre", str(index), f"The Wandering Inn ({index})")
+
+        table = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+        offered = _json(cli_runner, storage, ["library", "duplicates"])
+
+        assert table.exit_code == 0, table.output
+        assert "No suspected duplicates." not in table.output
+        assert offered["skipped_note"] == skipped_works_note(1)
+        assert table.output.strip() == offered["skipped_note"]
+
+        _save_book(storage, "calibre", "pair-1", "Deadhouse Gates")
+        _save_book(storage, "goodreads_csv", "pair-2", "Deadhouse Gates (Malazan)")
+        beside = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
+
+        assert (
+            f"Showing 1 of 1 suspected duplicates. {skipped_works_note(1)}"
+            in beside.output
+        )
 
 
 class TestLibraryMerge:

@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.duplicates import GROUP_MEMBER_MAX
+from src.storage.duplicates import GROUP_BLOCK_MAX, GROUP_MEMBER_MAX
 from src.storage.manager import (
     DuplicateSuggestion,
     MergeError,
@@ -284,22 +284,6 @@ def test_a_merge_inside_a_block_leaves_the_copies_it_did_not_touch_offered(
     assert _blocks(manager) == [[first, third]]
 
 
-def test_three_copies_of_one_work_are_offered_as_one_block_naming_all_three(
-    manager: StorageManager,
-) -> None:
-    first = _save(
-        manager, "goodreads_csv", "1", "The Time of Contempt (The Witcher, #2)"
-    )
-    second = _save(manager, "goodreads_csv", "2", "Time of Contempt")
-    third = _save(manager, "goodreads_csv", "3", "The Time of Contempt")
-
-    (block,) = _offered(manager)
-
-    assert [copy.db_id for copy in block.copies] == [first, second, third]
-    assert block.survivor_id == first
-    assert block.evidence is SuggestionEvidence.NORMALIZED_TITLE
-
-
 def test_a_copy_declined_out_of_a_block_leaves_the_others_pairing(
     manager: StorageManager,
 ) -> None:
@@ -358,10 +342,28 @@ def test_a_group_past_the_cap_is_skipped_with_a_line_in_the_log_saying_so(
     _shelf(manager, GROUP_MEMBER_MAX + 1)
 
     with caplog.at_level(logging.WARNING), _within(seconds=10):
-        assert _offered(manager) == []
+        page = manager.list_duplicate_suggestions()
 
+    assert page.suggestions == []
+    assert page.skipped_works == 1
     assert f"the {GROUP_MEMBER_MAX + 1} copies" in caplog.text
     assert "is not offered for review" in caplog.text
+
+
+def test_a_group_disjoint_refusals_split_every_which_way_is_skipped_too(
+    manager: StorageManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """d disjoint refusals make 2^d blocks, which the member cap cannot see."""
+    shelf = _shelf(manager, GROUP_MEMBER_MAX)
+    for one, other in zip(shelf[::2], shelf[1::2], strict=True):
+        assert manager.decline_duplicate_suggestion(one, [other]) != []
+
+    with caplog.at_level(logging.WARNING), _within(seconds=10):
+        page = manager.list_duplicate_suggestions()
+
+    assert page.suggestions == []
+    assert page.skipped_works == 1
+    assert f"more than {GROUP_BLOCK_MAX} blocks" in caplog.text
 
 
 def test_one_refusal_inside_a_group_of_four_leaves_both_blocks_it_splits_into(

@@ -18,6 +18,7 @@ from src.models.content import (
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import AccountStore, normalize_account_name
 from src.storage.credentials import CredentialStore
+from src.storage.duplicates import MAX_DECLINE_OTHERS as MAX_DECLINE_OTHERS
 from src.storage.duplicates import SUGGESTION_PAGE_DEFAULT as SUGGESTION_PAGE_DEFAULT
 from src.storage.duplicates import SUGGESTION_PAGE_MAX as SUGGESTION_PAGE_MAX
 from src.storage.duplicates import DeclinedPair as DeclinedPair

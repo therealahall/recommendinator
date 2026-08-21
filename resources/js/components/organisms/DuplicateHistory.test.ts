@@ -3,7 +3,7 @@ import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DuplicateHistory from './DuplicateHistory.vue'
 import { useDuplicatesStore } from '@/stores/duplicates'
-import type { DeclinedPair, MergeRecord } from '@/types/api'
+import type { MergeRecord } from '@/types/api'
 
 const mockGet = vi.fn()
 const mockDelete = vi.fn()
@@ -31,15 +31,6 @@ function merge(id: number, survivorId: number, absorbedId: number): MergeRecord 
     evidence_label: 'your choice',
     evidence_detail: null,
     merged_at: '2026-08-20 09:30:00',
-  }
-}
-
-function declined(oneId: number, otherId: number): DeclinedPair {
-  return {
-    one_id: oneId,
-    one_title: `Row ${oneId}`,
-    other_id: otherId,
-    other_title: `Row ${otherId}`,
   }
 }
 
@@ -108,28 +99,4 @@ describe('DuplicateHistory', () => {
     expect(wrapper.element.contains(document.activeElement)).toBe(true)
   })
 
-  it('prints a refused offer again beside the control, and names it as its reason', async () => {
-    // Offering again has no precomputed block, so the click is expected to
-    // fail sometimes, and the only other sign is the label reverting.
-    const store = useDuplicatesStore()
-    store.declined = [declined(10, 11), declined(20, 21)]
-    mockDelete.mockRejectedValue(new Error('Undo merge 7 first — it absorbed “Row 20”.'))
-    // A refusal reloads before it reports, and one that failed is still in force.
-    mockGet.mockImplementation(async (url: string) =>
-      url === '/duplicates'
-        ? { total: 0, suggestions: [] }
-        : [declined(10, 11), declined(20, 21)],
-    )
-    const wrapper = mountHistory()
-
-    await row(wrapper, 'Row 21').get('button').trigger('click')
-    await flushPromises()
-
-    const refused = row(wrapper, 'Row 21')
-    expect(refused.text()).toContain('Undo merge 7 first')
-    expect(refused.get('button').attributes('aria-describedby')).toBe(
-      refused.get('.dup-log-reason').attributes('id'),
-    )
-    expect(row(wrapper, 'Row 11').find('.dup-log-reason').exists()).toBe(false)
-  })
 })

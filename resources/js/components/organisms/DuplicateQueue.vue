@@ -21,16 +21,18 @@ const rows = computed(() =>
   }),
 )
 
-const emptyMessage = computed(() =>
-  store.typeFilter
+// Blank where the summary says a work was skipped, which this contradicts.
+const emptyMessage = computed(() => {
+  if (store.skippedNote) return ''
+  return store.typeFilter
     ? 'No suspected duplicates of this type.'
-    : 'No suspected duplicates. Nothing looks like the same work twice.',
-)
+    : 'No suspected duplicates. Nothing looks like the same work twice.'
+})
 
 function decide(
   index: number,
   run: () => Promise<void>,
-  survivingKey = '',
+  surviving: () => string = () => '',
 ): Promise<void> {
   return keepFocusInList(
     listEl,
@@ -38,8 +40,15 @@ function decide(
     index,
     () => rows.value.map((row) => row.key),
     run,
-    survivingKey,
+    surviving,
   )
+}
+
+function blockHolding(copyId: number): string {
+  const held = rows.value.find((row) =>
+    row.suggestion.copies.some((copy) => copy.db_id === copyId),
+  )
+  return held?.key ?? ''
 }
 </script>
 
@@ -77,23 +86,29 @@ function decide(
 
     <p class="dup-summary">{{ store.summary }}</p>
 
-    <!-- Blanked only with nothing to keep: the reload a decision runs would
-         otherwise unmount the row the operator has tabbed on to. -->
+    <!-- Blanked only with nothing to keep: a reload unmounts the tabbed row. -->
     <div v-if="store.loading && rows.length === 0" class="empty-state">
       <span class="spinner" /> Loading…
     </div>
-    <div v-else-if="rows.length === 0" class="empty-state">{{ emptyMessage }}</div>
-    <ul v-else ref="listEl" class="dup-list" role="list">
+    <div v-else-if="rows.length === 0 && emptyMessage" class="empty-state">
+      {{ emptyMessage }}
+    </div>
+    <ul v-else-if="rows.length" ref="listEl" class="dup-list" role="list">
       <DuplicatePair
         v-for="(row, index) in rows"
         :key="row.key"
         :suggestion="row.suggestion"
         :merging="row.merging"
         :declining="row.declining"
-        @merge="(keep, drop) => decide(index, () => store.merge(keep, drop))"
+        @merge="
+          (keep, drop) =>
+            decide(index, () => store.merge(keep, drop), () => blockHolding(keep))
+        "
         @decline="
           (copy, others) =>
-            decide(index, () => store.declineCopy(copy, others), decisionKey(others))
+            decide(index, () => store.declineCopy(copy, others), () =>
+              decisionKey(others),
+            )
         "
       />
     </ul>

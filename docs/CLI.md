@@ -186,13 +186,16 @@ matched them, and `same title apart from a qualifier` where only the looser key
 did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
 works at a time by default, saying how many are left. Two copies a creator,
 year or region veto separates are never in one block. A copy in two blocks says
-so under its title in both, which is a dismissal having split a group.
+so under its title in both, a veto or a dismissal having split the group. A
+work whose copies split more ways than a page holds is not offered at all, and
+the count line says how many are in that state.
 
 A merge keeps `--survivor` and folds the other row into it; run it once per
 copy, from the one listing. Nothing is deleted, and `unmerge` puts the absorbed
 row back — newest merge first, refusing any other order. `decline-duplicate`
 sets `--one` apart from every `--other` named, for the life of the library, and
-leaves the copies it did not name still offered together.
+leaves the copies it did not name still offered together; it takes at most 39
+of them, one short of the largest block offered.
 `undecline-duplicate` lifts one of those refusals, and refuses while a merge
 holds either row, naming the merge to undo first: a refusal is only liftable
 back onto a pair the list can offer.

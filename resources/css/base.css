@@ -1572,9 +1572,13 @@ input[type="checkbox"] {
 }
 
 .edit-field-error {
-  margin: var(--space-1) 0 0 0;
+  margin: 0;
   font-size: var(--text-sm);
   color: var(--color-error-text);
+}
+
+.edit-field-error:not(:empty) {
+  margin-top: var(--space-1);
 }
 
 .edit-modal-divider {

@@ -31,6 +31,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
 
   const suggestions = ref<DuplicateSuggestion[]>([])
   const total = ref(0)
+  const skippedNote = ref('')
   const merges = ref<MergeRecord[]>([])
   const declined = ref<DeclinedPair[]>([])
 
@@ -39,14 +40,11 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
 
   const loading = ref(false)
   const error = ref('')
-  /** Which decision's row prints the refusal itself, quieting the page notice.
-   *  Empty where the failure leaves no row to print it, page notice only. */
-  const errorKey = ref('')
   const announcement = ref('')
   const pending = ref<string[]>([])
 
-  const summary = computed(() => {
-    if (total.value === 0) return 'No suspected duplicates.'
+  const counted = computed(() => {
+    if (total.value === 0) return skippedNote.value ? '' : 'No suspected duplicates.'
     if (suggestions.value.length < total.value) {
       return `Showing ${suggestions.value.length} of ${total.value} suspected duplicates.`
     }
@@ -54,6 +52,10 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
       ? '1 suspected duplicate.'
       : `${total.value} suspected duplicates.`
   })
+
+  const summary = computed(() =>
+    [counted.value, skippedNote.value].filter(Boolean).join(' '),
+  )
 
   const mergeRows = computed<MergeRow[]>(() => {
     const newestFirst = [...merges.value].sort((a, b) => b.id - a.id)
@@ -81,13 +83,8 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     return { user_id: useAppStore().currentUserId }
   }
 
-  function fail(err: unknown, fallback: string, key = ''): void {
+  function fail(err: unknown, fallback: string): void {
     error.value = err instanceof Error && err.message ? err.message : fallback
-    errorKey.value = key
-  }
-
-  function errorFor(key: string): string {
-    return errorKey.value === key ? error.value : ''
   }
 
   async function loadSuggestions(): Promise<void> {
@@ -101,6 +98,7 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
       const page = await api.get<DuplicateSuggestionPage>('/duplicates', params)
       suggestions.value = page.suggestions
       total.value = page.total
+      skippedNote.value = page.skipped_note
     } catch (err) {
       fail(err, 'Failed to load suspected duplicates.')
     } finally {
@@ -132,21 +130,18 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
     key: string,
     act: () => Promise<string>,
     reload: () => Promise<unknown>,
-    printedByItsRow = false,
   ): Promise<void> {
     if (isPending(key)) return
     pending.value = [...pending.value, key]
     error.value = ''
-    errorKey.value = ''
     try {
       const outcome = await act()
       await reload()
       announcement.value = `${outcome} ${summary.value}`
     } catch (err) {
-      // One POST per absorbed copy, so a block can be part merged when this is
-      // reached: retried against the offer on screen it would fail for good.
+      // A block can be part merged here, so the offer on screen is stale.
       await reload()
-      fail(err, 'That change did not go through.', printedByItsRow ? key : '')
+      fail(err, 'That change did not go through.')
       announcement.value = ''
     } finally {
       pending.value = pending.value.filter((one) => one !== key)
@@ -201,7 +196,6 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
         return `Put “${record.absorbed_title}” back beside “${record.survivor_title}”.`
       },
       () => Promise.all([loadSuggestions(), loadMerges()]),
-      true,
     )
   }
 
@@ -216,7 +210,6 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
         return `“${pair.one_title}” and “${pair.other_title}” may be offered again.`
       },
       () => Promise.all([loadSuggestions(), loadDeclined()]),
-      true,
     )
   }
 
@@ -230,17 +223,16 @@ export const useDuplicatesStore = defineStore('duplicates', () => {
   return {
     suggestions,
     total,
+    skippedNote,
     merges,
     declined,
     typeFilter,
     limit,
     loading,
     error,
-    errorKey,
     announcement,
     summary,
     mergeRows,
-    errorFor,
     isPending,
     loadAll,
     loadSuggestions,
