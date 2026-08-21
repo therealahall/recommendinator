@@ -38,7 +38,9 @@ __all__ = [
     "normalize_creator_for_matching",
     "normalize_title_for_matching",
     "parse_json_list",
+    "regions_conflict",
     "resolve_status_forward",
+    "stated_region",
     "stated_release_year",
     "years_conflict",
 ]
@@ -289,6 +291,34 @@ def bare_title_key(title: str) -> str:
     Not the save door's key: "(Malazan Book 2)" may name a different work.
     """
     return normalize_title_for_matching(_TRAILING_PARENTHETICAL.sub("", title))
+
+
+# One region two sources spell two ways, which a veto reading them apart would
+# take for two shows.
+_REGION_ALIASES = {"usa": "us", "gb": "uk"}
+
+
+def stated_region(title: str | None) -> str | None:
+    """The region a title qualifies its work with: "The Traitors (AU)" is "au"."""
+    remaining = (title or "").lower()
+    while match := _TRAILING_PARENTHETICAL.search(remaining):
+        inner = match.group(1)
+        if not _is_qualifier(inner):
+            return None
+        region = re.sub(r"[\W_]", "", inner.strip())
+        if region in _REGION_QUALIFIERS:
+            return _REGION_ALIASES.get(region, region)
+        remaining = remaining[: match.start()]
+    return None
+
+
+def regions_conflict(one: str | None, other: str | None) -> bool:
+    """Whether two titles name different productions, vetoing a title match.
+
+    Not the year rule: a region only one side states is not disagreement, it
+    qualifies the Hell's Kitchen nobody else qualifies.
+    """
+    return one is not None and other is not None and one != other
 
 
 def _collapse_initials(tokens: list[str]) -> list[str]:

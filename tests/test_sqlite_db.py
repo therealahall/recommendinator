@@ -18,6 +18,8 @@ from src.storage.merge import (
     creators_conflict,
     normalize_creator_for_matching,
     normalize_title_for_matching,
+    regions_conflict,
+    stated_region,
 )
 from src.storage.schema import write_enrichment_complete
 from src.storage.sqlite_db import SaveOutcome, SQLiteDB
@@ -783,6 +785,30 @@ class TestTheCreatorVeto:
         )
 
 
+class TestTheRegionVeto:
+    """Region is no part of the match key either; it only rejects a match."""
+
+    def test_the_traitors_us_and_the_traitors_au_are_different_productions(
+        self,
+    ) -> None:
+        assert regions_conflict(
+            stated_region("The Traitors (US)"), stated_region("The Traitors (AU)")
+        )
+
+    def test_a_region_only_one_title_states_does_not_conflict(self) -> None:
+        """Unlike a year: nothing is taken, so "(US)" qualifies one show."""
+        assert not regions_conflict(
+            stated_region("Hell's Kitchen"), stated_region("Hell's Kitchen (US)")
+        )
+        assert stated_region("Hell's Kitchen") is None
+
+    def test_one_region_two_sources_spell_differently_is_one_region(self) -> None:
+        assert stated_region("The Office (USA)") == stated_region("The Office (US)")
+
+    def test_a_region_behind_a_year_is_still_the_region_stated(self) -> None:
+        assert stated_region("The Traitors (US) (2023)") == "us"
+
+
 class TestWhatTheSaveDoorMatchesOnTitle:
     """Title, creator veto and year veto, over the door every sync comes through."""
 
@@ -939,6 +965,47 @@ class TestWhatTheSaveDoorMatchesOnTitle:
 
         assert us != uk
         assert trakt_us != uk
+
+    @pytest.mark.parametrize(
+        ("shelved", "incoming", "release_year"),
+        [
+            ("The Traitors (US)", "The Traitors (AU)", None),
+            ("The Summit (US)", "The Summit (UK)", 2025),
+        ],
+    )
+    def test_two_regional_versions_of_one_format_stay_apart_across_sources(
+        self, temp_db: SQLiteDB, shelved: str, incoming: str, release_year: int | None
+    ) -> None:
+        """DEFECT: the key strips both regions, so only a stated year kept these
+        apart — and a format airing in two countries at once states the same one."""
+        sonarr = temp_db.save_content_item(
+            self._dated(ContentType.TV_SHOW, "sonarr", "tvdb:1", shelved, release_year)
+        )
+
+        trakt = temp_db.save_content_item(
+            self._dated(ContentType.TV_SHOW, "trakt", "trakt:2", incoming, release_year)
+        )
+
+        assert trakt != sonarr
+
+    @pytest.mark.parametrize(
+        ("shelved", "incoming"),
+        [
+            ("Hell's Kitchen", "Hell's Kitchen (US)"),
+            ("Hell's Kitchen (US)", "Hell's Kitchen"),
+        ],
+    )
+    def test_a_region_only_one_source_appends_lands_on_the_row_stating_none(
+        self, temp_db: SQLiteDB, shelved: str, incoming: str
+    ) -> None:
+        """GH #93: one source qualifies the show the other names bare, and it is
+        one show whichever of the two syncs first — the veto takes an unstated
+        region for agreement on the shelved side as on the incoming one."""
+        shelf = temp_db.save_content_item(self._show("trakt", "trakt:1", shelved))
+
+        landed = temp_db.save_content_item(self._show("sonarr", "tvdb:2", incoming))
+
+        assert landed == shelf
 
     def test_two_films_of_one_name_are_told_apart_by_the_years_they_state(
         self, temp_db: SQLiteDB

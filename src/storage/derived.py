@@ -18,6 +18,8 @@ from src.storage.merge import (
     StatedYear,
     creators_conflict,
     detail_join,
+    regions_conflict,
+    stated_region,
     stated_release_year,
     years_conflict,
 )
@@ -106,16 +108,19 @@ class MatchSignals:
 
     creator: str | None = None
     release_year: StatedYear = StatedYear()
+    region: str | None = None
 
 
 def signals_conflict(one: MatchSignals, other: MatchSignals) -> bool:
-    """Whether either veto separates two rows a title brought together.
+    """Whether any veto separates two rows a title brought together.
 
     Shared with the save door, which refuses more besides: its key keeps a
     numbered edition apart, and where one key names two rows it takes neither.
     """
-    return creators_conflict(one.creator, other.creator) or years_conflict(
-        one.release_year, other.release_year
+    return (
+        creators_conflict(one.creator, other.creator)
+        or years_conflict(one.release_year, other.release_year)
+        or regions_conflict(one.region, other.region)
     )
 
 
@@ -130,7 +135,7 @@ class MatchRow:
 
 
 def read_match_signals(cursor: sqlite3.Cursor, db_id: int) -> MatchSignals:
-    """The creator and release year one row states, chosen by its type."""
+    """The creator, release year and region one row states, chosen by its type."""
     cursor.execute(_MATCH_SIGNAL_SELECT, (db_id,))
     row = cursor.fetchone()
     return MatchSignals() if row is None else _read_signals(row)
@@ -158,6 +163,7 @@ def _read_signals(row: sqlite3.Row) -> MatchSignals:
         release_year=stated_release_year(
             row["content_type"], row["release_year"], row["title"]
         ),
+        region=stated_region(row["title"]),
     )
 
 
