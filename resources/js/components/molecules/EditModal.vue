@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
+import {
+  MAX_CREATOR_LENGTH,
+  MAX_RELEASE_YEAR,
+  MIN_RELEASE_YEAR,
+  RELEASE_YEAR_TYPES,
+} from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import StarRating from '@/components/atoms/StarRating.vue'
@@ -35,29 +41,40 @@ const yearInput = ref<HTMLInputElement | null>(null)
 const creatorError = ref('')
 const yearError = ref('')
 
-const MIN_RELEASE_YEAR = 1800
-const MAX_RELEASE_YEAR = 2200
 const CREATOR_EMPTY = 'Creator cannot be empty.'
+const CREATOR_TOO_LONG = `Creator must be at most ${MAX_CREATOR_LENGTH} characters.`
 const YEAR_OUT_OF_RANGE = `Enter a year between ${MIN_RELEASE_YEAR} and ${MAX_RELEASE_YEAR}.`
+
+const loadedCreator = creator.value.trim()
+const loadedYear = releaseYear.value.trim()
+const correctedCreator = computed(() => creator.value.trim())
+const correctedYear = computed(() => releaseYear.value.trim())
+const creatorChanged = computed(() => correctedCreator.value !== loadedCreator)
+const yearChanged = computed(() => correctedYear.value !== loadedYear)
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
-const hasReleaseYear = computed(() => props.item.content_type !== 'book')
+const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Both fields set a value and clear none, so an emptied box asks for something
-// `library edit` refuses too — unless the item states none to begin with.
+// Only a changed box is checked and sent: ingestion bounds neither field, so a
+// stored year of 19993 would otherwise refuse every save of an untouched one.
 function creatorComplaint(): string {
-  return !creator.value.trim() && props.item.author ? CREATOR_EMPTY : ''
+  if (!creatorChanged.value) return ''
+  if (!correctedCreator.value) return CREATOR_EMPTY
+  // maxlength bounds what is typed, never the longer creator an import stored.
+  return correctedCreator.value.length > MAX_CREATOR_LENGTH ? CREATOR_TOO_LONG : ''
 }
 
 function yearComplaint(): string {
-  if (!hasReleaseYear.value) return ''
-  const stated = releaseYear.value.trim()
-  if (!stated) return props.item.release_year === null ? '' : YEAR_OUT_OF_RANGE
-  if (!/^\d+$/.test(stated)) return YEAR_OUT_OF_RANGE
-  const year = Number(stated)
+  if (!hasReleaseYear.value || !yearChanged.value) return ''
+  if (!/^\d+$/.test(correctedYear.value)) return YEAR_OUT_OF_RANGE
+  const year = Number(correctedYear.value)
   return year >= MIN_RELEASE_YEAR && year <= MAX_RELEASE_YEAR ? '' : YEAR_OUT_OF_RANGE
 }
+
+// Cleared as the box is edited, not re-checked: 1, 19 and 199 are not errors.
+watch(creator, () => (creatorError.value = ''))
+watch(releaseYear, () => (yearError.value = ''))
 
 // Status and the checklist are two views of one fact, so each edit derives the
 // other. Explicit handlers, not a watcher each way: those retrigger each other.
@@ -86,8 +103,7 @@ function onStatusChange(event: Event) {
 }
 
 function save() {
-  // The only other check is the server's, and its 400 renders on the page
-  // behind this dialog's overlay, so a refusal is said here or not at all.
+  // The server's own refusal renders behind this overlay, so it is said here.
   creatorError.value = creatorComplaint()
   yearError.value = yearComplaint()
   if (creatorError.value || yearError.value) {
@@ -100,16 +116,16 @@ function save() {
     status: status.value,
     rating: rating.value,
     // Blank clears the review alone: a stored "" reads as one the user wrote.
-    // A blank creator was refused above, so null here means the item has none.
     review: review.value.trim() ? review.value : null,
-    creator: creator.value.trim() || null,
     genres: genres.value,
     tags: tags.value,
     description: description.value || null,
   }
-  const year = releaseYear.value.trim()
-  if (hasReleaseYear.value && year) {
-    data.release_year = Number(year)
+  if (creatorChanged.value) {
+    data.creator = correctedCreator.value
+  }
+  if (yearChanged.value) {
+    data.release_year = Number(correctedYear.value)
   }
   if (isTvShow.value) {
     data.seasons_watched = seasonsWatched.value
@@ -141,7 +157,7 @@ function onBackdropClick(event: MouseEvent) {
           ref="creatorInput"
           v-model="creator"
           type="text"
-          maxlength="500"
+          :maxlength="MAX_CREATOR_LENGTH"
           placeholder="Author, director or developer..."
           :aria-invalid="creatorError ? 'true' : undefined"
           :aria-describedby="creatorError ? 'edit-creator-error' : undefined"
