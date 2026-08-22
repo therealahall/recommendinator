@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import EnrichmentCard from './EnrichmentCard.vue'
 import { useDataStore } from '@/stores/data'
@@ -11,6 +11,8 @@ vi.mock('@/composables/useApi', () => ({
     post: vi.fn(),
   }),
 }))
+
+enableAutoUnmount(afterEach)
 
 function makeStats(overrides: Partial<EnrichmentStatsResponse> = {}): EnrichmentStatsResponse {
   return {
@@ -56,14 +58,27 @@ describe('EnrichmentCard', () => {
     data.enrichmentStats = makeStats()
     data.enrichmentJob = null
     Object.assign(data, overrides)
-    return mount(EnrichmentCard)
+    return mount(EnrichmentCard, { attachTo: document.body })
   }
 
-  it('does not render when enrichment is disabled', () => {
+  it('offers the setup state on a fresh install rather than hiding the card', async () => {
     const data = useDataStore()
     data.enrichmentEnabled = false
+    data.enableEnrichment = vi.fn().mockResolvedValue(undefined)
     const wrapper = mount(EnrichmentCard)
-    expect(wrapper.find('.card').exists()).toBe(false)
+
+    expect(wrapper.find('[data-testid="enrichment-setup"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="enrichment-enable"]').trigger('click')
+    await flushPromises()
+
+    expect(data.enableEnrichment).toHaveBeenCalled()
+  })
+
+  it('nests under the Data page heading rather than beside it', () => {
+    const wrapper = mountWithEnrichment()
+
+    expect(wrapper.find('h2').exists()).toBe(false)
+    expect(wrapper.get('h3').text()).toBe('Metadata Enrichment')
   })
 
   it('shows job progress when enrichment is running', () => {
@@ -85,35 +100,114 @@ describe('EnrichmentCard', () => {
   it('calls startEnrichment with selected type and retry flag', async () => {
     const wrapper = mountWithEnrichment()
     const data = useDataStore()
-    data.startEnrichment = vi.fn()
+    data.startEnrichment = vi.fn().mockResolvedValue('Enrichment started.')
 
-    const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
+    const moviePill = wrapper.findAll('.pill').find((p) => p.text() === 'Movie')!
     await moviePill.trigger('click')
-
     await wrapper.find('.toggle-switch').trigger('click')
-
-    const enrichBtn = wrapper.findAll('.btn').find(b => b.text() === 'Enrich')!
-    await enrichBtn.trigger('click')
+    await wrapper.find('[data-testid="enrichment-start"]').trigger('click')
 
     expect(data.startEnrichment).toHaveBeenCalledWith('movie', true)
   })
 
-  it('calls resetEnrichment when reset toggle is on and button clicked', async () => {
+  it('says a refused start instead of leaving the button looking dead', async () => {
     const wrapper = mountWithEnrichment()
     const data = useDataStore()
-    data.resetEnrichment = vi.fn()
+    data.startEnrichment = vi.fn().mockRejectedValue(new Error('Enrichment is disabled'))
 
-    const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
-    await moviePill.trigger('click')
+    await wrapper.find('[data-testid="enrichment-start"]').trigger('click')
+    await flushPromises()
 
-    // Toggle reset mode on (second toggle switch — first is Retry Not Found)
-    const toggles = wrapper.findAll('.toggle-switch')
-    const resetToggle = toggles[toggles.length - 1]
-    await resetToggle.trigger('click')
+    const alert = wrapper.get('[data-testid="enrichment-error"]')
+    expect(alert.text()).toContain('Enrichment is disabled')
+    expect(document.activeElement).toBe(alert.element)
+  })
 
-    const actionBtn = wrapper.findAll('.btn').find(b => b.text() === 'Reset Enrichment')!
-    await actionBtn.trigger('click')
+  it('confirms a start that queued nothing, so the click has an outcome', async () => {
+    const wrapper = mountWithEnrichment()
+    const data = useDataStore()
+    data.startEnrichment = vi.fn().mockResolvedValue('Nothing to enrich.')
 
-    expect(data.resetEnrichment).toHaveBeenCalledWith('movie')
+    await wrapper.find('[data-testid="enrichment-start"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="enrichment-message"]').text()).toBe(
+      'Nothing to enrich.',
+    )
+  })
+
+  it('offers Stop only while a job is running, and stops it', async () => {
+    const idle = mountWithEnrichment()
+    expect(idle.find('[data-testid="enrichment-stop"]').exists()).toBe(false)
+
+    const wrapper = mountWithEnrichment({ enrichmentJob: makeRunningJob() })
+    const data = useDataStore()
+    data.stopEnrichment = vi.fn().mockResolvedValue('Enrichment stopped.')
+
+    await wrapper.find('[data-testid="enrichment-stop"]').trigger('click')
+    await flushPromises()
+
+    expect(data.stopEnrichment).toHaveBeenCalled()
+  })
+
+  it('tells a failed stats read apart from a library with nothing to enrich', () => {
+    const wrapper = mountWithEnrichment({
+      enrichmentStatsError: 'backend is down',
+      enrichmentStats: null,
+    })
+
+    expect(wrapper.text()).toContain('backend is down')
+    expect(wrapper.text()).not.toContain('No items to enrich')
+  })
+
+  describe('reset', () => {
+    it('is its own button, not a mode that rewrites Enrich', () => {
+      const wrapper = mountWithEnrichment()
+
+      expect(wrapper.get('[data-testid="enrichment-start"]').text()).toBe('Enrich')
+      expect(wrapper.get('[data-testid="reset-btn"]').text()).toBe('Reset enrichment')
+    })
+
+    it('asks before re-queueing, naming the scope and the item count', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn()
+
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+
+      expect(data.resetEnrichment).not.toHaveBeenCalled()
+      const question = wrapper.get('[data-testid="confirm-panel"]').text()
+      expect(question).toContain('55 item(s)')
+      expect(question).toContain('every content type')
+    })
+
+    it('sends the provider filter the CLI offers', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn().mockResolvedValue('Reset 12 item(s).')
+
+      await wrapper.findAll('.pill').find((p) => p.text() === 'Movie')!.trigger('click')
+      await wrapper.find('[data-testid="reset-provider"]').setValue('rawg')
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'rawg')
+    })
+
+    it('leaves the items alone when the question is declined', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn()
+
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-cancel"]').trigger('click')
+      await flushPromises()
+
+      expect(data.resetEnrichment).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(
+        wrapper.get('[data-testid="reset-btn"]').element,
+      )
+    })
   })
 })

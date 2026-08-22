@@ -1,73 +1,152 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
-import { truncate } from '@/utils/format'
+import { formatContentType, truncate } from '@/utils/format'
+import EnrichmentReset from '@/components/molecules/EnrichmentReset.vue'
 import TypePills from '@/components/atoms/TypePills.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 
 const data = useDataStore()
 const enrichType = ref('')
 const retryNotFound = ref(false)
-const resetMode = ref(false)
+const busy = ref(false)
+const error = ref('')
+const message = ref('')
 
-function runEnrichment() {
-  if (resetMode.value) {
-    data.resetEnrichment(enrichType.value || undefined)
-  } else {
-    data.startEnrichment(enrichType.value || undefined, retryNotFound.value)
+const stats = computed(() => data.enrichmentStats)
+const running = computed(() => data.enrichmentJob?.running === true)
+const typeLabel = computed(() =>
+  enrichType.value ? formatContentType(enrichType.value) : '',
+)
+// Exact only with no content-type filter: the stats are not cross-tabulated.
+const affected = computed(() =>
+  enrichType.value || !stats.value ? null : stats.value.total - stats.value.pending,
+)
+
+async function run(action: () => Promise<string>): Promise<void> {
+  if (busy.value) return
+  busy.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    message.value = await action()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unknown error'
+    await nextTick()
+    // A refusal takes focus, so it is read where the click happened.
+    document.querySelector<HTMLElement>('[data-testid="enrichment-error"]')?.focus()
+  } finally {
+    busy.value = false
   }
 }
+
+const onEnable = () => run(() => data.enableEnrichment().then(() => 'Enrichment is on.'))
+const onEnrich = () =>
+  run(() => data.startEnrichment(enrichType.value || undefined, retryNotFound.value))
+const onStop = () => run(() => data.stopEnrichment())
+const onReset = (provider: string) =>
+  run(() => data.resetEnrichment(enrichType.value || undefined, provider))
 </script>
 
 <template>
-  <div v-if="data.enrichmentEnabled" class="card">
-    <h2>Metadata Enrichment</h2>
-    <p class="help-text">Enrichment adds genres, tags, and descriptions from external APIs (TMDB, OpenLibrary, RAWG).</p>
+  <div class="card">
+    <h3>Metadata Enrichment</h3>
+    <p class="help-text">
+      Enrichment adds genres, tags, and descriptions from external APIs (TMDB,
+      OpenLibrary, RAWG).
+    </p>
 
-    <div v-if="data.enrichmentStats">
-      <div v-if="data.enrichmentStats.total === 0" class="empty-state">
-        No items to enrich. Sync some content first.
-      </div>
-      <template v-else>
-        <div class="enrichment-summary">
-          <div class="enrichment-progress-row">
-            <span>{{ data.enrichmentStats.enriched }}/{{ data.enrichmentStats.total }}
-              ({{ Math.round((data.enrichmentStats.enriched / data.enrichmentStats.total) * 100) }}% enriched)</span>
-          </div>
+    <template v-if="!data.enrichmentEnabled">
+      <p class="enrichment-setup" data-testid="enrichment-setup">
+        It is off, so recommendations run on whatever your sources happened to send.
+      </p>
+      <button
+        type="button"
+        class="btn btn-primary"
+        data-testid="enrichment-enable"
+        :disabled="busy"
+        @click="onEnable"
+      >Turn on enrichment</button>
+    </template>
+
+    <template v-else>
+      <p v-if="data.enrichmentStatsError" class="enrichment-stats-error">
+        Could not read the enrichment counts: {{ data.enrichmentStatsError }}
+      </p>
+      <div v-else-if="stats">
+        <div v-if="stats.total === 0" class="empty-state">
+          No items to enrich. Sync some content first.
         </div>
-      </template>
-    </div>
+        <div v-else class="enrichment-summary">
+          <span>{{ stats.enriched }}/{{ stats.total }}
+            ({{ Math.round((stats.enriched / stats.total) * 100) }}% enriched)</span>
+        </div>
+      </div>
 
-    <!-- Job progress -->
-    <div v-if="data.enrichmentJob?.running" class="enrichment-status" aria-live="polite" aria-atomic="true">
-      <span class="spinner" aria-hidden="true" />
-      <span class="sr-only">Enriching: </span>
-      {{ data.enrichmentJob.current_item ? truncate(data.enrichmentJob.current_item, 50) : 'Processing...' }}
-      ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
-      - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
-    </div>
+      <div
+        v-if="data.enrichmentJob?.running"
+        class="enrichment-status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span class="spinner" aria-hidden="true" />
+        <span class="sr-only">Enriching: </span>
+        {{ data.enrichmentJob.current_item
+          ? truncate(data.enrichmentJob.current_item, 50)
+          : 'Processing...' }}
+        ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
+        - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
+      </div>
 
-    <div class="enrichment-toolbar">
-      <TypePills v-model="enrichType" />
+      <div class="enrichment-toolbar">
+        <TypePills v-model="enrichType" />
 
-      <div class="toolbar-divider" />
+        <div class="toolbar-divider" />
 
-      <div class="toolbar-zone">
         <ToggleSwitch v-model="retryNotFound" label="Retry Not Found" />
-        <ToggleSwitch v-model="resetMode" label="Reset Enrichment" />
-      </div>
 
-      <div class="toolbar-divider" />
+        <div class="toolbar-divider" />
 
-      <div class="toolbar-right">
-        <button
-          class="btn"
-          :class="resetMode ? 'btn-warning' : 'btn-primary'"
-          :disabled="data.enrichmentJob?.running"
-          @click="runEnrichment"
-        >{{ resetMode ? 'Reset Enrichment' : 'Enrich' }}</button>
+        <div class="toolbar-right">
+          <EnrichmentReset
+            :type-label="typeLabel"
+            :affected="affected"
+            :busy="busy || running"
+            @reset="onReset"
+          />
+          <button
+            v-if="running"
+            type="button"
+            class="btn btn-secondary"
+            data-testid="enrichment-stop"
+            :disabled="busy"
+            @click="onStop"
+          >Stop</button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="enrichment-start"
+            :disabled="busy || running"
+            @click="onEnrich"
+          >Enrich</button>
+        </div>
       </div>
-    </div>
+    </template>
+
+    <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
+    <p
+      class="enrichment-error focus-fallback"
+      data-testid="enrichment-error"
+      role="alert"
+      tabindex="-1"
+    >{{ error }}</p>
+    <p
+      class="enrichment-message"
+      data-testid="enrichment-message"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ message }}</p>
   </div>
 </template>
 
@@ -80,13 +159,10 @@ function runEnrichment() {
   margin-top: var(--space-4);
 }
 
-.toolbar-zone {
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.toolbar-right {
   margin-left: auto;
 }
 
@@ -98,5 +174,31 @@ function runEnrichment() {
 
 .enrichment-summary {
   margin-bottom: var(--space-3);
+}
+
+.enrichment-setup {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.enrichment-stats-error,
+.enrichment-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
+.enrichment-error:not(:empty) {
+  margin-top: var(--space-3);
+}
+
+.enrichment-message {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.enrichment-message:not(:empty) {
+  margin-top: var(--space-3);
 }
 </style>
