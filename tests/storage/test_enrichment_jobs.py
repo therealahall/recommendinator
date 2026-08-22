@@ -72,6 +72,27 @@ class TestClaim:
         assert jobs.read().running is False
         assert jobs.claim("book") is True
 
+    def test_a_heartbeat_keeps_a_long_run_alive(
+        self, jobs: EnrichmentJobStore, strand: Callable[[], None]
+    ) -> None:
+        """Drop the stamp from heartbeat() and a run past the window reads dead,
+        Stop starts answering "nothing running", and a second claim gets in."""
+        jobs.claim("movie")
+        strand()
+        jobs.heartbeat(
+            items_processed=1,
+            items_enriched=1,
+            items_failed=0,
+            items_not_found=0,
+            total_items=9,
+            current_item="Arrival",
+            errors=[],
+        )
+
+        assert jobs.read().running is True
+        assert jobs.claim("book") is False
+        assert jobs.request_stop() is True
+
     def test_a_stranded_run_reads_as_cancelled_not_as_still_going(
         self, jobs: EnrichmentJobStore, strand: Callable[[], None]
     ) -> None:

@@ -155,6 +155,13 @@ class EnrichmentJobStatus:
         return (self.items_processed / self.total_items) * 100
 
 
+#: Whole up to here; past it the count is the useful part.
+MAX_RECORDED_ERRORS = 50
+
+#: How often the run re-reads the stop flag and re-publishes its tally.
+_POLL_INTERVAL_SECONDS = 1.0
+
+
 def _to_status(record: EnrichmentJobRecord) -> EnrichmentJobStatus:
     return EnrichmentJobStatus(
         running=record.running,
@@ -233,6 +240,10 @@ class EnrichmentManager:
         # give across two processes.
         self._jobs = storage_manager.enrichment_jobs
         self._status = EnrichmentJobStatus()
+        self._dropped_errors = 0
+        self._published_at = 0.0
+        self._stop_checked_at = 0.0
+        self._stop_cached = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
@@ -324,8 +335,42 @@ class EnrichmentManager:
         """The job as the shared record has it, whoever started it."""
         return _to_status(self._jobs.read())
 
-    def _publish(self) -> None:
+    def _record_error(self, rendered: str) -> None:
+        """Cap the list, keeping a running count in one last entry.
+
+        It is re-serialised on every heartbeat, so an expired key failing 20k
+        items would cost quadratic writes.
+        """
+        with self._lock:
+            errors = self._status.errors
+            if len(errors) < MAX_RECORDED_ERRORS:
+                errors.append(rendered)
+                return
+            self._dropped_errors += 1
+            summary = f"… and {self._dropped_errors} more"
+            if len(errors) == MAX_RECORDED_ERRORS:
+                errors.append(summary)
+            else:
+                errors[-1] = summary
+
+    def _stop_asked(self) -> bool:
+        """The stop flag, re-read at most once a second.
+
+        An item matching no provider never touches the network, so a per-item
+        read makes a wrong-type sweep thousands of round trips and nothing else.
+        """
+        now = time.monotonic()
+        if now - self._stop_checked_at >= _POLL_INTERVAL_SECONDS:
+            self._stop_cached = self._jobs.stop_requested()
+            self._stop_checked_at = now
+        return self._stop_cached
+
+    def _publish(self, *, force: bool = False) -> None:
         """Mirror this run's tally into the record the other process reads."""
+        now = time.monotonic()
+        if not force and now - self._published_at < _POLL_INTERVAL_SECONDS:
+            return
+        self._published_at = now
         with self._lock:
             snapshot = EnrichmentJobStatus(
                 items_processed=self._status.items_processed,
@@ -396,7 +441,7 @@ class EnrichmentManager:
             )
             with self._lock:
                 self._status.total_items = pending_count + len(not_found_ids)
-            self._publish()
+            self._publish(force=True)
 
             # An item whose provider errored stays queued so a later run
             # retries it, which means this run's own query keeps returning it.
@@ -410,7 +455,7 @@ class EnrichmentManager:
             retried_ids: set[int] = set()
 
             # Process items in batches
-            while not self._jobs.stop_requested():
+            while not self._stop_asked():
                 # Fetch next batch of items (normal items only, not include_not_found)
                 fetched = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
@@ -451,6 +496,8 @@ class EnrichmentManager:
                 # Process each item
                 self._process_batch(items)
 
+            # Uncached, unlike the loop's check: this one decides what the run
+            # is recorded as.
             stopped = self._jobs.stop_requested()
             with self._lock:
                 self._status.running = False
@@ -459,6 +506,7 @@ class EnrichmentManager:
                 self._status.completed_at = time.time()
                 self._status.current_item = ""
                 errors = list(self._status.errors)
+            self._publish(force=True)
             self._jobs.finish(completed=not stopped, cancelled=stopped, errors=errors)
 
             job_result = "cancelled" if stopped else "completed"
@@ -477,9 +525,9 @@ class EnrichmentManager:
             # name only. The log is the operator's own, and gets the traceback.
             rendered = type(error).__name__
             logger.error("Enrichment job failed: %s", rendered, exc_info=True)
+            self._record_error(f"Job error: {rendered}")
             with self._lock:
                 self._status.running = False
-                self._status.errors.append(f"Job error: {rendered}")
                 errors = list(self._status.errors)
             # Neither completed nor cancelled: it stopped without finishing,
             # and the error is what says why. Releasing the claim is the point.
@@ -492,7 +540,7 @@ class EnrichmentManager:
             items: List of (db_id, ContentItem) tuples
         """
         for db_id, item in items:
-            if self._jobs.stop_requested():
+            if self._stop_asked():
                 return
             self._process_item(db_id, item)
             self._publish()
@@ -604,8 +652,7 @@ class EnrichmentManager:
                     "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
                 )
                 failures.append(failure)
-                with self._lock:
-                    self._status.errors.append(str(failure))
+                self._record_error(str(failure))
 
         if failures:
             reported = "; ".join(str(failure) for failure in failures)

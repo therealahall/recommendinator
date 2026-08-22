@@ -11,6 +11,7 @@ import pytest
 import requests
 
 from src.enrichment.manager import (
+    MAX_RECORDED_ERRORS,
     EnrichmentManager,
     merge_enrichment,
 )
@@ -467,6 +468,38 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
             f"?api_key={self._API_KEY}&query=The+Matrix"
         )
         return requests.HTTPError(f"401 Client Error for url: {url}", response=response)
+
+    def test_a_key_that_fails_every_item_does_not_grow_the_record_without_bound(
+        self,
+        mock_storage: MagicMock,
+        mock_registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The whole list is re-serialised per item, so an expired key against a
+        large library cost quadratic writes and a status body to match."""
+        items = [
+            (
+                index,
+                ContentItem(
+                    id=f"movie{index}",
+                    title=f"Movie {index}",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                ),
+            )
+            for index in range(1, MAX_RECORDED_ERRORS + 21)
+        ]
+        mock_storage.enrichment.items_needing.side_effect = [items, []]
+        mock_storage.enrichment.count_needing.return_value = len(items)
+        mock_registry.register(RawRequestErrorProvider(self._http_error()))
+
+        manager = EnrichmentManager(mock_storage, config, mock_registry)
+        manager.start_enrichment()
+        manager._wait_for_completion()
+
+        errors = manager.get_status().errors
+        assert len(errors) == MAX_RECORDED_ERRORS + 1
+        assert errors[-1] == "… and 20 more"
 
     def test_raw_request_error_does_not_leak_api_key_in_status(
         self,
