@@ -36,6 +36,7 @@ from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_RELEASE_YEAR,
+    MAX_REVIEW_LENGTH,
     MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
@@ -1844,13 +1845,14 @@ def test_edit_rejects_blank_review_regression(client, mock_components):
         "/api/items/42?user_id=1",
         json={"status": "completed", "review": ""},
     )
-    assert empty.status_code == 422
+    assert empty.status_code == 400
+    assert "null" in empty.json()["detail"]
 
     whitespace = client.patch(
         "/api/items/42?user_id=1",
         json={"status": "completed", "review": "   "},
     )
-    assert whitespace.status_code == 422
+    assert whitespace.status_code == 400
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
 
@@ -2070,7 +2072,9 @@ def test_edit_rejects_oversized_manual_metadata(client, mock_components):
 
     Bounds the manual-edit fields at the API boundary: at most 50 genres and
     100 tags, each genre/tag string at most 100 chars, and a description at
-    most 10000 chars. Each over-cap payload must 422 before any storage write.
+    most 10000 chars. Each over-cap payload must be refused before any storage
+    write. The review bound is checked with the rest of the dialog's own
+    refusals, which are worded for it to render.
     """
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
@@ -2108,13 +2112,6 @@ def test_edit_rejects_oversized_manual_metadata(client, mock_components):
     )
     assert too_many_tags.status_code == 422
     assert too_many_tags.json()["detail"]
-
-    review_too_long = client.patch(
-        "/api/items/42?user_id=1",
-        json={"status": "unread", "review": "x" * 10001},
-    )
-    assert review_too_long.status_code == 422
-    assert review_too_long.json()["detail"]
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
 
@@ -5376,9 +5373,11 @@ def test_edit_item_corrects_the_release_year_and_creator(client, mock_components
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
     mock_components["storage"].get_content_item = Mock(return_value=corrected)
 
+    # The year arrives as the text the dialog's free-text box holds, and is
+    # stored as the number the CLI would have sent.
     response = client.patch(
         "/api/items/7?user_id=1",
-        json={"status": "unread", "release_year": 1993, "creator": "id Software"},
+        json={"status": "unread", "release_year": "1993", "creator": "id Software"},
     )
 
     assert response.status_code == 200
@@ -5392,18 +5391,30 @@ def test_edit_item_corrects_the_release_year_and_creator(client, mock_components
 def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
     client, mock_components
 ):
+    """Each refusal is a sentence naming the bound, not a nested 422 list.
+
+    The edit dialog renders ``detail`` and nothing else, so a schema constraint
+    left it with "422 Unprocessable Entity" to show for a mistyped year.
+    """
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
-    for correction in (
-        {"release_year": MIN_RELEASE_YEAR - 1},
-        {"release_year": MAX_RELEASE_YEAR + 1},
-        {"creator": "x" * (MAX_CREATOR_LENGTH + 1)},
-        {"creator": "   "},
+    for correction, says in (
+        ({"release_year": MIN_RELEASE_YEAR - 1}, str(MIN_RELEASE_YEAR)),
+        ({"release_year": MAX_RELEASE_YEAR + 1}, str(MAX_RELEASE_YEAR)),
+        # The dialog's year box is free text, so what it holds arrives verbatim.
+        ({"release_year": "2016 (remaster)"}, str(MAX_RELEASE_YEAR)),
+        # A year copied off a page with a footnote marker: every character is a
+        # digit to ``str.isdigit``, but ``int`` takes only the decimal ones.
+        ({"release_year": "2016¹"}, str(MAX_RELEASE_YEAR)),
+        ({"creator": "x" * (MAX_CREATOR_LENGTH + 1)}, str(MAX_CREATOR_LENGTH)),
+        ({"creator": "   "}, "empty"),
+        ({"review": "x" * (MAX_REVIEW_LENGTH + 1)}, str(MAX_REVIEW_LENGTH)),
     ):
         response = client.patch(
             "/api/items/42?user_id=1", json={"status": "unread", **correction}
         )
-        assert response.status_code == 422, correction
+        assert response.status_code == 400, correction
+        assert says in response.json()["detail"], correction
 
     mock_components["storage"].update_item_from_ui.assert_not_called()
 

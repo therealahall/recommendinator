@@ -115,12 +115,10 @@ describe('RecommendationsPage', () => {
     expect(errorBar.text()).toBe('Failed to load recommendations: Not found')
   })
 
-  it('renders the page error bar when a save fails and clears it on a successful retry', async () => {
-    // End-to-end check of the reworked error contract through the page, not just
-    // the store: a rejected PATCH surfaces the error bar (modal still open, card
-    // still present), and a subsequent successful save clears the bar, removes
-    // the card, and unmounts the modal. The store clears error on markComplete
-    // entry, so the stale failure message must not persist after the retry.
+  it('says a refused save in the dialog, never on the page, and clears it on retry', async () => {
+    // End-to-end through the page: the load banner renders behind the overlay
+    // and calls every failure a failure to load, so a refused save was invisible
+    // and misdescribed. The card and the modal stay until a save is accepted.
     const { wrapper, store } = await mountWithItems()
 
     mockGet.mockResolvedValue(makeFullItem())
@@ -134,21 +132,19 @@ describe('RecommendationsPage', () => {
       .vm.$emit('save', 1, { status: 'completed', rating: null, review: null })
     await flushPromises()
 
-    const errorBar = wrapper.find('.status-bar.error')
-    expect(errorBar.exists()).toBe(true)
-    expect(errorBar.text()).toBe('Failed to load recommendations: Server error')
+    const dialog = wrapper.find('[aria-modal="true"]')
+    expect(dialog.find('[role="alert"]').text()).toBe('Server error')
+    expect(wrapper.find('.status-bar.error').exists()).toBe(false)
     expect(store.items.length).toBe(2)
-    expect(wrapper.findComponent({ name: 'EditModal' }).exists()).toBe(true)
 
-    // Retry succeeds: error bar clears, card removed, modal unmounts.
+    // Retry succeeds: card removed, modal unmounts, refusal gone with it.
     mockPatch.mockResolvedValueOnce({})
     await wrapper
       .findComponent({ name: 'EditModal' })
       .vm.$emit('save', 1, { status: 'completed', rating: null, review: null })
     await flushPromises()
 
-    expect(wrapper.find('.status-bar.error').exists()).toBe(false)
-    expect(store.error).toBe('')
+    expect(store.editError).toBe('')
     expect(store.items.map((i) => i.db_id)).toEqual([2])
     expect(wrapper.findComponent({ name: 'EditModal' }).exists()).toBe(false)
   })

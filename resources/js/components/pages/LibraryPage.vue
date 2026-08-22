@@ -120,6 +120,7 @@ onUnmounted(() => {
       v-if="lib.editingItem"
       :item="lib.editingItem"
       :saving="lib.editSaving"
+      :save-error="lib.editError"
       @save="lib.saveEdit"
       @close="onCloseEdit"
     />

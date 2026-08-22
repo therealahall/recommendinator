@@ -14,9 +14,11 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const contentType = ref('book')
   const count = ref(5)
 
-  // Edit modal (reused from the library to mark recommendations complete)
+  // Edit modal (reused from the library to mark recommendations complete). A
+  // refused save is the dialog's own: the page banner sits behind the overlay.
   const editingItem = ref<ContentItemResponse | null>(null)
   const editSaving = ref(false)
+  const editError = ref('')
 
   // Actions
   async function fetch() {
@@ -70,12 +72,13 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   function closeEdit() {
     editingItem.value = null
     editSaving.value = false
+    editError.value = ''
   }
 
   async function markComplete(dbId: number, data: ItemEditRequest) {
     const app = useAppStore()
     editSaving.value = true
-    error.value = ''
+    editError.value = ''
     try {
       await api.patch<ContentItemResponse>(`/items/${dbId}`, {
         ...data,
@@ -88,7 +91,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
       // Surface the failure (mirrors the library store's saveEdit). Leave the
       // list unchanged and keep the modal open so the user can retry, then
       // re-throw so the page can react (it skips moving focus out of the form).
-      error.value = err instanceof Error ? err.message : 'Failed to save'
+      editError.value = err instanceof Error ? err.message : 'Failed to save'
       editSaving.value = false
       throw err
     }
@@ -102,6 +105,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     count,
     editingItem,
     editSaving,
+    editError,
     fetch,
     ignoreItem,
     openEdit,

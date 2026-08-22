@@ -212,6 +212,24 @@ describe('useLibraryStore', () => {
     expect(store.editingItem).toBeNull()
   })
 
+  it('saveEdit keeps a refused save on the dialog, not on the load banner', async () => {
+    // The banner renders behind the modal overlay and prefixes "Failed to load
+    // library:", so a refusal routed there was unreadable and misdescribed.
+    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false }
+    mockGet.mockResolvedValue([item])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    mockPatch.mockRejectedValue(new Error('Review must be at most 10000 characters.'))
+    store.editingItem = item as any
+    await expect(store.saveEdit(1, { status: 'unread', review: 'x' })).rejects.toThrow()
+
+    expect(store.editError).toBe('Review must be at most 10000 characters.')
+    expect(store.error).toBe('')
+    expect(store.editingItem).not.toBeNull()
+    expect(store.editSaving).toBe(false)
+  })
+
   it('saveEdit posts enrichment fields and flips the local enriched flag', async () => {
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false, enriched: false, genres: [], tags: [], description: null }
     mockGet.mockResolvedValue([item])

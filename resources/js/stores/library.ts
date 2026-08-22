@@ -35,9 +35,11 @@ export const useLibraryStore = defineStore('library', () => {
   // promise, keeping searchLoading bound to the true request lifecycle.
   let inFlightLoad: Promise<void> | null = null
 
-  // Edit modal
+  // Edit modal. A refused save is the dialog's own, not the page's: the page
+  // banner sits behind the overlay and says "Failed to load library" over it.
   const editingItem = ref<ContentItemResponse | null>(null)
   const editSaving = ref(false)
+  const editError = ref('')
 
   // Getters
   const totalLoaded = computed(() => items.value.length)
@@ -180,11 +182,13 @@ export const useLibraryStore = defineStore('library', () => {
   function closeEdit() {
     editingItem.value = null
     editSaving.value = false
+    editError.value = ''
   }
 
   async function saveEdit(dbId: number, data: ItemEditRequest) {
     const app = useAppStore()
     editSaving.value = true
+    editError.value = ''
     try {
       const updated = await api.patch<ContentItemResponse>(
         `/items/${dbId}`,
@@ -199,7 +203,7 @@ export const useLibraryStore = defineStore('library', () => {
 
       closeEdit()
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to save'
+      editError.value = err instanceof Error ? err.message : 'Failed to save'
       editSaving.value = false
       throw err
     }
@@ -252,6 +256,7 @@ export const useLibraryStore = defineStore('library', () => {
     searchAnnouncement,
     editingItem,
     editSaving,
+    editError,
     totalLoaded,
     resetAndLoad,
     load,
