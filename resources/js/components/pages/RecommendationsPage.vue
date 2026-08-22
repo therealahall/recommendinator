@@ -41,6 +41,7 @@ async function onCloseEdit() {
 }
 
 async function onRestoreEnrichment(dbId: number) {
+  recs.editError = ''
   try {
     await data.restoreItemEnrichment(dbId)
     await recs.openEdit(dbId)

@@ -6,7 +6,9 @@ import click
 
 from src.cli._shared import abort_after_failure, is_blank_review
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
+    MAX_TITLE_LENGTH,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -46,8 +48,7 @@ def complete(
 
     A rating or review given here replaces the stored one, so an empty
     --review is refused rather than written over a review you wrote.
-    Mirrors the web API POST /api/complete, apart from the title and author
-    lengths that endpoint bounds and this command does not.
+    Mirrors the web API POST /api/complete.
     """
     content_type = ContentType.from_string(content_type_str)
 
@@ -60,6 +61,20 @@ def complete(
 
     if is_blank_review(review):
         click.echo("Error: --review cannot be empty.", err=True)
+        raise click.Abort()
+
+    if len(title) > MAX_TITLE_LENGTH:
+        click.echo(
+            f"Error: --title must be at most {MAX_TITLE_LENGTH} characters.",
+            err=True,
+        )
+        raise click.Abort()
+
+    if author is not None and len(author) > MAX_CREATOR_LENGTH:
+        click.echo(
+            f"Error: --author must be at most {MAX_CREATOR_LENGTH} characters.",
+            err=True,
+        )
         raise click.Abort()
 
     if review is not None and len(review) > MAX_REVIEW_LENGTH:

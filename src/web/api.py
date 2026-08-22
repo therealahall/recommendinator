@@ -68,6 +68,7 @@ from src.models.content import (
     MAX_RELEASE_YEAR,
     MAX_REVIEW_LENGTH,
     MAX_TAGS,
+    MAX_TITLE_LENGTH,
     MIN_RELEASE_YEAR,
     ConsumptionStatus,
     ContentItem,
@@ -295,10 +296,12 @@ class CompletionRequest(BaseModel):
     content_type: str = Field(
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
-    title: str = Field(..., max_length=500, description="Title of the content")
+    title: str = Field(
+        ..., max_length=MAX_TITLE_LENGTH, description="Title of the content"
+    )
     author: str | None = Field(
         None,
-        max_length=500,
+        max_length=MAX_CREATOR_LENGTH,
         description="Creator: author, director, creator or developer",
     )
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")

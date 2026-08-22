@@ -116,4 +116,18 @@ describe('useThemeStore', () => {
 
     expect(store.currentThemeId).toBe('nord')
   })
+
+  it('keeps the theme list when only the preference read fails', async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/themes') return Promise.resolve(THEMES)
+      if (path === '/themes/default') return Promise.resolve({ theme: 'nord' })
+      return Promise.reject(new Error('Internal Server Error'))
+    })
+
+    const store = useThemeStore()
+    await store.fetchThemes()
+
+    expect(store.themes).toEqual(THEMES)
+    expect(store.currentThemeId).toBe('nord')
+  })
 })

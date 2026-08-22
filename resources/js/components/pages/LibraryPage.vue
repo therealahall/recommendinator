@@ -12,6 +12,7 @@ const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
 
 async function onRestoreEnrichment(dbId: number) {
+  lib.editError = ''
   try {
     await data.restoreItemEnrichment(dbId)
     await lib.openEdit(dbId)
