@@ -1,19 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
-import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
-import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
-import SourceScheduleSelect from '@/components/molecules/SourceScheduleSelect.vue'
+import SourceConnectPanel from '@/components/organisms/SourceConnectPanel.vue'
+import SourceScheduleSelect from '@/components/organisms/SourceScheduleSelect.vue'
+import SourceSettingsPanel from '@/components/organisms/SourceSettingsPanel.vue'
+import SourceSyncOutcome from '@/components/molecules/SourceSyncOutcome.vue'
+import SourceSyncProgress from '@/components/molecules/SourceSyncProgress.vue'
 import SourceSyncSchedule from '@/components/molecules/SourceSyncSchedule.vue'
-import OAuthConnectFlow from '@/components/molecules/OAuthConnectFlow.vue'
-import TraktDeviceCodeFlow from '@/components/molecules/TraktDeviceCodeFlow.vue'
 import { useDataStore } from '@/stores/data'
-import { domId } from '@/utils/format'
-import type {
-  SyncJobResponse,
-  SyncSourceProgressResponse,
-  SyncSourceResponse,
-} from '@/types/api'
+import type { SyncJobResponse, SyncSourceResponse } from '@/types/api'
 
 const props = defineProps<{
   source: SyncSourceResponse
@@ -31,23 +26,9 @@ const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
 const detailsError = ref('')
 const detailsMessage = ref('')
-const migrateError = ref('')
-const oauthStatusFailed = ref(false)
-const gateRefreshing = ref(false)
 const migrating = ref(false)
-const savingConfig = ref(false)
-const togglingEnabled = ref(false)
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
-const SAVED_STATUS_MS = 2500
-const saveStatus = ref<SaveStatus>('idle')
-const saveError = ref('')
-let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
-
-/** Retry and a gate-changing write run the same re-read, so they say the same
- *  words for it. */
-const RECHECKING_STATUS = 'Rechecking the connection status…'
-const STATUS_UPDATED = 'Connection status updated.'
-const RELOADING_DETAILS = 'Loading these settings again…'
+const migrateError = ref('')
+const gateRevision = ref(0)
 
 // Accordion.vue hides its panel rather than unmounting it, so there is no
 // single element in this component's own tree to scope a query to. The testids
@@ -72,7 +53,6 @@ async function ensureDetails(): Promise<void> {
       data.loadSourceSchema(props.source.id),
       data.loadSourceConfig(props.source.id),
     ])
-    await loadOAuthState()
     detailsLoaded.value = true
   } catch (err) {
     detailsError.value = err instanceof Error ? err.message : 'Unknown error'
@@ -83,11 +63,10 @@ async function ensureDetails(): Promise<void> {
 
 async function onRetryDetails(): Promise<void> {
   if (detailsLoading.value) return
-  detailsMessage.value = RELOADING_DETAILS
+  detailsMessage.value = 'Loading these settings again…'
   await ensureDetails()
   if (detailsError.value) {
-    // A second failure changes nothing else on screen, so without a word here
-    // the click has no perceivable outcome at all.
+    // A second failure changes nothing else on screen.
     detailsMessage.value = 'Still could not load these settings. Try again in a moment.'
     return
   }
@@ -98,27 +77,9 @@ async function onRetryDetails(): Promise<void> {
   panelControl(`details-body-${props.source.id}`)?.focus()
 }
 
-// A failed status read is tracked, not swallowed: the fallback reads as "not
-// connected", which offers a Connect button and a hint naming a remedy that
-// may have nothing to do with the failure.
-async function loadOAuthState(): Promise<void> {
-  if (!isOAuthSource.value) return
-  try {
-    await data.loadOAuthStatus(props.source.id, plugin.value)
-    oauthStatusFailed.value = false
-  } catch {
-    oauthStatusFailed.value = true
-  }
-}
-
 async function onToggleExpanded(value: boolean): Promise<void> {
   expanded.value = value
-  if (!value) return
-  // Accordion.vue hides the body with `hidden` rather than unmounting it, so
-  // a message left from the last visit would re-enter the accessibility tree
-  // already populated — read as page content, never as a status (WCAG 4.1.3).
-  data.setOAuthMessage(props.source.id, '')
-  await ensureDetails()
+  if (value) await ensureDetails()
 }
 
 function onSyncClick(event: MouseEvent): void {
@@ -141,287 +102,6 @@ async function onMigrate(): Promise<void> {
   }
 }
 
-async function onSaveConfig(values: Record<string, unknown>): Promise<void> {
-  if (saveStatusTimer) {
-    clearTimeout(saveStatusTimer)
-    saveStatusTimer = null
-  }
-  savingConfig.value = true
-  saveStatus.value = 'saving'
-  saveError.value = ''
-  try {
-    await data.updateSourceConfig(props.source.id, values)
-    saveStatus.value = 'saved'
-    saveStatusTimer = setTimeout(() => {
-      saveStatus.value = 'idle'
-      saveStatusTimer = null
-    }, SAVED_STATUS_MS)
-  } catch (err) {
-    saveStatus.value = 'error'
-    saveError.value = err instanceof Error ? err.message : 'Unknown error'
-  } finally {
-    savingConfig.value = false
-  }
-  // Trakt's client ID is an ordinary field, so this form moves the connect
-  // gate as surely as the secret verbs do. Out here rather than in the try:
-  // the recheck's own await would hold "Saving…" on a button whose status
-  // pill already reads "Saved ✓".
-  if (saveStatus.value === 'saved') await refreshConnectGate()
-}
-
-let gateGeneration = 0
-
-// The Connect button reads the OAuth status; the hint under it reads the
-// source's own settings. Only the settings half of that pair moves when the
-// user enables the source or stores a client credential, so without this the
-// button stays dead under a hint that has moved on to naming a different
-// remedy — and nothing on screen changes to say so.
-async function refreshConnectGate(): Promise<void> {
-  if (!isOAuthSource.value) return
-  const generation = ++gateGeneration
-  gateRefreshing.value = true
-  data.setOAuthMessage(props.source.id, RECHECKING_STATUS)
-  await loadOAuthState()
-  // The secret verbs stay live through an enable, so two rechecks overlap. A
-  // refresh overtaken by a later one read a gate that has already moved again:
-  // releasing the hold on its result is how the stale remedy returns.
-  if (generation !== gateGeneration) return
-  gateRefreshing.value = false
-  data.setOAuthMessage(
-    props.source.id,
-    oauthStatusFailed.value
-      ? 'Could not read the connection status. Try again in a moment.'
-      : STATUS_UPDATED,
-  )
-}
-
-const secretSave = ref<Record<string, SaveStatus>>({})
-const secretSaveError = ref<Record<string, string>>({})
-const secretTimers: Record<string, ReturnType<typeof setTimeout>> = {}
-
-function setSecretStatus(name: string, status: SaveStatus, error = ''): void {
-  const running = secretTimers[name]
-  if (running) clearTimeout(running)
-  delete secretTimers[name]
-  secretSave.value = { ...secretSave.value, [name]: status }
-  secretSaveError.value = { ...secretSaveError.value, [name]: error }
-  if (status !== 'saved') return
-  secretTimers[name] = setTimeout(() => {
-    delete secretTimers[name]
-    secretSave.value = { ...secretSave.value, [name]: 'idle' }
-  }, SAVED_STATUS_MS)
-}
-
-// The outcome is what the row reports, so the request is awaited here rather
-// than left to reject unhandled out of the emit.
-async function runSecret(name: string, action: () => Promise<void>): Promise<void> {
-  if (secretSave.value[name] === 'saving') return
-  setSecretStatus(name, 'saving')
-  try {
-    await action()
-  } catch (err) {
-    setSecretStatus(name, 'error', err instanceof Error ? err.message : 'Unknown error')
-    return
-  }
-  setSecretStatus(name, 'saved')
-  await refreshConnectGate()
-}
-
-function onSetSecret(name: string, value: string): Promise<void> {
-  return runSecret(name, () => data.setSourceSecret(props.source.id, name, value))
-}
-
-function onClearSecret(name: string): Promise<void> {
-  return runSecret(name, () => data.clearSourceSecret(props.source.id, name))
-}
-
-async function onEnabledChange(value: boolean): Promise<void> {
-  if (togglingEnabled.value) return
-  togglingEnabled.value = true
-  try {
-    await data.setSourceEnabled(props.source.id, value)
-    await refreshConnectGate()
-  } finally {
-    togglingEnabled.value = false
-  }
-}
-
-const removing = ref(false)
-const removeConfirming = ref(false)
-const removeError = ref('')
-
-const removeQuestion = computed(
-  () =>
-    `Remove "${props.source.display_name}" from the database? This drops ` +
-    'every stored secret for this source. The original config.yaml entry ' +
-    '(if any) will reappear next reload.',
-)
-
-async function cancelRemove(): Promise<void> {
-  removeConfirming.value = false
-  await nextTick()
-  panelControl(`remove-btn-${props.source.id}`)?.focus()
-}
-
-async function onRemove(): Promise<void> {
-  removeConfirming.value = false
-  if (removing.value) return
-  removing.value = true
-  removeError.value = ''
-  try {
-    await data.deleteSource(props.source.id)
-  } catch (err) {
-    removeError.value = err instanceof Error ? err.message : 'Unknown error'
-    await nextTick()
-    panelControl(`remove-error-${props.source.id}`)?.focus()
-  } finally {
-    removing.value = false
-  }
-}
-
-/** The account each OAuth plugin connects, for the disconnect button's label. */
-const OAUTH_SERVICE_NAME: Record<string, string> = {
-  gog: 'GOG',
-  epic_games: 'Epic Games',
-  trakt: 'Trakt',
-}
-
-// Keyed on the plugin, never the source id: a GOG source the user named
-// "gog_work" runs the same connect flow as one named "gog".
-const plugin = computed(() => config.value?.plugin ?? '')
-const isGog = computed(() => plugin.value === 'gog')
-const isEpic = computed(() => plugin.value === 'epic_games')
-const isTrakt = computed(() => plugin.value === 'trakt')
-const isOAuthSource = computed(() => plugin.value in OAUTH_SERVICE_NAME)
-// Named for the source, not just the service: two expanded gog panels would
-// otherwise offer two buttons with the identical accessible name.
-const disconnectLabel = computed(
-  () =>
-    `Disconnect ${props.source.display_name} from ` +
-    `${OAUTH_SERVICE_NAME[plugin.value]}`,
-)
-const oauthPanelLabel = computed(() => `${props.source.display_name} connection`)
-const connectedLabel = computed(
-  () => `${OAUTH_SERVICE_NAME[plugin.value]} account connected.`,
-)
-const oauth = computed(() => data.oauthStatusFor(props.source.id))
-const oauthMessage = computed(() => data.oauthMessages[props.source.id] ?? '')
-// Not gated on the auth URL: a source the server will not connect gets one
-// disabled button and a hint naming the remedy, where dropping the whole block
-// left a named, empty group announcing nothing.
-const showOAuthConnect = computed(
-  () =>
-    isMigrated.value &&
-    !oauthStatusFailed.value &&
-    (isGog.value || isEpic.value) &&
-    !oauth.value.connected,
-)
-const showTraktConnect = computed(
-  () =>
-    isMigrated.value &&
-    !oauthStatusFailed.value &&
-    isTrakt.value &&
-    !oauth.value.connected,
-)
-// Neither flow can name its own remedy: Trakt's `enabled` folds "disabled" in
-// with "no client credentials", and Epic nulls the auth URL when its builder
-// throws while enabled. Only the enable flag tells those apart.
-const connectHint = computed(() => {
-  // Mid-refresh the two halves disagree, the settings one having moved first.
-  // Naming a remedy from it alone is how a Trakt source one click from
-  // connectable was told to add the credentials it already had.
-  if (gateRefreshing.value) return RECHECKING_STATUS
-  if (!config.value?.enabled) {
-    return 'Enable this source in the settings below before you can connect.'
-  }
-  if (isTrakt.value) {
-    return (
-      'Add the Trakt client ID and client secret in the settings below ' +
-      'before you can connect.'
-    )
-  }
-  return 'The service did not return a sign-in link. Try again in a moment.'
-})
-// An unreadable status asserts nothing: the cached flag is what the server said
-// before, and claiming a connection next to "could not read the status" leaves
-// the user no way to tell which statement is current.
-const showConnected = computed(
-  () => !oauthStatusFailed.value && oauth.value.connected,
-)
-const showDisconnect = computed(
-  () => isMigrated.value && isOAuthSource.value && showConnected.value,
-)
-
-const oauthPanel = ref<HTMLElement | null>(null)
-const oauthRetrying = ref(false)
-// Tracks the visible label, which speech-input users say back (WCAG 2.5.3).
-const retryStatusLabel = computed(
-  () =>
-    `${oauthRetrying.value ? 'Retrying' : 'Retry'} the connection status ` +
-    `check for ${props.source.display_name}`,
-)
-
-// Connect, disconnect and a recovered status read each swap out part of the
-// panel, and each can take the control holding focus with it — dropping the
-// keyboard user to <body> (WCAG 2.4.3). One place decides, keyed on whether
-// that element actually went away: a refused disconnect leaves its button
-// mounted and must not throw the user out of it.
-watch([() => oauth.value.connected, oauthStatusFailed], () => {
-  const focused = document.activeElement
-  void nextTick(() => {
-    if (!(focused instanceof HTMLElement) || focused.isConnected) return
-    oauthPanel.value?.focus()
-  })
-})
-
-// Only the status re-read rejects out of these: a refused connect or disconnect
-// is reported in the live region instead. The server has already acted by then,
-// so the cached flag is stale — showing the status as unknown puts one
-// statement on screen, with the Retry that can settle it.
-async function onDisconnect(): Promise<void> {
-  try {
-    if (isGog.value) await data.disconnectGog(props.source.id)
-    else if (isEpic.value) await data.disconnectEpic(props.source.id)
-    else if (isTrakt.value) await data.disconnectTrakt(props.source.id)
-  } catch {
-    oauthStatusFailed.value = true
-  }
-}
-
-async function onSubmitCode(code: string): Promise<void> {
-  try {
-    if (isGog.value) await data.submitGogCode(props.source.id, code)
-    else if (isEpic.value) await data.submitEpicCode(props.source.id, code)
-  } catch {
-    oauthStatusFailed.value = true
-  }
-}
-
-async function onRetryStatus(): Promise<void> {
-  if (oauthRetrying.value) return
-  oauthRetrying.value = true
-  data.setOAuthMessage(props.source.id, RECHECKING_STATUS)
-  await loadOAuthState()
-  oauthRetrying.value = false
-  // A second failure changes nothing else on screen, so without a word here
-  // the click has no perceivable outcome at all.
-  data.setOAuthMessage(
-    props.source.id,
-    oauthStatusFailed.value
-      ? 'Still could not read the connection status. Try again in a moment.'
-      : STATUS_UPDATED,
-  )
-}
-
-onBeforeUnmount(() => {
-  if (saveStatusTimer) {
-    clearTimeout(saveStatusTimer)
-    saveStatusTimer = null
-  }
-  for (const timer of Object.values(secretTimers)) clearTimeout(timer)
-  clearScheduleTimer()
-})
-
 const syncDisabled = computed(() => props.syncing || !props.source.enabled)
 // A disabled source never runs, and the accessible name below says so: letting
 // the visible label read "Syncing…" would leave the two disagreeing (WCAG 2.5.3).
@@ -429,125 +109,12 @@ const syncLabel = computed(() =>
   props.syncing && props.source.enabled ? 'Syncing…' : 'Sync',
 )
 
-// Progress for THIS source. When the running job is single-source (the
-// user clicked Sync on this row), use the job's top-level counters. When
-// the job is the umbrella "All Sources" run, look up this source's slot
-// in ``job.sources[]`` by display_name.
-const progress = computed<SyncSourceProgressResponse | null>(() => {
-  const job = props.job
-  if (!job || job.status !== 'running') return null
-  if (job.source === props.source.display_name) {
-    return {
-      source: job.source,
-      items_processed: job.items_processed,
-      total_items: job.total_items,
-      current_item: job.current_item,
-      progress_percent: job.progress_percent,
-      items_added: job.items_added,
-      items_updated: job.items_updated,
-      items_unchanged: job.items_unchanged,
-    }
-  }
-  return (
-    job.sources.find((entry) => entry.source === props.source.display_name) ||
-    null
-  )
-})
-
-const progressLabel = computed<string>(() => {
-  const entry = progress.value
-  if (!entry) return ''
-  if (entry.total_items != null && entry.total_items > 0) {
-    const pct = entry.progress_percent != null ? ` (${entry.progress_percent}%)` : ''
-    return `${entry.items_processed}/${entry.total_items}${pct}`
-  }
-  return `${entry.items_processed} items`
-})
-
-// What the last run did to THIS source, which is the whole question a re-sync
-// is run to answer: a count of items touched reads the same either way.
-const resultLabel = computed<string>(() => {
-  const job = props.job
-  if (props.syncing || !job || job.status === 'running') return ''
-  const entry = job.sources.find(
-    (slot) => slot.source === props.source.display_name,
-  )
-  if (!entry) return ''
-  return (
-    `${entry.items_added} added, ${entry.items_updated} updated, ` +
-    `${entry.items_unchanged} unchanged`
-  )
-})
-
-// An "All Sources" job carries every source's failures, and the remedy for one
-// source is wrong on the next row.
-const sourceErrors = computed<string[]>(() => {
-  if (props.syncing || !props.job) return []
-  return props.job.errors
-    .filter((entry) => entry.source === props.source.display_name)
-    .map((entry) => entry.message)
-})
-
-// One entry per failed item, so a large library failing item by item would
-// otherwise push the rest of the page off screen.
-const MAX_SHOWN_ERRORS = 5
-const shownErrors = computed<string[]>(() =>
-  sourceErrors.value.slice(0, MAX_SHOWN_ERRORS),
-)
-const unshownErrorCount = computed<number>(() =>
-  Math.max(0, sourceErrors.value.length - MAX_SHOWN_ERRORS),
-)
-
-const scheduleStatus = ref<SaveStatus>('idle')
-const scheduleError = ref('')
-let scheduleStatusTimer: ReturnType<typeof setTimeout> | null = null
-let pendingInterval: string | null = null
-
-function clearScheduleTimer(): void {
-  if (scheduleStatusTimer) clearTimeout(scheduleStatusTimer)
-  scheduleStatusTimer = null
-}
-
 const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
 // Only the schema carries the labels, so a collapsed row reads the raw key.
 const intervalLabel = computed(
   () =>
-    intervalOptions.value.find(
-      (option) => option.key === props.source.sync_interval,
-    )?.label ?? props.source.sync_interval,
-)
-
-// Arrow-keying a closed <select> fires a change per keystroke, outrunning the
-// save, so the last one of a burst is queued rather than dropped.
-async function onScheduleChange(interval: string): Promise<void> {
-  pendingInterval = interval
-  if (scheduleStatus.value === 'saving') return
-  clearScheduleTimer()
-  scheduleStatus.value = 'saving'
-  scheduleError.value = ''
-  try {
-    while (pendingInterval !== null) {
-      const next = pendingInterval
-      pendingInterval = null
-      await data.setSourceSchedule(props.source.id, next)
-    }
-    scheduleStatus.value = 'saved'
-    scheduleStatusTimer = setTimeout(() => {
-      scheduleStatus.value = 'idle'
-      scheduleStatusTimer = null
-    }, SAVED_STATUS_MS)
-  } catch (err) {
-    pendingInterval = null
-    scheduleStatus.value = 'error'
-    scheduleError.value = err instanceof Error ? err.message : 'Unknown error'
-  }
-}
-
-const errorsTitle = computed<string>(
-  () => `Last sync errors for ${props.source.display_name}`,
-)
-const errorsTitleId = computed<string>(() =>
-  domId('sync-errors-title', props.source.id),
+    intervalOptions.value.find((option) => option.key === props.source.sync_interval)
+      ?.label ?? props.source.sync_interval,
 )
 </script>
 
@@ -565,38 +132,7 @@ const errorsTitleId = computed<string>(() =>
           v-if="!props.source.enabled"
           class="source-accordion-status-badge"
         >Disabled</span>
-        <!--
-          v-show (not v-if) keeps the live region in the DOM so JAWS/NVDA
-          announce progress as values change rather than treating each
-          poll as a fresh insertion (WCAG 4.1.3 status messages).
-          All `progress?` derefs are null-safe so the children evaluate
-          cleanly while the region is hidden.
-        -->
-        <span
-          v-show="progress"
-          class="source-accordion-progress"
-          aria-live="polite"
-        >
-          <span
-            v-if="progress?.progress_percent != null"
-            class="source-accordion-progress-bar"
-            role="progressbar"
-            :aria-valuenow="progress.progress_percent"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            :aria-label="`${source.display_name} sync progress: ${progress.progress_percent}%`"
-          >
-            <span
-              class="source-accordion-progress-fill"
-              :style="{ width: `${Math.min(100, progress.progress_percent)}%` }"
-            />
-          </span>
-          <span class="source-accordion-progress-counts">{{ progressLabel }}</span>
-          <span
-            v-if="progress?.current_item"
-            class="source-accordion-progress-item"
-          >{{ progress.current_item }}</span>
-        </span>
+        <SourceSyncProgress :source-name="source.display_name" :job="job" />
       </span>
     </template>
 
@@ -617,12 +153,6 @@ const errorsTitleId = computed<string>(() =>
       >{{ syncLabel }}</button>
     </template>
 
-    <!--
-      Plain content, not a live region: it renders on the poll that ends the
-      sync, and a region arriving already populated is read as page content
-      rather than a status change. The page-level sync banner announces
-      (WCAG 4.1.3).
-    -->
     <template #notice>
       <SourceSyncSchedule
         :source-id="source.id"
@@ -631,29 +161,12 @@ const errorsTitleId = computed<string>(() =>
         :last-run-status="source.last_run_status"
         :next-run-at="source.next_run_at"
       />
-      <!-- Beside the errors rather than in the header: the header slot is the
-           trigger button's content, so this would run into the source name in
-           its accessible name and in the heading (WCAG 2.4.6). -->
-      <p
-        v-if="resultLabel"
-        class="source-accordion-result"
-        data-testid="source-sync-result"
-      >{{ resultLabel }}</p>
-      <div v-if="sourceErrors.length" class="source-accordion-errors">
-        <p
-          :id="errorsTitleId"
-          class="source-accordion-errors-title"
-          data-testid="source-sync-errors-title"
-        >{{ errorsTitle }}</p>
-        <ul
-          class="source-accordion-errors-list"
-          data-testid="source-sync-errors"
-          :aria-labelledby="errorsTitleId"
-        >
-          <li v-for="(message, index) in shownErrors" :key="index">{{ message }}</li>
-          <li v-if="unshownErrorCount">… and {{ unshownErrorCount }} more</li>
-        </ul>
-      </div>
+      <SourceSyncOutcome
+        :source-id="source.id"
+        :source-name="source.display_name"
+        :syncing="syncing"
+        :job="job"
+      />
     </template>
 
     <div v-if="detailsLoading && !detailsLoaded" class="empty-state">
@@ -684,7 +197,7 @@ const errorsTitleId = computed<string>(() =>
       v-else-if="config && schema"
       :data-testid="`details-body-${source.id}`"
       tabindex="-1"
-      class="source-accordion-details focus-fallback"
+      class="focus-fallback"
     >
       <template v-if="!isMigrated">
         <p class="source-accordion-explainer">
@@ -698,7 +211,6 @@ const errorsTitleId = computed<string>(() =>
           :disabled="migrating"
           @click="onMigrate"
         >{{ migrating ? 'Migrating…' : 'Migrate to DB' }}</button>
-        <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
         <p
           class="source-accordion-error focus-fallback"
           :data-testid="`migrate-error-${source.id}`"
@@ -708,168 +220,34 @@ const errorsTitleId = computed<string>(() =>
       </template>
 
       <template v-else>
-        <!--
-          Rendered for every OAuth source whatever its connection state: it is
-          the focus target when an outcome removes the button that had focus.
-        -->
-        <template v-if="isOAuthSource">
-          <div
-            ref="oauthPanel"
-            class="source-accordion-oauth"
-            role="group"
-            :aria-label="oauthPanelLabel"
-            tabindex="-1"
-          >
-            <!--
-              The panel is where focus lands, so the connected state needs
-              something in it: an empty group gives a sighted keyboard user
-              nothing on screen to read the announcement against.
-            -->
-            <p
-              v-if="showConnected"
-              class="source-accordion-oauth-connected"
-              data-testid="oauth-connected"
-            >{{ connectedLabel }}</p>
-
-            <template v-if="showOAuthConnect">
-              <OAuthConnectFlow
-                v-if="isGog"
-                :source-id="source.id"
-                :source-name="source.display_name"
-                :auth-url="oauth.authUrl"
-                expected-origin="https://login.gog.com"
-                help-text="Paste the redirect URL after logging in:"
-                service-name="GOG Account"
-                :connect-hint="connectHint"
-                @submit="onSubmitCode"
-              />
-              <OAuthConnectFlow
-                v-else-if="isEpic"
-                :source-id="source.id"
-                :source-name="source.display_name"
-                :auth-url="oauth.authUrl"
-                expected-origin="https://www.epicgames.com"
-                help-text="Paste the authorization code from the JSON response:"
-                service-name="Epic Games"
-                :connect-hint="connectHint"
-                @submit="onSubmitCode"
-              />
-            </template>
-
-            <TraktDeviceCodeFlow
-              v-if="showTraktConnect"
-              :source-id="source.id"
-              :source-name="source.display_name"
-              :connect-hint="connectHint"
-            />
-
-            <!--
-              Plain content, not role="alert": it can only appear as the body
-              first renders, where an alert arrives already populated and is
-              read as page content. The retry outcome goes to the region below,
-              which is mounted and silent before it has anything to say.
-            -->
-            <div v-if="oauthStatusFailed" class="source-accordion-oauth-error">
-              <p data-testid="oauth-status-error">
-                Could not read this source's connection status.
-              </p>
-              <button
-                type="button"
-                class="btn btn-secondary"
-                data-testid="oauth-status-retry"
-                :aria-label="retryStatusLabel"
-                :aria-disabled="oauthRetrying || undefined"
-                @click="onRetryStatus"
-              >{{ oauthRetrying ? 'Retrying…' : 'Retry' }}</button>
-            </div>
-          </div>
-
-          <!--
-            The one live region for the whole OAuth lifecycle. Visible: a
-            refused disconnect changes nothing else on screen. Outside the
-            focus target, so landing there does not repeat it. Named, since
-            several panels announce and nothing collapses the others.
-          -->
-          <p
-            class="source-accordion-oauth-message"
-            data-testid="oauth-message"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          ><span v-if="oauthMessage" class="sr-only">{{ source.display_name }}: </span>{{ oauthMessage }}</p>
-        </template>
+        <SourceConnectPanel
+          :source-id="source.id"
+          :source-name="source.display_name"
+          :plugin="config.plugin"
+          :source-enabled="config.enabled"
+          :disabled="props.syncing"
+          :expanded="expanded"
+          :gate-revision="gateRevision"
+        />
 
         <SourceScheduleSelect
           :source-id="source.id"
           :source-name="source.display_name"
           :interval="source.sync_interval"
           :options="intervalOptions"
-          :status="scheduleStatus"
-          :error="scheduleError"
-          @change="onScheduleChange"
         />
 
-        <SourceConfigForm
-          :schema="schema.fields"
-          :values="config.field_values"
-          :secret-status="config.secret_status"
-          :source-name="source.display_name"
-          :secret-save="secretSave"
-          :secret-save-error="secretSaveError"
-          :saving="savingConfig"
+        <SourceSettingsPanel
+          :source="source"
+          :fields="schema.fields"
+          :config="config"
           :disabled="props.syncing"
-          :enabled="config.enabled"
-          :enable-busy="togglingEnabled"
-          :save-status="saveStatus"
-          :save-error="saveError"
-          @save="onSaveConfig"
-          @set-secret="onSetSecret"
-          @clear-secret="onClearSecret"
-          @toggle-enabled="onEnabledChange"
-        >
-          <template #actions-extra>
-            <button
-              v-if="showDisconnect"
-              type="button"
-              class="btn btn-danger"
-              :data-testid="`disconnect-btn-${source.id}`"
-              :aria-label="disconnectLabel"
-              :disabled="props.syncing"
-              @click="onDisconnect"
-            >Disconnect</button>
-            <button
-              type="button"
-              class="btn btn-danger source-accordion-remove-btn"
-              :data-testid="`remove-btn-${source.id}`"
-              :aria-label="`Remove ${source.display_name} from the database`"
-              :disabled="removing || props.syncing"
-              @click="removeConfirming = true"
-            >{{ removing ? 'Removing…' : 'Remove' }}</button>
-          </template>
-        </SourceConfigForm>
-
-        <ConfirmPanel
-          v-if="removeConfirming"
-          :message="removeQuestion"
-          confirm-label="Remove"
-          cancel-label="Keep it"
-          destructive
-          @cancel="cancelRemove"
-          @confirm="onRemove"
+          @gate-changed="gateRevision += 1"
         />
-
-        <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
-        <p
-          class="source-accordion-error focus-fallback"
-          :data-testid="`remove-error-${source.id}`"
-          role="alert"
-          tabindex="-1"
-        >{{ removeError }}</p>
       </template>
     </div>
 
-    <!-- The retry outcome, which changes nothing else on screen when it fails
-         a second time. Mounted and silent, outside the branch it reports on. -->
+    <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
     <p
       class="source-accordion-details-message"
       :data-testid="`details-message-${source.id}`"
@@ -934,18 +312,6 @@ const errorsTitleId = computed<string>(() =>
   margin-bottom: var(--space-3);
 }
 
-.source-accordion-oauth {
-  margin-bottom: var(--space-3);
-}
-
-/* Pointer focus only, mirroring .main-content in base.css. The panel is focused
-   programmatically, which propagates :focus-visible from the control the user
-   just activated — so a keyboard disconnect keeps the ring that says where
-   focus went (2.4.7), and a mouse one never draws it. */
-.source-accordion-oauth:focus:not(:focus-visible) {
-  outline: none;
-}
-
 .source-accordion-error {
   margin: 0;
   font-size: var(--text-sm);
@@ -978,109 +344,4 @@ const errorsTitleId = computed<string>(() =>
   margin-top: var(--space-3);
 }
 
-.source-accordion-oauth-message {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
-/* Silent, the region still has to stay in the accessibility tree, so it earns
-   its spacing only once it says something. */
-.source-accordion-oauth-message:not(:empty) {
-  margin-bottom: var(--space-3);
-}
-
-.source-accordion-oauth-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
-.source-accordion-oauth-error p {
-  margin: 0;
-}
-
-.source-accordion-oauth-connected {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-
-.source-accordion-progress {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: var(--space-3);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-
-.source-accordion-progress-bar {
-  position: relative;
-  display: inline-block;
-  width: 80px;
-  height: 6px;
-  background: var(--border-default);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  vertical-align: middle;
-}
-
-.source-accordion-progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.2s ease;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .source-accordion-progress-fill {
-    transition: none;
-  }
-}
-
-.source-accordion-progress-counts {
-  font-variant-numeric: tabular-nums;
-}
-
-.source-accordion-result {
-  margin: 0;
-  padding: 0 var(--space-4) var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.source-accordion-progress-item {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-style: italic;
-}
-
-.source-accordion-errors {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-error) 18%, transparent);
-}
-
-.source-accordion-errors-title {
-  margin: 0 0 var(--space-1);
-  font-weight: 600;
-}
-
-.source-accordion-errors-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.source-accordion-errors-list li + li {
-  margin-top: var(--space-1);
-}
 </style>

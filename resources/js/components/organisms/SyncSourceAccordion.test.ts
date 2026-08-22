@@ -715,7 +715,7 @@ describe('SyncSourceAccordion', () => {
       // The button unmounts itself as it succeeds; without a deliberate move
       // focus falls to <body> and keyboard users restart from the top.
       expect(document.activeElement).toBe(
-        wrapper.get('.source-accordion-oauth').element,
+        wrapper.get('.source-connect').element,
       )
       wrapper.unmount()
     })

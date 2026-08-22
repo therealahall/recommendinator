@@ -17,8 +17,7 @@ defineEmits<{
 }>()
 
 const panel = ref<HTMLElement | null>(null)
-// Several panels can be open at once — one per source accordion — and a
-// duplicated id resolves to the first match, unnaming every later group.
+// Several panels can be open at once, and a duplicated id names only the first.
 const messageId = useId()
 
 // Focused where it renders, so the group's name reads the question. Not
