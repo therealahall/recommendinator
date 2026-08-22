@@ -1480,13 +1480,8 @@ class SQLiteDB:
           (see below) and an unsupplied one must not read as a fresh one.
         - ``rating`` and ``review`` use :data:`UNSET` for "leave it alone",
           because they are nullable and ``None`` therefore has to mean
-          "clear it". A blank ``review`` clears it as well, so the only two
-          things this door can leave in the column are text the user wrote and
-          NULL: it overwrites what it is handed, and a stored ``""`` reads as a
-          review the user wrote and refuses every later import. Clearing
-          rather than ignoring is what the surfaces in front already decide —
-          the edit dialog sends null once the box is empty, and ``library
-          edit`` spells that instruction ``--clear-review``.
+          "clear it". A blank ``review`` clears it as well: a stored ``""``
+          reads as a review the user wrote and refuses every later import.
         - ``seasons_watched``, ``genres``, ``tags`` and ``description`` use
           ``None`` for "leave it alone", so sending an explicit null for one
           of them is a no-op, not a clear. The *empty* value is the clear:
@@ -1504,14 +1499,12 @@ class SQLiteDB:
         ``seasons_watched`` with no status derives the status (0 watched =
         unread, all watched = completed, partial = currently_consuming).
 
-        A supplied status with no season list writes the list it implies:
-        ``completed`` ticks every season, unless the show's season total is
-        unknown, in which case the stored list stands, and ``unread`` empties
-        it, since a show nobody has started has no season watched. Only
-        ``currently_consuming`` leaves the stored list alone — being part-way
-        through says nothing about which seasons. A caller supplying both is
-        taken at its word: the edit dialog derives the pair itself and sends a
-        consistent one.
+        A supplied status writes a season list it was not given only where it
+        adds one: ``completed`` ticks every season, unless the show's total is
+        unknown, in which case the stored list stands. No status empties the
+        list — the dialog hides the checklist for a show whose total never
+        synced, so its status-only save must not erase seasons only a Trakt
+        sync can write back. A caller supplying both is taken at its word.
 
         Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
         detail-table metadata: a season newly checked off in this edit (not
@@ -1582,8 +1575,6 @@ class SQLiteDB:
                             seasons_watched = seasons_watched_for_completed(
                                 total_seasons
                             )
-                        elif status == "unread":
-                            seasons_watched = []
                     elif status is UNSET:
                         resolved_status = status_for_seasons_watched(
                             seasons_watched, total_seasons
@@ -1629,12 +1620,8 @@ class SQLiteDB:
                 params.append(rating)
             if review is not UNSET:
                 set_parts.append("review = ?")
-                # The door holds this itself: a stored blank reads as a review
-                # the user wrote and refuses every later import.
                 params.append(review if review and review.strip() else None)
             if resolved_status == "completed" and existing_status != "completed":
-                # An already-completed item keeps whatever date it has, so an
-                # unrelated edit cannot date an import that carried none.
                 set_parts.append("date_completed = COALESCE(date_completed, ?)")
                 params.append(local_today().isoformat())
             params.append(db_id)

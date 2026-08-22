@@ -2872,6 +2872,30 @@ class TestPartialEditPreservesUnsentFields:
         assert retrieved.rating == 5
         assert retrieved.review == "Loved it"
 
+    def test_unread_status_alone_keeps_watched_seasons_regression(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        """A status-only unread leaves a show's watched seasons and dates alone."""
+        dates = {"1": "2026-06-01T00:00:00+00:00"}
+        db_id = temp_db.save_content_item(
+            ContentItem(
+                id="partial_4",
+                title="The Wire",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons_watched": [1, 2, 3], "seasons_watched_dates": dates},
+            )
+        )
+
+        assert temp_db.update_item_from_ui(db_id=db_id, status="unread") is True
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata.get("seasons") is None
+        assert retrieved.status == ConsumptionStatus.UNREAD
+        assert retrieved.metadata["seasons_watched"] == [1, 2, 3]
+        assert retrieved.metadata["seasons_watched_dates"] == dates
+
     def test_explicit_none_still_clears_rating_and_review(
         self, temp_db: SQLiteDB
     ) -> None:

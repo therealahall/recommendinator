@@ -325,6 +325,11 @@ def library_show(
     help=f"Comma-separated list of watched season numbers (1-{MAX_SEASONS})",
 )
 @click.option(
+    "--clear-seasons",
+    is_flag=True,
+    help="Remove every watched season",
+)
+@click.option(
     "--genre",
     "genres",
     multiple=True,
@@ -379,6 +384,7 @@ def library_edit(
     review: str | None,
     clear_review: bool,
     seasons_watched: str | None,
+    clear_seasons: bool,
     genres: tuple[str, ...],
     clear_genres: bool,
     tags: tuple[str, ...],
@@ -396,6 +402,7 @@ def library_edit(
         and review is None
         and not clear_review
         and seasons_watched is None
+        and not clear_seasons
         and not genres
         and not clear_genres
         and not tags
@@ -406,8 +413,8 @@ def library_edit(
     ):
         click.echo(
             "Error: Provide at least one of --status, --rating, --clear-rating, "
-            "--review, --clear-review, --seasons-watched, --genre, "
-            "--clear-genres, --tag, --clear-tags, --description, "
+            "--review, --clear-review, --seasons-watched, --clear-seasons, "
+            "--genre, --clear-genres, --tag, --clear-tags, --description, "
             "--release-year, --creator.",
             err=True,
         )
@@ -421,6 +428,12 @@ def library_edit(
     if review is not None and clear_review:
         click.echo(
             "Error: --review and --clear-review cannot be used together.", err=True
+        )
+        raise click.Abort()
+    if seasons_watched is not None and clear_seasons:
+        click.echo(
+            "Error: --seasons-watched and --clear-seasons cannot be used together.",
+            err=True,
         )
         raise click.Abort()
     if genres and clear_genres:
@@ -451,7 +464,7 @@ def library_edit(
         click.echo(f"Error: Item {item_id} not found.", err=True)
         raise click.Abort()
 
-    parsed_seasons: list[int] | None = None
+    parsed_seasons: list[int] | None = [] if clear_seasons else None
     if seasons_watched is not None:
         try:
             parsed_seasons = [

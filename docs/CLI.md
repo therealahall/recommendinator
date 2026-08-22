@@ -127,6 +127,7 @@ python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
 python3.11 -m src.cli library edit --id 42 --clear-rating
 python3.11 -m src.cli library edit --id 42 --clear-review
 python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
+python3.11 -m src.cli library edit --id 42 --clear-seasons
 python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
 python3.11 -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
 python3.11 -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
@@ -135,17 +136,18 @@ python3.11 -m src.cli library edit --id 42 --release-year 1993 --creator "id Sof
 **Only the flags you pass are written**, so a status-only edit cannot erase a
 rating. Passing one replaces it.
 
-A TV show is the exception, because status and the season list are one fact
-there. Omit `--seasons-watched` and the status fills it in: `--status unread`
-empties it, `--status completed` ticks every season. Pass both and both are
-written as given.
+A TV show status fills in a season list you did not pass only where that adds
+one: `--status completed` ticks every season. Nothing else infers seasons from a
+status, and nothing but `--clear-seasons` empties the list, because only a Trakt
+sync ever writes watched seasons back. Pass both and both are written as given.
 
 Emptying a field is a separate instruction. `--clear-rating`, `--clear-review`,
-`--clear-genres` and `--clear-tags` are the only way to store nothing there, and
-none may be combined with its value flag. `--review ""` is refused, pointing you
-at `--clear-review`, because an empty string is far more often a shell accident
-than an intention. A description is the exception: `--description ""` is its
-clear, whitespace included, matching the emptied box the web sends.
+`--clear-seasons`, `--clear-genres` and `--clear-tags` are the only way to store
+nothing there, and none may be combined with its value flag. `--review ""` is
+refused, pointing you at `--clear-review`, because an empty string is far more
+often a shell accident than an intention. A description is the exception:
+`--description ""` is its clear, whitespace included, matching the emptied box
+the web sends.
 
 `--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
 `--genre` and `--tag` replace the existing lists rather than appending. Any of
