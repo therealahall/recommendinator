@@ -10,7 +10,9 @@ from click.testing import CliRunner, Result
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
 from src.models.content import (
+    MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
+    MAX_TITLE_LENGTH,
     ConsumptionStatus,
     ContentItem,
     ContentType,
@@ -360,6 +362,36 @@ def test_complete_refuses_a_review_over_the_bound_regression(tmp_path: Path) -> 
     assert accepted.exit_code == 0, accepted.output
     stored = storage.get_content_items(content_type=ContentType.BOOK)
     assert [len(item.review or "") for item in stored] == [MAX_REVIEW_LENGTH]
+
+
+def test_complete_refuses_a_title_or_author_the_web_door_would_refuse(
+    tmp_path: Path,
+) -> None:
+    """`complete` bounds --title and --author where CompletionRequest does."""
+    storage = StorageManager(sqlite_path=tmp_path / "complete-bounds.db")
+
+    def complete_with(title: str, author: str) -> Result:
+        return _invoke_with_mocks(
+            CliRunner(),
+            ["complete", "--type", "book", "--title", title, "--author", author],
+            storage,
+        )
+
+    long_title = complete_with("x" * (MAX_TITLE_LENGTH + 1), "Susanna Clarke")
+
+    assert long_title.exit_code != 0
+    assert f"at most {MAX_TITLE_LENGTH} characters" in long_title.output
+
+    long_author = complete_with("Piranesi", "x" * (MAX_CREATOR_LENGTH + 1))
+
+    assert long_author.exit_code != 0
+    assert f"at most {MAX_CREATOR_LENGTH} characters" in long_author.output
+    assert storage.get_content_items(content_type=ContentType.BOOK) == []
+
+    accepted = complete_with("x" * MAX_TITLE_LENGTH, "x" * MAX_CREATOR_LENGTH)
+
+    assert accepted.exit_code == 0, accepted.output
+    assert len(storage.get_content_items(content_type=ContentType.BOOK)) == 1
 
 
 def test_complete_command_invalid_rating(mock_components):

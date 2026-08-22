@@ -94,6 +94,22 @@ describe('LibraryPage search behaviour', () => {
     expect(lib.openEdit).toHaveBeenCalledWith(1)
   })
 
+  it('clears the last refusal before restoring, so a second failure is announced', async () => {
+    const { wrapper, lib } = mountPage({
+      editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
+      editError: 'Failed to restore enrichment',
+    })
+    const data = useDataStore()
+    vi.mocked(data.restoreItemEnrichment).mockRejectedValue(new Error('still down'))
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(EditModal).vm.$emit('restoreEnrichment', 1)
+
+    expect(lib.editError).toBe('')
+    await flushPromises()
+    expect(lib.editError).toBe('still down')
+  })
+
   it('renders the generic empty state when there is no search query', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: '' })
     await wrapper.vm.$nextTick()

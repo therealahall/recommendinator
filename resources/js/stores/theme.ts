@@ -23,7 +23,9 @@ export const useThemeStore = defineStore('theme', () => {
       const [themeList, defaultData, prefs] = await Promise.all([
         api.get<ThemeResponse[]>('/themes'),
         api.get<{ theme: string }>('/themes/default'),
-        api.get<UserPreferenceResponse>(`/users/${app.currentUserId}/preferences`),
+        api
+          .get<UserPreferenceResponse>(`/users/${app.currentUserId}/preferences`)
+          .catch(() => null),
       ])
 
       if (themeList && themeList.length > 0) {
@@ -34,7 +36,7 @@ export const useThemeStore = defineStore('theme', () => {
 
       // A theme folder removed after it was picked leaves the preference naming
       // nothing, and applyTheme would then paint no stylesheet at all.
-      const stored = prefs.theme
+      const stored = prefs?.theme
       const installed = themes.value.length === 0 || themes.value.some((t) => t.id === stored)
       applyTheme(stored && installed ? stored : defaultThemeId.value)
     } catch {
