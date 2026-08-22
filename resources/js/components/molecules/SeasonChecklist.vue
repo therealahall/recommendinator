@@ -67,6 +67,19 @@ function deselectAll() {
           :checked="watchedSet.has(season)"
           @change="toggle(season)"
         >
+        <svg
+          v-if="watchedSet.has(season)"
+          class="season-check"
+          aria-hidden="true"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
         {{ season }}
       </label>
     </div>
@@ -108,10 +121,18 @@ function deselectAll() {
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
+.season-checkbox:has(:focus-visible) {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 2px;
+}
+
 .season-checkbox.checked {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   border-color: var(--accent);
   color: var(--accent-light);
 }
 
+.season-check {
+  flex-shrink: 0;
+}
 </style>
