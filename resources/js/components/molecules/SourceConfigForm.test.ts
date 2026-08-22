@@ -224,7 +224,9 @@ describe('SourceConfigForm', () => {
       })
       await wrapper.vm.$nextTick()
 
-      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe('Saved ✓')
+      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe(
+        'api_key saved',
+      )
       expect(wrapper.find('input[name="api_key"]').exists()).toBe(false)
       expect(document.activeElement).toBe(
         wrapper.get('[data-testid="secret-replace-api_key"]').element,
@@ -239,7 +241,9 @@ describe('SourceConfigForm', () => {
         secretStatus: { api_key: false },
       })
 
-      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe('Cleared ✓')
+      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe(
+        'api_key cleared',
+      )
     })
   })
 

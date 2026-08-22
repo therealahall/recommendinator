@@ -315,7 +315,10 @@ describe('SyncSourceAccordion', () => {
   })
 
   describe('removing the source', () => {
-    async function expandWith(deleteSource: () => Promise<void>) {
+    async function expandWith(
+      deleteSource: () => Promise<void>,
+      { focusRemove = false } = {},
+    ) {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
         attachTo: document.body,
@@ -326,7 +329,10 @@ describe('SyncSourceAccordion', () => {
 
       await wrapper.find('button.accordion-trigger').trigger('click')
       await flushPromises()
-      await wrapper.find('[data-testid="remove-btn-steam"]').trigger('click')
+      const button = wrapper.get('[data-testid="remove-btn-steam"]')
+      // jsdom does not focus on click the way a browser does.
+      if (focusRemove) (button.element as HTMLElement).focus()
+      await button.trigger('click')
       return { wrapper, remove }
     }
 
@@ -344,7 +350,7 @@ describe('SyncSourceAccordion', () => {
     })
 
     it('keeps the source and the keyboard on Remove when the question is declined', async () => {
-      const { wrapper, remove } = await expandWith(async () => {})
+      const { wrapper, remove } = await expandWith(async () => {}, { focusRemove: true })
 
       await wrapper.find('[data-testid="confirm-panel-cancel"]').trigger('click')
       await flushPromises()
@@ -393,7 +399,9 @@ describe('SyncSourceAccordion', () => {
       await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
       await flushPromises()
 
-      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe('Saved ✓')
+      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe(
+        'api_key saved',
+      )
       expect(wrapper.find('input[name="api_key"]').exists()).toBe(false)
     })
 
