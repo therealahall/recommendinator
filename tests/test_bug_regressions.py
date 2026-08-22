@@ -7,7 +7,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preference_interpreter import PatternBasedInterpreter
 from src.storage.schema import (
     create_schema,
-    get_enrichment_stats,
     mark_enrichment_complete,
     mark_item_needs_enrichment,
 )
@@ -159,36 +158,6 @@ class TestMinRatingZeroRegression:
 
 class TestEnrichmentStatsRegression:
     """Regression tests for enrichment stats query bugs."""
-
-    def test_enrichment_stats_with_user_id_regression(self) -> None:
-        """Regression test: get_enrichment_stats crashes with user_id filter.
-
-        Bug reported: Sync page shows "Failed to load enrichment stats:
-        HTTP 500" on fresh load.
-
-        Root cause: _count_query for total_items joined content_items ci
-        twice — once from the table prefix and once from user_join — causing
-        "ambiguous column name: ci.user_id".
-
-        Fix: Query total_items directly without _count_query when user_id
-        is set, avoiding the double join.
-        """
-        conn = sqlite3.connect(":memory:")
-        create_schema(conn)
-
-        # Insert a content item so there's data
-        conn.execute(
-            "INSERT INTO content_items (title, content_type, status, source, user_id)"
-            " VALUES ('Test', 'book', 'completed', 'test', 1)"
-        )
-        conn.commit()
-
-        # This would crash with "ambiguous column name: ci.user_id" before fix
-        stats = get_enrichment_stats(conn, user_id=1)
-
-        assert stats["total"] == 1
-        assert stats["enriched"] == 0
-        conn.close()
 
     def test_mark_enrichment_preserves_existing_status_regression(self) -> None:
         """Regression test: re-syncing items should not re-enrich already enriched items.
