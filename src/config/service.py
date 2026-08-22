@@ -160,6 +160,22 @@ def resolve_bootstrap_web(
     )
 
 
+def _without_childless_headers(section: dict[str, Any]) -> dict[str, Any]:
+    """Drop the keys YAML parsed as None, at every depth.
+
+    A ``.get(name, {})`` default fires on an absent key, never on a present
+    one holding None, and every config section is read that way.
+    """
+    pruned: dict[str, Any] = {}
+    for key, value in section.items():
+        if value is None:
+            continue
+        pruned[key] = (
+            _without_childless_headers(value) if isinstance(value, dict) else value
+        )
+    return pruned
+
+
 def resolve_config_path(config_path: Path | None = None) -> Path:
     """Resolve config file path with fallback to example.yaml.
 
@@ -217,10 +233,10 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     resolved = resolve_config_path(config_path)
 
-    with open(resolved) as f:
+    with open(resolved, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    yaml_config = raw if isinstance(raw, dict) else {}
+    yaml_config = _without_childless_headers(raw) if isinstance(raw, dict) else {}
 
     # Layer the registry const defaults UNDER the parsed YAML (const default <
     # YAML) so a minimal, bootstrap-only config still yields a complete
@@ -295,7 +311,9 @@ def build_scorers_from_config(config: dict[str, Any]) -> list[Scorer]:
     Returns:
         List of scorer instances.
     """
-    rec_config = config.get("recommendations", {})
+    # `or {}`, not a .get default: a childless `recommendations:` header parses
+    # to None, and the default only fires on an ABSENT key.
+    rec_config = config.get("recommendations") or {}
     weight_overrides = rec_config.get("scorer_weights", {})
 
     scorers: list[Scorer] = []
@@ -329,7 +347,7 @@ def create_recommendation_engine(
     Returns:
         RecommendationEngine instance
     """
-    rec_config = config.get("recommendations", {})
+    rec_config = config.get("recommendations") or {}
     min_rating = rec_config.get(
         "min_rating_for_preference",
         default_of("recommendations.min_rating_for_preference"),
