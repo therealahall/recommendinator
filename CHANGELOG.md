@@ -1,6 +1,93 @@
 # CHANGELOG
 
 
+## v0.43.0 (2026-08-22)
+
+### Bug Fixes
+
+- **cli**: Ask before clear-secret destroys a credential
+  ([`4b7a96e`](https://github.com/therealahall/recommendinator/commit/4b7a96eb28da33346425b4804833ee7671ddf73d))
+
+- **cli**: Release the enrichment claim when Ctrl-C ends the run
+  ([`68d2f1f`](https://github.com/therealahall/recommendinator/commit/68d2f1f7889920ff7c2dd65fc83826cb9902af7a))
+
+- **cli**: Survive a second Ctrl-C, and keep the failures already published
+  ([`9a80446`](https://github.com/therealahall/recommendinator/commit/9a8044642a67aac907950aa8ec38316585cc3293))
+
+- **cli,web**: Say a source's plugin died, rather than that the source is gone
+  ([`25c6077`](https://github.com/therealahall/recommendinator/commit/25c6077863cf952488ab1a3eb75483e6ee2e137f))
+
+- **cli,web**: Send the user to the surface that owns the setting
+  ([`d466f50`](https://github.com/therealahall/recommendinator/commit/d466f5075418ffcbcf0fa3a49afc1136882b922f))
+
+- **cli,web**: Tell a Generate that found nothing from one that never ran
+  ([`5c56f49`](https://github.com/therealahall/recommendinator/commit/5c56f4928f40e6417e22a73b18622bad82b1a127))
+
+- **web**: Ask before a source credential is destroyed, and say what happened
+  ([`07ed5f8`](https://github.com/therealahall/recommendinator/commit/07ed5f827337e2ad1eb180dc69c1895a4de1eb31))
+
+- **web**: Forget the finished run when the content type changes
+  ([`ff82123`](https://github.com/therealahall/recommendinator/commit/ff8212318db205c21b0fdbfc636884e1c93ab3cf))
+
+- **web**: Give the keyboard somewhere to land after a confirmation
+  ([`71840de`](https://github.com/therealahall/recommendinator/commit/71840de6ecf7f3a56b86448754c0f37c1a9f567f))
+
+- **web**: Keep the secret confirmation in the accessibility tree while silent
+  ([`260c00d`](https://github.com/therealahall/recommendinator/commit/260c00da2ab3b0d77d0b7a2dd0785e74093152a6))
+
+- **web**: Leave an undo where an ignored recommendation was
+  ([`910f978`](https://github.com/therealahall/recommendinator/commit/910f9781096204e2df55722f782c9acaf895eab3))
+
+- **web**: Let an enrichment refusal reach the card that asked for it
+  ([`b5cbe98`](https://github.com/therealahall/recommendinator/commit/b5cbe98d5c36b421a00400f850c709bb89a107ff))
+
+- **web**: Make Reset its own destructive button, and show the card before it is on
+  ([`ffec7b4`](https://github.com/therealahall/recommendinator/commit/ffec7b45fe0730b5d7bc4e57fe1ec1de6ba1c74b))
+
+- **web**: Say why a source panel is empty, and offer to load it again
+  ([`78e1a4d`](https://github.com/therealahall/recommendinator/commit/78e1a4dab6f674fdab8997127a3ed054a920540d))
+
+- **web**: Send no provider filter when the reset is not narrowed to one
+  ([`cd03746`](https://github.com/therealahall/recommendinator/commit/cd03746511031e5b33eee5801c325f80f1fe0152))
+
+### Code Style
+
+- **web**: Trim three comments to the constraint they record
+  ([`693191e`](https://github.com/therealahall/recommendinator/commit/693191e43d2aef4d8fd0b7824e2b9a67706ef701))
+
+### Documentation
+
+- Name the Data tab and the routes the plugin failure now reaches
+  ([`67d281a`](https://github.com/therealahall/recommendinator/commit/67d281a2e298d8d6303f5470e93ee2a6e2660418))
+
+- **enrichment**: Say what the completion wait answers that the record cannot
+  ([`e9a6d0c`](https://github.com/therealahall/recommendinator/commit/e9a6d0c2b983f21b744e810f3c22a96c913c597e))
+
+### Features
+
+- **cli**: Watch and stop an enrichment run the CLI did not start
+  ([`7fa51f5`](https://github.com/therealahall/recommendinator/commit/7fa51f5768215a3b70664139d66e0e59bdb9e14c))
+
+- **enrichment**: Run the job off the shared record, so either side can stop it
+  ([`16aad08`](https://github.com/therealahall/recommendinator/commit/16aad085ebe46d03eeb0a1fdfb9a1a77b3fb3f38))
+
+- **storage**: Give the enrichment job a record both processes can read
+  ([`3a2ab37`](https://github.com/therealahall/recommendinator/commit/3a2ab3769ba4fa17f3a9274b0f0d96c0f42426a4))
+
+### Performance Improvements
+
+- **enrichment**: Bound what a run that fails every item writes
+  ([`7919f3c`](https://github.com/therealahall/recommendinator/commit/7919f3cfe51436d0d36f01b9abe98da6e105780d))
+
+### Refactoring
+
+- **web**: One confirmation panel, whatever the question
+  ([`102a8f5`](https://github.com/therealahall/recommendinator/commit/102a8f5549097a880da4113755e20a9c92e9211f))
+
+- **web**: Split the source accordion into the panels it was holding
+  ([`586cda5`](https://github.com/therealahall/recommendinator/commit/586cda57b12af242d888ae5045bbf61d99513369))
+
+
 ## v0.42.0 (2026-08-22)
 
 ### Bug Fixes
