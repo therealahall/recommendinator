@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRecommendationsStore } from './recommendations'
 
@@ -90,6 +91,17 @@ describe('useRecommendationsStore', () => {
     expect(store.hasRun).toBe(false)
     await store.fetch()
     expect(store.hasRun).toBe(true)
+  })
+
+  it('forgets the run when the type changes, so the copy names one that ran', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useRecommendationsStore()
+    await store.fetch()
+
+    store.contentType = 'movie'
+    await nextTick()
+
+    expect(store.hasRun).toBe(false)
   })
 
   it('markComplete PATCHes /items/{dbId} and removes the card on success', async () => {
