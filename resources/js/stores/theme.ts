@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
-import type { ThemeResponse } from '@/types/api'
+import { useAppStore } from '@/stores/app'
+import type { ThemeResponse, UserPreferenceResponse } from '@/types/api'
 
 const STORAGE_KEY = 'theme'
 const THEME_ID_RE = /^[a-zA-Z0-9_-]+$/
@@ -9,17 +10,20 @@ const THEME_ID_RE = /^[a-zA-Z0-9_-]+$/
 export const useThemeStore = defineStore('theme', () => {
   const api = useApi()
 
-  // State
   const themes = ref<ThemeResponse[]>([])
   const currentThemeId = ref<string | null>(null)
   const defaultThemeId = ref('nord')
 
-  // Actions
+  /** The one thing that decides the theme: the stored preference, or the
+   *  default when nothing has been picked. localStorage only caches it, so a
+   *  pick made on another browser reaches this one here, at boot. */
   async function fetchThemes() {
+    const app = useAppStore()
     try {
-      const [themeList, defaultData] = await Promise.all([
+      const [themeList, defaultData, prefs] = await Promise.all([
         api.get<ThemeResponse[]>('/themes'),
         api.get<{ theme: string }>('/themes/default'),
+        api.get<UserPreferenceResponse>(`/users/${app.currentUserId}/preferences`),
       ])
 
       if (themeList && themeList.length > 0) {
@@ -27,14 +31,9 @@ export const useThemeStore = defineStore('theme', () => {
       }
 
       defaultThemeId.value = defaultData.theme || 'nord'
-
-      // Apply config default if no localStorage preference
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (!stored && defaultData.theme) {
-        applyTheme(defaultData.theme)
-      }
+      applyTheme(prefs.theme || defaultThemeId.value)
     } catch {
-      // Silently ignore if themes endpoint not available
+      // Nothing to decide with: the browser keeps the theme it painted from cache.
     }
   }
 
@@ -59,12 +58,11 @@ export const useThemeStore = defineStore('theme', () => {
 
   function applyTheme(themeId: string) {
     if (!themeId || !THEME_ID_RE.test(themeId)) return
+    // The stored preference confirming what the cache already painted must not
+    // reload the stylesheet: that is the flash this was all built to avoid.
+    if (themeId === currentThemeId.value) return
 
-    // Validate against known themes when cache is available
-    if (themes.value.length > 0) {
-      const known = themes.value.some((t) => t.id === themeId)
-      if (!known) return
-    }
+    if (themes.value.length > 0 && !themes.value.some((t) => t.id === themeId)) return
 
     const link = getOrCreateThemeLink()
     link.href = `/static/themes/${themeId}/colors.css`

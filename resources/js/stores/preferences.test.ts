@@ -134,17 +134,15 @@ describe('usePreferencesStore', () => {
     expect(mockPut).not.toHaveBeenCalled()
   })
 
-  it('load applies the stored theme over the painted one, and not again', async () => {
+  it('load leaves the theme alone: boot already applied the stored one', async () => {
+    // Regression: opening this page was where the stored theme was read, so the
+    // whole UI restyled the moment it mounted.
     appliedThemeId = 'snowstorm'
     mockGet.mockResolvedValue({ ...STORED_PREFS, theme: 'nord' })
-    const store = usePreferencesStore()
 
-    await store.load()
-    appliedThemeId = 'nord'
-    await store.load()
+    await usePreferencesStore().load()
 
-    expect(mockApplyTheme).toHaveBeenCalledTimes(1)
-    expect(mockApplyTheme).toHaveBeenCalledWith('nord')
+    expect(mockApplyTheme).not.toHaveBeenCalled()
   })
 
   it('reset shows the defaults the server answers with, theme included', async () => {

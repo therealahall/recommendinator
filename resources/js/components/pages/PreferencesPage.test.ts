@@ -3,12 +3,6 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import PreferencesPage from './PreferencesPage.vue'
-import { useThemeStore } from '@/stores/theme'
-
-const THEMES = [
-  { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-  { id: 'snowstorm', name: 'Snowstorm', description: '', author: '', version: '1.0.0', theme_type: 'light' },
-]
 
 const PROFILE = {
   user_id: 1,
@@ -170,23 +164,5 @@ describe('PreferencesPage', () => {
 
     expect(mockDelete).toHaveBeenCalledWith('/users/1/preferences')
     expect(wrapper.text()).not.toContain('prefer westerns')
-  })
-
-  // The theme is stored server-side to reach a second device, and boot applies
-  // the config default before any page loads, so load's "this browser has none
-  // yet" guard is already false when it is asked.
-  it('applies the stored theme on a browser that has only the config default', async () => {
-    mockPreferencesGet.mockImplementation((path: string) => {
-      if (path === '/themes') return Promise.resolve(THEMES)
-      if (path === '/themes/default') return Promise.resolve({ theme: 'nord' })
-      return Promise.resolve({ ...preferences(), theme: 'snowstorm' })
-    })
-    const theme = useThemeStore()
-    await theme.fetchThemes()
-
-    await mountPage()
-
-    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
-    expect(link.href).toContain('/static/themes/snowstorm/colors.css')
   })
 })
