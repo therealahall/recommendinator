@@ -60,8 +60,14 @@ describe('EditModal', () => {
   it.each([
     ['Escape', async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))],
     ['the backdrop', async (w: ReturnType<typeof mount>) => w.trigger('click')],
+    [
+      'Cancel',
+      async (w: ReturnType<typeof mount>) =>
+        w.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click'),
+    ],
   ])('%s asks before discarding a typed review, and declining keeps it', async (_name, dismiss) => {
-    // Both gestures used to close on the spot, taking a long review with them.
+    // Every gesture used to close on the spot, taking a long review with it;
+    // Cancel is the visible one, and it kept doing so after the others stopped.
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -72,7 +78,7 @@ describe('EditModal', () => {
     await vi.runAllTimersAsync()
 
     expect(wrapper.emitted('close')).toBeFalsy()
-    const asked = wrapper.get('[role="alertdialog"]')
+    const asked = wrapper.get('.discard-confirm')
     expect(wrapper.get('[aria-modal="true"]').element.contains(asked.element)).toBe(true)
 
     await asked.findAll('button').find(b => b.text() === 'Keep editing')!.trigger('click')
@@ -101,12 +107,12 @@ describe('EditModal', () => {
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await vi.runAllTimersAsync()
-    expect(document.activeElement).toBe(wrapper.get('[role="alertdialog"]').element)
+    expect(document.activeElement).toBe(wrapper.get('.discard-confirm').element)
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await vi.runAllTimersAsync()
 
-    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(wrapper.find('.discard-confirm').exists()).toBe(false)
     expect(wrapper.emitted('close')).toBeFalsy()
     expect(document.activeElement).toBe(review.element)
     wrapper.unmount()
@@ -121,7 +127,7 @@ describe('EditModal', () => {
     await wrapper.trigger('click')
     await vi.runAllTimersAsync()
 
-    await wrapper.get('[role="alertdialog"]').findAll('button')
+    await wrapper.get('.discard-confirm').findAll('button')
       .find(b => b.text() === 'Discard')!.trigger('click')
 
     expect(wrapper.emitted('close')).toBeTruthy()
@@ -142,6 +148,40 @@ describe('EditModal', () => {
       .find(b => b.text().includes('Restore automatic enrichment'))!.trigger('click')
 
     expect(wrapper.emitted('restoreEnrichment')).toEqual([[1]])
+    wrapper.unmount()
+  })
+
+  it('a restored item says so and keeps focus in the dialog, not on the button that vanished', async () => {
+    // The refetched item unmounted the focused button, dropping the keyboard to
+    // <body> outside the trap — and nothing said the restore had worked.
+    const manual = { ...defaultItem, enriched: true, manually_enriched: true }
+    const wrapper = mount(EditModal, {
+      props: { item: manual, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    const said = wrapper.get('[role="status"]')
+    const whileManual = said.text()
+    const restore = wrapper.findAll('button')
+      .find(b => b.text().includes('Restore automatic enrichment'))!
+    ;(restore.element as HTMLElement).focus()
+    await restore.trigger('click')
+
+    await wrapper.setProps({ item: { ...manual, enriched: true, manually_enriched: false } })
+    await vi.runAllTimersAsync()
+
+    expect(said.text()).not.toBe(whileManual)
+    expect(said.text()).not.toBe('')
+    expect(document.activeElement).toBe(said.element)
+    const dialog = wrapper.get('[aria-modal="true"]').element
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    // A tabindex=-1 line is outside the trap's wrap, so Tab off it is native:
+    // the keyboard only stays in while something tabbable still follows.
+    const tabbable = [...dialog.querySelectorAll<HTMLElement>('button, input, select, textarea')]
+    expect(
+      tabbable.some(
+        (el) => said.element.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true)
     wrapper.unmount()
   })
 
@@ -391,6 +431,32 @@ describe('EditModal', () => {
     expect(said.text()).toBe('Review must be at most 10000 characters.')
     expect(wrapper.get('[aria-modal="true"]').element.contains(said.element)).toBe(true)
     expect(document.activeElement).toBe(said.element)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['Review must be at most 10000 characters.', '#edit-review'],
+    ['Creator cannot be empty.', '#edit-creator'],
+    ['Release year must be a number between 1800 and 2100.', '#edit-release-year'],
+  ])('the refusal "%s" is attached to the box it is about', async (saveError, selector) => {
+    // One sentence at the foot of a long dialog left a screen-reader user no
+    // route back to the field, which the deleted client-side check had given.
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...defaultItem, content_type: 'movie' },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+    expect(wrapper.get(selector).attributes('aria-invalid')).toBeUndefined()
+
+    await wrapper.setProps({ saveError })
+
+    const field = wrapper.get(selector)
+    expect(field.attributes('aria-invalid')).toBe('true')
+    expect(wrapper.get(`#${field.attributes('aria-describedby')}`).text()).toBe(saveError)
+    expect(wrapper.findAll('[aria-invalid="true"]')).toHaveLength(1)
     wrapper.unmount()
   })
 

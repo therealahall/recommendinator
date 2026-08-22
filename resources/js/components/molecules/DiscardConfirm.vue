@@ -8,7 +8,8 @@ defineEmits<{
 
 const panel = ref<HTMLElement | null>(null)
 
-// Focused where it renders: inside the aria-modal subtree it guards.
+// Focused where it renders, so the group's name reads the question. Not
+// alertdialog: it inerts nothing, so Tab walks straight out into the form.
 onMounted(() => panel.value?.focus())
 </script>
 
@@ -16,7 +17,7 @@ onMounted(() => panel.value?.focus())
   <div
     ref="panel"
     class="discard-confirm"
-    role="alertdialog"
+    role="group"
     aria-labelledby="discard-confirm-message"
     tabindex="-1"
   >
@@ -36,7 +37,8 @@ onMounted(() => panel.value?.focus())
   padding: var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  background: var(--bg-card, var(--surface));
+  background: var(--bg-card);
+  color: var(--text-primary);
 }
 
 .discard-confirm p {

@@ -216,6 +216,34 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, them
   )
 })
 
+const BASE = 'resources/css/base.css'
+const LIBRARY_FILTERS = 'resources/js/components/organisms/LibraryFilters.vue'
+const DISCARD_CONFIRM = 'resources/js/components/molecules/DiscardConfirm.vue'
+
+/** Text and the rule painting what it sits on, which for two of the three is
+ *  declared in another file. */
+const EDIT_SURFACES: [string, string, string, string, string][] = [
+  ['the export scope', LIBRARY_FILTERS, '.export-scope', BASE, '.dropdown-menu'],
+  ['an enrichment note', BASE, '.edit-modal-note', BASE, '.edit-modal-content'],
+  ['the discard question', DISCARD_CONFIRM, '.discard-confirm', DISCARD_CONFIRM, '.discard-confirm'],
+]
+
+describe.each(THEMES)('edit dialog surfaces in %s', (_theme, themePath) => {
+  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+
+  it.each(EDIT_SURFACES)(
+    '%s carries readable text',
+    (_label, textPath, textSelector, surfacePath, surfaceSelector) => {
+      const text = declaration(ruleBody(read(textPath), textSelector), 'color')
+      const surface = declaration(ruleBody(read(surfacePath), surfaceSelector), 'background')
+
+      expect(contrast(toRgba(text, vars), toRgba(surface, vars))).toBeGreaterThanOrEqual(
+        AA_NORMAL_TEXT,
+      )
+    },
+  )
+})
+
 const DUP_PAIR = 'resources/js/components/molecules/DuplicatePair.vue'
 const DUP_HISTORY = 'resources/js/components/organisms/DuplicateHistory.vue'
 const DUP_QUEUE = 'resources/js/components/organisms/DuplicateQueue.vue'

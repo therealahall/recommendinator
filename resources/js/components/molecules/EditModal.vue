@@ -52,6 +52,7 @@ const loaded = {
 }
 
 const refusal = ref<HTMLElement | null>(null)
+const enrichmentStatus = ref<HTMLElement | null>(null)
 
 // The dialog covers the page, so focus is what carries a refusal to a user who
 // cannot see the whole screen.
@@ -63,6 +64,34 @@ watch(
     refusal.value?.focus()
   },
 )
+
+// The restore button unmounts once the item is back on automatic enrichment,
+// so focus has to land on the line that now says so (WCAG 2.4.3).
+watch(
+  () => props.item.manually_enriched,
+  async (manual, was) => {
+    if (manual || !was) return
+    await nextTick()
+    enrichmentStatus.value?.focus()
+  },
+)
+
+const REFUSED_FIELDS: [string, string][] = [
+  ['Review', 'edit-review'],
+  ['Creator', 'edit-creator'],
+  ['Release year', 'edit-release-year'],
+]
+
+// The server words each refusal with the field's own label first, so the
+// sentence at the foot of the dialog can point back at the box it is about.
+const refusedField = computed(
+  () => REFUSED_FIELDS.find(([label]) => props.saveError.startsWith(label))?.[1] ?? '',
+)
+
+function refusalFor(inputId: string) {
+  if (refusedField.value !== inputId) return {}
+  return { 'aria-invalid': true, 'aria-describedby': 'edit-save-error' }
+}
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
@@ -165,6 +194,7 @@ function onBackdropClick(event: MouseEvent) {
           type="text"
           :maxlength="MAX_CREATOR_LENGTH"
           placeholder="Author, director or developer..."
+          v-bind="refusalFor('edit-creator')"
         >
       </div>
 
@@ -177,6 +207,7 @@ function onBackdropClick(event: MouseEvent) {
           v-model="releaseYear"
           type="text"
           inputmode="numeric"
+          v-bind="refusalFor('edit-release-year')"
         >
       </div>
 
@@ -196,7 +227,12 @@ function onBackdropClick(event: MouseEvent) {
 
       <div class="edit-field">
         <label for="edit-review">Review</label>
-        <textarea id="edit-review" v-model="review" placeholder="Write a review..." />
+        <textarea
+          id="edit-review"
+          v-model="review"
+          placeholder="Write a review..."
+          v-bind="refusalFor('edit-review')"
+        />
       </div>
 
       <div v-if="isTvShow" class="edit-field">
@@ -211,9 +247,17 @@ function onBackdropClick(event: MouseEvent) {
       <h4 class="edit-modal-section">Enrichment metadata</h4>
       <p class="edit-modal-note">Editing these opts the item out of automatic enrichment.</p>
 
-      <div v-if="item.manually_enriched" class="edit-field">
-        <p class="edit-modal-note">This item's metadata is manual, so automatic enrichment skips it.</p>
-        <button class="btn btn-secondary" @click="emit('restoreEnrichment', item.db_id!)">
+      <div class="edit-field">
+        <p ref="enrichmentStatus" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
+          {{ item.manually_enriched
+            ? "This item's metadata is manual, so automatic enrichment skips it."
+            : 'Automatic enrichment fills in this item\'s metadata.' }}
+        </p>
+        <button
+          v-if="item.manually_enriched"
+          class="btn btn-secondary"
+          @click="emit('restoreEnrichment', item.db_id!)"
+        >
           Restore automatic enrichment
         </button>
       </div>
@@ -244,12 +288,12 @@ function onBackdropClick(event: MouseEvent) {
       </div>
 
       <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
-      <p ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
+      <p id="edit-save-error" ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
 
       <DiscardConfirm v-if="confirming" @keep="keepEditing" @discard="emit('close')" />
 
       <div class="edit-modal-actions">
-        <button class="btn btn-secondary" @click="emit('close')">Cancel</button>
+        <button class="btn btn-secondary" @click="requestClose">Cancel</button>
         <button class="btn btn-primary" :disabled="saving" @click="save">
           {{ saving ? 'Saving...' : 'Save' }}
         </button>

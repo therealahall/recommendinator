@@ -132,19 +132,26 @@ describe('AddSourceModal', () => {
     expect((idInput.element as HTMLInputElement).value).toBe('custom-id')
   })
 
-  it('asks before a backdrop click discards a typed API key, and declining keeps it and the focus', async () => {
+  it.each([
+    ['the backdrop', async (w: ReturnType<typeof mount>) => w.trigger('click')],
+    [
+      'Cancel',
+      async (w: ReturnType<typeof mount>) =>
+        w.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click'),
+    ],
+  ])('%s asks before discarding a typed API key, and declining keeps it and the focus', async (_name, dismiss) => {
     const { wrapper } = await mountWithPlugins([calibrePlugin], document.body)
 
-    await wrapper.trigger('click')
+    await dismiss(wrapper)
     expect(wrapper.emitted('close')).toBeTruthy()
 
     await wrapper.find('[data-testid="add-source-secret-password"]').setValue('hunter2')
     // A real backdrop press blurs to <body> before the click, which jsdom skips.
     ;(document.activeElement as HTMLElement).blur()
-    await wrapper.trigger('click')
+    await dismiss(wrapper)
 
     expect(wrapper.emitted('close')).toHaveLength(1)
-    const asked = wrapper.get('[role="alertdialog"]')
+    const asked = wrapper.get('.discard-confirm')
 
     await asked.findAll('button').find((b) => b.text() === 'Keep editing')!.trigger('click')
 
