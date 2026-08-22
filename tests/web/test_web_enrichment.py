@@ -111,9 +111,10 @@ class TestEnrichmentStart:
 class TestEnrichmentStatus:
     """Tests for GET /api/enrichment/status endpoint."""
 
-    def test_get_status_no_job(self) -> None:
+    def test_get_status_no_job(self, tmp_path: Path) -> None:
         """Test status when no job exists."""
-        with _client(MagicMock(spec=StorageManager), {}) as client:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        with _client(storage, {}) as client:
             response = client.get("/api/enrichment/status")
 
         assert response.status_code == 200
@@ -123,9 +124,10 @@ class TestEnrichmentStatus:
     def test_a_wrapped_provider_error_reaches_the_wire_derived(
         self, tmp_path: Path
     ) -> None:
-        """Closes the chain from the manager's scrub to the body an operator reads.
+        """The scrub in the manager reaches the body an operator reads.
 
-        ``TestEnrichmentStatusApiKeyScrubbingRegression`` pins the manager end.
+        The run happens outside the app, which is the point: the endpoint
+        reads the shared record, not a manager of its own.
         """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         save_movie(storage)
@@ -146,10 +148,7 @@ class TestEnrichmentStatus:
         manager.start_enrichment(content_type=ContentType.MOVIE)
         assert manager._wait_for_completion()
 
-        with (
-            _client(MagicMock(spec=StorageManager), config) as client,
-            patch("src.web.api.get_enrichment_manager", return_value=manager),
-        ):
+        with _client(storage, config) as client:
             response = client.get("/api/enrichment/status")
 
         assert response.status_code == 200

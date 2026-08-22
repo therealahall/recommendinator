@@ -26,6 +26,17 @@ from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 
 
+def job_backed(storage: MagicMock, tmp_path: Path) -> MagicMock:
+    """Put a real job record behind the mock.
+
+    A bare MagicMock answers "already stopped" truthy, cancelling every run.
+    """
+    storage.enrichment_jobs = StorageManager(
+        sqlite_path=tmp_path / "enrichment-job.db"
+    ).enrichment_jobs
+    return storage
+
+
 class MockProvider(EnrichmentProvider):
     """Mock provider for testing."""
 
@@ -300,14 +311,14 @@ class TestEnrichmentManager:
     """Tests for the EnrichmentManager class."""
 
     @pytest.fixture
-    def mock_storage(self) -> MagicMock:
+    def mock_storage(self, tmp_path: Path) -> MagicMock:
         """Create a mock storage manager."""
         storage = MagicMock(spec=StorageManager)
         storage.enrichment.items_needing.return_value = []
         # Return an int so `_run_enrichment` can compute total_items without
         # silently producing a MagicMock when tests don't override the value.
         storage.enrichment.count_needing.return_value = 0
-        return storage
+        return job_backed(storage, tmp_path)
 
     @pytest.fixture
     def mock_registry(self) -> EnrichmentRegistry:
@@ -423,11 +434,11 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
     _API_KEY = "SECRET_MANAGER_KEY_123"
 
     @pytest.fixture
-    def mock_storage(self) -> MagicMock:
+    def mock_storage(self, tmp_path: Path) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
-        return storage
+        return job_backed(storage, tmp_path)
 
     @pytest.fixture
     def mock_registry(self) -> EnrichmentRegistry:
@@ -540,11 +551,11 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
     _FORGED = "Real Title\nWARNING  | forged | line"
 
     @pytest.fixture
-    def mock_storage(self) -> MagicMock:
+    def mock_storage(self, tmp_path: Path) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
-        return storage
+        return job_backed(storage, tmp_path)
 
     @pytest.fixture
     def mock_registry(self) -> EnrichmentRegistry:
@@ -650,11 +661,11 @@ class TestEnrichmentProgressRegression:
     """
 
     @pytest.fixture
-    def mock_storage(self) -> MagicMock:
+    def mock_storage(self, tmp_path: Path) -> MagicMock:
         storage = MagicMock(spec=StorageManager)
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
-        return storage
+        return job_backed(storage, tmp_path)
 
     @pytest.fixture
     def mock_registry(self) -> EnrichmentRegistry:

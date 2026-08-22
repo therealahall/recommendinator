@@ -4015,6 +4015,10 @@ _GUARDED_ENDPOINTS = [
     _Endpoint("DELETE", "/api/trakt/token", ("config", "storage")),
     _Endpoint("GET", "/api/profile", ("storage",)),
     _Endpoint("POST", "/api/profile/regenerate", ("storage",)),
+    # The enrichment job lives in the database now, so reading or stopping it
+    # is a storage read rather than a look at a manager this process holds.
+    _Endpoint("POST", "/api/enrichment/stop", ("storage",)),
+    _Endpoint("GET", "/api/enrichment/status", ("storage",)),
 ]
 
 # Endpoints that serve off constants, the filesystem or a manager of their own,
@@ -4034,8 +4038,6 @@ _DEPENDENCY_FREE_ENDPOINTS = [
         url="/api/import/templates/download?importer=csv_import&content_type=book",
     ),
     _Endpoint("GET", "/api/sync/status"),
-    _Endpoint("POST", "/api/enrichment/stop"),
-    _Endpoint("GET", "/api/enrichment/status"),
     _Endpoint("GET", "/api/themes"),
     _Endpoint("GET", "/api/themes/default"),
 ]

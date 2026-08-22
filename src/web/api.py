@@ -2534,14 +2534,10 @@ def start_enrichment(
 
 
 @router.post("/enrichment/stop")
-def stop_enrichment() -> dict[str, Any]:
-    """Stop the current enrichment job.
-
-    Returns:
-        Message indicating enrichment was stopped
-    """
+def stop_enrichment(storage: RequiredStorage) -> dict[str, Any]:
+    """Stop the current enrichment job, whichever process started it."""
     enrichment_manager = get_enrichment_manager()
-    success, message = enrichment_manager.stop_enrichment()
+    success, message = enrichment_manager.stop_enrichment(storage)
 
     if not success:
         raise HTTPException(status_code=400, detail=message)
@@ -2549,18 +2545,10 @@ def stop_enrichment() -> dict[str, Any]:
     return {"message": message, "status": "stopping"}
 
 
-@router.get("/enrichment/status", response_model=EnrichmentJobStatusResponse | None)
-def get_enrichment_status() -> EnrichmentJobStatusResponse | None:
-    """Get current enrichment job status.
-
-    Returns:
-        Current enrichment job status or null if no job exists
-    """
-    enrichment_manager = get_enrichment_manager()
-    status = enrichment_manager.get_status()
-
-    if status is None:
-        return EnrichmentJobStatusResponse()
+@router.get("/enrichment/status", response_model=EnrichmentJobStatusResponse)
+def get_enrichment_status(storage: RequiredStorage) -> EnrichmentJobStatusResponse:
+    """The live enrichment job, whichever process started it."""
+    status = get_enrichment_manager().get_status(storage)
 
     return EnrichmentJobStatusResponse(
         running=status.running,
