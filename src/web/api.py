@@ -1312,8 +1312,8 @@ def list_items(
 @router.get("/items/export")
 def export_items(
     storage: RequiredStorage,
-    type: str = Query(
-        ..., description="Content type (book, movie, tv_show, video_game)"
+    type: str | None = Query(
+        None, description="Content type (book, movie, tv_show, video_game)"
     ),
     format: str = Query("csv", description="Export format: csv or json"),
     user_id: int = Query(1, ge=1, description="User ID"),
@@ -1321,20 +1321,22 @@ def export_items(
     """Export library items as CSV or JSON file download.
 
     Args:
-        type: Content type to export
+        type: Content type to export, or None for the whole library
         format: Export format (csv or json)
         user_id: User ID for filtering items
 
     Returns:
         File download response
     """
-    try:
-        content_type = ContentType.from_string(type)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
-        ) from None
+    content_type: ContentType | None = None
+    if type is not None:
+        try:
+            content_type = ContentType.from_string(type)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
+            ) from None
 
     export_format = format.lower()
     if export_format not in {"csv", "json"}:
@@ -1346,10 +1348,11 @@ def export_items(
     items = storage.get_content_items(
         user_id=user_id,
         content_type=content_type,
+        include_ignored=True,
     )
 
-    content_type_value = get_enum_value(content_type)
-    filename = f"{content_type_value}s.{export_format}"
+    stem = "library" if content_type is None else f"{get_enum_value(content_type)}s"
+    filename = f"{stem}.{export_format}"
 
     if export_format == "csv":
         content = export_items_csv(items, content_type)

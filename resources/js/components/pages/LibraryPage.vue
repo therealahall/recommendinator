@@ -62,6 +62,7 @@ onUnmounted(() => {
       :enrichment-filter="lib.enrichmentFilter"
       :show-ignored="lib.showIgnored"
       :needs-rating="lib.needsRating"
+      :sort-by="lib.sortBy"
       :search-query="lib.searchQuery"
       :search-loading="lib.searchLoading"
       @filter-change="lib.setFilter"

@@ -32,6 +32,18 @@ _CSV_COLUMN_ORDER: dict[str, list[str]] = {
     for content_type, columns in CONTENT_TYPE_COLUMNS.items()
 }
 
+# Header for a whole-library CSV: every type's columns in one row, so an item
+# leaves the columns its own type does not declare blank.
+_ALL_CSV_COLUMNS: list[str] = [
+    *dict.fromkeys(
+        column
+        for columns in _CSV_COLUMN_ORDER.values()
+        for column in columns
+        if column != "ignored"
+    ),
+    "ignored",
+]
+
 
 def _item_to_export_dict(
     item: ContentItem, content_type: ContentType, for_csv: bool = False
@@ -87,18 +99,13 @@ def _item_to_export_dict(
     return result
 
 
-def export_items_csv(items: list[ContentItem], content_type: ContentType) -> str:
-    """Export content items to CSV format.
-
-    Args:
-        items: List of ContentItem objects to export
-        content_type: Content type for determining column layout
-
-    Returns:
-        CSV string with header and data rows
-    """
-    content_type_value = get_enum_value(content_type)
-    columns = _CSV_COLUMN_ORDER[content_type_value]
+def export_items_csv(items: list[ContentItem], content_type: ContentType | None) -> str:
+    """Export items as CSV; *content_type* None writes the whole library."""
+    columns = (
+        _ALL_CSV_COLUMNS
+        if content_type is None
+        else _CSV_COLUMN_ORDER[get_enum_value(content_type)]
+    )
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
@@ -107,7 +114,9 @@ def export_items_csv(items: list[ContentItem], content_type: ContentType) -> str
     # Guarding here rather than per field covers every column a future
     # content type adds, and the JSON export stays byte-for-byte raw.
     for item in items:
-        row = _item_to_export_dict(item, content_type, for_csv=True)
+        row = _item_to_export_dict(
+            item, content_type or item.content_type, for_csv=True
+        )
         writer.writerow(
             {column: guard_csv_formula(value) for column, value in row.items()}
         )
@@ -115,17 +124,12 @@ def export_items_csv(items: list[ContentItem], content_type: ContentType) -> str
     return output.getvalue()
 
 
-def export_items_json(items: list[ContentItem], content_type: ContentType) -> str:
-    """Export content items to JSON format.
-
-    Args:
-        items: List of ContentItem objects to export
-        content_type: Content type for determining field layout
-
-    Returns:
-        Pretty-printed JSON string (array of objects)
-    """
+def export_items_json(
+    items: list[ContentItem], content_type: ContentType | None
+) -> str:
+    """Export items as JSON; *content_type* None writes the whole library."""
     entries = [
-        _item_to_export_dict(item, content_type, for_csv=False) for item in items
+        _item_to_export_dict(item, content_type or item.content_type, for_csv=False)
+        for item in items
     ]
     return json.dumps(entries, indent=2, ensure_ascii=False)

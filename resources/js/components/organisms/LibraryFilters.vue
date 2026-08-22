@@ -4,7 +4,7 @@ import TypePills from '@/components/atoms/TypePills.vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import SearchInput from '@/components/atoms/SearchInput.vue'
-import { MAX_SEARCH_LENGTH } from '@/constants/library'
+import { MAX_SEARCH_LENGTH, SORT_OPTIONS } from '@/constants/library'
 
 const props = defineProps<{
   typeFilter: string
@@ -12,13 +12,14 @@ const props = defineProps<{
   enrichmentFilter: string
   showIgnored: boolean
   needsRating: boolean
+  sortBy: string
   searchQuery: string
   searchLoading: boolean
 }>()
 
 const emit = defineEmits<{
   filterChange: [
-    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating',
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating' | 'sort',
     value: string | boolean,
   ]
   export: [format: 'csv' | 'json']
@@ -33,6 +34,12 @@ const statusLabels: Record<string, Record<string, string>> = {
 
 const unreadLabel = computed(() =>
   statusLabels.unread[props.typeFilter] ?? statusLabels.unread.default
+)
+
+const exportScope = computed(() =>
+  props.typeFilter
+    ? 'Exports every item of this type. Your other filters do not apply.'
+    : 'Exports your whole library, every type. Your other filters do not apply.'
 )
 
 function doExport(format: 'csv' | 'json') {
@@ -109,6 +116,11 @@ onUnmounted(() => {
           <option value="enriched">Enriched</option>
           <option value="not_enriched">Not enriched</option>
         </select>
+        <select class="toolbar-select" aria-label="Sort" :value="sortBy" @change="emit('filterChange', 'sort', ($event.target as HTMLSelectElement).value)">
+          <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">
+            Sort: {{ option.label }}
+          </option>
+        </select>
       </div>
 
       <div class="toolbar-divider" />
@@ -135,6 +147,7 @@ onUnmounted(() => {
             Export
           </button>
           <div v-if="exportOpen" class="dropdown-menu">
+            <p class="export-scope">{{ exportScope }}</p>
             <button class="dropdown-menu-item" @click="doExport('csv')">CSV</button>
             <button class="dropdown-menu-item" @click="doExport('json')">JSON</button>
           </div>
@@ -145,6 +158,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.export-scope {
+  max-width: 16rem;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
+  color: var(--text-secondary);
+}
+
 .library-toolbar {
   display: flex;
   align-items: center;

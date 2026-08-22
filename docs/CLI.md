@@ -205,7 +205,12 @@ back onto a pair the list can offer.
 
 ```bash
 python3.11 -m src.cli library export --type book --format csv --output books.csv
+python3.11 -m src.cli library export --output library.csv   # every type
 ```
+
+Without `--type` the file covers the whole library. Its header carries all four
+types' columns, so each row leaves the ones its own type does not have blank.
+Ignored items are exported either way, as the web Export button does.
 
 ## Source management
 

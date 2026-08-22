@@ -84,12 +84,16 @@ Per-source rate limits are enforced inside each plugin and are untouched by this
 
 ## Library export
 
-Filter the **Library** tab by content type, consumption status and enrichment
-state, then pick CSV or JSON and click **Export**. The enrichment filter finds
-items still missing metadata so you can fill them in by hand, see
-[ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing). The CLI
-equivalent is `python3.11 -m src.cli library export`, see
-[CLI.md](CLI.md#library-management).
+Click **Export** on the **Library** tab and pick CSV or JSON. The file covers
+the content type you have selected, or the whole library when none is, and
+carries your ignored items either way. Nothing else on screen narrows it: the
+status, search and enrichment filters shape the view, not the export. The CLI
+equivalent is `python3.11 -m src.cli library export`, whose `--type` is
+optional for the same reason, see [CLI.md](CLI.md#library-management).
+
+The enrichment filter finds items still missing metadata so you can fill them
+in by hand, see
+[ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing).
 
 Exported files match the import template format, so you can edit one and
 re-import it. What a re-import may change depends on the field, and for most

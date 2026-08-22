@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
-import { MAX_SEARCH_LENGTH } from '@/constants/library'
+import { DEFAULT_SORT, MAX_SEARCH_LENGTH } from '@/constants/library'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 
 const PAGE_SIZE = 50
@@ -24,6 +24,7 @@ export const useLibraryStore = defineStore('library', () => {
   const enrichmentFilter = ref('')
   const showIgnored = ref(false)
   const needsRating = ref(false)
+  const sortBy = ref(DEFAULT_SORT)
 
   // Search
   const searchQuery = ref('')
@@ -73,6 +74,7 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: app.currentUserId,
         limit: PAGE_SIZE,
         offset: offset.value,
+        sort_by: sortBy.value,
       }
       if (typeFilter.value) params.type = typeFilter.value
       if (needsRating.value) {
@@ -145,7 +147,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function setFilter(
-    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating',
+    key: 'type' | 'status' | 'enrichment' | 'showIgnored' | 'search' | 'needsRating' | 'sort',
     value: string | boolean,
   ) {
     if (key === 'search') {
@@ -164,6 +166,7 @@ export const useLibraryStore = defineStore('library', () => {
     else if (key === 'enrichment') enrichmentFilter.value = value as string
     else if (key === 'showIgnored') showIgnored.value = value as boolean
     else if (key === 'needsRating') needsRating.value = value as boolean
+    else if (key === 'sort') sortBy.value = value as string
     return resetAndLoad()
   }
 
@@ -227,17 +230,21 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  function exportLibrary(format: 'csv' | 'json') {
+  // The export covers one content type, or the whole library when none is
+  // picked; the other on-screen filters never narrow it.
+  function exportUrl(format: 'csv' | 'json'): string {
     const app = useAppStore()
-    if (!typeFilter.value) return
-
     const params = new URLSearchParams({
-      type: typeFilter.value,
       format,
       user_id: app.currentUserId.toString(),
     })
+    if (typeFilter.value) params.set('type', typeFilter.value)
 
-    window.location.href = `/api/items/export?${params}`
+    return `/api/items/export?${params}`
+  }
+
+  function exportLibrary(format: 'csv' | 'json') {
+    window.location.href = exportUrl(format)
   }
 
   return {
@@ -251,6 +258,7 @@ export const useLibraryStore = defineStore('library', () => {
     enrichmentFilter,
     showIgnored,
     needsRating,
+    sortBy,
     searchQuery,
     searchLoading,
     searchAnnouncement,
@@ -267,6 +275,7 @@ export const useLibraryStore = defineStore('library', () => {
     closeEdit,
     saveEdit,
     toggleIgnore,
+    exportUrl,
     exportLibrary,
   }
 })

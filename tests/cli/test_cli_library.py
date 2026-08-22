@@ -1033,6 +1033,32 @@ class TestLibraryExport:
         call_kwargs = mock_storage.get_content_items.call_args[1]
         assert call_kwargs["include_ignored"] is True
 
+    def test_export_without_a_type_covers_every_content_type(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """No --type exports the whole library, as the web Export button does."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [
+            _make_item(db_id=1, title="Book One"),
+            _make_item(db_id=2, title="Movie One", content_type=ContentType.MOVIE),
+        ]
+        output_path = tmp_path / "library.csv"
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "export", "--output", str(output_path)],
+            mock_storage,
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(output_path.read_text(encoding="utf-8")))
+        )
+        assert result.exit_code == 0
+        assert mock_storage.get_content_items.call_args[1]["content_type"] is None
+        assert [row["title"] for row in rows] == ["Book One", "Movie One"]
+        assert rows[0]["author"] == "Test Author"
+        assert rows[1]["director"] == "Test Author"
+
     def test_export_guards_a_formula_title_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:

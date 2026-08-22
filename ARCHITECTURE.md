@@ -508,7 +508,9 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
   [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
-- Library export: `GET /api/items/export?type=book&format=csv`.
+- Library export: `GET /api/items/export?type=book&format=csv`. `type` is
+  optional on both interfaces and omitting it exports every content type, under
+  a header carrying all four types' columns.
 - The duplicates review reaches the merge door from both sides: `/api/duplicates`
   and `/api/merges` behind the **Duplicates** page, `library duplicates`,
   `merge`, `unmerge`, `merges`, `decline-duplicate`, `declined-duplicates` and
