@@ -34,8 +34,10 @@ export const useThemeStore = defineStore('theme', () => {
 
       defaultThemeId.value = defaultData.theme || 'nord'
 
-      // A theme folder removed after it was picked leaves the preference naming
-      // nothing, and applyTheme would then paint no stylesheet at all.
+      // A read that failed is not a preference naming nothing: falling back
+      // would repaint over the cache and overwrite it with the default.
+      if (prefs === null && currentThemeId.value) return
+
       const stored = prefs?.theme
       const installed = themes.value.length === 0 || themes.value.some((t) => t.id === stored)
       applyTheme(stored && installed ? stored : defaultThemeId.value)
