@@ -19,6 +19,7 @@ from src.enrichment.provider_base import EnrichmentResult
 from src.enrichment.rate_limiter import RateLimiter
 from src.enrichment.registry import EnrichmentRegistry, get_enrichment_registry
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.storage.enrichment_jobs import EnrichmentJobRecord
 from src.storage.global_secrets import read_secret
 from src.utils.request_errors import scrub_request_error
 from src.utils.text import sanitize_for_log
@@ -154,6 +155,33 @@ class EnrichmentJobStatus:
         return (self.items_processed / self.total_items) * 100
 
 
+def _to_status(record: EnrichmentJobRecord) -> EnrichmentJobStatus:
+    return EnrichmentJobStatus(
+        running=record.running,
+        completed=record.completed,
+        cancelled=record.cancelled,
+        items_processed=record.items_processed,
+        items_enriched=record.items_enriched,
+        items_failed=record.items_failed,
+        items_not_found=record.items_not_found,
+        total_items=record.total_items,
+        current_item=record.current_item,
+        content_type=record.content_type,
+        errors=list(record.errors),
+        started_at=(
+            record.started_at.timestamp() if record.started_at is not None else None
+        ),
+        completed_at=(
+            record.finished_at.timestamp() if record.finished_at is not None else None
+        ),
+    )
+
+
+def job_status(storage_manager: StorageManager) -> EnrichmentJobStatus:
+    """The live job, for a caller with no reason to build a manager."""
+    return _to_status(storage_manager.enrichment_jobs.read())
+
+
 class EnrichmentManager:
     """Manages background enrichment of content items.
 
@@ -201,9 +229,10 @@ class EnrichmentManager:
         self.config = config
         self.registry = registry or get_enrichment_registry()
 
-        # Job state
+        # Running, and asked-to-stop, are answers only the shared record can
+        # give across two processes.
+        self._jobs = storage_manager.enrichment_jobs
         self._status = EnrichmentJobStatus()
-        self._stop_requested = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
@@ -232,16 +261,16 @@ class EnrichmentManager:
             True if job started, False if already running
         """
         with self._lock:
-            if self._status.running:
+            # The claim is the mutual exclusion, and it spans processes: a
+            # local flag let the CLI start a second job beside the server's.
+            if not self._jobs.claim(content_type.value if content_type else None):
                 logger.warning("Enrichment job already running")
                 return False
 
-            # Reset status
             self._status = EnrichmentJobStatus(
                 running=True,
                 content_type=content_type.value if content_type else None,
             )
-            self._stop_requested = False
 
             # Start background thread
             self._thread = threading.Thread(
@@ -262,17 +291,15 @@ class EnrichmentManager:
             )
             return True
 
-    def stop_enrichment(self) -> None:
-        """Request the enrichment job to stop.
+    def stop_enrichment(self) -> bool:
+        """Ask the running job to stop, whichever process owns it.
 
-        The job will stop after completing the current item.
+        It stops after the current item. False when nothing was running.
         """
-        with self._lock:
-            if not self._status.running:
-                return
-
-            self._stop_requested = True
+        asked = self._jobs.request_stop()
+        if asked:
             logger.info("Requested enrichment job stop")
+        return asked
 
     def _wait_for_completion(self, timeout: float = 5.0) -> bool:
         """Wait for the background enrichment thread to finish.
@@ -294,27 +321,30 @@ class EnrichmentManager:
         return not thread.is_alive()
 
     def get_status(self) -> EnrichmentJobStatus:
-        """Get current job status.
+        """The job as the shared record has it, whoever started it."""
+        return _to_status(self._jobs.read())
 
-        Returns:
-            Copy of current EnrichmentJobStatus
-        """
+    def _publish(self) -> None:
+        """Mirror this run's tally into the record the other process reads."""
         with self._lock:
-            return EnrichmentJobStatus(
-                running=self._status.running,
-                completed=self._status.completed,
-                cancelled=self._status.cancelled,
+            snapshot = EnrichmentJobStatus(
                 items_processed=self._status.items_processed,
                 items_enriched=self._status.items_enriched,
                 items_failed=self._status.items_failed,
                 items_not_found=self._status.items_not_found,
                 total_items=self._status.total_items,
                 current_item=self._status.current_item,
-                content_type=self._status.content_type,
                 errors=list(self._status.errors),
-                started_at=self._status.started_at,
-                completed_at=self._status.completed_at,
             )
+        self._jobs.heartbeat(
+            items_processed=snapshot.items_processed,
+            items_enriched=snapshot.items_enriched,
+            items_failed=snapshot.items_failed,
+            items_not_found=snapshot.items_not_found,
+            total_items=snapshot.total_items,
+            current_item=snapshot.current_item,
+            errors=snapshot.errors,
+        )
 
     def _run_enrichment(
         self,
@@ -366,6 +396,7 @@ class EnrichmentManager:
             )
             with self._lock:
                 self._status.total_items = pending_count + len(not_found_ids)
+            self._publish()
 
             # An item whose provider errored stays queued so a later run
             # retries it, which means this run's own query keeps returning it.
@@ -379,7 +410,7 @@ class EnrichmentManager:
             retried_ids: set[int] = set()
 
             # Process items in batches
-            while not self._stop_requested:
+            while not self._jobs.stop_requested():
                 # Fetch next batch of items (normal items only, not include_not_found)
                 fetched = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
@@ -420,15 +451,17 @@ class EnrichmentManager:
                 # Process each item
                 self._process_batch(items)
 
-            # Mark job as complete
+            stopped = self._jobs.stop_requested()
             with self._lock:
                 self._status.running = False
-                self._status.completed = not self._stop_requested
-                self._status.cancelled = self._stop_requested
+                self._status.completed = not stopped
+                self._status.cancelled = stopped
                 self._status.completed_at = time.time()
                 self._status.current_item = ""
+                errors = list(self._status.errors)
+            self._jobs.finish(completed=not stopped, cancelled=stopped, errors=errors)
 
-            job_result = "cancelled" if self._stop_requested else "completed"
+            job_result = "cancelled" if stopped else "completed"
             logger.info(
                 "[ENRICHMENT] === Job %s === "
                 "Processed: %d, Enriched: %d, Not found: %d, Failed: %d",
@@ -447,6 +480,10 @@ class EnrichmentManager:
             with self._lock:
                 self._status.running = False
                 self._status.errors.append(f"Job error: {rendered}")
+                errors = list(self._status.errors)
+            # Neither completed nor cancelled: it stopped without finishing,
+            # and the error is what says why. Releasing the claim is the point.
+            self._jobs.finish(completed=False, cancelled=False, errors=errors)
 
     def _process_batch(self, items: list[tuple[int, ContentItem]]) -> None:
         """Process a batch of items.
@@ -455,9 +492,10 @@ class EnrichmentManager:
             items: List of (db_id, ContentItem) tuples
         """
         for db_id, item in items:
-            if self._stop_requested:
+            if self._jobs.stop_requested():
                 return
             self._process_item(db_id, item)
+            self._publish()
 
     def _process_item(self, db_id: int, item: ContentItem) -> None:
         """Process a single content item.
