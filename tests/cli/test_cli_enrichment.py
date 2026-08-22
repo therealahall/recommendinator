@@ -210,6 +210,31 @@ class TestEnrichmentJobControl:
         assert result.exit_code == 0, result.output
         assert storage.enrichment_jobs.stop_requested() is True
 
+    def test_ctrl_c_releases_the_claim_rather_than_stranding_it(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The worker is a daemon thread, so the process can exit before it sees
+        the stop; the claim would then block both Start doors until it staled."""
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+        mock_manager = MagicMock(spec=EnrichmentManager)
+        mock_manager.start_enrichment.side_effect = (
+            lambda **_: storage.enrichment_jobs.claim(None)
+        )
+        mock_manager.get_status.side_effect = KeyboardInterrupt
+        mock_manager._wait_for_completion.return_value = False
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "start"],
+            storage,
+            mock_manager,
+            config={"enrichment": {"enabled": True, "batch_size": 50}},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert storage.enrichment_jobs.read().running is False
+        assert storage.enrichment_jobs.claim(None) is True
+
     def test_stop_with_nothing_running_says_so_rather_than_claiming_success(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:

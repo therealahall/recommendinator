@@ -122,6 +122,13 @@ def enrichment_start(
     except KeyboardInterrupt:
         click.echo("\nStopping enrichment...", err=True)
         manager.stop_enrichment()
+        # The worker is a daemon thread, so without this wait the process exits
+        # before it reaches its next stop check and never releases the claim —
+        # leaving a dead run blocking both Start doors until it goes stale.
+        if not manager._wait_for_completion(timeout=10.0):
+            storage.enrichment_jobs.finish(
+                completed=False, cancelled=True, errors=["Interrupted."]
+            )
         click.echo("Enrichment stopped.")
 
 
