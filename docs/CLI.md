@@ -254,6 +254,9 @@ RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
   python3.11 -m src.cli source set-secret my_steam api_key
 ```
 
+`source clear-secret` and `source remove` destroy a stored credential, so both
+prompt first. Pass `--yes` to skip the prompt in a script.
+
 ## Global settings
 
 Manages `recommendations`, `sync`, `enrichment`, `web` and `logging`.

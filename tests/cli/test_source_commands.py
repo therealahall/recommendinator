@@ -18,6 +18,7 @@ from click.testing import CliRunner, Result
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from tests.cli.conftest import _invoke_with_mocks
+from tests.fakes.source_plugins import UNLOADED_PLUGIN, UNLOADED_PLUGIN_DETAIL
 
 _RUN_START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
@@ -584,12 +585,32 @@ class TestSourceSecrets:
         storage.credentials.save(1, "my_games", "api_key", "to_be_cleared")
         result = _invoke_with_mocks(
             cli_runner,
-            ["source", "clear-secret", "my_games", "api_key"],
+            ["source", "clear-secret", "my_games", "api_key", "--yes"],
             mock_storage=storage,
             config=base_config,
         )
         assert result.exit_code == 0
         assert storage.credentials.get(1, "my_games", "api_key") is None
+
+    def test_clear_secret_keeps_the_credential_when_the_prompt_is_declined(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        """It fired on one word, where the web door now asks first."""
+        storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
+        storage.credentials.save(1, "my_games", "api_key", "keep_me")
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "clear-secret", "my_games", "api_key"],
+            mock_storage=storage,
+            config=base_config,
+            input_text="n\n",
+        )
+        assert result.exit_code == 0
+        assert "Aborted." in result.output
+        assert storage.credentials.get(1, "my_games", "api_key") == "keep_me"
 
     def test_set_secret_rejects_non_sensitive_field(
         self,
@@ -865,3 +886,45 @@ class TestSourceSetGuardsBoundCredentials:
         row = migrated.sources.get(1, "calibre")
         assert row is not None and row["config"]["url"] == "https://localhost:8083"
         assert migrated.credentials.get(1, "calibre", "password") == "hunter2"
+
+
+@pytest.mark.usefixtures("registry_with_a_failed_import")
+class TestSourceWhosePluginNeverImported:
+    """`source list` showed it while `source show` called it unknown."""
+
+    @pytest.fixture()
+    def broken_config(self) -> dict[str, Any]:
+        return {"inputs": {"my_books": {"plugin": UNLOADED_PLUGIN, "enabled": True}}}
+
+    def test_show_says_why_it_cannot_be_used_in_the_api_s_words(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        broken_config: dict[str, Any],
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "show", "my_books"],
+            mock_storage=storage,
+            config=broken_config,
+        )
+
+        assert result.exit_code != 0
+        assert "Unknown source" not in result.output
+        assert UNLOADED_PLUGIN_DETAIL in result.output
+
+    def test_a_source_that_really_is_absent_still_reads_as_unknown(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        broken_config: dict[str, Any],
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "show", "nothing_here"],
+            mock_storage=storage,
+            config=broken_config,
+        )
+
+        assert result.exit_code != 0
+        assert "Unknown source: nothing_here" in result.output
