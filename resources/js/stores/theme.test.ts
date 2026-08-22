@@ -14,6 +14,11 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
+const THEMES = [
+  { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
+  { id: 'snowstorm', name: 'Snowstorm', description: '', author: '', version: '1.0.0', theme_type: 'light' },
+]
+
 describe('useThemeStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -27,13 +32,6 @@ describe('useThemeStore', () => {
   afterEach(() => {
     const el = document.getElementById('theme-stylesheet')
     if (el) el.remove()
-  })
-
-  it('has correct initial state', () => {
-    const store = useThemeStore()
-    expect(store.themes).toEqual([])
-    expect(store.currentThemeId).toBeNull()
-    expect(store.defaultThemeId).toBe('nord')
   })
 
   it('applyTheme sets link href and localStorage', () => {
@@ -65,47 +63,45 @@ describe('useThemeStore', () => {
     expect(store.currentThemeId).toBeNull()
   })
 
-  it('applyStoredTheme reads from localStorage', () => {
-    localStorage.setItem('theme', 'snowstorm')
+  function answerBoot(configDefault: string, stored: string) {
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/themes') return Promise.resolve(THEMES)
+      if (path === '/themes/default') return Promise.resolve({ theme: configDefault })
+      return Promise.resolve({ theme: stored })
+    })
+  }
+
+  it('fetchThemes applies the config default when nothing has been picked', async () => {
+    answerBoot('snowstorm', '')
+
+    const store = useThemeStore()
+    await store.fetchThemes()
+
+    expect(store.themes).toEqual(THEMES)
+    expect(store.defaultThemeId).toBe('snowstorm')
+    expect(store.currentThemeId).toBe('snowstorm')
+  })
+
+  it('falls back to the default when the stored theme is gone', async () => {
+    // Regression: boot resolves the theme from the stored preference, and a
+    // theme folder removed after it was picked left that preference naming
+    // nothing, so a browser with no cache painted no theme at all.
+    answerBoot('nord', 'retired')
+
+    const store = useThemeStore()
+    await store.fetchThemes()
+
+    expect(store.currentThemeId).toBe('nord')
+  })
+
+  it('a server that cannot be reached leaves the cached theme painted', async () => {
+    localStorage.setItem('theme', 'nord')
+    mockGet.mockRejectedValue(new Error('Network error'))
+
     const store = useThemeStore()
     store.applyStoredTheme()
-
-    expect(store.currentThemeId).toBe('snowstorm')
-  })
-
-  it('fetchThemes loads themes and applies default', async () => {
-    const themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-      { id: 'snowstorm', name: 'Snowstorm', description: '', author: '', version: '1.0.0', theme_type: 'light' },
-    ]
-    mockGet
-      .mockResolvedValueOnce(themes)
-      .mockResolvedValueOnce({ theme: 'snowstorm' })
-
-    const store = useThemeStore()
     await store.fetchThemes()
 
-    expect(store.themes).toEqual(themes)
-    expect(store.defaultThemeId).toBe('snowstorm')
-    // Should apply default since no localStorage preference
-    expect(store.currentThemeId).toBe('snowstorm')
-  })
-
-  it('fetchThemes does not override localStorage preference', async () => {
-    localStorage.setItem('theme', 'nord')
-    const themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-    ]
-    mockGet
-      .mockResolvedValueOnce(themes)
-      .mockResolvedValueOnce({ theme: 'snowstorm' })
-
-    const store = useThemeStore()
-    await store.fetchThemes()
-
-    // Should NOT apply default because localStorage has a preference
-    expect(store.defaultThemeId).toBe('snowstorm')
-    // currentThemeId stays null because applyStoredTheme wasn't called
-    expect(store.currentThemeId).toBeNull()
+    expect(store.currentThemeId).toBe('nord')
   })
 })

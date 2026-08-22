@@ -122,11 +122,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
         `/users/${app.currentUserId}/preferences`,
       )
       adopt(prefs)
-
-      // Boot paints the config default on every browser, so what is on screen
-      // is no evidence of a pick. Picking stores one, which this reads back.
-      const theme = useThemeStore()
-      if (prefs.theme && prefs.theme !== theme.currentThemeId) theme.applyTheme(prefs.theme)
     } catch (err) {
       loadError.value = errorMessage(err)
     } finally {

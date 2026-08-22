@@ -46,6 +46,43 @@ function sessionCalls(): number {
   return vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/auth/session').length
 }
 
+const THEMES = [
+  { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
+  { id: 'snowstorm', name: 'Snowstorm', description: '', author: '', version: '1.0.0', theme_type: 'light' },
+]
+
+function answerBoot(storedTheme: string) {
+  vi.mocked(fetch).mockImplementation((url) => {
+    const path = String(url)
+    if (path === '/api/themes') return Promise.resolve(jsonResponse(200, THEMES))
+    if (path === '/api/themes/default') return Promise.resolve(jsonResponse(200, { theme: 'nord' }))
+    if (path === '/api/users/1/preferences') {
+      return Promise.resolve(
+        jsonResponse(200, {
+          scorer_weights: {},
+          series_in_order: true,
+          variety_penalty: 0,
+          content_length_preferences: {},
+          custom_rules: [],
+          theme: storedTheme,
+        }),
+      )
+    }
+    return Promise.resolve(
+      jsonResponse(200, {
+        claimed: true,
+        authenticated: true,
+        user: AARON,
+        min_password_length: PASSWORD_MIN_LENGTH,
+      }),
+    )
+  })
+}
+
+function paintedTheme(): string {
+  return (document.getElementById('theme-stylesheet') as HTMLLinkElement | null)?.href ?? ''
+}
+
 describe('App', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -54,8 +91,39 @@ describe('App', () => {
   })
 
   afterEach(() => {
+    document.getElementById('theme-stylesheet')?.remove()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  const BOOTS: Array<{ browser: string; cached: string | null; stored: string; painted: string }> = [
+    {
+      browser: 'the theme picked on another browser, never having picked one here',
+      cached: null,
+      stored: 'snowstorm',
+      painted: 'snowstorm',
+    },
+    {
+      browser: 'the default again, once a reset elsewhere cleared the stored theme',
+      cached: 'snowstorm',
+      stored: '',
+      painted: 'nord',
+    },
+  ]
+
+  // Regression: boot painted the cache, or the config default when there was
+  // none, so a pick or a reset made elsewhere arrived only on the Preferences
+  // page, flipping the theme as it mounted.
+  it.each(BOOTS)('boots on $browser', async ({ cached, stored, painted }) => {
+    vi.spyOn(useAppStore(), 'fetchStatus').mockResolvedValue(undefined)
+    if (cached) localStorage.setItem('theme', cached)
+    answerBoot(stored)
+
+    mount(App, { shallow: true })
+    await flushPromises()
+
+    expect(paintedTheme()).toContain(`/static/themes/${painted}/colors.css`)
+    expect(useThemeStore().currentThemeId).toBe(painted)
   })
 
   it('says it is working, and fetches nothing else, until the session resolves', async () => {
