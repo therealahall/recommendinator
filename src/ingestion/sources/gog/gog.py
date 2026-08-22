@@ -464,10 +464,10 @@ def _fetch_gog_games(
             metadata["category"] = product["category"]
         if product.get("globalReleaseDate"):
             metadata["release_date"] = product["globalReleaseDate"]
-        if product.get("genres"):
-            metadata["genres"] = product["genres"]
-        if product.get("tags"):
-            metadata["tags"] = product["tags"]
+        if genres := text_names(product.get("genres")):
+            metadata["genres"] = genres
+        if tags := text_names(product.get("tags")):
+            metadata["tags"] = tags
         if product.get("dlcCount") is not None:
             metadata["dlc_count"] = product["dlcCount"]
 

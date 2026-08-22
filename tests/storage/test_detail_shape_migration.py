@@ -729,23 +729,17 @@ class TestStrandedPlatformFlagsMigration:
         assert rows[0]["platform"] == "Windows"
 
     def test_an_imported_object_is_not_read_as_flags(self, tmp_path: Path) -> None:
-        """Only a dict of booleans is a flag dict, and only one is rewritten.
-
-        ``generic_json`` wraps a non-list ``platform`` in a list, so an entry
-        saying ``{"name": "PC"}`` is stored in exactly the shape GOG's old
-        value took. Reading its keys as names rewrote the column to
-        ``["Name"]``, destroying the imported value in place.
-        ``TestTheRowsTheRepairDeclinesToSettle`` takes the same row from the
-        other side: declining it is what leaves it matching the scan's filter.
+        """Only a dict of booleans is a flag dict: reading an imported
+        ``{"name": "PC"}`` as keys rewrote the column to ``["Name"]``, in
+        place. The list repair behind it keeps the name the entry states.
         """
         db_path = tmp_path / "test.db"
-        stored = json.dumps([{"name": "PC"}])
-        db_id = _seed_game(SQLiteDB(db_path), platforms=stored)
+        db_id = _seed_game(SQLiteDB(db_path), platforms=json.dumps([{"name": "PC"}]))
         _make_the_next_open_repair(db_path)
 
         db = SQLiteDB(db_path)
 
-        assert _stored_platforms(db, db_id) == stored
+        assert json.loads(_stored_platforms(db, db_id)) == ["PC"]
 
     def test_the_emptied_column_accepts_a_later_sync(self, tmp_path: Path) -> None:
         """Clearing the column has to leave it fillable, not an empty list.
@@ -897,3 +891,22 @@ class TestEveryShapeInOnePass:
         assert _show_detail(db, second_show) == (5, {"trakt_id": 222})
         assert json.loads(_stored_platforms(db, game)) == ["Windows", "Linux"]
         assert _game_companies(db, stranded_companies) == ("ConcernedApe", None, None)
+
+
+class TestAnObjectStrandedInAListColumnMigration:
+    def test_a_stored_row_can_be_saved_again_regression(self, tmp_path: Path) -> None:
+        """A row the release before this one wrote reads back and re-saves:
+        it refused the object without repairing the rows already holding one."""
+        db_path = tmp_path / "test.db"
+        seed = SQLiteDB(db_path)
+        db_id = _seed_game(seed, platforms=json.dumps([{"name": "PC"}]))
+        with seed.connection() as conn:
+            conn.execute(f"PRAGMA user_version = {schema._SCHEMA_VERSION - 1}")
+            conn.commit()
+
+        db = SQLiteDB(db_path)
+
+        stored = db.get_content_item(db_id)
+        assert stored is not None
+        assert db.save_content_item(stored) == db_id
+        assert json.loads(_stored_platforms(db, db_id)) == ["PC"]

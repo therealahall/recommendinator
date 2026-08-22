@@ -364,7 +364,8 @@ class TestGogPluginFetch:
         mock_refresh: Mock,
         mock_owned: Mock,
     ) -> None:
-        """Test that metadata fields are populated correctly."""
+        """Test that metadata fields are populated correctly, GOG's tag objects
+        included: a list column refuses one, failing the whole game's save."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -377,7 +378,7 @@ class TestGogPluginFetch:
                 "category": "Game",
                 "globalReleaseDate": "2020-12-10",
                 "genres": ["RPG", "Action"],
-                "tags": ["Open World", "Sci-Fi"],
+                "tags": [{"name": "Open World"}, {"name": "Sci-Fi"}],
                 "dlcCount": 2,
                 "worksOn": {"Windows": True, "Mac": False, "Linux": True},
             },

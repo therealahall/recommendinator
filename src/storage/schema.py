@@ -6,7 +6,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Literal, TypedDict
 
-from src.models.detail_fields import text_names, to_text
+from src.models.detail_fields import (
+    DETAIL_FIELDS,
+    FieldKind,
+    text_names,
+    to_json_array,
+    to_text,
+)
 from src.storage.derived import backfill_derived_columns
 from src.storage.merge import normalize_title_for_matching
 
@@ -79,13 +85,13 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 15 re-normalize titles. Other versions record a shape the
-# CREATE/ALTER below reaches.
+# leaves, 10 to 15 re-normalize titles, 16 reduces a list column holding an
+# object.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 16
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -372,6 +378,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         # rewrites their keys; the save door decides each pair on the next
         # sync, and the merge door decides what that leaves.
         _renormalize_titles(cursor)
+    if stored_version < 16:
+        _reduce_non_scalar_list_columns(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -769,9 +777,8 @@ def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
     return max(counts) if counts else column_value
 
 
-# GOG's plural spellings, mapped to the singular column each folds onto. They
-# are the only aliases a legacy blob strands in front of a codec that refuses
-# their shape: the rest arrive as scalars, which no codec refuses.
+# GOG's plural spellings, mapped to the singular column each folds onto: a
+# legacy blob strands them in front of ``to_text``, which refuses an object.
 _STRANDED_COMPANY_COLUMNS: dict[str, str] = {
     "developers": "developer",
     "publishers": "publisher",
@@ -878,6 +885,55 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
     # The flags lowercased GOG's platform names; the corrected plugin keeps
     # GOG's own capitalisation ("Windows", "Mac", "Linux").
     return [str(name).capitalize() for name, supported in stored.items() if supported]
+
+
+def _reduce_non_scalar_list_columns(cursor: sqlite3.Cursor) -> None:
+    """Rewrite a list column holding an object as its names.
+
+    A row synced before the codec refused an object still holds one, so every
+    save of it raises. After the flag-dict repair, which recovers those names.
+    """
+    for spec in DETAIL_FIELDS.values():
+        columns = [
+            field.column
+            for field in spec.fields
+            if field.kind is FieldKind.STRING_LIST and field.column is not None
+        ]
+        selected = ", ".join(columns)
+        cursor.execute(f"SELECT content_item_id, {selected} FROM {spec.table}")
+        for row in cursor.fetchall():
+            reduced = {
+                column: names
+                for column in columns
+                if (names := _reduced_list_names(row[column])) is not None
+            }
+            if not reduced:
+                continue
+            assignments = ", ".join(f"{column} = ?" for column in reduced)
+            # NULL rather than "[]": a fill-only column never fills again.
+            values = [
+                json.dumps(names) if names else None for names in reduced.values()
+            ]
+            cursor.execute(
+                f"UPDATE {spec.table} SET {assignments} WHERE content_item_id = ?",
+                (*values, row["content_item_id"]),
+            )
+
+
+def _reduced_list_names(raw: Any) -> list[str] | None:
+    """The names to rewrite a stored list column as, or None to leave it:
+    the codec decides which, so the pass cannot drift from what it refuses."""
+    try:
+        stored = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(stored, list):
+        return None
+    try:
+        to_json_array(stored)
+    except TypeError:
+        return text_names(stored)
+    return None
 
 
 def _column_names(cursor: sqlite3.Cursor, table: str) -> list[str]:
