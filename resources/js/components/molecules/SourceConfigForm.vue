@@ -634,9 +634,18 @@ function isSecretSet(name: string): boolean {
   margin-left: auto;
 }
 
-/* Empty it takes no room, so the row does not shift when the write lands. */
+/* Clipped rather than `display: none` while silent: the row must not shift
+   when the write lands, but a region that leaves the accessibility tree and
+   comes back populated is an insertion, which is the case 4.1.3 excludes. */
 .secret-saved:empty {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border-width: 0;
 }
 
 .secret-error {
