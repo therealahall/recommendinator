@@ -6,7 +6,7 @@ const mockGet = vi.fn()
 const mockPut = vi.fn()
 const mockDelete = vi.fn()
 const mockApplyTheme = vi.fn()
-/** What the browser already has on screen, as localStorage left it. */
+/** What the browser already has on screen. */
 let appliedThemeId: string | null = null
 
 vi.mock('@/composables/useApi', () => ({
@@ -134,20 +134,16 @@ describe('usePreferencesStore', () => {
     expect(mockPut).not.toHaveBeenCalled()
   })
 
-  it('load leaves the theme the browser already applied alone', async () => {
+  it('load applies the stored theme over the painted one, and not again', async () => {
     appliedThemeId = 'snowstorm'
     mockGet.mockResolvedValue({ ...STORED_PREFS, theme: 'nord' })
+    const store = usePreferencesStore()
 
-    await usePreferencesStore().load()
+    await store.load()
+    appliedThemeId = 'nord'
+    await store.load()
 
-    expect(mockApplyTheme).not.toHaveBeenCalled()
-  })
-
-  it('load applies the stored theme when the browser has none', async () => {
-    mockGet.mockResolvedValue({ ...STORED_PREFS, theme: 'nord' })
-
-    await usePreferencesStore().load()
-
+    expect(mockApplyTheme).toHaveBeenCalledTimes(1)
     expect(mockApplyTheme).toHaveBeenCalledWith('nord')
   })
 

@@ -123,11 +123,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
       )
       adopt(prefs)
 
-      // The theme on screen was applied from localStorage before this request
-      // went out, so applying the stored one over it flips the UI in the middle
-      // of opening this page. It only decides a browser that has none.
+      // Boot paints the config default on every browser, so what is on screen
+      // is no evidence of a pick. Picking stores one, which this reads back.
       const theme = useThemeStore()
-      if (prefs.theme && !theme.currentThemeId) theme.applyTheme(prefs.theme)
+      if (prefs.theme && prefs.theme !== theme.currentThemeId) theme.applyTheme(prefs.theme)
     } catch (err) {
       loadError.value = errorMessage(err)
     } finally {
