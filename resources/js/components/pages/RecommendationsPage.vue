@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { computed, ref, nextTick } from 'vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
 import { useDataStore } from '@/stores/data'
+import { formatContentType } from '@/utils/format'
 import type { ItemEditRequest } from '@/types/api'
 import RecControls from '@/components/organisms/RecControls.vue'
 import RecCard from '@/components/molecules/RecCard.vue'
@@ -12,6 +13,16 @@ const data = useDataStore()
 const editTrigger = ref<HTMLElement | null>(null)
 const recList = ref<HTMLElement | null>(null)
 const heading = ref<HTMLElement | null>(null)
+const announcement = ref('')
+const ignoreError = ref('')
+
+const typeLabel = computed(() => formatContentType(recs.contentType).toLowerCase())
+const emptyState = computed(() =>
+  recs.hasRun
+    ? `No ${typeLabel.value} recommendations. They come from items you have not ` +
+      'consumed yet — try syncing a source, or adding items to your library.'
+    : 'No recommendations yet. Click Generate to get started.',
+)
 
 function onComplete(dbId: number) {
   const active = document.activeElement
@@ -61,6 +72,27 @@ async function onSave(dbId: number, edits: ItemEditRequest) {
   await nextTick()
   restoreFocus()
 }
+
+// The button that was pressed is replaced by its opposite in the same slot, so
+// the keyboard follows it rather than dropping to <body> (WCAG 2.4.3).
+async function setIgnored(dbId: number, title: string, value: boolean) {
+  announcement.value = ''
+  ignoreError.value = ''
+  try {
+    await recs.setIgnored(dbId, value)
+  } catch (err) {
+    ignoreError.value = err instanceof Error ? err.message : 'Failed to save'
+    await nextTick()
+    recList.value?.querySelector<HTMLElement>('#rec-ignore-error')?.focus()
+    return
+  }
+  announcement.value = value
+    ? `Ignored “${title}”. Undo is beside it.`
+    : `Restored “${title}”.`
+  await nextTick()
+  const testid = value ? `undo-ignore-${dbId}` : `ignore-btn-${dbId}`
+  recList.value?.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.focus()
+}
 </script>
 
 <template>
@@ -80,19 +112,42 @@ async function onSave(dbId: number, edits: ItemEditRequest) {
       <span class="spinner" /> Loading recommendations...
     </div>
 
-    <div v-if="recs.items.length === 0 && !recs.loading && !recs.error" class="empty-state">
-      No recommendations yet. Click Generate to get started.
-    </div>
+    <div
+      v-if="recs.items.length === 0 && !recs.loading && !recs.error"
+      class="empty-state"
+      data-testid="recs-empty"
+    >{{ emptyState }}</div>
 
     <div v-if="recs.items.length > 0" ref="recList">
-      <RecCard
-        v-for="(rec, index) in recs.items"
-        :key="rec.db_id ?? index"
-        :rec="rec"
-        :rank="index + 1"
-        @ignore="recs.ignoreItem($event)"
-        @complete="onComplete"
-      />
+      <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
+      <p id="rec-ignore-error" class="rec-ignore-error focus-fallback" role="alert" tabindex="-1">
+        {{ ignoreError }}
+      </p>
+      <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>
+
+      <template v-for="(rec, index) in recs.items" :key="rec.db_id ?? index">
+        <div
+          v-if="rec.db_id && recs.ignored.has(rec.db_id)"
+          class="rec-ignored"
+          :data-testid="`ignored-row-${rec.db_id}`"
+        >
+          <span>Ignored “{{ rec.title }}”.</span>
+          <button
+            type="button"
+            class="btn btn-small"
+            :data-testid="`undo-ignore-${rec.db_id}`"
+            :aria-label="`Undo ignoring ${rec.title}`"
+            @click="setIgnored(rec.db_id, rec.title, false)"
+          >Undo</button>
+        </div>
+        <RecCard
+          v-else
+          :rec="rec"
+          :rank="index + 1"
+          @ignore="setIgnored($event, rec.title, true)"
+          @complete="onComplete"
+        />
+      </template>
     </div>
 
     <EditModal
@@ -107,3 +162,29 @@ async function onSave(dbId: number, edits: ItemEditRequest) {
     />
   </div>
 </template>
+
+<style scoped>
+.rec-ignored {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.rec-ignore-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
+.rec-ignore-error:not(:empty) {
+  margin-bottom: var(--space-3);
+}
+</style>

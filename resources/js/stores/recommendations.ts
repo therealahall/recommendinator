@@ -12,6 +12,12 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const error = ref('')
   const contentType = ref('book')
   const count = ref(5)
+  // Kept per item rather than dropping the row: the undo has to sit where the
+  // card was, and a re-inserted row would come back at the wrong rank.
+  const ignored = ref<Set<number>>(new Set())
+  /** Whether a generate has finished, which is what tells "nothing yet" from
+   *  "nothing matched" — fetch() empties the list before it asks. */
+  const hasRun = ref(false)
 
   // Edit modal (reused from the library to mark recommendations complete). A
   // refused save is the dialog's own: the page banner sits behind the overlay.
@@ -24,6 +30,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     loading.value = true
     error.value = ''
     items.value = []
+    ignored.value = new Set()
 
     try {
       const result = await api.get<RecommendationResponse[]>('/recommendations', {
@@ -32,6 +39,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
         user_id: app.currentUserId,
       })
       items.value = result
+      hasRun.value = true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load recommendations'
     } finally {
@@ -39,17 +47,18 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     }
   }
 
-  async function ignoreItem(dbId: number) {
+  // Rejects to the caller: ignoring is a one-click exclusion from every future
+  // recommendation, and the page is what can offer the undo beside it.
+  async function setIgnored(dbId: number, value: boolean) {
     const app = useAppStore()
-    try {
-      await api.patch(`/items/${dbId}/ignore`, {
-        ignored: true,
-        user_id: app.currentUserId,
-      })
-      items.value = items.value.filter((i) => i.db_id !== dbId)
-    } catch {
-      // Silently ignore
-    }
+    await api.patch(`/items/${dbId}/ignore`, {
+      ignored: value,
+      user_id: app.currentUserId,
+    })
+    const next = new Set(ignored.value)
+    if (value) next.add(dbId)
+    else next.delete(dbId)
+    ignored.value = next
   }
 
   async function openEdit(dbId: number) {
@@ -99,11 +108,13 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     error,
     contentType,
     count,
+    ignored,
+    hasRun,
     editingItem,
     editSaving,
     editError,
     fetch,
-    ignoreItem,
+    setIgnored,
     openEdit,
     closeEdit,
     markComplete,
