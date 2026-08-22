@@ -36,6 +36,7 @@ from src.sources.service import (
     set_source_enabled_state,
     set_source_schedule,
     set_source_secret_value,
+    source_plugin_not_loaded,
     unusable_detail,
     update_source_config_values,
 )
@@ -58,6 +59,15 @@ def _resolve_cli_plugin(ctx: click.Context, source_id: str) -> SourcePlugin:
         user_id=_SOURCE_DEFAULT_USER_ID,
     )
     if plugin is None:
+        # `source list` shows this one, so "Unknown source" contradicts it.
+        not_loaded = source_plugin_not_loaded(
+            source_id,
+            ctx.obj.get("config"),
+            ctx.obj.get("storage"),
+            user_id=_SOURCE_DEFAULT_USER_ID,
+        )
+        if not_loaded is not None:
+            abort_with(unusable_detail(not_loaded))
         abort_with(f"Unknown source: {source_id}")
     return plugin
 
@@ -481,11 +491,19 @@ def source_set_secret(ctx: click.Context, source_id: str, field_name: str) -> No
 @source.command("clear-secret")
 @click.argument("source_id")
 @click.argument("field_name")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def source_clear_secret(ctx: click.Context, source_id: str, field_name: str) -> None:
+def source_clear_secret(
+    ctx: click.Context, source_id: str, field_name: str, yes: bool
+) -> None:
     """Delete a sensitive field's stored value."""
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = require_storage(ctx)
+    if not yes and not click.confirm(
+        f"Clear {source_id}.{field_name}? The stored value is deleted for good."
+    ):
+        click.echo("Aborted.")
+        return
     try:
         clear_source_secret_value(
             source_id,

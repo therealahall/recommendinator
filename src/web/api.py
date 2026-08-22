@@ -2204,6 +2204,12 @@ def require_plugin(
     """
     plugin = resolve_source_plugin(source_id, config, storage)
     if plugin is None:
+        # A source whose plugin died stays in the listing, so answering "not
+        # found" here contradicts what the user is looking at. Same words as
+        # the sync refusal, per the disclosure carve-out in docs/SECURITY.md.
+        not_loaded = source_plugin_not_loaded(source_id, config, storage)
+        if not_loaded is not None:
+            raise HTTPException(status_code=400, detail=unusable_detail(not_loaded))
         # Server-side log carries the identifier; the wire response stays generic.
         logger.info("Source lookup miss for source_id=%s", sanitize_for_log(source_id))
         raise HTTPException(status_code=404, detail="Source not found.")
