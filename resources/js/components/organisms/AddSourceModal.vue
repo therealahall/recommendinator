@@ -44,8 +44,10 @@ const dirty = computed(
     Object.values(fieldValues.value).some((value) => value !== undefined && value !== ''),
 )
 
-const { confirming, requestClose, keepEditing } = useDiscardGuard(dirty, () =>
-  emit('close'),
+const { confirming, requestClose, keepEditing } = useDiscardGuard(
+  dirty,
+  () => emit('close'),
+  modalContent,
 )
 
 useFocusTrap(modalContent, requestClose)

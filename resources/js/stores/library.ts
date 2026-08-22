@@ -159,6 +159,11 @@ export const useLibraryStore = defineStore('library', () => {
     return resetAndLoad()
   }
 
+  function syncRow(dbId: number, fields: Partial<ContentItemResponse>) {
+    const index = items.value.findIndex((i) => i.db_id === dbId)
+    if (index >= 0) items.value[index] = { ...items.value[index], ...fields }
+  }
+
   async function openEdit(dbId: number) {
     const app = useAppStore()
     try {
@@ -166,6 +171,7 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: app.currentUserId,
       })
       editingItem.value = item
+      syncRow(dbId, item)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load item'
     }
@@ -187,11 +193,7 @@ export const useLibraryStore = defineStore('library', () => {
         { ...data, user_id: app.currentUserId },
       )
 
-      const index = items.value.findIndex((i) => i.db_id === dbId)
-      if (index >= 0) {
-        items.value[index] = { ...items.value[index], ...updated }
-      }
-
+      syncRow(dbId, updated)
       closeEdit()
     } catch (err) {
       editError.value = err instanceof Error ? err.message : 'Failed to save'
@@ -208,10 +210,7 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: app.currentUserId,
       })
 
-      const index = items.value.findIndex((i) => i.db_id === dbId)
-      if (index >= 0) {
-        items.value[index] = { ...items.value[index], ignored }
-      }
+      syncRow(dbId, { ignored })
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to update'
     }

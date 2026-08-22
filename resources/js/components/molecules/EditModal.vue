@@ -128,7 +128,11 @@ const edits = computed<ItemEditRequest>(() => {
 })
 
 const dirty = computed(() => Object.keys(edits.value).length > 0)
-const { confirming, requestClose, keepEditing } = useDiscardGuard(dirty, () => emit('close'))
+const { confirming, requestClose, keepEditing } = useDiscardGuard(
+  dirty,
+  () => emit('close'),
+  modalContent,
+)
 
 useFocusTrap(modalContent, requestClose)
 

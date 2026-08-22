@@ -284,4 +284,19 @@ describe('useLibraryStore', () => {
     expect(store.items[0].enriched).toBe(true)
     expect(store.items[0].genres).toEqual(['Sci-Fi'])
   })
+
+  it('openEdit refreshes the card behind the dialog', async () => {
+    // Restoring automatic enrichment reopens the dialog on fresh data, and the
+    // card behind it read enriched until a reload — the badge said the opposite.
+    const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', ignored: false, enriched: true, manually_enriched: true }
+    mockGet.mockResolvedValueOnce([item])
+    const store = useLibraryStore()
+    await store.resetAndLoad()
+
+    mockGet.mockResolvedValueOnce({ ...item, enriched: false, manually_enriched: false })
+    await store.openEdit(1)
+
+    expect(store.items[0].enriched).toBe(false)
+    expect(store.items[0].manually_enriched).toBe(false)
+  })
 })
