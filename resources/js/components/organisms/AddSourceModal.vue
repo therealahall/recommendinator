@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { useDataStore } from '@/stores/data'
-import DiscardConfirm from '@/components/molecules/DiscardConfirm.vue'
+import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import type { PluginInfoResponse, SourceCreateRequest } from '@/types/api'
 
 const data = useDataStore()
@@ -394,7 +394,14 @@ async function submit(): Promise<void> {
         role="alert"
       >{{ errorMessage }}</p>
 
-      <DiscardConfirm v-if="confirming" @keep="keepEditing" @discard="emit('close')" />
+      <ConfirmPanel
+        v-if="confirming"
+        message="Discard your unsaved changes?"
+        confirm-label="Discard"
+        cancel-label="Keep editing"
+        @cancel="keepEditing"
+        @confirm="emit('close')"
+      />
 
       <div class="add-source-actions">
         <!-- Cancel stays focusable while submitting so the dialog always has at

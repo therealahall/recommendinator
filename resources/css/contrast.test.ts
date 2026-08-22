@@ -218,14 +218,14 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, them
 
 const BASE = 'resources/css/base.css'
 const LIBRARY_FILTERS = 'resources/js/components/organisms/LibraryFilters.vue'
-const DISCARD_CONFIRM = 'resources/js/components/molecules/DiscardConfirm.vue'
+const CONFIRM_PANEL = 'resources/js/components/molecules/ConfirmPanel.vue'
 
 /** Text and the rule painting what it sits on, which for two of the three is
  *  declared in another file. */
 const EDIT_SURFACES: [string, string, string, string, string][] = [
   ['the export scope', LIBRARY_FILTERS, '.export-scope', BASE, '.dropdown-menu'],
   ['an enrichment note', BASE, '.edit-modal-note', BASE, '.edit-modal-content'],
-  ['the discard question', DISCARD_CONFIRM, '.discard-confirm', DISCARD_CONFIRM, '.discard-confirm'],
+  ['the confirmation question', CONFIRM_PANEL, '.confirm-panel', CONFIRM_PANEL, '.confirm-panel'],
 ]
 
 describe.each(THEMES)('edit dialog surfaces in %s', (_theme, themePath) => {

@@ -78,7 +78,7 @@ describe('EditModal', () => {
     await vi.runAllTimersAsync()
 
     expect(wrapper.emitted('close')).toBeFalsy()
-    const asked = wrapper.get('.discard-confirm')
+    const asked = wrapper.get('.confirm-panel')
     expect(wrapper.get('[aria-modal="true"]').element.contains(asked.element)).toBe(true)
 
     await asked.findAll('button').find(b => b.text() === 'Keep editing')!.trigger('click')
@@ -107,12 +107,12 @@ describe('EditModal', () => {
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await vi.runAllTimersAsync()
-    expect(document.activeElement).toBe(wrapper.get('.discard-confirm').element)
+    expect(document.activeElement).toBe(wrapper.get('.confirm-panel').element)
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await vi.runAllTimersAsync()
 
-    expect(wrapper.find('.discard-confirm').exists()).toBe(false)
+    expect(wrapper.find('.confirm-panel').exists()).toBe(false)
     expect(wrapper.emitted('close')).toBeFalsy()
     expect(document.activeElement).toBe(review.element)
     wrapper.unmount()
@@ -127,7 +127,7 @@ describe('EditModal', () => {
     await wrapper.trigger('click')
     await vi.runAllTimersAsync()
 
-    await wrapper.get('.discard-confirm').findAll('button')
+    await wrapper.get('.confirm-panel').findAll('button')
       .find(b => b.text() === 'Discard')!.trigger('click')
 
     expect(wrapper.emitted('close')).toBeTruthy()

@@ -8,7 +8,7 @@ import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
-import DiscardConfirm from '@/components/molecules/DiscardConfirm.vue'
+import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 
 const props = defineProps<{
   item: ContentItemResponse
@@ -290,7 +290,14 @@ function onBackdropClick(event: MouseEvent) {
       <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
       <p id="edit-save-error" ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
 
-      <DiscardConfirm v-if="confirming" @keep="keepEditing" @discard="emit('close')" />
+      <ConfirmPanel
+        v-if="confirming"
+        message="Discard your unsaved changes?"
+        confirm-label="Discard"
+        cancel-label="Keep editing"
+        @cancel="keepEditing"
+        @confirm="emit('close')"
+      />
 
       <div class="edit-modal-actions">
         <button class="btn btn-secondary" @click="requestClose">Cancel</button>
