@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
+import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import type { SourceFieldSchema } from '@/types/api'
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -9,12 +10,15 @@ const props = withDefaults(
     schema: SourceFieldSchema[]
     values: Record<string, unknown>
     secretStatus: Record<string, boolean>
+    sourceName: string
     saving?: boolean
     disabled?: boolean
     enabled?: boolean | null
     enableBusy?: boolean
     saveStatus?: SaveStatus
     saveError?: string
+    secretSave?: Record<string, SaveStatus>
+    secretSaveError?: Record<string, string>
   }>(),
   {
     saving: false,
@@ -23,6 +27,8 @@ const props = withDefaults(
     enableBusy: false,
     saveStatus: 'idle',
     saveError: '',
+    secretSave: () => ({}),
+    secretSaveError: () => ({}),
   },
 )
 
@@ -168,28 +174,79 @@ function onSave(): void {
 
 const secretEditing = reactive<Record<string, boolean>>({})
 const secretDrafts = reactive<Record<string, string>>({})
+const clearConfirming = ref('')
 
-function startReplace(name: string): void {
+function control(testid: string): HTMLElement | null {
+  return formRoot.value?.querySelector<HTMLElement>(`[data-testid="${testid}"]`) ?? null
+}
+
+function secretSaveStatus(name: string): SaveStatus {
+  return props.secretSave[name] ?? 'idle'
+}
+
+function secretBusy(name: string): boolean {
+  return secretSaveStatus(name) === 'saving'
+}
+
+// Each verb removes the control that was clicked, so focus is placed on what
+// replaced it rather than left to fall to <body> (WCAG 2.4.3).
+async function startReplace(name: string): Promise<void> {
   secretEditing[name] = true
   secretDrafts[name] = ''
+  await nextTick()
+  control(`secret-input-${name}`)?.focus()
 }
 
-function cancelReplace(name: string): void {
+async function cancelReplace(name: string): Promise<void> {
   secretEditing[name] = false
   secretDrafts[name] = ''
+  await nextTick()
+  control(`secret-replace-${name}`)?.focus()
 }
 
+// The edit row is left open: collapsing it on the emit reported a stored key
+// and a refused one identically, and the badge only corrects itself on a
+// config reload the failure path never reaches.
 function saveSecret(name: string): void {
   const value = secretDrafts[name] ?? ''
-  if (!value) return
+  if (!value || secretBusy(name)) return
   emit('set-secret', name, value)
-  secretEditing[name] = false
-  secretDrafts[name] = ''
 }
 
-function clearSecret(name: string): void {
+function askClear(name: string): void {
+  clearConfirming.value = name
+}
+
+async function cancelClear(name: string): Promise<void> {
+  clearConfirming.value = ''
+  await nextTick()
+  control(`secret-clear-${name}`)?.focus()
+}
+
+function confirmClear(name: string): void {
+  clearConfirming.value = ''
   emit('clear-secret', name)
 }
+
+async function settleSecret(name: string): Promise<void> {
+  secretEditing[name] = false
+  secretDrafts[name] = ''
+  await nextTick()
+  control(`secret-replace-${name}`)?.focus()
+}
+
+watch(
+  () => ({ ...props.secretSave }),
+  (now, before) => {
+    for (const [name, status] of Object.entries(now)) {
+      if (status === before?.[name]) continue
+      // A refusal takes focus, so it is read where it happened and the row it
+      // belongs to is the one the user is left in.
+      if (status === 'error') void nextTick(() => control(`secret-error-${name}`)?.focus())
+      else if (status === 'saved') void settleSecret(name)
+    }
+  },
+)
 
 function isSecretSet(name: string): boolean {
   return Boolean(props.secretStatus[name])
@@ -307,28 +364,48 @@ function isSecretSet(name: string): boolean {
         <div class="secret-status-row">
           <span class="source-form-label">{{ field.name }}</span>
           <span class="secret-status-badge">
+            <span class="sr-only">{{ field.name }} secret is</span>
             {{ isSecretSet(field.name) ? 'set' : 'unset' }}
           </span>
           <button
             v-if="!secretEditing[field.name]"
             type="button"
             class="btn btn-secondary"
+            :aria-label="`Replace ${field.name}`"
             :data-testid="`secret-replace-${field.name}`"
-            :disabled="disabled"
+            :disabled="disabled || secretBusy(field.name)"
             @click="startReplace(field.name)"
           >Replace</button>
           <button
             v-if="!secretEditing[field.name] && isSecretSet(field.name)"
             type="button"
             class="btn btn-danger"
+            :aria-label="`Clear ${field.name}`"
             :data-testid="`secret-clear-${field.name}`"
-            :disabled="disabled"
-            @click="clearSecret(field.name)"
+            :disabled="disabled || secretBusy(field.name)"
+            @click="askClear(field.name)"
           >Clear</button>
+          <span
+            v-if="secretSaveStatus(field.name) === 'saved'"
+            class="source-form-save-status source-form-save-status--ok"
+            :data-testid="`secret-saved-${field.name}`"
+            role="status"
+          >{{ isSecretSet(field.name) ? 'Saved ✓' : 'Cleared ✓' }}</span>
         </div>
         <p v-if="field.description" class="source-form-help">
           {{ field.description }}
         </p>
+
+        <ConfirmPanel
+          v-if="clearConfirming === field.name"
+          :message="`Clear ${field.name} for ${sourceName}? The stored value is deleted for good — getting it back means fetching it from the provider again.`"
+          confirm-label="Clear"
+          cancel-label="Keep it"
+          destructive
+          @cancel="cancelClear(field.name)"
+          @confirm="confirmClear(field.name)"
+        />
+
         <div v-if="secretEditing[field.name]" class="secret-edit-row">
           <input
             :id="`secret-input-${field.name}`"
@@ -336,7 +413,9 @@ function isSecretSet(name: string): boolean {
             type="password"
             autocomplete="new-password"
             :aria-label="`New value for ${field.name}`"
+            :data-testid="`secret-input-${field.name}`"
             :value="secretDrafts[field.name] ?? ''"
+            :disabled="disabled || secretBusy(field.name)"
             @input="
               secretDrafts[field.name] = ($event.target as HTMLInputElement).value
             "
@@ -344,17 +423,34 @@ function isSecretSet(name: string): boolean {
           <button
             type="button"
             class="btn btn-primary"
+            :aria-label="`Save ${field.name}`"
             :data-testid="`secret-save-${field.name}`"
             :disabled="disabled"
+            :aria-disabled="secretBusy(field.name) || undefined"
             @click="saveSecret(field.name)"
-          >Save secret</button>
+          >{{ secretBusy(field.name) ? 'Saving…' : 'Save secret' }}</button>
+          <!-- Not gated on `disabled`: it issues no request, and it is the only
+               way out of the edit row. -->
           <button
             type="button"
             class="btn btn-secondary"
+            :aria-label="`Cancel replacing ${field.name}`"
             :data-testid="`secret-cancel-${field.name}`"
             @click="cancelReplace(field.name)"
           >Cancel</button>
         </div>
+
+        <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+        <p
+          class="secret-error focus-fallback"
+          :data-testid="`secret-error-${field.name}`"
+          role="alert"
+          tabindex="-1"
+        >{{
+          secretSaveStatus(field.name) === 'error'
+            ? `Error: ${secretSaveError[field.name] || 'failed to save'}`
+            : ''
+        }}</p>
       </div>
     </fieldset>
 
@@ -529,6 +625,16 @@ function isSecretSet(name: string): boolean {
   align-items: center;
   gap: var(--space-3);
   margin-left: auto;
+}
+
+.secret-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
+.secret-error:not(:empty) {
+  margin-top: var(--space-2);
 }
 
 .source-form-save-status {
