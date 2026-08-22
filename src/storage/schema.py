@@ -1152,7 +1152,8 @@ def reset_enrichment_status(
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE enrichment_status"
-        " SET needs_enrichment = 1, enrichment_error = NULL"
+        " SET needs_enrichment = 1, enrichment_error = NULL,"
+        "     enrichment_quality = NULL"
         " WHERE content_item_id IN ("
         "   SELECT es.content_item_id FROM enrichment_status es"
         "   JOIN content_items ci ON es.content_item_id = ci.id"
@@ -1194,21 +1195,11 @@ def get_enrichment_stats(
     conn: sqlite3.Connection,
     user_id: int | None = None,
 ) -> dict[str, int | dict[str, int]]:
-    """Get overall enrichment statistics.
+    """Count each item under exactly one enrichment state.
 
-    ``enriched``, ``pending`` and ``failed`` read the same retry state and are
-    mutually exclusive: a failed item is queued for retry like a pending one,
-    but ``pending`` requires ``enrichment_error IS NULL``, so it is reported
-    only as failed — the more specific of the two, and the one the operator
-    may need to act on. Interfaces list these counts side by side, so an item
-    appearing in two of them would read as two items.
-
-    ``not_found`` is a different measure: it counts a quality label rather
-    than a retry state, so it overlaps the other three instead of extending
-    them into a partition. An item that settled as not_found and was then
-    re-queued by :func:`reset_enrichment_status` — which clears the error but
-    leaves the quality alone — is counted under both ``pending`` and
-    ``not_found``. The four buckets therefore need not sum to ``total``.
+    ``enriched``, ``pending``, ``not_found`` and ``failed`` partition the
+    library, so the four sum to ``total``: an untracked item counts as
+    pending, and a failed one reports only as failed.
     """
     cursor = conn.cursor()
 

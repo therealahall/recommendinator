@@ -102,6 +102,20 @@ class TestEnrichmentStatusMethods:
         assert storage_manager.enrichment.status(db_id1)["needs_enrichment"] is True
         assert storage_manager.enrichment.status(db_id2)["needs_enrichment"] is False
 
+    def test_reset_drops_the_settled_miss_that_retry_not_found_reads(
+        self, storage_manager: StorageManager, sample_item: ContentItem
+    ) -> None:
+        """A re-queued item must not also be a ``--retry-not-found`` candidate."""
+        db_id = storage_manager.save_content_item(sample_item)
+        storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+
+        storage_manager.enrichment.reset(content_item_id=db_id)
+
+        status = storage_manager.enrichment.status(db_id)
+        assert status is not None
+        assert status["enrichment_quality"] is None
+        assert status["needs_enrichment"] is True
+
 
 class TestGetItemsNeedingEnrichment:
     """Tests for getting items that need enrichment."""
@@ -278,18 +292,9 @@ class TestEnrichmentStats:
     ) -> None:
         """Every item is counted once across enriched/pending/not_found/failed.
 
-        Reported symptom: a failed item was listed under both "Pending" and
-        "Failed", and the CLI and the Data page print the four counts as a flat
-        list — so a library of five items read as six.
-
-        Root cause: a failure keeps ``needs_enrichment = 1`` so the item is
-        retried, and ``pending`` counted every such row regardless of whether
-        its last attempt had errored.
-
-        Fix: ``pending`` excludes rows carrying an enrichment error, which the
-        ``failed`` count already covers. The two remain the same item — it is
-        still queued for retry — but it is reported once, under the state that
-        tells the operator more.
+        The four print as a flat list, so an item in two reads as two. A failed
+        item once stayed in ``pending``. A settled ``not_found`` re-queued by
+        ``reset`` kept its label.
         """
         db_ids = [
             storage_manager.save_content_item(
@@ -300,20 +305,22 @@ class TestEnrichmentStats:
                     status=ConsumptionStatus.UNREAD,
                 )
             )
-            for index in range(5)
+            for index in range(6)
         ]
         storage_manager.enrichment.mark_complete(db_ids[0], "tmdb", "high")
         storage_manager.enrichment.mark_complete(db_ids[1], "none", "not_found")
         storage_manager.enrichment.mark_failed(db_ids[2], "tmdb: HTTP 503")
         storage_manager.enrichment.mark_needed(db_ids[3])
         # Item 4 is untracked.
+        storage_manager.enrichment.mark_complete(db_ids[5], "none", "not_found")
+        storage_manager.enrichment.reset(content_item_id=db_ids[5])
 
         stats = storage_manager.enrichment.stats()
 
         assert stats["enriched"] == 1
         assert stats["not_found"] == 1
         assert stats["failed"] == 1
-        assert stats["pending"] == 2  # 1 marked + 1 untracked
+        assert stats["pending"] == 3  # 1 marked + 1 untracked + 1 reset
         assert (
             stats["enriched"] + stats["pending"] + stats["not_found"] + stats["failed"]
             == stats["total"]
