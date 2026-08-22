@@ -7,6 +7,11 @@ though they were listed in SCORER_NAME_MAP and DEFAULT_SCORERS.
 
 import inspect
 import logging
+import os
+import subprocess
+import sys
+from collections.abc import Iterator
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +24,17 @@ from src.config.service import (
     BOOTSTRAP_WEB_PORT,
     auto_enrich_enabled,
     build_scorers_from_config,
+    create_recommendation_engine,
     load_config,
     resolve_bootstrap_web,
 )
 from src.recommendations.scorers import SCORER_NAME_MAP, Scorer
-from src.settings.metadata import default_config, flat_defaults
+from src.settings.metadata import default_config, default_of, flat_defaults
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
 from src.utils.dotted_path import get_leaf
+from src.web.app import create_app
+from src.web.state import app_state
 
 # Built per call by RecommendationEngine from the user's rules, not via
 # _SCORER_CONFIG_MAP, which cannot construct it generically.
@@ -229,20 +237,6 @@ class TestScorerConfigMap:
 class TestBuildScorersFromConfig:
     """Verify build_scorers_from_config produces the right scorers."""
 
-    def test_produces_all_config_map_scorers(
-        self, example_config: dict[str, Any]
-    ) -> None:
-        """build_scorers_from_config returns one scorer per _SCORER_CONFIG_MAP entry."""
-        scorers = build_scorers_from_config(example_config)
-
-        scorer_types = {type(s) for s in scorers}
-        expected_types = set(_SCORER_CONFIG_MAP.values())
-        assert scorer_types == expected_types, (
-            f"build_scorers_from_config is missing scorer types.\n"
-            f"  Missing: {expected_types - scorer_types}\n"
-            f"  Extra:   {scorer_types - expected_types}"
-        )
-
     def test_respects_weight_overrides(self) -> None:
         """Config weight overrides are applied to the returned scorers."""
         config: dict[str, Any] = {
@@ -315,3 +309,146 @@ class TestARetiredAiConfigBlockIsIgnored:
 
         assert config["recommendations"]["default_count"] == 6
         assert caplog.messages == []
+
+
+class TestAChildlessRecommendationsHeaderStillBoots:
+    """Regression: boot died with AttributeError on a bare ``recommendations:``.
+
+    The header parses to None, which a ``.get`` default cannot replace, and the
+    engine's own guard for a non-dict section never ran because nothing got as
+    far as building an engine.
+    """
+
+    @pytest.fixture()
+    def restored_app_state(self) -> Iterator[None]:
+        """``create_app`` writes a module-level singleton other tests read."""
+        saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
+        yield
+        for name, value in saved.items():
+            setattr(app_state, name, value)
+
+    @pytest.mark.parametrize(
+        "section", ["", "recommendations:\n"], ids=["absent", "childless-header"]
+    )
+    def test_the_web_boot_reaches_the_baseline_engine(
+        self, section: str, tmp_path: Path, restored_app_state: None
+    ) -> None:
+        """Through ``create_app``: a directly built engine never saw this."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            f"storage:\n  database_path: {tmp_path / 'boot.db'}\n{section}",
+            encoding="utf-8",
+        )
+
+        create_app(config_path)
+
+        engine = app_state.engine
+        assert engine is not None
+        assert engine.preference_analyzer.min_rating == default_of(
+            "recommendations.min_rating_for_preference"
+        )
+        weights = {type(scorer): scorer.weight for scorer in engine.pipeline.scorers}
+        assert weights == {
+            scorer_class: default_of(f"recommendations.scorer_weights.{name}")
+            for name, scorer_class in _SCORER_CONFIG_MAP.items()
+        }
+
+    def test_the_engine_factory_guards_the_none_section_itself(
+        self, tmp_path: Path
+    ) -> None:
+        """Called with the raw YAML, before any overlay heals the section."""
+        engine = create_recommendation_engine(
+            StorageManager(sqlite_path=tmp_path / "engine.db"),
+            {"recommendations": None},
+        )
+
+        assert engine.preference_analyzer.min_rating == default_of(
+            "recommendations.min_rating_for_preference"
+        )
+        assert len(engine.pipeline.scorers) == len(_SCORER_CONFIG_MAP)
+
+
+class TestEveryChildlessHeaderIsDroppedAtTheDoor:
+    """``storage:`` and ``enrichment:`` are read with the same ``.get`` default
+    and are absent from the settings registry, so no overlay heals them.
+    """
+
+    def test_no_section_survives_as_none(self, tmp_path: Path) -> None:
+        """One that did would reach a reader as None and fail its ``.get``."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "storage:\nenrichment:\ninputs:\nrecommendations:\n  scorer_weights:\n",
+            encoding="utf-8",
+        )
+
+        config = load_config(config_path)
+
+        def none_valued(section: dict[str, Any], prefix: str = "") -> list[str]:
+            found = []
+            for key, value in section.items():
+                if value is None:
+                    found.append(f"{prefix}{key}")
+                elif isinstance(value, dict):
+                    found += none_valued(value, f"{prefix}{key}.")
+            return found
+
+        assert none_valued(config) == []
+        assert auto_enrich_enabled(config) is False
+        assert len(build_scorers_from_config(config)) == len(_SCORER_CONFIG_MAP)
+
+
+class TestConfigYamlIsReadAsUtf8:
+    """Regression: config.yaml was decoded in the locale encoding.
+
+    Under a non-UTF-8 locale a non-ASCII path or display name in it raised
+    UnicodeDecodeError, killing the boot of every entry point.
+    """
+
+    def test_a_non_ascii_value_survives_a_non_utf8_locale(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        database_path = "data/Shōgun/recommendations.db"
+        config_path.write_text(
+            f"storage:\n  database_path: {database_path}\n", encoding="utf-8"
+        )
+        locale_report = tmp_path / "locale"
+        loaded = tmp_path / "loaded"
+
+        # A subprocess, because CPython resolves the locale encoding from the C
+        # library as ``open`` runs, not from anything patchable in process. The
+        # child reports back through files: its own stdout is ASCII under C.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import locale, sys\n"
+                "from pathlib import Path\n"
+                "Path(sys.argv[2]).write_text("
+                "locale.getpreferredencoding(False), encoding='ascii')\n"
+                "from src.config.service import load_config\n"
+                "config = load_config(Path(sys.argv[1]))\n"
+                "Path(sys.argv[3]).write_bytes("
+                "config['storage']['database_path'].encode('utf-8'))\n",
+                str(config_path),
+                str(locale_report),
+                str(loaded),
+            ],
+            cwd=_SRC.parent,
+            env={
+                **os.environ,
+                "LC_ALL": "C",
+                "LANG": "C",
+                # Both disable a fallback to UTF-8 that a C locale otherwise
+                # triggers, which would decode the file correctly regardless.
+                "PYTHONUTF8": "0",
+                "PYTHONCOERCECLOCALE": "0",
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        child_encoding = locale_report.read_text(encoding="ascii")
+        assert (
+            "utf" not in child_encoding.lower()
+        ), f"the child read files as {child_encoding}, so this proves nothing"
+        assert loaded.read_bytes().decode("utf-8") == database_path
