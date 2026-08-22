@@ -85,6 +85,18 @@ describe('RecommendationsPage', () => {
     expect(wrapper.findComponent({ name: 'EditModal' }).exists()).toBe(true)
   })
 
+  it('opens Mark complete on completed, not on the item\'s unread status', async () => {
+    // The card vanished on save either way, so a rating saved from the
+    // preselected "unread" left an unread item that looked marked complete.
+    const { wrapper } = await mountWithItems()
+
+    mockGet.mockResolvedValue(makeFullItem())
+    await wrapper.find('.btn-complete').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe('completed')
+  })
+
   it('removes the card after the modal saves', async () => {
     const { wrapper, store } = await mountWithItems()
 

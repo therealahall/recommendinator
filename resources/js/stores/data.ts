@@ -503,7 +503,6 @@ export const useDataStore = defineStore('data', () => {
     return disconnectOAuth(sourceId, 'trakt', 'Disconnecting Trakt...')
   }
 
-  // Enrichment actions
   async function loadEnrichmentStats() {
     const app = useAppStore()
     try {
@@ -539,6 +538,15 @@ export const useDataStore = defineStore('data', () => {
     } catch {
       // Ignore
     }
+  }
+
+  // Throws, unlike its neighbours: the dialog that asked shows the refusal.
+  async function restoreItemEnrichment(dbId: number) {
+    const app = useAppStore()
+    await api.post('/enrichment/reset', {
+      item_id: dbId,
+      user_id: app.currentUserId,
+    })
   }
 
   async function resetEnrichment(contentType?: string) {
@@ -797,6 +805,7 @@ export const useDataStore = defineStore('data', () => {
     startEnrichment,
     stopEnrichment,
     resetEnrichment,
+    restoreItemEnrichment,
     checkEnrichmentStatus,
     loadSourceSchema,
     loadSourceConfig,

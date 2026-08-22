@@ -1,11 +1,13 @@
 """Tests for CLI enrichment commands."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
+from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
 
 from .conftest import _invoke_with_mocks
@@ -184,8 +186,73 @@ class TestEnrichmentReset:
         assert result.exit_code == 0
         assert "Reset enrichment status for 50 item(s)" in result.output
         mock_storage.enrichment.reset.assert_called_once_with(
-            provider=None, content_type=None, user_id=1
+            provider=None, content_type=None, user_id=1, content_item_id=None
         )
+
+    def test_enrichment_reset_hands_one_item_back_to_automatic_enrichment(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A dialog edit stamps the item manual, and nothing undid that."""
+        storage = StorageManager(sqlite_path=tmp_path / "reset.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="movie-1",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+        storage.update_item_from_ui(db_id=db_id, genres=["Sci-Fi"], user_id=1)
+        edited = storage.get_content_item(db_id, user_id=1)
+        assert edited is not None and edited.manually_enriched is True
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--id", str(db_id), "--yes"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Reset enrichment status for 1 item(s)" in result.output
+        restored = storage.get_content_item(db_id, user_id=1)
+        assert restored is not None
+        assert restored.enriched is False
+        assert restored.manually_enriched is False
+        assert restored.metadata.get("genres") == ["Sci-Fi"]
+        assert [
+            item.db_id
+            for item in storage.get_content_items(user_id=1, enrichment="not_enriched")
+        ] == [db_id]
+
+    def test_enrichment_reset_refuses_an_id_beside_a_filter(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = MagicMock(spec=StorageManager)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "reset", "--id", "7", "--provider", "tmdb", "--yes"],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert "--id cannot be combined with --provider or --type." in result.output
+        mock_storage.enrichment.reset.assert_not_called()
+
+    def test_enrichment_reset_names_an_id_that_is_not_there(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = None
+
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "reset", "--id", "999", "--yes"], mock_storage
+        )
+
+        assert result.exit_code != 0
+        assert "Item 999 not found." in result.output
+        mock_storage.enrichment.reset.assert_not_called()
 
     def test_enrichment_reset_requires_confirmation(
         self, cli_runner: CliRunner

@@ -83,15 +83,19 @@ class EnrichmentStore:
         provider: str | None = None,
         content_type: ContentType | None = None,
         user_id: int | None = None,
+        content_item_id: int | None = None,
     ) -> int:
         """Re-queue enriched items, returning how many were reset.
 
-        Each filter left as ``None`` widens the reset; all three unset resets
-        every item.
+        Each filter left as ``None`` widens the reset; all unset resets every
+        item. *content_item_id* is what hands one manually edited item back to
+        automatic enrichment.
         """
         with self._sqlite_db.connection() as conn:
             content_type_str = content_type.value if content_type else None
-            return reset_enrichment_status(conn, provider, content_type_str, user_id)
+            return reset_enrichment_status(
+                conn, provider, content_type_str, user_id, content_item_id
+            )
 
     def stats(self, user_id: int | None = None) -> dict[str, int | dict[str, int]]:
         """Return ``total``/``enriched``/``pending``/``not_found``/``failed``

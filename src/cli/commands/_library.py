@@ -215,6 +215,13 @@ def library_list(
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
+def _enriched_label(item: ContentItem) -> str:
+    """Yes/No, saying when it is the manual state ``enrichment reset`` undoes."""
+    if not item.enriched:
+        return "No"
+    return "Yes (manual)" if item.manually_enriched else "Yes"
+
+
 @library.command("show")
 @click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
@@ -275,7 +282,7 @@ def library_show(
                 or "N/A",
             ],
             ["Ignored", "Yes" if item.ignored else "No"],
-            ["Enriched", "Yes" if item.enriched else "No"],
+            ["Enriched", _enriched_label(item)],
             ["Genres", ", ".join(cast(list[str], genres)) or "N/A"],
             ["Tags", ", ".join(cast(list[str], tags)) or "N/A"],
             ["Description", description or "N/A"],
@@ -324,10 +331,20 @@ def library_show(
     help="Manual genre (repeatable); replaces existing genres and marks enriched",
 )
 @click.option(
+    "--clear-genres",
+    is_flag=True,
+    help="Remove every genre",
+)
+@click.option(
     "--tag",
     "tags",
     multiple=True,
     help="Manual tag (repeatable); replaces existing tags and marks enriched",
+)
+@click.option(
+    "--clear-tags",
+    is_flag=True,
+    help="Remove every tag",
 )
 @click.option(
     "--description",
@@ -363,7 +380,9 @@ def library_edit(
     clear_review: bool,
     seasons_watched: str | None,
     genres: tuple[str, ...],
+    clear_genres: bool,
     tags: tuple[str, ...],
+    clear_tags: bool,
     description: str | None,
     release_year: int | None,
     creator: str | None,
@@ -378,15 +397,18 @@ def library_edit(
         and not clear_review
         and seasons_watched is None
         and not genres
+        and not clear_genres
         and not tags
+        and not clear_tags
         and description is None
         and release_year is None
         and creator is None
     ):
         click.echo(
             "Error: Provide at least one of --status, --rating, --clear-rating, "
-            "--review, --clear-review, --seasons-watched, --genre, --tag, "
-            "--description, --release-year, --creator.",
+            "--review, --clear-review, --seasons-watched, --genre, "
+            "--clear-genres, --tag, --clear-tags, --description, "
+            "--release-year, --creator.",
             err=True,
         )
         raise click.Abort()
@@ -401,6 +423,14 @@ def library_edit(
             "Error: --review and --clear-review cannot be used together.", err=True
         )
         raise click.Abort()
+    if genres and clear_genres:
+        click.echo(
+            "Error: --genre and --clear-genres cannot be used together.", err=True
+        )
+        raise click.Abort()
+    if tags and clear_tags:
+        click.echo("Error: --tag and --clear-tags cannot be used together.", err=True)
+        raise click.Abort()
     if is_blank_review(review):
         click.echo(
             "Error: --review cannot be empty. Use --clear-review to remove one.",
@@ -408,7 +438,6 @@ def library_edit(
         )
         raise click.Abort()
     if creator is not None:
-        # Stripped and refused blank for the reasons CorrectedCreator states.
         creator = creator.strip()
         if not creator:
             abort_with("--creator cannot be empty.")
@@ -434,8 +463,6 @@ def library_edit(
                 err=True,
             )
             raise click.Abort() from None
-        # Mirror the web ItemEditRequest bounds so both interfaces reject the
-        # same out-of-range season values instead of silently storing them.
         if len(parsed_seasons) > MAX_SEASONS:
             click.echo(
                 f"Error: --seasons-watched accepts at most {MAX_SEASONS} seasons.",
@@ -449,8 +476,8 @@ def library_edit(
             )
             raise click.Abort()
 
-    genre_list = list(genres) if genres else None
-    tag_list = list(tags) if tags else None
+    genre_list = [] if clear_genres else (list(genres) if genres else None)
+    tag_list = [] if clear_tags else (list(tags) if tags else None)
     if genre_list is not None and len(genre_list) > MAX_GENRES:
         click.echo(
             f"Error: --genre accepts at most {MAX_GENRES} values.",
@@ -484,9 +511,6 @@ def library_edit(
         )
         raise click.Abort()
 
-    # An unsupplied flag leaves the stored value alone; only --clear-rating /
-    # --clear-review send the None that storage writes as NULL, matching the
-    # explicit null the web edit dialog sends.
     try:
         updated = storage.update_item_from_ui(
             db_id=item_id,

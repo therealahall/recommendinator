@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import LibraryPage from './LibraryPage.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 import { useLibraryStore } from '@/stores/library'
+import { useDataStore } from '@/stores/data'
 
 // jsdom has no IntersectionObserver; the page sets one up on mount.
 class FakeIntersectionObserver {
@@ -77,6 +78,20 @@ describe('LibraryPage search behaviour', () => {
 
     expect(wrapper.text()).not.toContain('Failed to load library')
     expect(wrapper.findComponent(EditModal).props('saveError')).toBe(refusal)
+  })
+
+  it('restores an item to automatic enrichment and reloads what the dialog shows', async () => {
+    const { wrapper, lib } = mountPage({
+      editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
+    })
+    const data = useDataStore()
+    await wrapper.vm.$nextTick()
+
+    wrapper.findComponent(EditModal).vm.$emit('restoreEnrichment', 1)
+    await flushPromises()
+
+    expect(data.restoreItemEnrichment).toHaveBeenCalledWith(1)
+    expect(lib.openEdit).toHaveBeenCalledWith(1)
   })
 
   it('renders the generic empty state when there is no search query', async () => {

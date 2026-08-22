@@ -1593,6 +1593,13 @@ input[type="checkbox"] {
   margin: 0 0 var(--space-4) 0;
 }
 
+.edit-modal-note {
+  font-size: var(--text-sm);
+  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-3) 0;
+}
+
 .edit-modal-actions {
   display: flex;
   gap: var(--space-2);

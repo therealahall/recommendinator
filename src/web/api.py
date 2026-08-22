@@ -183,17 +183,15 @@ def _reject_blank_review(value: str) -> str:
     return value
 
 
-#: Blank is not a review — stored, it reads as one they wrote and stops a
-#: later import filling the field. A completion has none to clear.
+#: Blank is not a review: stored, it stops a later import filling the field.
 CompletionReviewText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
     AfterValidator(_reject_blank_review),
 ]
 
-#: Stripped, so a pasted trailing space is not another name to the veto. Empty
-#: and over-long are ``edit_item``'s to refuse, not a constraint's: a
-#: constraint answers 422 with a nested list, unreadable in the dialog.
+#: Stripped, so a pasted trailing space is not another name to the veto. Its
+#: bounds are ``edit_item``'s to refuse: a constraint answers an unreadable 422.
 CorrectedCreator = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
@@ -429,6 +427,7 @@ class ContentItemResponse(BaseModel):
     total_seasons: int | None = None
     release_year: int | None = None
     enriched: bool = False
+    manually_enriched: bool = False
     genres: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
@@ -608,13 +607,11 @@ class ItemEditRequest(BaseModel):
 
     @property
     def corrected_year(self) -> int | None:
-        """``None`` when what arrived is not a number. A string is accepted so
-        that "2016 (remaster)", typed in a free-text box, reaches the door to
-        be refused instead of being dropped in the browser."""
+        """``None`` for text no ``int`` takes, which ``edit_item`` refuses."""
         if self.release_year is None:
             return None
         text = str(self.release_year).strip()
-        return int(text) if text.isdigit() else None
+        return int(text) if text.isdecimal() else None
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -638,6 +635,9 @@ class EnrichmentResetRequest(BaseModel):
     )
     content_type: str | None = Field(
         None, description="Reset items of this content type"
+    )
+    item_id: int | None = Field(
+        None, ge=1, description="Restore this one item to automatic enrichment"
     )
     user_id: int = Field(1, ge=1, description="User ID for filtering items")
 
@@ -1592,25 +1592,9 @@ def edit_item(
 ) -> ContentItemResponse:
     """Edit a content item from the UI.
 
-    Allows unrestricted editing of status, rating, review, and
-    seasons_watched (TV shows). Unlike sync, status can go backward
-    and rating/review can be changed or cleared.
-
-    Only the fields present in the request body are written: omitting
-    ``rating`` or ``review`` leaves the stored value untouched, while sending
-    an explicit ``null`` clears it. A blank ``review`` is rejected rather than
-    stored, so clearing one is always the null — the same two instructions
-    ``library edit`` spells ``--review`` and ``--clear-review``. Omitting
-    ``status`` leaves it to storage, which derives it from a supplied
-    ``seasons_watched``, as ``library edit`` does without ``--status``.
-
-    Args:
-        db_id: Database ID of the item.
-        request: Edit request with new values.
-        user_id: User ID for authorization.
-
-    Returns:
-        Updated content item.
+    Only the fields the body carries are written: omitting ``rating`` or
+    ``review`` leaves it alone, a null clears it, and an emptied
+    ``description``, ``genres`` or ``tags`` clears that.
     """
     supplied = request.model_fields_set
     status: str | Unset = UNSET
@@ -2616,18 +2600,7 @@ def reset_enrichment(
     request: EnrichmentResetRequest,
     storage: RequiredStorage,
 ) -> dict[str, Any]:
-    """Reset enrichment status for re-processing.
-
-    Marks items as needing enrichment again, allowing them to be
-    re-processed by the enrichment providers.
-
-    Args:
-        request: Reset request with optional filters
-
-    Returns:
-        Count of items reset
-    """
-    # Map content type if provided
+    """Re-queue items for enrichment, by provider, content type or one item."""
     content_type = None
     if request.content_type:
         try:
@@ -2638,10 +2611,20 @@ def reset_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
+    if request.item_id is not None:
+        if request.provider or request.content_type:
+            raise HTTPException(
+                status_code=400,
+                detail="item_id cannot be combined with provider or content_type.",
+            )
+        if not storage.get_content_item(request.item_id, user_id=request.user_id):
+            raise HTTPException(status_code=404, detail="Item not found")
+
     count = storage.enrichment.reset(
         provider=request.provider,
         content_type=content_type,
         user_id=request.user_id,
+        content_item_id=request.item_id,
     )
 
     return {"message": f"Reset enrichment status for {count} item(s)", "count": count}

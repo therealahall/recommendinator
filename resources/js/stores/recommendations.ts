@@ -7,7 +7,6 @@ import type { ContentItemResponse, ItemEditRequest, RecommendationResponse } fro
 export const useRecommendationsStore = defineStore('recommendations', () => {
   const api = useApi()
 
-  // State
   const items = ref<RecommendationResponse[]>([])
   const loading = ref(false)
   const error = ref('')
@@ -20,7 +19,6 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const editSaving = ref(false)
   const editError = ref('')
 
-  // Actions
   async function fetch() {
     const app = useAppStore()
     loading.value = true
@@ -48,7 +46,6 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
         ignored: true,
         user_id: app.currentUserId,
       })
-      // Remove from list
       items.value = items.value.filter((i) => i.db_id !== dbId)
     } catch {
       // Silently ignore
@@ -84,7 +81,6 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
         ...data,
         user_id: app.currentUserId,
       })
-      // Remove from list, mirroring ignore.
       items.value = items.value.filter((i) => i.db_id !== dbId)
       closeEdit()
     } catch (err) {

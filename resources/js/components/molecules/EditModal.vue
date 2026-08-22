@@ -4,39 +4,57 @@ import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { MAX_CREATOR_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
+import DiscardConfirm from '@/components/molecules/DiscardConfirm.vue'
 
 const props = defineProps<{
   item: ContentItemResponse
   saving: boolean
   /** Why the server refused the last save, '' while it has refused nothing. */
   saveError: string
+  /** The status the opening action means, where it is not the item's own. */
+  initialStatus?: string
 }>()
 
 const emit = defineEmits<{
   save: [dbId: number, data: ItemEditRequest]
+  restoreEnrichment: [dbId: number]
   close: []
 }>()
 
 const modalContent = ref<HTMLElement | null>(null)
-useFocusTrap(modalContent, () => emit('close'))
 
-const status = ref(props.item.status)
+const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
+
+const status = ref(props.initialStatus || props.item.status)
 const rating = ref<number | null>(props.item.rating)
 const review = ref(props.item.review || '')
 const creator = ref(props.item.author ?? '')
 const releaseYear = ref(props.item.release_year?.toString() ?? '')
-const seasonsWatched = ref<number[]>(props.item.seasons_watched || [])
-const genres = ref<string[]>(props.item.genres ?? [])
-const tags = ref<string[]>(props.item.tags ?? [])
+const seasonsWatched = ref<number[]>([...(props.item.seasons_watched ?? [])])
+const genres = ref<string[]>([...(props.item.genres ?? [])])
+const tags = ref<string[]>([...(props.item.tags ?? [])])
 const description = ref(props.item.description ?? '')
+
+const loaded = {
+  status: props.item.status,
+  rating: props.item.rating,
+  review: review.value.trim(),
+  creator: creator.value.trim(),
+  releaseYear: releaseYear.value.trim(),
+  seasons: [...seasonsWatched.value],
+  genres: [...genres.value],
+  tags: [...tags.value],
+  description: description.value.trim(),
+}
 
 const refusal = ref<HTMLElement | null>(null)
 
-// The dialog covers the page, so a refusal rendered behind it is unreachable;
-// focus is what carries this one to a user who cannot see the whole screen.
+// The dialog covers the page, so focus is what carries a refusal to a user who
+// cannot see the whole screen.
 watch(
   () => props.saveError,
   async (said) => {
@@ -46,21 +64,10 @@ watch(
   },
 )
 
-// Sent only when touched: ingestion bounds neither field, so resending an
-// untouched box would have the API refuse every save of a row holding 19993.
-const loadedCreator = creator.value.trim()
-const loadedYear = releaseYear.value.trim()
-const correctedCreator = computed(() => creator.value.trim())
-const correctedYear = computed(() => releaseYear.value.trim())
-const creatorChanged = computed(() => correctedCreator.value !== loadedCreator)
-const yearChanged = computed(() => correctedYear.value !== loadedYear)
-
-const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
-
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Status and the checklist are two views of one fact, so each edit derives the
-// other. Explicit handlers, not a watcher each way: those retrigger each other.
+// Status and the checklist are two views of one fact, so each derives the
+// other. Handlers, not watchers: a watcher each way retriggers the other.
 function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
   if (!isTvShow.value) return
@@ -74,8 +81,7 @@ function onSeasonsChange(watched: number[]) {
   }
 }
 
-function onStatusChange(event: Event) {
-  status.value = (event.target as HTMLSelectElement).value
+function seasonsForStatus() {
   if (!isTvShow.value) return
   // "In progress" says nothing about which seasons, so it leaves them alone.
   if (status.value === 'completed') {
@@ -85,31 +91,54 @@ function onStatusChange(event: Event) {
   }
 }
 
-function save() {
-  const data: ItemEditRequest = {
-    status: status.value,
-    rating: rating.value,
-    // Blank clears the review alone: a stored "" reads as one the user wrote.
-    review: review.value.trim() ? review.value : null,
-    genres: genres.value,
-    tags: tags.value,
-    description: description.value || null,
+function onStatusChange(event: Event) {
+  status.value = (event.target as HTMLSelectElement).value
+  seasonsForStatus()
+}
+
+// A preselected status derives the checklist as picking it by hand does, so a
+// show is never completed without its seasons shown first.
+if (props.initialStatus) seasonsForStatus()
+
+function sameList(one: readonly (string | number)[], other: readonly (string | number)[]) {
+  return one.length === other.length && one.every((value, index) => value === other[index])
+}
+
+// Only what changed is sent: storage stamps an item manually enriched for any
+// genres, tags or description it receives, dropping it out of the automatic
+// queue — so an untouched box must not travel with a rating.
+const edits = computed<ItemEditRequest>(() => {
+  const data: ItemEditRequest = {}
+  if (status.value !== loaded.status) data.status = status.value
+  if (rating.value !== loaded.rating) data.rating = rating.value
+  if (review.value.trim() !== loaded.review) data.review = review.value.trim() || null
+  if (creator.value.trim() !== loaded.creator) data.creator = creator.value.trim()
+  if (releaseYear.value.trim() !== loaded.releaseYear) {
+    data.release_year = releaseYear.value.trim()
   }
-  if (creatorChanged.value) {
-    data.creator = correctedCreator.value
-  }
-  if (yearChanged.value) {
-    data.release_year = correctedYear.value
-  }
-  if (isTvShow.value) {
+  if (isTvShow.value && !sameList(seasonsWatched.value, loaded.seasons)) {
     data.seasons_watched = seasonsWatched.value
   }
-  emit('save', props.item.db_id!, data)
+  if (!sameList(genres.value, loaded.genres)) data.genres = genres.value
+  if (!sameList(tags.value, loaded.tags)) data.tags = tags.value
+  if (description.value.trim() !== loaded.description) {
+    data.description = description.value.trim()
+  }
+  return data
+})
+
+const dirty = computed(() => Object.keys(edits.value).length > 0)
+const { confirming, requestClose, keepEditing } = useDiscardGuard(dirty, () => emit('close'))
+
+useFocusTrap(modalContent, requestClose)
+
+function save() {
+  emit('save', props.item.db_id!, edits.value)
 }
 
 function onBackdropClick(event: MouseEvent) {
   if (event.target === event.currentTarget) {
-    emit('close')
+    requestClose()
   }
 }
 
@@ -137,8 +166,8 @@ function onBackdropClick(event: MouseEvent) {
 
       <div v-if="hasReleaseYear" class="edit-field">
         <label for="edit-release-year">Release year</label>
-        <!-- Text, not number: a number input silently discards a pasted
-             "2016 (remaster)" and rolls the year under a stray mouse wheel. -->
+        <!-- Text: a number input eats a pasted "2016 (remaster)" and rolls
+             the year under a stray mouse wheel. -->
         <input
           id="edit-release-year"
           v-model="releaseYear"
@@ -176,6 +205,14 @@ function onBackdropClick(event: MouseEvent) {
 
       <hr class="edit-modal-divider">
       <h4 class="edit-modal-section">Enrichment metadata</h4>
+      <p class="edit-modal-note">Editing these opts the item out of automatic enrichment.</p>
+
+      <div v-if="item.manually_enriched" class="edit-field">
+        <p class="edit-modal-note">This item's metadata is manual, so automatic enrichment skips it.</p>
+        <button class="btn btn-secondary" @click="emit('restoreEnrichment', item.db_id!)">
+          Restore automatic enrichment
+        </button>
+      </div>
 
       <div class="edit-field">
         <TagInput
@@ -204,6 +241,8 @@ function onBackdropClick(event: MouseEvent) {
 
       <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
       <p ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
+
+      <DiscardConfirm v-if="confirming" @keep="keepEditing" @discard="emit('close')" />
 
       <div class="edit-modal-actions">
         <button class="btn btn-secondary" @click="emit('close')">Cancel</button>

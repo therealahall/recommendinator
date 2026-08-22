@@ -1110,6 +1110,7 @@ def reset_enrichment_status(
     provider: str | None = None,
     content_type: str | None = None,
     user_id: int | None = None,
+    content_item_id: int | None = None,
 ) -> int:
     """Re-queue every tracked item a filter left as ``None`` does not exclude.
 
@@ -1118,6 +1119,9 @@ def reset_enrichment_status(
     """
     conditions = ["ci.merged_into IS NULL"]
     params: list[str | int] = []
+    if content_item_id is not None:
+        conditions.append("es.content_item_id = ?")
+        params.append(content_item_id)
     if provider:
         conditions.append("es.enrichment_provider = ?")
         params.append(provider)

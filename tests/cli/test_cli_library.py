@@ -121,6 +121,7 @@ class TestLibraryList:
             "total_seasons",
             "release_year",
             "enriched",
+            "manually_enriched",
             "genres",
             "tags",
             "description",
@@ -285,6 +286,23 @@ class TestLibraryShow:
         assert "Famous Author" in result.output
         assert "Excellent!" in result.output
 
+    def test_show_names_the_manual_state_enrichment_reset_undoes(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The dialog says it on the web; nothing said it on the terminal."""
+        item = _make_item(db_id=42)
+        item.enriched = True
+        item.manually_enriched = True
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "42"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        assert "Yes (manual)" in result.output
+
     def test_show_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test showing a non-existent item."""
         mock_storage = MagicMock(spec=StorageManager)
@@ -330,6 +348,7 @@ class TestLibraryShow:
             "total_seasons",
             "release_year",
             "enriched",
+            "manually_enriched",
             "genres",
             "tags",
             "description",
@@ -949,6 +968,87 @@ class TestLibraryEditClearing:
         stored = storage.get_content_item(db_id, user_id=1)
         assert stored is not None
         assert stored.review == "Loved it"
+
+    @pytest.mark.parametrize("emptied", ["", "   "])
+    def test_an_empty_description_is_its_clear_as_the_web_box_is(
+        self, cli_runner: CliRunner, tmp_path: Path, emptied: str
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "clear.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="movie-1",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"description": "A linguist."},
+            ),
+            user_id=1,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "edit", "--id", str(db_id), "--description", emptied],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert not stored.metadata.get("description")
+
+    @pytest.mark.parametrize(
+        "flag,cleared,kept",
+        [("--clear-genres", "genres", "tags"), ("--clear-tags", "tags", "genres")],
+    )
+    def test_clear_genres_and_tags_empty_only_the_list_named(
+        self, cli_runner: CliRunner, tmp_path: Path, flag: str, cleared: str, kept: str
+    ) -> None:
+        """No --genre and "clear the genres" were the same None."""
+        storage = StorageManager(sqlite_path=tmp_path / "clear.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="movie-1",
+                title="Arrival",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"genres": ["Sci-Fi"], "tags": ["cerebral"]},
+            ),
+            user_id=1,
+        )
+        seeded = storage.get_content_item(db_id, user_id=1)
+        assert seeded is not None
+        assert seeded.metadata[cleared] and seeded.metadata[kept]
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "edit", "--id", str(db_id), flag], storage
+        )
+
+        assert result.exit_code == 0, result.output
+        stored = storage.get_content_item(db_id, user_id=1)
+        assert stored is not None
+        assert stored.metadata.get(cleared, []) == []
+        assert stored.metadata[kept] == seeded.metadata[kept]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--genre", "Sci-Fi", "--clear-genres"],
+            ["--tag", "classic", "--clear-tags"],
+        ],
+    )
+    def test_setting_and_clearing_one_list_together_is_refused(
+        self, cli_runner: CliRunner, args: list[str]
+    ) -> None:
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = _make_item(db_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "edit", "--id", "1", *args], mock_storage
+        )
+
+        assert result.exit_code != 0
+        assert "cannot be used together" in result.output
+        mock_storage.update_item_from_ui.assert_not_called()
 
     def test_rating_and_clear_rating_together_are_refused(
         self, cli_runner: CliRunner
