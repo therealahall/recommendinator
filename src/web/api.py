@@ -611,7 +611,11 @@ class ItemEditRequest(BaseModel):
         if self.release_year is None:
             return None
         text = str(self.release_year).strip()
-        return int(text) if text.isdecimal() else None
+        # Python refuses ``int`` on a decimal string over 4300 digits, and that
+        # ValueError would escape as a 500 rather than the refusal sentence.
+        if len(text) > len(str(MAX_RELEASE_YEAR)) or not text.isdecimal():
+            return None
+        return int(text)
 
 
 class EnrichmentStartRequest(BaseModel):

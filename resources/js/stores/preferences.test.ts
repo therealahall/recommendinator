@@ -99,6 +99,23 @@ describe('usePreferencesStore', () => {
     expect(store.isDirty).toBe(false)
   })
 
+  it('an edit made while a save is in flight is still unsaved', async () => {
+    let landed: () => void = () => {}
+    mockPut.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        landed = resolve
+      }),
+    )
+
+    const store = await loadedStore()
+    const inFlight = store.save()
+    store.varietyPenalty = 2.5
+    landed()
+    await inFlight
+
+    expect(store.isDirty).toBe(true)
+  })
+
   it('a control moved away and back leaves nothing unsaved', async () => {
     const store = await loadedStore()
 

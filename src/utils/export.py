@@ -33,8 +33,10 @@ _CSV_COLUMN_ORDER: dict[str, list[str]] = {
 }
 
 # Header for a whole-library CSV: every type's columns in one row, so an item
-# leaves the columns its own type does not declare blank.
+# leaves the columns its own type does not declare blank — which for an
+# unenriched item is all of them, hence the type column.
 _ALL_CSV_COLUMNS: list[str] = [
+    "content_type",
     *dict.fromkeys(
         column
         for columns in _CSV_COLUMN_ORDER.values()
@@ -117,6 +119,8 @@ def export_items_csv(items: list[ContentItem], content_type: ContentType | None)
         row = _item_to_export_dict(
             item, content_type or item.content_type, for_csv=True
         )
+        if content_type is None:
+            row["content_type"] = get_enum_value(item.content_type)
         writer.writerow(
             {column: guard_csv_formula(value) for column, value in row.items()}
         )

@@ -191,10 +191,13 @@ export const usePreferencesStore = defineStore('preferences', () => {
         content_length_preferences: contentLengthPreferences.value,
         custom_rules: customRules.value,
       }
-      await api.put(`/users/${app.currentUserId}/preferences`, payload)
       // The theme is not in the payload: it was stored when it was picked, and
       // sending a stale copy here would undo a selection made since.
-      savedFields.value = fields()
+      const sent = fields()
+      await api.put(`/users/${app.currentUserId}/preferences`, payload)
+      // What was sent, not what is on screen now: an edit made during the round
+      // trip is not in the request, so recording it as saved discards it.
+      savedFields.value = sent
       reportSaved()
     } catch (err) {
       saveStatus.value = 'error'

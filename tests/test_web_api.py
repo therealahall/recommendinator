@@ -5550,6 +5550,9 @@ def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
         # A year copied off a page with a footnote marker: every character is a
         # digit to ``str.isdigit``, but ``int`` takes only the decimal ones.
         ({"release_year": "2016¹"}, str(MAX_RELEASE_YEAR)),
+        # A pasted absurdity: ``int`` refuses a decimal string this long, and
+        # that ValueError answered 500 instead of the sentence below.
+        ({"release_year": "9" * 5000}, str(MAX_RELEASE_YEAR)),
         ({"creator": "x" * (MAX_CREATOR_LENGTH + 1)}, str(MAX_CREATOR_LENGTH)),
         ({"creator": "   "}, "empty"),
         ({"review": "x" * (MAX_REVIEW_LENGTH + 1)}, str(MAX_REVIEW_LENGTH)),

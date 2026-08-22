@@ -89,12 +89,19 @@ describe('LibraryFilters', () => {
     expect(wrapper.emitted('filterChange')).toEqual([['sort', 'rating']])
   })
 
-  it('states that an export with no type selected covers the whole library', async () => {
+  it('reads the scope note out at each format button', async () => {
     const wrapper = mount(LibraryFilters, { props: defaultProps })
 
     await wrapper.findAll('.btn').find(b => b.text() === 'Export')!.trigger('click')
 
-    expect(wrapper.find('.dropdown-menu').text()).toContain('whole library')
+    const described = wrapper.findAll('.dropdown-menu-item').map((button) => {
+      const id = button.attributes('aria-describedby')
+      return id ? wrapper.find(`#${id}`).text() : ''
+    })
+    expect(described).toEqual([
+      expect.stringContaining('whole library'),
+      expect.stringContaining('whole library'),
+    ])
   })
 
   it('emits filterChange for type from TypeSelect', async () => {

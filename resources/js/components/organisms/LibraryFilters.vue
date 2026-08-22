@@ -147,9 +147,9 @@ onUnmounted(() => {
             Export
           </button>
           <div v-if="exportOpen" class="dropdown-menu">
-            <p class="export-scope">{{ exportScope }}</p>
-            <button class="dropdown-menu-item" @click="doExport('csv')">CSV</button>
-            <button class="dropdown-menu-item" @click="doExport('json')">JSON</button>
+            <p id="export-scope" class="export-scope">{{ exportScope }}</p>
+            <button class="dropdown-menu-item" aria-describedby="export-scope" @click="doExport('csv')">CSV</button>
+            <button class="dropdown-menu-item" aria-describedby="export-scope" @click="doExport('json')">JSON</button>
           </div>
         </div>
       </div>
@@ -163,7 +163,6 @@ onUnmounted(() => {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-xs);
-  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
   color: var(--text-secondary);
 }
 
