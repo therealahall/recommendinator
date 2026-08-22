@@ -1,6 +1,64 @@
 # CHANGELOG
 
 
+## v0.42.0 (2026-08-22)
+
+### Bug Fixes
+
+- **cli**: Bound complete --review like its three sibling surfaces
+  ([`0c8f5c4`](https://github.com/therealahall/recommendinator/commit/0c8f5c4bc1b2bbf5ac82508580dd46c9049f1869))
+
+- **cli**: Bound complete --title and --author where the web door does
+  ([`a7ab5ba`](https://github.com/therealahall/recommendinator/commit/a7ab5baf70fd9f26e91466af58f281243daba1c9))
+
+- **duplicates**: One skip note true of both skip conditions
+  ([`c62203c`](https://github.com/therealahall/recommendinator/commit/c62203c2eacd5a2bcb88471b83c5d359517cd287))
+
+- **library**: Send only what changed, and make the manual stamp undoable
+  ([`7735bc1`](https://github.com/therealahall/recommendinator/commit/7735bc17f80e7d2317ad10366fbe205d0c75e66d))
+
+- **library**: Show the keyboard where it is in the season grid
+  ([`7dd8595`](https://github.com/therealahall/recommendinator/commit/7dd8595873b4bbaccb5dd6993f4b3532ca7dbfd0))
+
+- **preferences**: Let the stored theme outrank the one boot painted
+  ([`d0bb8ff`](https://github.com/therealahall/recommendinator/commit/d0bb8ff1892b8bfb669189315549c1189a13e6cc))
+
+- **web**: A failed preference read keeps the theme the cache painted
+  ([`138a29d`](https://github.com/therealahall/recommendinator/commit/138a29d8325a0a277d696ea3e261ddebd9eebfd0))
+
+- **web**: Clear the format-load failure once the formats load
+  ([`0ce0e55`](https://github.com/therealahall/recommendinator/commit/0ce0e55dee9b56772c04c33ea517118216dc5cf9))
+
+- **web**: Fall back when a stored theme is gone, and keep a save-time edit
+  ([`76e5f94`](https://github.com/therealahall/recommendinator/commit/76e5f94e14154a00dee6fd890c35d4e27ac8c779))
+
+- **web**: Keep the dialog's focus and say which field a refusal is about
+  ([`3373dd5`](https://github.com/therealahall/recommendinator/commit/3373dd5f01c3e1b2ae496ce6e032624948389e8b))
+
+- **web**: Keep the format-load failure a file pick was wiping
+  ([`0451684`](https://github.com/therealahall/recommendinator/commit/04516848716fe5689c3741e6033c0b73234bd3a8))
+
+- **web**: Keep the keyboard in the dialog when a discard is declined
+  ([`9fa7bda`](https://github.com/therealahall/recommendinator/commit/9fa7bda89bf5ea50bd7eda13694684980ab7239d))
+
+- **web**: Mark the refused field, and say what the type column is for
+  ([`edbf3a8`](https://github.com/therealahall/recommendinator/commit/edbf3a88a6f6c89324d207a52323de93cca1142f))
+
+- **web**: Resolve the theme at boot, not when Preferences opens
+  ([`b87283d`](https://github.com/therealahall/recommendinator/commit/b87283d04a1695afab16873589c1110ebaa875db))
+
+- **web**: Say a refused save inside the dialog that caused it
+  ([`37105cb`](https://github.com/therealahall/recommendinator/commit/37105cbc3bb3d5eae68a6bd216b35b988a287214))
+
+### Features
+
+- **library**: Export the whole library, and sort it from the web
+  ([`bff43d7`](https://github.com/therealahall/recommendinator/commit/bff43d76daf74868002343ef69079b67b5ebf0a3))
+
+- **preferences**: Unsaved edits are visible, the theme applies at once
+  ([`d3d1786`](https://github.com/therealahall/recommendinator/commit/d3d1786183efab549390e8b8e6cbe2e0e803b6d4))
+
+
 ## v0.41.0 (2026-08-21)
 
 ### Bug Fixes
