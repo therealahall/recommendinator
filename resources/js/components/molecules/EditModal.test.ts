@@ -48,7 +48,7 @@ describe('EditModal', () => {
 
   it('Escape key emits close', async () => {
     const wrapper = mount(EditModal, {
-      props: { item: defaultItem, saving: false },
+      props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
     })
     await vi.runAllTimersAsync()
@@ -60,7 +60,7 @@ describe('EditModal', () => {
   it('a book offers no year box, and save emits its status, genres, tags and description', async () => {
     const item = { ...defaultItem, genres: ['Sci-Fi'], tags: [], description: null }
     const wrapper = mount(EditModal, {
-      props: { item, saving: false },
+      props: { item, saving: false, saveError: '' },
       attachTo: document.body,
     })
     expect(wrapper.find('#edit-release-year').exists()).toBe(false)
@@ -88,7 +88,7 @@ describe('EditModal', () => {
     // user wrote and blocks any later import from filling the field, so the
     // API rejects it — the modal now clears on blank, as the CLI does.
     const wrapper = mount(EditModal, {
-      props: { item: { ...defaultItem, review: 'Loved it.' }, saving: false },
+      props: { item: { ...defaultItem, review: 'Loved it.' }, saving: false, saveError: '' },
       attachTo: document.body,
     })
 
@@ -110,7 +110,7 @@ describe('EditModal', () => {
     // Regression (#123): the modal resent the half-ticked checklist beside the
     // new status, and the backend derived currently_consuming back over it.
     const wrapper = mount(EditModal, {
-      props: { item: tvItem, saving: false },
+      props: { item: tvItem, saving: false, saveError: '' },
       attachTo: document.body,
     })
 
@@ -141,7 +141,7 @@ describe('EditModal', () => {
       author: 'a'.repeat(600),
     }
     const wrapper = mount(EditModal, {
-      props: { item, saving: false },
+      props: { item, saving: false, saveError: '' },
       attachTo: document.body,
     })
 
@@ -150,70 +150,40 @@ describe('EditModal', () => {
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
 
     const payload = wrapper.emitted('save')![0][1] as ItemEditRequest
-    expect(payload.release_year).toBe(1993)
+    expect(payload.release_year).toBe('1993')
     expect(payload.creator).toBe(atTheBound)
     expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
     wrapper.unmount()
   })
 
-  it('refuses a corrected creator the API would, and clears the complaint as it is fixed', async () => {
-    // maxlength bounds what is typed, never the 600-character author an import wrote.
-    const refused = [
-      { author: 'Author', typed: '', says: 'Creator cannot be empty' },
-      {
-        author: 'a'.repeat(600),
-        typed: 'b'.repeat(MAX_CREATOR_LENGTH + 20),
-        says: String(MAX_CREATOR_LENGTH),
-      },
-    ]
-
-    for (const { author, typed, says } of refused) {
-      const wrapper = mount(EditModal, {
-        props: { item: { ...defaultItem, author }, saving: false },
-        attachTo: document.body,
-      })
-
-      await wrapper.find('#edit-creator').setValue(typed)
-      await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
-
-      expect(wrapper.emitted('save')).toBeUndefined()
-      const field = wrapper.find('#edit-creator')
-      expect(field.attributes('aria-invalid')).toBe('true')
-      const complaint = wrapper.get(`#${field.attributes('aria-describedby')}`)
-      expect(complaint.text()).toContain(says)
-      expect(complaint.attributes('role')).toBe('alert')
-      expect(document.activeElement).toBe(field.element)
-
-      await field.setValue('Someone Else')
-
-      expect(wrapper.find('#edit-creator').attributes('aria-invalid')).toBeUndefined()
-      expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
-      wrapper.unmount()
-    }
-  })
-
-  it('an emptied, out-of-range or non-numeric year is refused, not discarded', async () => {
+  it('an emptied creator or mistyped year is sent for the API to refuse, not blocked here', async () => {
+    // Regression: an unparseable year serialized to NaN, which JSON writes as
+    // null — the save then quietly left the stored year as it was. A cleared
+    // creator was blocked before the request, so only the dialog ever said no.
     const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
 
     for (const typed of ['', '20', '2016 (remaster)']) {
       const wrapper = mount(EditModal, {
-        props: { item, saving: false },
+        props: { item, saving: false, saveError: '' },
         attachTo: document.body,
       })
 
       await wrapper.find('#edit-release-year').setValue(typed)
       await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
 
-      expect(wrapper.emitted('save')).toBeUndefined()
-      const field = wrapper.find('#edit-release-year')
-      expect((field.element as HTMLInputElement).value).toBe(typed)
-      expect(field.attributes('aria-invalid')).toBe('true')
-      const complaint = wrapper.get(`#${field.attributes('aria-describedby')}`)
-      expect(complaint.text()).toContain('Enter a year between 1800 and 2200')
-      expect(complaint.attributes('role')).toBe('alert')
-      expect(document.activeElement).toBe(field.element)
+      expect((wrapper.emitted('save')![0][1] as ItemEditRequest).release_year).toBe(typed)
       wrapper.unmount()
     }
+
+    const cleared = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await cleared.find('#edit-creator').setValue('')
+    await cleared.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect((cleared.emitted('save')![0][1] as ItemEditRequest).creator).toBe('')
+    cleared.unmount()
   })
 
   it('rates an item whose stored year or creator the API would refuse, or states neither', async () => {
@@ -225,7 +195,7 @@ describe('EditModal', () => {
 
     for (const fields of stored) {
       const wrapper = mount(EditModal, {
-        props: { item: { ...defaultItem, ...fields }, saving: false },
+        props: { item: { ...defaultItem, ...fields }, saving: false, saveError: '' },
         attachTo: document.body,
       })
 
@@ -241,45 +211,22 @@ describe('EditModal', () => {
     }
   })
 
-  it('keeps both field complaints mounted while silent, so either can announce', async () => {
-    // Inserted by v-if, the one save() does not focus may never be announced.
-    const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
+  it('says a refused save inside the dialog, and puts focus on it', async () => {
+    // The page banner it used to land on renders behind this overlay and
+    // outside the aria-modal subtree, so nobody saving ever saw the reason.
     const wrapper = mount(EditModal, {
-      props: { item, saving: false },
+      props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
     })
-
-    expect(wrapper.findAll('[role="alert"]')).toHaveLength(2)
-    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
-    expect(wrapper.find('#edit-creator').attributes('aria-describedby')).toBeUndefined()
-
-    await wrapper.find('#edit-creator').setValue('')
-    await wrapper.find('#edit-release-year').setValue('19')
-    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
-
-    expect(complaints(wrapper.findAll('[role="alert"]'))).toHaveLength(2)
-    wrapper.unmount()
-  })
-
-  it('clears a refused year as it is retyped, not at the next save press', async () => {
-    // The alert outlived the correction: "1994, invalid entry" was announced.
-    const item = { ...defaultItem, content_type: 'video_game', release_year: 2016 }
-    const wrapper = mount(EditModal, {
-      props: { item, saving: false },
-      attachTo: document.body,
-    })
-
-    await wrapper.find('#edit-release-year').setValue('20')
-    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
-    expect(wrapper.find('#edit-release-year').attributes('aria-invalid')).toBe('true')
-
-    await wrapper.find('#edit-release-year').setValue('19')
     expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
 
-    await wrapper.find('#edit-release-year').setValue('1994')
+    await wrapper.setProps({ saveError: 'Review must be at most 10000 characters.' })
+    await vi.runAllTimersAsync()
 
-    expect(wrapper.find('#edit-release-year').attributes('aria-invalid')).toBeUndefined()
-    expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
+    const said = wrapper.get('[role="alert"]')
+    expect(said.text()).toBe('Review must be at most 10000 characters.')
+    expect(wrapper.get('[aria-modal="true"]').element.contains(said.element)).toBe(true)
+    expect(document.activeElement).toBe(said.element)
     wrapper.unmount()
   })
 

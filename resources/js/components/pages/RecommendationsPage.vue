@@ -46,9 +46,9 @@ async function onSave(dbId: number, data: ItemEditRequest) {
   try {
     await recs.markComplete(dbId, data)
   } catch {
-    // A failed save keeps the modal open for retry (the store recorded the
-    // error); leave focus in the form. Swallow here to avoid an unhandled
-    // rejection — mirrors LibraryPage's save handler.
+    // A failed save keeps the modal open for retry, where the dialog puts
+    // focus on the refusal. Swallow here to avoid an unhandled rejection —
+    // mirrors LibraryPage's save handler.
     return
   }
   // Success: the store closed the modal and removed the card. Move focus to the
@@ -95,6 +95,7 @@ async function onSave(dbId: number, data: ItemEditRequest) {
       v-if="recs.editingItem"
       :item="recs.editingItem"
       :saving="recs.editSaving"
+      :save-error="recs.editError"
       @save="onSave"
       @close="onCloseEdit"
     />

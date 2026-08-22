@@ -1567,18 +1567,14 @@ input[type="checkbox"] {
   border-color: var(--border-focus);
 }
 
-.edit-field input[aria-invalid='true'] {
-  border-color: var(--color-error);
-}
-
-.edit-field-error {
+.edit-save-error {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--color-error-text);
 }
 
-.edit-field-error:not(:empty) {
-  margin-top: var(--space-1);
+.edit-save-error:not(:empty) {
+  margin-bottom: var(--space-3);
 }
 
 .edit-modal-divider {

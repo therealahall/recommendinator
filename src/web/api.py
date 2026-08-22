@@ -175,52 +175,26 @@ router = APIRouter(
 )
 
 
-def _blank_review_validator(remedy: str) -> Callable[[str], str]:
-    """Build the blank-review validator for one surface's remedy.
-
-    The check is common to every request model carrying a review — the field's
-    lower bound already refuses ``""``, and a string of spaces is the same
-    claim in a form the schema cannot express — but the remedy is not, so the
-    message belongs to the model. This is the split the CLI already makes
-    around ``is_blank_review`` in ``src/cli/_shared.py``.
-    """
-
-    def reject(value: str) -> str:
-        if not value.strip():
-            raise ValueError(f"review cannot be blank{remedy}")
-        return value
-
-    return reject
+def _reject_blank_review(value: str) -> str:
+    """The lower bound refuses ``""``; spaces are the same claim, unsayable in
+    a schema. The CLI splits it the same way around ``is_blank_review``."""
+    if not value.strip():
+        raise ValueError("review cannot be blank")
+    return value
 
 
-#: A review the user actually wrote. Blank is not a review — stored, it reads
-#: as one they wrote and stops a later import from filling the field.
-#: On an edit, clearing is therefore the explicit null alone (the CLI spells it
-#: ``--clear-review``).
-EditReviewText = Annotated[
-    str,
-    Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
-    AfterValidator(_blank_review_validator("; send null to clear it")),
-]
-
-#: The same review, on a completion, where there is nothing to clear: a null
-#: is indistinguishable from omitting the field, and either way the door
-#: leaves a stored review in place. Naming the edit endpoint's remedy here
-#: would promise a clear that never happens, so this message names none —
-#: matching ``complete``, which says only that ``--review`` cannot be empty.
+#: Blank is not a review — stored, it reads as one they wrote and stops a
+#: later import filling the field. A completion has none to clear.
 CompletionReviewText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
-    AfterValidator(_blank_review_validator("")),
+    AfterValidator(_reject_blank_review),
 ]
 
-#: Stripped, so a pasted trailing space is not another name to the veto.
-CorrectedCreator = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True, min_length=1, max_length=MAX_CREATOR_LENGTH
-    ),
-]
+#: Stripped, so a pasted trailing space is not another name to the veto. Empty
+#: and over-long are ``edit_item``'s to refuse, not a constraint's: a
+#: constraint answers 422 with a nested list, unreadable in the dialog.
+CorrectedCreator = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 def _account_name_validator(required: bool) -> Callable[[str], str]:
@@ -608,11 +582,15 @@ class ItemEditRequest(BaseModel):
     Every field distinguishes omitted from supplied: an absent one leaves the
     stored value alone, and a null clears ``rating`` or ``review``. A null
     ``status`` is refused instead. See ``edit_item``.
+
+    The fields the edit dialog can overrun — review, creator, release year —
+    carry no bound here: ``edit_item`` refuses them with a sentence the dialog
+    can show, where a constraint would answer an unreadable 422.
     """
 
     status: str | None = Field(None, description="Status value")
     rating: int | None = Field(None, ge=1, le=5)
-    review: EditReviewText | None = None
+    review: str | None = None
     seasons_watched: list[Annotated[int, Field(ge=1, le=MAX_SEASONS)]] | None = Field(
         None, max_length=MAX_SEASONS
     )
@@ -625,10 +603,18 @@ class ItemEditRequest(BaseModel):
     description: str | None = Field(
         None, max_length=MAX_DESCRIPTION_LENGTH, description="Manual description"
     )
-    release_year: int | None = Field(
-        None, ge=MIN_RELEASE_YEAR, le=MAX_RELEASE_YEAR, description="Corrected year"
-    )
+    release_year: int | str | None = Field(None, description="Corrected year")
     creator: CorrectedCreator | None = None
+
+    @property
+    def corrected_year(self) -> int | None:
+        """``None`` when what arrived is not a number. A string is accepted so
+        that "2016 (remaster)", typed in a free-text box, reaches the door to
+        be refused instead of being dropped in the browser."""
+        if self.release_year is None:
+            return None
+        text = str(self.release_year).strip()
+        return int(text) if text.isdigit() else None
 
 
 class EnrichmentStartRequest(BaseModel):
@@ -1572,6 +1558,28 @@ def get_single_item(
     return _item_to_response(item)
 
 
+def _edit_bound_crossed(request: ItemEditRequest) -> str | None:
+    """The first bound an edit crosses, worded as the CLI words its own."""
+    if request.review is not None:
+        if not request.review.strip():
+            return "Review cannot be blank. Send null to clear it."
+        if len(request.review) > MAX_REVIEW_LENGTH:
+            return f"Review must be at most {MAX_REVIEW_LENGTH} characters."
+    if request.creator is not None:
+        if not request.creator:
+            return "Creator cannot be empty."
+        if len(request.creator) > MAX_CREATOR_LENGTH:
+            return f"Creator must be at most {MAX_CREATOR_LENGTH} characters."
+    if request.release_year is not None:
+        year = request.corrected_year
+        if year is None or not MIN_RELEASE_YEAR <= year <= MAX_RELEASE_YEAR:
+            return (
+                "Release year must be a number between "
+                f"{MIN_RELEASE_YEAR} and {MAX_RELEASE_YEAR}."
+            )
+    return None
+
+
 @router.patch("/items/{db_id}", response_model=ContentItemResponse)
 def edit_item(
     db_id: int,
@@ -1611,6 +1619,10 @@ def edit_item(
             )
         status = request.status
 
+    crossed = _edit_bound_crossed(request)
+    if crossed is not None:
+        raise HTTPException(status_code=400, detail=crossed)
+
     try:
         success = storage.update_item_from_ui(
             db_id=db_id,
@@ -1621,7 +1633,7 @@ def edit_item(
             genres=request.genres,
             tags=request.tags,
             description=request.description,
-            release_year=request.release_year,
+            release_year=request.corrected_year,
             creator=request.creator,
             user_id=user_id,
         )

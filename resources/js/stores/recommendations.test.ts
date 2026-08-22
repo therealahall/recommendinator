@@ -99,7 +99,10 @@ describe('useRecommendationsStore', () => {
     await expect(store.markComplete(1, { status: 'completed', rating: null, review: null })).rejects.toThrow('Server error')
 
     expect(store.editSaving).toBe(false)
-    expect(store.error).toBe('Server error')
+    // The dialog's own error, not the page's: the page banner renders behind
+    // the overlay and calls every failure a failure to load recommendations.
+    expect(store.editError).toBe('Server error')
+    expect(store.error).toBe('')
   })
 
   it('openEdit surfaces an error and leaves editingItem null when the item GET fails', async () => {

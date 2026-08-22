@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
-import {
-  MAX_CREATOR_LENGTH,
-  MAX_RELEASE_YEAR,
-  MIN_RELEASE_YEAR,
-  RELEASE_YEAR_TYPES,
-} from '@/constants/library'
+import { MAX_CREATOR_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import StarRating from '@/components/atoms/StarRating.vue'
@@ -16,6 +11,8 @@ import TagInput from '@/components/atoms/TagInput.vue'
 const props = defineProps<{
   item: ContentItemResponse
   saving: boolean
+  /** Why the server refused the last save, '' while it has refused nothing. */
+  saveError: string
 }>()
 
 const emit = defineEmits<{
@@ -36,15 +33,21 @@ const genres = ref<string[]>(props.item.genres ?? [])
 const tags = ref<string[]>(props.item.tags ?? [])
 const description = ref(props.item.description ?? '')
 
-const creatorInput = ref<HTMLInputElement | null>(null)
-const yearInput = ref<HTMLInputElement | null>(null)
-const creatorError = ref('')
-const yearError = ref('')
+const refusal = ref<HTMLElement | null>(null)
 
-const CREATOR_EMPTY = 'Creator cannot be empty.'
-const CREATOR_TOO_LONG = `Creator must be at most ${MAX_CREATOR_LENGTH} characters.`
-const YEAR_OUT_OF_RANGE = `Enter a year between ${MIN_RELEASE_YEAR} and ${MAX_RELEASE_YEAR}.`
+// The dialog covers the page, so a refusal rendered behind it is unreachable;
+// focus is what carries this one to a user who cannot see the whole screen.
+watch(
+  () => props.saveError,
+  async (said) => {
+    if (!said) return
+    await nextTick()
+    refusal.value?.focus()
+  },
+)
 
+// Sent only when touched: ingestion bounds neither field, so resending an
+// untouched box would have the API refuse every save of a row holding 19993.
 const loadedCreator = creator.value.trim()
 const loadedYear = releaseYear.value.trim()
 const correctedCreator = computed(() => creator.value.trim())
@@ -55,25 +58,6 @@ const yearChanged = computed(() => correctedYear.value !== loadedYear)
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
-
-// Ingestion bounds neither field: checking an untouched box would refuse every
-// save of a row stored with 19993 in it.
-function creatorComplaint(): string {
-  if (!creatorChanged.value) return ''
-  if (!correctedCreator.value) return CREATOR_EMPTY
-  return correctedCreator.value.length > MAX_CREATOR_LENGTH ? CREATOR_TOO_LONG : ''
-}
-
-function yearComplaint(): string {
-  if (!hasReleaseYear.value || !yearChanged.value) return ''
-  if (!/^\d+$/.test(correctedYear.value)) return YEAR_OUT_OF_RANGE
-  const year = Number(correctedYear.value)
-  return year >= MIN_RELEASE_YEAR && year <= MAX_RELEASE_YEAR ? '' : YEAR_OUT_OF_RANGE
-}
-
-// Cleared as the box is edited, not re-checked: 1, 19 and 199 are not errors.
-watch(creator, () => (creatorError.value = ''))
-watch(releaseYear, () => (yearError.value = ''))
 
 // Status and the checklist are two views of one fact, so each edit derives the
 // other. Explicit handlers, not a watcher each way: those retrigger each other.
@@ -102,15 +86,6 @@ function onStatusChange(event: Event) {
 }
 
 function save() {
-  // The server's own refusal renders behind this overlay, so it is said here.
-  creatorError.value = creatorComplaint()
-  yearError.value = yearComplaint()
-  if (creatorError.value || yearError.value) {
-    const offending = creatorError.value ? creatorInput : yearInput
-    void nextTick(() => offending.value?.focus())
-    return
-  }
-
   const data: ItemEditRequest = {
     status: status.value,
     rating: rating.value,
@@ -124,7 +99,7 @@ function save() {
     data.creator = correctedCreator.value
   }
   if (yearChanged.value) {
-    data.release_year = Number(correctedYear.value)
+    data.release_year = correctedYear.value
   }
   if (isTvShow.value) {
     data.seasons_watched = seasonsWatched.value
@@ -153,15 +128,11 @@ function onBackdropClick(event: MouseEvent) {
         <label for="edit-creator">Creator</label>
         <input
           id="edit-creator"
-          ref="creatorInput"
           v-model="creator"
           type="text"
           :maxlength="MAX_CREATOR_LENGTH"
           placeholder="Author, director or developer..."
-          :aria-invalid="creatorError ? 'true' : undefined"
-          :aria-describedby="creatorError ? 'edit-creator-error' : undefined"
         >
-        <p id="edit-creator-error" class="edit-field-error" role="alert">{{ creatorError }}</p>
       </div>
 
       <div v-if="hasReleaseYear" class="edit-field">
@@ -170,14 +141,10 @@ function onBackdropClick(event: MouseEvent) {
              "2016 (remaster)" and rolls the year under a stray mouse wheel. -->
         <input
           id="edit-release-year"
-          ref="yearInput"
           v-model="releaseYear"
           type="text"
           inputmode="numeric"
-          :aria-invalid="yearError ? 'true' : undefined"
-          :aria-describedby="yearError ? 'edit-release-year-error' : undefined"
         >
-        <p id="edit-release-year-error" class="edit-field-error" role="alert">{{ yearError }}</p>
       </div>
 
       <div class="edit-field">
@@ -234,6 +201,9 @@ function onBackdropClick(event: MouseEvent) {
         <label for="edit-description">Description</label>
         <textarea id="edit-description" v-model="description" maxlength="10000" placeholder="Add a description..." />
       </div>
+
+      <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+      <p ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
 
       <div class="edit-modal-actions">
         <button class="btn btn-secondary" @click="emit('close')">Cancel</button>

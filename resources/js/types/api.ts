@@ -382,7 +382,9 @@ export interface ItemEditRequest {
   genres?: string[]
   tags?: string[]
   description?: string | null
-  release_year?: number | null
+  /** The text the year box holds: the API refuses what is not a year, so a
+   *  mistyped one is said back rather than dropped on the way out. */
+  release_year?: string | null
   creator?: string | null
 }
 

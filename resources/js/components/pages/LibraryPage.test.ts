@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import LibraryPage from './LibraryPage.vue'
+import EditModal from '@/components/molecules/EditModal.vue'
 import { useLibraryStore } from '@/stores/library'
 
 // jsdom has no IntersectionObserver; the page sets one up on mount.
@@ -62,6 +63,20 @@ describe('LibraryPage search behaviour', () => {
     expect(region.exists()).toBe(true)
     expect(region.attributes('aria-live')).toBe('polite')
     expect(region.text()).toBe('2 items match “dune”')
+  })
+
+  it('hands a refused save to the dialog, and never to the load banner', async () => {
+    // The banner sits behind the modal overlay and prefixes "Failed to load
+    // library:", so a refused save was both unreadable and misdescribed.
+    const refusal = 'Review must be at most 10000 characters.'
+    const { wrapper } = mountPage({
+      editingItem: { db_id: 1, title: 'Dune', content_type: 'book', status: 'unread' },
+      editError: refusal,
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('Failed to load library')
+    expect(wrapper.findComponent(EditModal).props('saveError')).toBe(refusal)
   })
 
   it('renders the generic empty state when there is no search query', async () => {
