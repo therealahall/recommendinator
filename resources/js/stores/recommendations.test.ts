@@ -50,7 +50,7 @@ describe('useRecommendationsStore', () => {
     expect(store.loading).toBe(false)
   })
 
-  it('ignoreItem removes from list', async () => {
+  it('setIgnored marks the row in place, so the undo can sit where the card was', async () => {
     mockGet.mockResolvedValue([
       { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
       { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {} },
@@ -59,10 +59,37 @@ describe('useRecommendationsStore', () => {
 
     const store = useRecommendationsStore()
     await store.fetch()
-    await store.ignoreItem(1)
+    await store.setIgnored(1, true)
 
-    expect(store.items.length).toBe(1)
-    expect(store.items[0].db_id).toBe(2)
+    expect(mockPatch).toHaveBeenCalledWith('/items/1/ignore', expect.objectContaining({
+      ignored: true,
+    }))
+    expect(store.items.length).toBe(2)
+    expect(store.ignored.has(1)).toBe(true)
+
+    await store.setIgnored(1, false)
+    expect(store.ignored.has(1)).toBe(false)
+  })
+
+  it('setIgnored rejects rather than leaving the button looking dead', async () => {
+    mockGet.mockResolvedValue([
+      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {} },
+    ])
+    const store = useRecommendationsStore()
+    await store.fetch()
+
+    mockPatch.mockRejectedValue(new Error('Server error'))
+    await expect(store.setIgnored(1, true)).rejects.toThrow('Server error')
+    expect(store.ignored.has(1)).toBe(false)
+  })
+
+  it('records that a generate finished, so zero results is not read as "not run yet"', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useRecommendationsStore()
+
+    expect(store.hasRun).toBe(false)
+    await store.fetch()
+    expect(store.hasRun).toBe(true)
   })
 
   it('markComplete PATCHes /items/{dbId} and removes the card on success', async () => {

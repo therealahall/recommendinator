@@ -28,12 +28,14 @@ const emit = defineEmits<{
         <button
           v-if="rec.db_id"
           class="btn btn-small btn-complete"
+          :data-testid="`complete-btn-${rec.db_id}`"
           :aria-label="`Mark complete: ${rec.title}`"
           @click="emit('complete', rec.db_id)"
         >Mark complete</button>
         <button
           v-if="rec.db_id"
           class="btn btn-small btn-ignore"
+          :data-testid="`ignore-btn-${rec.db_id}`"
           :aria-label="`Ignore: ${rec.title}`"
           @click="emit('ignore', rec.db_id)"
         >Ignore</button>
