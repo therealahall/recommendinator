@@ -1595,7 +1595,6 @@ input[type="checkbox"] {
 
 .edit-modal-note {
   font-size: var(--text-sm);
-  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
   color: var(--text-secondary);
   margin: 0 0 var(--space-3) 0;
 }

@@ -138,7 +138,7 @@ const canSubmit = computed(() => isValid.value && !submitting.value)
 // Cancel has to drop the click itself rather than closing mid-request.
 function onCancel(): void {
   if (submitting.value) return
-  emit('close')
+  requestClose()
 }
 
 async function submit(): Promise<void> {
