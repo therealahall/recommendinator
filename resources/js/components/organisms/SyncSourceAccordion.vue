@@ -30,9 +30,8 @@ const migrating = ref(false)
 const migrateError = ref('')
 const gateRevision = ref(0)
 
-// Accordion.vue hides its panel rather than unmounting it, so there is no
-// single element in this component's own tree to scope a query to. The testids
-// are source-scoped, which is what keeps two expanded panels apart.
+// Accordion.vue hides its panel rather than unmounting it, so there is nothing
+// in this tree to scope to. The testids are source-scoped, which is the guard.
 function panelControl(testid: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)
 }

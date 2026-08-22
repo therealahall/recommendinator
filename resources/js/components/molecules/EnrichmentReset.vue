@@ -25,8 +25,7 @@ const scope = computed(() => {
   return parts.join(', ')
 })
 
-// A count only where the filters let the stats answer exactly. A guess here is
-// worse than no number: it is the figure the user decides against.
+// A guess is worse than no number: it is what the user decides against.
 const question = computed(() => {
   const many = props.affected === null ? 'every matching item' : `${props.affected} item(s)`
   return (
