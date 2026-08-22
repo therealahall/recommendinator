@@ -36,8 +36,11 @@ class TestRecommendEmptyResultsRegression:
         )
 
         assert result.exit_code == 0
-        assert "haven't consumed yet" in result.output
+        assert "have not consumed yet" in result.output
         assert "add more consumed content" not in result.output
+        # Named, because the web state names it: an empty run for one type and
+        # an empty library read identically without it.
+        assert "No video game recommendations" in result.output
 
 
 class TestRecommendCountMaxEnforcement:

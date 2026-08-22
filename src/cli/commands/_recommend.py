@@ -87,10 +87,14 @@ def recommend(
                 # Emit an empty JSON array (matches web GET /api/recommendations).
                 click.echo(json.dumps([]))
             else:
+                # Worded exactly as the web zero-result state, which names the
+                # type for the same reason: an empty run and an empty library
+                # read identically otherwise.
+                label = content_type_str.replace("_", " ")
                 click.echo(
-                    "No recommendations available. Recommendations are based "
-                    "on items you haven't consumed yet — try adding new items "
-                    "to your wishlist or library."
+                    f"No {label} recommendations. They come from items you have "
+                    "not consumed yet — try syncing a source, or adding items "
+                    "to your library."
                 )
             return
 
