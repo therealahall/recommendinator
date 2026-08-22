@@ -2491,12 +2491,14 @@ def start_enrichment(
     Returns:
         Message indicating enrichment was started or error
     """
-    # Check if enrichment is enabled
     enrichment_config = config.get("enrichment", {})
     if not enrichment_config.get("enabled", False):
         raise HTTPException(
             status_code=400,
-            detail="Enrichment is disabled. Set enrichment.enabled: true in config",
+            detail=(
+                "Enrichment is disabled. Turn it on from the Data tab, or run: "
+                "settings set enrichment.enabled true"
+            ),
         )
 
     # Map content type if provided

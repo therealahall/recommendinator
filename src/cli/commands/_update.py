@@ -200,7 +200,8 @@ def update(
         resolved = resolve_inputs(config, storage=storage)
         if not resolved:
             report_nothing_ran(
-                "No sources enabled in config. Use --source list to see available sources."
+                "No sources are enabled. Use --source list to see what exists, "
+                "or add one with: source create"
             )
             return
     else:

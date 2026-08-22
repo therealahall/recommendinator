@@ -83,13 +83,18 @@ class TestEnrichmentStart:
         data = response.json()
         assert data["status"] == "started"
 
-    def test_start_enrichment_disabled(self, mock_config_disabled: dict) -> None:
-        """Test error when enrichment is disabled."""
+    def test_disabled_enrichment_names_the_surface_that_turns_it_on(
+        self, mock_config_disabled: dict
+    ) -> None:
+        """It used to send the user to a config.yaml key the app no longer reads."""
         with _client(MagicMock(spec=StorageManager), mock_config_disabled) as client:
             response = client.post("/api/enrichment/start", json={})
 
         assert response.status_code == 400
-        assert "disabled" in response.json()["detail"].lower()
+        detail = response.json()["detail"]
+        assert "config.yaml" not in detail
+        assert "Data tab" in detail
+        assert "settings set enrichment.enabled true" in detail
 
     def test_start_enrichment_invalid_content_type(self, mock_config: dict) -> None:
         """Test error with invalid content type."""

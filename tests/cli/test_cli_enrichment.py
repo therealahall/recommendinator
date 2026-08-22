@@ -50,8 +50,10 @@ def _make_status(
 class TestEnrichmentStart:
     """Tests for enrichment start command."""
 
-    def test_enrichment_disabled_error(self, cli_runner: CliRunner) -> None:
-        """Test error when enrichment is disabled."""
+    def test_disabled_enrichment_names_the_surface_that_turns_it_on(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """It used to send the user to a config.yaml key the app no longer reads."""
         mock_storage = MagicMock(spec=StorageManager)
         result = _invoke_with_mocks(
             cli_runner,
@@ -61,7 +63,9 @@ class TestEnrichmentStart:
         )
 
         assert result.exit_code != 0
-        assert "disabled" in result.output.lower()
+        assert "config.yaml" not in result.output
+        assert "Data tab" in result.output
+        assert "settings set enrichment.enabled true" in result.output
 
     def test_enrichment_start_success(self, cli_runner: CliRunner) -> None:
         """Test successful enrichment start forwards correct args to the manager."""
