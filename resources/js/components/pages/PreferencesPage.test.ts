@@ -13,8 +13,7 @@ const PROFILE = {
   generated_at: '2026-01-01T00:00:00+00:00',
 }
 
-/** A fresh response each call: the store holds on to the collections it is
- *  handed, so a shared literal would carry one test's edits into the next. */
+/** A fresh response each call: the store keeps the collections it is handed. */
 function preferences(customRules: string[] = []) {
   return {
     scorer_weights: {},
@@ -41,7 +40,7 @@ vi.mock('@/composables/useApi', () => ({
 }))
 
 /** The page inside a router, which is what makes its leave guard run. */
-async function mountPage() {
+async function mountPage(attachTo?: HTMLElement) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -53,7 +52,7 @@ async function mountPage() {
   await router.isReady()
   const wrapper = mount(
     { template: '<router-view />' },
-    { global: { plugins: [router] } },
+    { global: { plugins: [router] }, attachTo },
   )
   await flushPromises()
   return { wrapper, router }
@@ -71,8 +70,7 @@ describe('PreferencesPage', () => {
     mockDelete.mockReset()
     mockPreferencesGet.mockReset()
     mockPreferencesGet.mockImplementation(() => Promise.resolve(preferences()))
-    // A theme applied here outlives the test in both, so without this the
-    // browser one test leaves behind is the browser the next one starts in.
+    // A theme applied here outlives the test that applied it.
     localStorage.clear()
     document.getElementById('theme-stylesheet')?.remove()
   })
@@ -94,8 +92,6 @@ describe('PreferencesPage', () => {
     expect(mockPost).toHaveBeenCalledWith('/profile/regenerate', expect.anything())
   })
 
-  // Nothing on this page is written until Save, so a nav link used to discard
-  // a typed-in rule without a word.
   it('asks before a nav link discards an unsaved rule, and stays put', async () => {
     const { wrapper, router } = await mountPage()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
@@ -112,8 +108,6 @@ describe('PreferencesPage', () => {
     expect(router.currentRoute.value.path).toBe('/library')
   })
 
-  // The prompt is the only warning a keyboard away from the page; on the page
-  // itself nothing but this line says the buffer is unsaved.
   it('says the page is holding changes until they are saved', async () => {
     const { wrapper } = await mountPage()
     const marker = () => wrapper.find('[data-testid="preferences-dirty"]')
@@ -142,8 +136,7 @@ describe('PreferencesPage', () => {
     expect(router.currentRoute.value.path).toBe('/library')
   })
 
-  // Parity with `preferences reset`, which also confirms before it throws the
-  // weights, rules and length preferences away.
+  // Parity with `preferences reset`, which also confirms first.
   it('confirms a reset, then shows the defaults it stored', async () => {
     mockPreferencesGet.mockImplementation(() =>
       Promise.resolve(preferences(['prefer westerns'])),
@@ -164,5 +157,40 @@ describe('PreferencesPage', () => {
 
     expect(mockDelete).toHaveBeenCalledWith('/users/1/preferences')
     expect(wrapper.text()).not.toContain('prefer westerns')
+  })
+
+  // A button disabled mid-request is blurred by the browser, dropping the
+  // keyboard user to <body> for the rest of the flight (WCAG 2.4.3).
+  it('keeps Reset to defaults focusable while the reset is in flight', async () => {
+    const { wrapper } = await mountPage(document.body)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let settle: (defaults: unknown) => void = () => {}
+    mockDelete.mockImplementation(
+      () => new Promise((resolve) => { settle = resolve }),
+    )
+    const reset = wrapper.findAll('button').find((b) => b.text() === 'Reset to defaults')!
+    ;(reset.element as HTMLButtonElement).focus()
+
+    await reset.trigger('click')
+
+    expect(reset.attributes('disabled')).toBeUndefined()
+
+    settle(preferences())
+    await flushPromises()
+
+    expect(document.activeElement).toBe(reset.element)
+    wrapper.unmount()
+  })
+
+  it('does not send a second reset while the first is in flight', async () => {
+    const { wrapper } = await mountPage()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDelete.mockImplementation(() => new Promise(() => {}))
+    const reset = wrapper.findAll('button').find((b) => b.text() === 'Reset to defaults')!
+
+    await reset.trigger('click')
+    await reset.trigger('click')
+
+    expect(mockDelete).toHaveBeenCalledTimes(1)
   })
 })

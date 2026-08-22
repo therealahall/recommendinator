@@ -95,9 +95,12 @@ The enrichment filter finds items still missing metadata so you can fill them
 in by hand, see
 [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing).
 
-Only a single-type export matches the import template: a whole-library file
-names each row's type in a `content_type` column, and comes back as one type. What a re-import may change depends on the field, and
-is usually less than you expect:
+Only a single-type export matches the import template. A whole-library CSV adds
+a `content_type` column so you can tell its rows apart while reading it; no
+importer reads that column, and whole-library JSON has no type field at all.
+Re-importing either file stamps every row with the one type you pass to
+`--content-type`. What a re-import may change depends on the field, and is
+usually less than you expect:
 
 | Field | What a re-import can do to it |
 |-------|-------------------------------|
