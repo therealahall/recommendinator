@@ -9,15 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # Default user ID used across the application when no user is specified
 DEFAULT_USER_ID = 1
 
-# Longest ``review`` the three surfaces that bound one accept: ``library edit``
-# and the request models behind ``PATCH /api/items/{id}`` and
-# ``POST /api/complete``. It lives here, with the field it bounds, so those
-# three cannot drift apart — a bound one interface applies and another does not
-# is a review the user can write in one place and not the other, and one stored
-# row the other cannot round-trip. CLI ``complete`` checks only that a review
-# is not blank, so a longer one still reaches the column through it.
-# 10000 characters is far longer than any review worth writing and short enough
-# that a pasted document is refused rather than stored whole.
+# Longest ``review`` all four writing surfaces accept (both CLI commands, both
+# endpoints), so a review one of them stores is never one another refuses to
+# re-save. Far longer than a review worth writing, short enough to refuse a
+# pasted document.
 MAX_REVIEW_LENGTH = 10000
 
 # The manual-metadata bounds `library edit` and ``PATCH /api/items/{id}`` share.

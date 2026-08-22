@@ -5,11 +5,16 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
-from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.content import (
+    MAX_REVIEW_LENGTH,
+    ConsumptionStatus,
+    ContentItem,
+    ContentType,
+)
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
@@ -327,6 +332,34 @@ class TestCompleteCommandUserOwnedFields:
         stored = storage.get_content_item(db_id)
         assert stored is not None
         assert stored.review == "On reflection, overrated"
+
+
+def test_complete_refuses_a_review_over_the_bound_regression(tmp_path: Path) -> None:
+    """`complete` refuses a review over MAX_REVIEW_LENGTH and stores one at it.
+
+    Bug reported: `library edit` and both write endpoints refuse a longer
+    review, but `complete` stored one the web edit dialog then could not save.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "complete.db")
+
+    def complete_with(review: str) -> Result:
+        return _invoke_with_mocks(
+            CliRunner(),
+            ["complete", "--type", "book", "--title", "Piranesi", "--review", review],
+            storage,
+        )
+
+    refused = complete_with("x" * (MAX_REVIEW_LENGTH + 1))
+
+    assert refused.exit_code != 0
+    assert f"at most {MAX_REVIEW_LENGTH} characters" in refused.output
+    assert storage.get_content_items(content_type=ContentType.BOOK) == []
+
+    accepted = complete_with("x" * MAX_REVIEW_LENGTH)
+
+    assert accepted.exit_code == 0, accepted.output
+    stored = storage.get_content_items(content_type=ContentType.BOOK)
+    assert [len(item.review or "") for item in stored] == [MAX_REVIEW_LENGTH]
 
 
 def test_complete_command_invalid_rating(mock_components):
