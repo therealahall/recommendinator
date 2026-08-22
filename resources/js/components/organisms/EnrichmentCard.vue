@@ -18,11 +18,15 @@ const running = computed(() => data.enrichmentJob?.running === true)
 const typeLabel = computed(() =>
   enrichType.value ? formatContentType(enrichType.value) : '',
 )
-// Exact only with no content-type filter: the stats are not cross-tabulated.
-const affected = computed(() =>
-  enrichType.value || !stats.value ? null : stats.value.total - stats.value.pending,
-)
 
+function control(testid: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)
+}
+
+// aria-disabled rather than disabled on the buttons below, because `disabled`
+// blurs the control the user just pressed; the guard here is what stops the
+// second activation. Whichever button the outcome unmounts, the keyboard lands
+// on the refusal or on the one control that is always there (WCAG 2.4.3).
 async function run(action: () => Promise<string>): Promise<void> {
   if (busy.value) return
   busy.value = true
@@ -32,17 +36,23 @@ async function run(action: () => Promise<string>): Promise<void> {
     message.value = await action()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Unknown error'
-    await nextTick()
-    // A refusal takes focus, so it is read where the click happened.
-    document.querySelector<HTMLElement>('[data-testid="enrichment-error"]')?.focus()
   } finally {
     busy.value = false
+  }
+  await nextTick()
+  const landing = error.value ? 'enrichment-error' : 'enrichment-start'
+  const focused = document.activeElement
+  if (focused === null || focused === document.body || error.value) {
+    control(landing)?.focus()
   }
 }
 
 const onEnable = () => run(() => data.enableEnrichment().then(() => 'Enrichment is on.'))
+// aria-disabled does not block activation, so the running guard lives here.
 const onEnrich = () =>
-  run(() => data.startEnrichment(enrichType.value || undefined, retryNotFound.value))
+  running.value
+    ? Promise.resolve()
+    : run(() => data.startEnrichment(enrichType.value || undefined, retryNotFound.value))
 const onStop = () => run(() => data.stopEnrichment())
 const onReset = (provider: string) =>
   run(() => data.resetEnrichment(enrichType.value || undefined, provider))
@@ -64,7 +74,7 @@ const onReset = (provider: string) =>
         type="button"
         class="btn btn-primary"
         data-testid="enrichment-enable"
-        :disabled="busy"
+        :aria-disabled="busy || undefined"
         @click="onEnable"
       >Turn on enrichment</button>
     </template>
@@ -110,7 +120,6 @@ const onReset = (provider: string) =>
         <div class="toolbar-right">
           <EnrichmentReset
             :type-label="typeLabel"
-            :affected="affected"
             :busy="busy || running"
             @reset="onReset"
           />
@@ -119,14 +128,14 @@ const onReset = (provider: string) =>
             type="button"
             class="btn btn-secondary"
             data-testid="enrichment-stop"
-            :disabled="busy"
+            :aria-disabled="busy || undefined"
             @click="onStop"
           >Stop</button>
           <button
             type="button"
             class="btn btn-primary"
             data-testid="enrichment-start"
-            :disabled="busy || running"
+            :aria-disabled="busy || running || undefined"
             @click="onEnrich"
           >Enrich</button>
         </div>

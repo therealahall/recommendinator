@@ -168,7 +168,7 @@ describe('EnrichmentCard', () => {
       expect(wrapper.get('[data-testid="reset-btn"]').text()).toBe('Reset enrichment')
     })
 
-    it('asks before re-queueing, naming the scope and the item count', async () => {
+    it('asks before re-queueing, naming the scope', async () => {
       const wrapper = mountWithEnrichment()
       const data = useDataStore()
       data.resetEnrichment = vi.fn()
@@ -176,9 +176,37 @@ describe('EnrichmentCard', () => {
       await wrapper.find('[data-testid="reset-btn"]').trigger('click')
 
       expect(data.resetEnrichment).not.toHaveBeenCalled()
-      const question = wrapper.get('[data-testid="confirm-panel"]').text()
-      expect(question).toContain('55 item(s)')
-      expect(question).toContain('every content type')
+      expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain(
+        'every content type',
+      )
+    })
+
+    it('sends no provider filter on the default, which is not a provider name', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn().mockResolvedValue('Reset 55 item(s).')
+
+      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      // 'all' reaching the API matches enrichment_provider = 'all', which is
+      // no row: the default reset silently did nothing.
+      expect(data.resetEnrichment).toHaveBeenCalledWith(undefined, '')
+    })
+
+    it('puts the keyboard back on Reset once the question is answered', async () => {
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.resetEnrichment = vi.fn().mockResolvedValue('Reset 1 item(s).')
+
+      const button = wrapper.get('[data-testid="reset-btn"]')
+      ;(button.element as HTMLElement).focus()
+      await button.trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(document.activeElement).toBe(button.element)
     })
 
     it('sends the provider filter the CLI offers', async () => {
@@ -195,19 +223,36 @@ describe('EnrichmentCard', () => {
       expect(data.resetEnrichment).toHaveBeenCalledWith('movie', 'rawg')
     })
 
+    it('keeps the keyboard on the button it disables while the request runs', async () => {
+      // `disabled` blurs the control the user just pressed; aria-disabled does
+      // not, and the guard in run() is what stops a second activation.
+      const wrapper = mountWithEnrichment()
+      const data = useDataStore()
+      data.startEnrichment = vi.fn().mockResolvedValue('Started.')
+
+      const button = wrapper.get('[data-testid="enrichment-start"]')
+      ;(button.element as HTMLElement).focus()
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(button.attributes('disabled')).toBeUndefined()
+      expect(document.activeElement).toBe(button.element)
+    })
+
     it('leaves the items alone when the question is declined', async () => {
       const wrapper = mountWithEnrichment()
       const data = useDataStore()
       data.resetEnrichment = vi.fn()
 
-      await wrapper.find('[data-testid="reset-btn"]').trigger('click')
+      const button = wrapper.get('[data-testid="reset-btn"]')
+      // jsdom does not focus on click the way a browser does.
+      ;(button.element as HTMLElement).focus()
+      await button.trigger('click')
       await wrapper.find('[data-testid="confirm-panel-cancel"]').trigger('click')
       await flushPromises()
 
       expect(data.resetEnrichment).not.toHaveBeenCalled()
-      expect(document.activeElement).toBe(
-        wrapper.get('[data-testid="reset-btn"]').element,
-      )
+      expect(document.activeElement).toBe(button.element)
     })
   })
 })

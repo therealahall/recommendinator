@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useId } from 'vue'
+import { computed, ref, useId } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import { ENRICHMENT_PROVIDERS, PROVIDER_LABELS } from '@/constants/enrichment'
 
 const props = defineProps<{
   /** Human-readable content-type scope, '' for every type. */
   typeLabel: string
-  /** Items the reset would re-queue, or null when the scope cannot be counted. */
-  affected: number | null
   busy: boolean
 }>()
 
@@ -25,24 +23,21 @@ const scope = computed(() => {
   return parts.join(', ')
 })
 
-// A guess is worse than no number: it is what the user decides against.
-const question = computed(() => {
-  const many = props.affected === null ? 'every matching item' : `${props.affected} item(s)`
-  return (
-    `Re-queue ${many} for enrichment (${scope.value})? Their current genres, ` +
-    'tags and descriptions are dropped and fetched again from rate-limited APIs.'
-  )
-})
+// No count: /enrichment/stats folds untracked items into `pending`, so nothing
+// it reports is the number a reset would touch, and a wrong figure in a
+// destructive dialog is worse than none.
+const question = computed(
+  () =>
+    `Re-queue every matching item for enrichment (${scope.value})? Their ` +
+    'current genres, tags and descriptions are dropped and fetched again ' +
+    'from rate-limited APIs.',
+)
 
-async function cancel(): Promise<void> {
+function answer(reset: boolean): void {
   confirming.value = false
-  await nextTick()
-  document.getElementById(`${selectId}-btn`)?.focus()
-}
-
-function confirm(): void {
-  confirming.value = false
-  emit('reset', provider.value)
+  // 'all' is the absence of a filter, not a provider name: sent through, the
+  // storage layer matches it against `enrichment_provider` and finds nothing.
+  if (reset) emit('reset', provider.value === 'all' ? '' : provider.value)
 }
 </script>
 
@@ -59,8 +54,8 @@ function confirm(): void {
       type="button"
       class="btn btn-danger"
       data-testid="reset-btn"
-      :disabled="busy"
-      @click="confirming = true"
+      :aria-disabled="busy || undefined"
+      @click="confirming = !busy"
     >Reset enrichment</button>
   </div>
 
@@ -70,8 +65,8 @@ function confirm(): void {
     confirm-label="Reset"
     cancel-label="Keep it"
     destructive
-    @cancel="cancel"
-    @confirm="confirm"
+    @cancel="answer(false)"
+    @confirm="answer(true)"
   />
 </template>
 
