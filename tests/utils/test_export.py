@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -25,6 +26,7 @@ from src.models.templates import (
 )
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.export import export_items_csv, export_items_json
+from src.utils.series import latest_season_watched_date
 
 
 class TestExportSerialization:
@@ -882,6 +884,30 @@ class TestExportRoundtrip:
         assert reimported[0].metadata["seasons_watched"] == [1, 2, 5, 6]
         assert reimported[0].metadata["seasons"] == 8
         assert reimported[0].ignored is False
+
+    def test_csv_roundtrip_tv_show_keeps_its_watch_dates_readable(self) -> None:
+        """One CSV cell holds the whole date map, and writing the dict itself
+        exports a Python repr that re-imports as no dates at all.
+        """
+        original = ContentItem(
+            id="rt3",
+            title="Roundtrip Show",
+            content_type=ContentType.TV_SHOW,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={
+                "seasons_watched": [1, 2],
+                "seasons_watched_dates": {"2": "2026-03-09T22:30:00+00:00"},
+            },
+        )
+
+        reimported = _reimport(
+            CsvImporter(),
+            export_items_csv([original], ContentType.TV_SHOW),
+            ContentType.TV_SHOW,
+        )
+
+        assert reimported[0].metadata["seasons_watched"] == [1, 2]
+        assert latest_season_watched_date(reimported[0]) == date(2026, 3, 9)
 
     def test_csv_roundtrip_movie_through_storage_regression(
         self, tmp_path: Path

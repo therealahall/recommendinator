@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
+from src.ingestion.importers.base import Importer
 from src.ingestion.importers.generic_csv.generic_csv import CsvImporter
 from src.ingestion.importers.generic_json.generic_json import JsonImporter
 from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImporter
@@ -19,6 +20,7 @@ from src.ingestion.importers.service import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from src.utils.series import latest_season_watched_date
 
 SERVICE_LOGGER = "src.ingestion.importers.service"
 
@@ -303,6 +305,65 @@ class TestUserOwnedFieldsSurviveAReimport:
         stored = self._only_item(storage)
         assert (stored.rating, stored.review) == (5, "Loved it")
         assert stored.status == ConsumptionStatus.COMPLETED
+
+
+class TestARestoreLandsOnTheShowItNames:
+    """Regression: a rebuilt detail table cascaded 866 watched seasons away, and
+    this import path is the recovery route rather than a hand-edited row."""
+
+    _RESTORE_CSV = (
+        "title,seasons_watched,seasons_watched_dates\n"
+        'Succession,"3,4","{""4"": ""2026-06-01T12:00:00+00:00""}"\n'
+        'Severance,1,"{""1"": ""2026-02-14T09:30:00+00:00""}"\n'
+    )
+    _RESTORE_JSON = json.dumps(
+        [
+            {
+                "title": "Succession",
+                "seasons_watched": [3, 4],
+                "seasons_watched_dates": {"4": "2026-06-01T12:00:00+00:00"},
+            },
+            {
+                "title": "Severance",
+                "seasons_watched": [1],
+                "seasons_watched_dates": {"1": "2026-02-14T09:30:00+00:00"},
+            },
+        ]
+    )
+
+    @pytest.fixture()
+    def succession_id(self, storage: StorageManager) -> int:
+        return storage.save_content_item(
+            ContentItem(
+                title="Succession",
+                content_type=ContentType.TV_SHOW,
+                status=ConsumptionStatus.CURRENTLY_CONSUMING,
+                metadata={"seasons_watched": [1, 2]},
+            ),
+            user_id=1,
+        )
+
+    @pytest.mark.parametrize(
+        ("importer", "text"),
+        [(CsvImporter(), _RESTORE_CSV), (JsonImporter(), _RESTORE_JSON)],
+        ids=["csv", "json"],
+    )
+    def test_the_stored_show_gains_the_seasons_and_an_unknown_one_is_created(
+        self,
+        storage: StorageManager,
+        succession_id: int,
+        importer: Importer,
+        text: str,
+    ) -> None:
+        result = import_file(storage, 1, text, importer, ContentType.TV_SHOW)
+
+        stored = {item.title: item for item in storage.get_content_items(user_id=1)}
+        assert (result.added, result.updated) == (1, 1)
+        assert sorted(stored) == ["Severance", "Succession"]
+        assert stored["Succession"].db_id == succession_id
+        assert stored["Succession"].metadata["seasons_watched"] == [1, 2, 3, 4]
+        assert latest_season_watched_date(stored["Succession"]) == date(2026, 6, 1)
+        assert latest_season_watched_date(stored["Severance"]) == date(2026, 2, 14)
 
 
 @pytest.mark.parametrize("mark_for_enrichment", [True, False])

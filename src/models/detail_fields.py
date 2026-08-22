@@ -433,6 +433,11 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 template_column="seasons_watched",
             ),
             DetailField(
+                "seasons_watched_dates",
+                FieldKind.FREE_FORM,
+                template_column="seasons_watched_dates",
+            ),
+            DetailField(
                 "seasons",
                 FieldKind.INTEGER,
                 column="seasons",

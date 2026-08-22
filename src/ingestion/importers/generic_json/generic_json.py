@@ -16,9 +16,9 @@ from src.ingestion.importers.base import (
 )
 from src.ingestion.importers.rows import (
     normalize_rating,
+    normalize_watched_seasons,
     parse_completion_date,
     parse_ignored_field,
-    parse_seasons_watched,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.templates import (
@@ -60,10 +60,8 @@ class JsonImporter(Importer):
             metadata = _build_metadata(entry, resolved)
             if notes:
                 metadata["notes"] = notes
-            if resolved is ContentType.TV_SHOW and "seasons_watched" in metadata:
-                metadata["seasons_watched"] = parse_seasons_watched(
-                    metadata["seasons_watched"]
-                )
+            if resolved is ContentType.TV_SHOW:
+                normalize_watched_seasons(metadata)
 
             yield ImportedRow(
                 number,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from datetime import date, datetime
 from typing import Any
 
 from src.ingestion.importers.base import ImporterError
+from src.utils.dates import parse_iso_timestamp
 from src.utils.series import MAX_SEASONS
 from src.utils.text import sanitize_for_log
 
@@ -130,56 +132,74 @@ def parse_ignored_field(row: Mapping[str, Any]) -> bool | None:
     return parse_boolean_field(value)
 
 
-def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
-    """Read a season list from an array, a comma-separated string or a count.
+def _season_number(value: Any) -> int | None:
+    try:
+        season = int(value)
+    except (ValueError, TypeError):
+        return None
+    return season if 1 <= season <= MAX_SEASONS else None
 
-    Seasons outside ``1..MAX_SEASONS`` are dropped and a count is capped there,
-    so a malformed cell cannot expand into an unbounded list.
-    """
+
+def _seasons_up_to(count: int) -> list[int]:
+    return list(range(1, min(count, MAX_SEASONS) + 1)) if count > 0 else []
+
+
+def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
     if value is None:
         return []
 
     if isinstance(value, list):
-        parsed = []
-        for entry in value:
-            if not str(entry).strip():
-                continue
-            try:
-                season = int(entry)
-            except (ValueError, TypeError):
-                continue
-            if 1 <= season <= MAX_SEASONS:
-                parsed.append(season)
-        return sorted(parsed)
+        return sorted(
+            season for entry in value if (season := _season_number(entry)) is not None
+        )
 
     if isinstance(value, int):
-        if value <= 0:
-            return []
-        return list(range(1, min(value, MAX_SEASONS) + 1))
+        return _seasons_up_to(value)
 
     text = str(value).strip()
-    if not text:
-        return []
-
     if "," in text:
-        seasons = []
-        for part in text.split(","):
-            part = part.strip()
-            if part:
-                try:
-                    season = int(part)
-                except ValueError:
-                    continue
-                if 1 <= season <= MAX_SEASONS:
-                    seasons.append(season)
-        return sorted(seasons)
+        return sorted(
+            season
+            for part in text.split(",")
+            if (season := _season_number(part)) is not None
+        )
 
-    # A bare number is a count, which is what the field held before it took a
-    # list, and an export from that era still imports.
+    # A bare number is the count the field held before it took a list.
     try:
-        count = int(text)
+        return _seasons_up_to(int(text))
     except ValueError:
         return []
-    if count <= 0:
-        return []
-    return list(range(1, min(count, MAX_SEASONS) + 1))
+
+
+def parse_seasons_watched_dates(value: Any) -> dict[str, str]:
+    """An unparseable timestamp is dropped: stored, it would read back as a
+    watch date that is not one."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(value, Mapping):
+        return {}
+
+    dates: dict[str, str] = {}
+    for key, raw in value.items():
+        season = _season_number(key)
+        if (
+            season is not None
+            and isinstance(raw, str)
+            and parse_iso_timestamp(raw) is not None
+        ):
+            dates[str(season)] = raw
+    return dates
+
+
+def normalize_watched_seasons(metadata: dict[str, Any]) -> None:
+    if "seasons_watched" in metadata:
+        metadata["seasons_watched"] = parse_seasons_watched(metadata["seasons_watched"])
+
+    dates = parse_seasons_watched_dates(metadata.get("seasons_watched_dates"))
+    if dates:
+        metadata["seasons_watched_dates"] = dates
+    else:
+        metadata.pop("seasons_watched_dates", None)
