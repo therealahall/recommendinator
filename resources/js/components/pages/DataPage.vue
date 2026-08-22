@@ -194,7 +194,7 @@ const orderedSources = computed(() => {
           </div>
         </div>
         <div v-else-if="unusableSources.length === 0" class="empty-state">
-          No sync sources configured. Add sources to config.yaml with enabled: true.
+          No sync sources configured yet.
         </div>
       </template>
 
