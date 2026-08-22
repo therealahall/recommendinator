@@ -117,6 +117,22 @@ describe('useThemeStore', () => {
     expect(store.currentThemeId).toBe('nord')
   })
 
+  it('leaves the cached pick painted when only the preference read fails', async () => {
+    localStorage.setItem('theme', 'snowstorm')
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/themes') return Promise.resolve(THEMES)
+      if (path === '/themes/default') return Promise.resolve({ theme: 'nord' })
+      return Promise.reject(new Error('Internal Server Error'))
+    })
+
+    const store = useThemeStore()
+    store.applyStoredTheme()
+    await store.fetchThemes()
+
+    expect(store.currentThemeId).toBe('snowstorm')
+    expect(localStorage.getItem('theme')).toBe('snowstorm')
+  })
+
   it('keeps the theme list when only the preference read fails', async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === '/themes') return Promise.resolve(THEMES)
