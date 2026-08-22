@@ -87,6 +87,31 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('a second Escape dismisses the confirmation and puts the caret back in the review', async () => {
+    // It only hid the panel, leaving focus on the node Vue then removed: the
+    // user landed at <body>, outside the aria-modal subtree, mid-sentence.
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await vi.runAllTimersAsync()
+    const review = wrapper.get('#edit-review')
+    await review.setValue('A long review.')
+    ;(review.element as HTMLTextAreaElement).focus()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await vi.runAllTimersAsync()
+    expect(document.activeElement).toBe(wrapper.get('[role="alertdialog"]').element)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await vi.runAllTimersAsync()
+
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('close')).toBeFalsy()
+    expect(document.activeElement).toBe(review.element)
+    wrapper.unmount()
+  })
+
   it('discarding from the confirmation closes the dialog', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },

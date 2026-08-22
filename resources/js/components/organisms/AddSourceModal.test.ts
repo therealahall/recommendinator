@@ -104,8 +104,9 @@ function createdConfig(sourceId: string, plugin = 'calibre_web'): SourceConfigRe
 
 async function mountWithPlugins(
   plugins: PluginInfoResponse[] = [calibrePlugin],
+  attachTo?: HTMLElement,
 ) {
-  const wrapper = mount(AddSourceModal)
+  const wrapper = mount(AddSourceModal, { attachTo })
   const store = useDataStore()
   store.availablePlugins = plugins
   vi.spyOn(store, 'loadAvailablePlugins').mockResolvedValue(plugins)
@@ -131,21 +132,30 @@ describe('AddSourceModal', () => {
     expect((idInput.element as HTMLInputElement).value).toBe('custom-id')
   })
 
-  it('asks before a backdrop click discards a typed API key, and closes when nothing is typed', async () => {
-    const { wrapper } = await mountWithPlugins()
+  it('asks before a backdrop click discards a typed API key, and declining keeps it and the focus', async () => {
+    const { wrapper } = await mountWithPlugins([calibrePlugin], document.body)
 
     await wrapper.trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
 
     await wrapper.find('[data-testid="add-source-secret-password"]').setValue('hunter2')
+    // A real backdrop press blurs to <body> before the click, which jsdom skips.
+    ;(document.activeElement as HTMLElement).blur()
     await wrapper.trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
-    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(true)
+    const asked = wrapper.get('[role="alertdialog"]')
+
+    await asked.findAll('button').find((b) => b.text() === 'Keep editing')!.trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
     expect(
       (wrapper.find('[data-testid="add-source-secret-password"]').element as HTMLInputElement)
         .value,
     ).toBe('hunter2')
+    // Declining left focus on <body>, so the next Tab walked out of the dialog.
+    expect(wrapper.get('[aria-modal="true"]').element.contains(document.activeElement)).toBe(true)
+    wrapper.unmount()
   })
 
   it('shows an inline error and disables Create for an invalid id', async () => {
