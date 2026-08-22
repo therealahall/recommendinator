@@ -160,4 +160,77 @@ describe('RecommendationsPage', () => {
     expect(store.items.map((i) => i.db_id)).toEqual([2])
     expect(wrapper.findComponent({ name: 'EditModal' }).exists()).toBe(false)
   })
+
+  describe('ignoring a recommendation', () => {
+    it('leaves an undo where the card was, and puts the keyboard on it', async () => {
+      const { wrapper } = await mountWithItems()
+      mockPatch.mockResolvedValue({})
+
+      await wrapper.find('[data-testid="ignore-btn-1"]').trigger('click')
+      await flushPromises()
+
+      const undo = wrapper.get('[data-testid="undo-ignore-1"]')
+      expect(wrapper.get('[data-testid="ignored-row-1"]').text()).toContain('A')
+      expect(document.activeElement).toBe(undo.element)
+    })
+
+    it('announces the removal, which nothing else on screen says', async () => {
+      const { wrapper } = await mountWithItems()
+      mockPatch.mockResolvedValue({})
+
+      await wrapper.find('[data-testid="ignore-btn-1"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[role="status"]').text()).toContain('Ignored “A”')
+    })
+
+    it('brings the card back on Undo, with focus on the Ignore that returned', async () => {
+      const { wrapper } = await mountWithItems()
+      mockPatch.mockResolvedValue({})
+
+      await wrapper.find('[data-testid="ignore-btn-1"]').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="undo-ignore-1"]').trigger('click')
+      await flushPromises()
+
+      const ignore = wrapper.get('[data-testid="ignore-btn-1"]')
+      expect(wrapper.find('[data-testid="ignored-row-1"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(ignore.element)
+    })
+
+    it('says a refused ignore instead of leaving the card silently in place', async () => {
+      const { wrapper } = await mountWithItems()
+      mockPatch.mockRejectedValue(new Error('Server error'))
+
+      await wrapper.find('[data-testid="ignore-btn-1"]').trigger('click')
+      await flushPromises()
+
+      const alert = wrapper.get('#rec-ignore-error')
+      expect(alert.text()).toContain('Server error')
+      expect(wrapper.find('[data-testid="ignored-row-1"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(alert.element)
+    })
+  })
+
+  describe('the empty state', () => {
+    it('invites a first Generate before one has run', () => {
+      wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
+
+      expect(wrapper.get('[data-testid="recs-empty"]').text()).toContain('Click Generate')
+    })
+
+    it('names the type and the next step once a Generate returned nothing', async () => {
+      wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
+      const store = useRecommendationsStore()
+      store.contentType = 'tv_show'
+      mockGet.mockResolvedValue([])
+      await store.fetch()
+      await flushPromises()
+
+      const empty = wrapper.get('[data-testid="recs-empty"]').text()
+      expect(empty).not.toContain('Click Generate')
+      expect(empty).toContain('No tv show recommendations')
+      expect(empty).toContain('syncing a source')
+    })
+  })
 })
