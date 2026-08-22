@@ -23,6 +23,7 @@ from src.storage.manager import (
     StorageManager,
     SuggestionEvidence,
 )
+from src.utils.duplicate_serialization import skipped_works_note
 
 
 @contextmanager
@@ -350,20 +351,41 @@ def test_a_group_past_the_cap_is_skipped_with_a_line_in_the_log_saying_so(
     assert "is not offered for review" in caplog.text
 
 
-def test_a_group_disjoint_refusals_split_every_which_way_is_skipped_too(
+def test_a_group_split_every_which_way_is_skipped_without_blaming_its_copies(
     manager: StorageManager, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """d disjoint refusals make 2^d blocks, which the member cap cannot see."""
+    """d disjoint refusals make 2^d blocks. This shelf sits at the copy cap
+    rather than over it, so the note's old "too many copies" was a lie."""
     shelf = _shelf(manager, GROUP_MEMBER_MAX)
     for one, other in zip(shelf[::2], shelf[1::2], strict=True):
         assert manager.decline_duplicate_suggestion(one, [other]) != []
 
     with caplog.at_level(logging.WARNING), _within(seconds=10):
         page = manager.list_duplicate_suggestions()
+    cause, _, advice = skipped_works_note(page.skipped_works).partition(". ")
 
     assert page.suggestions == []
     assert page.skipped_works == 1
     assert f"more than {GROUP_BLOCK_MAX} blocks" in caplog.text
+    assert advice, "the cause is its own sentence, ahead of what to do about it"
+    assert "copies" not in cause
+
+
+def test_two_works_left_unsearched_read_as_the_plural_they_are_counted_in(
+    manager: StorageManager,
+) -> None:
+    """Both shelves are over the copy cap, so the note counts two: catches the
+    subject and the possessive drifting apart, "2 works are ... its copies"."""
+    for title in ("The Wandering Inn", "The Odyssey"):
+        for index in range(GROUP_MEMBER_MAX + 1):
+            _save(manager, "calibre", f"{title} {index}", f"{title} ({index})")
+
+    page = manager.list_duplicate_suggestions()
+    note = skipped_works_note(page.skipped_works)
+
+    assert page.skipped_works == 2
+    assert "2 works" in note
+    assert "its" not in note.split()
 
 
 def test_one_refusal_inside_a_group_of_four_leaves_both_blocks_it_splits_into(

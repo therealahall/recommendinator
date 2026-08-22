@@ -49,13 +49,15 @@ def decline_refusal_message(one_id: int, other_ids: Sequence[int]) -> str:
 
 
 def skipped_works_note(count: int) -> str:
-    """Says copies, not groupings: a group over the size cap is left unsearched."""
+    """Names neither cap: a work is skipped on its copies or on its blocks, and
+    a reason true of one of those reads as a lie about the other."""
     if count == 0:
         return ""
     subject = "1 work is" if count == 1 else f"{count} works are"
+    whose = "its" if count == 1 else "their"
     return (
-        f"{subject} not offered: too many copies to review at once."
-        " Merge some of them to see the rest."
+        f"{subject} not offered: more review than one pass can hold."
+        f" Merge some of {whose} copies to see the rest."
     )
 
 
