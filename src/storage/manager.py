@@ -26,6 +26,7 @@ from src.storage.duplicates import DuplicateSide as DuplicateSide
 from src.storage.duplicates import DuplicateSuggestion as DuplicateSuggestion
 from src.storage.duplicates import SuggestionEvidence as SuggestionEvidence
 from src.storage.duplicates import SuggestionPage as SuggestionPage
+from src.storage.enrichment_jobs import EnrichmentJobStore
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.global_secrets import SecretStore
 from src.storage.item_merges import MergeError as MergeError
@@ -95,6 +96,10 @@ class StorageManager:
     @functools.cached_property
     def enrichment(self) -> EnrichmentStore:
         return EnrichmentStore(self.sqlite_db)
+
+    @functools.cached_property
+    def enrichment_jobs(self) -> EnrichmentJobStore:
+        return EnrichmentJobStore(self.sqlite_db)
 
     @functools.cached_property
     def settings(self) -> SettingsStore:

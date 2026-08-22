@@ -54,6 +54,7 @@ SQLite holds everything.
 | `source_configs` | Non-sensitive per-source config |
 | `settings` | Global config, dotted leaf key to JSON value, only what a user set |
 | `enrichment_status` | Enrichment tracking |
+| `enrichment_job` | The live enrichment run, one row, so either interface can watch and stop it |
 | `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source |
 | `preference_profiles` | The generated per-user taste profile |
 

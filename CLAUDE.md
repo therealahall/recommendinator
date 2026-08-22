@@ -85,7 +85,9 @@ src/
 ├── storage/          # SQLite. manager.py is the facade: content items, users and
 │                     # preference config directly, everything else through a typed
 │                     # store (credentials, secrets, accounts, enrichment, settings,
-│                     # sources, profiles, sync_runs.py for the per-source run log)
+│                     # sources, profiles, sync_runs.py for the per-source run log,
+│                     # enrichment_jobs.py for the live enrichment run both
+│                     # interfaces read, watch and stop)
 ├── settings/         # Global-config registry (metadata.py) + service (list/get/set/reset/secrets)
 ├── recommendations/  # Recommendation engine (scorers, scoring_pipeline, variety, genre_clusters,
 │                     # identity.py for candidate keys, record.py for the emitted Recommendation)
