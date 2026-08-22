@@ -563,22 +563,31 @@ class TestLibraryEdit:
         assert "comma-separated integers" in result.output.lower()
         mock_storage.update_item_from_ui.assert_not_called()
 
-    def test_edit_seasons_watched(self, cli_runner: CliRunner) -> None:
-        """Test parsing valid seasons-watched input to a list of ints."""
+    @pytest.mark.parametrize(
+        ("flags", "sent"),
+        [
+            (["--seasons-watched", "1, 2 ,3"], [1, 2, 3]),
+            (["--clear-seasons"], []),
+            (["--status", "unread"], None),
+        ],
+        ids=["parsed", "cleared", "unmentioned"],
+    )
+    def test_edit_sends_the_seasons_its_flags_name(
+        self, cli_runner: CliRunner, flags: list[str], sent: list[int] | None
+    ) -> None:
+        """A status says nothing about seasons; only --clear-seasons empties them."""
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
 
         result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--seasons-watched", "1, 2 ,3"],
-            mock_storage,
+            cli_runner, ["library", "edit", "--id", "1", *flags], mock_storage
         )
 
         assert result.exit_code == 0
         call_kwargs = mock_storage.update_item_from_ui.call_args[1]
-        assert call_kwargs["seasons_watched"] == [1, 2, 3]
+        assert call_kwargs["seasons_watched"] == sent
 
     def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
         """Test setting manual enrichment metadata forwards lists/text to storage."""
@@ -1034,9 +1043,11 @@ class TestLibraryEditClearing:
         [
             ["--genre", "Sci-Fi", "--clear-genres"],
             ["--tag", "classic", "--clear-tags"],
+            ["--seasons-watched", "1", "--clear-seasons"],
+            ["--rating", "3", "--clear-rating"],
         ],
     )
-    def test_setting_and_clearing_one_list_together_is_refused(
+    def test_setting_and_clearing_one_field_together_is_refused(
         self, cli_runner: CliRunner, args: list[str]
     ) -> None:
         mock_storage = MagicMock(spec=StorageManager)
@@ -1044,23 +1055,6 @@ class TestLibraryEditClearing:
 
         result = _invoke_with_mocks(
             cli_runner, ["library", "edit", "--id", "1", *args], mock_storage
-        )
-
-        assert result.exit_code != 0
-        assert "cannot be used together" in result.output
-        mock_storage.update_item_from_ui.assert_not_called()
-
-    def test_rating_and_clear_rating_together_are_refused(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Setting and clearing the rating in one command is a contradiction."""
-        mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.get_content_item.return_value = _make_item(db_id=1)
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["library", "edit", "--id", "1", "--rating", "3", "--clear-rating"],
-            mock_storage,
         )
 
         assert result.exit_code != 0

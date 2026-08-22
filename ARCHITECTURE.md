@@ -110,17 +110,19 @@ supplied:
   "Not supplied" is spelled two ways. `status`, `rating` and `review` use the
   `UNSET` sentinel, because for the last two `None` has to mean clear.
   `seasons_watched`, `genres`, `tags` and `description` use `None`, so there the
-  *empty* value clears: `[]` or `""`. `PATCH /api/items/{id}` can clear all four.
-  The web dialog sends `null` for an emptied description and the CLI cannot spell
-  an empty list, so each surface reaches a different subset.
+  *empty* value clears: `[]` or `""`. `PATCH /api/items/{id}` can clear all four,
+  and so can `library edit`: `--clear-seasons`, `--clear-genres`, `--clear-tags`
+  and `--description ""`.
 - **`set_item_ignored`** backs the Ignore buttons
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
 
-For a TV show, whichever of status and `seasons_watched` the caller omits is
-derived from the other, in `src/utils/series.py`: `completed` ticks every season
-unless the total is unknown, `unread` empties the list, `currently_consuming`
-leaves it. Both supplied are written as given.
+For a TV show, an omitted status is derived from `seasons_watched` in
+`src/utils/series.py`, and a stated `completed` ticks every season unless the
+total is unknown. No status empties the list: only a Trakt sync writes watched
+seasons, and the dialog hides its checklist for a show whose total never synced,
+so that show's status-only save would erase them unseen. Both supplied are
+written as given.
 
 **No door stores a blank review.** A stored `""` reads as a review the user wrote
 and blocks every later import from filling the field. The sync door declines to
