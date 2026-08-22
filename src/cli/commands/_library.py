@@ -558,8 +558,8 @@ def library_unignore(ctx: click.Context, item_id: int, user_id: int) -> None:
     "--type",
     "content_type_str",
     type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
-    required=True,
-    help="Content type to export",
+    default=None,
+    help="Content type to export (default: every type)",
 )
 @click.option(
     "--format",
@@ -585,14 +585,16 @@ def library_unignore(ctx: click.Context, item_id: int, user_id: int) -> None:
 @click.pass_context
 def library_export(
     ctx: click.Context,
-    content_type_str: str,
+    content_type_str: str | None,
     output_format: str,
     output_path: Path | None,
     user_id: int,
 ) -> None:
-    """Export library items as CSV or JSON."""
+    """Export library items as CSV or JSON. No --type exports every type."""
     storage = ctx.obj["storage"]
-    content_type = ContentType.from_string(content_type_str)
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
 
     items: list[ContentItem] = storage.get_content_items(
         user_id=user_id,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryFilters from './LibraryFilters.vue'
-import { MAX_SEARCH_LENGTH } from '@/constants/library'
+import { DEFAULT_SORT, MAX_SEARCH_LENGTH, SORT_OPTIONS } from '@/constants/library'
 import { componentStyles } from '@/testing/styles'
 
 describe('LibraryFilters', () => {
@@ -11,6 +11,7 @@ describe('LibraryFilters', () => {
     enrichmentFilter: '',
     showIgnored: false,
     needsRating: false,
+    sortBy: DEFAULT_SORT,
     searchQuery: '',
     searchLoading: false,
   }
@@ -75,6 +76,25 @@ describe('LibraryFilters', () => {
 
     expect(wrapper.emitted('export')).toEqual([['csv']])
     expect(wrapper.find('.dropdown-menu').exists()).toBe(false)
+  })
+
+  it('offers every sort order the API accepts and emits the choice', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    const select = wrapper.find('select[aria-label="Sort"]')
+    const values = select.findAll('option').map(o => o.attributes('value'))
+    await select.setValue('rating')
+
+    expect(values.sort()).toEqual(SORT_OPTIONS.map(o => o.value).slice().sort())
+    expect(wrapper.emitted('filterChange')).toEqual([['sort', 'rating']])
+  })
+
+  it('states that an export with no type selected covers the whole library', async () => {
+    const wrapper = mount(LibraryFilters, { props: defaultProps })
+
+    await wrapper.findAll('.btn').find(b => b.text() === 'Export')!.trigger('click')
+
+    expect(wrapper.find('.dropdown-menu').text()).toContain('whole library')
   })
 
   it('emits filterChange for type from TypeSelect', async () => {

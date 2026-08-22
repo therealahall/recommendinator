@@ -2456,6 +2456,45 @@ class TestExportEndpoint:
         assert len(data) == 1
         assert data[0]["title"] == "Test Movie"
 
+    def test_export_without_a_type_covers_the_whole_library(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """Bug: the Export button did nothing on the default view, because the
+        endpoint demanded a type. Now no type means every type, on the same
+        terms as ``library export``: ignored items included, filters ignored.
+        """
+        mock_components["storage"].get_content_items = Mock(
+            return_value=[
+                ContentItem(
+                    id="1",
+                    title="Test Book",
+                    author="Author",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                ),
+                ContentItem(
+                    id="2",
+                    title="Test Movie",
+                    author="Director",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                    ignored=True,
+                ),
+            ]
+        )
+
+        response = client.get("/api/items/export?format=csv")
+
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        call_kwargs = mock_components["storage"].get_content_items.call_args[1]
+        assert response.status_code == 200
+        assert 'filename="library.csv"' in response.headers["content-disposition"]
+        assert call_kwargs["content_type"] is None
+        assert call_kwargs["include_ignored"] is True
+        assert [row["title"] for row in rows] == ["Test Book", "Test Movie"]
+        assert rows[0]["author"] == "Author"
+        assert rows[1]["director"] == "Director"
+
     def test_csv_download_neutralises_a_formula_cell_regression(
         self, client: TestClient, mock_components: dict
     ) -> None:

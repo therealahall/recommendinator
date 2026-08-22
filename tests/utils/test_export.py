@@ -511,6 +511,60 @@ class TestCreatorExportEdges:
         assert entries[0]["creator"] == "Vince Gilligan"
 
 
+class TestWholeLibraryExport:
+    """No content type means every type, for both interfaces' export."""
+
+    @staticmethod
+    def _library() -> list[ContentItem]:
+        return [
+            ContentItem(
+                id="1",
+                title="=1+1",
+                author="Patrick Rothfuss",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            ContentItem(
+                id="2",
+                title="Arrival",
+                author="Denis Villeneuve",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+            ),
+        ]
+
+    def test_each_row_fills_its_own_type_columns_behind_the_formula_guard(
+        self,
+    ) -> None:
+        """A mixed CSV keeps the guarded write path and one shared header."""
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv(self._library(), None)))
+        )
+
+        assert rows[0]["title"] == "'=1+1"
+        assert rows[0]["author"] == "Patrick Rothfuss"
+        assert rows[0]["director"] == ""
+        assert rows[1]["director"] == "Denis Villeneuve"
+        assert rows[1]["author"] == ""
+
+    def test_the_header_carries_every_type_s_columns(self) -> None:
+        """A column left out of the shared header is data silently dropped."""
+        header = set(
+            csv.DictReader(io.StringIO(export_items_csv([], None))).fieldnames or []
+        )
+
+        for content_type in ContentType:
+            assert set(_exported_header(content_type)) <= header
+
+    def test_each_json_entry_uses_its_own_type_s_creator_field(self) -> None:
+        """JSON entries are ragged rather than padded, so each keeps its key."""
+        entries = json.loads(export_items_json(self._library(), None))
+
+        assert entries[0]["author"] == "Patrick Rothfuss"
+        assert entries[1]["director"] == "Denis Villeneuve"
+        assert "director" not in entries[0]
+
+
 def _exported_header(content_type: ContentType) -> list[str]:
     """The header row a CSV export of *content_type* writes."""
     reader = csv.DictReader(io.StringIO(export_items_csv([], content_type)))

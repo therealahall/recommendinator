@@ -195,6 +195,45 @@ describe('useLibraryStore', () => {
     expect(params.status).toBe('unread')
   })
 
+  it('exports the whole library when no content type is selected', () => {
+    // Regression: exportLibrary returned early without a type filter, so the
+    // default view's Export menu picked a format and downloaded nothing.
+    const store = useLibraryStore()
+
+    const url = new URL(store.exportUrl('csv'), 'http://localhost')
+
+    expect(url.pathname).toBe('/api/items/export')
+    expect(url.searchParams.get('type')).toBeNull()
+    expect(url.searchParams.get('format')).toBe('csv')
+  })
+
+  it('exports only the selected content type when one is filtered', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+
+    await store.setFilter('type', 'movie')
+
+    expect(new URL(store.exportUrl('json'), 'http://localhost').searchParams.get('type')).toBe('movie')
+  })
+
+  it('sends the chosen sort order as sort_by, on the next page as well', async () => {
+    // A page fetched in a different order than the one before it repeats some
+    // rows and drops others, so sort_by belongs on every request rather than
+    // on the reset that follows the choice.
+    const page = Array.from({ length: 50 }, (_, i) => ({
+      db_id: i, title: `Item ${i}`, content_type: 'book', status: 'completed', ignored: false,
+    }))
+    mockGet.mockResolvedValueOnce(page).mockResolvedValueOnce([])
+    const store = useLibraryStore()
+
+    await store.setFilter('sort', 'rating')
+    await store.loadMore()
+
+    expect(store.sortBy).toBe('rating')
+    expect(mockGet.mock.calls.map(call => call[1].sort_by)).toEqual(['rating', 'rating'])
+    expect(mockGet.mock.lastCall![1].offset).toBe(50)
+  })
+
   it('saveEdit updates item in list', async () => {
     const item = { db_id: 1, title: 'Book A', content_type: 'book', status: 'unread', rating: null, ignored: false }
     mockGet.mockResolvedValue([item])
