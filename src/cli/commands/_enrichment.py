@@ -8,8 +8,18 @@ import time
 import click
 
 from src.cli._shared import abort_with
-from src.enrichment.manager import EnrichmentManager
+from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, job_status
 from src.models.content import ContentType
+
+
+def _echo_errors(errors: list[str]) -> None:
+    if not errors:
+        return
+    click.echo("  Errors:")
+    for error in errors[:5]:
+        click.echo(f"    - {error}")
+    if len(errors) > 5:
+        click.echo(f"    ... and {len(errors) - 5} more")
 
 
 @click.group()
@@ -107,17 +117,89 @@ def enrichment_start(
         click.echo(f"  Items failed: {status.items_failed}")
         click.echo(f"  Elapsed time: {status.elapsed_seconds:.1f}s")
 
-        if status.errors:
-            click.echo("  Errors:")
-            for error in status.errors[:5]:
-                click.echo(f"    - {error}")
-            if len(status.errors) > 5:
-                click.echo(f"    ... and {len(status.errors) - 5} more")
+        _echo_errors(status.errors)
 
     except KeyboardInterrupt:
         click.echo("\nStopping enrichment...", err=True)
         manager.stop_enrichment()
         click.echo("Enrichment stopped.")
+
+
+#: Matches ``EnrichmentJobStatusResponse`` in src/web/api.py key for key; the
+#: parity reviewer blocks on any drift between the two.
+def _job_payload(status: EnrichmentJobStatus) -> dict[str, object]:
+    return {
+        "running": status.running,
+        "completed": status.completed,
+        "cancelled": status.cancelled,
+        "items_processed": status.items_processed,
+        "items_enriched": status.items_enriched,
+        "items_failed": status.items_failed,
+        "items_not_found": status.items_not_found,
+        "total_items": status.total_items,
+        "current_item": status.current_item,
+        "content_type": status.content_type,
+        "errors": status.errors,
+        "elapsed_seconds": status.elapsed_seconds,
+        "progress_percent": status.progress_percent,
+    }
+
+
+@enrichment.command("job")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def enrichment_job(ctx: click.Context, output_format: str) -> None:
+    """Show the live enrichment job (mirrors GET /api/enrichment/status).
+
+    Reads the job whatever started it — the web UI, another terminal, or a
+    backgrounded run — and returns without starting or waiting for one.
+    """
+    status = job_status(ctx.obj["storage"])
+
+    if output_format == "json":
+        click.echo(json.dumps(_job_payload(status), indent=2))
+        return
+
+    if not status.running and status.started_at is None:
+        click.echo("No enrichment job has run.")
+        return
+
+    if status.running:
+        state = "running"
+    elif status.cancelled:
+        state = "cancelled"
+    elif status.completed:
+        state = "completed"
+    else:
+        state = "stopped on an error"
+    click.echo(f"Enrichment job: {state}")
+    if status.current_item:
+        click.echo(f"  Current item: {status.current_item}")
+    click.echo(f"  Content type: {status.content_type or 'all types'}")
+    click.echo(
+        f"  Progress: {status.items_processed}/{status.total_items} "
+        f"({status.progress_percent:.1f}%)"
+    )
+    click.echo(f"  Items enriched: {status.items_enriched}")
+    click.echo(f"  Items not found: {status.items_not_found}")
+    click.echo(f"  Items failed: {status.items_failed}")
+    click.echo(f"  Elapsed time: {status.elapsed_seconds:.1f}s")
+    _echo_errors(status.errors)
+
+
+@enrichment.command("stop")
+@click.pass_context
+def enrichment_stop(ctx: click.Context) -> None:
+    """Stop the running enrichment job, whatever started it."""
+    if not ctx.obj["storage"].enrichment_jobs.request_stop():
+        abort_with("No enrichment job is running.")
+    click.echo("Stop requested. The job ends after the item it is on.")
 
 
 @enrichment.command("status")
