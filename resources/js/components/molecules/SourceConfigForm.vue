@@ -204,9 +204,8 @@ async function cancelReplace(name: string): Promise<void> {
   control(`secret-replace-${name}`)?.focus()
 }
 
-// The edit row is left open: collapsing it on the emit reported a stored key
-// and a refused one identically, and the badge only corrects itself on a
-// config reload the failure path never reaches.
+// The row stays open: collapsing on the emit reported a stored key and a
+// refused one identically.
 function saveSecret(name: string): void {
   const value = secretDrafts[name] ?? ''
   if (!value || secretBusy(name)) return
@@ -240,8 +239,7 @@ watch(
   (now, before) => {
     for (const [name, status] of Object.entries(now)) {
       if (status === before?.[name]) continue
-      // A refusal takes focus, so it is read where it happened and the row it
-      // belongs to is the one the user is left in.
+      // A refusal takes focus, so it is read where it happened.
       if (status === 'error') void nextTick(() => control(`secret-error-${name}`)?.focus())
       else if (status === 'saved') void settleSecret(name)
     }
@@ -429,8 +427,7 @@ function isSecretSet(name: string): boolean {
             :aria-disabled="secretBusy(field.name) || undefined"
             @click="saveSecret(field.name)"
           >{{ secretBusy(field.name) ? 'Saving…' : 'Save secret' }}</button>
-          <!-- Not gated on `disabled`: it issues no request, and it is the only
-               way out of the edit row. -->
+          <!-- Not gated on `disabled`: it is the only way out of the edit row. -->
           <button
             type="button"
             class="btn btn-secondary"
