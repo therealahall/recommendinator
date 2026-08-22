@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Accordion from '@/components/atoms/Accordion.vue'
+import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import SourceConfigForm from '@/components/molecules/SourceConfigForm.vue'
 import SourceScheduleSelect from '@/components/molecules/SourceScheduleSelect.vue'
 import SourceSyncSchedule from '@/components/molecules/SourceSyncSchedule.vue'
@@ -28,6 +29,9 @@ const data = useDataStore()
 const expanded = ref(false)
 const detailsLoaded = ref(false)
 const detailsLoading = ref(false)
+const detailsError = ref('')
+const detailsMessage = ref('')
+const migrateError = ref('')
 const oauthStatusFailed = ref(false)
 const gateRefreshing = ref(false)
 const migrating = ref(false)
@@ -43,14 +47,26 @@ let saveStatusTimer: ReturnType<typeof setTimeout> | null = null
  *  words for it. */
 const RECHECKING_STATUS = 'Rechecking the connection status…'
 const STATUS_UPDATED = 'Connection status updated.'
+const RELOADING_DETAILS = 'Loading these settings again…'
+
+// Accordion.vue hides its panel rather than unmounting it, so there is no
+// single element in this component's own tree to scope a query to. The testids
+// are source-scoped, which is what keeps two expanded panels apart.
+function panelControl(testid: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)
+}
 
 const schema = computed(() => data.sourceSchemas[props.source.id])
 const config = computed(() => data.sourceConfigs[props.source.id])
 const isMigrated = computed(() => config.value?.migrated === true)
 
+// Without the catch a rejection left detailsLoaded and detailsLoading both
+// false, which matches neither template branch: the panel opened onto nothing
+// at all, and re-expanding failed the same silent way.
 async function ensureDetails(): Promise<void> {
   if (detailsLoaded.value || detailsLoading.value) return
   detailsLoading.value = true
+  detailsError.value = ''
   try {
     await Promise.all([
       data.loadSourceSchema(props.source.id),
@@ -58,9 +74,28 @@ async function ensureDetails(): Promise<void> {
     ])
     await loadOAuthState()
     detailsLoaded.value = true
+  } catch (err) {
+    detailsError.value = err instanceof Error ? err.message : 'Unknown error'
   } finally {
     detailsLoading.value = false
   }
+}
+
+async function onRetryDetails(): Promise<void> {
+  if (detailsLoading.value) return
+  detailsMessage.value = RELOADING_DETAILS
+  await ensureDetails()
+  if (detailsError.value) {
+    // A second failure changes nothing else on screen, so without a word here
+    // the click has no perceivable outcome at all.
+    detailsMessage.value = 'Still could not load these settings. Try again in a moment.'
+    return
+  }
+  detailsMessage.value = ''
+  await nextTick()
+  // Retry unmounts with the error it belonged to, so the keyboard follows the
+  // settings it just loaded rather than dropping to <body> (WCAG 2.4.3).
+  panelControl(`details-body-${props.source.id}`)?.focus()
 }
 
 // A failed status read is tracked, not swallowed: the fallback reads as "not
@@ -94,8 +129,13 @@ function onSyncClick(event: MouseEvent): void {
 async function onMigrate(): Promise<void> {
   if (migrating.value) return
   migrating.value = true
+  migrateError.value = ''
   try {
     await data.migrateSource(props.source.id)
+  } catch (err) {
+    migrateError.value = err instanceof Error ? err.message : 'Unknown error'
+    await nextTick()
+    panelControl(`migrate-error-${props.source.id}`)?.focus()
   } finally {
     migrating.value = false
   }
@@ -155,14 +195,44 @@ async function refreshConnectGate(): Promise<void> {
   )
 }
 
-async function onSetSecret(name: string, value: string): Promise<void> {
-  await data.setSourceSecret(props.source.id, name, value)
+const secretSave = ref<Record<string, SaveStatus>>({})
+const secretSaveError = ref<Record<string, string>>({})
+const secretTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
+function setSecretStatus(name: string, status: SaveStatus, error = ''): void {
+  const running = secretTimers[name]
+  if (running) clearTimeout(running)
+  delete secretTimers[name]
+  secretSave.value = { ...secretSave.value, [name]: status }
+  secretSaveError.value = { ...secretSaveError.value, [name]: error }
+  if (status !== 'saved') return
+  secretTimers[name] = setTimeout(() => {
+    delete secretTimers[name]
+    secretSave.value = { ...secretSave.value, [name]: 'idle' }
+  }, SAVED_STATUS_MS)
+}
+
+// The outcome is what the row reports, so the request is awaited here rather
+// than left to reject unhandled out of the emit.
+async function runSecret(name: string, action: () => Promise<void>): Promise<void> {
+  if (secretSave.value[name] === 'saving') return
+  setSecretStatus(name, 'saving')
+  try {
+    await action()
+  } catch (err) {
+    setSecretStatus(name, 'error', err instanceof Error ? err.message : 'Unknown error')
+    return
+  }
+  setSecretStatus(name, 'saved')
   await refreshConnectGate()
 }
 
-async function onClearSecret(name: string): Promise<void> {
-  await data.clearSourceSecret(props.source.id, name)
-  await refreshConnectGate()
+function onSetSecret(name: string, value: string): Promise<void> {
+  return runSecret(name, () => data.setSourceSecret(props.source.id, name, value))
+}
+
+function onClearSecret(name: string): Promise<void> {
+  return runSecret(name, () => data.clearSourceSecret(props.source.id, name))
 }
 
 async function onEnabledChange(value: boolean): Promise<void> {
@@ -177,18 +247,33 @@ async function onEnabledChange(value: boolean): Promise<void> {
 }
 
 const removing = ref(false)
+const removeConfirming = ref(false)
+const removeError = ref('')
+
+const removeQuestion = computed(
+  () =>
+    `Remove "${props.source.display_name}" from the database? This drops ` +
+    'every stored secret for this source. The original config.yaml entry ' +
+    '(if any) will reappear next reload.',
+)
+
+async function cancelRemove(): Promise<void> {
+  removeConfirming.value = false
+  await nextTick()
+  panelControl(`remove-btn-${props.source.id}`)?.focus()
+}
 
 async function onRemove(): Promise<void> {
+  removeConfirming.value = false
   if (removing.value) return
-  const ok = window.confirm(
-    `Remove "${props.source.display_name}" from the database? This drops ` +
-      'every stored secret for this source. The original config.yaml entry ' +
-      '(if any) will reappear next reload.',
-  )
-  if (!ok) return
   removing.value = true
+  removeError.value = ''
   try {
     await data.deleteSource(props.source.id)
+  } catch (err) {
+    removeError.value = err instanceof Error ? err.message : 'Unknown error'
+    await nextTick()
+    panelControl(`remove-error-${props.source.id}`)?.focus()
   } finally {
     removing.value = false
   }
@@ -333,6 +418,7 @@ onBeforeUnmount(() => {
     clearTimeout(saveStatusTimer)
     saveStatusTimer = null
   }
+  for (const timer of Object.values(secretTimers)) clearTimeout(timer)
   clearScheduleTimer()
 })
 
@@ -574,7 +660,32 @@ const errorsTitleId = computed<string>(() =>
       <span class="spinner" /> Loading…
     </div>
 
-    <template v-else-if="config && schema">
+    <!--
+      Plain content, not role="alert": it can only appear as the body first
+      renders, where an alert arrives already populated and is read as page
+      content. The retry outcome goes to the region below it, which is mounted
+      and silent before it has anything to say.
+    -->
+    <div v-else-if="detailsError" class="source-accordion-details-error">
+      <p :data-testid="`details-error-${source.id}`">
+        Could not load these settings: {{ detailsError }}
+      </p>
+      <button
+        type="button"
+        class="btn btn-secondary"
+        :data-testid="`details-retry-${source.id}`"
+        :aria-label="`Retry loading the settings for ${source.display_name}`"
+        :aria-disabled="detailsLoading || undefined"
+        @click="onRetryDetails"
+      >{{ detailsLoading ? 'Retrying…' : 'Retry' }}</button>
+    </div>
+
+    <div
+      v-else-if="config && schema"
+      :data-testid="`details-body-${source.id}`"
+      tabindex="-1"
+      class="source-accordion-details focus-fallback"
+    >
       <template v-if="!isMigrated">
         <p class="source-accordion-explainer">
           This source is configured via <code>config.yaml</code>. Migrate it to the
@@ -587,6 +698,13 @@ const errorsTitleId = computed<string>(() =>
           :disabled="migrating"
           @click="onMigrate"
         >{{ migrating ? 'Migrating…' : 'Migrate to DB' }}</button>
+        <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+        <p
+          class="source-accordion-error focus-fallback"
+          :data-testid="`migrate-error-${source.id}`"
+          role="alert"
+          tabindex="-1"
+        >{{ migrateError }}</p>
       </template>
 
       <template v-else>
@@ -695,6 +813,9 @@ const errorsTitleId = computed<string>(() =>
           :schema="schema.fields"
           :values="config.field_values"
           :secret-status="config.secret_status"
+          :source-name="source.display_name"
+          :secret-save="secretSave"
+          :secret-save-error="secretSaveError"
           :saving="savingConfig"
           :disabled="props.syncing"
           :enabled="config.enabled"
@@ -722,12 +843,40 @@ const errorsTitleId = computed<string>(() =>
               :data-testid="`remove-btn-${source.id}`"
               :aria-label="`Remove ${source.display_name} from the database`"
               :disabled="removing || props.syncing"
-              @click="onRemove"
+              @click="removeConfirming = true"
             >{{ removing ? 'Removing…' : 'Remove' }}</button>
           </template>
         </SourceConfigForm>
+
+        <ConfirmPanel
+          v-if="removeConfirming"
+          :message="removeQuestion"
+          confirm-label="Remove"
+          cancel-label="Keep it"
+          destructive
+          @cancel="cancelRemove"
+          @confirm="onRemove"
+        />
+
+        <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+        <p
+          class="source-accordion-error focus-fallback"
+          :data-testid="`remove-error-${source.id}`"
+          role="alert"
+          tabindex="-1"
+        >{{ removeError }}</p>
       </template>
-    </template>
+    </div>
+
+    <!-- The retry outcome, which changes nothing else on screen when it fails
+         a second time. Mounted and silent, outside the branch it reports on. -->
+    <p
+      class="source-accordion-details-message"
+      :data-testid="`details-message-${source.id}`"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ detailsMessage }}</p>
   </Accordion>
 </template>
 
@@ -795,6 +944,38 @@ const errorsTitleId = computed<string>(() =>
    focus went (2.4.7), and a mouse one never draws it. */
 .source-accordion-oauth:focus:not(:focus-visible) {
   outline: none;
+}
+
+.source-accordion-error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+}
+
+.source-accordion-error:not(:empty) {
+  margin-top: var(--space-3);
+}
+
+.source-accordion-details-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.source-accordion-details-error p {
+  margin: 0;
+}
+
+.source-accordion-details-message {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.source-accordion-details-message:not(:empty) {
+  margin-top: var(--space-3);
 }
 
 .source-accordion-oauth-message {

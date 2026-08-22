@@ -240,23 +240,203 @@ describe('SyncSourceAccordion', () => {
     expect(update.mock.calls[0][1]).toMatchObject({ vanity_url: 'updated' })
   })
 
-  it('clicking Remove with confirm=true calls store.deleteSource', async () => {
-    const wrapper = mount(SyncSourceAccordion, {
-      props: { source: baseSource, syncing: false },
+  describe('a detail load that fails', () => {
+    async function expandFailing() {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      const schema = vi
+        .spyOn(store, 'loadSourceSchema')
+        .mockRejectedValue(new Error('backend is down'))
+      vi.spyOn(store, 'loadSourceConfig').mockRejectedValue(new Error('backend is down'))
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      return { wrapper, store, schema }
+    }
+
+    it('renders the reason and a Retry instead of an empty panel', async () => {
+      const { wrapper } = await expandFailing()
+
+      expect(wrapper.get('[data-testid="details-error-steam"]').text()).toContain(
+        'backend is down',
+      )
+      expect(wrapper.find('[data-testid="details-retry-steam"]').exists()).toBe(true)
+      wrapper.unmount()
     })
-    const store = useDataStore()
-    primeStore(store, migratedConfig)
-    const remove = vi.spyOn(store, 'deleteSource').mockResolvedValue(undefined)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    await wrapper.find('button.accordion-trigger').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-testid="remove-btn-steam"]').trigger('click')
-    await flushPromises()
+    it('renders the settings and takes the keyboard there when Retry succeeds', async () => {
+      const { wrapper, store } = await expandFailing()
+      primeStore(store, migratedConfig)
 
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(remove).toHaveBeenCalledWith('steam')
-    confirmSpy.mockRestore()
+      await wrapper.find('[data-testid="details-retry-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="form-save"]').exists()).toBe(true)
+      expect(document.activeElement).toBe(
+        wrapper.get('[data-testid="details-body-steam"]').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('says a second Retry failed rather than changing nothing on screen', async () => {
+      const { wrapper } = await expandFailing()
+
+      await wrapper.find('[data-testid="details-retry-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="details-message-steam"]').text()).toContain(
+        'Still could not load',
+      )
+      wrapper.unmount()
+    })
+
+    it('says so when Migrate to DB is refused, rather than only restoring the label', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, yamlConfig)
+      vi.spyOn(store, 'migrateSource').mockRejectedValue(new Error('already migrated'))
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="migrate-btn-steam"]').trigger('click')
+      await flushPromises()
+
+      const alert = wrapper.get('[data-testid="migrate-error-steam"]')
+      expect(alert.text()).toContain('already migrated')
+      expect(document.activeElement).toBe(alert.element)
+      wrapper.unmount()
+    })
+  })
+
+  describe('removing the source', () => {
+    async function expandWith(deleteSource: () => Promise<void>) {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      const remove = vi.spyOn(store, 'deleteSource').mockImplementation(deleteSource)
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      await wrapper.find('[data-testid="remove-btn-steam"]').trigger('click')
+      return { wrapper, remove }
+    }
+
+    it('asks in the panel rather than in a browser dialog, and removes once answered', async () => {
+      const { wrapper, remove } = await expandWith(async () => {})
+
+      expect(remove).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain('Steam')
+
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(remove).toHaveBeenCalledWith('steam')
+      wrapper.unmount()
+    })
+
+    it('keeps the source and the keyboard on Remove when the question is declined', async () => {
+      const { wrapper, remove } = await expandWith(async () => {})
+
+      await wrapper.find('[data-testid="confirm-panel-cancel"]').trigger('click')
+      await flushPromises()
+
+      expect(remove).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(
+        wrapper.get('[data-testid="remove-btn-steam"]').element,
+      )
+      wrapper.unmount()
+    })
+
+    it('says so when the removal is refused, instead of only ending the spinner', async () => {
+      const { wrapper } = await expandWith(async () => {
+        throw new Error('source is syncing')
+      })
+
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      const alert = wrapper.get('[data-testid="remove-error-steam"]')
+      expect(alert.text()).toContain('source is syncing')
+      expect(document.activeElement).toBe(alert.element)
+      wrapper.unmount()
+    })
+  })
+
+  describe('storing and clearing a secret', () => {
+    async function expand(attach = false) {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+        ...(attach ? { attachTo: document.body } : {}),
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      return { wrapper, store }
+    }
+
+    it('confirms a stored key only after the request resolves', async () => {
+      const { wrapper, store } = await expand()
+      vi.spyOn(store, 'setSourceSecret').mockResolvedValue(undefined)
+
+      await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
+      await wrapper.find('input[name="api_key"]').setValue('rotated')
+      await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="secret-saved-api_key"]').text()).toBe('Saved ✓')
+      expect(wrapper.find('input[name="api_key"]').exists()).toBe(false)
+    })
+
+    it('reports a refused store instead of closing the row as if it worked', async () => {
+      const { wrapper, store } = await expand()
+      vi.spyOn(store, 'setSourceSecret').mockRejectedValue(new Error('key rejected'))
+
+      await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
+      await wrapper.find('input[name="api_key"]').setValue('rotated')
+      await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="secret-error-api_key"]').text()).toContain(
+        'key rejected',
+      )
+      expect(wrapper.find('input[name="api_key"]').exists()).toBe(true)
+    })
+
+    it('destroys the credential only once the confirmation is answered', async () => {
+      const { wrapper, store } = await expand()
+      const clear = vi.spyOn(store, 'clearSourceSecret').mockResolvedValue(undefined)
+
+      await wrapper.find('[data-testid="secret-clear-api_key"]').trigger('click')
+      expect(clear).not.toHaveBeenCalled()
+
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(clear).toHaveBeenCalledWith('steam', 'api_key')
+    })
+
+    it('reports a refused clear rather than leaving the row unchanged and silent', async () => {
+      const { wrapper, store } = await expand()
+      vi.spyOn(store, 'clearSourceSecret').mockRejectedValue(new Error('still in use'))
+
+      await wrapper.find('[data-testid="secret-clear-api_key"]').trigger('click')
+      await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="secret-error-api_key"]').text()).toContain(
+        'still in use',
+      )
+    })
   })
 
   it('renders the Error status pill when updateSourceConfig rejects', async () => {
