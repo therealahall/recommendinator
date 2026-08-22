@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useApi, ApiError } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import { truncate } from '@/utils/format'
 import type {
   SyncSourceResponse,
@@ -524,7 +525,6 @@ export const useDataStore = defineStore('data', () => {
 
   /** Turn enrichment on from the Data tab, where the card that needs it lives. */
   async function enableEnrichment() {
-    const { useSettingsStore } = await import('@/stores/settings')
     await useSettingsStore().saveSection('enrichment', { 'enrichment.enabled': true })
     await loadEnrichmentStats()
   }
