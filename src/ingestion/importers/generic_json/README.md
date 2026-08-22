@@ -10,8 +10,9 @@ Names and per-field rules match the
 included: omit it or send `null` and the stored flag is left alone, send a real
 `true` or `false` and it wins in either direction.
 
-Unlike a CSV cell, a JSON field can hold a list directly, so `genre` and
-`platform` accept either one value or an array.
+Unlike a CSV cell, a JSON field can hold a container directly, so `genre` and
+`platform` accept either one value or an array, and `seasons_watched_dates`
+takes its season-to-date object rather than that object quoted as a string.
 
 [The same snapshot warning](../generic_csv/README.md#ignored) applies: a file
 this app exported states `ignored` on every entry.

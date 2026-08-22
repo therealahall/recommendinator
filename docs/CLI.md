@@ -138,8 +138,9 @@ rating. Passing one replaces it.
 
 A TV show status fills in a season list you did not pass only where that adds
 one: `--status completed` ticks every season. Nothing else infers seasons from a
-status, and nothing but `--clear-seasons` empties the list, because only a Trakt
-sync ever writes watched seasons back. Pass both and both are written as given.
+status, and nothing but `--clear-seasons` empties the list, because a Trakt sync
+and a CSV/JSON import both write watched seasons back. Pass both and both are
+written as given.
 
 Emptying a field is a separate instruction. `--clear-rating`, `--clear-review`,
 `--clear-seasons`, `--clear-genres` and `--clear-tags` are the only way to store
