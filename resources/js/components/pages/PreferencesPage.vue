@@ -18,7 +18,6 @@ onMounted(() => {
   prefs.load()
 })
 
-// Everything on this page is held until Save, so a nav link is a discard.
 onBeforeRouteLeave(
   () =>
     !prefs.isDirty ||
@@ -26,6 +25,7 @@ onBeforeRouteLeave(
 )
 
 function resetToDefaults() {
+  if (prefs.saving) return
   if (
     window.confirm(
       'Reset every preference to its defaults? This clears your scorer ' +
@@ -126,7 +126,7 @@ async function onRetry(): Promise<void> {
         </button>
         <button
           class="btn btn-secondary"
-          :disabled="prefs.saving"
+          :aria-disabled="prefs.saving || undefined"
           @click="resetToDefaults"
         >Reset to defaults</button>
         <!-- Outside the live region below: it changes on every keystroke, and

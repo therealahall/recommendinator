@@ -211,8 +211,9 @@ python3.11 -m src.cli library export --type book --format csv --output books.csv
 python3.11 -m src.cli library export --output library.csv   # every type
 ```
 
-Without `--type` the file covers the whole library. Its header carries all four
-types' columns, so each row leaves the ones its own type does not have blank.
+Without `--type` the file covers the whole library. A CSV header then carries
+all four types' columns plus a `content_type` column naming each row's type, so
+each row leaves the columns its own type does not have blank.
 Ignored items are exported either way, as the web Export button does.
 
 ## Source management

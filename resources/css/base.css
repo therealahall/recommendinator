@@ -1567,6 +1567,11 @@ input[type="checkbox"] {
   border-color: var(--border-focus);
 }
 
+.edit-field input[aria-invalid='true'],
+.edit-field textarea[aria-invalid='true'] {
+  border-color: var(--color-error);
+}
+
 .edit-save-error {
   margin: 0;
   font-size: var(--text-sm);
