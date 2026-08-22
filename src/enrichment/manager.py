@@ -313,10 +313,11 @@ class EnrichmentManager:
         return asked
 
     def _wait_for_completion(self, timeout: float = 5.0) -> bool:
-        """Wait for the background enrichment thread to finish.
+        """Wait for this process's worker thread to exit.
 
-        NOTE: This method exists for test synchronization.  Production code
-        should use :meth:`get_status` to poll running state instead.
+        Which the shared record cannot answer, and the interrupt path must know
+        before releasing the claim itself. Callers asking what the job is doing
+        want :meth:`get_status`.
 
         Args:
             timeout: Maximum time to wait in seconds.
