@@ -235,6 +235,95 @@ class TestEnrichmentJobControl:
         assert storage.enrichment_jobs.read().running is False
         assert storage.enrichment_jobs.claim(None) is True
 
+    def test_a_second_ctrl_c_during_the_wait_still_releases_the_claim(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Escaping the join leaves the claim held, which is what the first
+        Ctrl-C handler was added to prevent."""
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+        mock_manager = MagicMock(spec=EnrichmentManager)
+        mock_manager.start_enrichment.side_effect = (
+            lambda **_: storage.enrichment_jobs.claim(None)
+        )
+        mock_manager.get_status.side_effect = KeyboardInterrupt
+        mock_manager._wait_for_completion.side_effect = KeyboardInterrupt
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "start"],
+            storage,
+            mock_manager,
+            config={"enrichment": {"enabled": True, "batch_size": 50}},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert storage.enrichment_jobs.claim(None) is True
+
+    def test_the_interrupt_keeps_the_failures_the_run_had_already_published(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """They are usually why the operator interrupted."""
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+        mock_manager = MagicMock(spec=EnrichmentManager)
+
+        def claim_and_report(**_: object) -> bool:
+            claimed = storage.enrichment_jobs.claim(None)
+            storage.enrichment_jobs.heartbeat(
+                items_processed=1,
+                items_enriched=0,
+                items_failed=1,
+                items_not_found=0,
+                total_items=99,
+                current_item="Dune",
+                errors=["tmdb: HTTP 401"],
+            )
+            return claimed
+
+        mock_manager.start_enrichment.side_effect = claim_and_report
+        mock_manager.get_status.side_effect = KeyboardInterrupt
+        mock_manager._wait_for_completion.return_value = False
+
+        _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "start"],
+            storage,
+            mock_manager,
+            config={"enrichment": {"enabled": True, "batch_size": 50}},
+        )
+
+        assert storage.enrichment_jobs.read().errors == [
+            "tmdb: HTTP 401",
+            "Interrupted.",
+        ]
+
+    def test_a_run_that_released_itself_is_left_alone_by_the_interrupt(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Finishing unconditionally would record a completed run as cancelled."""
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+        mock_manager = MagicMock(spec=EnrichmentManager)
+
+        def claim_then_finish(**_: object) -> bool:
+            claimed = storage.enrichment_jobs.claim(None)
+            storage.enrichment_jobs.finish(completed=True, cancelled=False, errors=[])
+            return claimed
+
+        mock_manager.start_enrichment.side_effect = claim_then_finish
+        mock_manager.get_status.side_effect = KeyboardInterrupt
+        mock_manager._wait_for_completion.return_value = True
+
+        _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "start"],
+            storage,
+            mock_manager,
+            config={"enrichment": {"enabled": True, "batch_size": 50}},
+        )
+
+        record = storage.enrichment_jobs.read()
+        assert record.completed is True
+        assert record.cancelled is False
+
     def test_stop_with_nothing_running_says_so_rather_than_claiming_success(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:

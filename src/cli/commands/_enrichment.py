@@ -120,14 +120,21 @@ def enrichment_start(
         _echo_errors(status.errors)
 
     except KeyboardInterrupt:
-        click.echo("\nStopping enrichment...", err=True)
+        click.echo("\nStopping after the item in flight, up to 10s...", err=True)
         manager.stop_enrichment()
-        # The worker is a daemon thread, so without this wait the process exits
-        # before it reaches its next stop check and never releases the claim —
-        # leaving a dead run blocking both Start doors until it goes stale.
-        if not manager._wait_for_completion(timeout=10.0):
+        # A daemon worker leaves the claim held when the process exits first,
+        # blocking both Start doors until it goes stale. A second Ctrl-C is
+        # caught here rather than escaping the join, which would do the same.
+        try:
+            released = manager._wait_for_completion(timeout=10.0)
+        except KeyboardInterrupt:
+            released = False
+        if not released:
+            # Extended, not replaced: the reason for interrupting is usually in
+            # the failures the run had already published.
+            errors = [*storage.enrichment_jobs.read().errors, "Interrupted."]
             storage.enrichment_jobs.finish(
-                completed=False, cancelled=True, errors=["Interrupted."]
+                completed=False, cancelled=True, errors=errors
             )
         click.echo("Enrichment stopped.")
 
