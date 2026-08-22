@@ -137,6 +137,10 @@ class ContentItem(BaseModel):
     # row). Populated when read from storage; None when the state is unknown.
     enriched: bool | None = None
 
+    # Runtime-only: enriched by the ``manual`` provider, the state an edit to
+    # genres, tags or description writes and only a reset undoes.
+    manually_enriched: bool | None = None
+
     # Whether this item is ignored (excluded from recommendations).
     # None means "not specified by this source" — the existing database
     # value is preserved on update.  True/False explicitly sets the flag.

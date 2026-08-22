@@ -131,6 +131,23 @@ describe('AddSourceModal', () => {
     expect((idInput.element as HTMLInputElement).value).toBe('custom-id')
   })
 
+  it('asks before a backdrop click discards a typed API key, and closes when nothing is typed', async () => {
+    const { wrapper } = await mountWithPlugins()
+
+    await wrapper.trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+
+    await wrapper.find('[data-testid="add-source-secret-password"]').setValue('hunter2')
+    await wrapper.trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(true)
+    expect(
+      (wrapper.find('[data-testid="add-source-secret-password"]').element as HTMLInputElement)
+        .value,
+    ).toBe('hunter2')
+  })
+
   it('shows an inline error and disables Create for an invalid id', async () => {
     const { wrapper } = await mountWithPlugins()
     await wrapper.find('#add-source-id').setValue('Bad ID')

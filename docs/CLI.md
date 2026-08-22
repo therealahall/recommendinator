@@ -128,6 +128,7 @@ python3.11 -m src.cli library edit --id 42 --clear-rating
 python3.11 -m src.cli library edit --id 42 --clear-review
 python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
 python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
+python3.11 -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
 python3.11 -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
 ```
 
@@ -139,16 +140,18 @@ there. Omit `--seasons-watched` and the status fills it in: `--status unread`
 empties it, `--status completed` ticks every season. Pass both and both are
 written as given.
 
-Emptying a field is a separate instruction. `--clear-rating` and `--clear-review`
-are the only way to store nothing there, and neither may be combined with its
-value flag. `--review ""` is refused, pointing you at `--clear-review`, because
-an empty string is far more often a shell accident than an intention.
+Emptying a field is a separate instruction. `--clear-rating`, `--clear-review`,
+`--clear-genres` and `--clear-tags` are the only way to store nothing there, and
+none may be combined with its value flag. `--review ""` is refused, pointing you
+at `--clear-review`, because an empty string is far more often a shell accident
+than an intention. A description is the exception: `--description ""` is its
+clear, whitespace included, matching the emptied box the web sends.
 
 `--seasons-watched` takes comma-separated season numbers, each 1-200. Repeated
 `--genre` and `--tag` replace the existing lists rather than appending. Any of
 `--genre`, `--tag` or `--description` marks the item enriched through the
 `manual` provider, dropping it out of `not_enriched` and out of the automatic
-queue.
+queue — `library show` says so, and `enrichment reset --id` undoes it.
 
 `--release-year` and `--creator` correct the two fields a title match is vetoed
 on, so a row still holding a released merge's wrong year takes the next source
@@ -355,7 +358,13 @@ python3.11 -m src.cli enrichment start --type movie
 python3.11 -m src.cli enrichment start --retry-not-found   # providers drift over time
 python3.11 -m src.cli enrichment status
 python3.11 -m src.cli enrichment reset                     # re-process on the next run
+python3.11 -m src.cli enrichment reset --id 42             # one item, back to automatic
 ```
+
+`--id` hands a single item back to automatic enrichment, which is what undoes a
+manual edit to its genres, tags or description. It takes no `--provider` or
+`--type` beside it, and the web dialog's **Restore automatic enrichment** does
+the same thing.
 
 ## Authentication (GOG/Epic/Trakt)
 

@@ -2106,6 +2106,66 @@ def test_edit_item_manual_metadata(client, mock_components):
     )
 
 
+def test_rating_alone_keeps_the_item_in_the_not_enriched_filter_regression(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "edit.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="movie-1",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Sci-Fi"], "description": "A linguist."},
+        ),
+        user_id=1,
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    saved = client.patch(f"/api/items/{db_id}?user_id=1", json={"rating": 4})
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["manually_enriched"] is False
+    listed = client.get("/api/items?user_id=1&enrichment=not_enriched").json()
+    assert [item["db_id"] for item in listed] == [db_id]
+    assert listed[0]["rating"] == 4
+    assert listed[0]["genres"] == ["Sci-Fi"]
+
+
+def test_an_emptied_description_clears_and_the_reset_hands_the_item_back(
+    mock_components, tmp_path
+):
+    storage = StorageManager(sqlite_path=tmp_path / "clear.db")
+    db_id = storage.save_content_item(
+        ContentItem(
+            id="movie-1",
+            title="Arrival",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"description": "A linguist."},
+        ),
+        user_id=1,
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    cleared = client.patch(f"/api/items/{db_id}?user_id=1", json={"description": ""})
+
+    assert cleared.status_code == 200, cleared.text
+    assert not cleared.json()["description"]
+    assert cleared.json()["manually_enriched"] is True
+    assert client.get("/api/items?user_id=1&enrichment=not_enriched").json() == []
+
+    restored = client.post(
+        "/api/enrichment/reset", json={"item_id": db_id, "user_id": 1}
+    )
+
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["count"] == 1
+    back = client.get("/api/items?user_id=1&enrichment=not_enriched").json()
+    assert [item["db_id"] for item in back] == [db_id]
+    assert back[0]["manually_enriched"] is False
+
+
 def test_edit_rejects_oversized_manual_metadata(client, mock_components):
     """PATCH /api/items/{db_id} rejects manual metadata above the model caps.
 

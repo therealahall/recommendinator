@@ -56,11 +56,10 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "ignored": bool(item.ignored),
         "seasons_watched": seasons_watched,
         "total_seasons": total_seasons,
-        # enriched is bool | None on ContentItem; None means the enrichment
-        # state is unknown (e.g. an item not read back from storage). The wire
-        # type is a non-nullable bool, so None intentionally serializes as
-        # False — unknown state is presented as "not enriched".
+        # None means the state is unknown (an item not read back from storage),
+        # which the wire type presents as "not enriched".
         "enriched": bool(item.enriched),
+        "manually_enriched": bool(item.manually_enriched),
         "release_year": to_int(metadata.get("release_year")),
         "genres": metadata.get("genres") or [],
         "tags": metadata.get("tags") or [],

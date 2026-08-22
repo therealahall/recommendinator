@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { useDataStore } from '@/stores/data'
+import DiscardConfirm from '@/components/molecules/DiscardConfirm.vue'
 import type { PluginInfoResponse, SourceCreateRequest } from '@/types/api'
 
 const data = useDataStore()
 const modalContent = ref<HTMLElement | null>(null)
-useFocusTrap(modalContent, () => emit('close'))
 
 const emit = defineEmits<{
   created: [sourceId: string]
@@ -35,6 +36,19 @@ function onSourceIdInput(event: Event): void {
   sourceIdEdited.value = true
   sourceId.value = (event.target as HTMLInputElement).value
 }
+
+const dirty = computed(
+  () =>
+    sourceIdEdited.value ||
+    !enabled.value ||
+    Object.values(fieldValues.value).some((value) => value !== undefined && value !== ''),
+)
+
+const { confirming, requestClose, keepEditing } = useDiscardGuard(dirty, () =>
+  emit('close'),
+)
+
+useFocusTrap(modalContent, requestClose)
 
 onMounted(async () => {
   if (data.availablePlugins.length === 0) {
@@ -191,7 +205,7 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="add-source-modal" @click.self="emit('close')">
+  <div class="add-source-modal" @click.self="requestClose">
     <div
       ref="modalContent"
       class="add-source-modal-content"
@@ -377,6 +391,8 @@ async function submit(): Promise<void> {
         class="add-source-error"
         role="alert"
       >{{ errorMessage }}</p>
+
+      <DiscardConfirm v-if="confirming" @keep="keepEditing" @discard="emit('close')" />
 
       <div class="add-source-actions">
         <!-- Cancel stays focusable while submitting so the dialog always has at

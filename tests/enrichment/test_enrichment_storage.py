@@ -590,6 +590,26 @@ class TestManualMetadataEdit:
         assert storage_manager.enrichment.status(db_id) is None
         assert storage_manager.get_content_item(db_id).enriched is False
 
+    @pytest.mark.parametrize("emptied", ["", "   "])
+    def test_an_emptied_description_clears_rather_than_storing_blanks(
+        self, storage_manager: StorageManager, emptied: str
+    ) -> None:
+        """Stored whitespace would read as a description the user wrote."""
+        db_id = storage_manager.save_content_item(
+            ContentItem(
+                id="movie1",
+                title="Test Movie",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"description": "Original synopsis."},
+            )
+        )
+
+        storage_manager.update_item_from_ui(db_id=db_id, description=emptied)
+
+        loaded = storage_manager.get_content_item(db_id)
+        assert not loaded.metadata.get("description")
+
     def test_genres_empty_list_clears_while_none_leaves_as_is(
         self, storage_manager: StorageManager
     ) -> None:

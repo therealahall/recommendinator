@@ -46,7 +46,7 @@ describe('EditModal', () => {
     vi.useFakeTimers()
   })
 
-  it('Escape key emits close', async () => {
+  it('Escape closes a dialog nobody has edited', async () => {
     const wrapper = mount(EditModal, {
       props: { item: defaultItem, saving: false, saveError: '' },
       attachTo: document.body,
@@ -57,7 +57,84 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
-  it('a book offers no year box, and save emits its status, genres, tags and description', async () => {
+  it.each([
+    ['Escape', async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))],
+    ['the backdrop', async (w: ReturnType<typeof mount>) => w.trigger('click')],
+  ])('%s asks before discarding a typed review, and declining keeps it', async (_name, dismiss) => {
+    // Both gestures used to close on the spot, taking a long review with them.
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await wrapper.find('#edit-review').setValue('A long review.')
+
+    await dismiss(wrapper)
+    await vi.runAllTimersAsync()
+
+    expect(wrapper.emitted('close')).toBeFalsy()
+    const asked = wrapper.get('[role="alertdialog"]')
+    expect(wrapper.get('[aria-modal="true"]').element.contains(asked.element)).toBe(true)
+
+    await asked.findAll('button').find(b => b.text() === 'Keep editing')!.trigger('click')
+
+    expect(wrapper.emitted('close')).toBeFalsy()
+    expect((wrapper.get('#edit-review').element as HTMLTextAreaElement).value).toBe(
+      'A long review.',
+    )
+    expect(
+      wrapper.get('[aria-modal="true"]').element.contains(document.activeElement),
+    ).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('discarding from the confirmation closes the dialog', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await wrapper.get('[aria-label="4 stars"]').trigger('click')
+    await wrapper.trigger('click')
+    await vi.runAllTimersAsync()
+
+    await wrapper.get('[role="alertdialog"]').findAll('button')
+      .find(b => b.text() === 'Discard')!.trigger('click')
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('offers a manually enriched item its way back to automatic enrichment', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...defaultItem, enriched: true, manually_enriched: true },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.findAll('button')
+      .find(b => b.text().includes('Restore automatic enrichment'))!.trigger('click')
+
+    expect(wrapper.emitted('restoreEnrichment')).toEqual([[1]])
+    wrapper.unmount()
+  })
+
+  it('says what editing the enrichment fields costs', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    expect(wrapper.text()).toContain('opts the item out of automatic enrichment')
+    expect(wrapper.text()).not.toContain('Restore automatic enrichment')
+    wrapper.unmount()
+  })
+
+  it('a book offers no year box, and save emits only the fields that changed', async () => {
+    // Regression: genres, tags and description went with every save, and the
+    // door stamps any of them "manual" — a rating dropped the item out of the
+    // Not enriched filter and out of automatic enrichment for good.
     const item = { ...defaultItem, genres: ['Sci-Fi'], tags: [], description: null }
     const wrapper = mount(EditModal, {
       props: { item, saving: false, saveError: '' },
@@ -73,20 +150,65 @@ describe('EditModal', () => {
     expect(emitted[0][0]).toBe(1)
     expect(emitted[0][1]).toEqual({
       status: 'completed',
-      rating: null,
-      review: null,
-      genres: ['Sci-Fi'],
       tags: ['classic'],
       description: 'A tale.',
     })
     wrapper.unmount()
   })
 
+  it('a rating alone sends the rating alone', async () => {
+    const item = { ...defaultItem, genres: ['Sci-Fi'], tags: ['classic'], description: 'A tale.' }
+    const wrapper = mount(EditModal, {
+      props: { item, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('[aria-label="4 stars"]').trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ rating: 4 })
+    wrapper.unmount()
+  })
+
+  it('an emptied description is sent as the clear, not dropped', async () => {
+    // Regression: the payload used `description || null`, and null is the
+    // door's "leave alone", so an emptied box silently kept the old text.
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...defaultItem, description: 'A tale.' },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.find('#edit-description').setValue('   ')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ description: '' })
+    wrapper.unmount()
+  })
+
+  it('emptying the genre chips clears the list', async () => {
+    const wrapper = mount(EditModal, {
+      props: {
+        item: { ...defaultItem, genres: ['Sci-Fi'] },
+        saving: false,
+        saveError: '',
+      },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('[aria-label="Remove Sci-Fi"]').trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ genres: [] })
+    wrapper.unmount()
+  })
+
   it('save serializes a whitespace-only review to null', async () => {
-    // Regression: the payload coerced with `|| null`, so '' cleared the review
-    // but '   ' was sent as a string. A stored blank review reads as one the
-    // user wrote and blocks any later import from filling the field, so the
-    // API rejects it — the modal now clears on blank, as the CLI does.
+    // Regression: '   ' went as a string, and a stored blank review reads as
+    // one the user wrote, blocking every later import from filling the field.
     const wrapper = mount(EditModal, {
       props: { item: { ...defaultItem, review: 'Loved it.' }, saving: false, saveError: '' },
       attachTo: document.body,
@@ -95,14 +217,7 @@ describe('EditModal', () => {
     await wrapper.find('#edit-review').setValue('   ')
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
 
-    expect(wrapper.emitted('save')![0][1]).toEqual({
-      status: 'unread',
-      rating: null,
-      review: null,
-      genres: [],
-      tags: [],
-      description: null,
-    })
+    expect(wrapper.emitted('save')![0][1]).toEqual({ review: null })
     wrapper.unmount()
   })
 
@@ -120,19 +235,43 @@ describe('EditModal', () => {
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
     expect(wrapper.emitted('save')![0][1]).toEqual({
       status: 'completed',
-      rating: null,
-      review: null,
-      genres: [],
-      tags: [],
-      description: null,
       seasons_watched: [1, 2, 3, 4, 5],
     })
     wrapper.unmount()
   })
 
+  it('opened as Mark complete it preselects completed, and the choice stays editable', async () => {
+    // Seeded from a recommendation's own status the shared dialog opened on
+    // "unread", so a rating saved from it marked nothing complete.
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false, saveError: '', initialStatus: 'completed' },
+      attachTo: document.body,
+    })
+
+    expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe('completed')
+    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(5)
+
+    await wrapper.findAll('.season-checkbox')[4].trigger('click')
+    await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
+
+    expect(wrapper.emitted('save')![0][1]).toEqual({ seasons_watched: [1, 2, 3, 4] })
+    wrapper.unmount()
+  })
+
+  it('opened from the library it keeps the item\'s own status', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: tvItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+
+    expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe(
+      'currently_consuming',
+    )
+    wrapper.unmount()
+  })
+
   it('save emits a corrected release year, and a creator trimmed to exactly the bound', async () => {
-    // The bound itself is what `library edit --creator` and the API both take,
-    // so refusing it would leave a 600-character import with nothing to trim to.
+    // Refusing the bound itself leaves a 600-character import nothing to trim to.
     const atTheBound = 'id Software '.padEnd(MAX_CREATOR_LENGTH, 'x')
     const item = {
       ...defaultItem,

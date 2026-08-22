@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
+import { useDataStore } from '@/stores/data'
 import type { ItemEditRequest } from '@/types/api'
 import RecControls from '@/components/organisms/RecControls.vue'
 import RecCard from '@/components/molecules/RecCard.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 
 const recs = useRecommendationsStore()
+const data = useDataStore()
 const editTrigger = ref<HTMLElement | null>(null)
 const recList = ref<HTMLElement | null>(null)
 const heading = ref<HTMLElement | null>(null)
@@ -14,15 +16,12 @@ const heading = ref<HTMLElement | null>(null)
 function onComplete(dbId: number) {
   const active = document.activeElement
   editTrigger.value = active instanceof HTMLElement && active !== document.body ? active : null
-  // Intentionally not awaited: the triggering control must be captured before
-  // openEdit's async GET resolves and the focus trap moves focus into the modal.
+  // Not awaited: the trigger must be captured before the trap takes focus.
   recs.openEdit(dbId)
 }
 
-// Return focus when the modal closes. On cancel the triggering card is still in
-// the DOM, so focus it. On a successful save the card is removed, leaving a
-// detached trigger; in that case land focus on the next remaining card action
-// or the page heading so keyboard users are not stranded at <body>.
+// A saved card is removed, leaving a detached trigger: focus then lands on the
+// next card's action or the heading, never at <body>.
 function restoreFocus() {
   const trigger = editTrigger.value
   editTrigger.value = null
@@ -36,23 +35,28 @@ function restoreFocus() {
 
 async function onCloseEdit() {
   recs.closeEdit()
-  // Wait for the modal to unmount before restoring focus, matching the save
-  // path so focus never lands on a control that is about to be torn down.
+  // Let the modal unmount first, so focus never lands on a torn-down control.
   await nextTick()
   restoreFocus()
 }
 
-async function onSave(dbId: number, data: ItemEditRequest) {
+async function onRestoreEnrichment(dbId: number) {
   try {
-    await recs.markComplete(dbId, data)
+    await data.restoreItemEnrichment(dbId)
+    await recs.openEdit(dbId)
+  } catch (err) {
+    recs.editError = err instanceof Error ? err.message : 'Failed to restore enrichment'
+  }
+}
+
+async function onSave(dbId: number, edits: ItemEditRequest) {
+  try {
+    await recs.markComplete(dbId, edits)
   } catch {
-    // A failed save keeps the modal open for retry, where the dialog puts
-    // focus on the refusal. Swallow here to avoid an unhandled rejection —
-    // mirrors LibraryPage's save handler.
+    // The dialog stays open on the refusal it now shows; swallowed here only
+    // to avoid an unhandled rejection.
     return
   }
-  // Success: the store closed the modal and removed the card. Move focus to the
-  // next remaining card action or the heading so keyboard users are not stranded.
   await nextTick()
   restoreFocus()
 }
@@ -90,13 +94,14 @@ async function onSave(dbId: number, data: ItemEditRequest) {
       />
     </div>
 
-    <!-- Edit Modal (shared with the library) -->
     <EditModal
       v-if="recs.editingItem"
       :item="recs.editingItem"
       :saving="recs.editSaving"
       :save-error="recs.editError"
+      initial-status="completed"
       @save="onSave"
+      @restore-enrichment="onRestoreEnrichment"
       @close="onCloseEdit"
     />
   </div>

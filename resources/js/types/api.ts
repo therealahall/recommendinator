@@ -23,6 +23,8 @@ export interface ContentItemResponse {
   total_seasons: number | null
   release_year: number | null
   enriched: boolean
+  /** Enriched by the manual provider, which is what an edit here writes. */
+  manually_enriched?: boolean
   genres: string[]
   tags: string[]
   description: string | null
@@ -375,7 +377,7 @@ export interface TraktPollResponse {
 // --- Item Edit ---
 
 export interface ItemEditRequest {
-  status: string
+  status?: string
   rating?: number | null
   review?: string | null
   seasons_watched?: number[] | null

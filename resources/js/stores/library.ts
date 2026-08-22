@@ -11,14 +11,12 @@ const SEARCH_DEBOUNCE_MS = 250
 export const useLibraryStore = defineStore('library', () => {
   const api = useApi()
 
-  // State
   const items = ref<ContentItemResponse[]>([])
   const offset = ref(0)
   const hasMore = ref(true)
   const loading = ref(false)
   const error = ref('')
 
-  // Filters
   const typeFilter = ref('')
   const statusFilter = ref('')
   const enrichmentFilter = ref('')
@@ -26,14 +24,11 @@ export const useLibraryStore = defineStore('library', () => {
   const needsRating = ref(false)
   const sortBy = ref(DEFAULT_SORT)
 
-  // Search
   const searchQuery = ref('')
   const searchLoading = ref(false)
   const searchAnnouncement = ref('')
   let searchTimer: ReturnType<typeof setTimeout> | null = null
-  // Tracks the in-flight load so a search triggered while a request is
-  // already running awaits the real settle instead of an instantly-resolved
-  // promise, keeping searchLoading bound to the true request lifecycle.
+  // A search started mid-load awaits the real settle, not a resolved promise.
   let inFlightLoad: Promise<void> | null = null
 
   // Edit modal. A refused save is the dialog's own, not the page's: the page
@@ -42,10 +37,8 @@ export const useLibraryStore = defineStore('library', () => {
   const editSaving = ref(false)
   const editError = ref('')
 
-  // Getters
   const totalLoaded = computed(() => items.value.length)
 
-  // Actions
   function resetAndLoad() {
     offset.value = 0
     items.value = []
@@ -55,8 +48,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function load(isReset = false): Promise<void> {
-    // Never return undefined: a search triggered while a load is already in
-    // flight must await that settle so its finally clears searchLoading.
+    // Never undefined: the caller's finally clears searchLoading.
     if (loading.value) return inFlightLoad ?? Promise.resolve()
     inFlightLoad = runLoad(isReset).finally(() => {
       inFlightLoad = null
@@ -78,9 +70,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       if (typeFilter.value) params.type = typeFilter.value
       if (needsRating.value) {
-        // The backend forces completed items for needs-rating, so the user's
-        // own status filter is irrelevant here — omit it to avoid a redundant
-        // or contradictory param.
+        // needs-rating forces completed, so a status param would contradict it.
         params.needs_rating = true
       } else if (statusFilter.value) {
         params.status = statusFilter.value
@@ -151,8 +141,7 @@ export const useLibraryStore = defineStore('library', () => {
     value: string | boolean,
   ) {
     if (key === 'search') {
-      // The search input caps typing at the same length; this clamp keeps a
-      // programmatic caller from sending a term the API answers with a 422.
+      // Clamped so a programmatic caller cannot send the API a 422.
       searchQuery.value = (value as string).slice(0, MAX_SEARCH_LENGTH)
       if (searchTimer) clearTimeout(searchTimer)
       searchTimer = setTimeout(() => {
@@ -198,7 +187,6 @@ export const useLibraryStore = defineStore('library', () => {
         { ...data, user_id: app.currentUserId },
       )
 
-      // Update item in list
       const index = items.value.findIndex((i) => i.db_id === dbId)
       if (index >= 0) {
         items.value[index] = { ...items.value[index], ...updated }
@@ -220,7 +208,6 @@ export const useLibraryStore = defineStore('library', () => {
         user_id: app.currentUserId,
       })
 
-      // Update item in list
       const index = items.value.findIndex((i) => i.db_id === dbId)
       if (index >= 0) {
         items.value[index] = { ...items.value[index], ignored }
@@ -230,8 +217,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // The export covers one content type, or the whole library when none is
-  // picked; the other on-screen filters never narrow it.
+  // One content type, or the whole library; no other filter narrows it.
   function exportUrl(format: 'csv' | 'json'): string {
     const app = useAppStore()
     const params = new URLSearchParams({

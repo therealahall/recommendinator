@@ -1,13 +1,24 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, onUnmounted } from 'vue'
 import { useLibraryStore } from '@/stores/library'
+import { useDataStore } from '@/stores/data'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 
 const lib = useLibraryStore()
+const data = useDataStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
+
+async function onRestoreEnrichment(dbId: number) {
+  try {
+    await data.restoreItemEnrichment(dbId)
+    await lib.openEdit(dbId)
+  } catch (err) {
+    lib.editError = err instanceof Error ? err.message : 'Failed to restore enrichment'
+  }
+}
 
 function onEdit(dbId: number) {
   const active = document.activeElement
@@ -36,7 +47,6 @@ function setupInfiniteScroll() {
     },
     { rootMargin: '200px' },
   )
-  // Will observe sentinel once it renders
   watch(sentinel, (el) => {
     if (el && observer) observer.observe(el)
   })
@@ -113,16 +123,15 @@ onUnmounted(() => {
       All {{ lib.totalLoaded }} items loaded
     </div>
 
-    <!-- Infinite scroll sentinel -->
     <div v-if="lib.hasMore && !lib.loading" ref="sentinel" />
 
-    <!-- Edit Modal -->
     <EditModal
       v-if="lib.editingItem"
       :item="lib.editingItem"
       :saving="lib.editSaving"
       :save-error="lib.editError"
       @save="lib.saveEdit"
+      @restore-enrichment="onRestoreEnrichment"
       @close="onCloseEdit"
     />
   </div>

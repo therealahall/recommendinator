@@ -453,17 +453,12 @@ def _build_content_item_select() -> str:
 
 _CONTENT_ITEM_SELECT = _build_content_item_select()
 
-# The projection a library search reads: an id and the stored haystack, and no
-# detail blob to parse, so a candidate that does not match never costs a
-# ContentItem.
+# Id and haystack only: a candidate that does not match never costs a
+# ContentItem parse.
 _SEARCH_CANDIDATE_SELECT = f"\n    SELECT ci.id, ci.search_text{_CONTENT_ITEM_FROM}"
 
-# An item is enriched when it has a clean enrichment_status row: a real
-# provider found a match, no error, and re-enrichment is not pending. Anything
-# else (no row, needs_enrichment=1, not_found quality, or a recorded error)
-# counts as not enriched. Expressed as a WHERE fragment over the ``es`` alias
-# from _CONTENT_ITEM_SELECT so the list filter and the per-row flag stay in
-# sync.
+# A WHERE fragment over _CONTENT_ITEM_SELECT's ``es`` alias, so the list filter
+# and the per-row flag of _row_is_enriched stay in sync.
 _ENRICHED_PREDICATE = (
     "es.content_item_id IS NOT NULL"
     " AND es.needs_enrichment = 0"
@@ -1428,6 +1423,9 @@ class SQLiteDB:
             source=row["source"],
             ignored=bool(row["ignored"]),
             enriched=self._row_is_enriched(row),
+            manually_enriched=(
+                self._row_is_enriched(row) and row["enrichment_provider"] == "manual"
+            ),
             metadata=metadata,
         )
 
@@ -1570,8 +1568,6 @@ class SQLiteDB:
                 if creator is not None:
                     write_derived_columns(cursor, db_id)
 
-            # For a TV show, whichever of status and seasons the caller
-            # supplied derives the other; supplying both writes both as given.
             if content_type == "tv_show":
                 cursor.execute(
                     "SELECT seasons, metadata FROM tv_show_details"
@@ -1609,12 +1605,8 @@ class SQLiteDB:
                     previously_watched = existing_metadata.get("seasons_watched")
                     if not isinstance(previously_watched, list):
                         previously_watched = []
-                    # A season already dated keeps its date. A season newly
-                    # ticked in this edit (not in the previous list) gets
-                    # `now`. A season that was already watched but has no
-                    # date is left undated rather than inventing one.
-                    # Unchecked seasons fall out (rebuilt from the incoming
-                    # list only).
+                    # A season watched before this edit but undated stays
+                    # undated rather than being dated now.
                     new_dates: dict[str, str] = {}
                     for season in seasons_watched:
                         key = str(season)
@@ -1630,8 +1622,6 @@ class SQLiteDB:
                         (json.dumps(existing_metadata), db_id),
                     )
 
-            # Update the content_items row directly, writing only the fields
-            # the caller supplied so a partial edit cannot erase the rest.
             set_parts = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
             params: list[Any] = [resolved_status]
             if rating is not UNSET:
@@ -1639,17 +1629,12 @@ class SQLiteDB:
                 params.append(rating)
             if review is not UNSET:
                 set_parts.append("review = ?")
-                # A blank is not a review. The check lives here rather than
-                # only in the callers so the door holds the property itself:
-                # every caller today refuses or drops a blank, and the next one
-                # inherits NULL instead of a value that reads as the user's.
+                # The door holds this itself: a stored blank reads as a review
+                # the user wrote and refuses every later import.
                 params.append(review if review and review.strip() else None)
             if resolved_status == "completed" and existing_status != "completed":
-                # Only a transition into completed dates the completion: an
-                # item that was already completed but undated is left undated
-                # rather than being dated by an unrelated edit. COALESCE fills
-                # the empty case without disturbing a date the user (or an
-                # import) already recorded.
+                # An already-completed item keeps whatever date it has, so an
+                # unrelated edit cannot date an import that carried none.
                 set_parts.append("date_completed = COALESCE(date_completed, ?)")
                 params.append(local_today().isoformat())
             params.append(db_id)
@@ -1659,8 +1644,8 @@ class SQLiteDB:
             )
 
             if genres is not None or tags is not None or description is not None:
-                # _write_manual_metadata raises for an unknown content_type, so
-                # the enriched row is only written when metadata actually was.
+                # Raises for an unknown content_type, so the enriched row is
+                # only written when metadata actually was.
                 self._write_manual_metadata(
                     cursor, db_id, content_type, genres, tags, description
                 )
@@ -1684,7 +1669,8 @@ class SQLiteDB:
         if tags is not None:
             updates["tags"] = json.dumps(tags)
         if description is not None:
-            updates["description"] = description
+            # Whitespace is not a description: a blank normalises to the clear.
+            updates["description"] = description.strip()
         self._write_detail_columns(cursor, db_id, content_type, updates)
 
     def _write_corrections(
