@@ -65,8 +65,11 @@ async function onRetryDetails(): Promise<void> {
   detailsMessage.value = 'Loading these settings again…'
   await ensureDetails()
   if (detailsError.value) {
-    // A second failure changes nothing else on screen.
+    // A second failure changes nothing else on screen, and the Retry unmounts
+    // for the length of the request, taking the focus with it.
     detailsMessage.value = 'Still could not load these settings. Try again in a moment.'
+    await nextTick()
+    panelControl(`details-retry-${props.source.id}`)?.focus()
     return
   }
   detailsMessage.value = ''

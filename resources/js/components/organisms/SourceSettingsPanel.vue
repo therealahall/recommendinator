@@ -99,12 +99,6 @@ const removeQuestion = computed(
     '(if any) will reappear next reload.',
 )
 
-async function cancelRemove(): Promise<void> {
-  removeConfirming.value = false
-  await nextTick()
-  control(`remove-btn-${props.source.id}`)?.focus()
-}
-
 async function onRemove(): Promise<void> {
   removeConfirming.value = false
   if (removing.value) return
@@ -112,6 +106,10 @@ async function onRemove(): Promise<void> {
   removeError.value = ''
   try {
     await data.deleteSource(props.source.id)
+    await nextTick()
+    // This whole accordion went with the source, so the keyboard lands on the
+    // panel that outlived it rather than at <body> (WCAG 2.4.3).
+    control('sync-sources-panel')?.focus()
   } catch (err) {
     removeError.value = reason(err)
     await nextTick()
@@ -163,7 +161,7 @@ onBeforeUnmount(() => {
     confirm-label="Remove"
     cancel-label="Keep it"
     destructive
-    @cancel="cancelRemove"
+    @cancel="removeConfirming = false"
     @confirm="onRemove"
   />
 

@@ -383,12 +383,22 @@ function isSecretSet(name: string): boolean {
             :disabled="disabled || secretBusy(field.name)"
             @click="askClear(field.name)"
           >Clear</button>
+          <!-- Mounted while silent: inserted populated it reads as content
+               (4.1.3), and nothing else announces that the write landed —
+               focus goes to Replace, whose name does not change. -->
           <span
-            v-if="secretSaveStatus(field.name) === 'saved'"
-            class="source-form-save-status source-form-save-status--ok"
+            class="secret-saved"
+            :class="{
+              'source-form-save-status source-form-save-status--ok':
+                secretSaveStatus(field.name) === 'saved',
+            }"
             :data-testid="`secret-saved-${field.name}`"
             role="status"
-          >{{ isSecretSet(field.name) ? 'Saved ✓' : 'Cleared ✓' }}</span>
+          >{{
+            secretSaveStatus(field.name) === 'saved'
+              ? `${field.name} ${isSecretSet(field.name) ? 'saved' : 'cleared'}`
+              : ''
+          }}</span>
         </div>
         <p v-if="field.description" class="source-form-help">
           {{ field.description }}
@@ -622,6 +632,11 @@ function isSecretSet(name: string): boolean {
   align-items: center;
   gap: var(--space-3);
   margin-left: auto;
+}
+
+/* Empty it takes no room, so the row does not shift when the write lands. */
+.secret-saved:empty {
+  display: none;
 }
 
 .secret-error {
