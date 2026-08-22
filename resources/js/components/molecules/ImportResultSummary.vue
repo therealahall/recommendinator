@@ -41,13 +41,13 @@ const missed = computed(() => props.result.skipped + props.result.failed)
     <p
       v-for="note in result.notes"
       :key="note"
-      class="import-note"
+      class="import-callout import-note"
       data-testid="import-note"
     >{{ note }}</p>
 
     <!-- Not an error state and not styled as one. A file where most rows
          imported and two did not is a success that lists two rows. -->
-    <div v-if="result.errors.length" class="import-misses">
+    <div v-if="result.errors.length" class="import-callout">
       <!-- "Rows", because each message names its own unit: a JSON array
            entry is not a file line, and the heading cannot know which. -->
       <h4 class="import-misses-title">
@@ -106,7 +106,10 @@ const missed = computed(() => props.result.skipped + props.result.failed)
   color: var(--text-primary);
 }
 
-.import-misses {
+/* One rule rather than a comma-grouped selector: contrast.test.ts finds a rule
+   body by anchoring the selector at the start of a line, so a second selector
+   in the group would be invisible to it. */
+.import-callout {
   padding: var(--space-3) var(--space-4);
   border-left: 3px solid var(--color-warning);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -115,10 +118,6 @@ const missed = computed(() => props.result.skipped + props.result.failed)
 
 .import-note {
   margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-left: 3px solid var(--color-warning);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  background: var(--bg-elevated);
   font-size: var(--text-sm);
   color: var(--text-primary);
 }
