@@ -453,6 +453,29 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "ON sync_runs(user_id, source_id, started_at DESC)"
     )
 
+    # One row, because one job runs at a time. In the database rather than on
+    # the manager: the CLI and the server are separate processes.
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS enrichment_job ("
+        "id INTEGER PRIMARY KEY CHECK (id = 1), "
+        "running INTEGER NOT NULL DEFAULT 0, "
+        "completed INTEGER NOT NULL DEFAULT 0, "
+        "cancelled INTEGER NOT NULL DEFAULT 0, "
+        "stop_requested INTEGER NOT NULL DEFAULT 0, "
+        "items_processed INTEGER NOT NULL DEFAULT 0, "
+        "items_enriched INTEGER NOT NULL DEFAULT 0, "
+        "items_failed INTEGER NOT NULL DEFAULT 0, "
+        "items_not_found INTEGER NOT NULL DEFAULT 0, "
+        "total_items INTEGER NOT NULL DEFAULT 0, "
+        "current_item TEXT NOT NULL DEFAULT '', "
+        "content_type TEXT, "
+        "errors_json TEXT NOT NULL DEFAULT '[]', "
+        "started_at TIMESTAMP, "
+        "finished_at TIMESTAMP, "
+        "heartbeat_at TIMESTAMP"
+        ")"
+    )
+
     # Global/system settings: dotted leaf key -> JSON-encoded value. Holds ONLY
     # the leaves a user explicitly set via the Settings page / `settings` CLI,
     # keyed by dotted path (e.g. "recommendations.default_count"). Nothing is
