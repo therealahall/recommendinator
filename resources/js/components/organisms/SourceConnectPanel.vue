@@ -20,8 +20,7 @@ const props = defineProps<{
 
 const data = useDataStore()
 
-// Keyed on the plugin, never the source id: a GOG source named "gog_work" runs
-// the same connect flow as one named "gog".
+// Keyed on the plugin: a GOG source named "gog_work" runs the same flow.
 const isGog = computed(() => props.plugin === 'gog')
 const isEpic = computed(() => props.plugin === 'epic_games')
 const isTrakt = computed(() => props.plugin === 'trakt')
