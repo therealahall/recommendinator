@@ -328,7 +328,7 @@ class TestAListColumnRefusesAValueItCannotHold:
 
 
 class TestWhatAListColumnStillAccepts:
-    """The refusal reaches no shape a plugin writes today.
+    """The refusal is narrow: only an entry with no name of its own.
 
     Every source that has genres writes them, so a guard reaching one shape
     too far would fail a sync rather than an object.
