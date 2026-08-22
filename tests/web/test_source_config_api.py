@@ -632,6 +632,15 @@ class TestFailedPluginImportIsReportedRegression:
             {"module": FAILED_PLUGIN_MODULE, "reason": FAILED_PLUGIN_REASON}
         ]
 
+    def test_reading_the_source_says_why_it_cannot_be_used_not_that_it_is_gone(
+        self, broken_plugin_client: TestClient
+    ) -> None:
+        """A 404 contradicted the listing the user was looking at."""
+        response = broken_plugin_client.get("/api/sync/sources/my_books/config")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == UNLOADED_PLUGIN_DETAIL
+
     def test_syncing_it_is_refused_with_the_import_failure(
         self, broken_plugin_client: TestClient
     ) -> None:
