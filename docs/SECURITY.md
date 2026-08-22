@@ -96,10 +96,13 @@ it blames, or repeats a path-containment refusal verbatim, and a sync answers a
 fixed string. The reason goes to the log instead.
 
 **One carve-out: a plugin module that failed to import.** `GET
-/api/sync/sources`, `GET /api/plugins` and the 400 from `POST /api/update`
+/api/sync/sources`, `GET /api/plugins`, the 400 from `POST /api/update` and the
+400 `require_plugin` raises for every `/api/sync/sources/{source_id}/*` route
 carry the module name and the exception that lost it, because "No module named
-'defusedxml'" is the answer the operator needs and every one of those routes
-requires a session on a single-user instance.
+'defusedxml'" is the answer the operator needs and those routes need a session.
+
+The plugin name comes from the stored source row or `config.yaml`, never from
+the request path: an id matching no source still gets the generic 404.
 
 **The second: templates that are not installed.** The 503 from both
 `/api/import/templates` routes names the directory it looked in, for the same
@@ -299,7 +302,8 @@ Changes are audited for the following before they are committed.
   the templates 503 twice, the import 400, the correction 400, the merge 409.
   The first reaches a body two ways, so grepping that one pattern misses it:
   named response fields on the source and plugin listings, and `unusable_detail`
-  in the sync 400, which composes the failed module's own exception text
+  in the sync 400 and in `require_plugin`, which composes the failed module's
+  own exception text
 - Module-level imports only
 - Copy dicts and lists before mutating data passed in from outside
 - `is not None` rather than a truthy check for security-relevant values

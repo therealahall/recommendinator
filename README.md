@@ -115,6 +115,8 @@ from the Settings API. See
 Everything else lives in the database and is set from the app. Data sources come
 from the **Data** tab or the `source` CLI. Global settings, from scorer weights
 to enrichment to logging, come from the **Settings** page or the `settings` CLI.
+Enrichment can also be switched on from the **Data** tab, beside the controls
+that need it.
 
 ```bash
 python3.11 -m src.cli settings list
