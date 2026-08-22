@@ -1421,6 +1421,45 @@ class TestPreferenceWriteNamingAnUnknownUser:
         merge.assert_not_called()
 
 
+class TestPreferenceReset:
+    """``preferences reset`` writes a fresh config; the page had no door to it.
+
+    Both surfaces have to mean the same thing by "defaults", so the assertion
+    is against the model the CLI writes rather than a copy of its fields.
+    """
+
+    def test_reset_restores_what_the_cli_reset_writes(self, settings_app):
+        """Against SQLite: the read back is what a later page load gets."""
+        client, _storage = settings_app
+        client.put(
+            "/api/users/1/preferences",
+            json={
+                "scorer_weights": {"genre_match": 4.5},
+                "series_in_order": False,
+                "variety_penalty": 3.0,
+                "custom_rules": ["no horror"],
+                "content_length_preferences": {"book": "short"},
+                "theme": "midnight",
+            },
+        )
+
+        reset = client.delete("/api/users/1/preferences")
+
+        assert reset.status_code == 200
+        assert reset.json() == UserPreferenceConfig().to_dict()
+        stored = client.get("/api/users/1/preferences")
+        assert stored.json() == UserPreferenceConfig().to_dict()
+
+    def test_a_reset_naming_an_unknown_user_is_refused(self, settings_app):
+        """As the CLI's is, rather than reporting a write it did not make."""
+        client, _storage = settings_app
+
+        response = client.delete("/api/users/999/preferences")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "User not found."
+
+
 def test_list_users(client, mock_components):
     """Test GET /api/users returns user list."""
     mock_components["storage"].get_all_users = Mock(
@@ -3782,6 +3821,12 @@ _GUARDED_ENDPOINTS = [
         ("storage",),
         url="/api/users/1/preferences",
         body={},
+    ),
+    _Endpoint(
+        "DELETE",
+        "/api/users/{user_id}/preferences",
+        ("storage",),
+        url="/api/users/1/preferences",
     ),
     _Endpoint(
         "POST",
