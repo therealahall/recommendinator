@@ -161,11 +161,8 @@ def resolve_bootstrap_web(
 
 
 def _without_childless_headers(section: dict[str, Any]) -> dict[str, Any]:
-    """Drop the keys YAML parsed as None, at every depth.
-
-    A ``.get(name, {})`` default fires on an absent key, never on a present
-    one holding None, and every config section is read that way.
-    """
+    """A ``.get(name, {})`` default fires on an absent key, never on a present
+    one holding None, and every config section is read that way."""
     pruned: dict[str, Any] = {}
     for key, value in section.items():
         if value is None:
