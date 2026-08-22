@@ -52,15 +52,12 @@ def enrichment_start(
     storage = ctx.obj["storage"]
     config = ctx.obj["config"]
 
-    # Check if enrichment is enabled
     enrichment_config = config.get("enrichment", {})
     if not enrichment_config.get("enabled", False):
-        click.echo(
-            "Enrichment is disabled in config. "
-            "Set enrichment.enabled: true in config.yaml",
-            err=True,
+        abort_with(
+            "Enrichment is disabled. Turn it on from the Data tab, or run: "
+            "settings set enrichment.enabled true"
         )
-        raise click.Abort()
 
     # Map string to ContentType enum if provided
     content_type = (
