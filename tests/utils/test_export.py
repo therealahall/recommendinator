@@ -547,6 +547,14 @@ class TestWholeLibraryExport:
         assert rows[1]["director"] == "Denis Villeneuve"
         assert rows[1]["author"] == ""
 
+    def test_each_row_names_its_content_type(self) -> None:
+        """Otherwise the types are told apart only by which columns are blank."""
+        rows = list(
+            csv.DictReader(io.StringIO(export_items_csv(self._library(), None)))
+        )
+
+        assert [row["content_type"] for row in rows] == ["book", "movie"]
+
     def test_the_header_carries_every_type_s_columns(self) -> None:
         """A column left out of the shared header is data silently dropped."""
         header = set(

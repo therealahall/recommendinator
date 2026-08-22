@@ -94,6 +94,18 @@ describe('useThemeStore', () => {
     expect(store.currentThemeId).toBe('nord')
   })
 
+  it('repaints the default over a cached theme that is gone', async () => {
+    localStorage.setItem('theme', 'retired')
+    answerBoot('nord', 'retired')
+
+    const store = useThemeStore()
+    store.applyStoredTheme()
+    await store.fetchThemes()
+
+    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
+    expect(link.href).toContain('/static/themes/nord/colors.css')
+  })
+
   it('a server that cannot be reached leaves the cached theme painted', async () => {
     localStorage.setItem('theme', 'nord')
     mockGet.mockRejectedValue(new Error('Network error'))

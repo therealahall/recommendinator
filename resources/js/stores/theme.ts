@@ -31,7 +31,12 @@ export const useThemeStore = defineStore('theme', () => {
       }
 
       defaultThemeId.value = defaultData.theme || 'nord'
-      applyTheme(prefs.theme || defaultThemeId.value)
+
+      // A theme folder removed after it was picked leaves the preference naming
+      // nothing, and applyTheme would then paint no stylesheet at all.
+      const stored = prefs.theme
+      const installed = themes.value.length === 0 || themes.value.some((t) => t.id === stored)
+      applyTheme(stored && installed ? stored : defaultThemeId.value)
     } catch {
       // Nothing to decide with: the browser keeps the theme it painted from cache.
     }
