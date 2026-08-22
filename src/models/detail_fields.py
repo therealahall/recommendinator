@@ -95,19 +95,23 @@ def to_int(value: Any) -> int | None:
 
 
 def to_json_array(value: Any) -> str | None:
-    """Serialize a metadata value as the JSON array its column holds.
+    """Serialize a value as the JSON array its column holds.
 
-    A bare string is wrapped, because a single genre stored as ``"Drama"``
-    rather than ``'["Drama"]'`` reads back as a string nothing downstream
-    parses. A string that already looks like an array is passed through.
+    A bare string is wrapped: ``"Drama"`` alone reads back as a string
+    nothing parses. One starting with ``[`` passes through.
+
+    Raises:
+        TypeError: For anything but a scalar, as :func:`to_text` does.
     """
     if value is None:
         return None
     if isinstance(value, str):
         return value if value.startswith("[") else json.dumps([value])
-    if isinstance(value, list):
-        return json.dumps(value)
-    return json.dumps([value])
+    entries = value if isinstance(value, list) else [value]
+    for entry in entries:
+        if entry is not None and not isinstance(entry, _TEXT_SCALARS):
+            raise TypeError(f"a list column cannot hold a {type(entry).__name__}")
+    return json.dumps(entries)
 
 
 def parse_json_array(value: Any) -> list[Any] | None:

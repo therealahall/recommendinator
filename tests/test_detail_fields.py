@@ -300,6 +300,64 @@ class TestATextColumnRefusesAValueItCannotHold:
             )
 
 
+class TestAListColumnRefusesAValueItCannotHold:
+    """An object in a list column fails the write instead of taking a repr.
+
+    ``to_json_array`` used to wrap whatever it was handed, and genres merge
+    rather than being replaced, so the shape never left the column again.
+    """
+
+    def test_an_imported_object_never_reaches_the_column(self, tmp_path: Path) -> None:
+        """``generic_json`` forwards a raw value, so a user's file can send one."""
+        db = SQLiteDB(tmp_path / "object-genre.db")
+
+        with pytest.raises(TypeError, match="'genres': a list column cannot hold"):
+            db.save_content_item(
+                ContentItem(
+                    id="object-genre",
+                    title="Fargo",
+                    content_type=ContentType.MOVIE,
+                    status=ConsumptionStatus.UNREAD,
+                    metadata={"genre": [{"id": 80, "name": "Crime"}]},
+                )
+            )
+
+        # The refusal rolls the title row back with the detail row it belongs
+        # to, rather than leaving a genreless ghost a re-sync never fills.
+        assert db.get_content_items() == []
+
+
+class TestWhatAListColumnStillAccepts:
+    """The refusal reaches no shape a plugin writes today.
+
+    Every source that has genres writes them, so a guard reaching one shape
+    too far would fail a sync rather than an object.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (["RPG"], '["RPG"]'),
+            ("Drama", '["Drama"]'),
+            ('["Drama"]', '["Drama"]'),
+            (None, None),
+            ([], "[]"),
+        ],
+        ids=[
+            "list_of_names",
+            "bare_name",
+            "array_already",
+            "null",
+            "empty_list",
+        ],
+    )
+    def test_a_value_a_list_column_can_hold_is_serialised_as_before(
+        self, value: Any, expected: str | None
+    ) -> None:
+        """None stored as "[null]" would merge into every later sync's genres."""
+        assert detail_fields.to_json_array(value) == expected
+
+
 class TestWhatATextColumnStillAccepts:
     """The refusal is narrow: only a value with no name inside it.
 

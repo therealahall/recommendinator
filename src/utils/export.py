@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from src.models.content import ContentItem, ContentType, get_enum_value
+from src.models.detail_fields import text_names
 from src.models.templates import (
     CONTENT_TYPE_COLUMNS,
     CREATOR_COLUMNS,
@@ -92,9 +93,11 @@ def _item_to_export_dict(
         if column == "seasons_watched" and isinstance(value, list):
             # One cell holds the whole list.
             value = ",".join(str(season) for season in value) if for_csv else value
-        elif column in LIST_VALUED_COLUMNS and isinstance(value, list):
-            # One cell holds one of them.
-            value = value[0] if value else None
+        elif column in LIST_VALUED_COLUMNS:
+            # One cell holds one of them, and a row stored before the codec
+            # refused an object still holds the object rather than a name.
+            names = text_names(value)
+            value = names[0] if names else None
 
         result[column] = value if value is not None else ("" if for_csv else None)
 

@@ -769,15 +769,9 @@ def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
     return max(counts) if counts else column_value
 
 
-# The plural spellings GOG writes, now aliases of the singular video-game
-# columns that claim them, mapped to the column each one folds onto. They are
-# the only aliases a legacy blob can strand in front of a text column: the rest
-# are read by ``to_int`` or ``to_json_array``, neither of which raises, bar
-# tv_show's ``creator``. That one is reachable — the markdown source turns any
-# ``Key: Value`` in a list item into a lowercased metadata key — but only ever
-# as a string, which ``to_text`` takes unchanged, so it folds onto ``creators``
-# on the next save rather than refusing it. What keeps a key out of this
-# mapping is the shape its producers can write, not the absence of a producer.
+# GOG's plural spellings, mapped to the singular column each folds onto. They
+# are the only aliases a legacy blob strands in front of a codec that refuses
+# their shape: the rest arrive as scalars, which no codec refuses.
 _STRANDED_COMPANY_COLUMNS: dict[str, str] = {
     "developers": "developer",
     "publishers": "publisher",
