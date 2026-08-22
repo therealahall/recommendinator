@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import type { ContentItemResponse, ItemEditRequest, RecommendationResponse } from '@/types/api'
@@ -15,9 +15,13 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   // Kept per item rather than dropping the row: the undo has to sit where the
   // card was, and a re-inserted row would come back at the wrong rank.
   const ignored = ref<Set<number>>(new Set())
-  /** Whether a generate has finished, which is what tells "nothing yet" from
-   *  "nothing matched" — fetch() empties the list before it asks. */
+  /** Whether a generate finished for the selected type, which tells "nothing
+   *  yet" from "nothing matched" — fetch() empties the list before it asks.
+   *  Carried across a type change, it names a type nothing ran against. */
   const hasRun = ref(false)
+  watch(contentType, () => {
+    hasRun.value = false
+  })
 
   // Edit modal (reused from the library to mark recommendations complete). A
   // refused save is the dialog's own: the page banner sits behind the overlay.
