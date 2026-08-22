@@ -18,10 +18,14 @@ const contentType = ref('book')
 const importing = ref(false)
 const result = ref<ImportResponse | null>(null)
 const errorMessage = ref('')
+// Its own ref, not the shared error slot: that slot is about the file and is
+// cleared by the next pick, which would take this failure with it and leave
+// Import refusing for a reason nothing on screen still gives.
+const formatsError = ref('')
 const status = ref('')
 
 // Fetched on first expand, the way a source accordion fetches its schema: a
-// closed panel that announced "Import formats could not be loaded" would be
+// closed panel that announced "Failed to load import formats" would be
 // reporting on a surface the operator has not asked to see.
 async function ensureFormats(): Promise<void> {
   if (formatsLoaded.value || formatsLoading.value) return
@@ -33,9 +37,11 @@ async function ensureFormats(): Promise<void> {
     }
     formatsLoaded.value = true
   } catch (err) {
-    errorMessage.value =
-      err instanceof Error ? err.message : 'Failed to load import formats'
-    status.value = `Import formats could not be loaded. ${errorMessage.value}`
+    // The lead sentence is fixed rather than taken from the error: an API that
+    // answers "Service Unavailable" names nothing the operator can act on.
+    const reason = err instanceof Error ? ` ${err.message}` : ''
+    formatsError.value = `Failed to load import formats.${reason}`
+    status.value = formatsError.value
   } finally {
     formatsLoading.value = false
   }
@@ -49,6 +55,15 @@ async function onToggleExpanded(value: boolean): Promise<void> {
   expanded.value = value
   if (value) await ensureFormats()
 }
+
+// Named on the select as well as rendered beside it: the failure is the reason
+// the list is empty, and a screen-reader user landing on the select is
+// otherwise given an empty control and no explanation.
+const formatDescribedBy = computed(() =>
+  formatsError.value
+    ? 'import-format-error import-format-description'
+    : 'import-format-description',
+)
 
 const selectedImporter = computed(
   () => data.importers.find((entry) => entry.name === importerName.value) ?? null,
@@ -168,7 +183,7 @@ async function submit(): Promise<void> {
               <select
                 id="import-format"
                 v-model="importerName"
-                aria-describedby="import-format-description"
+                :aria-describedby="formatDescribedBy"
               >
                 <option
                   v-for="entry in data.importers"
@@ -176,6 +191,12 @@ async function submit(): Promise<void> {
                   :value="entry.name"
                 >{{ entry.display_name }}</option>
               </select>
+              <p
+                v-if="formatsError"
+                id="import-format-error"
+                class="import-error"
+                data-testid="import-format-error"
+              >{{ formatsError }}</p>
             </div>
 
             <div v-if="needsContentType" class="import-field">
@@ -338,6 +359,12 @@ async function submit(): Promise<void> {
   background: color-mix(in srgb, var(--color-error) 35%, transparent);
   color: var(--text-primary);
   font-size: var(--text-sm);
+}
+
+/* The same notice class beside the picker, where the field's own gap already
+   separates it. */
+.import-field .import-error {
+  margin: 0;
 }
 
 .import-panel :deep(.import-result) {

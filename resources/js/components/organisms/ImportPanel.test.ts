@@ -230,6 +230,55 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
+  /** The failure is about the API, not the file, so the pick that cleared it
+   *  left Import refusing with nothing on screen saying why — the sighted half
+   *  of the reason the button's aria-label already gave. */
+  it('keeps the format-load failure on screen after a file is picked', async () => {
+    mockGet.mockImplementation((path: string) =>
+      path === '/importers'
+        ? Promise.reject(new Error('Service Unavailable'))
+        : Promise.resolve([]),
+    )
+    const wrapper = await openPanel()
+
+    await chooseFile(wrapper, exportFile())
+
+    expect(wrapper.get('[data-testid="import-format-error"]').text()).toContain(
+      'Failed to load import formats',
+    )
+    expect(wrapper.find('[data-testid="import-error"]').exists()).toBe(false)
+    expect(
+      wrapper.get('[data-testid="import-submit"]').attributes('disabled'),
+    ).toBeDefined()
+    wrapper.unmount()
+  })
+
+  /** Reopening the panel refetches, so a blip that resolves leaves a populated
+   *  select beside a notice still refusing an Import that now works. The catch
+   *  set the failure and no success path ever cleared it. */
+  it('drops the format-load failure once a reopen loads the formats', async () => {
+    let attempts = 0
+    mockGet.mockImplementation((path: string) => {
+      if (path !== '/importers') return Promise.resolve(TEMPLATES)
+      attempts += 1
+      return attempts === 1
+        ? Promise.reject(new Error('Service Unavailable'))
+        : Promise.resolve(IMPORTERS)
+    })
+    const wrapper = await openPanel()
+    expect(wrapper.find('[data-testid="import-format-error"]').exists()).toBe(true)
+
+    await toggle(wrapper)
+    await toggle(wrapper)
+    await chooseFile(wrapper, exportFile())
+
+    expect(
+      wrapper.get('[data-testid="import-submit"]').attributes('disabled'),
+    ).toBeUndefined()
+    expect(wrapper.find('[data-testid="import-format-error"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   /** The sibling Sync All button names its reason too: a control announcing
    *  only "unavailable" leaves the operator nothing to act on — and naming the
    *  file when a file is already picked sends them after the wrong thing. */

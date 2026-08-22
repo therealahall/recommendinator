@@ -123,7 +123,7 @@ describe('DuplicatesPage', () => {
 
   it('says a work was left unsearched rather than showing its empty state', async () => {
     // Counted in neither number, a skipped work reads as a library with none.
-    const note = '1 work is not offered: too many copies to review at once.'
+    const note = '1 work is not offered: more review than one pass can hold.'
     mockGet.mockImplementation(async (url: string) =>
       url === '/duplicates' ? page([], note) : [],
     )
