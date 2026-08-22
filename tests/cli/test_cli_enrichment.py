@@ -133,6 +133,94 @@ class TestEnrichmentStart:
         assert "already running" in result.output.lower()
 
 
+class TestEnrichmentJobControl:
+    """The CLI could not see or stop a job the web UI started."""
+
+    @staticmethod
+    def _running(tmp_path: Path) -> StorageManager:
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+        storage.enrichment_jobs.claim("movie")
+        storage.enrichment_jobs.heartbeat(
+            items_processed=4,
+            items_enriched=3,
+            items_failed=0,
+            items_not_found=1,
+            total_items=8,
+            current_item="Arrival",
+            errors=[],
+        )
+        return storage
+
+    def test_job_reports_a_run_this_invocation_did_not_start(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner, ["enrichment", "job"], self._running(tmp_path)
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "running" in result.output
+        assert "Arrival" in result.output
+        assert "4/8" in result.output
+
+    def test_job_json_carries_the_web_response_field_set(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Parity: the key set must match EnrichmentJobStatusResponse exactly."""
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["enrichment", "job", "--format", "json"],
+            self._running(tmp_path),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert set(json.loads(result.output)) == {
+            "running",
+            "completed",
+            "cancelled",
+            "items_processed",
+            "items_enriched",
+            "items_failed",
+            "items_not_found",
+            "total_items",
+            "current_item",
+            "content_type",
+            "errors",
+            "elapsed_seconds",
+            "progress_percent",
+        }
+
+    def test_job_says_so_when_nothing_has_ever_run(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+
+        result = _invoke_with_mocks(cli_runner, ["enrichment", "job"], storage)
+
+        assert result.exit_code == 0
+        assert "No enrichment job has run." in result.output
+
+    def test_stop_asks_the_running_job_to_end(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = self._running(tmp_path)
+
+        result = _invoke_with_mocks(cli_runner, ["enrichment", "stop"], storage)
+
+        assert result.exit_code == 0, result.output
+        assert storage.enrichment_jobs.stop_requested() is True
+
+    def test_stop_with_nothing_running_says_so_rather_than_claiming_success(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "job.db")
+
+        result = _invoke_with_mocks(cli_runner, ["enrichment", "stop"], storage)
+
+        assert result.exit_code != 0
+        assert "No enrichment job is running." in result.output
+
+
 class TestEnrichmentStatus:
     """Tests for enrichment status command."""
 

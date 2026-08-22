@@ -360,10 +360,19 @@ Enrichment is critical for recommendation quality. See
 python3.11 -m src.cli enrichment start
 python3.11 -m src.cli enrichment start --type movie
 python3.11 -m src.cli enrichment start --retry-not-found   # providers drift over time
-python3.11 -m src.cli enrichment status
+python3.11 -m src.cli enrichment status                    # library counts by provider
+python3.11 -m src.cli enrichment job                       # the live run, if there is one
+python3.11 -m src.cli enrichment stop
 python3.11 -m src.cli enrichment reset                     # re-process on the next run
 python3.11 -m src.cli enrichment reset --id 42             # one item, back to automatic
 ```
+
+`enrichment job` and `enrichment stop` reach the run whatever started it — the
+Data tab, another terminal, a backgrounded process — because the job lives in
+the database rather than in the process that launched it. `job` mirrors
+`GET /api/enrichment/status` and returns straight away; `status` is the library
+counts, mirroring `GET /api/enrichment/stats`. A stop takes effect after the
+item the run is on.
 
 `--id` hands a single item back to automatic enrichment, which is what undoes a
 manual edit to its genres, tags or description. It takes no `--provider` or
