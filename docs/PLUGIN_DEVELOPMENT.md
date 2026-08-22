@@ -210,7 +210,7 @@ these keys out of it, and none of them is a recognised key:
 | [Length scorer](SCORING.md#content-length-preferences), `src/recommendations/content_length.py` | **book** `num_pages`, `number_of_pages`. **TV show** `number_of_seasons`. **video game** `average_playtime_hours` |
 | Series ordering, `src/utils/series.py` | Series name: `series_name`, `series`, `series_title`, `franchise`. Position: `series_position`, `series_number`, `series_num`, `series_index`, `book_number`, `book_num`, `season`, `season_number`, `season_num`, `part`, `part_number`, `episode`, `episode_number`, `movie_number`. Expanding a show into seasons: `number_of_seasons` |
 | Season checklist and the [variety ladder](SCORING.md#variety-after-completion), `src/utils/series.py` | `seasons_watched`, `seasons_watched_dates` |
-| Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`. **video game** `playtime_hours` |
+| Library export, `src/utils/export.py` | `notes` on every type. **TV show** `seasons_watched`, `seasons_watched_dates`. **video game** `playtime_hours` |
 
 That list grows whenever a reader gains another fallback spelling, so check those
 files. Beyond it and the recognised keys, the blob is yours.

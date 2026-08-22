@@ -8,7 +8,8 @@ Reads a CSV of one content type, which you pick when you upload the file.
   `ignored`
 - `book`: `author`, `isbn`, `pages`, `year_published`, `genre`
 - `movie`: `director`, `year`, `runtime_minutes`, `genre`
-- `tv_show`: `creator`, `seasons_watched`, `total_seasons`, `year`, `genre`
+- `tv_show`: `creator`, `seasons_watched`, `seasons_watched_dates`,
+  `total_seasons`, `year`, `genre`
 - `video_game`: `developer`, `platform`, `genre`, `hours_played`
 
 `title` is required and a file without it is refused whole. Unknown columns are
@@ -18,7 +19,9 @@ logged and ignored.
 `reading`/`watching`/`playing` for currently consuming, and
 `to_read`/`to_watch`/`to_play`/`wishlist`/`unwatched`/`unplayed` for unread.
 Boolean fields accept `true`/`false`, `1`/`0` and `yes`/`no`. `seasons_watched`
-takes a list, `1,2,5,6`, or a count integer.
+takes a list, `1,2,5,6`, or a count integer. `seasons_watched_dates` takes a JSON
+object mapping a season number to the UTC instant you finished it,
+`{"3": "2026-07-01T17:42:47+00:00"}`, quoted as one cell.
 
 ## Skipped lines
 
@@ -36,15 +39,17 @@ Reported with the file line they were on:
 | `status` | Forward-only: unread → consuming → completed. A file can advance a status, never revert a completion. |
 | `date_completed` | Replaced only by a later date. |
 | `genre` | Additive. An imported genre joins the stored ones. |
+| `seasons_watched`, `seasons_watched_dates` | Additive. An import adds a watched season and its date, never removes one. |
 | `total_seasons` | Monotonic. It only increases. |
-| Everything else | Fill-only, including `seasons_watched` and `notes`. |
+| Everything else | Fill-only, including `notes`. |
 
 One exception to forward-only: raising `total_seasons` above a completed show's
 watched-season list sends it back to in-progress. That is a season rule, not a
 status one.
 
 Fill-only means editing the value in an export and re-importing does nothing. Use
-the edit modal or `library edit --seasons-watched` to change a season checklist.
+the edit modal or `library edit --seasons-watched` to untick a season, which an
+import only ever adds.
 `notes` is the one that surprises people: a stored note always wins, and no
 surface in the app edits one, so the first import of a note is the last word.
 

@@ -1,2 +1,2 @@
-title,creator,rating,status,date_completed,review,notes,seasons_watched,total_seasons,year,genre,ignored
-Breaking Bad,Vince Gilligan,5,watched,2024-01-20,One of the best shows ever,,"1,2,3,4,5",5,2008,Drama,false
+title,creator,rating,status,date_completed,review,notes,seasons_watched,seasons_watched_dates,total_seasons,year,genre,ignored
+Breaking Bad,Vince Gilligan,5,watched,2024-01-20,One of the best shows ever,,"1,2,3,4,5","{""1"": ""2023-06-02T20:11:00+00:00"", ""2"": ""2023-07-18T21:40:00+00:00"", ""3"": ""2023-09-05T19:02:00+00:00"", ""4"": ""2023-11-27T22:15:00+00:00"", ""5"": ""2024-01-20T23:30:00+00:00""}",5,2008,Drama,false
