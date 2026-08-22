@@ -231,8 +231,7 @@ describe('ImportPanel', () => {
   })
 
   /** The failure is about the API, not the file, so the pick that cleared it
-   *  left Import refusing with nothing on screen saying why — the sighted half
-   *  of the reason the button's aria-label already gave. */
+   *  left Import refusing with nothing on screen saying why. */
   it('keeps the format-load failure on screen after a file is picked', async () => {
     mockGet.mockImplementation((path: string) =>
       path === '/importers'
@@ -253,9 +252,7 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** Reopening the panel refetches, so a blip that resolves leaves a populated
-   *  select beside a notice still refusing an Import that now works. The catch
-   *  set the failure and no success path ever cleared it. */
+  /** A resolved blip left a notice still refusing an Import that works. */
   it('drops the format-load failure once a reopen loads the formats', async () => {
     let attempts = 0
     mockGet.mockImplementation((path: string) => {
@@ -270,6 +267,8 @@ describe('ImportPanel', () => {
 
     await toggle(wrapper)
     await toggle(wrapper)
+    expect(wrapper.get('[data-testid="import-status"]').text()).toBe('')
+
     await chooseFile(wrapper, exportFile())
 
     expect(
@@ -279,9 +278,8 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** The sibling Sync All button names its reason too: a control announcing
-   *  only "unavailable" leaves the operator nothing to act on — and naming the
-   *  file when a file is already picked sends them after the wrong thing. */
+  /** Naming only "unavailable" leaves the operator nothing to act on, and
+   *  naming the file, when one is picked, misdirects them. */
   it('names whichever of the two conditions is refusing the Import button', async () => {
     const wrapper = await openPanel()
     const button = wrapper.get('[data-testid="import-submit"]')

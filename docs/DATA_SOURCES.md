@@ -95,9 +95,9 @@ The enrichment filter finds items still missing metadata so you can fill them
 in by hand, see
 [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing).
 
-Exported files match the import template format, so you can edit one and
-re-import it. What a re-import may change depends on the field, and for most
-fields it is less than you would expect:
+Only a single-type export matches the import template, so a whole-library file
+comes back as one type. What a re-import may change depends on the field, and
+is usually less than you expect:
 
 | Field | What a re-import can do to it |
 |-------|-------------------------------|

@@ -24,9 +24,8 @@ const errorMessage = ref('')
 const formatsError = ref('')
 const status = ref('')
 
-// Fetched on first expand, the way a source accordion fetches its schema: a
-// closed panel that announced "Failed to load import formats" would be
-// reporting on a surface the operator has not asked to see.
+// Fetched on first expand: a closed panel announcing "Failed to load import
+// formats" reports on a surface the operator has not asked to see.
 async function ensureFormats(): Promise<void> {
   if (formatsLoaded.value || formatsLoading.value) return
   formatsLoading.value = true
@@ -36,9 +35,11 @@ async function ensureFormats(): Promise<void> {
       importerName.value = data.importers[0].name
     }
     formatsLoaded.value = true
+    if (status.value === formatsError.value) status.value = ''
+    formatsError.value = ''
   } catch (err) {
-    // The lead sentence is fixed rather than taken from the error: an API that
-    // answers "Service Unavailable" names nothing the operator can act on.
+    // Fixed lead sentence, not the error's: an API answering "Service
+    // Unavailable" names nothing the operator can act on.
     const reason = err instanceof Error ? ` ${err.message}` : ''
     formatsError.value = `Failed to load import formats.${reason}`
     status.value = formatsError.value
@@ -46,8 +47,8 @@ async function ensureFormats(): Promise<void> {
     formatsLoading.value = false
   }
   // Swallowed on purpose: the templates are a convenience beside the picker,
-  // and an install that ships none still imports a file the operator already
-  // has. Failing here would take the whole panel down with it.
+  // and failing here would take down a panel that still imports the file the
+  // operator already has.
   data.loadImportTemplates().catch(() => {})
 }
 
