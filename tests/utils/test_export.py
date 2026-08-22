@@ -302,6 +302,41 @@ class TestExportOfStoredItems:
         assert rows[0]["platform"] == "Windows"
         assert rows[0]["genre"] == "Role-playing"
 
+    def test_a_stored_object_platform_exports_its_name_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A row stored before the codec refused an object exports its name.
+
+        ``generic_json`` wrapped a non-list ``platform`` in a list, so
+        ``{"name": "PC"}`` reached the column, and no repair rewrites it: the
+        export wrote its repr.
+        """
+        database = SQLiteDB(tmp_path / "object-platform.db")
+        db_id = database.save_content_item(
+            ContentItem(
+                id="1207658924",
+                title="The Witcher 3: Wild Hunt",
+                content_type=ContentType.VIDEO_GAME,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        with database.connection() as conn:
+            conn.execute(
+                "UPDATE video_game_details SET platforms = ? WHERE content_item_id = ?",
+                (json.dumps([{"name": "PC"}]), db_id),
+            )
+            conn.commit()
+        stored = database.get_content_item(db_id)
+        assert stored is not None
+
+        rows = list(
+            csv.DictReader(
+                io.StringIO(export_items_csv([stored], ContentType.VIDEO_GAME))
+            )
+        )
+
+        assert rows[0]["platform"] == "PC"
+
 
 class TestCreatorSurvivesStorage:
     """The creator column round-trips for every content type, not just books.

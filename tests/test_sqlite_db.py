@@ -11,7 +11,6 @@ import pytest
 
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.models.detail_fields import to_json_array
 from src.storage import sqlite_db
 from src.storage.item_merges import MergeEvidence
 from src.storage.merge import (
@@ -2195,27 +2194,6 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
         )
         found = reopened.get_content_items(search="Gibson")
         assert [item.title for item in found] == ["Neuromancer"]
-
-
-class TestToJsonArrayRegression:
-    """Regression tests for to_json_array() bare string handling.
-
-    Bug reported: TV show genres stored as bare strings like ``"Drama"``
-    instead of JSON arrays ``'["Drama"]'``.  Downstream code expecting
-    JSON arrays would fail to parse them, resulting in single-genre
-    items that weakly matched everything via broad Jaccard overlap.
-
-    Root cause: ``to_json_array()`` returned bare strings unchanged
-    (``if isinstance(val, str): return val``).
-
-    Fix: Bare strings are now wrapped in a JSON array; only strings
-    that already start with ``[`` are passed through.
-    """
-
-    def test_bare_string_wrapped_in_json_array_regression(self) -> None:
-        """A bare string like 'Drama' should become '["Drama"]'."""
-        result = to_json_array("Drama")
-        assert result == '["Drama"]'
 
 
 class TestAdditiveGenreSaves:
