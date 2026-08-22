@@ -380,6 +380,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _renormalize_titles(cursor)
     if stored_version < 16:
         _reduce_non_scalar_list_columns(cursor)
+        _clear_quality_on_requeued_items(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -885,6 +886,15 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
     # The flags lowercased GOG's platform names; the corrected plugin keeps
     # GOG's own capitalisation ("Windows", "Mac", "Linux").
     return [str(name).capitalize() for name, supported in stored.items() if supported]
+
+
+def _clear_quality_on_requeued_items(cursor: sqlite3.Cursor) -> None:
+    """``not_found`` reads the label and ``pending`` the retry state, so a
+    re-queued item keeping its label is counted in both."""
+    cursor.execute(
+        "UPDATE enrichment_status SET enrichment_quality = NULL"
+        " WHERE needs_enrichment = 1 AND enrichment_quality IS NOT NULL"
+    )
 
 
 def _reduce_non_scalar_list_columns(cursor: sqlite3.Cursor) -> None:

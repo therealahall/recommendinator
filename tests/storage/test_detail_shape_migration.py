@@ -910,3 +910,31 @@ class TestAnObjectStrandedInAListColumnMigration:
         assert stored is not None
         assert db.save_content_item(stored) == db_id
         assert json.loads(_stored_platforms(db, db_id)) == ["PC"]
+
+    def test_an_item_an_earlier_reset_requeued_is_counted_once_regression(
+        self, tmp_path: Path
+    ) -> None:
+        """A reset before this one re-queued the item and kept its not_found."""
+        db_path = tmp_path / "test.db"
+        seed = SQLiteDB(db_path)
+        db_id = _seed_game(seed, platforms=json.dumps(["PC"]))
+        with seed.connection() as conn:
+            conn.execute(
+                "INSERT INTO enrichment_status"
+                " (content_item_id, enrichment_provider, enrichment_quality,"
+                " needs_enrichment) VALUES (?, 'none', 'not_found', 1)",
+                (db_id,),
+            )
+            conn.execute(f"PRAGMA user_version = {schema._SCHEMA_VERSION - 1}")
+            conn.commit()
+
+        db = SQLiteDB(db_path)
+
+        with db.connection() as conn:
+            stats = schema.get_enrichment_stats(conn)
+        assert stats["not_found"] == 0
+        assert stats["pending"] == 1
+        assert (
+            stats["enriched"] + stats["pending"] + stats["not_found"] + stats["failed"]
+            == stats["total"]
+        )

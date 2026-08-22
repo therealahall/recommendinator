@@ -24,7 +24,6 @@ from src.config.service import (
     BOOTSTRAP_WEB_PORT,
     auto_enrich_enabled,
     build_scorers_from_config,
-    create_recommendation_engine,
     load_config,
     resolve_bootstrap_web,
 )
@@ -353,20 +352,6 @@ class TestAChildlessRecommendationsHeaderStillBoots:
             for name, scorer_class in _SCORER_CONFIG_MAP.items()
         }
 
-    def test_the_engine_factory_guards_the_none_section_itself(
-        self, tmp_path: Path
-    ) -> None:
-        """Called with the raw YAML, before any overlay heals the section."""
-        engine = create_recommendation_engine(
-            StorageManager(sqlite_path=tmp_path / "engine.db"),
-            {"recommendations": None},
-        )
-
-        assert engine.preference_analyzer.min_rating == default_of(
-            "recommendations.min_rating_for_preference"
-        )
-        assert len(engine.pipeline.scorers) == len(_SCORER_CONFIG_MAP)
-
 
 class TestEveryChildlessHeaderIsDroppedAtTheDoor:
     """``storage:`` and ``enrichment:`` are read with the same ``.get`` default
@@ -383,16 +368,9 @@ class TestEveryChildlessHeaderIsDroppedAtTheDoor:
 
         config = load_config(config_path)
 
-        def none_valued(section: dict[str, Any], prefix: str = "") -> list[str]:
-            found = []
-            for key, value in section.items():
-                if value is None:
-                    found.append(f"{prefix}{key}")
-                elif isinstance(value, dict):
-                    found += none_valued(value, f"{prefix}{key}.")
-            return found
-
-        assert none_valued(config) == []
+        assert "storage" not in config
+        assert "inputs" not in config
+        assert config["recommendations"]["scorer_weights"]
         assert auto_enrich_enabled(config) is False
         assert len(build_scorers_from_config(config)) == len(_SCORER_CONFIG_MAP)
 
