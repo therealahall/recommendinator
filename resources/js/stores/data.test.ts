@@ -463,6 +463,109 @@ describe('useDataStore', () => {
     })
   })
 
+  describe('an enrichment action the server refuses', () => {
+    it('rejects out of startEnrichment rather than swallowing the reason', async () => {
+      mockPost.mockRejectedValue(new ApiError(400, 'Enrichment is disabled.'))
+      const store = useDataStore()
+
+      await expect(store.startEnrichment()).rejects.toThrow('Enrichment is disabled.')
+    })
+
+    it('rejects out of stopEnrichment rather than swallowing the reason', async () => {
+      mockPost.mockRejectedValue(new ApiError(409, 'No job is running.'))
+      const store = useDataStore()
+
+      await expect(store.stopEnrichment()).rejects.toThrow('No job is running.')
+    })
+
+    it('rejects out of resetEnrichment rather than swallowing the reason', async () => {
+      mockPost.mockRejectedValue(new ApiError(500, 'Reset failed.'))
+      const store = useDataStore()
+
+      await expect(store.resetEnrichment()).rejects.toThrow('Reset failed.')
+    })
+
+    it('sends the provider filter the CLI offers on reset', async () => {
+      mockPost.mockResolvedValue({ message: 'Reset 3 item(s)', count: 3 })
+      mockGet.mockResolvedValue({
+        enabled: true,
+        total: 3,
+        enriched: 0,
+        pending: 3,
+        not_found: 0,
+        failed: 0,
+        by_provider: {},
+        by_quality: {},
+      })
+      const store = useDataStore()
+
+      await store.resetEnrichment('movie', 'rawg')
+
+      expect(mockPost).toHaveBeenCalledWith('/enrichment/reset', {
+        content_type: 'movie',
+        provider: 'rawg',
+        user_id: 1,
+      })
+    })
+
+    it('keeps the counts a failed stats read could not replace, and says it failed', async () => {
+      const store = useDataStore()
+      mockGet.mockResolvedValueOnce({
+        enabled: true,
+        total: 10,
+        enriched: 4,
+        pending: 6,
+        not_found: 0,
+        failed: 0,
+        by_provider: {},
+        by_quality: {},
+      })
+      await store.loadEnrichmentStats()
+
+      mockGet.mockRejectedValueOnce(new ApiError(503, 'backend is down'))
+      await store.loadEnrichmentStats()
+
+      expect(store.enrichmentStatsError).toContain('backend is down')
+      expect(store.enrichmentStats?.total).toBe(10)
+    })
+
+    it('keeps the last known job when a status poll drops', async () => {
+      const running = {
+        running: true,
+        completed: false,
+        cancelled: false,
+        items_processed: 1,
+        items_enriched: 1,
+        items_failed: 0,
+        items_not_found: 0,
+        total_items: 2,
+        current_item: null,
+        content_type: null,
+        errors: [],
+        elapsed_seconds: 1,
+        progress_percent: 50,
+      }
+      const store = useDataStore()
+      mockGet.mockResolvedValueOnce(running).mockResolvedValueOnce({
+        enabled: true,
+        total: 2,
+        enriched: 1,
+        pending: 1,
+        not_found: 0,
+        failed: 0,
+        by_provider: {},
+        by_quality: {},
+      })
+      await store.checkEnrichmentStatus()
+
+      mockGet.mockRejectedValueOnce(new Error('network'))
+      await store.checkEnrichmentStatus()
+      store.cleanup()
+
+      expect(store.enrichmentJob).toEqual(running)
+    })
+  })
+
   /** Hold every status read open, in call order, so they can be answered
    *  out of it. */
   function pendingStatusReads(): Array<(status: unknown) => void> {

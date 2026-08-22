@@ -151,6 +151,7 @@ export const useDataStore = defineStore('data', () => {
 
   // Enrichment state
   const enrichmentStats = ref<EnrichmentStatsResponse | null>(null)
+  const enrichmentStatsError = ref('')
   const enrichmentJob = ref<EnrichmentJobStatusResponse | null>(null)
   const enrichmentEnabled = ref(false)
 
@@ -270,8 +271,10 @@ export const useDataStore = defineStore('data', () => {
         syncMessage.value = ''
         stopSyncPolling()
       }
-    } catch {
-      // Ignore polling errors
+    } catch (err) {
+      // Fire-and-forget: the next poll corrects a dropped one, and the banner
+      // already carries whatever the last good read said.
+      console.error('Sync status poll failed:', err)
     }
   }
 
@@ -505,39 +508,45 @@ export const useDataStore = defineStore('data', () => {
 
   async function loadEnrichmentStats() {
     const app = useAppStore()
+    enrichmentStatsError.value = ''
     try {
       const stats = await api.get<EnrichmentStatsResponse>('/enrichment/stats', {
         user_id: app.currentUserId,
       })
       enrichmentStats.value = stats
       enrichmentEnabled.value = stats.enabled
-    } catch {
-      enrichmentStats.value = null
+    } catch (err) {
+      // The counts are left alone: emptying them makes a failed read look like
+      // a library with nothing in it to enrich.
+      enrichmentStatsError.value = err instanceof Error ? err.message : 'Unknown error'
     }
   }
 
+  /** Turn enrichment on from the Data tab, where the card that needs it lives. */
+  async function enableEnrichment() {
+    const { useSettingsStore } = await import('@/stores/settings')
+    await useSettingsStore().saveSection('enrichment', { 'enrichment.enabled': true })
+    await loadEnrichmentStats()
+  }
+
+  // Rejects to the caller, like the source-config writes: the card that asked
+  // is the only surface that can say the refusal where the click happened.
   async function startEnrichment(contentType?: string, retryNotFound = false) {
     const app = useAppStore()
-    try {
-      await api.post('/enrichment/start', {
-        content_type: contentType || undefined,
-        user_id: app.currentUserId,
-        retry_not_found: retryNotFound,
-      })
-      startEnrichmentPolling()
-    } catch {
-      // Ignore
-    }
+    const result = await api.post<{ message: string }>('/enrichment/start', {
+      content_type: contentType || undefined,
+      user_id: app.currentUserId,
+      retry_not_found: retryNotFound,
+    })
+    startEnrichmentPolling()
+    return result.message
   }
 
   async function stopEnrichment() {
-    try {
-      await api.post('/enrichment/stop')
-      stopEnrichmentPolling()
-      await checkEnrichmentStatus()
-    } catch {
-      // Ignore
-    }
+    const result = await api.post<{ message: string }>('/enrichment/stop')
+    stopEnrichmentPolling()
+    await checkEnrichmentStatus()
+    return result.message
   }
 
   // Throws, unlike its neighbours: the dialog that asked shows the refusal.
@@ -549,19 +558,22 @@ export const useDataStore = defineStore('data', () => {
     })
   }
 
-  async function resetEnrichment(contentType?: string) {
+  async function resetEnrichment(contentType?: string, provider?: string) {
     const app = useAppStore()
-    try {
-      await api.post('/enrichment/reset', {
+    const result = await api.post<{ message: string; count: number }>(
+      '/enrichment/reset',
+      {
         content_type: contentType || undefined,
+        provider: provider || undefined,
         user_id: app.currentUserId,
-      })
-      startEnrichmentPolling()
-    } catch {
-      // Ignore
-    }
+      },
+    )
+    await loadEnrichmentStats()
+    return result.message
   }
 
+  // Fire-and-forget, unlike the verbs above: a dropped poll is corrected by the
+  // next one, and the last known job is a truer answer than "no job".
   async function checkEnrichmentStatus() {
     try {
       const status = await api.get<EnrichmentJobStatusResponse>('/enrichment/status')
@@ -575,8 +587,8 @@ export const useDataStore = defineStore('data', () => {
           await loadEnrichmentStats()
         }
       }
-    } catch {
-      enrichmentJob.value = null
+    } catch (err) {
+      console.error('Enrichment status poll failed:', err)
     }
   }
 
@@ -780,6 +792,7 @@ export const useDataStore = defineStore('data', () => {
     oauthMessages,
     oauthStatusFor,
     enrichmentStats,
+    enrichmentStatsError,
     enrichmentJob,
     enrichmentEnabled,
     sourceSchemas,
@@ -802,6 +815,7 @@ export const useDataStore = defineStore('data', () => {
     pollTraktApproval,
     disconnectTrakt,
     loadEnrichmentStats,
+    enableEnrichment,
     startEnrichment,
     stopEnrichment,
     resetEnrichment,
