@@ -151,7 +151,7 @@ describe('AddSourceModal', () => {
     await dismiss(wrapper)
 
     expect(wrapper.emitted('close')).toHaveLength(1)
-    const asked = wrapper.get('.discard-confirm')
+    const asked = wrapper.get('.confirm-panel')
 
     await asked.findAll('button').find((b) => b.text() === 'Keep editing')!.trigger('click')
 
