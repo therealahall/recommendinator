@@ -119,10 +119,10 @@ supplied:
 
 For a TV show, an omitted status is derived from `seasons_watched` in
 `src/utils/series.py`, and a stated `completed` ticks every season unless the
-total is unknown. No status empties the list: only a Trakt sync writes watched
-seasons, and the dialog hides its checklist for a show whose total never synced,
-so that show's status-only save would erase them unseen. Both supplied are
-written as given.
+total is unknown. No status empties the list: a Trakt sync and a CSV/JSON import
+both write watched seasons, and the dialog hides its checklist for a show whose
+total never synced, so that show's status-only save would erase them unseen.
+Both supplied are written as given.
 
 **No door stores a blank review.** A stored `""` reads as a review the user wrote
 and blocks every later import from filling the field. The sync door declines to
