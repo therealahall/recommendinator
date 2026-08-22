@@ -1836,6 +1836,26 @@ def update_user_preferences(
     return UserPreferenceResponse(**updated.to_dict())
 
 
+@router.delete("/users/{user_id}/preferences", response_model=UserPreferenceResponse)
+def reset_user_preferences(
+    user_id: UserIdPath, storage: RequiredStorage
+) -> UserPreferenceResponse:
+    """Reset every preference to its default, as ``preferences reset`` does.
+
+    Returns:
+        The defaults now stored, so the caller need not read them back.
+
+    Raises:
+        HTTPException: 404 when nobody carries *user_id*.
+    """
+    defaults = UserPreferenceConfig()
+    try:
+        storage.save_user_preference_config(user_id, defaults)
+    except UnknownUserError as error:
+        raise HTTPException(status_code=404, detail="User not found.") from error
+    return UserPreferenceResponse(**defaults.to_dict())
+
+
 @router.post("/complete")
 def mark_complete(
     request: CompletionRequest, storage: RequiredStorage

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useThemeStore } from '@/stores/theme'
 import ThemeSelector from '@/components/organisms/ThemeSelector.vue'
 import ScoringPrefs from '@/components/organisms/ScoringPrefs.vue'
 import RulesPrefs from '@/components/organisms/RulesPrefs.vue'
 import ProfilePanel from '@/components/organisms/ProfilePanel.vue'
 
 const prefs = usePreferencesStore()
+const theme = useThemeStore()
 const retrying = ref(false)
 const retryMessage = ref('')
 const page = ref<HTMLElement | null>(null)
@@ -14,6 +17,24 @@ const page = ref<HTMLElement | null>(null)
 onMounted(() => {
   prefs.load()
 })
+
+// Everything on this page is held until Save, so a nav link is a discard.
+onBeforeRouteLeave(
+  () =>
+    !prefs.isDirty ||
+    window.confirm('Your preference changes have not been saved. Discard them?'),
+)
+
+function resetToDefaults() {
+  if (
+    window.confirm(
+      'Reset every preference to its defaults? This clears your scorer ' +
+        'weights, custom rules, length preferences and theme.',
+    )
+  ) {
+    prefs.resetToDefaults()
+  }
+}
 
 async function onRetry(): Promise<void> {
   if (retrying.value) return
@@ -92,7 +113,10 @@ async function onRetry(): Promise<void> {
     </div>
 
     <div v-else class="card">
-      <ThemeSelector v-model="prefs.pendingTheme" />
+      <ThemeSelector
+        :model-value="theme.currentThemeId ?? theme.defaultThemeId"
+        @update:model-value="prefs.selectTheme"
+      />
       <ScoringPrefs />
       <RulesPrefs />
       <ProfilePanel />
@@ -100,6 +124,18 @@ async function onRetry(): Promise<void> {
         <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
           {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
         </button>
+        <button
+          class="btn btn-secondary"
+          :disabled="prefs.saving"
+          @click="resetToDefaults"
+        >Reset to defaults</button>
+        <!-- Outside the live region below: it changes on every keystroke, and
+             announcing each one would talk over the field being typed in. -->
+        <span
+          v-if="prefs.isDirty"
+          class="save-status"
+          data-testid="preferences-dirty"
+        >Unsaved changes</span>
         <div aria-live="polite" aria-atomic="true">
           <span
             v-if="prefs.saveStatus === 'saved'"

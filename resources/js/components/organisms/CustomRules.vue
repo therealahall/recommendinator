@@ -20,7 +20,10 @@ function onKeypress(event: KeyboardEvent) {
 <template>
   <div>
     <h4>Custom rules</h4>
-    <p class="help-text">Natural language rules like "avoid horror" or "prefer sci-fi".</p>
+    <p class="help-text">
+      Natural language rules like "avoid horror" or "prefer sci-fi". Rules you
+      add or remove here are kept until you press Save Preferences.
+    </p>
     <div>
       <div v-if="prefs.customRules.length === 0" class="empty-rules">
         No custom rules defined
@@ -45,7 +48,9 @@ function onKeypress(event: KeyboardEvent) {
         placeholder='e.g., avoid horror, prefer sci-fi'
         @keypress="onKeypress"
       >
-      <button class="btn btn-small btn-primary" @click="addRule">Add Rule</button>
+      <!-- "Add", not "Add Rule": the rule lands in the unsaved list above, and
+           a verb naming the object reads as having stored it. -->
+      <button class="btn btn-small btn-primary" @click="addRule">Add</button>
     </div>
   </div>
 </template>
