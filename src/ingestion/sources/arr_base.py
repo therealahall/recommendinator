@@ -165,13 +165,20 @@ class ArrPlugin(SourcePlugin):
             Metadata dictionary
         """
 
+    def fetch_context(self, base_url: str, api_key: str, verify_ssl: bool) -> Any:
+        """Whatever ``post_fetch`` needs for one run (e.g. Radarr collections).
+
+        It belongs to the run, not the plugin: the registry hands every
+        configured source the same plugin instance, so a second Radarr once
+        read the first one's collections off ``self``.
+        """
+        return None
+
     def post_fetch(
         self,
-        base_url: str,
-        api_key: str,
-        verify_ssl: bool,
         item: dict[str, Any],
         metadata: dict[str, Any],
+        context: Any,
     ) -> None:
         """Hook for subclasses to add data the main fetch does not carry
         (e.g. Radarr collections)."""
@@ -221,6 +228,7 @@ class ArrPlugin(SourcePlugin):
                 f"Failed to connect to {self.display_name} at {base_url}: {error}",
             ) from error
 
+        context = self.fetch_context(base_url, api_key, verify_ssl)
         total = len(item_list)
         processed_count = 0
 
@@ -231,7 +239,7 @@ class ArrPlugin(SourcePlugin):
 
             external_id = self.build_external_id(item)
             metadata = self.build_metadata(item)
-            self.post_fetch(base_url, api_key, verify_ssl, item, metadata)
+            self.post_fetch(item, metadata, context)
 
             processed_count += 1
             log_progress(logger, f"{self.display_name} items", processed_count, total)
