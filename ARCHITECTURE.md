@@ -197,13 +197,19 @@ below, and stamps `_SCHEMA_VERSION` at the end, inside the same transaction. A
 database with no tables yet reports as already current.
 
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
-Version 3 is `_repair_legacy_content_rows`: title re-normalization and the
-stranded detail-shape repair. Versions 10 to 15 re-normalize titles under one
-`stored_version < 15` guard. No step merges or unmerges rows: an upgraded
-library rewrites its keys and leaves the merge door to decide the rest.
 
-Versions 4, 5, 7 to 9 record a shape rather than guarding a step; the
-derived-column fill selects the rows missing them.
+Version 3 is `_repair_legacy_content_rows`: an approximate SQL
+`normalized_title` backfill and the stranded detail-shape repair. Version 16
+reduces a list column holding an object and clears a re-queued item's stale
+quality. Version 17 moves a book title's `(Series, #N)` marker into its
+metadata, clears a placeholder author, folds a stranded company name,
+re-normalizes every title and clears the derived columns for the backfill.
+
+No step merges or unmerges rows: an upgraded library rewrites its keys and
+leaves the merge door to decide the rest.
+
+Versions 4, 5 and 7 to 15 record a shape rather than guarding a step; the
+derived-column fill and version 17's re-normalize cover the rows they left.
 
 The one table rebuild, `_move_external_ids_off_content_items`, guards on the
 `content_items.external_id` column rather than the version, since it commits
@@ -214,13 +220,14 @@ before the stamp. `_assert_no_child_followed` aborts it when SQLite ignores the
 
 `content_items.sort_title` and `content_items.search_text`
 (`src/storage/derived.py`) hold `get_sort_title(title)` and the item's
-normalized title and creator, so `get_content_items` orders in SQL under a real
-`LIMIT`/`OFFSET` and builds a `ContentItem` only for the rows it returns. Both
-are recomputed from what is stored after every save and every merge — the
-creator column is fill-only, so they are read back from the row rather than
-taken from the item being saved, and the creator is picked by content type the
-way the read picks it. Every `ORDER BY` ends in `ci.id`, because SQL ordering is
-not stable and a page boundary inside a tie repeats one row and drops another.
+normalized title, creator and series, so `get_content_items` orders in SQL
+under a real `LIMIT`/`OFFSET` and builds a `ContentItem` only for the rows it
+returns. Both are recomputed from what is stored after every save and every
+merge — the creator column is fill-only, so they are read back from the row
+rather than taken from the item being saved, and the creator is picked by
+content type the way the read picks it. Every `ORDER BY` ends in `ci.id`,
+because SQL ordering is not stable and a page boundary inside a tie repeats one
+row and drops another.
 
 A search is one matched set. SQL orders the filtered candidates and projects
 each as an `id` and its `search_text`; `search_text_matches` runs all three
@@ -229,9 +236,9 @@ page is sliced out of what matched, so no candidate that misses and no match
 outside the page costs a `ContentItem`. The scan stops as soon as the page is
 full, so a search carrying a limit never reads past it. Typo tolerance is never
 conditional, and the pages of a search concatenate into the answer that search
-gives unpaged. `search_text` joins its two halves with a character search
-normalization can never produce, so a term never matches across the
-title/creator boundary.
+gives unpaged. `search_text` joins its parts with a character search
+normalization can never produce, so a term never matches across the boundary
+between a title, its creator and the series it states.
 
 #### Cross-source deduplication
 
@@ -240,12 +247,20 @@ back to the normalized title, oldest row first. It skips a row whose merge
 group holds another id from that source: a source lists an item once, so two
 of its ids are two items.
 
-The key is deliberately lossy — a series marker, a region qualifier, an edition
-and a trailing year all leave it — and three vetoes make it safe. A creator, a
+The key is deliberately lossy — a region qualifier, an edition and a trailing
+year all leave it — and three vetoes make it safe. A creator, a
 year or a region both rows state and disagree on refuses the match, as does a
 year one row spells into its title against a row stating none. Books are
 exempt: their `year_published` is the edition's. Where the key names two rows,
 only one spelled as the incoming title is taken.
+
+Comparison is core's and source shape is the plugin's. Core sees two rows and
+decides whether they name one work; only a plugin knows what its own source
+appends to a title or writes where it has no value. So a shelf emits `title`
+beside `metadata["series"]` rather than "All Systems Red (The Murderbot
+Diaries, #1)", and the save door refuses the "Unknown" Calibre-Web sends for an
+authorless book, once for every source. Schema 17 splits what earlier builds
+stored, re-keys every title and re-derives every row's sort and search columns.
 
 It updates the matched row in place and absorbs nothing: absorbing the
 same-titled rows beside an id match destroyed ids a third source held. A pair
@@ -303,8 +318,10 @@ duplicated in a TV show's metadata blob moves onto the `seasons` column, taking
 the higher of the two so the count is never lowered. It runs inside the one
 transaction `create_schema` commits, so a failure after it discards it.
 A GOG game's `developers`/`publishers`, stranded in the
-blob before either was an alias, fold onto the `developer` and `publisher`
-columns as names, filling only a column that is empty; without that, the objects
+blob by a build that spelled them so, fold onto the `developer` and `publisher`
+columns as names, filling only a column that is empty; schema 17 runs that fold
+again, because neither plural is an accepted spelling any more. Without it, the
+objects
 GOG uses on some products make every later save of the item raise. GOG's old
 per-platform flag dict becomes the list of names every
 other producer writes — or nothing, since the dict was truthy even when it named
