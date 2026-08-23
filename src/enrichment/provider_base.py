@@ -258,19 +258,3 @@ class EnrichmentProvider(ABC):
             ProviderError: If an API error occurs
         """
         ...
-
-    @classmethod
-    def transform_config(cls, raw_config: dict[str, Any]) -> dict[str, Any]:
-        """Transform raw YAML config into the dict expected by validate/enrich.
-
-        Override in subclasses when the YAML keys differ from the keys
-        that ``enrich()`` and ``validate_config()`` expect. The default
-        implementation returns *raw_config* unchanged.
-
-        Args:
-            raw_config: The ``enrichment.providers.<provider>`` section from config.
-
-        Returns:
-            Transformed config dict ready for ``validate_config`` / ``enrich``.
-        """
-        return dict(raw_config)
