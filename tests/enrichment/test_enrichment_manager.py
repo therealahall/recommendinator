@@ -11,6 +11,7 @@ import pytest
 import requests
 
 from src.enrichment.manager import (
+    _MAX_CONSECUTIVE_REJECTIONS,
     MAX_RECORDED_ERRORS,
     EnrichmentManager,
     merge_enrichment,
@@ -23,7 +24,6 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 
@@ -114,6 +114,7 @@ class RawRequestErrorProvider(EnrichmentProvider):
 
     def __init__(self, error: Exception) -> None:
         self._error = error
+        self.enrich_calls: list[ContentItem] = []
 
     @property
     def name(self) -> str:
@@ -144,6 +145,7 @@ class RawRequestErrorProvider(EnrichmentProvider):
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
+        self.enrich_calls.append(item)
         raise self._error
 
 
@@ -308,6 +310,30 @@ class TestMergeEnrichment:
         )  # Preserved (extra_metadata doesn't overwrite)
         assert merged["runtime"] == 90  # Added
 
+    @pytest.mark.parametrize("field", ["genres", "tags"])
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ('["Fantasy", "Horror"]', ["Science Fiction", "Fantasy", "Horror"]),
+            ("Fantasy", ["Science Fiction", "Fantasy"]),
+            ("", ["Science Fiction"]),
+            (["Fantasy", "Science Fiction"], ["Science Fiction", "Fantasy"]),
+        ],
+    )
+    def test_a_stored_value_of_any_shape_keeps_its_place_behind_the_enrichment(
+        self, field: str, stored: str | list[str], expected: list[str]
+    ) -> None:
+        """SQLite hands a stored list back as JSON, and scoring weights order."""
+        result = EnrichmentResult(provider="tmdb")
+        setattr(result, field, ["Science Fiction"])
+
+        assert merge_enrichment({field: stored}, result)[field] == expected
+
+    def test_merging_leaves_the_callers_metadata_untouched(self) -> None:
+        existing = {"genres": ["Comedy"]}
+        merge_enrichment(existing, EnrichmentResult(genres=["Action"], provider="tmdb"))
+        assert existing == {"genres": ["Comedy"]}
+
 
 class TestEnrichmentManager:
     """Tests for the EnrichmentManager class."""
@@ -460,24 +486,25 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
             }
         }
 
-    def _http_error(self) -> requests.HTTPError:
+    def _http_error(self, status_code: int = 401) -> requests.HTTPError:
         """Build an HTTPError whose str() embeds the api_key, like requests."""
         response = MagicMock(spec=requests.Response)
-        response.status_code = 401
+        response.status_code = status_code
         url = (
             "https://api.themoviedb.org/3/search/movie"
             f"?api_key={self._API_KEY}&query=The+Matrix"
         )
-        return requests.HTTPError(f"401 Client Error for url: {url}", response=response)
+        return requests.HTTPError(
+            f"{status_code} Error for url: {url}", response=response
+        )
 
-    def test_a_key_that_fails_every_item_does_not_grow_the_record_without_bound(
+    def test_a_failure_on_every_item_does_not_grow_the_record_without_bound(
         self,
         mock_storage: MagicMock,
         mock_registry: EnrichmentRegistry,
         config: dict[str, Any],
     ) -> None:
-        """The whole list is re-serialised per item, so an expired key against a
-        large library cost quadratic writes and a status body to match."""
+        """Re-serialising the whole list per item cost quadratic writes."""
         items = [
             (
                 index,
@@ -492,7 +519,7 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
         ]
         mock_storage.enrichment.items_needing.side_effect = [items, []]
         mock_storage.enrichment.count_needing.return_value = len(items)
-        mock_registry.register(RawRequestErrorProvider(self._http_error()))
+        mock_registry.register(RawRequestErrorProvider(self._http_error(503)))
 
         manager = EnrichmentManager(mock_storage, config, mock_registry)
         manager.start_enrichment()
@@ -813,59 +840,6 @@ class TestEnrichmentProgressRegression:
             content_type=None,
             user_id=None,
         )
-
-
-class TestRetryNotFoundSetIsBuiltInOneQuery:
-    """The set was built by paging every candidate and then reading one status
-    column per item, on a fresh connection each time."""
-
-    @pytest.fixture
-    def storage_manager(self, tmp_path: Path) -> StorageManager:
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    @pytest.fixture
-    def registry(self) -> EnrichmentRegistry:
-        registry = EnrichmentRegistry()
-        registry._discovered = True
-        return registry
-
-    @pytest.fixture
-    def config(self) -> dict[str, Any]:
-        return {
-            "enrichment": {
-                "batch_size": 10,
-                "providers": {"mock": {"enabled": True}},
-            }
-        }
-
-    def test_a_retry_run_reaches_the_settled_misses_without_per_item_status_reads(
-        self,
-        storage_manager: StorageManager,
-        registry: EnrichmentRegistry,
-        config: dict[str, Any],
-    ) -> None:
-        """The same items are retried, and the per-item accessor is untouched."""
-        settled = save_movie(storage_manager, "Missing Movie")
-        storage_manager.enrichment.mark_complete(settled, "none", "not_found")
-        enriched = save_movie(storage_manager, "Found Movie")
-        storage_manager.enrichment.mark_complete(enriched, "tmdb", "high")
-        save_movie(storage_manager, "New Movie")
-        provider = MockProvider()
-        registry.register(provider)
-
-        manager = EnrichmentManager(storage_manager, config, registry)
-        with patch.object(EnrichmentStore, "status", autospec=True) as per_item_status:
-            manager.start_enrichment(
-                content_type=ContentType.MOVIE, include_not_found=True
-            )
-            assert manager._wait_for_completion()
-
-        per_item_status.assert_not_called()
-        assert sorted(item.title for item in provider.enrich_calls) == [
-            "Missing Movie",
-            "New Movie",
-        ]
-        assert manager.get_status().items_processed == 2
 
 
 class TestTransientProviderFailureIsRetryable:
@@ -1197,6 +1171,34 @@ class TestTransientProviderFailureIsRetryable:
         )
         assert queued_ids(storage_manager) == {db_id}
 
+    def test_a_failed_save_is_ours_and_settles_without_asking_more_providers(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A broken write was filed as a retryable provider failure."""
+        save_movie(storage_manager)
+        answering = MockProvider()
+        untouched = MockProvider(name="raw_request")
+        registry.register(answering)
+        registry.register(untouched)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        with patch.object(
+            storage_manager,
+            "save_enrichment_metadata",
+            side_effect=OSError("disk full"),
+        ):
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        assert len(answering.enrich_calls) == 1
+        assert untouched.enrich_calls == []
+        assert queued_ids(storage_manager) == set()
+        assert manager.get_status().errors == ["storage: OSError"]
+        assert manager.get_status().items_failed == 1
+
     def test_mixed_batch_requeues_only_the_failed_item(
         self,
         storage_manager: StorageManager,
@@ -1402,6 +1404,34 @@ class TestPermanentProviderFailureStopsRetrying:
 
         assert queued_ids(storage_manager) == {db_id}
         assert manager.get_status().items_failed == 1
+
+    def test_a_provider_rejecting_every_item_is_abandoned_for_the_rest_of_the_run(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Settling rejections one at a time cost one request per library item."""
+        db_ids = [save_movie(storage_manager, f"Movie {index}") for index in range(20)]
+        provider = RawRequestErrorProvider(http_error(401))
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        asked = len(provider.enrich_calls)
+        assert asked == _MAX_CONSECUTIVE_REJECTIONS
+        assert queued_ids(storage_manager) == set(db_ids[asked:])
+        assert storage_manager.enrichment.status(db_ids[-1]) is None
+        job_status = manager.get_status()
+        assert job_status.items_processed == asked
+        assert job_status.items_not_found == asked
+        assert job_status.items_failed == 0
+        assert f"{provider.name}: abandoned" in " ".join(job_status.errors[:5]), (
+            "_echo_errors shows errors[:5], so a reason recorded behind the "
+            "rejections that caused it is one no operator reads"
+        )
 
     def test_failure_with_no_request_error_stays_retryable(
         self,

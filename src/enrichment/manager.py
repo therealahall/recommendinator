@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 # at the provider that can never come out differently.
 _RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
 
+_MAX_CONSECUTIVE_REJECTIONS = 5
+
 
 @dataclass(frozen=True)
 class _ProviderFailure:
@@ -247,6 +249,9 @@ class EnrichmentManager:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
+        self._rejections: dict[str, int] = {}
+        self._abandoned_providers: set[str] = set()
+
         # Rate limiters per provider
         self._rate_limiters: dict[str, RateLimiter] = {}
 
@@ -450,7 +455,7 @@ class EnrichmentManager:
             retried_ids: set[int] = set()
 
             # Process items in batches
-            while not self._stop_asked():
+            while not self._stop_asked() and not self._every_provider_abandoned():
                 # Fetch next batch of items (normal items only, not include_not_found)
                 fetched = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
@@ -591,11 +596,26 @@ class EnrichmentManager:
                 self._status.items_not_found += 1
             return
 
+        available_providers = [
+            provider
+            for provider in matching_providers
+            if provider.name not in self._abandoned_providers
+        ]
+        if not available_providers:
+            # Deliberately no write: the item keeps the status it arrived with,
+            # so the run after the credential is fixed picks it up untouched.
+            logger.debug(
+                "[ENRICHMENT] Every provider for %s was abandoned this run: %s",
+                content_type_str,
+                safe_title,
+            )
+            return
+
         # Providers that never gave an answer for this item because they raised.
         failures: list[_ProviderFailure] = []
 
         # Try each provider until one succeeds
-        for provider in matching_providers:
+        for provider in available_providers:
             try:
                 # Apply rate limiting
                 limiter = self._get_rate_limiter(provider.name)
@@ -611,32 +631,9 @@ class EnrichmentManager:
                     safe_title,
                 )
 
-                # Enrich
+                # The try covers the provider call and nothing else: a failed
+                # save is ours, and blaming a provider re-fetched it forever.
                 result = provider.enrich(item, provider_config)
-
-                if result and result.match_quality != "not_found":
-                    # Success - merge and save
-                    self._apply_enrichment(db_id, item, result)
-                    self.storage_manager.enrichment.mark_complete(
-                        db_id, provider.name, result.match_quality
-                    )
-                    logger.info(
-                        "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
-                        content_type_str,
-                        provider.name,
-                        result.match_quality,
-                        safe_title,
-                    )
-                    with self._lock:
-                        self._status.items_processed += 1
-                        self._status.items_enriched += 1
-                    return
-                else:
-                    logger.debug(
-                        "[ENRICHMENT] %s returned not_found: %s",
-                        provider.name,
-                        safe_title,
-                    )
 
             except Exception as error:
                 # One branch for every exception, because a bare ValueError
@@ -648,6 +645,37 @@ class EnrichmentManager:
                 )
                 failures.append(failure)
                 self._record_error(str(failure))
+                self._note_rejection(failure)
+                continue
+
+            self._rejections.pop(provider.name, None)
+
+            if result and result.match_quality != "not_found":
+                try:
+                    self._apply_enrichment(db_id, item, result)
+                    self.storage_manager.enrichment.mark_complete(
+                        db_id, provider.name, result.match_quality
+                    )
+                except Exception as error:
+                    self._settle_storage_failure(db_id, safe_title, error)
+                    return
+                logger.info(
+                    "[ENRICHMENT] Enriched %s via %s (quality=%s): %s",
+                    content_type_str,
+                    provider.name,
+                    result.match_quality,
+                    safe_title,
+                )
+                with self._lock:
+                    self._status.items_processed += 1
+                    self._status.items_enriched += 1
+                return
+
+            logger.debug(
+                "[ENRICHMENT] %s returned not_found: %s",
+                provider.name,
+                safe_title,
+            )
 
         if failures:
             reported = "; ".join(str(failure) for failure in failures)
@@ -686,6 +714,62 @@ class EnrichmentManager:
         with self._lock:
             self._status.items_processed += 1
             self._status.items_not_found += 1
+
+    def _settle_storage_failure(
+        self, db_id: int, safe_title: str, error: Exception
+    ) -> None:
+        """Retire an item whose enrichment arrived but could not be written.
+
+        Re-fetching spends a third party's quota on a failure of ours that
+        repeating cannot clear. ``status.errors`` is served to clients, so it
+        names the type only.
+        """
+        logger.error(
+            "[ENRICHMENT] Saving enrichment failed, not retrying: %s",
+            safe_title,
+            exc_info=True,
+        )
+        self._record_error(f"storage: {type(error).__name__}")
+        self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+        with self._lock:
+            self._status.items_processed += 1
+            self._status.items_failed += 1
+
+    def _note_rejection(self, failure: _ProviderFailure) -> None:
+        """Abandon a provider that keeps rejecting the request.
+
+        A revoked key rejects every item alike, so settling one at a time means
+        thousands of requests at a provider that already said no. Any answer
+        clears the count.
+        """
+        if failure.retryable:
+            self._rejections.pop(failure.provider, None)
+            return
+        count = self._rejections.get(failure.provider, 0) + 1
+        self._rejections[failure.provider] = count
+        if count < _MAX_CONSECUTIVE_REJECTIONS:
+            return
+        self._abandoned_providers.add(failure.provider)
+        logger.warning(
+            "[ENRICHMENT] Abandoning %s for the rest of this run after %d "
+            "consecutive rejections: %s",
+            failure.provider,
+            count,
+            failure.reason,
+        )
+        self._record_error(
+            f"{failure.provider}: abandoned for this run after {count} "
+            f"consecutive rejections ({failure.reason})"
+        )
+
+    def _every_provider_abandoned(self) -> bool:
+        """Whether nothing is left that could answer, so the run should end."""
+        if not self._abandoned_providers:
+            return False
+        return all(
+            provider.name in self._abandoned_providers
+            for provider in self.registry.get_enabled_providers(self.config)
+        )
 
     def _get_rate_limiter(self, provider_name: str) -> RateLimiter:
         """Get or create rate limiter for a provider.
