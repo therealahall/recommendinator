@@ -394,6 +394,26 @@ def test_complete_refuses_a_title_or_author_the_web_door_would_refuse(
     assert len(storage.get_content_items(content_type=ContentType.BOOK)) == 1
 
 
+@pytest.mark.parametrize("title", ["   ", "\udcff\udcfe"])
+def test_complete_refuses_a_blank_title_the_web_door_would_refuse(
+    tmp_path: Path, title: str
+) -> None:
+    """A blank title stored a library row nothing could name or find.
+
+    Undecodable bytes are the same case: the group strips them to ``""``
+    upstream of every guard, so both reach one rule.
+    """
+    storage = StorageManager(sqlite_path=tmp_path / "complete-blank-title.db")
+
+    result = _invoke_with_mocks(
+        CliRunner(), ["complete", "--type", "book", "--title", title], storage
+    )
+
+    assert result.exit_code != 0
+    assert "--title" in result.output
+    assert storage.get_content_items(content_type=ContentType.BOOK) == []
+
+
 def test_complete_command_invalid_rating(mock_components):
     """Test complete command with invalid rating."""
     runner = CliRunner()

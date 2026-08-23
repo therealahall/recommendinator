@@ -13,6 +13,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
+from src.utils.text import is_blank
 
 #: What ``POST /api/complete`` answers with; the title and review that failed
 #: to write stay in the log.
@@ -61,6 +62,10 @@ def complete(
 
     if is_blank_review(review):
         click.echo("Error: --review cannot be empty.", err=True)
+        raise click.Abort()
+
+    if is_blank(title):
+        click.echo("Error: --title cannot be empty.", err=True)
         raise click.Abort()
 
     if len(title) > MAX_TITLE_LENGTH:

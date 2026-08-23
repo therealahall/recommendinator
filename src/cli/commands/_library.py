@@ -10,7 +10,13 @@ from typing import cast
 import click
 from tabulate import tabulate
 
-from src.cli._shared import abort_with, emit_view, is_blank_review, series_label
+from src.cli._shared import (
+    abort_with,
+    emit_view,
+    is_blank_review,
+    series_label,
+    write_output_file,
+)
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -630,6 +636,11 @@ def library_unignore(ctx: click.Context, item_id: int, user_id: int) -> None:
     default=1,
     help="User ID",
 )
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Overwrite an existing --output file without asking",
+)
 @click.pass_context
 def library_export(
     ctx: click.Context,
@@ -637,6 +648,7 @@ def library_export(
     output_format: str,
     output_path: Path | None,
     user_id: int,
+    yes: bool,
 ) -> None:
     """Export library items as CSV or JSON. No --type exports every type."""
     storage = ctx.obj["storage"]
@@ -656,7 +668,10 @@ def library_export(
         data = export_items_csv(items, content_type)
 
     if output_path:
-        output_path.write_text(data, encoding="utf-8")
+        if not write_output_file(
+            ctx, output_path, data.encode("utf-8"), assume_yes=yes
+        ):
+            return
         click.echo(f"Exported {len(items)} items to {output_path}")
     else:
         click.echo(data, nl=False)

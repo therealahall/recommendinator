@@ -68,6 +68,11 @@ def humanize_source_id(source_id: str) -> str:
     return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
 
 
+def is_blank(value: str) -> bool:
+    """The one emptiness rule both doors reach: ``min_length`` cannot say it."""
+    return not value.strip()
+
+
 def _log_escape(match: re.Match[str]) -> str:
     """The conventional spelling where one exists, the codepoint otherwise."""
     character = match.group()

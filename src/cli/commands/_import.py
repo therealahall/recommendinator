@@ -8,7 +8,7 @@ from typing import Any
 
 import click
 
-from src.cli._shared import abort_with, require_storage
+from src.cli._shared import abort_with, require_storage, write_output_file
 from src.config.service import auto_enrich_enabled
 from src.ingestion.import_templates import (
     TEMPLATE_IMPORTERS,
@@ -214,11 +214,19 @@ def _list_templates(output_format: str) -> None:
     default=None,
     help="Output format for the listing (default: table)",
 )
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Overwrite an existing --output file without asking",
+)
+@click.pass_context
 def import_template(
+    ctx: click.Context,
     importer_name: str | None,
     content_type_str: str | None,
     output_path: Path | None,
     output_format: str | None,
+    yes: bool,
 ) -> None:
     """Write an import template, or list them (mirrors GET /api/import/templates)."""
     if importer_name is None and content_type_str is None and output_path is None:
@@ -241,7 +249,8 @@ def import_template(
 
     data = read_template(template)
     if output_path:
-        output_path.write_bytes(data)
+        if not write_output_file(ctx, output_path, data, assume_yes=yes):
+            return
         click.echo(f"Wrote {template.filename} to {output_path}")
     else:
         click.echo(data, nl=False)

@@ -63,7 +63,8 @@ format and `--content-type` the type where the format decides none.
 `total_rows` and a line per refused row, capped at the first 200 with a
 `… and N more` tally after them, plus `notes` for what happened to the file.
 `import-formats` lists the formats; `import-template` writes one to
-`--output` or stdout, or lists them.
+`--output` or stdout, or lists them. An existing `--output` file is overwritten
+only after a prompt, which `--yes` skips.
 
 ```bash
 python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
@@ -222,7 +223,9 @@ python3.11 -m src.cli library export --output library.csv   # every type
 Without `--type` the file covers the whole library. A CSV header then carries
 all four types' columns plus a `content_type` column naming each row's type, so
 each row leaves the columns its own type does not have blank.
-Ignored items are exported either way, as the web Export button does.
+Ignored items are exported either way, as the web Export button does. An
+existing `--output` file is overwritten only after a prompt, which `--yes`
+skips.
 
 ## Source management
 

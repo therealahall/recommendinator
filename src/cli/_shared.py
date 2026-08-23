@@ -19,7 +19,7 @@ from src.utils.series import (
     get_series_name_from_metadata,
     get_series_position_from_metadata,
 )
-from src.utils.text import exception_for_log
+from src.utils.text import exception_for_log, is_blank
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def is_blank_review(review: str | None) -> bool:
     and ``library edit`` both refuse it. Each words its own message: only one
     has ``--clear-review``.
     """
-    return review is not None and not review.strip()
+    return review is not None and is_blank(review)
 
 
 def series_label(metadata: dict[str, Any] | None) -> str:
@@ -154,6 +154,29 @@ def read_json_payload(from_json: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         abort_with("JSON payload must be an object mapping field names to values")
     return parsed
+
+
+def write_output_file(
+    ctx: click.Context,
+    output_path: Path,
+    data: bytes,
+    *,
+    assume_yes: bool,
+) -> bool:
+    """False means the operator kept the file that was already there.
+
+    The OS judges what is unwritable — a directory, an absent parent, a mode —
+    so one ``except`` covers every shape rather than a check per shape.
+    """
+    if not assume_yes and output_path.is_file():
+        if not click.confirm(f"{output_path} already exists. Overwrite it?"):
+            click.echo("Aborted.")
+            return False
+    try:
+        output_path.write_bytes(data)
+    except OSError as error:
+        abort_after_failure(ctx, f"Could not write {output_path}", error)
+    return True
 
 
 def emit_view(
