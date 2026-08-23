@@ -473,8 +473,8 @@ Rules:
 - **A provider that keeps rejecting is abandoned for the run.** Five consecutive
   non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, and the run
   ends once nothing unabandoned is left for its content type. Items no remaining
-  provider reached are left queued and unwritten, and the run reports neither
-  completed nor cancelled.
+  provider reached are left queued and unwritten, and the run reports "stopped on
+  an error" — whether or not a content type filter narrowed it.
 - **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` takes
   the item out of the queue with the error on the row, so it is not counted as
   one more `not_found`.
