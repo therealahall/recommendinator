@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from src.ingestion.importers.base import ImportedRow
+from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImporter
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage import sqlite_db
@@ -708,26 +710,7 @@ class TestNormalizeTitleForMatching:
 
 
 class TestWhichTrailingParentheticalsAreDropped:
-    """Goodreads RSS appends "(Series, #N)" where Calibre appends nothing."""
-
-    _ONE_BOOK_TWO_SPELLINGS = [
-        (
-            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
-            "The Gate of the Feral Gods",
-        ),
-        ("Burden to Bear (Spear of the Gods #1)", "Burden to Bear"),
-        ("Endgame (Doom #4)", "Endgame"),
-        ("Dawnshard (The Stormlight Archive, #3.5)", "Dawnshard"),
-        ("A Clash of Kings  (A Song of Ice and Fire, #2)", "A Clash of Kings"),
-    ]
-
-    @pytest.mark.parametrize(("shelved", "bare"), _ONE_BOOK_TWO_SPELLINGS)
-    def test_a_series_position_matches_the_calibre_row_beside_it(
-        self, shelved: str, bare: str
-    ) -> None:
-        assert normalize_title_for_matching(shelved) == normalize_title_for_matching(
-            bare
-        )
+    """A qualifier no source is obliged to append leaves the key."""
 
     def test_a_regional_qualifier_matches_the_same_show_without_one(self) -> None:
         assert normalize_title_for_matching("Hell's Kitchen (US)") == (
@@ -831,12 +814,19 @@ class TestWhatTheSaveDoorMatchesOnTitle:
             metadata={"release_year": release_year} if release_year else {},
         )
 
-    def test_a_goodreads_series_row_and_an_authorless_calibre_row_are_one_book(
+    @staticmethod
+    def _goodreads_csv_book(book_id: str, title: str, author: str) -> ContentItem:
+        rows = GoodreadsCsvImporter().parse(
+            "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
+            f'{book_id},"{title}",{author},0,to-read\n'
+        )
+        return next(row.item for row in rows if isinstance(row, ImportedRow))
+
+    def test_a_shelved_series_row_lands_on_the_calibre_row_of_that_book(
         self, temp_db: SQLiteDB
     ) -> None:
         goodreads = temp_db.save_content_item(
-            self._book(
-                "goodreads_rss",
+            self._goodreads_csv_book(
                 "57905101",
                 "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
                 "Matt Dinniman",
@@ -914,7 +904,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         )
 
         gog = temp_db.save_content_item(
-            self._game("gog", "1207658919", "Tomb Raider", developers=["Core Design"])
+            self._game("gog", "1207658919", "Tomb Raider", developer=["Core Design"])
         )
 
         assert gog != steam
@@ -928,7 +918,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         )
 
         gog = temp_db.save_content_item(
-            self._game("gog", "1424216861", "Prey", developers=["Arkane Studios"])
+            self._game("gog", "1424216861", "Prey", developer=["Arkane Studios"])
         )
 
         assert gog != steam
@@ -1081,28 +1071,25 @@ class TestWhatTheSaveDoorMatchesOnTitle:
 
         assert landed == plain
 
-    def test_calibres_placeholder_author_does_not_veto_the_goodreads_row(
+    def test_the_word_unknown_vetoes_nothing_and_is_never_stored_as_an_author(
         self, temp_db: SQLiteDB
     ) -> None:
-        goodreads = temp_db.save_content_item(
-            self._book(
-                "goodreads_rss",
-                "57905101",
-                "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
-                "Matt Dinniman",
-            )
+        """``author`` is fill-only, so a placeholder written once is permanent."""
+        shelved = temp_db.save_content_item(
+            self._book("goodreads_rss", "57905101", "Dungeon Crawler Carl", "Dinniman")
         )
 
-        calibre = temp_db.save_content_item(
-            self._book(
-                "calibre_web",
-                "calibre:51a0e808",
-                "The Gate of the Feral Gods",
-                "Unknown",
-            )
+        imported = temp_db.save_content_item(
+            self._book("generic_csv", "csv-1", "Dungeon Crawler Carl", "Unknown")
+        )
+        authorless = temp_db.save_content_item(
+            self._book("generic_csv", "csv-2", "The Rats in the Walls", "Unknown")
         )
 
-        assert calibre == goodreads
+        assert imported == shelved
+        stored = temp_db.get_content_item(authorless)
+        assert stored is not None
+        assert stored.author is None
 
 
 # ---------------------------------------------------------------------------
@@ -1294,6 +1281,21 @@ class TestGetContentItemsSearch:
         )
         results = temp_db.get_content_items(search="Tolkien")
         assert [item.title for item in results] == ["The Hobbit"]
+
+    def test_search_matches_the_series_a_book_states(self, temp_db: SQLiteDB) -> None:
+        """The series left the title, so only the metadata still names it."""
+        temp_db.save_content_item(
+            ContentItem(
+                id="book_1",
+                title="All Systems Red",
+                author="Martha Wells",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"series": "The Murderbot Diaries", "series_index": 1.0},
+            )
+        )
+        results = temp_db.get_content_items(search="Murderbot Diaries")
+        assert [item.title for item in results] == ["All Systems Red"]
 
     def test_search_ands_with_type_filter(self, temp_db: SQLiteDB) -> None:
         temp_db.save_content_item(
@@ -3929,7 +3931,7 @@ class TestCreatorColumnEdges:
                 title="Divinity",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"developers": ["Larian Studios", "Larian Belgium"]},
+                metadata={"developer": ["Larian Studios", "Larian Belgium"]},
             )
         )
 
@@ -3946,7 +3948,7 @@ class TestCreatorColumnEdges:
                 title="Unattributed",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"developers": []},
+                metadata={"developer": []},
             )
         )
 
@@ -3960,7 +3962,7 @@ class TestCreatorColumnEdges:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.author is None
-        assert "developers" not in retrieved.metadata
+        assert "developer" not in retrieved.metadata
 
     def test_a_later_sync_does_not_overwrite_a_stored_creator(
         self, temp_db: SQLiteDB
