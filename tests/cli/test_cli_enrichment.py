@@ -190,6 +190,15 @@ class TestEnrichmentJobControl:
             "progress_percent",
         }
 
+    def test_job_prints_why_a_run_stopped_and_not_only_its_tallies(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        reason = "tmdb: abandoned for this run"
+        storage = self._running(tmp_path)
+        storage.enrichment_jobs.finish(completed=True, cancelled=False, errors=[reason])
+        result = _invoke_with_mocks(cli_runner, ["enrichment", "job"], storage)
+        assert reason in result.output
+
     def test_job_says_so_when_nothing_has_ever_run(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:

@@ -144,6 +144,19 @@ describe('EnrichmentCard', () => {
     expect(data.stopEnrichment).toHaveBeenCalled()
   })
 
+  it('shows why a run stopped, which the card used to drop entirely', () => {
+    const abandoned = 'tmdb: abandoned for this run after 5 consecutive rejections'
+    const wrapper = mountWithEnrichment({
+      enrichmentJob: makeRunningJob({
+        running: false,
+        completed: true,
+        errors: ['tmdb: HTTP 401', abandoned],
+      }),
+    })
+
+    expect(wrapper.get('[data-testid="enrichment-errors"]').text()).toContain(abandoned)
+  })
+
   it('tells a failed stats read apart from a library with nothing to enrich', () => {
     const wrapper = mountWithEnrichment({
       enrichmentStatsError: 'backend is down',

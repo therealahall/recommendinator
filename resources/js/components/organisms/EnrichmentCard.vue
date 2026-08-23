@@ -18,6 +18,9 @@ const running = computed(() => data.enrichmentJob?.running === true)
 const typeLabel = computed(() =>
   enrichType.value ? formatContentType(enrichType.value) : '',
 )
+// The manager caps this list itself, last entry a count of the rest, so the
+// whole of it renders: the line saying why a run stopped is usually the last.
+const jobErrors = computed<string[]>(() => data.enrichmentJob?.errors ?? [])
 const resettable = computed(() =>
   enrichType.value || !stats.value
     ? null
@@ -146,6 +149,19 @@ const onReset = (provider: string) =>
           >Enrich</button>
         </div>
       </div>
+
+      <div v-if="jobErrors.length" class="enrichment-errors">
+        <p id="enrichment-errors-title" class="enrichment-errors-title">
+          Errors reported by this run
+        </p>
+        <ul
+          class="enrichment-errors-list"
+          data-testid="enrichment-errors"
+          aria-labelledby="enrichment-errors-title"
+        >
+          <li v-for="(line, index) in jobErrors" :key="index">{{ line }}</li>
+        </ul>
+      </div>
     </template>
 
     <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
@@ -185,6 +201,27 @@ const onReset = (provider: string) =>
   margin-top: var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+.enrichment-errors {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.enrichment-errors-title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+
+.enrichment-errors-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.enrichment-errors-list li + li {
+  margin-top: var(--space-1);
 }
 
 .enrichment-summary {
