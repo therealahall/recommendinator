@@ -132,6 +132,7 @@ from src.storage.merge import (
     normalize_title_for_matching,
     parse_json_list,
     resolve_status_forward,
+    stated_creator,
     stated_region,
     stated_release_year,
 )
@@ -913,8 +914,9 @@ class SQLiteDB:
             raw = detail_field.value_from(metadata)
             if detail_field.kind is FieldKind.CREATOR:
                 # The item's own author outranks whatever metadata carries.
-                raw = item.author or raw
-            new_value = detail_field.store(raw)
+                new_value = stated_creator(detail_field.store(item.author or raw))
+            else:
+                new_value = detail_field.store(raw)
 
             if col_name in MERGEABLE_DETAIL_COLUMNS and existing_data:
                 existing_list = parse_json_list(existing_data.get(col_name))
