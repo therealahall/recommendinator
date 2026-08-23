@@ -58,11 +58,7 @@ class EnrichmentStore:
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> list[int]:
-        """Return the db_ids whose last enrichment settled as ``not_found``.
-
-        These are what a retry run adds to the queue. An item that was never
-        attempted has no status row and is not one of them.
-        """
+        """Return the db_ids whose last enrichment settled as ``not_found``."""
         return self._sqlite_db.get_not_found_ids(
             content_type=content_type,
             user_id=user_id,

@@ -16,10 +16,8 @@ def _echo_errors(errors: list[str]) -> None:
     if not errors:
         return
     click.echo("  Errors:")
-    for error in errors[:5]:
+    for error in errors:
         click.echo(f"    - {error}")
-    if len(errors) > 5:
-        click.echo(f"    ... and {len(errors) - 5} more")
 
 
 def _finished_state(status: EnrichmentJobStatus) -> str:

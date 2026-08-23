@@ -251,8 +251,8 @@ class EnrichmentManager:
 
         self._rejections: dict[str, int] = {}
         self._abandoned_providers: set[str] = set()
+        self._skipped_for_abandonment = False
 
-        # Rate limiters per provider
         self._rate_limiters: dict[str, RateLimiter] = {}
 
         # Resolved global secrets, keyed by dotted registry key. Each secret is
@@ -287,8 +287,10 @@ class EnrichmentManager:
                 running=True,
                 content_type=content_type.value if content_type else None,
             )
+            self._rejections = {}
+            self._abandoned_providers = set()
+            self._skipped_for_abandonment = False
 
-            # Start background thread
             self._thread = threading.Thread(
                 target=self._run_enrichment,
                 args=(content_type, user_id, include_not_found),
@@ -499,8 +501,7 @@ class EnrichmentManager:
             # Uncached, unlike the loop's check: this one decides what the run
             # is recorded as.
             stopped = self._jobs.stop_requested()
-            abandoned = self._every_provider_abandoned(content_type)
-            completed = not stopped and not abandoned
+            completed = not stopped and not self._skipped_for_abandonment
             with self._lock:
                 self._status.running = False
                 self._status.completed = completed
@@ -513,7 +514,7 @@ class EnrichmentManager:
 
             if stopped:
                 job_result = "cancelled"
-            elif abandoned:
+            elif not completed:
                 job_result = "stopped on an error"
             else:
                 job_result = "completed"
@@ -593,7 +594,6 @@ class EnrichmentManager:
         ]
 
         if not matching_providers:
-            # No providers available for this content type
             logger.debug(
                 "[ENRICHMENT] No providers for %s: %s", content_type_str, safe_title
             )
@@ -611,6 +611,7 @@ class EnrichmentManager:
         if not available_providers:
             # Deliberately no write: the item keeps the status it arrived with,
             # so the run after the credential is fixed picks it up untouched.
+            self._skipped_for_abandonment = True
             logger.debug(
                 "[ENRICHMENT] Every provider for %s was abandoned this run: %s",
                 content_type_str,
@@ -618,10 +619,8 @@ class EnrichmentManager:
             )
             return
 
-        # Providers that never gave an answer for this item because they raised.
         failures: list[_ProviderFailure] = []
 
-        # Try each provider until one succeeds
         for provider in available_providers:
             try:
                 # Apply rate limiting
