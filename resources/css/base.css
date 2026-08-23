@@ -1248,6 +1248,7 @@ input[type="checkbox"] {
   font-size: var(--text-sm);
 }
 
+.rec-series,
 .rec-author {
   font-size: var(--text-sm);
   color: var(--text-secondary);
@@ -1363,9 +1364,13 @@ input[type="checkbox"] {
   margin-bottom: 2px;
 }
 
+.library-item .item-series,
 .library-item .item-author {
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+.library-item .item-author {
   margin-bottom: var(--space-2);
 }
 

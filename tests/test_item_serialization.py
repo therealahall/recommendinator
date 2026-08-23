@@ -1,5 +1,7 @@
 """Tests for the shared CLI/web ContentItem serialization helpers."""
 
+import pytest
+
 from src.storage.duplicates import (
     DeclinedPair,
     DuplicateSide,
@@ -63,6 +65,24 @@ def test_unknown_enriched_serializes_as_false() -> None:
     serialized = item_to_dict(item)
 
     assert serialized["enriched"] is False
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"series": "The Murderbot Diaries", "series_index": 1.0}, 1.0),
+        ({"series": "The Murderbot Diaries"}, None),
+        ({"series": "The Murderbot Diaries", "series_index": "nonsense"}, None),
+    ],
+    ids=["stated", "no-position", "unreadable-position"],
+)
+def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
+    metadata: dict[str, object], expected: float | None
+) -> None:
+    serialized = item_to_dict(make_item(title="All Systems Red", metadata=metadata))
+
+    assert serialized["series"] == "The Murderbot Diaries"
+    assert serialized["series_index"] == expected
 
 
 def test_the_cli_json_and_the_web_response_carry_the_same_keys() -> None:

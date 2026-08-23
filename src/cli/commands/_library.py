@@ -10,7 +10,7 @@ from typing import cast
 import click
 from tabulate import tabulate
 
-from src.cli._shared import abort_with, emit_view, is_blank_review
+from src.cli._shared import abort_with, emit_view, is_blank_review, series_label
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -90,7 +90,7 @@ def library() -> None:
 @click.option(
     "--search",
     default=None,
-    help="Filter by title or creator (matches web API search)",
+    help="Filter by title, creator or series (matches web API search)",
 )
 @click.option(
     "--show-ignored",
@@ -202,6 +202,7 @@ def library_list(
             [
                 item.db_id,
                 item.title,
+                series_label(item.metadata),
                 item.author or "N/A",
                 get_enum_value(item.content_type),
                 get_enum_value(item.status),
@@ -211,7 +212,16 @@ def library_list(
         )
     # One listing mixes the types, so the column takes the name they share
     # rather than any one type's ("Author" over a director, and so on).
-    headers = ["ID", "Title", "Creator", "Type", "Status", "Rating", "Enriched"]
+    headers = [
+        "ID",
+        "Title",
+        "Series",
+        "Creator",
+        "Type",
+        "Status",
+        "Rating",
+        "Enriched",
+    ]
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
 
@@ -264,6 +274,7 @@ def library_show(
         release_year = serialized["release_year"]
         table_data = [
             ["Title", item.title],
+            ["Series", series_label(item.metadata)],
             [creator_label, item.author or "N/A"],
             ["Release Year", "N/A" if release_year is None else release_year],
             ["Type", content_type],

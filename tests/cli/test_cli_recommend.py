@@ -88,6 +88,7 @@ def _book(
     title: str,
     author: str | None = "Author A",
     db_id: int = 1,
+    series: tuple[str, float] | None = None,
 ) -> ContentItem:
     """An unread book to recommend."""
     return ContentItem(
@@ -97,6 +98,7 @@ def _book(
         author=author,
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
+        metadata={"series": series[0], "series_index": series[1]} if series else {},
     )
 
 
@@ -131,7 +133,7 @@ class TestRecommendJsonOutput:
         """Test JSON output includes all RecommendationResponse fields."""
         mock_engine = _engine_returning(
             Recommendation(
-                item=_book("Book One", db_id=42),
+                item=_book("Book One", db_id=42, series=("The Expanse", 2.0)),
                 score=0.9,
                 reasoning="Great match",
                 score_breakdown={"genre": 0.5, "theme": 0.4},
@@ -152,6 +154,8 @@ class TestRecommendJsonOutput:
             "db_id",
             "title",
             "author",
+            "series",
+            "series_index",
             "score",
             "reasoning",
             "score_breakdown",
@@ -159,6 +163,7 @@ class TestRecommendJsonOutput:
         }
         assert rec["db_id"] == 42
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
+        assert (rec["series"], rec["series_index"]) == ("The Expanse", 2.0)
 
     def test_zero_results_emit_an_empty_array_and_no_prose(self) -> None:
         """Nothing to recommend is ``[]``, as GET /api/recommendations answers.
@@ -227,6 +232,8 @@ class TestRecommendProgressLineOnStdoutRegression:
                 "db_id": 42,
                 "title": "Hyperion",
                 "author": "Dan Simmons",
+                "series": None,
+                "series_index": None,
                 "score": 0.9,
                 "reasoning": "Great match",
                 "score_breakdown": {},
@@ -245,7 +252,7 @@ class TestRecommendProgressLineOnStdoutRegression:
         assert self.PROGRESS in result.stderr
         assert self.PROGRESS not in result.stdout
         assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "Dan Simmons", "0.9", "Great match"]
+            ["1", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match"]
         ]
 
 
@@ -253,13 +260,18 @@ class TestRecommendTableOutput:
     """What the default format renders, which is what a human reads."""
 
     def test_recommendations_render_as_ranked_rows_in_engine_order(self) -> None:
-        """Rank, title, creator and score per row, best-scoring first."""
+        """Rank, title, series, creator and score per row, best-scoring first."""
         result = _invoke_recommend_with_engine(
             _piping_runner(),
             ["recommend", "--type", "book"],
             _engine_returning(
                 Recommendation(
-                    item=_book("Hyperion", author="Dan Simmons", db_id=1),
+                    item=_book(
+                        "Hyperion",
+                        author="Dan Simmons",
+                        db_id=1,
+                        series=("Hyperion Cantos", 1.0),
+                    ),
                     score=0.9,
                     reasoning="Great match",
                 ),
@@ -273,8 +285,15 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "Dan Simmons", "0.9", "Great match"],
-            ["2", "Dune", "Frank Herbert", "0.42", "Also good"],
+            [
+                "1",
+                "Hyperion",
+                "Hyperion Cantos #1",
+                "Dan Simmons",
+                "0.9",
+                "Great match",
+            ],
+            ["2", "Dune", "N/A", "Frank Herbert", "0.42", "Also good"],
         ]
 
     def test_an_unknown_author_renders_a_placeholder(self) -> None:
@@ -293,7 +312,7 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert _data_rows(result.stdout) == [
-            ["1", "Nowhere Man", "N/A", "0.5", "Pipeline line"]
+            ["1", "Nowhere Man", "N/A", "N/A", "0.5", "Pipeline line"]
         ]
         assert "None" not in result.stdout
 

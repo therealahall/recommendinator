@@ -7,7 +7,7 @@ import json
 import click
 from tabulate import tabulate
 
-from src.cli._shared import abort_after_failure
+from src.cli._shared import abort_after_failure, series_label
 from src.models.content import ContentType, get_enum_value
 from src.models.detail_fields import DETAIL_FIELDS
 
@@ -120,6 +120,7 @@ def recommend(
                     [
                         rank,
                         item.title,
+                        series_label(item.metadata),
                         author,
                         f"{rec.score:.2f}",
                         reasoning,
@@ -129,7 +130,7 @@ def recommend(
             # Every row is the one requested type, so the column is labelled
             # the way that type names its creator: "Director" for a movie.
             creator = DETAIL_FIELDS[get_enum_value(content_type)].creator_column
-            headers = ["#", "Title", creator.title(), "Score", "Reasoning"]
+            headers = ["#", "Title", "Series", creator.title(), "Score", "Reasoning"]
             click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     except Exception as error:

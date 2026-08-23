@@ -20,6 +20,8 @@ function makeFullItem(overrides: Partial<ContentItemResponse> = {}): ContentItem
     seasons_watched: null,
     total_seasons: null,
     release_year: null,
+    series: null,
+    series_index: null,
     enriched: true,
     genres: [],
     tags: [],

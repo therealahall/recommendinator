@@ -8,6 +8,8 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     db_id: 7,
     title: 'Test',
     author: 'Author',
+    series: null,
+    series_index: null,
     score: 0.5,
     reasoning: 'Because',
     score_breakdown: {},
@@ -40,6 +42,13 @@ describe('RecCard', () => {
     })
     expect(wrapper.find('.btn-complete').attributes('aria-label')).toBe('Mark complete: Dune')
     expect(wrapper.find('.btn-ignore').attributes('aria-label')).toBe('Ignore: Dune')
+  })
+
+  it('names the series the recommended title no longer carries', () => {
+    const wrapper = mount(RecCard, {
+      props: { rec: makeRec({ series: 'The Expanse', series_index: 2 }), rank: 1 },
+    })
+    expect(wrapper.find('.rec-series').text()).toContain('The Expanse #2')
   })
 
   it('omits the action buttons when there is no db_id', () => {

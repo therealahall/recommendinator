@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ContentItemResponse } from '@/types/api'
-import { formatContentType, formatStatusForContentType } from '@/utils/format'
+import { formatContentType, formatSeries, formatStatusForContentType } from '@/utils/format'
 
 const props = defineProps<{
   item: ContentItemResponse
 }>()
+
+const series = computed(() => formatSeries(props.item.series, props.item.series_index))
 
 const emit = defineEmits<{
   edit: [dbId: number]
@@ -20,6 +23,10 @@ function statusClass(status: string): string {
 <template>
   <div class="library-item" :class="{ ignored: item.ignored }">
     <h3>{{ item.title }}</h3>
+    <div v-if="series.shown" class="item-series">
+      <span aria-hidden="true">{{ series.shown }}</span>
+      <span class="sr-only">{{ series.spoken }}</span>
+    </div>
     <div v-if="item.author" class="item-author">{{ item.author }}</div>
     <div class="library-meta">
       <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>

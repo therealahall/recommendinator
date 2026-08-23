@@ -16,6 +16,8 @@ const baseItem = {
   seasons_watched: null,
   total_seasons: null,
   release_year: null,
+  series: null,
+  series_index: null,
   enriched: true,
   genres: [],
   tags: [],
@@ -54,5 +56,17 @@ describe('LibraryCard', () => {
       props: { item: { ...baseItem, content_type: 'movie', status: 'unread' } },
     })
     expect(wrapper.find('.badge-status').text()).toBe('Unwatched')
+  })
+
+  it.each<[number | null, string]>([
+    [1, 'The Murderbot Diaries #1'],
+    [null, 'The Murderbot Diaries'],
+  ])('names the series the title no longer carries, position %s', (position, shown) => {
+    const wrapper = mount(LibraryCard, {
+      props: {
+        item: { ...baseItem, series: 'The Murderbot Diaries', series_index: position },
+      },
+    })
+    expect(wrapper.find('.item-series').text()).toContain(shown)
   })
 })

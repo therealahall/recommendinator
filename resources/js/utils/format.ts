@@ -73,6 +73,17 @@ export function formatStatusForContentType(status: string, contentType: string):
   return status
 }
 
+/** The series line as it is shown and as it is read out: "#4" alone is
+ *  punctuation a screen reader may drop. */
+export function formatSeries(
+  name: string | null,
+  index: number | null,
+): { shown: string; spoken: string } {
+  if (!name) return { shown: '', spoken: '' }
+  if (index === null) return { shown: name, spoken: `Series: ${name}` }
+  return { shown: `${name} #${index}`, spoken: `Series: ${name}, number ${index}` }
+}
+
 /** Title-case a scorer key (e.g., "genre_match" -> "Genre Match") */
 export function formatScorerName(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())

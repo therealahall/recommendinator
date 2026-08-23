@@ -22,6 +22,8 @@ export interface ContentItemResponse {
   seasons_watched: number[] | null
   total_seasons: number | null
   release_year: number | null
+  series: string | null
+  series_index: number | null
   enriched: boolean
   /** Enriched by the manual provider, which is what an edit here writes. */
   manually_enriched?: boolean
@@ -34,6 +36,8 @@ export interface RecommendationResponse {
   db_id: number | null
   title: string
   author: string | null
+  series: string | null
+  series_index: number | null
   score: number
   reasoning: string
   score_breakdown: Record<string, number>

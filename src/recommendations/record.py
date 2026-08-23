@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 from src.models.content import ContentItem
+from src.utils.series import (
+    get_series_name_from_metadata,
+    get_series_position_from_metadata,
+)
 
 
 class RecommendationPayload(TypedDict):
@@ -23,6 +27,8 @@ class RecommendationPayload(TypedDict):
     db_id: int | None
     title: str
     author: str | None
+    series: str | None
+    series_index: float | None
     score: float
     reasoning: str
     score_breakdown: dict[str, float]
@@ -65,6 +71,8 @@ class Recommendation:
             "db_id": self.item.db_id,
             "title": self.item.title,
             "author": self.item.author,
+            "series": get_series_name_from_metadata(self.item.metadata),
+            "series_index": get_series_position_from_metadata(self.item.metadata),
             "score": self.score,
             "reasoning": self.reasoning,
             "score_breakdown": self.score_breakdown,
