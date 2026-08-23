@@ -8,6 +8,9 @@ import requests
 from src.ingestion.plugin_base import SourceError
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
 
+MAIN_RADARR = "http://radarr:7878"
+WRESTLING_RADARR = "http://radarr-wrestling:7878"
+
 
 def _api_response(payload: list[dict]) -> Mock:
     response = Mock(spec=requests.Response)
@@ -271,6 +274,27 @@ class TestRadarrCollections:
             self.mock_get = mock_get
             yield
 
+    def _serve_two_radarrs(self) -> None:
+        """Two configured Radarrs holding the same tmdb id, one collecting it."""
+        libraries = {
+            MAIN_RADARR: (
+                [{"title": "Back to the Future", "tmdbId": 105}],
+                [
+                    {
+                        "title": "Back to the Future",
+                        "movies": [{"tmdbId": 105}, {"tmdbId": 165}],
+                    }
+                ],
+            ),
+            WRESTLING_RADARR: ([{"title": "WrestleMania III", "tmdbId": 105}], []),
+        }
+
+        def side_effect(url, **kwargs):
+            movies, collections = libraries[url.split("/api/")[0]]
+            return _api_response(collections if "collection" in url else movies)
+
+        self.mock_get.side_effect = side_effect
+
     def test_fetch_adds_collection_metadata(
         self,
         plugin: RadarrPlugin,
@@ -314,6 +338,62 @@ class TestRadarrCollections:
         assert items[0].metadata.get("movie_number") == 1
         assert items[1].metadata.get("series_name") == "Back to the Future Collection"
         assert items[1].metadata.get("movie_number") == 2
+
+    def test_a_second_source_is_not_tagged_from_the_firsts_collections(
+        self, plugin: RadarrPlugin
+    ) -> None:
+        """Bug: the map was cached on the plugin the registry hands out, so a
+        second Radarr's movies took the first Radarr's series and order."""
+        self._serve_two_radarrs()
+
+        main = list(plugin.fetch({"url": MAIN_RADARR, "api_key": "key"}))
+        wrestling = list(plugin.fetch({"url": WRESTLING_RADARR, "api_key": "key"}))
+
+        assert main[0].metadata["series_name"] == "Back to the Future"
+        assert main[0].metadata["movie_number"] == 1
+        assert "series_name" not in wrestling[0].metadata
+
+    def test_two_sources_fetching_at_once_keep_their_own_collections(
+        self, plugin: RadarrPlugin
+    ) -> None:
+        """max_workers > 1 leaves two syncs in flight together; interleaving the
+        generators is that overlap without the thread timing."""
+        self._serve_two_radarrs()
+
+        main = plugin.fetch({"url": MAIN_RADARR, "api_key": "key"})
+        wrestling = plugin.fetch({"url": WRESTLING_RADARR, "api_key": "key"})
+
+        main_movie = next(main)
+        wrestling_movie = next(wrestling)
+
+        assert main_movie.metadata["series_name"] == "Back to the Future"
+        assert "series_name" not in wrestling_movie.metadata
+
+    def test_a_later_sync_of_one_source_sees_its_collections_change(
+        self, plugin: RadarrPlugin
+    ) -> None:
+        """The scheduler re-syncs in the same process, so a map held between
+        runs serves the collections Radarr had when the server booted."""
+        movies = [{"title": "Back to the Future Part III", "tmdbId": 166}]
+        collections: list[dict] = []
+
+        def side_effect(url, **kwargs):
+            return _api_response(collections if "collection" in url else movies)
+
+        self.mock_get.side_effect = side_effect
+
+        before = list(plugin.fetch({"url": MAIN_RADARR, "api_key": "key"}))
+        collections.append(
+            {
+                "title": "Back to the Future",
+                "movies": [{"tmdbId": 105}, {"tmdbId": 166}],
+            }
+        )
+        after = list(plugin.fetch({"url": MAIN_RADARR, "api_key": "key"}))
+
+        assert "series_name" not in before[0].metadata
+        assert after[0].metadata["series_name"] == "Back to the Future"
+        assert after[0].metadata["movie_number"] == 2
 
 
 class TestRadarrTls:

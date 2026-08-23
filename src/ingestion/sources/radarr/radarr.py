@@ -59,23 +59,20 @@ class RadarrPlugin(ArrPlugin):
     def build_metadata(self, item: dict[str, Any]) -> dict[str, Any]:
         return _build_radarr_metadata(item)
 
+    def fetch_context(
+        self, base_url: str, api_key: str, verify_ssl: bool
+    ) -> dict[int, dict[str, Any]]:
+        return self._fetch_collections(base_url, api_key, verify_ssl)
+
     def post_fetch(
         self,
-        base_url: str,
-        api_key: str,
-        verify_ssl: bool,
         item: dict[str, Any],
         metadata: dict[str, Any],
+        context: Any,
     ) -> None:
         """Add collection/series info from Radarr collections."""
-        # Lazy-load collection map on first call
-        if not hasattr(self, "_collection_map"):
-            self._collection_map = self._fetch_collections(
-                base_url, api_key, verify_ssl
-            )
-
         tmdb_id = item.get("tmdbId")
-        collection_info = self._collection_map.get(tmdb_id) if tmdb_id else None
+        collection_info = context.get(tmdb_id) if tmdb_id else None
         if collection_info:
             metadata["series_name"] = collection_info["title"]
             metadata["movie_number"] = collection_info["order"]
