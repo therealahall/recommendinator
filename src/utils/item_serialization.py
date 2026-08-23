@@ -7,6 +7,10 @@ web ContentItemResponse must be added here so the CLI emits it too.
 
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
+from src.utils.series import (
+    get_series_name_from_metadata,
+    get_series_position_from_metadata,
+)
 
 
 def extract_tv_season_fields(
@@ -61,6 +65,8 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "enriched": bool(item.enriched),
         "manually_enriched": bool(item.manually_enriched),
         "release_year": to_int(metadata.get("release_year")),
+        "series": get_series_name_from_metadata(metadata),
+        "series_index": get_series_position_from_metadata(metadata),
         "genres": metadata.get("genres") or [],
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),

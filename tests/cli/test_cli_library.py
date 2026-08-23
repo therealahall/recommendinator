@@ -73,12 +73,15 @@ def _make_item(
 class TestLibraryList:
     """Tests for library list command."""
 
-    def test_list_table_output(self, cli_runner: CliRunner) -> None:
-        """Test listing items with table output."""
+    def test_list_table_states_each_rows_title_series_and_creator(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The series the title no longer carries is a column of its own."""
         items = [
             _make_item(db_id=1, title="Book One", author="Author A", rating=5),
             _make_item(db_id=2, title="Book Two", author="Author B", rating=3),
         ]
+        items[0].metadata = {"series": "The Expanse", "series_index": 2.0}
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.get_content_items.return_value = items
 
@@ -88,6 +91,7 @@ class TestLibraryList:
         assert "Book One" in result.output
         assert "Book Two" in result.output
         assert "Author A" in result.output
+        assert "The Expanse #2" in result.output
 
     def test_list_json_output(self, cli_runner: CliRunner) -> None:
         """Test listing items with JSON output matches web ContentItemResponse shape."""
@@ -104,7 +108,6 @@ class TestLibraryList:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         item = parsed[0]
-        # Full field set matches web API ContentItemResponse
         assert set(item.keys()) == {
             "external_ids",
             "db_id",
@@ -120,6 +123,8 @@ class TestLibraryList:
             "seasons_watched",
             "total_seasons",
             "release_year",
+            "series",
+            "series_index",
             "enriched",
             "manually_enriched",
             "genres",
@@ -266,7 +271,6 @@ class TestLibraryShow:
     """Tests for library show command."""
 
     def test_show_item(self, cli_runner: CliRunner) -> None:
-        """Test showing a single item."""
         item = _make_item(
             db_id=42,
             title="The Great Book",
@@ -331,7 +335,6 @@ class TestLibraryShow:
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        # Full field set matches web API ContentItemResponse
         assert set(parsed.keys()) == {
             "external_ids",
             "db_id",
@@ -347,6 +350,8 @@ class TestLibraryShow:
             "seasons_watched",
             "total_seasons",
             "release_year",
+            "series",
+            "series_index",
             "enriched",
             "manually_enriched",
             "genres",
@@ -422,6 +427,23 @@ class TestLibraryShow:
         parsed = json.loads(result.output)
         assert parsed["seasons_watched"] == [1, 2, 3]
         assert parsed["total_seasons"] == 5
+
+    def test_show_table_states_the_series_the_title_no_longer_carries(
+        self, cli_runner: CliRunner
+    ) -> None:
+        item = _make_item(db_id=42, title="All Systems Red")
+        item.metadata = {"series": "The Murderbot Diaries", "series_index": 1.0}
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_item.return_value = item
+
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "show", "--id", "42"], mock_storage
+        )
+
+        assert result.exit_code == 0
+        rows = _labelled_rows(result.output, "Series")
+        assert len(rows) == 1
+        assert "The Murderbot Diaries #1" in rows[0]
 
 
 def _labelled_rows(output: str, label: str) -> list[str]:
@@ -1185,12 +1207,7 @@ def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
     storage = StorageManager(sqlite_path=tmp_path / "duplicates.db")
     rows = [
         ("goodreads_csv", "1", "The Gate of the Feral Gods", None),
-        (
-            "goodreads_csv",
-            "2",
-            "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
-            None,
-        ),
+        ("goodreads_csv", "2", "Gate of the Feral Gods", None),
         ("calibre", "3", "Deadhouse Gates", None),
         ("goodreads_csv", "4", "Deadhouse Gates (Malazan Book 2)", "Steven Erikson"),
     ]
@@ -1275,7 +1292,7 @@ class TestLibraryDuplicates:
         result = _invoke_with_mocks(cli_runner, ["library", "duplicates"], storage)
 
         assert result.exit_code == 0, result.output
-        exact = _row_containing(result.output, "Dungeon Crawler Carl")
+        exact = _row_containing(result.output, "Feral Gods")
         looser = _row_containing(result.output, "Malazan Book 2")
         assert "same title" in exact
         assert "apart from a qualifier" not in exact
@@ -1307,12 +1324,12 @@ class TestLibraryDuplicates:
         )
 
         assert "will not be offered as duplicates again" in declined.output
-        row = _row_containing(listed.output, "Dungeon Crawler Carl")
+        row = _row_containing(listed.output, "Feral Gods")
         assert str(db_ids[0]) in row
         assert str(db_ids[1]) in row
         assert lifted.exit_code == 0, lifted.output
         assert "may be offered as duplicates again" in lifted.output
-        assert "Dungeon Crawler Carl" in offered.output
+        assert "Feral Gods" in offered.output
         assert again.exit_code != 0
         assert f"Items {db_ids[0]} and {db_ids[1]} are not a declined pair" in (
             again.output
@@ -1512,10 +1529,9 @@ class TestLibraryMerge:
         after_merge = _json(cli_runner, storage, ["library", "list"])
 
         assert merged.exit_code == 0, merged.output
-        assert "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)" in merged.output
-        assert f"(#{absorbed}) into" in merged.output
+        assert f"Gate of the Feral Gods (#{absorbed}) into" in merged.output
         assert f"The Gate of the Feral Gods (#{survivor})" in merged.output
-        merge_row = _row_containing(listed.output, "Dungeon Crawler Carl")
+        merge_row = _row_containing(listed.output, "Feral Gods")
         assert f"(#{survivor})" in merge_row
         assert "your choice" in merge_row
         assert sorted(item["db_id"] for item in after_merge) == sorted(

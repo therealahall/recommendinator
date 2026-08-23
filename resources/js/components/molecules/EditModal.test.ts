@@ -21,6 +21,8 @@ const defaultItem = {
   seasons_watched: null,
   total_seasons: null,
   release_year: null,
+  series: null,
+  series_index: null,
   ignored: false,
   enriched: false,
   genres: [],

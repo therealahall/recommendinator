@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  formatRelativeTime, formatStatusForContentType, humanizeSection, truncate, domId,
+  formatRelativeTime, formatSeries, formatStatusForContentType, humanizeSection,
+  truncate, domId,
 } from './format'
 
 describe('domId', () => {
@@ -58,6 +59,22 @@ describe('formatRelativeTime', () => {
     // Python writes an aware UTC stamp, so dropping the offset would shift
     // every line by the operator's own zone.
     expect(formatRelativeTime('2026-08-17T12:00:00+02:00', now)).toBe('2 hours ago')
+  })
+})
+
+describe('formatSeries', () => {
+  it('says in words what "#4" leaves to punctuation a screen reader may drop', () => {
+    expect(formatSeries('The Murderbot Diaries', 4)).toEqual({
+      shown: 'The Murderbot Diaries #4',
+      spoken: 'Series: The Murderbot Diaries, number 4',
+    })
+  })
+
+  it('states a series with no position without inventing one', () => {
+    expect(formatSeries('Discworld', null)).toEqual({
+      shown: 'Discworld',
+      spoken: 'Series: Discworld',
+    })
   })
 })
 

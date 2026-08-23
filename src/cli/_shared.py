@@ -15,6 +15,10 @@ from typing import Any, NoReturn
 import click
 
 from src.storage.manager import StorageManager
+from src.utils.series import (
+    get_series_name_from_metadata,
+    get_series_position_from_metadata,
+)
 from src.utils.text import exception_for_log
 
 logger = logging.getLogger(__name__)
@@ -78,6 +82,15 @@ def is_blank_review(review: str | None) -> bool:
     has ``--clear-review``.
     """
     return review is not None and not review.strip()
+
+
+def series_label(metadata: dict[str, Any] | None) -> str:
+    """The series a table row states — "The Expanse #2" — or N/A for none."""
+    series = get_series_name_from_metadata(metadata)
+    if not series:
+        return "N/A"
+    position = get_series_position_from_metadata(metadata)
+    return series if position is None else f"{series} #{position:g}"
 
 
 class ValueCoercionError(Exception):

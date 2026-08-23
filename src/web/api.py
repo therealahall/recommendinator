@@ -429,6 +429,8 @@ class ContentItemResponse(BaseModel):
     seasons_watched: list[int] | None = None
     total_seasons: int | None = None
     release_year: int | None = None
+    series: str | None = None
+    series_index: float | None = None
     enriched: bool = False
     manually_enriched: bool = False
     genres: list[str] = Field(default_factory=list)
@@ -447,6 +449,8 @@ class RecommendationResponse(BaseModel):
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None
+    series: str | None = None
+    series_index: float | None = None
     score: float
     reasoning: str
     score_breakdown: dict[str, float] = Field(default_factory=dict)
@@ -1243,7 +1247,7 @@ def list_items(
     search: str | None = Query(
         None,
         max_length=MAX_SEARCH_LENGTH,
-        description="Search term for title/creator",
+        description="Search term for title/creator/series",
     ),
     needs_rating: bool = Query(
         False,
@@ -1261,7 +1265,7 @@ def list_items(
         sort_by: Sort order (default: title, which ignores leading articles).
         include_ignored: Whether to include ignored items (default: False).
         enrichment: Optional enrichment-state filter (enriched/not_enriched).
-        search: Optional search term matched against title and creator.
+        search: Optional search term matched against title, creator and series.
         needs_rating: When True, return only completed items with no rating.
             Forces status to completed (overriding any status param).
 

@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import type { RecommendationResponse } from '@/types/api'
 import RecScoreDetails from '@/components/molecules/RecScoreDetails.vue'
+import { computed } from 'vue'
+import { formatSeries } from '@/utils/format'
 
-defineProps<{
+const props = defineProps<{
   rec: RecommendationResponse
   rank: number
 }>()
+
+const series = computed(() => formatSeries(props.rec.series, props.rec.series_index))
 
 const emit = defineEmits<{
   ignore: [dbId: number]
@@ -20,6 +24,10 @@ const emit = defineEmits<{
         <div class="rec-title">
           <span class="rec-rank">{{ rank }}.</span>
           {{ rec.title }}
+        </div>
+        <div v-if="series.shown" class="rec-series">
+          <span aria-hidden="true">{{ series.shown }}</span>
+          <span class="sr-only">{{ series.spoken }}</span>
         </div>
         <div v-if="rec.author" class="rec-author">by {{ rec.author }}</div>
       </div>
