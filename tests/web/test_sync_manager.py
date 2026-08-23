@@ -14,12 +14,14 @@ import requests
 from fastapi import FastAPI
 
 from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL
+from src.sources.service import ResolvedInput
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from src.utils.dates import utc_now
 from src.web.app import lifespan
 from src.web.scheduler import SyncScheduler, dispatch_due_syncs
 from src.web.state import app_state
+from src.web.sync_dispatch import build_sync_job
 from src.web.sync_manager import (
     SyncError,
     SyncJob,
@@ -928,3 +930,21 @@ class TestSyncSchedulerLifecycle:
             return booted, scheduler.running, task.done()
 
         assert asyncio.run(boot_then_shut_down()) == (True, False, True)
+
+
+class TestAutoEnrichGate:
+    """``auto_enrich_on_sync`` off means a finished sync starts no job at all."""
+
+    def test_a_finished_sync_starts_nothing_when_auto_enrich_is_off(self) -> None:
+        dispatch = build_sync_job(
+            MagicMock(spec=SyncManager),
+            STEAM_LABEL,
+            [ResolvedInput("steam", MagicMock(), {"_source_id": "steam"})],
+            MagicMock(spec=StorageManager),
+            {"enrichment": {"enabled": True, "auto_enrich_on_sync": False}},
+        )
+
+        with patch("src.web.sync_dispatch.EnrichmentManager") as manager_cls:
+            dispatch.on_complete()
+
+        manager_cls.assert_not_called()

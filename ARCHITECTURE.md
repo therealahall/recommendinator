@@ -580,11 +580,12 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
   and swaps it in. Building it stays *outside* the lock, because a
   `private/plugins/` plugin calling `get_registry()` under it would hang the
   process silently.
-- The lazily-built process singletons behind `/api/sync/*` and
-  `/api/enrichment/*` (`get_sync_manager`, `get_enrichment_manager`) build under
-  a module-level lock for the same reason: two threadpool requests on a cold
-  process would otherwise each get a manager of their own, and a job started
-  through one is invisible to the status endpoint reading the other.
+- The lazily-built process singleton behind `/api/sync/*` (`get_sync_manager`)
+  builds under a module-level lock for the same reason: two threadpool requests
+  on a cold process would otherwise each get a manager of their own, and a job
+  started through one is invisible to the status endpoint reading the other.
+  `/api/enrichment/*` needs no singleton — its job lives in the shared
+  `enrichment_job` record, so each handler reads or claims that record directly.
 - A handler that does **not** require a component reads it through the
   unguarded `get_*` accessors in `src/web/state.py` and falls back when it is
   `None`, still answering 200: recommendations serve on the engine alone,

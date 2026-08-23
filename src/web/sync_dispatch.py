@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.config.service import auto_enrich_enabled
+from src.enrichment.manager import EnrichmentManager
 from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
@@ -16,7 +17,6 @@ from src.ingestion.sync import (
 )
 from src.models.content import ContentType
 from src.utils.text import sanitize_for_log
-from src.web.enrichment_manager import get_enrichment_manager
 from src.web.sync_manager import SyncJob, SyncManager
 
 if TYPE_CHECKING:
@@ -105,21 +105,14 @@ def build_sync_job(
         return sum(result.items_synced for result in results)
 
     def on_sync_complete() -> None:
-        if auto_enrich:
-            enrichment_manager = get_enrichment_manager()
-            started, message = enrichment_manager.start_enrichment(
-                storage_manager=storage,
-                config=config,
-                content_type=enrichment_content_type,
-            )
-            if started:
-                logger.info(
-                    "[ENRICHMENT] Auto-started after sync: %s",
-                    sanitize_for_log(message),
-                )
-            else:
-                logger.info(
-                    "[ENRICHMENT] Auto-start skipped: %s", sanitize_for_log(message)
-                )
+        if not auto_enrich:
+            return
+        started = EnrichmentManager(storage, config).start_enrichment(
+            content_type=enrichment_content_type,
+        )
+        if started:
+            logger.info("[ENRICHMENT] Auto-started after sync")
+        else:
+            logger.info("[ENRICHMENT] Auto-start skipped: a job is already running")
 
     return SyncDispatch(run=run_sync, on_complete=on_sync_complete)

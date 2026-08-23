@@ -31,6 +31,7 @@ from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
+from src.enrichment.manager import EnrichmentManager
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
 from src.models.content import (
@@ -67,12 +68,6 @@ from src.web.app import (
     _raised_refusal_json_can_carry,
 )
 from src.web.auth import SESSION_COOKIE, require_session
-from src.web.enrichment_manager import (
-    WebEnrichmentManager,
-    _enrichment_manager_lock,
-    get_enrichment_manager,
-    reset_enrichment_manager,
-)
 from src.web.state import (
     _config_lock,
     app_state,
@@ -1032,13 +1027,13 @@ def _sync_a_source_typed(client, content_type):
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = (True, "Started sync for Typed")
-    enrichment_manager = Mock(spec=WebEnrichmentManager)
-    enrichment_manager.start_enrichment.return_value = (True, "started")
+    enrichment_manager = Mock(spec=EnrichmentManager)
+    enrichment_manager.start_enrichment.return_value = True
 
     with (
         patch("src.web.api.get_sync_manager", return_value=sync_manager),
         patch(
-            "src.web.sync_dispatch.get_enrichment_manager",
+            "src.web.sync_dispatch.EnrichmentManager",
             return_value=enrichment_manager,
         ),
         patch(
@@ -3190,19 +3185,6 @@ class TestExchangeEpicTokenEndpointRegression:
         )
 
 
-class TestEnrichmentErrorPaths:
-    """Tests for enrichment endpoint error paths."""
-
-    def test_stop_enrichment_not_running(self, client, mock_components):
-        """Stopping when not running returns 400."""
-        with patch("src.web.api.get_enrichment_manager") as mock_get:
-            manager = Mock(spec=WebEnrichmentManager)
-            manager.stop_enrichment.return_value = (False, "No enrichment running")
-            mock_get.return_value = manager
-            response = client.post("/api/enrichment/stop")
-        assert response.status_code == 400
-
-
 class TestAuthDisconnectEndpoints:
     """Tests for DELETE /api/gog/token and /api/epic/token (matches CLI auth disconnect)."""
 
@@ -4901,9 +4883,9 @@ class TestOverlappingPreferenceWritesRegression:
         assert stored.scorer_weights == {"genre_match": 3.0}
 
 
-# Each lazily-built process singleton behind the sync and enrichment endpoints:
-# the accessor, its reset hook, the name its module builds, and the lock the
-# build is supposed to happen under.
+# Each lazily-built process singleton behind the sync endpoints: the accessor,
+# its reset hook, the name its module builds, and the lock the build is supposed
+# to happen under.
 _LAZY_SINGLETONS = [
     pytest.param(
         get_sync_manager,
@@ -4912,14 +4894,6 @@ _LAZY_SINGLETONS = [
         SyncManager,
         _sync_manager_lock,
         id="sync_manager",
-    ),
-    pytest.param(
-        get_enrichment_manager,
-        reset_enrichment_manager,
-        "src.web.enrichment_manager.WebEnrichmentManager",
-        WebEnrichmentManager,
-        _enrichment_manager_lock,
-        id="enrichment_manager",
     ),
 ]
 
@@ -4933,7 +4907,7 @@ class TestLazySingletonsAreBuiltOnceRegression:
     threadpool conversion made both of its callers plain ``def``. Two requests
     arriving together on a cold process both see ``None`` and each keep a
     manager of their own, so the job lives in one and the status endpoint reads
-    the other. ``get_enrichment_manager`` is the same three lines.
+    the other.
     Fix: the lazy build happens under a module-level lock.
     """
 
