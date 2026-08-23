@@ -7,8 +7,24 @@ from click.testing import CliRunner
 
 from src.recommendations.profile import ProfileGenerator
 from src.storage.manager import StorageManager
+from src.web.api import ProfileResponse
 
 from .conftest import _invoke_with_mocks
+
+
+def _stored_profile() -> dict:
+    """A ``profiles.get`` record carrying one entry in every profile field."""
+    return {
+        "id": 1,
+        "user_id": 1,
+        "profile": {
+            "genre_affinities": {"sci-fi": 4.5, "fantasy": 3.2},
+            "theme_preferences": ["space exploration", "time travel"],
+            "anti_preferences": ["gore"],
+            "cross_media_patterns": ["Generally rates books higher than games"],
+        },
+        "generated_at": "2026-01-01T00:00:00",
+    }
 
 
 class TestProfileShow:
@@ -16,17 +32,7 @@ class TestProfileShow:
 
     def test_show_profile_json(self, cli_runner: CliRunner) -> None:
         """Test showing profile in JSON format."""
-        profile_record = {
-            "id": 1,
-            "user_id": 1,
-            "profile": {
-                "genre_affinities": {"sci-fi": 4.5, "fantasy": 3.2},
-                "theme_preferences": ["space exploration", "time travel"],
-                "anti_preferences": ["gore"],
-                "cross_media_patterns": [],
-            },
-            "generated_at": "2026-01-01T00:00:00",
-        }
+        profile_record = _stored_profile()
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.profiles.get.return_value = profile_record
         result = _invoke_with_mocks(
@@ -37,19 +43,28 @@ class TestProfileShow:
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
+        assert set(parsed) == set(ProfileResponse.model_fields)
         assert parsed["genre_affinities"]["sci-fi"] == 4.5
         assert "space exploration" in parsed["theme_preferences"]
         assert parsed["user_id"] == 1
         assert parsed["generated_at"] == "2026-01-01T00:00:00"
 
-    def test_show_profile_no_profile_json(self, cli_runner: CliRunner) -> None:
-        """Empty profile in JSON mode emits the full ProfileResponse shape.
+    def test_table_names_every_stored_preference(self, cli_runner: CliRunner) -> None:
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.profiles.get.return_value = _stored_profile()
 
-        Bug: the CLI used to print "No profile generated yet" on stdout even
-        for --format json, which broke parity with the web API's empty-state
-        response. The JSON path now emits an empty ProfileResponse so parsers
-        on the web side see a consistent shape.
-        """
+        result = _invoke_with_mocks(cli_runner, ["profile", "show"], mock_storage)
+
+        assert result.exit_code == 0
+        assert "sci-fi" in result.output
+        assert "4.5" in result.output
+        assert "space exploration" in result.output
+        assert "gore" in result.output
+        assert "Generally rates books higher than games" in result.output
+        assert "2026-01-01T00:00:00" in result.output
+
+    def test_show_profile_no_profile_json(self, cli_runner: CliRunner) -> None:
+        """Empty profile in JSON mode emits the full ProfileResponse shape."""
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.profiles.get.return_value = None
         result = _invoke_with_mocks(
@@ -60,14 +75,7 @@ class TestProfileShow:
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert set(parsed.keys()) == {
-            "user_id",
-            "genre_affinities",
-            "theme_preferences",
-            "anti_preferences",
-            "cross_media_patterns",
-            "generated_at",
-        }
+        assert set(parsed) == set(ProfileResponse.model_fields)
         assert parsed["user_id"] == 1
         assert parsed["genre_affinities"] == {}
         assert parsed["theme_preferences"] == []

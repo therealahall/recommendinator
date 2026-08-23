@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.scorers import extract_genres
@@ -30,6 +30,36 @@ class PreferenceProfile:
     anti_preferences: list[str] = field(default_factory=list)
     cross_media_patterns: list[str] = field(default_factory=list)
     generated_at: datetime | None = None
+
+
+class ProfilePayload(TypedDict):
+    """The JSON shape both interfaces emit, declared by ``ProfileResponse``."""
+
+    user_id: int
+    genre_affinities: dict[str, float]
+    theme_preferences: list[str]
+    anti_preferences: list[str]
+    cross_media_patterns: list[str]
+    generated_at: str | None
+
+
+def profile_payload(user_id: int, record: dict[str, Any] | None) -> ProfilePayload:
+    """Serialise a ``profiles.get`` record; ``None`` is the empty shape.
+
+    The CLI emits this mapping; the web validates it into a ProfileResponse.
+    """
+    stored = record or {}
+    profile = stored.get("profile") or {}
+    return {
+        "user_id": user_id,
+        "genre_affinities": profile.get("genre_affinities") or {},
+        "theme_preferences": profile.get("theme_preferences") or [],
+        "anti_preferences": profile.get("anti_preferences") or [],
+        "cross_media_patterns": profile.get("cross_media_patterns") or [],
+        # The row's column and the blob's field stamp the same generation; the
+        # blob's is in the host's own time, which is what a reader expects.
+        "generated_at": profile.get("generated_at") or stored.get("generated_at"),
+    }
 
 
 # Theme keywords that indicate preference signals
