@@ -86,7 +86,7 @@ class SyncRunDict(TypedDict):
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
 # leaves, 10 to 15 re-normalize titles, 16 reduces a list column holding an
-# object.
+# object and clears a re-queued item's stale quality.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
