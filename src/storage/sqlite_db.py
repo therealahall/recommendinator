@@ -84,7 +84,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from src.models.content import (
     ConsumptionStatus,
@@ -166,6 +166,10 @@ class Unset(Enum):
 #: Marks an argument the caller did not supply, which ``None`` cannot mean
 #: on a nullable field: ``None`` clears the value, ``UNSET`` leaves it alone.
 UNSET = Unset.UNSET
+
+#: How an enrichment-queue query treats items that settled as ``not_found``:
+#: leave them out, add them to the queue, or return them alone.
+NotFoundMode = Literal["exclude", "include", "only"]
 
 #: A caller a zone ahead of the server calls tomorrow "today". Further ahead is
 #: a day nobody has lived, and an item dated there heads the variety ladder
@@ -1890,7 +1894,7 @@ class SQLiteDB:
             query, params = self._build_enrichment_query(
                 effective_user_id,
                 content_type,
-                include_not_found,
+                "include" if include_not_found else "exclude",
                 count_only=False,
                 after_db_id=after_db_id,
             )
@@ -1925,18 +1929,41 @@ class SQLiteDB:
             query, params = self._build_enrichment_query(
                 effective_user_id,
                 content_type,
-                include_not_found=False,
+                "exclude",
                 count_only=True,
             )
             cursor.execute(query, params)
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
+    def get_not_found_ids(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+    ) -> list[int]:
+        """Return the db_ids of items whose enrichment settled as ``not_found``.
+
+        An item with no ``enrichment_status`` row has never been attempted, so
+        it is not a retry candidate and this query does not return it.
+        """
+        effective_user_id = user_id if user_id is not None else get_default_user_id()
+
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            query, params = self._build_enrichment_query(
+                effective_user_id,
+                content_type,
+                "only",
+                count_only=False,
+            )
+            cursor.execute(query, params)
+            return [int(row["id"]) for row in cursor.fetchall()]
+
     @staticmethod
     def _build_enrichment_query(
         user_id: int,
         content_type: ContentType | None,
-        include_not_found: bool,
+        not_found: NotFoundMode,
         count_only: bool,
         after_db_id: int | None = None,
     ) -> tuple[str, list[Any]]:
@@ -1948,7 +1975,9 @@ class SQLiteDB:
         """
         select_clause = "SELECT COUNT(*)" if count_only else "SELECT ci.id"
 
-        if include_not_found:
+        if not_found == "only":
+            status_filter = "es.enrichment_quality = ?"
+        elif not_found == "include":
             status_filter = (
                 "(es.content_item_id IS NULL OR es.needs_enrichment = 1"
                 " OR es.enrichment_quality = ?)"
@@ -1965,7 +1994,7 @@ class SQLiteDB:
               AND {status_filter}
         """
         params: list[Any] = [user_id]
-        if include_not_found:
+        if not_found != "exclude":
             params.append("not_found")
         if content_type:
             query += " AND ci.content_type = ?"

@@ -416,18 +416,12 @@ class EnrichmentManager:
             # If retrying not_found items, collect their IDs first to avoid infinite loop
             not_found_ids: set[int] = set()
             if include_not_found:
-                # Collect all not_found item IDs upfront
-                not_found_items = self.storage_manager.enrichment.items_needing(
-                    content_type=content_type,
-                    user_id=user_id,
-                    limit=10000,  # Get all not_found items
-                    include_not_found=True,
+                not_found_ids = set(
+                    self.storage_manager.enrichment.not_found_ids(
+                        content_type=content_type,
+                        user_id=user_id,
+                    )
                 )
-                # Filter to only those that are actually not_found (not new items)
-                for db_id, _item in not_found_items:
-                    status = self.storage_manager.enrichment.status(db_id)
-                    if status and status.get("enrichment_quality") == "not_found":
-                        not_found_ids.add(db_id)
                 logger.info(
                     "[ENRICHMENT] Found %d not_found items to retry",
                     len(not_found_ids),
