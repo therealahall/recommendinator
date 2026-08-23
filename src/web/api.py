@@ -80,7 +80,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.content_length import LengthPreference
-from src.recommendations.profile import ProfileGenerator
+from src.recommendations.profile import ProfileGenerator, profile_payload
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import get_entry
 from src.settings.service import (
@@ -2644,31 +2644,8 @@ def get_profile(
     storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
     """Get a user's preference profile summary."""
-    profile_data = storage.profiles.get(user_id)
-
-    if profile_data:
-        # The stored row nests the profile under "profile".
-        profile = profile_data.get("profile", {})
-        return ProfileResponse(
-            user_id=user_id,
-            genre_affinities=profile.get("genre_affinities", {}),
-            theme_preferences=profile.get("theme_preferences", []),
-            anti_preferences=profile.get("anti_preferences", []),
-            cross_media_patterns=profile.get("cross_media_patterns", []),
-            generated_at=(
-                datetime.fromisoformat(profile["generated_at"])
-                if profile.get("generated_at")
-                else None
-            ),
-        )
-
-    return ProfileResponse(
-        user_id=user_id,
-        genre_affinities={},
-        theme_preferences=[],
-        anti_preferences=[],
-        cross_media_patterns=[],
-        generated_at=None,
+    return ProfileResponse.model_validate(
+        profile_payload(user_id, storage.profiles.get(user_id))
     )
 
 

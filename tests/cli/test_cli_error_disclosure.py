@@ -20,6 +20,7 @@ from click.testing import CliRunner
 
 from src.cli.commands._account import PASSWORD_WRITE_FAILED, RENAME_FAILED
 from src.cli.commands._complete import COMPLETE_FAILED
+from src.cli.commands._profile import PROFILE_LOAD_FAILED, PROFILE_REGENERATE_FAILED
 from src.cli.commands._update import SYNC_FAILED
 from src.cli.main import cli
 from src.models.content import (
@@ -141,6 +142,24 @@ class TestTheAccountWritesHideTheFaultToo:
 
         _assert_generic(result, PASSWORD_WRITE_FAILED)
         assert _FAULT in caplog.text
+
+
+class TestProfileHidesTheStorageFault:
+    def test_show_refuses_in_the_webs_words(self, cli_runner: CliRunner) -> None:
+        storage = MagicMock(spec=StorageManager)
+        storage.profiles.get.side_effect = sqlite3.OperationalError(_FAULT)
+
+        result = _invoke_with_mocks(cli_runner, ["profile", "show"], storage)
+
+        _assert_generic(result, PROFILE_LOAD_FAILED)
+
+    def test_regenerate_refuses_in_the_webs_words(self, cli_runner: CliRunner) -> None:
+        storage = MagicMock(spec=StorageManager)
+        storage.get_signal_items.side_effect = sqlite3.OperationalError(_FAULT)
+
+        result = _invoke_with_mocks(cli_runner, ["profile", "regenerate"], storage)
+
+        _assert_generic(result, PROFILE_REGENERATE_FAILED)
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

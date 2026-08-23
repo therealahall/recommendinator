@@ -5551,3 +5551,49 @@ def test_edit_item_reports_a_type_that_states_no_release_year(client, mock_compo
 
     assert response.status_code == 400
     assert "release year" in response.json()["detail"]
+
+
+class TestProfileBodyIsBuiltFromTheStoredRecord:
+    """``GET /api/profile`` shares its body builder with ``profile show``."""
+
+    def test_every_stored_field_reaches_the_body(self, client, mock_components):
+        mock_components["storage"].profiles.get.return_value = {
+            "id": 1,
+            "user_id": 1,
+            "profile": {
+                "genre_affinities": {"sci-fi": 4.5},
+                "theme_preferences": ["space exploration"],
+                "anti_preferences": ["gore"],
+                "cross_media_patterns": ["Generally rates books higher than games"],
+                "generated_at": "2026-01-01T00:00:00",
+            },
+        }
+
+        response = client.get("/api/profile?user_id=1")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "user_id": 1,
+            "genre_affinities": {"sci-fi": 4.5},
+            "theme_preferences": ["space exploration"],
+            "anti_preferences": ["gore"],
+            "cross_media_patterns": ["Generally rates books higher than games"],
+            "generated_at": "2026-01-01T00:00:00",
+        }
+
+    def test_a_user_with_no_profile_gets_the_empty_shape_not_a_404(
+        self, client, mock_components
+    ):
+        mock_components["storage"].profiles.get.return_value = None
+
+        response = client.get("/api/profile?user_id=1")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "user_id": 1,
+            "genre_affinities": {},
+            "theme_preferences": [],
+            "anti_preferences": [],
+            "cross_media_patterns": [],
+            "generated_at": None,
+        }
