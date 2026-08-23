@@ -858,6 +858,47 @@ def test_custom_rules_interpret_pattern(mock_components):
     assert "horror" in result.output
 
 
+class TestPreferencesResetConfirms:
+    """``reset`` wipes every preference a user has, so it asks first."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        storage = StorageManager(sqlite_path=tmp_path / "reset.db")
+        storage.save_user_preference_config(
+            1,
+            UserPreferenceConfig(
+                custom_rules=["avoid horror", "prefer sci-fi", "no sequels"],
+                scorer_weights={"genre_match": 3.0},
+                variety_penalty=4.0,
+            ),
+        )
+        return storage
+
+    @pytest.mark.parametrize("answer", ["n\n", "\n"])
+    def test_neither_no_nor_a_bare_enter_resets(
+        self, storage: StorageManager, answer: str
+    ) -> None:
+        before = storage.get_user_preference_config(1)
+
+        result = _invoke_with_mocks(
+            CliRunner(), ["preferences", "reset"], storage, input_text=answer
+        )
+
+        assert result.exit_code == 0
+        # The prompt sizes the loss rather than just asking.
+        assert "3" in result.output
+        assert storage.get_user_preference_config(1) == before
+
+    def test_yes_resets_without_prompting(self, storage: StorageManager) -> None:
+        """No stdin to answer with: a prompt here would abort instead."""
+        result = _invoke_with_mocks(
+            CliRunner(), ["preferences", "reset", "--yes"], storage
+        )
+
+        assert result.exit_code == 0
+        assert storage.get_user_preference_config(1) == UserPreferenceConfig()
+
+
 def test_set_length_preference(mock_components):
     """Test setting a length preference."""
     mock_config = UserPreferenceConfig()
@@ -971,7 +1012,7 @@ class TestPreferenceWritesTheStoreRefusesRegression:
     def test_reset_names_the_unknown_user_too(self, storage: StorageManager) -> None:
         """The one write that does not read first, so it took another path."""
         result = _invoke_with_mocks(
-            CliRunner(), ["preferences", "reset", "--user", "999"], storage
+            CliRunner(), ["preferences", "reset", "--user", "999", "--yes"], storage
         )
 
         assert result.exit_code != 0

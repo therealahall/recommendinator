@@ -183,10 +183,26 @@ def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) ->
     default=1,
     help="User ID",
 )
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
 @click.pass_context
-def preferences_reset(ctx: click.Context, user_id: int) -> None:
+def preferences_reset(ctx: click.Context, user_id: int, yes: bool) -> None:
     """Reset user preferences to defaults."""
     storage = ctx.obj["storage"]
+
+    if not yes:
+        rules = len(storage.get_user_preference_config(user_id).custom_rules)
+        if not click.confirm(
+            "Reset the scorer weights, length preferences, variety penalty, "
+            "series ordering, theme and "
+            f"{rules} custom rule(s) for user {user_id} to defaults?"
+        ):
+            click.echo("Aborted.")
+            return
+
     try:
         storage.save_user_preference_config(user_id, UserPreferenceConfig())
     except UnknownUserError as error:
