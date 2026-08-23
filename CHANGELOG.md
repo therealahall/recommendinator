@@ -1,6 +1,60 @@
 # CHANGELOG
 
 
+## v0.46.0 (2026-08-23)
+
+### Bug Fixes
+
+- **a11y**: The enrichment card announces that a run reported errors
+  ([`8915b08`](https://github.com/therealahall/recommendinator/commit/8915b08e499147c6548cc4118cd895347ddccb36))
+
+- **cli**: Enrichment start names the same three states enrichment job does
+  ([`c7ade99`](https://github.com/therealahall/recommendinator/commit/c7ade994273d769e2e07eff1192a6fd115c2d08b))
+
+- **enrichment**: A failed save is ours, and a rejecting provider is dropped for the run
+  ([`792cc96`](https://github.com/therealahall/recommendinator/commit/792cc96f3e96181a75c885329f7425d059c5489f))
+
+- **enrichment**: A run that gave up is not a run that finished
+  ([`f018f06`](https://github.com/therealahall/recommendinator/commit/f018f06eb34ebbc94b62fcf43003d0b13b483057))
+
+- **enrichment**: The default run reports giving up, not just a scoped one
+  ([`48547c7`](https://github.com/therealahall/recommendinator/commit/48547c7e62d3986ca2277ce6c1d8b522d0c7849b))
+
+- **enrichment**: The reason a run gave up survives the operator's view of it
+  ([`33a31a8`](https://github.com/therealahall/recommendinator/commit/33a31a8bb3e4527e50812e21ac6e9c6b2b9666f7))
+
+- **radarr**: A collection map belongs to the source that fetched it
+  ([`846ccfa`](https://github.com/therealahall/recommendinator/commit/846ccfa3ede97278234e1d736705e93e3cde24aa))
+
+### Documentation
+
+- The abandonment note names the state the operator sees
+  ([`db9304b`](https://github.com/therealahall/recommendinator/commit/db9304b7bc038b186c3018b23d4e5fdb3ece9913))
+
+### Features
+
+- **enrichment**: Both Reset confirmations state what a re-queue touches
+  ([`c588e3d`](https://github.com/therealahall/recommendinator/commit/c588e3d33e569eb1ba2f6105a999b529ca218811))
+
+### Performance Improvements
+
+- **enrichment**: The retry set is one query, not one connection per item
+  ([`6128142`](https://github.com/therealahall/recommendinator/commit/6128142f88e81aa182e4bf734e98f4d48a9d0118))
+
+### Refactoring
+
+- **enrichment**: Drop an override point one name already meant the opposite of
+  ([`a242a4a`](https://github.com/therealahall/recommendinator/commit/a242a4aa1333f7602dc4fd3f4be5be6e59329db5))
+
+- **web**: The enrichment routes reach the job record directly
+  ([`481e6a7`](https://github.com/therealahall/recommendinator/commit/481e6a7bd1d35db1db3043b75daf47d94639b066))
+
+### Testing
+
+- **plugins**: Pin that a private module failing to import reaches both interfaces
+  ([`a7f880a`](https://github.com/therealahall/recommendinator/commit/a7f880adf86ba6c77afe7cc51510fe2b35722234))
+
+
 ## v0.45.0 (2026-08-23)
 
 ### Bug Fixes
