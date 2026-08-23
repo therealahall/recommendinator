@@ -336,13 +336,12 @@ class TestEnrichmentJobControl:
 
 
 class TestEnrichmentStatus:
-    """Tests for enrichment status command."""
-
     def test_enrichment_status_json(self, cli_runner: CliRunner) -> None:
-        """Test status JSON output matches web API EnrichmentStatsResponse shape."""
+        """Parity: the JSON is web EnrichmentStatsResponse, key for key."""
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.enrichment.stats.return_value = {
+        stats = {
             "total": 100,
+            "resettable": 88,
             "enriched": 80,
             "pending": 15,
             "not_found": 3,
@@ -350,43 +349,51 @@ class TestEnrichmentStatus:
             "by_provider": {"tmdb": 50},
             "by_quality": {"high": 60},
         }
+        mock_storage.enrichment.stats.return_value = stats
 
         result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "status", "--format", "json"],
-            mock_storage,
+            cli_runner, ["enrichment", "status", "--format", "json"], mock_storage
         )
 
         assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        # Field set matches web API EnrichmentStatsResponse (includes `enabled`)
-        assert set(parsed.keys()) >= {
-            "enabled",
-            "total",
-            "enriched",
-            "pending",
-            "not_found",
-            "failed",
-            "by_provider",
-            "by_quality",
-        }
-        assert parsed["total"] == 100
-        assert parsed["enriched"] == 80
-        assert parsed["enabled"] is False
+        assert json.loads(result.output) == {"enabled": False, **stats}
 
 
 class TestEnrichmentReset:
-    """Tests for enrichment reset command."""
+    def test_reset_prompt_states_the_count_each_filter_leaves(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """The library total under --provider or --type overstates the damage."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.enrichment.stats.return_value = {
+            "resettable": 1488,
+            "by_provider": {"tmdb": 12},
+        }
+
+        def prompt(*args: str) -> str:
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["enrichment", "reset", *args],
+                mock_storage,
+                input_text="n\n",
+            )
+            assert result.exit_code == 0
+            return result.output
+
+        unfiltered = prompt()
+        assert "1488 item(s)" in unfiltered
+        assert "Aborted" in unfiltered
+        assert "12 item(s)" in prompt("--provider", "tmdb")
+        assert "1488" not in prompt("--type", "movie")
+        mock_storage.enrichment.reset.assert_not_called()
 
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
-        """Test reset command for all items forwards correct filters."""
+        """--yes skips the prompt and leaves every filter unset."""
         mock_storage = MagicMock(spec=StorageManager)
         mock_storage.enrichment.reset.return_value = 50
 
         result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "reset", "--yes"],
-            mock_storage,
+            cli_runner, ["enrichment", "reset", "--yes"], mock_storage
         )
 
         assert result.exit_code == 0
@@ -458,21 +465,4 @@ class TestEnrichmentReset:
 
         assert result.exit_code != 0
         assert "Item 999 not found." in result.output
-        mock_storage.enrichment.reset.assert_not_called()
-
-    def test_enrichment_reset_requires_confirmation(
-        self, cli_runner: CliRunner
-    ) -> None:
-        """Test that reset requires confirmation without --yes."""
-        mock_storage = MagicMock(spec=StorageManager)
-
-        result = _invoke_with_mocks(
-            cli_runner,
-            ["enrichment", "reset"],
-            mock_storage,
-            input_text="n\n",
-        )
-
-        assert result.exit_code == 0
-        assert "Aborted" in result.output
         mock_storage.enrichment.reset.assert_not_called()

@@ -18,6 +18,11 @@ const running = computed(() => data.enrichmentJob?.running === true)
 const typeLabel = computed(() =>
   enrichType.value ? formatContentType(enrichType.value) : '',
 )
+const resettable = computed(() =>
+  enrichType.value || !stats.value
+    ? null
+    : { all: stats.value.resettable, ...stats.value.by_provider },
+)
 
 function control(testid: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-testid="${testid}"]`)
@@ -120,6 +125,7 @@ const onReset = (provider: string) =>
         <div class="toolbar-right">
           <EnrichmentReset
             :type-label="typeLabel"
+            :resettable="resettable"
             :busy="busy || running"
             @reset="onReset"
           />

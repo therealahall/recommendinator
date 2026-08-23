@@ -331,7 +331,18 @@ def enrichment_reset(
     desc = f" ({', '.join(desc_parts)})" if desc_parts else ""
 
     if not yes:
-        if not click.confirm(f"Reset enrichment status for items{desc}?"):
+        target = f"items{desc}"
+        # Stats can count a provider filter ahead of the reset but not a content
+        # type, and --id already names the single item it would touch.
+        if content_type_str is None and item_id is None:
+            stats = storage.enrichment.stats(user_id=user_id)
+            count = (
+                stats["by_provider"].get(provider_filter, 0)
+                if provider_filter
+                else stats["resettable"]
+            )
+            target = f"{count} item(s){desc}"
+        if not click.confirm(f"Reset enrichment status for {target}?"):
             click.echo("Aborted.")
             return
 

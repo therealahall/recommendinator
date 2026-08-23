@@ -1319,9 +1319,9 @@ def get_enrichment_stats(
 ) -> dict[str, int | dict[str, int]]:
     """Count each item under exactly one enrichment state.
 
-    ``enriched``, ``pending``, ``not_found`` and ``failed`` partition the
-    library, so the four sum to ``total``: an untracked item counts as
-    pending, and a failed one reports only as failed.
+    ``enriched``, ``pending``, ``not_found`` and ``failed`` sum to ``total``:
+    untracked counts as pending, failed only as failed. ``resettable`` is
+    the tracked rows an unfiltered reset re-queues.
     """
     cursor = conn.cursor()
 
@@ -1373,6 +1373,7 @@ def get_enrichment_stats(
 
     return {
         "total": total_items,
+        "resettable": tracked_items,
         "enriched": enriched,
         "pending": needs_enrichment + untracked,
         "not_found": by_quality.get("not_found", 0),

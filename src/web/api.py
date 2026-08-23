@@ -707,6 +707,7 @@ class EnrichmentStatsResponse(BaseModel):
 
     enabled: bool = False
     total: int = 0
+    resettable: int = 0
     enriched: int = 0
     pending: int = 0
     not_found: int = 0
@@ -2593,6 +2594,7 @@ def get_enrichment_stats(
     return EnrichmentStatsResponse(
         enabled=enrichment_enabled,
         total=cast(int, stats.get("total", 0)),
+        resettable=cast(int, stats.get("resettable", 0)),
         enriched=cast(int, stats.get("enriched", 0)),
         pending=cast(int, stats.get("pending", 0)),
         not_found=cast(int, stats.get("not_found", 0)),

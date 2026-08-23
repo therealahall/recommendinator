@@ -6,6 +6,8 @@ import { ENRICHMENT_PROVIDERS, PROVIDER_LABELS } from '@/constants/enrichment'
 const props = defineProps<{
   /** Human-readable content-type scope, '' for every type. */
   typeLabel: string
+  /** Items a reset re-queues, keyed by provider filter; null under a type filter. */
+  resettable: Record<string, number> | null
   busy: boolean
 }>()
 
@@ -23,14 +25,17 @@ const scope = computed(() => {
   return parts.join(', ')
 })
 
-// No count: /enrichment/stats folds untracked items into `pending`, so nothing
-// it reports is the number a reset would touch, and a wrong figure in a
-// destructive dialog is worse than none.
+const subject = computed(() =>
+  props.resettable === null
+    ? 'every matching item'
+    : `${props.resettable[provider.value] ?? 0} item(s)`,
+)
+
 const question = computed(
   () =>
-    `Re-queue every matching item for enrichment (${scope.value})? Their ` +
-    'current genres, tags and descriptions are dropped and fetched again ' +
-    'from rate-limited APIs.',
+    `Re-queue ${subject.value} for enrichment (${scope.value})? Their current ` +
+    'genres, tags and descriptions are dropped and fetched again from ' +
+    'rate-limited APIs.',
 )
 
 function answer(reset: boolean): void {
