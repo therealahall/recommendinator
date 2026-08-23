@@ -310,16 +310,20 @@ class TestPrivateProviderDiscoveryRegression:
     def test_a_provider_dropped_into_private_plugins_is_registered(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A discovery pass reaches a module the repo does not ship.
+        """A discovery pass reaches a folder the repo does not ship.
 
-        Driven through the public entry point, so dropping the private scan out
-        of it fails here: nothing else can register ``mock_book``.
+        In the layout in-tree providers use, unwalkable before ``pkgutil``, and
+        driven through the public entry point: nothing else has ``mock_book``.
         """
         private_plugins = tmp_path / "private" / "plugins"
-        private_plugins.mkdir(parents=True)
+        dropped = private_plugins / "dropped"
+        dropped.mkdir(parents=True)
         (private_plugins.parent / "__init__.py").write_text("")
         (private_plugins / "__init__.py").write_text("")
-        (private_plugins / "dropped.py").write_text(
+        (dropped / "__init__.py").write_text(
+            "from private.plugins.dropped.dropped import *  # noqa: F401, F403\n"
+        )
+        (dropped / "dropped.py").write_text(
             f"from {__name__} import MockBookProvider\n"
         )
         # The scan derives the project root from this module's location, so a

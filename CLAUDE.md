@@ -101,7 +101,9 @@ src/
 │                     # importers and the export read
 └── utils/            # Utility functions (list_merge, series, sorting, export,
                       # csv_formula, urls for the bare-origin/local-host guards,
-                      # logging: the root-logger wiring both interfaces call)
+                      # logging: the root-logger wiring both interfaces call,
+                      # private_plugins: the private/plugins/ scan both
+                      # registries share)
 
 resources/            # Frontend source (Vue 3)
 ├── js/               # Vue components, Pinia stores, composables, router, types

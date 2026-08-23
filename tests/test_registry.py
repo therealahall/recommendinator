@@ -2,10 +2,12 @@
 
 import importlib
 import logging
+import sys
 import threading
 import types
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -103,6 +105,55 @@ class FakeGamePlugin(SourcePlugin):
 def clean_registry() -> PluginRegistry:
     """Create a fresh registry for each test (not singleton)."""
     return PluginRegistry()
+
+
+_BUILTIN_PLUGIN_NAMES = {
+    "calibre_web",
+    "epic_games",
+    "gog",
+    "goodreads_rss",
+    "radarr",
+    "roms",
+    "sonarr",
+    "steam",
+    "trakt",
+}
+
+
+def _private_module_names() -> list[str]:
+    """The imported ``private`` package and its submodules, if any."""
+    return [
+        name
+        for name in list(sys.modules)
+        if name == "private" or name.startswith("private.")
+    ]
+
+
+@pytest.fixture()
+def private_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """An empty ``private/plugins/`` the next discovery pass scans instead.
+
+    The scan reads the project root off ``registry.py``, three levels down.
+    """
+    private_path = tmp_path / "private" / "plugins"
+    private_path.mkdir(parents=True)
+    (private_path.parent / "__init__.py").write_text("")
+    (private_path / "__init__.py").write_text("")
+    monkeypatch.setattr(
+        registry_module,
+        "__file__",
+        str(tmp_path / "src" / "ingestion" / "registry.py"),
+    )
+    for name in _private_module_names():
+        monkeypatch.delitem(sys.modules, name)
+    importlib.invalidate_caches()
+
+    yield private_path
+
+    for name in _private_module_names():
+        del sys.modules[name]
+    if str(tmp_path) in sys.path:
+        sys.path.remove(str(tmp_path))
 
 
 # Bounded so a thread nothing releases fails the test instead of hanging the
@@ -361,6 +412,87 @@ class TestPluginImportFailureRegression:
         }
         assert "goodreads_rss" not in clean_registry.get_all_plugins()
         assert "steam" in clean_registry.get_all_plugins()
+
+
+class TestPrivatePluginDiscoveryRegression:
+    """A private plugin loads in the layout every in-tree plugin uses.
+
+    The scan globbed ``*.py``, so a private folder loaded nothing, silently.
+    Each case drives the public entry point, so losing the private scan from
+    ``discover_plugins`` fails here too.
+    """
+
+    def test_a_plugin_shipped_as_a_folder_is_discovered(
+        self, private_plugins: Path
+    ) -> None:
+        plugin_dir = private_plugins / "dropped"
+        plugin_dir.mkdir()
+        (plugin_dir / "__init__.py").write_text(
+            "from private.plugins.dropped.dropped import *  # noqa: F401, F403\n"
+        )
+        (plugin_dir / "dropped.py").write_text(
+            f"from {__name__} import FakeBookPlugin\n"
+        )
+
+        registry = PluginRegistry()
+        registry.discover_plugins()
+
+        discovered = set(registry.get_all_plugins())
+        assert "fake_books" in discovered
+        assert _BUILTIN_PLUGIN_NAMES <= discovered
+
+    def test_a_plugin_shipped_as_a_single_file_is_discovered(
+        self, private_plugins: Path
+    ) -> None:
+        """The layout private plugins had to use before the folder one worked."""
+        (private_plugins / "dropped.py").write_text(
+            f"from {__name__} import FakeBookPlugin\n"
+        )
+
+        registry = PluginRegistry()
+        registry.discover_plugins()
+
+        discovered = set(registry.get_all_plugins())
+        assert "fake_books" in discovered
+        assert _BUILTIN_PLUGIN_NAMES <= discovered
+
+    def test_a_private_module_that_raises_is_blamed_on_the_source_scan(
+        self, private_plugins: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The enrichment registry imports the same module, so say which scan."""
+        (private_plugins / "dropped.py").write_text("raise RuntimeError('boom')\n")
+
+        registry = PluginRegistry()
+        with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
+            registry.discover_plugins()
+
+        assert registry.get_import_errors() == {"dropped": "RuntimeError: boom"}
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if "dropped" in record.getMessage()
+            and "source plugins" in record.getMessage()
+        ]
+
+    def test_a_plugin_folder_without_an_init_says_it_was_skipped(
+        self, private_plugins: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        plugin_dir = private_plugins / "dropped"
+        plugin_dir.mkdir()
+        (plugin_dir / "dropped.py").write_text(
+            f"from {__name__} import FakeBookPlugin\n"
+        )
+
+        registry = PluginRegistry()
+        with caplog.at_level(logging.WARNING, logger="src.utils.private_plugins"):
+            registry.discover_plugins()
+
+        assert "fake_books" not in registry.get_all_plugins()
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if "dropped" in record.getMessage() and "__init__.py" in record.getMessage()
+        ]
 
 
 def test_no_import_format_is_also_a_source_plugin(
