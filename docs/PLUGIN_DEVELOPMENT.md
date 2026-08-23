@@ -536,6 +536,10 @@ each keeps the classes it recognises. Private modules stay **flat single-file
 modules** — that scan globs `*.py` rather than walking subpackages, so a
 private folder is silently skipped.
 
+`make check` runs Ruff, Black, MyPy and pytest over `private/` when the
+directory exists, so a private plugin is held to the same standard and its
+tests run beside it. On a clone without one the step does nothing.
+
 `name`, `display_name`, `content_types`, `requires_api_key`,
 `get_config_schema` and `validate_config` work as they do on a source plugin. The
 rest is what differs:

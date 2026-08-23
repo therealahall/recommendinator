@@ -1,9 +1,16 @@
 .PHONY: help install install-dev lock test lint format format-check
 .PHONY: type-check clean run install-frontend build-frontend check-frontend check
+.PHONY: check-private
 
 # CI overrides this with the interpreter uv provisioned into .venv; locally the
 # project's pinned version is on PATH.
 PYTHON ?= python3.11
+
+# private/ is gitignored, and ruff and black both honour that while walking a
+# directory — so ruff is told not to, and black is handed the files by name.
+# Empty on a clone without the directory, which is what makes check-private a
+# no-op there.
+PRIVATE_SOURCES := $(shell find private -name '*.py' 2>/dev/null)
 
 help:
 	@echo "Available commands:"
@@ -18,6 +25,7 @@ help:
 	@echo "  make type-check        - Run type checker (mypy)"
 	@echo "  make build-frontend    - Build Vue frontend (Vite + vue-tsc)"
 	@echo "  make check-frontend    - Run frontend type-check and tests"
+	@echo "  make check-private     - Run the Python checks over private/, if present"
 	@echo "  make check             - Run all checks (Python + frontend)"
 	@echo "  make clean             - Clean build artifacts"
 	@echo "  make run               - Run the application"
@@ -49,7 +57,7 @@ lint:
 	$(PYTHON) -m ruff check src/ tests/ conftest.py
 
 format:
-	$(PYTHON) -m black src/ tests/ conftest.py
+	$(PYTHON) -m black src/ tests/ conftest.py $(PRIVATE_SOURCES)
 
 format-check:
 	$(PYTHON) -m black --check src/ tests/ conftest.py
@@ -64,7 +72,17 @@ check-frontend: node_modules/.make-install
 	pnpm vue-tsc --noEmit
 	pnpm vitest run
 
-check: format-check lint type-check test check-frontend
+check-private:
+ifneq ($(PRIVATE_SOURCES),)
+	$(PYTHON) -m ruff check --no-respect-gitignore private/
+	$(PYTHON) -m black --check $(PRIVATE_SOURCES)
+	$(PYTHON) -m mypy private/
+# Exit 5 is "no tests collected", which a plugin tree without tests yet is
+# entitled to be; every other failure is real.
+	$(PYTHON) -m pytest private/ || [ $$? -eq 5 ]
+endif
+
+check: format-check lint type-check test check-private check-frontend
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
