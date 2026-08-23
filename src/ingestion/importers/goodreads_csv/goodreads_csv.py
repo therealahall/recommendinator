@@ -12,6 +12,7 @@ from src.ingestion.importers.base import (
 )
 from src.ingestion.importers.rows import csv_field, parse_slashed_date, read_csv_rows
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.series import split_series_from_title
 
 SHELF_STATUS: dict[str, ConsumptionStatus] = {
     "read": ConsumptionStatus.COMPLETED,
@@ -37,24 +38,27 @@ class GoodreadsCsvImporter(Importer):
                 yield SkippedRow(row.number, row.mismatch)
                 continue
 
-            title = csv_field(row.fields, "Title")
-            if not title:
+            raw_title = csv_field(row.fields, "Title")
+            if not raw_title:
                 yield SkippedRow(row.number, "no title")
                 continue
 
+            title, series = split_series_from_title(raw_title)
+            book_id = csv_field(row.fields, "Book Id")
             metadata = {
-                "book_id": csv_field(row.fields, "Book Id"),
+                "book_id": book_id,
                 "isbn": csv_field(row.fields, "ISBN") or None,
                 "isbn13": csv_field(row.fields, "ISBN13") or None,
                 "pages": csv_field(row.fields, "Number of Pages") or None,
                 "year_published": csv_field(row.fields, "Year Published") or None,
                 "publisher": csv_field(row.fields, "Publisher") or None,
+                **series,
             }
 
             yield ImportedRow(
                 row.number,
                 ContentItem(
-                    id=metadata["book_id"],
+                    id=book_id,
                     title=title,
                     author=csv_field(row.fields, "Author") or None,
                     content_type=ContentType.BOOK,

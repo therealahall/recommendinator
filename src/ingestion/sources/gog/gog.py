@@ -563,13 +563,12 @@ def _fetch_gog_games(
                     for genre in details["genres"]
                     if genre.get("name")
                 ]
-            # A company arrives as a bare name on some products and as an
-            # object holding one on others, and ``developer``/``publisher``
-            # are text columns, which hold neither an object nor its repr.
+            # A company arrives as an object on some products, and a text
+            # column holds neither that nor its repr.
             if details.get("developers"):
-                metadata["developers"] = text_names(details["developers"])
+                metadata["developer"] = text_names(details["developers"])
             if details.get("publishers"):
-                metadata["publishers"] = text_names(details["publishers"])
+                metadata["publisher"] = text_names(details["publishers"])
             if details.get("description", {}).get("full"):
                 metadata["description"] = details["description"]["full"]
             if details.get("release_date"):

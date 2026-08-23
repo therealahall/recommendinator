@@ -15,6 +15,7 @@ from src.ingestion.importers.base import (
     SkippedRow,
 )
 from src.ingestion.importers.rows import (
+    fill_series_from_title,
     normalize_rating,
     normalize_watched_seasons,
     parse_completion_date,
@@ -60,7 +61,9 @@ class JsonImporter(Importer):
             metadata = _build_metadata(entry, resolved)
             if notes:
                 metadata["notes"] = notes
-            if resolved is ContentType.TV_SHOW:
+            if resolved is ContentType.BOOK:
+                title = fill_series_from_title(title, metadata)
+            elif resolved is ContentType.TV_SHOW:
                 normalize_watched_seasons(metadata)
 
             yield ImportedRow(

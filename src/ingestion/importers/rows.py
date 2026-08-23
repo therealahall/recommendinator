@@ -13,7 +13,7 @@ from typing import Any
 
 from src.ingestion.importers.base import ImporterError
 from src.utils.dates import parse_iso_timestamp
-from src.utils.series import MAX_SEASONS
+from src.utils.series import MAX_SEASONS, split_series_from_title
 from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,14 @@ def parse_ignored_field(row: Mapping[str, Any]) -> bool | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     return parse_boolean_field(value)
+
+
+def fill_series_from_title(title: str, metadata: dict[str, Any]) -> str:
+    """The work's own title; a series it states fills what the columns did not."""
+    bare, stated = split_series_from_title(title)
+    for key, value in stated.items():
+        metadata.setdefault(key, value)
+    return bare
 
 
 def _season_number(value: Any) -> int | None:

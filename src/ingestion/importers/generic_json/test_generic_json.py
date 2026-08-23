@@ -73,6 +73,26 @@ class TestEntries:
         assert item.metadata["pages"] == 662
         assert item.metadata["genres"] == ["Fantasy"]
 
+    def test_a_series_crammed_into_the_title_splits_out_unless_stated(self) -> None:
+        parsed = items(
+            json.dumps(
+                [
+                    {"title": "All Systems Red (The Murderbot Diaries, #1)"},
+                    {
+                        "title": "Leviathan Wakes (The Expanse, #1)",
+                        "series": "Expanse Novels",
+                        "series_index": 4,
+                    },
+                ]
+            )
+        )
+
+        assert [item.title for item in parsed] == ["All Systems Red", "Leviathan Wakes"]
+        assert parsed[0].metadata["series"] == "The Murderbot Diaries"
+        assert parsed[0].metadata["series_index"] == 1.0
+        assert parsed[1].metadata["series"] == "Expanse Novels"
+        assert parsed[1].metadata["series_index"] == 4
+
     def test_a_tv_entry_expands_its_watched_season_count(self) -> None:
         parsed = items(
             json.dumps(

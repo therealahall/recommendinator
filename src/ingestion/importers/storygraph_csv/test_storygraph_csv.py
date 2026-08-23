@@ -76,6 +76,17 @@ class TestExport:
         assert parsed[0].status == ConsumptionStatus.COMPLETED
         assert parsed[0].metadata["read_status"] == "did-not-finish"
 
+    def test_a_series_title_arrives_as_a_title_and_a_series(self) -> None:
+        parsed = items(
+            '"All Systems Red (The Murderbot Diaries, #1)",Martha Wells,,,,read,'
+            + "," * 16
+            + "\n"
+        )
+
+        assert parsed[0].title == "All Systems Red"
+        assert parsed[0].metadata["series"] == "The Murderbot Diaries"
+        assert parsed[0].metadata["series_index"] == 1.0
+
     def test_an_unknown_read_status_falls_back_to_unread(self) -> None:
         parsed = items("Mystery Status,Some Author,,,,wishlist," + "," * 16 + "\n")
 

@@ -68,6 +68,16 @@ class TestExport:
         assert parsed[0].metadata["year_published"] == "2020"
         assert parsed[0].metadata["publisher"] == "Test Publisher"
 
+    def test_a_series_title_arrives_as_a_title_and_a_series(self) -> None:
+        parsed = items(
+            "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
+            '123,"All Systems Red (The Murderbot Diaries, #1)",Martha Wells,5,read\n'
+        )
+
+        assert parsed[0].title == "All Systems Red"
+        assert parsed[0].metadata["series"] == "The Murderbot Diaries"
+        assert parsed[0].metadata["series_index"] == 1.0
+
     def test_an_unparseable_date_keeps_the_row(self) -> None:
         parsed = items(
             "Book Id,Title,Author,My Rating,Exclusive Shelf,Date Read\n"

@@ -400,11 +400,7 @@ class TestCustomRulesIntegration:
 
 
 class TestTwinnedSeriesEntryRegression:
-    """Reported: a run offered book #2 while #1 sat unread.
-
-    Only the "(Series, Book N)" spelling leaves two rows to merge: the save
-    door joins a "(Series, #N)" twin at ingest, ``_is_qualifier`` stripping it.
-    """
+    """Reported: a run offered book #2 while #1 sat unread, both rows counting."""
 
     @pytest.mark.parametrize("position_key", ["series_position", "series_index"])
     def test_a_merged_twin_takes_one_place_in_its_series_regression(
@@ -421,15 +417,16 @@ class TestTwinnedSeriesEntryRegression:
         calibre_id = _save_book(
             real_storage,
             item_id="calibre-1",
-            title="All Systems Red",
+            title="All Systems Red: A Murderbot Novella",
             status=ConsumptionStatus.UNREAD,
             metadata={"series": "The Murderbot Diaries", position_key: 1},
         )
         goodreads_id = _save_book(
             real_storage,
             item_id="goodreads-1",
-            title="All Systems Red (The Murderbot Diaries, Book 1)",
+            title="All Systems Red",
             status=ConsumptionStatus.UNREAD,
+            metadata={"series": "The Murderbot Diaries", "series_index": 1},
         )
         for position, title in ((2, "Artificial Condition"), (3, "Rogue Protocol")):
             _save_book(

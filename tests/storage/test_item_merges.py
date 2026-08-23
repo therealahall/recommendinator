@@ -560,11 +560,10 @@ def test_no_door_in_src_deletes_a_content_row() -> None:
 
 
 def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> None:
-    """Only the Calibre-Web row states the series, and it is the twin more often
-    absorbed than kept, so a survivor with no position leaves its series."""
+    """A survivor taking no position from the row it absorbs leaves its series."""
     survivor_id = _save(
         db,
-        "goodreads_rss",
+        "generic_csv",
         "1",
         title="All Systems Red",
         content_type=ContentType.BOOK,
@@ -573,7 +572,7 @@ def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> No
         db,
         "calibre_web",
         "2",
-        title="All Systems Red (The Murderbot Diaries, Book 1)",
+        title="All Systems Red: A Murderbot Novella",
         content_type=ContentType.BOOK,
         metadata={"series": "The Murderbot Diaries", "series_index": 1},
     )
