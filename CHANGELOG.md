@@ -1,6 +1,55 @@
 # CHANGELOG
 
 
+## v0.45.0 (2026-08-23)
+
+### Bug Fixes
+
+- **ingestion**: Private plugins load as folders, the way in-tree ones do
+  ([`0d90352`](https://github.com/therealahall/recommendinator/commit/0d90352a23bd9cf11329a8505377818257aa7f07))
+
+- **ingestion**: Sweep private plugins for undeclared paths too
+  ([`56adbf3`](https://github.com/therealahall/recommendinator/commit/56adbf33a9b9a302dd9691cf42364308980f0949))
+
+- **storage**: Refuse a placeholder creator once, at the write boundary
+  ([`0ca5a96`](https://github.com/therealahall/recommendinator/commit/0ca5a964162c354a1e380fcd90c58cb87a1608da))
+
+- **storage**: Schema 17 moves a stored series off the title it sat in
+  ([`1221557`](https://github.com/therealahall/recommendinator/commit/122155738090b9c302914a325feedf476f89b136))
+
+### Build System
+
+- **gate**: Run the Python checks over private/ when it exists
+  ([`12f3c7c`](https://github.com/therealahall/recommendinator/commit/12f3c7cd72b6761626848511719d065407afcbff))
+
+### Documentation
+
+- The series is the plugin's to state and storage's to keep
+  ([`f47870c`](https://github.com/therealahall/recommendinator/commit/f47870c43545df8dcb1b63ba8953a5ebb96acebf))
+
+- **gate**: Make check runs the Python tools over private/ too
+  ([`0843aaa`](https://github.com/therealahall/recommendinator/commit/0843aaa350f336f45756dd31a5ba9bd4fd470712))
+
+### Features
+
+- **ingestion**: A book's series is a field, not part of its title
+  ([`9c36f60`](https://github.com/therealahall/recommendinator/commit/9c36f6003ca9a99a2ab3ad20469ca556e5a05e45))
+
+- **library**: The series shows wherever the title used to carry it
+  ([`4ceed64`](https://github.com/therealahall/recommendinator/commit/4ceed64c5ef27bd5f2f42d84d6bee64d4ebb25fb))
+
+- **models**: Series is a book column both templates carry
+  ([`2180f09`](https://github.com/therealahall/recommendinator/commit/2180f0929330267c24d35baa374054c9b2c12380))
+
+- **storage**: A library search matches the series a book states
+  ([`1368e43`](https://github.com/therealahall/recommendinator/commit/1368e435ff0fe33031306e3f2fc23dff4142191b))
+
+### Testing
+
+- **ingestion**: Sweep private plugins for path containment too
+  ([`9531743`](https://github.com/therealahall/recommendinator/commit/953174359a51c598b30485d1cb5a451f4e84f8f7))
+
+
 ## v0.44.0 (2026-08-23)
 
 ### Bug Fixes
