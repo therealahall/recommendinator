@@ -1,6 +1,42 @@
 # CHANGELOG
 
 
+## v0.44.0 (2026-08-23)
+
+### Bug Fixes
+
+- **config**: Survive a childless YAML header, and read config.yaml as UTF-8
+  ([`4562342`](https://github.com/therealahall/recommendinator/commit/4562342be3df5f612ca600298eecb687b951a5bb))
+
+- **models**: Refuse a value a list column cannot faithfully hold
+  ([`17a03ad`](https://github.com/therealahall/recommendinator/commit/17a03ad22977b17cfead56652a1e03ab99421fd4))
+
+- **storage**: Clear a stale quality an earlier reset left behind
+  ([`ad4906f`](https://github.com/therealahall/recommendinator/commit/ad4906fada2233ae1eae43c347ef139c15924cb8))
+
+- **storage**: Clear the settled quality when an item is re-queued
+  ([`b461bdc`](https://github.com/therealahall/recommendinator/commit/b461bdcfcbe204b545e87f3cd0c874e959ce9d42))
+
+- **storage**: Reduce an object stranded in a list column, and stop GOG writing one
+  ([`3c0fb4e`](https://github.com/therealahall/recommendinator/commit/3c0fb4eb813b4d568f6669e893c70833d81a7ff1))
+
+- **storage**: Stop a status change from emptying a show's watched seasons
+  ([`53a081c`](https://github.com/therealahall/recommendinator/commit/53a081c85115cdd4a0b9e365b804a926d4fea3f6))
+
+### Documentation
+
+- A CSV or JSON import writes watched seasons back too
+  ([`c74bbe5`](https://github.com/therealahall/recommendinator/commit/c74bbe5077fa9607d2237c373a7a0558e153b009))
+
+- **storage**: The version map now names both halves of step 16
+  ([`b3c230f`](https://github.com/therealahall/recommendinator/commit/b3c230fdfe145b8368d3209d86ea900dd5cc585e))
+
+### Features
+
+- **ingestion**: Carry seasons_watched_dates through an import
+  ([`983b4a9`](https://github.com/therealahall/recommendinator/commit/983b4a971223ce232fcb070453d3fe11ada66efa))
+
+
 ## v0.43.0 (2026-08-22)
 
 ### Bug Fixes
