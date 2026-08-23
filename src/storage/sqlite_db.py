@@ -168,8 +168,8 @@ class Unset(Enum):
 UNSET = Unset.UNSET
 
 #: How an enrichment-queue query treats items that settled as ``not_found``:
-#: leave them out, add them to the queue, or return them alone.
-NotFoundMode = Literal["exclude", "include", "only"]
+#: leave them out, or return them alone.
+NotFoundMode = Literal["exclude", "only"]
 
 #: A caller a zone ahead of the server calls tomorrow "today". Further ahead is
 #: a day nobody has lived, and an item dated there heads the variety ladder
@@ -1873,15 +1873,13 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         limit: int = 100,
-        include_not_found: bool = False,
         after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """Get content items that need enrichment.
 
         Returns items where:
         1. No enrichment_status record exists (new items), OR
-        2. needs_enrichment = TRUE, OR
-        3. enrichment_quality = 'not_found' (if include_not_found is True)
+        2. needs_enrichment = TRUE
 
         Results are ordered by ID, so a caller walking the queue passes the
         last ID it saw as *after_db_id* to page past the items it already
@@ -1894,7 +1892,7 @@ class SQLiteDB:
             query, params = self._build_enrichment_query(
                 effective_user_id,
                 content_type,
-                "include" if include_not_found else "exclude",
+                "exclude",
                 count_only=False,
                 after_db_id=after_db_id,
             )
@@ -1916,11 +1914,11 @@ class SQLiteDB:
     ) -> int:
         """Count content items that need enrichment.
 
-        Uses the same filter as :meth:`get_items_needing_enrichment` (with
-        ``include_not_found=False``) so the enrichment manager can report a
-        total upfront instead of incrementing per batch. Items previously
-        marked as ``not_found`` are tracked separately by the manager and are
-        intentionally excluded here to avoid double-counting.
+        Uses the same filter as :meth:`get_items_needing_enrichment` so the
+        enrichment manager can report a total upfront instead of incrementing
+        per batch. Items previously marked as ``not_found`` are tracked
+        separately by the manager and are intentionally excluded here to avoid
+        double-counting.
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
@@ -1977,11 +1975,6 @@ class SQLiteDB:
 
         if not_found == "only":
             status_filter = "es.enrichment_quality = ?"
-        elif not_found == "include":
-            status_filter = (
-                "(es.content_item_id IS NULL OR es.needs_enrichment = 1"
-                " OR es.enrichment_quality = ?)"
-            )
         else:
             status_filter = "(es.content_item_id IS NULL OR es.needs_enrichment = 1)"
 

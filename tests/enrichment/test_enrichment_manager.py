@@ -259,7 +259,7 @@ def queued_ids(storage_manager: StorageManager) -> set[int]:
     return {
         db_id
         for db_id, _item in storage_manager.enrichment.items_needing(
-            content_type=ContentType.MOVIE, include_not_found=False
+            content_type=ContentType.MOVIE
         )
     }
 
@@ -329,6 +329,11 @@ class TestMergeEnrichment:
         setattr(result, field, ["Science Fiction"])
 
         assert merge_enrichment({field: stored}, result)[field] == expected
+
+    def test_merging_leaves_the_callers_metadata_untouched(self) -> None:
+        existing = {"genres": ["Comedy"]}
+        merge_enrichment(existing, EnrichmentResult(genres=["Action"], provider="tmdb"))
+        assert existing == {"genres": ["Comedy"]}
 
 
 class TestEnrichmentManager:
@@ -1229,6 +1234,10 @@ class TestTransientProviderFailureIsRetryable:
         assert queued_ids(storage_manager) == set()
         assert manager.get_status().errors == ["storage: OSError"]
         assert manager.get_status().items_failed == 1
+        assert enrichment_buckets(storage_manager)["failed"] == 1, (
+            "the run counted the item failed, so a not_found row would tell "
+            "the operator no provider had it when one did"
+        )
 
     def test_mixed_batch_requeues_only_the_failed_item(
         self,
@@ -1463,6 +1472,67 @@ class TestPermanentProviderFailureStopsRetrying:
             "_echo_errors shows errors[:5], so a reason recorded behind the "
             "rejections that caused it is one no operator reads"
         )
+
+    def test_abandoning_one_types_providers_ends_a_run_scoped_to_that_type(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """A healthy book provider kept a ``--type movie`` run paging rows
+        nothing could enrich, then filed the run as completed.
+        """
+        for index in range(20):
+            save_movie(storage_manager, f"Movie {index}")
+        registry.register(RawRequestErrorProvider(http_error(401)))
+        registry.register(MockProvider(content_types=[ContentType.BOOK]))
+
+        pages = 0
+        real_fetch = storage_manager.enrichment.items_needing
+
+        def spy(**kwargs: Any) -> list[tuple[int, ContentItem]]:
+            nonlocal pages
+            pages += 1
+            return real_fetch(**kwargs)
+
+        with patch.object(storage_manager.enrichment, "items_needing", side_effect=spy):
+            manager = EnrichmentManager(storage_manager, config, registry)
+            manager.start_enrichment(content_type=ContentType.MOVIE)
+            assert manager._wait_for_completion()
+
+        assert pages == 1, (
+            "the run must stop at the batch that abandoned the movie provider, "
+            f"not page the rest of the queue to skip it — took {pages} fetches"
+        )
+        job_status = manager.get_status()
+        assert not job_status.completed, (
+            "a run that gave up left items untouched; reporting it completed "
+            "sends the operator looking anywhere but at the rejected key"
+        )
+        assert not job_status.cancelled
+
+    def test_a_second_provider_for_the_type_keeps_the_run_going(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Ending the run on any abandonment leaves the provider that answers
+        unasked for every item behind the one that was dropped.
+        """
+        for index in range(20):
+            save_movie(storage_manager, f"Movie {index}")
+        registry.register(RawRequestErrorProvider(http_error(401)))
+        answering = MockProvider()
+        registry.register(answering)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment(content_type=ContentType.MOVIE)
+        assert manager._wait_for_completion()
+
+        assert len(answering.enrich_calls) == 20
+        assert queued_ids(storage_manager) == set()
+        assert manager.get_status().items_enriched == 20
 
     def test_failure_with_no_request_error_stays_retryable(
         self,
