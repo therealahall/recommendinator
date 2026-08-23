@@ -22,6 +22,14 @@ def _echo_errors(errors: list[str]) -> None:
         click.echo(f"    ... and {len(errors) - 5} more")
 
 
+def _finished_state(status: EnrichmentJobStatus) -> str:
+    if status.cancelled:
+        return "cancelled"
+    if status.completed:
+        return "completed"
+    return "stopped on an error"
+
+
 @click.group()
 def enrichment() -> None:
     """Manage metadata enrichment."""
@@ -106,10 +114,7 @@ def enrichment_start(
 
         # Final status
         click.echo("", err=True)
-        if status.cancelled:
-            click.echo("Enrichment cancelled.")
-        else:
-            click.echo("Enrichment completed.")
+        click.echo(f"Enrichment {_finished_state(status)}.")
 
         click.echo(f"  Items processed: {status.items_processed}")
         click.echo(f"  Items enriched: {status.items_enriched}")
@@ -184,14 +189,7 @@ def enrichment_job(ctx: click.Context, output_format: str) -> None:
         click.echo("No enrichment job has run.")
         return
 
-    if status.running:
-        state = "running"
-    elif status.cancelled:
-        state = "cancelled"
-    elif status.completed:
-        state = "completed"
-    else:
-        state = "stopped on an error"
+    state = "running" if status.running else _finished_state(status)
     click.echo(f"Enrichment job: {state}")
     if status.current_item:
         click.echo(f"  Current item: {status.current_item}")

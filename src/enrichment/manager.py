@@ -711,7 +711,6 @@ class EnrichmentManager:
                 reported,
             )
         else:
-            # Every provider answered and none of them has this item
             logger.debug(
                 "[ENRICHMENT] No match found for %s: %s", content_type_str, safe_title
             )
@@ -727,8 +726,7 @@ class EnrichmentManager:
         """Retire an item whose enrichment arrived but could not be written.
 
         Re-fetching spends a third party's quota on a failure of ours that
-        repeating cannot clear. ``status.errors`` is served to clients, so it
-        names the type only.
+        repeating cannot clear.
         """
         logger.error(
             "[ENRICHMENT] Saving enrichment failed, not retrying: %s",
