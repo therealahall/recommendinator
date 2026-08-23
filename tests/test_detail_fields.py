@@ -256,7 +256,7 @@ class TestSingleStringColumnsCoerceWhatTheyAreGiven:
                 title="Cyberpunk 2077",
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
-                metadata={"developers": ["", "CD Projekt Red"]},
+                metadata={"developer": ["", "CD Projekt Red"]},
             )
         )
 
@@ -449,7 +449,7 @@ class TestReducingAKnownShapeToNames:
                 content_type=ContentType.VIDEO_GAME,
                 status=ConsumptionStatus.UNREAD,
                 metadata={
-                    "developers": detail_fields.text_names(
+                    "developer": detail_fields.text_names(
                         [["Nested"], {"name": {"text": "Deep"}}, "Valve"]
                     )
                 },

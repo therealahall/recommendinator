@@ -40,11 +40,10 @@ _TEXT_SCALARS: tuple[type, ...] = (str, int, float)
 def to_text(value: Any) -> str | None:
     """Flatten a metadata value into the one string its column holds.
 
-    A source hands over a list where the column takes a single name — GOG's
-    ``developers`` against ``developer`` — so a list is joined the way TMDB
-    already joins several directors into one ``director``. An entry naming
-    nothing is dropped before the join: a None would read as the text "None",
-    and an empty string as a comma in front of the name beside it.
+    A source hands over a list where the column takes a single name — two
+    studios, several directors — so the names are joined into one. An entry
+    naming nothing is dropped before the join: a None would read as the text
+    "None", and an empty string as a comma in front of the name beside it.
 
     A value naming nothing — an empty string as much as an empty list — is
     None rather than "". Every text column is fill-only in
@@ -72,10 +71,10 @@ def to_text(value: Any) -> str | None:
 def text_names(value: Any) -> list[str]:
     """Keep the names in *value* that a text column can hold.
 
-    An entry naming itself in an object — GOG's ``{"name": "CD Projekt Red"}``
-    — is read for that name, and anything with no text form is dropped rather
-    than stringified into a repr. A caller reducing a shape it knows uses
-    this; :func:`to_text` stays the backstop for a shape nobody reduced.
+    An entry naming itself in an object — ``{"name": "CD Projekt Red"}`` — is
+    read for that name, and anything with no text form is dropped rather than
+    stringified into a repr. A caller reducing a shape it knows uses this;
+    :func:`to_text` stays the backstop for a shape nobody reduced.
     """
     entries = value if isinstance(value, list) else [value]
     names = [
@@ -336,6 +335,10 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 select_alias="book_author",
                 template_column="author",
             ),
+            DetailField("series", FieldKind.FREE_FORM, template_column="series"),
+            DetailField(
+                "series_index", FieldKind.FREE_FORM, template_column="series_index"
+            ),
             DetailField("isbn", FieldKind.TEXT, column="isbn", template_column="isbn"),
             DetailField(
                 "pages", FieldKind.INTEGER, column="pages", template_column="pages"
@@ -482,7 +485,6 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 "developer",
                 FieldKind.CREATOR,
                 column="developer",
-                aliases=("developers",),
                 template_column="developer",
             ),
             DetailField(
@@ -510,7 +512,6 @@ DETAIL_FIELDS: dict[str, ContentTypeFields] = {
                 FieldKind.TEXT,
                 column="publisher",
                 select_alias="game_publisher",
-                aliases=("publishers",),
             ),
             DetailField(
                 "release_year",

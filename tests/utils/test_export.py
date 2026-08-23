@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ import pytest
 from src.ingestion.importers.base import ImportedRow, Importer
 from src.ingestion.importers.generic_csv.generic_csv import CsvImporter
 from src.ingestion.importers.generic_json.generic_json import JsonImporter
+from src.ingestion.importers.goodreads_csv.goodreads_csv import GoodreadsCsvImporter
 from src.ingestion.sources.arr_base import ArrPlugin
 from src.ingestion.sources.gog.gog import GogPlugin
 from src.ingestion.sources.radarr.radarr import RadarrPlugin
@@ -399,17 +401,16 @@ class TestCreatorSurvivesStorage:
         entries = json.loads(export_items_json([stored], content_type))
         assert entries[0][creator_column] == creator
 
-    def test_gog_wishlist_developers_export_as_the_developer_regression(
+    def test_a_gog_wishlist_game_exports_the_company_names_it_states(
         self, tmp_path: Path
     ) -> None:
-        """GOG's plural ``developers`` reaches the singular column."""
         stored = _store_and_read_back(
             tmp_path,
             _gog_wishlist_game(
                 1207658924,
                 {
                     "title": "Cyberpunk 2077",
-                    "developers": ["CD Projekt Red"],
+                    "developers": [{"name": "CD Projekt Red"}],
                     "publishers": ["CD Projekt"],
                 },
             ),
@@ -424,6 +425,37 @@ class TestCreatorSurvivesStorage:
         assert stored.author == "CD Projekt Red"
         assert stored.metadata["publisher"] == "CD Projekt"
         assert rows[0]["developer"] == "CD Projekt Red"
+
+
+class TestSeriesSurvivesAnExport:
+    """An export is a snapshot, and the series no longer rides on the title."""
+
+    @pytest.mark.parametrize(
+        ("importer", "export"),
+        [(CsvImporter(), export_items_csv), (JsonImporter(), export_items_json)],
+        ids=["csv", "json"],
+    )
+    def test_a_shelved_books_series_survives_an_export_and_its_reimport(
+        self,
+        tmp_path: Path,
+        importer: Importer,
+        export: Callable[[list[ContentItem], ContentType | None], str],
+    ) -> None:
+        shelved = _reimport(
+            GoodreadsCsvImporter(),
+            "Book Id,Title,Author,Exclusive Shelf\n"
+            '1,"All Systems Red (The Murderbot Diaries, #1)",Martha Wells,read\n',
+            ContentType.BOOK,
+        )[0]
+        stored = _store_and_read_back(tmp_path, shelved)
+
+        restored = _reimport(
+            importer, export([stored], ContentType.BOOK), ContentType.BOOK
+        )[0]
+
+        assert restored.title == "All Systems Red"
+        assert restored.metadata.get("series") == "The Murderbot Diaries"
+        assert float(restored.metadata["series_index"]) == 1.0
 
 
 class TestCreatorExportEdges:

@@ -6,7 +6,8 @@ Reads a CSV of one content type, which you pick when you upload the file.
 
 - Universal: `title`, `status`, `rating`, `date_completed`, `review`, `notes`,
   `ignored`
-- `book`: `author`, `isbn`, `pages`, `year_published`, `genre`
+- `book`: `author`, `series`, `series_index`, `isbn`, `pages`, `year_published`,
+  `genre`
 - `movie`: `director`, `year`, `runtime_minutes`, `genre`
 - `tv_show`: `creator`, `seasons_watched`, `seasons_watched_dates`,
   `total_seasons`, `year`, `genre`
