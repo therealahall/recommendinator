@@ -48,6 +48,7 @@ from src.auth.trakt import (
     start_device_auth_flow,
 )
 from src.config.service import auto_enrich_enabled
+from src.enrichment.manager import EnrichmentManager, job_status
 from src.ingestion.import_templates import (
     TemplatesUnavailable,
     available_templates,
@@ -147,7 +148,6 @@ from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 from src.web.auth import SESSION_COOKIE, CurrentUser, require_session
 from src.web.csrf import refuse_cross_origin
-from src.web.enrichment_manager import get_enrichment_manager
 from src.web.guards import (
     RequiredConfig,
     RequiredEngine,
@@ -2522,37 +2522,37 @@ def start_enrichment(
                 detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
             ) from None
 
-    enrichment_manager = get_enrichment_manager()
-    success, message = enrichment_manager.start_enrichment(
-        storage_manager=storage,
-        config=config,
+    # The claim inside is the mutual exclusion, and it holds against the CLI
+    # too — which a check-then-build here never could.
+    started = EnrichmentManager(storage, config).start_enrichment(
         content_type=content_type,
         user_id=request.user_id,
         include_not_found=request.retry_not_found,
     )
+    if not started:
+        raise HTTPException(status_code=409, detail="Enrichment job already running")
 
-    if not success:
-        raise HTTPException(status_code=409, detail=message)
-
-    return {"message": message, "status": "started"}
+    type_desc = content_type.value if content_type else "all types"
+    retry_msg = " (retrying not_found)" if request.retry_not_found else ""
+    return {
+        "message": f"Started enrichment for {type_desc}{retry_msg}",
+        "status": "started",
+    }
 
 
 @router.post("/enrichment/stop")
 def stop_enrichment(storage: RequiredStorage) -> dict[str, Any]:
     """Stop the current enrichment job, whichever process started it."""
-    enrichment_manager = get_enrichment_manager()
-    success, message = enrichment_manager.stop_enrichment(storage)
+    if not storage.enrichment_jobs.request_stop():
+        raise HTTPException(status_code=400, detail="No enrichment job is running.")
 
-    if not success:
-        raise HTTPException(status_code=400, detail=message)
-
-    return {"message": message, "status": "stopping"}
+    return {"message": "Enrichment job stop requested", "status": "stopping"}
 
 
 @router.get("/enrichment/status", response_model=EnrichmentJobStatusResponse)
 def get_enrichment_status(storage: RequiredStorage) -> EnrichmentJobStatusResponse:
     """The live enrichment job, whichever process started it."""
-    status = get_enrichment_manager().get_status(storage)
+    status = job_status(storage)
 
     return EnrichmentJobStatusResponse(
         running=status.running,

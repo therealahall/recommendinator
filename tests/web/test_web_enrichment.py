@@ -12,7 +12,6 @@ from src.enrichment.manager import EnrichmentManager
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ContentType
 from src.storage.manager import StorageManager
-from src.web.enrichment_manager import reset_enrichment_manager
 from tests.enrichment.test_enrichment_manager import (
     WrappedRequestErrorProvider,
     http_error,
@@ -52,36 +51,68 @@ def _client(storage: MagicMock, config: dict) -> Iterator[TestClient]:
     Binding the state rather than patching whichever module imported
     ``get_storage``: the endpoints reach their components through the shared
     guards, and app_state is the one place both routers agree on.
-
-    The enrichment manager is a module-level singleton of its own, so it is
-    reset on both sides of the boot.
     """
-    reset_enrichment_manager()
-    try:
-        with booted_web_app(storage, config) as app:
-            yield authenticated_client(app)
-    finally:
-        reset_enrichment_manager()
+    with booted_web_app(storage, config) as app:
+        yield authenticated_client(app)
 
 
 class TestEnrichmentStart:
     """Tests for POST /api/enrichment/start endpoint."""
 
-    def test_start_enrichment_success(self, mock_config: dict) -> None:
-        """Test successful enrichment start."""
+    @pytest.mark.parametrize(
+        ("body", "expected_kwargs", "expected_message"),
+        [
+            (
+                {},
+                {"content_type": None, "user_id": 1, "include_not_found": False},
+                "Started enrichment for all types",
+            ),
+            (
+                {"content_type": "movie", "retry_not_found": True, "user_id": 3},
+                {
+                    "content_type": ContentType.MOVIE,
+                    "user_id": 3,
+                    "include_not_found": True,
+                },
+                "Started enrichment for movie (retrying not_found)",
+            ),
+        ],
+        ids=["defaults", "narrowed_and_retrying"],
+    )
+    def test_start_runs_the_job_the_request_asked_for(
+        self,
+        mock_config: dict,
+        body: dict,
+        expected_kwargs: dict,
+        expected_message: str,
+    ) -> None:
+        """A dropped kwarg would report a run the operator never asked for."""
         with (
             _client(MagicMock(spec=StorageManager), mock_config) as client,
-            patch("src.web.enrichment_manager.EnrichmentManager") as mock_manager_cls,
+            patch("src.web.api.EnrichmentManager") as mock_manager_cls,
         ):
             mock_manager = MagicMock(spec=EnrichmentManager)
             mock_manager.start_enrichment.return_value = True
             mock_manager_cls.return_value = mock_manager
 
+            response = client.post("/api/enrichment/start", json=body)
+
+        assert mock_manager.start_enrichment.call_args.kwargs == expected_kwargs
+        assert response.status_code == 200
+        assert response.json() == {"message": expected_message, "status": "started"}
+
+    def test_start_is_refused_while_a_job_is_already_claimed(
+        self, mock_config: dict, tmp_path: Path
+    ) -> None:
+        """The 409 the Data tab and the CLI both surface to the operator."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        assert storage.enrichment_jobs.claim(None) is True
+
+        with _client(storage, mock_config) as client:
             response = client.post("/api/enrichment/start", json={})
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "started"
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Enrichment job already running"
 
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, mock_config_disabled: dict
@@ -106,6 +137,33 @@ class TestEnrichmentStart:
 
         assert response.status_code == 400
         assert "invalid" in response.json()["detail"].lower()
+
+
+class TestEnrichmentStop:
+    """Tests for POST /api/enrichment/stop endpoint."""
+
+    def test_stop_with_no_job_running(self, tmp_path: Path) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/stop")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No enrichment job is running."
+
+    def test_stop_asks_the_claimed_job_to_stop(self, tmp_path: Path) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        assert storage.enrichment_jobs.claim(None) is True
+
+        with _client(storage, {}) as client:
+            response = client.post("/api/enrichment/stop")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "message": "Enrichment job stop requested",
+            "status": "stopping",
+        }
+        assert storage.enrichment_jobs.stop_requested() is True
 
 
 class TestEnrichmentStatus:
