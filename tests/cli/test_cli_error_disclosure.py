@@ -18,6 +18,7 @@ import pytest
 import requests
 from click.testing import CliRunner
 
+from src.cli.commands._account import PASSWORD_WRITE_FAILED, RENAME_FAILED
 from src.cli.commands._complete import COMPLETE_FAILED
 from src.cli.commands._update import SYNC_FAILED
 from src.cli.main import cli
@@ -29,6 +30,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
+from src.storage.accounts import AccountStore
 from src.storage.manager import StorageManager
 from tests.fakes.source_plugins import FakeFilePlugin
 
@@ -85,6 +87,60 @@ class TestCompleteHidesTheWriteThatFailed:
 
         _assert_verbose(result, COMPLETE_FAILED)
         assert "Traceback" not in result.output
+
+
+class TestTheAccountWritesHideTheFaultToo:
+    """The break-glass group, whose faults name the account being reset."""
+
+    _PASSWORD = "a longer passphrase"
+
+    @staticmethod
+    def _claimed(tmp_path: Path) -> StorageManager:
+        storage = StorageManager(sqlite_path=tmp_path / "account.db")
+        storage.accounts.claim("owner", "The Owner", "correct horse")
+        return storage
+
+    def test_a_failed_rename_is_generic_and_the_log_holds_the_reason(
+        self, cli_runner: CliRunner, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(logging.ERROR, logger="src.cli._shared"),
+            patch.object(
+                StorageManager,
+                "update_user_identity",
+                side_effect=sqlite3.OperationalError(_FAULT),
+            ),
+        ):
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["account", "set-name", "--username", "keeper"],
+                self._claimed(tmp_path),
+            )
+
+        _assert_generic(result, RENAME_FAILED)
+        assert _FAULT in caplog.text
+
+    def test_a_failed_password_write_is_generic_and_the_log_holds_the_reason(
+        self, cli_runner: CliRunner, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No server is running on this path, so the log is the only diagnosis."""
+        with (
+            caplog.at_level(logging.ERROR, logger="src.cli._shared"),
+            patch.object(
+                AccountStore,
+                "set_password",
+                side_effect=sqlite3.OperationalError(_FAULT),
+            ),
+        ):
+            result = _invoke_with_mocks(
+                cli_runner,
+                ["account", "set-password"],
+                self._claimed(tmp_path),
+                input_text=f"{self._PASSWORD}\n{self._PASSWORD}\n",
+            )
+
+        _assert_generic(result, PASSWORD_WRITE_FAILED)
+        assert _FAULT in caplog.text
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

@@ -16,7 +16,6 @@ from src.storage.accounts import (
 )
 from src.storage.manager import StorageManager
 
-#: The web answers a failed account write with a fixed refusal; so does this.
 PASSWORD_WRITE_FAILED = "Could not set the password"
 RENAME_FAILED = "Could not rename the account"
 
