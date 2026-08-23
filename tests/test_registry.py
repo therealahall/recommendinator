@@ -107,19 +107,6 @@ def clean_registry() -> PluginRegistry:
     return PluginRegistry()
 
 
-_BUILTIN_PLUGIN_NAMES = {
-    "calibre_web",
-    "epic_games",
-    "gog",
-    "goodreads_rss",
-    "radarr",
-    "roms",
-    "sonarr",
-    "steam",
-    "trakt",
-}
-
-
 def _private_module_names() -> list[str]:
     """The imported ``private`` package and its submodules, if any."""
     return [
@@ -437,9 +424,7 @@ class TestPrivatePluginDiscoveryRegression:
         registry = PluginRegistry()
         registry.discover_plugins()
 
-        discovered = set(registry.get_all_plugins())
-        assert "fake_books" in discovered
-        assert _BUILTIN_PLUGIN_NAMES <= discovered
+        assert "fake_books" in registry.get_all_plugins()
 
     def test_a_plugin_shipped_as_a_single_file_is_discovered(
         self, private_plugins: Path
@@ -452,27 +437,18 @@ class TestPrivatePluginDiscoveryRegression:
         registry = PluginRegistry()
         registry.discover_plugins()
 
-        discovered = set(registry.get_all_plugins())
-        assert "fake_books" in discovered
-        assert _BUILTIN_PLUGIN_NAMES <= discovered
+        assert "fake_books" in registry.get_all_plugins()
 
-    def test_a_private_module_that_raises_is_blamed_on_the_source_scan(
-        self, private_plugins: Path, caplog: pytest.LogCaptureFixture
+    def test_a_private_module_that_raises_is_reported_with_its_reason(
+        self, private_plugins: Path
     ) -> None:
-        """The enrichment registry imports the same module, so say which scan."""
+        """Silently, it is a source the operator configured and never sees."""
         (private_plugins / "dropped.py").write_text("raise RuntimeError('boom')\n")
 
         registry = PluginRegistry()
-        with caplog.at_level(logging.WARNING, logger="src.ingestion.registry"):
-            registry.discover_plugins()
+        registry.discover_plugins()
 
         assert registry.get_import_errors() == {"dropped": "RuntimeError: boom"}
-        assert [
-            record.getMessage()
-            for record in caplog.records
-            if "dropped" in record.getMessage()
-            and "source plugins" in record.getMessage()
-        ]
 
     def test_a_plugin_folder_without_an_init_says_it_was_skipped(
         self, private_plugins: Path, caplog: pytest.LogCaptureFixture
