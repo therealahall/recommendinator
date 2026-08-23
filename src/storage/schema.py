@@ -1228,6 +1228,28 @@ def mark_enrichment_failed(
     conn.commit()
 
 
+def mark_enrichment_settled_failure(
+    conn: sqlite3.Connection,
+    content_item_id: int,
+    error: str,
+) -> None:
+    """Retire an item from the queue carrying the error that stopped it.
+
+    Writing ``not_found`` here instead would tell an operator no provider had
+    the item when one did, and would count it as a miss the run counted failed.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT OR REPLACE INTO enrichment_status
+           (content_item_id, last_enriched_at, enrichment_provider,
+            enrichment_quality, needs_enrichment, enrichment_error)
+           SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 0, ? FROM content_items
+            WHERE id = ? AND merged_into IS NULL""",
+        (error, content_item_id),
+    )
+    conn.commit()
+
+
 def mark_item_needs_enrichment(
     conn: sqlite3.Connection,
     content_item_id: int,

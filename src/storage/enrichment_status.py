@@ -9,6 +9,7 @@ from src.storage.schema import (
     get_enrichment_status,
     mark_enrichment_complete,
     mark_enrichment_failed,
+    mark_enrichment_settled_failure,
     mark_item_needs_enrichment,
     reset_enrichment_status,
 )
@@ -26,7 +27,6 @@ class EnrichmentStore:
         content_type: ContentType | None = None,
         user_id: int | None = None,
         limit: int = 100,
-        include_not_found: bool = False,
         after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
         """Return ``(db_id, item)`` for items queued for enrichment.
@@ -39,7 +39,6 @@ class EnrichmentStore:
             content_type=content_type,
             user_id=user_id,
             limit=limit,
-            include_not_found=include_not_found,
             after_db_id=after_db_id,
         )
 
@@ -87,6 +86,11 @@ class EnrichmentStore:
         """
         with self._sqlite_db.connection() as conn:
             mark_enrichment_failed(conn, content_item_id, error)
+
+    def mark_settled_failure(self, content_item_id: int, error: str) -> None:
+        """Retire an item from the queue carrying the error that stopped it."""
+        with self._sqlite_db.connection() as conn:
+            mark_enrichment_settled_failure(conn, content_item_id, error)
 
     def mark_needed(self, content_item_id: int) -> None:
         """Queue an item for enrichment."""

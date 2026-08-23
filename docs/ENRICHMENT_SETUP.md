@@ -154,11 +154,14 @@ throttling at the time. Ordinary runs keep skipping them, because "not found" is
 settled. Run `enrichment start --retry-not-found` once after upgrading to sweep
 them back in.
 
-One case never retries: the provider rejecting the request itself, most often an
-invalid, revoked or expired API key returning 401 or 403. That request would be
-rejected identically every run, so the item settles as "not found" rather than
-re-asking the provider for your whole library each time. Fix the key, then run
-`--retry-not-found`.
+A rejected request — usually an invalid, revoked or expired API key returning
+401 or 403 — settles that item as "not found", since the next run would be
+rejected the same way. After five rejections in a row the provider is dropped
+for the rest of the run.
+
+Items the dropped provider never reached keep the status they had, so the next
+run picks them up. Fix the key, run enrichment again, then `--retry-not-found`
+for the few that already settled.
 
 ### API key errors
 

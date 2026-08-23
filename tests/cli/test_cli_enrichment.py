@@ -115,6 +115,31 @@ class TestEnrichmentStart:
             content_type=None, user_id=1, include_not_found=True
         )
 
+    def test_start_does_not_call_a_run_that_gave_up_completed(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """A revoked key abandons the run's only provider, and the summary the
+        operator is watching has to say so rather than claim the library is done.
+        """
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_manager = MagicMock(spec=EnrichmentManager)
+        mock_manager.start_enrichment.return_value = True
+        status = _make_status(completed=False, items_processed=5, items_enriched=0)
+        status.errors = ["tmdb: abandoned for this run after 5 rejections (HTTP 401)"]
+        mock_manager.get_status.return_value = status
+
+        result = _invoke_with_enrichment_manager(
+            cli_runner,
+            ["enrichment", "start", "--type", "movie"],
+            mock_storage,
+            mock_manager,
+            config={"enrichment": {"enabled": True, "batch_size": 50}},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "completed" not in result.output.lower(), result.output
+        assert "tmdb" in result.output
+
     def test_enrichment_already_running(self, cli_runner: CliRunner) -> None:
         """Test error when enrichment is already running."""
         mock_storage = MagicMock(spec=StorageManager)

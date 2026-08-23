@@ -455,13 +455,13 @@ class EnrichmentManager:
             retried_ids: set[int] = set()
 
             # Process items in batches
-            while not self._stop_asked() and not self._every_provider_abandoned():
-                # Fetch next batch of items (normal items only, not include_not_found)
+            while not self._stop_asked() and not self._every_provider_abandoned(
+                content_type
+            ):
                 fetched = self.storage_manager.enrichment.items_needing(
                     content_type=content_type,
                     user_id=user_id,
                     limit=batch_size,
-                    include_not_found=False,
                     after_db_id=after_db_id,
                 )
                 if fetched:
@@ -499,17 +499,24 @@ class EnrichmentManager:
             # Uncached, unlike the loop's check: this one decides what the run
             # is recorded as.
             stopped = self._jobs.stop_requested()
+            abandoned = self._every_provider_abandoned(content_type)
+            completed = not stopped and not abandoned
             with self._lock:
                 self._status.running = False
-                self._status.completed = not stopped
+                self._status.completed = completed
                 self._status.cancelled = stopped
                 self._status.completed_at = time.time()
                 self._status.current_item = ""
                 errors = list(self._status.errors)
             self._publish(force=True)
-            self._jobs.finish(completed=not stopped, cancelled=stopped, errors=errors)
+            self._jobs.finish(completed=completed, cancelled=stopped, errors=errors)
 
-            job_result = "cancelled" if stopped else "completed"
+            if stopped:
+                job_result = "cancelled"
+            elif abandoned:
+                job_result = "stopped on an error"
+            else:
+                job_result = "completed"
             logger.info(
                 "[ENRICHMENT] === Job %s === "
                 "Processed: %d, Enriched: %d, Not found: %d, Failed: %d",
@@ -728,8 +735,9 @@ class EnrichmentManager:
             safe_title,
             exc_info=True,
         )
-        self._record_error(f"storage: {type(error).__name__}")
-        self.storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+        rendered = f"storage: {type(error).__name__}"
+        self._record_error(rendered)
+        self.storage_manager.enrichment.mark_settled_failure(db_id, rendered)
         with self._lock:
             self._status.items_processed += 1
             self._status.items_failed += 1
@@ -765,13 +773,18 @@ class EnrichmentManager:
             "the items it never reached are left queued"
         )
 
-    def _every_provider_abandoned(self) -> bool:
-        """Whether nothing is left that could answer, so the run should end."""
+    def _every_provider_abandoned(self, content_type: ContentType | None) -> bool:
+        """Whether nothing is left that could answer *this* run, so it should end.
+
+        Scoped to the run's type: an unabandoned book provider is no reason to
+        keep paging a movie queue nothing can enrich.
+        """
         if not self._abandoned_providers:
             return False
         return all(
             provider.name in self._abandoned_providers
             for provider in self.registry.get_enabled_providers(self.config)
+            if content_type is None or content_type in provider.content_types
         )
 
     def _get_rate_limiter(self, provider_name: str) -> RateLimiter:
