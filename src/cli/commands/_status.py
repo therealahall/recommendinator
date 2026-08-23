@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 
 import click
+
+from src import __version__ as APP_VERSION
 
 
 @click.command()
@@ -22,7 +23,6 @@ def status(ctx: click.Context, output_format: str) -> None:
 
     Mirrors the web API GET /api/status StatusResponse shape.
     """
-    version = importlib.metadata.version("recommendinator")
     config = ctx.obj["config"]
 
     # Component readiness (keys match web API)
@@ -43,13 +43,13 @@ def status(ctx: click.Context, output_format: str) -> None:
     if output_format == "json":
         output = {
             "status": status_str,
-            "version": version,
+            "version": APP_VERSION,
             "components": components,
             "recommendations_config": recommendations_config,
         }
         click.echo(json.dumps(output, indent=2))
     else:
-        click.echo(f"\nRecommendinator v{version} ({status_str})\n")
+        click.echo(f"\nRecommendinator v{APP_VERSION} ({status_str})\n")
 
         click.echo("Components:")
         for name, ready in components.items():

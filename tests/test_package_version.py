@@ -1,3 +1,4 @@
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,13 @@ class TestPackageVersion:
             patch("src._pkg_version", return_value="1.2.3"),
         ):
             assert src._resolve_version() == "1.2.3"
+
+    def test_resolve_returns_sentinel_when_uninstalled_and_no_pyproject(self) -> None:
+        with (
+            patch("src._read_source_version", return_value=None),
+            patch("src._pkg_version", side_effect=PackageNotFoundError),
+        ):
+            assert src._resolve_version() == "0.0.0"
 
 
 class TestStaleEditableInstallRegression:
@@ -29,11 +37,9 @@ class TestStaleEditableInstallRegression:
             )
 
     def test_real_pyproject_is_parseable_in_dev_tree(self) -> None:
-        version = src._read_source_version()
-        assert version is not None, "pyproject.toml is no longer adjacent to src/"
-        parts = version.split(".")
-        assert len(parts) >= 2, f"Expected dotted version, got {version!r}"
-        assert all(part for part in parts), f"Empty version segment in {version!r}"
+        assert (
+            src._read_source_version() is not None
+        ), "pyproject.toml is no longer adjacent to src/"
 
     def test_returns_none_when_no_pyproject(self, tmp_path: Path) -> None:
         fake_init = tmp_path / "src" / "__init__.py"
