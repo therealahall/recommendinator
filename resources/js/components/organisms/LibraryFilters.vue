@@ -77,7 +77,7 @@ onUnmounted(() => {
         :model-value="searchQuery"
         :loading="searchLoading"
         :maxlength="MAX_SEARCH_LENGTH"
-        placeholder="Search by title or creator"
+        placeholder="Search by title, creator or series"
         @update:model-value="emit('filterChange', 'search', $event)"
       />
 

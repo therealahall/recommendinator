@@ -207,29 +207,30 @@ def _matches_normalized(haystack_norm: str, needle_norm: str) -> bool:
     return _best_window_ratio(needle_norm, haystack_norm) >= FUZZY_MATCH_THRESHOLD
 
 
-# Separates the title from the creator in a stored search text. Search
-# normalization collapses every non-word character to a space, so neither half
-# nor a normalized term can contain a newline: a substring found in the joined
-# string therefore always lies inside one half, never across the two.
+# Separates the parts of a search text. Search normalization collapses every
+# non-word character to a space, so neither a part nor a search term can hold
+# a newline: a substring found in the joined string lies inside one part.
 _SEARCH_TEXT_SEPARATOR = "\n"
 
 
-def build_search_text(title: str | None, creator: str | None) -> str:
-    """Build the stored haystack a library search matches an item against.
-
-    Holding the normalized title and creator in one column lets a search run
-    every tier over both halves without loading the item.
-    """
+def build_search_text(
+    title: str | None, creator: str | None, series: str | None = None
+) -> str:
+    """The haystack a search matches an item against, a part per stated field."""
     return _SEARCH_TEXT_SEPARATOR.join(
-        (normalize_for_search(title or ""), normalize_for_search(creator or ""))
+        (
+            normalize_for_search(title or ""),
+            normalize_for_search(creator or ""),
+            normalize_for_search(series or ""),
+        )
     )
 
 
 def search_text_matches(search_text: str | None, needle_norm: str) -> bool:
     """Check a stored search text against an already-normalized search term.
 
-    Runs all three tiers against each half the text holds, so an item matches
-    on its title or on its creator and never on the two read as one string.
+    Runs all three tiers against each part the text holds, so an item matches
+    on its title, its creator or its series, never on them read as one string.
 
     Args:
         search_text: A stored :func:`build_search_text` value.
@@ -237,11 +238,11 @@ def search_text_matches(search_text: str | None, needle_norm: str) -> bool:
             :func:`normalize_for_search`.
 
     Returns:
-        True if the title or the creator matches at any tier.
+        True if any part matches at any tier.
     """
     if not search_text or not needle_norm:
         return False
     return any(
-        _matches_normalized(half, needle_norm)
-        for half in search_text.split(_SEARCH_TEXT_SEPARATOR)
+        _matches_normalized(part, needle_norm)
+        for part in search_text.split(_SEARCH_TEXT_SEPARATOR)
     )

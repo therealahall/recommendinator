@@ -1,8 +1,8 @@
-"""The content columns derived from an item's title and creator.
+"""The content columns derived from an item's title, creator and series.
 
 ``content_items.sort_title`` and ``content_items.search_text`` exist so that
 the library list can be ordered in SQL under a real LIMIT/OFFSET, and searched
-over a projection of two columns, instead of building a ``ContentItem`` for
+over a projection of those parts, instead of building a ``ContentItem`` for
 every row and slicing in Python.
 
 Nothing reads them as input: both are recomputed from what is stored on every
@@ -10,6 +10,7 @@ write that can change either source, and ``schema.create_schema`` backfills
 whatever row reaches an open without them.
 """
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -23,6 +24,7 @@ from src.storage.merge import (
     stated_release_year,
     years_conflict,
 )
+from src.utils.series import get_series_name_from_metadata
 from src.utils.sorting import build_search_text, get_sort_title
 
 
@@ -58,11 +60,22 @@ def _build_year_expression() -> str:
     return f"CASE ci.content_type {' '.join(branches)} END"
 
 
+def _build_metadata_expression() -> str:
+    """The free-form blob expression, chosen by content type as the creator is."""
+    branches = [
+        f"WHEN '{content_type}' THEN {spec.table_alias}.metadata"
+        for content_type, spec in DETAIL_FIELDS.items()
+    ]
+    return f"CASE ci.content_type {' '.join(branches)} END"
+
+
 _CREATOR_EXPRESSION, _DETAIL_JOINS = _build_creator_source()
 _YEAR_EXPRESSION = _build_year_expression()
+_METADATA_EXPRESSION = _build_metadata_expression()
 
 _SOURCE_SELECT = (
-    f"SELECT ci.id, ci.title, {_CREATOR_EXPRESSION} AS creator"
+    f"SELECT ci.id, ci.title, {_CREATOR_EXPRESSION} AS creator,"
+    f" {_METADATA_EXPRESSION} AS metadata"
     f" FROM content_items ci {_DETAIL_JOINS}"
 )
 
@@ -90,7 +103,7 @@ _BACKFILL_SELECT = (
 
 
 def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
-    """Recompute one row's derived columns from its stored title and creator.
+    """Recompute one row's derived columns from what it stores.
 
     Read back from the database rather than taken from the item being saved:
     the creator column is fill-only, so what a sync hands over is not always
@@ -181,10 +194,27 @@ def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
         _write_row(cursor, row)
 
 
+def _stated_series(blob: str | None) -> str | None:
+    """The series a row's blob states; one that is unreadable states none."""
+    if not blob:
+        return None
+    try:
+        metadata = json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    return get_series_name_from_metadata(metadata)
+
+
 def _write_row(cursor: sqlite3.Cursor, row: sqlite3.Row) -> None:
     """Write the derived columns for one row of :data:`_SOURCE_SELECT`."""
     title = row["title"] or ""
     cursor.execute(
         "UPDATE content_items SET sort_title = ?, search_text = ? WHERE id = ?",
-        (get_sort_title(title), build_search_text(title, row["creator"]), row["id"]),
+        (
+            get_sort_title(title),
+            build_search_text(title, row["creator"], _stated_series(row["metadata"])),
+            row["id"],
+        ),
     )
