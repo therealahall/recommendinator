@@ -1469,8 +1469,8 @@ class TestPermanentProviderFailureStopsRetrying:
         assert job_status.items_not_found == asked
         assert job_status.items_failed == 0
         assert f"{provider.name}: abandoned" in " ".join(job_status.errors[:5]), (
-            "_echo_errors shows errors[:5], so a reason recorded behind the "
-            "rejections that caused it is one no operator reads"
+            "the reason the run stopped must not sit behind the duplicate "
+            "rejections that caused it"
         )
 
     def test_abandoning_one_types_providers_ends_a_run_scoped_to_that_type(
@@ -1510,6 +1510,40 @@ class TestPermanentProviderFailureStopsRetrying:
             "sends the operator looking anywhere but at the rejected key"
         )
         assert not job_status.cancelled
+
+    def test_an_unfiltered_run_that_gave_up_on_one_type_is_not_completed(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Asking whether every enabled provider was abandoned is never true
+        when providers cover disjoint types, so the default run reported
+        completed with every movie left untouched.
+        """
+        for index in range(20):
+            save_movie(storage_manager, f"Movie {index}")
+        book_id = storage_manager.save_content_item(
+            ContentItem(
+                id="a-book",
+                title="A Book",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            )
+        )
+        registry.register(RawRequestErrorProvider(http_error(401)))
+        registry.register(MockProvider(content_types=[ContentType.BOOK]))
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        manager.start_enrichment()
+        assert manager._wait_for_completion()
+
+        job_status = manager.get_status()
+        assert not job_status.completed
+        assert not job_status.cancelled
+        book_status = storage_manager.enrichment.status(book_id)
+        assert book_status is not None
+        assert book_status["enrichment_quality"] == "high"
 
     def test_a_second_provider_for_the_type_keeps_the_run_going(
         self,
