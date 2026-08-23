@@ -93,8 +93,6 @@ def _params(plugins: list[SourcePlugin]) -> list[Any]:
     return [pytest.param(plugin, id=plugin.name) for plugin in plugins]
 
 
-_FILE_BASED_PLUGINS = _params([RomScannerPlugin()])
-
 _URL_PLUGINS = _params([CalibreWebPlugin(), RadarrPlugin(), SonarrPlugin()])
 
 
@@ -103,6 +101,16 @@ def _discovered_plugins() -> dict[str, SourcePlugin]:
     registry = PluginRegistry()
     registry.discover_plugins()
     return registry.get_all_plugins()
+
+
+def _file_based_plugins() -> list[SourcePlugin]:
+    """Discovered at call time: a private plugin raising on import must fail the
+    test that reports it, not collection of every module beside it."""
+    return [
+        plugin
+        for plugin in _discovered_plugins().values()
+        if _reads_a_configured_path(plugin)
+    ]
 
 
 def _builtin_plugins() -> dict[str, SourcePlugin]:
@@ -231,13 +239,14 @@ class TestEveryFileReadingPluginIsContained:
     """
 
     def test_the_sweep_covers_every_built_in_plugin_that_reads_a_path(self) -> None:
-        """Without this a new file-based plugin escapes the parametrised tests."""
+        """The half a clone with no ``private/`` still pins: discovery finding
+        nothing would sweep nothing."""
         reads_a_path = {
             name
             for name, plugin in _builtin_plugins().items()
             if _reads_a_configured_path(plugin)
         }
-        assert reads_a_path == {param.id for param in _FILE_BASED_PLUGINS}
+        assert reads_a_path == {RomScannerPlugin().name}
 
     def test_no_offline_plugin_leaves_the_path_it_reads_undeclared(self) -> None:
         """The equality above catches a missed call, this a missed declaration.
@@ -264,25 +273,23 @@ class TestEveryFileReadingPluginIsContained:
         """
         assert _plugins_leaving_a_path_undeclared(_discovered_plugins()) == {}
 
-    @pytest.mark.parametrize("plugin", _FILE_BASED_PLUGINS)
-    def test_validate_reports_a_path_outside_every_root(
-        self, plugin: SourcePlugin, outside: Path
-    ) -> None:
-        errors = plugin.validate_config(
-            _escaping_config(plugin, _outside_target(plugin, outside))
-        )
+    def test_validate_reports_a_path_outside_every_root(self, outside: Path) -> None:
+        for plugin in _file_based_plugins():
+            errors = plugin.validate_config(
+                _escaping_config(plugin, _outside_target(plugin, outside))
+            )
 
-        assert any("outside the allowed source roots" in error for error in errors)
+            assert any(
+                "outside the allowed source roots" in error for error in errors
+            ), plugin.name
 
-    @pytest.mark.parametrize("plugin", _FILE_BASED_PLUGINS)
-    def test_fetch_refuses_a_path_outside_every_root(
-        self, plugin: SourcePlugin, outside: Path
-    ) -> None:
+    def test_fetch_refuses_a_path_outside_every_root(self, outside: Path) -> None:
         """Matched on the message: a parse failure is not containment."""
-        config = _escaping_config(plugin, _outside_target(plugin, outside))
+        for plugin in _file_based_plugins():
+            config = _escaping_config(plugin, _outside_target(plugin, outside))
 
-        with pytest.raises(SourceError, match="outside the allowed source roots"):
-            list(plugin.fetch(config))
+            with pytest.raises(SourceError, match="outside the allowed source roots"):
+                list(plugin.fetch(config))
 
 
 class TestEveryNetworkPluginGuardsItsSecret:
