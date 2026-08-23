@@ -27,6 +27,8 @@ from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from tests.factories import authenticated_client, booted_web_app
 from tests.fakes.source_plugins import (
+    BROKEN_PRIVATE_MODULE,
+    BROKEN_PRIVATE_REASON,
     FAILED_PLUGIN_MODULE,
     FAILED_PLUGIN_REASON,
     UNLOADED_PLUGIN,
@@ -649,6 +651,30 @@ class TestFailedPluginImportIsReportedRegression:
 
         assert response.status_code == 400
         assert response.json()["detail"] == UNLOADED_PLUGIN_DETAIL
+
+
+class TestPrivateModuleImportFailureReachesThePicker:
+    """``private/plugins/`` holds source plugins and enrichment providers alike,
+    and one scan reports for both. A module that dies is otherwise a module the
+    operator cannot tell from one never installed.
+    """
+
+    def test_the_picker_names_the_private_module_and_why_it_died(
+        self,
+        registry_with_a_broken_private_module: None,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        engine = Mock(spec=RecommendationEngine)
+        engine.storage = storage
+
+        with booted_web_app(storage, base_config, engine=engine) as app:
+            body = authenticated_client(app).get("/api/plugins").json()
+
+        assert {
+            "module": BROKEN_PRIVATE_MODULE,
+            "reason": BROKEN_PRIVATE_REASON,
+        } in body["import_errors"]
 
 
 class TestCreateSourceEndpoint:

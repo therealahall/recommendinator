@@ -2,7 +2,6 @@
 
 import importlib
 import logging
-import sys
 import threading
 import types
 from collections.abc import Iterator
@@ -105,42 +104,6 @@ class FakeGamePlugin(SourcePlugin):
 def clean_registry() -> PluginRegistry:
     """Create a fresh registry for each test (not singleton)."""
     return PluginRegistry()
-
-
-def _private_module_names() -> list[str]:
-    """The imported ``private`` package and its submodules, if any."""
-    return [
-        name
-        for name in list(sys.modules)
-        if name == "private" or name.startswith("private.")
-    ]
-
-
-@pytest.fixture()
-def private_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """An empty ``private/plugins/`` the next discovery pass scans instead.
-
-    The scan reads the project root off ``registry.py``, three levels down.
-    """
-    private_path = tmp_path / "private" / "plugins"
-    private_path.mkdir(parents=True)
-    (private_path.parent / "__init__.py").write_text("")
-    (private_path / "__init__.py").write_text("")
-    monkeypatch.setattr(
-        registry_module,
-        "__file__",
-        str(tmp_path / "src" / "ingestion" / "registry.py"),
-    )
-    for name in _private_module_names():
-        monkeypatch.delitem(sys.modules, name)
-    importlib.invalidate_caches()
-
-    yield private_path
-
-    for name in _private_module_names():
-        del sys.modules[name]
-    if str(tmp_path) in sys.path:
-        sys.path.remove(str(tmp_path))
 
 
 # Bounded so a thread nothing releases fails the test instead of hanging the

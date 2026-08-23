@@ -18,7 +18,12 @@ from click.testing import CliRunner, Result
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
 from tests.cli.conftest import _invoke_with_mocks
-from tests.fakes.source_plugins import UNLOADED_PLUGIN, UNLOADED_PLUGIN_DETAIL
+from tests.fakes.source_plugins import (
+    BROKEN_PRIVATE_MODULE,
+    BROKEN_PRIVATE_REASON,
+    UNLOADED_PLUGIN,
+    UNLOADED_PLUGIN_DETAIL,
+)
 
 _RUN_START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
@@ -928,3 +933,23 @@ class TestSourceWhosePluginNeverImported:
 
         assert result.exit_code != 0
         assert "Unknown source: nothing_here" in result.output
+
+
+class TestPrivateModuleImportFailureIsReported:
+    """The web picker's answer, on the interface that has no picker."""
+
+    def test_source_plugins_names_the_private_module_and_why_it_died(
+        self,
+        storage: StorageManager,
+        registry_with_a_broken_private_module: None,
+    ) -> None:
+        result = _invoke_with_mocks(
+            CliRunner(mix_stderr=False),
+            ["source", "plugins"],
+            mock_storage=storage,
+            config={"inputs": {}},
+        )
+
+        assert result.exit_code == 0
+        assert BROKEN_PRIVATE_MODULE in result.stderr
+        assert BROKEN_PRIVATE_REASON in result.stderr
