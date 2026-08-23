@@ -157,6 +157,58 @@ describe('EnrichmentCard', () => {
     expect(wrapper.get('[data-testid="enrichment-errors"]').text()).toContain(abandoned)
   })
 
+  it('keeps the list semantics VoiceOver strips from a markerless list', () => {
+    const wrapper = mountWithEnrichment({
+      enrichmentJob: makeRunningJob({ errors: ['tmdb: HTTP 401'] }),
+    })
+
+    expect(wrapper.get('[data-testid="enrichment-errors"]').attributes('role')).toBe('list')
+  })
+
+  it('announces errors that only ever arrive on a poll, long after the click', async () => {
+    const wrapper = mountWithEnrichment()
+    const data = useDataStore()
+    const region = wrapper.get('[data-testid="enrichment-errors-status"]')
+
+    // A region inserted already populated reads as content, and `v-show` would
+    // take it out of the accessibility tree entirely (WCAG 4.1.3).
+    expect(region.text()).toBe('')
+    expect(region.isVisible()).toBe(true)
+
+    data.enrichmentJob = makeRunningJob({
+      running: false,
+      completed: true,
+      errors: ['tmdb: HTTP 401', 'tmdb: HTTP 500', 'tmdb: abandoned for this run'],
+    })
+    await flushPromises()
+
+    // The same node, so the text changed under a region already being watched.
+    expect(region.text()).toContain('3')
+  })
+
+  it('announces a second run reporting as many errors as the first', async () => {
+    const wrapper = mountWithEnrichment({
+      enrichmentJob: makeRunningJob({ completed: true, errors: ['tmdb: HTTP 500'] }),
+    })
+    const data = useDataStore()
+    const region = wrapper.get('[data-testid="enrichment-errors-status"]')
+
+    data.enrichmentJob = makeRunningJob()
+    await flushPromises()
+    // An announcement that never goes back to silent leaves the run below with
+    // identical text, which no screen reader reads out.
+    expect(region.text()).toBe('')
+
+    data.enrichmentJob = makeRunningJob({
+      running: false,
+      completed: true,
+      errors: ['rawg: HTTP 500'],
+    })
+    await flushPromises()
+
+    expect(region.text()).toContain('1')
+  })
+
   it('tells a failed stats read apart from a library with nothing to enrich', () => {
     const wrapper = mountWithEnrichment({
       enrichmentStatsError: 'backend is down',
