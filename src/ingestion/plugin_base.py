@@ -295,9 +295,9 @@ class SourcePlugin(ABC):
             return None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        # @final only reaches code mypy checks, and private plugins are neither
-        # checked nor in this repository. Refusing the override at class
-        # creation makes the mistake impossible rather than merely flagged.
+        # @final only reaches code mypy checks, and a plugin author outside this
+        # repository need never run it. Refusing the override at class creation
+        # makes the mistake impossible rather than merely flagged.
         super().__init_subclass__(**kwargs)
         for method, guidance in _FRAMEWORK_OWNED_METHODS.items():
             if method in cls.__dict__:

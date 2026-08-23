@@ -4,12 +4,12 @@ import importlib
 import inspect
 import logging
 import pkgutil
-import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 from src.enrichment.provider_base import EnrichmentProvider
+from src.utils.private_plugins import private_plugin_module_names
 from src.utils.text import exception_for_log, sanitize_for_log
 
 logger = logging.getLogger(__name__)
@@ -121,42 +121,10 @@ class EnrichmentRegistry:
         the scan that hit it rather than claiming a provider was lost.
         """
         project_root = Path(__file__).parent.parent.parent
-        private_path = project_root / "private" / "plugins"
 
-        if not private_path.exists():
-            logger.debug(
-                "No private plugins directory at %s, skipping the scan for "
-                "enrichment providers",
-                private_path,
-            )
-            return
-
-        private_init = private_path.parent / "__init__.py"
-        plugins_init = private_path / "__init__.py"
-
-        if not private_init.exists():
-            logger.debug(
-                "private/__init__.py not found, skipping the scan for "
-                "enrichment providers"
-            )
-            return
-
-        if not plugins_init.exists():
-            logger.debug(
-                "private/plugins/__init__.py not found, skipping the scan for "
-                "enrichment providers"
-            )
-            return
-
-        project_root_str = str(project_root.absolute())
-        if project_root_str not in sys.path:
-            sys.path.insert(0, project_root_str)
-
-        for py_file in private_path.glob("*.py"):
-            if py_file.name.startswith("_"):
-                continue
-
-            module_name = py_file.stem
+        for module_name in private_plugin_module_names(
+            project_root, "enrichment providers"
+        ):
             try:
                 module = importlib.import_module(f"private.plugins.{module_name}")
                 self._register_providers_from_module(module, module_name, "private")

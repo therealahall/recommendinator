@@ -341,6 +341,12 @@ The `__init__.py` is one line:
 from src.ingestion.sources.<plugin>.<plugin> import *  # noqa: F401, F403
 ```
 
+A plugin you do not want in the repo takes the same layout under
+`private/plugins/<plugin>/`, its `__init__.py` re-exporting
+`private.plugins.<plugin>.<plugin>`. A single-file `private/plugins/<plugin>.py`
+loads too. A folder without an `__init__.py` is not a package, so it is not
+imported at all — the scan logs that it skipped it.
+
 Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
 source.
 
@@ -532,9 +538,8 @@ discovers a source plugin, so shipping a provider edits no core file.
 
 A provider you do not want in the repo goes in `private/plugins/`, the
 directory private source plugins already live in: both registries scan it and
-each keeps the classes it recognises. Private modules stay **flat single-file
-modules** — that scan globs `*.py` rather than walking subpackages, so a
-private folder is silently skipped.
+each keeps the classes it recognises. Same folder layout as everywhere else,
+described under [Registration](#registration).
 
 `make check` runs Ruff, Black, MyPy and pytest over `private/` when the
 directory exists, so a private plugin is held to the same standard and its
