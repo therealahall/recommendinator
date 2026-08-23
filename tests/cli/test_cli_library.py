@@ -1201,6 +1201,78 @@ class TestLibraryExport:
         assert result.exit_code == 0
         assert rows[0]["title"] == '\'=HYPERLINK("http://evil","x")'
 
+    @pytest.mark.parametrize("destination", ["directory", "under_a_missing_directory"])
+    def test_an_output_path_that_cannot_be_written_is_named_not_raised(
+        self, cli_runner: CliRunner, tmp_path: Path, destination: str
+    ) -> None:
+        """Both shapes reached ``write_text`` bare and surfaced a traceback."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
+        paths = {
+            "directory": tmp_path,
+            "under_a_missing_directory": tmp_path / "absent" / "library.csv",
+        }
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "export", "--output", str(paths[destination])],
+            mock_storage,
+        )
+
+        assert result.exit_code != 0
+        assert str(paths[destination]) in result.output
+        # An unhandled fault never reaches the runner's output; only this says.
+        assert isinstance(result.exception, SystemExit)
+
+    @pytest.mark.parametrize("refusal", ["n\n", "\n"])
+    def test_an_existing_output_file_is_kept_until_the_overwrite_is_confirmed(
+        self, cli_runner: CliRunner, tmp_path: Path, refusal: str
+    ) -> None:
+        """It was clobbered silently, taking whatever was there with it.
+
+        A bare Enter is the operator not deciding, so it is the second refusal.
+        """
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
+        destination = tmp_path / "library.csv"
+        destination.write_text("title\nmy own work\n", encoding="utf-8")
+
+        def export(*args: str, input_text: str | None = None) -> Any:
+            return _invoke_with_mocks(
+                cli_runner,
+                ["library", "export", "--output", str(destination), *args],
+                mock_storage,
+                input_text=input_text,
+            )
+
+        declined = export(input_text=refusal)
+
+        assert destination.read_text(encoding="utf-8") == "title\nmy own work\n"
+
+        confirmed = export(input_text="y\n")
+
+        assert declined.exit_code == 0
+        assert confirmed.exit_code == 0
+        assert "Test Book" in destination.read_text(encoding="utf-8")
+
+    def test_yes_overwrites_an_existing_output_file_without_a_prompt(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A scripted run has no stdin to answer the prompt with."""
+        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
+        destination = tmp_path / "library.csv"
+        destination.write_text("title\nmy own work\n", encoding="utf-8")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "export", "--output", str(destination), "--yes"],
+            mock_storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Test Book" in destination.read_text(encoding="utf-8")
+
 
 def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
     """Two live pairs: one the exact key matches, one only the looser key does."""

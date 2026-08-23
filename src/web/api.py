@@ -145,7 +145,12 @@ from src.utils.export import export_items_csv, export_items_json
 from src.utils.item_serialization import item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
+from src.utils.text import (
+    exception_for_log,
+    humanize_source_id,
+    is_blank,
+    sanitize_for_log,
+)
 from src.web.auth import SESSION_COOKIE, CurrentUser, require_session
 from src.web.csrf import refuse_cross_origin
 from src.web.guards import (
@@ -176,19 +181,30 @@ router = APIRouter(
 )
 
 
-def _reject_blank_review(value: str) -> str:
+def _blank_rejector(field: str) -> Callable[[str], str]:
     """The lower bound refuses ``""``; spaces are the same claim, unsayable in
-    a schema. The CLI splits it the same way around ``is_blank_review``."""
-    if not value.strip():
-        raise ValueError("review cannot be blank")
-    return value
+    a schema. The CLI splits it the same way, around the same ``is_blank``."""
+
+    def reject(value: str) -> str:
+        if is_blank(value):
+            raise ValueError(f"{field} cannot be blank")
+        return value
+
+    return reject
 
 
 #: Blank is not a review: stored, it stops a later import filling the field.
 CompletionReviewText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_REVIEW_LENGTH),
-    AfterValidator(_reject_blank_review),
+    AfterValidator(_blank_rejector("review")),
+]
+
+#: Blank is not a title either: it is the item's only name in the library.
+CompletionTitle = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_TITLE_LENGTH),
+    AfterValidator(_blank_rejector("title")),
 ]
 
 #: Stripped, so a pasted trailing space is not another name to the veto. Its
@@ -296,9 +312,7 @@ class CompletionRequest(BaseModel):
     content_type: str = Field(
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
-    title: str = Field(
-        ..., max_length=MAX_TITLE_LENGTH, description="Title of the content"
-    )
+    title: CompletionTitle = Field(..., description="Title of the content")
     author: str | None = Field(
         None,
         max_length=MAX_CREATOR_LENGTH,

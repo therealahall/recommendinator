@@ -5161,6 +5161,18 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         assert response.json()["detail"][0]["input"] == f"Dune{surrogate}"
         mock_components["storage"].complete_content_item.assert_not_called()
 
+    def test_a_blank_title_is_refused_as_a_blank_review_already_was(
+        self, client, mock_components
+    ) -> None:
+        """``complete --title "   "`` and this door shared the same gap."""
+        response = client.post(
+            "/api/complete", json={"content_type": "book", "title": "   "}
+        )
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["loc"][-1] == "title"
+        mock_components["storage"].complete_content_item.assert_not_called()
+
     def test_an_ordinary_refusal_still_quotes_its_input_verbatim(self, client) -> None:
         """The escape above is the response class's, not a reshaped 422."""
         over_long = "D" * 501
