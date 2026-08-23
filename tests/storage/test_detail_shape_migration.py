@@ -51,6 +51,8 @@ _FLAGS_NOTHING_SUPPORTED = json.dumps(
     [{"windows": False, "mac": False, "linux": False}]
 )
 
+_STAMPED_BY_AN_EARLIER_BUILD = 15
+
 
 def _mark_written_before_the_repair(
     handle: sqlite3.Connection | sqlite3.Cursor,
@@ -558,6 +560,28 @@ class TestStrandedCompanyNamesMigration:
 
         assert _game_companies(db, db_id) == ("CD Projekt Red", "CD Projekt", None)
 
+    def test_a_row_a_later_build_stamped_over_is_folded_too(
+        self, tmp_path: Path
+    ) -> None:
+        """The plural spellings are no longer aliases of the columns."""
+        db_path = tmp_path / "test.db"
+        SQLiteDB(db_path)
+        db_id = _insert_legacy_game_row(
+            db_path,
+            title="Cyberpunk 2077",
+            metadata=json.dumps({"developers": [{"name": "CD Projekt Red"}]}),
+        )
+        stamping = sqlite3.connect(db_path)
+        try:
+            stamping.execute(f"PRAGMA user_version = {_STAMPED_BY_AN_EARLIER_BUILD}")
+            stamping.commit()
+        finally:
+            stamping.close()
+
+        db = SQLiteDB(db_path)
+
+        assert _game_companies(db, db_id) == ("CD Projekt Red", None, None)
+
     def test_metadata_that_is_not_json_cannot_block_startup(
         self, tmp_path: Path
     ) -> None:
@@ -901,7 +925,7 @@ class TestAnObjectStrandedInAListColumnMigration:
         seed = SQLiteDB(db_path)
         db_id = _seed_game(seed, platforms=json.dumps([{"name": "PC"}]))
         with seed.connection() as conn:
-            conn.execute(f"PRAGMA user_version = {schema._SCHEMA_VERSION - 1}")
+            conn.execute(f"PRAGMA user_version = {_STAMPED_BY_AN_EARLIER_BUILD}")
             conn.commit()
 
         db = SQLiteDB(db_path)
@@ -925,7 +949,7 @@ class TestAnObjectStrandedInAListColumnMigration:
                 " needs_enrichment) VALUES (?, 'none', 'not_found', 1)",
                 (db_id,),
             )
-            conn.execute(f"PRAGMA user_version = {schema._SCHEMA_VERSION - 1}")
+            conn.execute(f"PRAGMA user_version = {_STAMPED_BY_AN_EARLIER_BUILD}")
             conn.commit()
 
         db = SQLiteDB(db_path)

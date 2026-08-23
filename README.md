@@ -160,6 +160,10 @@ plugins are gone: those files are imported once now. Sources on them are deleted
 on first boot and named in the log, and an `inputs:` block naming one is
 ignored — delete it.
 
+**From 0.43.0 or earlier.** Your book titles change once, on first open:
+`Leviathan Wakes (The Expanse, #1)` becomes `Leviathan Wakes`, with the series
+and its number stored beside it.
+
 ## CLI usage
 
 ```bash
