@@ -180,8 +180,7 @@ class ArrPlugin(SourcePlugin):
         metadata: dict[str, Any],
         context: Any,
     ) -> None:
-        """Hook for subclasses to add data the main fetch does not carry
-        (e.g. Radarr collections)."""
+        """Add data the main fetch does not carry (e.g. Radarr collections)."""
 
     def fetch(
         self,
