@@ -23,6 +23,7 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 
@@ -779,12 +780,8 @@ class TestEnrichmentProgressRegression:
     ) -> None:
         """With include_not_found=True, total_items = pending count + not_found IDs.
 
-        The manager fetches not-found IDs upfront into a separate set and the
-        batch loop only counts them once they're mixed into a batch. Without
-        adding them to the upfront total, the displayed total would understate
-        the work and progress would briefly exceed 100%. Post-fix the regression
-        is guarded by combining ``count_items_needing_enrichment`` with the
-        precomputed ``not_found_ids`` set.
+        A retried miss is counted only once it joins a batch, so a total
+        without the upfront set understates the work.
         """
         not_found_item = ContentItem(
             id="movie99",
@@ -793,19 +790,9 @@ class TestEnrichmentProgressRegression:
             status=ConsumptionStatus.UNREAD,
         )
         not_found_item.db_id = 99
-        # Sequence: include_not_found=True for the upfront candidate scan,
-        # then include_not_found=False on each batch-loop iteration. The third
-        # entry must exist so the loop exits via the empty-batch break instead
-        # of via StopIteration (which would silently route through the broad
-        # `except Exception` in _run_enrichment and mask any real failure).
-        mock_storage.enrichment.items_needing.side_effect = [
-            [(99, not_found_item)],
-            [],
-            [],
-        ]
-        mock_storage.enrichment.status.return_value = {
-            "enrichment_quality": "not_found"
-        }
+        mock_storage.enrichment.not_found_ids.return_value = [99]
+        # Two empty batches: the loop must exit on the break, not StopIteration.
+        mock_storage.enrichment.items_needing.side_effect = [[], []]
         mock_storage.enrichment.count_needing.return_value = 5
         mock_storage.get_content_items_by_db_ids.return_value = [not_found_item]
 
@@ -826,6 +813,59 @@ class TestEnrichmentProgressRegression:
             content_type=None,
             user_id=None,
         )
+
+
+class TestRetryNotFoundSetIsBuiltInOneQuery:
+    """The set was built by paging every candidate and then reading one status
+    column per item, on a fresh connection each time."""
+
+    @pytest.fixture
+    def storage_manager(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @pytest.fixture
+    def registry(self) -> EnrichmentRegistry:
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        return registry
+
+    @pytest.fixture
+    def config(self) -> dict[str, Any]:
+        return {
+            "enrichment": {
+                "batch_size": 10,
+                "providers": {"mock": {"enabled": True}},
+            }
+        }
+
+    def test_a_retry_run_reaches_the_settled_misses_without_per_item_status_reads(
+        self,
+        storage_manager: StorageManager,
+        registry: EnrichmentRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """The same items are retried, and the per-item accessor is untouched."""
+        settled = save_movie(storage_manager, "Missing Movie")
+        storage_manager.enrichment.mark_complete(settled, "none", "not_found")
+        enriched = save_movie(storage_manager, "Found Movie")
+        storage_manager.enrichment.mark_complete(enriched, "tmdb", "high")
+        save_movie(storage_manager, "New Movie")
+        provider = MockProvider()
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        with patch.object(EnrichmentStore, "status", autospec=True) as per_item_status:
+            manager.start_enrichment(
+                content_type=ContentType.MOVIE, include_not_found=True
+            )
+            assert manager._wait_for_completion()
+
+        per_item_status.assert_not_called()
+        assert sorted(item.title for item in provider.enrich_calls) == [
+            "Missing Movie",
+            "New Movie",
+        ]
+        assert manager.get_status().items_processed == 2
 
 
 class TestTransientProviderFailureIsRetryable:

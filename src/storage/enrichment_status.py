@@ -54,6 +54,21 @@ class EnrichmentStore:
             user_id=user_id,
         )
 
+    def not_found_ids(
+        self,
+        content_type: ContentType | None = None,
+        user_id: int | None = None,
+    ) -> list[int]:
+        """Return the db_ids whose last enrichment settled as ``not_found``.
+
+        These are what a retry run adds to the queue. An item that was never
+        attempted has no status row and is not one of them.
+        """
+        return self._sqlite_db.get_not_found_ids(
+            content_type=content_type,
+            user_id=user_id,
+        )
+
     def status(self, content_item_id: int) -> EnrichmentStatusDict | None:
         """Return one item's enrichment status, or ``None`` if it has no row."""
         with self._sqlite_db.connection() as conn:
