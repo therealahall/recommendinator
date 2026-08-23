@@ -644,8 +644,7 @@ class EnrichmentManager:
                     "[ENRICHMENT] Provider %s failed: %s", provider.name, failure.reason
                 )
                 failures.append(failure)
-                self._record_error(str(failure))
-                self._note_rejection(failure)
+                self._note_failure(failure)
                 continue
 
             self._rejections.pop(provider.name, None)
@@ -735,18 +734,21 @@ class EnrichmentManager:
             self._status.items_processed += 1
             self._status.items_failed += 1
 
-    def _note_rejection(self, failure: _ProviderFailure) -> None:
-        """Abandon a provider that keeps rejecting the request.
+    def _note_failure(self, failure: _ProviderFailure) -> None:
+        """Record the failure, and abandon a provider that keeps rejecting.
 
-        A revoked key rejects every item alike, so settling one at a time means
-        thousands of requests at a provider that already said no. Any answer
-        clears the count.
+        A revoked key rejects every item alike: thousands of requests already
+        answered no. Recording it once keeps its duplicates from pushing the
+        abandonment past a truncated view.
         """
         if failure.retryable:
             self._rejections.pop(failure.provider, None)
+            self._record_error(str(failure))
             return
         count = self._rejections.get(failure.provider, 0) + 1
         self._rejections[failure.provider] = count
+        if count == 1:
+            self._record_error(str(failure))
         if count < _MAX_CONSECUTIVE_REJECTIONS:
             return
         self._abandoned_providers.add(failure.provider)
@@ -759,7 +761,8 @@ class EnrichmentManager:
         )
         self._record_error(
             f"{failure.provider}: abandoned for this run after {count} "
-            f"consecutive rejections ({failure.reason})"
+            f"consecutive rejections ({failure.reason}); "
+            "the items it never reached are left queued"
         )
 
     def _every_provider_abandoned(self) -> bool:

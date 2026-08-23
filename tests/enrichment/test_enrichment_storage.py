@@ -16,15 +16,21 @@ from src.storage.manager import StorageManager
 from src.storage.schema import create_user
 
 
-def save_unenriched(storage_manager: StorageManager, item_id: str) -> int:
+def save_unenriched(
+    storage_manager: StorageManager,
+    item_id: str,
+    content_type: ContentType = ContentType.MOVIE,
+    user_id: int | None = None,
+) -> int:
     """Store an item with no enrichment status and return its database ID."""
     return storage_manager.save_content_item(
         ContentItem(
             id=item_id,
             title=item_id,
-            content_type=ContentType.MOVIE,
+            content_type=content_type,
             status=ConsumptionStatus.UNREAD,
-        )
+        ),
+        user_id=user_id,
     )
 
 
@@ -242,6 +248,43 @@ class TestGetItemsNeedingEnrichment:
         # db_ids[3] is untracked.
 
         assert storage_manager.enrichment.not_found_ids() == [db_ids[0]]
+
+    def test_not_found_ids_holds_every_miss_past_one_queue_page(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """The queue this feeds is read a page at a time; the retry set is not."""
+        db_ids = [
+            save_unenriched(storage_manager, f"movie{index}") for index in range(150)
+        ]
+        for db_id in db_ids:
+            storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+
+        assert sorted(storage_manager.enrichment.not_found_ids()) == db_ids
+
+    def test_not_found_ids_filters_by_content_type_and_user(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """A retry run is scoped the same way the queue it feeds is."""
+        with storage_manager.sqlite_db.connection() as conn:
+            other_user = create_user(conn, username="other")
+        my_movie = save_unenriched(storage_manager, "movie1", user_id=1)
+        my_book = save_unenriched(
+            storage_manager, "book1", content_type=ContentType.BOOK, user_id=1
+        )
+        their_movie = save_unenriched(storage_manager, "movie2", user_id=other_user)
+        for db_id in (my_movie, my_book, their_movie):
+            storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
+
+        assert set(storage_manager.enrichment.not_found_ids(user_id=1)) == {
+            my_movie,
+            my_book,
+        }
+        assert storage_manager.enrichment.not_found_ids(
+            content_type=ContentType.MOVIE, user_id=1
+        ) == [my_movie]
+        assert storage_manager.enrichment.not_found_ids(user_id=other_user) == [
+            their_movie
+        ]
 
 
 class TestCountItemsNeedingEnrichment:

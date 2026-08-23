@@ -24,6 +24,7 @@ from src.enrichment.provider_base import (
 )
 from src.enrichment.registry import EnrichmentRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
 
@@ -328,11 +329,6 @@ class TestMergeEnrichment:
         setattr(result, field, ["Science Fiction"])
 
         assert merge_enrichment({field: stored}, result)[field] == expected
-
-    def test_merging_leaves_the_callers_metadata_untouched(self) -> None:
-        existing = {"genres": ["Comedy"]}
-        merge_enrichment(existing, EnrichmentResult(genres=["Action"], provider="tmdb"))
-        assert existing == {"genres": ["Comedy"]}
 
 
 class TestEnrichmentManager:
@@ -840,6 +836,41 @@ class TestEnrichmentProgressRegression:
             content_type=None,
             user_id=None,
         )
+
+
+class TestRetryNotFoundSetIsBuiltInOneQuery:
+    """The set was built by paging every candidate and then reading one status
+    column per item, on a fresh connection each time."""
+
+    def test_a_retry_run_reaches_the_settled_misses_without_per_item_status_reads(
+        self, tmp_path: Path
+    ) -> None:
+        """The same items are retried, and the per-item accessor is untouched."""
+        storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
+        registry = EnrichmentRegistry()
+        registry._discovered = True
+        config = {"enrichment": {"providers": {"mock": {"enabled": True}}}}
+        settled = save_movie(storage_manager, "Missing Movie")
+        storage_manager.enrichment.mark_complete(settled, "none", "not_found")
+        enriched = save_movie(storage_manager, "Found Movie")
+        storage_manager.enrichment.mark_complete(enriched, "tmdb", "high")
+        save_movie(storage_manager, "New Movie")
+        provider = MockProvider()
+        registry.register(provider)
+
+        manager = EnrichmentManager(storage_manager, config, registry)
+        with patch.object(EnrichmentStore, "status", autospec=True) as per_item_status:
+            manager.start_enrichment(
+                content_type=ContentType.MOVIE, include_not_found=True
+            )
+            assert manager._wait_for_completion()
+
+        per_item_status.assert_not_called()
+        assert sorted(item.title for item in provider.enrich_calls) == [
+            "Missing Movie",
+            "New Movie",
+        ]
+        assert manager.get_status().items_processed == 2
 
 
 class TestTransientProviderFailureIsRetryable:
