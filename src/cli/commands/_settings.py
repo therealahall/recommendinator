@@ -42,16 +42,20 @@ _VALUE_TYPE_ERRORS = {
 }
 
 
-def _format_setting_value(view: dict[str, Any]) -> str:
-    """Render a setting's value for human output; never reveal a secret."""
-    if view["sensitive"]:
-        return "********" if view["has_secret"] else "(not set)"
-    value = view["value"]
+def _format_value(value: Any) -> str:
+    """Render a setting value for human output."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list):
         return ", ".join(str(item) for item in value)
     return str(value)
+
+
+def _format_setting_value(view: dict[str, Any]) -> str:
+    """Render a setting's value for human output; never reveal a secret."""
+    if view["sensitive"]:
+        return "********" if view["has_secret"] else "(not set)"
+    return _format_value(view["value"])
 
 
 def _setting_flags(view: dict[str, Any]) -> str:
@@ -208,10 +212,12 @@ def settings_set(ctx: click.Context, key: str, value: str, output_format: str) -
     except SettingsValidationError as error:
         abort_with(error.reason)
 
+    # The stored leaf, not the running one: a restart_required key is written
+    # without being live-applied, so the effective value is still the old one.
     emit_view(
         output_format,
         lambda: build_settings_view(config, storage),
-        f"Set {key} = {_format_setting_value(setting_view(entry, config, storage))}.",
+        f"Set {key} = {_format_value(storage.settings.get(key))}.",
     )
     # The restart hint is advice for a human; the JSON view carries the same
     # fact structurally as `restart_required` on the entry.
@@ -318,13 +324,20 @@ def settings_set_secret(ctx: click.Context, key: str) -> None:
 
 @settings.command("clear-secret")
 @click.argument("key")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
-def settings_clear_secret(ctx: click.Context, key: str) -> None:
+def settings_clear_secret(ctx: click.Context, key: str, yes: bool) -> None:
     """Delete a sensitive setting's stored secret."""
     storage = require_storage(ctx)
     entry = get_entry(key)
     if entry is None or not entry.sensitive:
         abort_with(f"{key} is not a configurable secret.")
+
+    if not yes and not click.confirm(
+        f"Clear the secret for {key}? The stored value is deleted for good."
+    ):
+        click.echo("Aborted.")
+        return
 
     if clear_secret(storage, key):
         click.echo(f"Cleared secret for {key}.")

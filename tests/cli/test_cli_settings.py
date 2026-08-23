@@ -219,6 +219,38 @@ class TestSettingsSet:
         assert storage.settings.get(_SECRET_KEY) is None
         assert storage.secrets.has(_SECRET_KEY) is False
 
+    @pytest.mark.parametrize(
+        ("key", "written", "running", "restarts"),
+        [
+            pytest.param(
+                _LIST_KEY,
+                "https://a.example",
+                str(default_of(_LIST_KEY)[0]),
+                True,
+                id="restart",
+            ),
+            pytest.param(_INT_KEY, "9", str(default_of(_INT_KEY)), False, id="live"),
+        ],
+    )
+    def test_set_confirms_the_written_value_not_the_running_one(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        key: str,
+        written: str,
+        running: str,
+        restarts: bool,
+    ) -> None:
+        """A restart_required leaf is written without being live-applied."""
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", "set", key, written], storage
+        )
+
+        assert result.exit_code == 0
+        assert written in result.output
+        assert running not in result.output
+        assert ("restart" in result.output) is restarts
+
     def test_set_unknown_key_errors(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -297,24 +329,43 @@ class TestSettingsSecrets:
         assert result.exit_code != 0
         assert storage.secrets.has(_INT_KEY) is False
 
-    def test_clear_secret_removes_it(
+    def test_clear_secret_removes_it_with_yes_and_no_prompt(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
+        """No stdin to answer with: a prompt here would abort instead."""
         storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "clear-secret", _SECRET_KEY], storage
+            cli_runner, ["settings", "clear-secret", _SECRET_KEY, "--yes"], storage
         )
 
         assert result.exit_code == 0
         assert storage.secrets.has(_SECRET_KEY) is False
         assert "SECRETPLAIN" not in result.output
 
+    @pytest.mark.parametrize("answer", ["n\n", "\n"])
+    def test_neither_no_nor_a_bare_enter_clears_the_secret(
+        self, cli_runner: CliRunner, storage: StorageManager, answer: str
+    ) -> None:
+        storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["settings", "clear-secret", _SECRET_KEY],
+            storage,
+            input_text=answer,
+        )
+
+        assert result.exit_code == 0
+        # The prompt names the key whose secret would go.
+        assert _SECRET_KEY in result.output
+        assert storage.secrets.has(_SECRET_KEY) is True
+
     def test_clear_secret_reports_when_none_set(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
         result = _invoke_with_mocks(
-            cli_runner, ["settings", "clear-secret", _SECRET_KEY], storage
+            cli_runner, ["settings", "clear-secret", _SECRET_KEY, "--yes"], storage
         )
 
         assert result.exit_code == 0

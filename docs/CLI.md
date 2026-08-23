@@ -34,6 +34,11 @@ python3.11 -m src.cli --verbose recommend --type book
 Startup is the exception, reported in full: it happens before there is a log
 file to send anyone to.
 
+The commands that destroy stored data — `source clear-secret`, `source remove`,
+`settings clear-secret`, `preferences reset`, `preferences custom-rules clear`,
+`enrichment reset` and `auth disconnect` — each prompt first, naming what goes.
+Pass `--yes` to skip the prompt in a script.
+
 ## Import and recommend
 
 ### `update`
@@ -256,9 +261,6 @@ history and the visible process list:
 RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
   python3.11 -m src.cli source set-secret my_steam api_key
 ```
-
-`source clear-secret` and `source remove` destroy a stored credential, so both
-prompt first. Pass `--yes` to skip the prompt in a script.
 
 ## Global settings
 
