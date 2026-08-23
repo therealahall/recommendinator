@@ -111,13 +111,13 @@ usually less than you expect:
 | `genre` | Merge in. An import never removes a genre |
 | `total_seasons` | Raise it. A smaller number is discarded |
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
-| `year`, `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
-| creator: `author`, `director`, `creator`, `developer` | Fill an empty value, and nothing else. There is no edit surface for it either |
+| `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series`, `series_index` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
+| `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
 
 The edit modal and `library edit` cover status, rating, review, seasons watched,
-genres, tags and description, and nothing else. `notes` is the fill-only column
-most likely to catch you out, being universal and far more inviting to hand-edit
-than an ISBN.
+genres, tags, description, release year and creator, and nothing else. `notes`
+is the fill-only column most likely to catch you out, being universal and far
+more inviting to hand-edit than an ISBN.
 
 One thing does move a status backward, and it is not a status rule. A completed
 TV show whose season checklist you have filled in returns to in-progress when an
@@ -152,6 +152,10 @@ file. Three things still need care:
   file again writes the new key. Nothing but the export is affected: the
   [length scorer](SCORING.md#content-length-preferences) reads RAWG's average
   playtime, never your own hours.
+
+Book titles change on first open, once: `Leviathan Wakes (The Expanse, #1)`
+becomes `Leviathan Wakes`, and the marker moves into the `series` and
+`series_index` columns an export now carries.
 
 ## Credential storage
 

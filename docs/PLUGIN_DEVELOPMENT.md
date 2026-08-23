@@ -182,7 +182,7 @@ exception to metadata in and metadata out: storage reads it back on
 `ContentItem.author`, not in `metadata`. Setting `author` on the item works
 just as well, and wins if you do both.
 
-Eight columns accept a second spelling, and reach the same column either way:
+Six columns accept a second spelling, and reach the same column either way:
 
 | Column | Also accepted as | Where |
 |---|---|---|
@@ -192,11 +192,9 @@ Eight columns accept a second spelling, and reach the same column either way:
 | `runtime` | `runtime_minutes` | `movie` |
 | `release_year` | `year` | `movie`, `tv_show` (**not** `video_game`, which takes `release_year` only) |
 | `creators` | `creator` | `tv_show` |
-| `developer` | `developers` | `video_game` |
-| `publisher` | `publishers` | `video_game` |
 
 A text column takes a string, a number, or a list of either, joined with commas
-— so the plural spellings above may be lists. An object is refused rather than
+— so `developer` may be a list of studios. An object is refused rather than
 stored as its Python repr, and the refusal fails the whole item's save: sync
 reports only `Failed to process '<title>'`, naming no field, while the log line
 beside it names the key. So `metadata["publisher"] = {"name": "X"}` loses the
@@ -228,6 +226,13 @@ each only where the key is missing or empty, so it never overwrites you. See
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ### Shape rules
+
+**Emit the cleanest data your source can give.** A series goes in
+`metadata["series"]` and `metadata["series_index"]`, never crammed into the
+title: storage compares two sources' titles to decide they name one work, and
+only you know which words yours appends. A placeholder your source writes where
+it has nothing — `"Unknown"` for an authorless book — is not a value, so send
+`None` and let the item state nothing — the save door refuses one anyway.
 
 **`genres`, `tags` and `platforms` are lists of names.** A list is stored as
 given. Anything else, a bare string or a dict included, is wrapped into a
@@ -346,6 +351,9 @@ A plugin you do not want in the repo takes the same layout under
 `private.plugins.<plugin>.<plugin>`. A single-file `private/plugins/<plugin>.py`
 loads too. A folder without an `__init__.py` is not a package, so it is not
 imported at all — the scan logs that it skipped it.
+
+`private/__init__.py` and `private/plugins/__init__.py` have to exist as well,
+or the scan stops before any plugin, saying so only at debug level.
 
 Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
 source.
