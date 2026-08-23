@@ -14,7 +14,11 @@ from src.models.detail_fields import (
     to_text,
 )
 from src.storage.derived import backfill_derived_columns
-from src.storage.merge import normalize_title_for_matching
+from src.storage.merge import (
+    normalize_creator_for_matching,
+    normalize_title_for_matching,
+)
+from src.utils.series import split_series_from_title
 
 
 class EnrichmentStatusDict(TypedDict):
@@ -85,13 +89,17 @@ class SyncRunDict(TypedDict):
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
 # seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves, 10 to 15 re-normalize titles, 16 reduces a list column holding an
-# object and clears a re-queued item's stale quality.
+# leaves.
+
+# 16 reduces a list column holding an object and clears a re-queued item's
+# stale quality; 17 splits a crammed series title, drops a placeholder author,
+# folds a company name, re-normalizes every title and re-derives every row's
+# sort and search columns.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 17
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -366,21 +374,25 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
     _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
 
-    # Columns derived from the title and the creator, so the library list is
-    # ordered and searched in SQL (see src/storage/derived.py). Added ahead of
-    # the steps below, which rewrite them.
+    # Columns derived from the title, the creator and the series, so the
+    # library list is ordered and searched in SQL (see src/storage/derived.py).
+    # Added ahead of the steps below, which rewrite them.
     _add_column_if_not_exists(cursor, "content_items", "sort_title", "TEXT")
     _add_column_if_not_exists(cursor, "content_items", "search_text", "TEXT")
     if stored_version < 3:
         _repair_legacy_content_rows(cursor)
-    elif stored_version < 15:
-        # An upgraded library does not collapse its duplicates on open. It
-        # rewrites their keys; the save door decides each pair on the next
-        # sync, and the merge door decides what that leaves.
-        _renormalize_titles(cursor)
     if stored_version < 16:
         _reduce_non_scalar_list_columns(cursor)
         _clear_quality_on_requeued_items(cursor)
+    if stored_version < 17:
+        # An upgraded library does not collapse its duplicates on open. It
+        # rewrites their keys; the save door decides each pair on the next
+        # sync, and the merge door decides what that leaves.
+        _split_crammed_series_titles(cursor)
+        _clear_placeholder_authors(cursor)
+        _fold_stranded_company_names(cursor)
+        _renormalize_titles(cursor)
+        _clear_derived_columns(cursor)
 
     # Filled after the repair, which recovers a creator that existed only in a
     # blob. Unguarded because the fill selects the rows that need it rather
@@ -546,7 +558,7 @@ def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
 def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     """Rewrite the content rows left in shapes storage no longer writes.
 
-    Each pass reads the whole library, so both are guarded to run once per
+    Each reads the whole library, so both are guarded to run once per
     database: no current write path produces what either looks for, and a
     row a pass deliberately declines to settle — a fill-only column holding
     another producer's object, say — would otherwise be re-read on every open
@@ -558,12 +570,11 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
     leaves the ones before it committed over a half-upgraded library.
     """
     # Approximate normalization for a column the caller's ALTER may have just
-    # added; the pass below corrects it with the full Python function.
+    # added; step 17 corrects it with the full Python function.
     cursor.execute(
         "UPDATE content_items SET normalized_title = lower(title) "
         "WHERE normalized_title IS NULL"
     )
-    _renormalize_titles(cursor)
     _migrate_stranded_detail_shapes(cursor)
 
 
@@ -716,6 +727,51 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
             "UPDATE content_items SET normalized_title = ? WHERE id = ?",
             (normalized, row["id"]),
         )
+
+
+def _split_crammed_series_titles(cursor: sqlite3.Cursor) -> None:
+    """Move a book title's series marker into its metadata, where the plugins
+    now put it: crammed, it keys as itself and stops naming its Calibre twin."""
+    cursor.execute(
+        "SELECT ci.id, ci.title, bd.metadata FROM content_items AS ci"
+        " JOIN book_details AS bd ON bd.content_item_id = ci.id"
+        " WHERE ci.content_type = 'book' AND ci.title LIKE '%(%'"
+    )
+    for row in cursor.fetchall():
+        bare, series = split_series_from_title(row["title"])
+        if not series:
+            continue
+        try:
+            blob = json.loads(row["metadata"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(blob, dict):
+            continue
+        cursor.execute(
+            "UPDATE content_items SET title = ? WHERE id = ?", (bare, row["id"])
+        )
+        cursor.execute(
+            "UPDATE book_details SET metadata = ? WHERE content_item_id = ?",
+            (json.dumps({**series, **blob}), row["id"]),
+        )
+
+
+def _clear_placeholder_authors(cursor: sqlite3.Cursor) -> None:
+    """Drop a stored "Unknown": ``author`` is fill-only, so no sync replaces it."""
+    cursor.execute(
+        "SELECT content_item_id, author FROM book_details WHERE author IS NOT NULL"
+    )
+    for row in cursor.fetchall():
+        if normalize_creator_for_matching(row["author"]):
+            continue
+        cursor.execute(
+            "UPDATE book_details SET author = NULL WHERE content_item_id = ?",
+            (row["content_item_id"],),
+        )
+
+
+def _clear_derived_columns(cursor: sqlite3.Cursor) -> None:
+    cursor.execute("UPDATE content_items SET sort_title = NULL, search_text = NULL")
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:

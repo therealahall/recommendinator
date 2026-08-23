@@ -7,6 +7,7 @@ and ``tests/storage/test_detail_shape_migration.py`` cover the happy path of
 that scheme; each class below names one edge of it.
 """
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ from src.storage import schema
 from src.storage.item_merges import MergeEvidence, absorb_item
 from src.storage.schema import _SCHEMA_VERSION, create_schema
 from src.storage.sqlite_db import SQLiteDB
+from src.utils.series import split_series_from_title
+from src.utils.sorting import get_sort_title, normalize_for_search, search_text_matches
 
 # The upgrade the two rows below are waiting for: both carry the SQL
 # ``lower(title)`` backfill, and dropping the article, the punctuation and the
@@ -533,6 +536,16 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
         ),
     )
 
+    _AUTHORLESS = (
+        (
+            "calibre_web",
+            "calibre:0d1a4c19",
+            "Beowulf",
+            "beowulf",
+            "Unknown",
+        ),
+    )
+
     @staticmethod
     def _seed_books(db_path: Path, rows: tuple[tuple[Any, ...], ...]) -> None:
         conn = sqlite3.connect(db_path)
@@ -591,26 +604,151 @@ class TestUpgradingALibraryWrittenUnderTheOldTitleRules:
 
     @staticmethod
     def _sync_books(db: SQLiteDB, rows: tuple[tuple[Any, ...], ...]) -> list[int]:
-        """Save each row through the door every sync comes through."""
-        return [
-            db.save_content_item(
-                ContentItem(
-                    id=external_id,
-                    title=title,
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.UNREAD,
-                    source=source,
-                    author=author,
+        """Save each row as its plugin emits it now, the series off the title."""
+        saved = []
+        for source, external_id, title, _, author in rows:
+            bare, series = split_series_from_title(title)
+            saved.append(
+                db.save_content_item(
+                    ContentItem(
+                        id=external_id,
+                        title=bare,
+                        content_type=ContentType.BOOK,
+                        status=ConsumptionStatus.UNREAD,
+                        source=source,
+                        author=author,
+                        metadata=series,
+                    )
                 )
             )
-            for source, external_id, title, _, author in rows
-        ]
+        return saved
 
     def _saved_fresh(
         self, tmp_path: Path, name: str, rows: tuple[tuple[Any, ...], ...]
     ) -> Path:
         self._sync_books(SQLiteDB(tmp_path / name), rows)
         return tmp_path / name
+
+    @staticmethod
+    def _book(db_path: Path, external_id: str) -> tuple[Any, ...]:
+        conn = sqlite3.connect(db_path)
+        try:
+            title, key, sort_title, author, metadata = conn.execute(
+                "SELECT ci.title, ci.normalized_title, ci.sort_title, bd.author,"
+                " bd.metadata FROM content_items ci"
+                " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+                " JOIN book_details bd ON bd.content_item_id = ci.id"
+                " WHERE x.external_id = ?",
+                (external_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return title, key, sort_title, author, json.loads(metadata or "{}")
+
+    @staticmethod
+    def _state_series(db_path: Path, external_id: str, blob: dict[str, Any]) -> None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE book_details SET metadata = ? WHERE content_item_id ="
+                " (SELECT content_item_id FROM content_item_external_ids"
+                "  WHERE external_id = ?)",
+                (json.dumps(blob), external_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_a_crammed_title_becomes_the_title_and_the_series_it_states(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v16-crammed.db"
+        _open(db_path)
+        self._seed_books(db_path, self._FERAL_GODS)
+        _rewind_to(db_path, 16)
+
+        _open(db_path)
+
+        assert self._book(db_path, "57905101") == (
+            "The Gate of the Feral Gods",
+            "gate of the feral gods",
+            get_sort_title("The Gate of the Feral Gods"),
+            "Matt Dinniman",
+            {"series": "Dungeon Crawler Carl", "series_index": 4.0},
+        )
+
+    @staticmethod
+    def _search_text(db_path: Path, external_id: str) -> str:
+        conn = sqlite3.connect(db_path)
+        try:
+            (text,) = conn.execute(
+                "SELECT ci.search_text FROM content_items ci"
+                " JOIN content_item_external_ids x ON x.content_item_id = ci.id"
+                " WHERE x.external_id = ?",
+                (external_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return str(text)
+
+    def test_an_upgraded_row_is_searchable_by_the_series_it_states(
+        self, tmp_path: Path
+    ) -> None:
+        """A filled search text was written before it held a series part."""
+        db_path = tmp_path / "v16-searchable.db"
+        _open(db_path)
+        self._seed_books(db_path, self._FERAL_GODS)
+        _open(db_path)
+        self._state_series(
+            db_path, "calibre:51a0e808", {"series": "Dungeon Crawler Carl"}
+        )
+        _rewind_to(db_path, 16)
+
+        _open(db_path)
+
+        assert search_text_matches(
+            self._search_text(db_path, "calibre:51a0e808"),
+            normalize_for_search("Dungeon Crawler Carl"),
+        )
+
+    @pytest.mark.parametrize(
+        ("stated", "expected"),
+        [
+            (
+                {"series": "DCC", "series_index": 4.5},
+                {"series": "DCC", "series_index": 4.5},
+            ),
+            ({"series": "DCC"}, {"series": "DCC", "series_index": 4.0}),
+        ],
+        ids=["stated-in-full", "no-position-stated"],
+    )
+    def test_a_stated_series_wins_key_by_key_over_the_one_the_title_states(
+        self, tmp_path: Path, stated: dict[str, Any], expected: dict[str, Any]
+    ) -> None:
+        db_path = tmp_path / "v16-stated.db"
+        _open(db_path)
+        self._seed_books(db_path, self._FERAL_GODS)
+        self._state_series(db_path, "57905101", stated)
+        _rewind_to(db_path, 16)
+
+        _open(db_path)
+
+        title, _key, _sort_title, _author, metadata = self._book(db_path, "57905101")
+        assert title == "The Gate of the Feral Gods"
+        assert metadata == expected
+
+    def test_an_upgraded_row_drops_the_author_a_shelf_wrote_for_no_author(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v16-unknown-author.db"
+        _open(db_path)
+        self._seed_books(db_path, self._AUTHORLESS)
+        _rewind_to(db_path, 16)
+
+        _open(db_path)
+
+        _title, _key, _sort, author, _metadata = self._book(db_path, "calibre:0d1a4c19")
+        assert author is None
 
     def test_the_re_keyed_pair_is_still_two_rows_after_both_sources_sync(
         self, tmp_path: Path
