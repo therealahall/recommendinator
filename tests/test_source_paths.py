@@ -98,17 +98,17 @@ _FILE_BASED_PLUGINS = _params([RomScannerPlugin()])
 _URL_PLUGINS = _params([CalibreWebPlugin(), RadarrPlugin(), SonarrPlugin()])
 
 
-def _builtin_plugins() -> dict[str, SourcePlugin]:
-    """Every plugin shipped in this repository, private ones excluded.
-
-    Built off a throwaway registry so the singleton other tests install fakes
-    into is left alone.
-    """
+def _discovered_plugins() -> dict[str, SourcePlugin]:
+    """Private plugins too: excluding them is how an undeclared path hid."""
     registry = PluginRegistry()
     registry.discover_plugins()
+    return registry.get_all_plugins()
+
+
+def _builtin_plugins() -> dict[str, SourcePlugin]:
     built_in = {
         name: plugin
-        for name, plugin in registry.get_all_plugins().items()
+        for name, plugin in _discovered_plugins().items()
         if type(plugin).__module__.startswith("src.ingestion.sources.")
     }
     # The sweeps below assert an absence, so discovery finding nothing would
@@ -259,10 +259,10 @@ class TestEveryFileReadingPluginIsContained:
         assert offline & undeclared == set()
 
     def test_no_plugin_names_a_path_it_leaves_undeclared(self) -> None:
-        """Covers the shape the offline sweep above cannot: a plugin that reads
-        a configured path *and* talks to the network.
+        """Covers what the offline sweep cannot: a plugin that reads a path
+        *and* talks to the network.
         """
-        assert _plugins_leaving_a_path_undeclared(_builtin_plugins()) == {}
+        assert _plugins_leaving_a_path_undeclared(_discovered_plugins()) == {}
 
     @pytest.mark.parametrize("plugin", _FILE_BASED_PLUGINS)
     def test_validate_reports_a_path_outside_every_root(
