@@ -58,8 +58,8 @@ One command, and it must pass before a PR:
 make check
 ```
 
-It runs the review-agent preflight, Black, Ruff, MyPy, pytest, `vue-tsc` and
-Vitest, in that order, installing the frontend dependencies first when
+It runs Black, Ruff, MyPy, pytest, the same four over `private/` when you have
+one, then `vue-tsc` and Vitest, installing the frontend dependencies first when
 `node_modules` is missing — a fresh clone or worktree needs no separate `pnpm
 install`. When you run one of those tools directly, spell the interpreter
 `python3.11`, never bare `python` or `python3`.
