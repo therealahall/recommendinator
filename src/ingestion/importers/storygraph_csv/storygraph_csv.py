@@ -13,6 +13,7 @@ from src.ingestion.importers.base import (
 )
 from src.ingestion.importers.rows import csv_field, parse_slashed_date, read_csv_rows
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.utils.series import split_series_from_title
 
 # did-not-finish maps to completed because a rated-then-abandoned book is a real
 # preference signal; the raw status is kept in metadata so no fidelity is lost.
@@ -43,10 +44,12 @@ class StorygraphCsvImporter(Importer):
                 continue
 
             cells = row.fields
-            title = csv_field(cells, "Title")
-            if not title:
+            raw_title = csv_field(cells, "Title")
+            if not raw_title:
                 yield SkippedRow(row.number, "no title")
                 continue
+
+            title, series = split_series_from_title(raw_title)
 
             read_status = csv_field(cells, "Read Status").lower()
             last_date_read = csv_field(cells, "Last Date Read")
@@ -78,6 +81,7 @@ class StorygraphCsvImporter(Importer):
                 ),
                 "tags": csv_field(cells, "Tags") or None,
                 "owned": csv_field(cells, "Owned?") or None,
+                **series,
             }
 
             yield ImportedRow(

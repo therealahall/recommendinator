@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.series import (
     MAX_SEASONS,
@@ -19,6 +21,7 @@ from src.utils.series import (
     is_next_after_consumed,
     latest_season_watched_date,
     should_recommend_item,
+    split_series_from_title,
     strip_series_suffix_from_title,
 )
 
@@ -754,6 +757,43 @@ class TestTitleRegexPatternsRegression:
         assert result is not None
         assert result[0] == "LIGHTNING RETURNS: FINAL FANTASY"
         assert result[1] == 13
+
+
+class TestSplitSeriesFromTitle:
+    @pytest.mark.parametrize(
+        ("marker", "index"),
+        [
+            ("(Murderbot, #1)", 1.0),
+            ("(Murderbot, Book 1)", 1.0),
+            ("(Murderbot #1)", 1.0),
+            ("(Murderbot, #1.5)", 1.5),
+            ("(Murderbot, #1-3)", 1.0),
+        ],
+    )
+    def test_a_series_marker_leaves_the_title_and_states_itself(
+        self, marker: str, index: float
+    ) -> None:
+        assert split_series_from_title(f"All Systems Red {marker}") == (
+            "All Systems Red",
+            {"series": "Murderbot", "series_index": index},
+        )
+
+    def test_a_marker_ahead_of_the_titles_own_parenthetical_still_leaves_it(
+        self,
+    ) -> None:
+        assert split_series_from_title("Dune (Dune, #1) (1965)") == (
+            "Dune (1965)",
+            {"series": "Dune", "series_index": 1.0},
+        )
+
+    @pytest.mark.parametrize(
+        "title",
+        ["Deadhouse Gates (Malazan Book 2)", "Portal 2 (Game)", "(Murderbot, #1)"],
+    )
+    def test_a_parenthetical_naming_the_work_is_left_on_the_title(
+        self, title: str
+    ) -> None:
+        assert split_series_from_title(title) == (title, {})
 
 
 class TestStripSeriesSuffixFromTitle:

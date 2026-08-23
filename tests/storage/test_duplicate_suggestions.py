@@ -91,12 +91,7 @@ def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
 ) -> None:
     """The door skips a candidate holding another id of the incoming source."""
     first = _save(manager, "goodreads_csv", "1", "The Gate of the Feral Gods")
-    second = _save(
-        manager,
-        "goodreads_csv",
-        "2",
-        "The Gate of the Feral Gods (Dungeon Crawler Carl, #4)",
-    )
+    second = _save(manager, "goodreads_csv", "2", "The Gate of The Feral Gods")
     assert first != second
 
     (suggestion,) = _offered(manager)

@@ -6,8 +6,9 @@ plugin fetches one feed per requested shelf, paginates through all results,
 and maps each ``<item>`` to a :class:`ContentItem`. The ``metadata`` dict
 shares ``book_id``/``isbn``/``pages``/``year_published`` with the
 ``goodreads_csv`` importer and additionally carries ``average_rating``,
-``description``, and ``shelf``. RSS cannot supply ``isbn13`` or ``publisher``,
-so those keys are absent.
+``description``, and ``shelf``, plus ``series``/``series_index`` when the title
+states a series. RSS cannot supply ``isbn13`` or ``publisher``, so those keys
+are absent.
 
 Unlike that importer there is no manual export step — the profile just has to
 be public. The three default shelves (``read``, ``currently-reading``,
@@ -41,6 +42,7 @@ from src.ingestion.plugin_base import (
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.request_errors import scrub_request_error
+from src.utils.series import split_series_from_title
 from src.utils.text import exception_for_log, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -48,7 +50,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Base host for Goodreads RSS feeds.
 GOODREADS_BASE = "https://www.goodreads.com"
 
 # The only feed path Goodreads still serves to a signed-out client. The newer
@@ -431,14 +432,16 @@ class GoodreadsRssPlugin(SourcePlugin):
         Returns ``None`` for items without a title. The ``metadata`` dict shares
         ``book_id``/``isbn``/``pages``/``year_published`` with the
         ``goodreads_csv`` importer and additionally carries ``average_rating``,
-        ``description``, and ``shelf``. RSS cannot supply ``isbn13`` or
+        ``description``, and ``shelf``, plus ``series``/``series_index`` when
+        the title states a series. RSS cannot supply ``isbn13`` or
         ``publisher``, so those keys are omitted entirely rather than set to
         ``None``.
         """
-        title = _child_text(element, "title")
-        if not title:
+        raw_title = _child_text(element, "title")
+        if not raw_title:
             return None
 
+        title, series = split_series_from_title(raw_title)
         book_id = _child_text(element, "book_id") or None
         date_completed = None
         if status == ConsumptionStatus.COMPLETED:
@@ -452,6 +455,7 @@ class GoodreadsRssPlugin(SourcePlugin):
             "average_rating": _child_text(element, "average_rating") or None,
             "description": _child_text(element, "book_description") or None,
             "shelf": shelf,
+            **series,
         }
 
         return ContentItem(

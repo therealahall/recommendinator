@@ -12,7 +12,7 @@ import re
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypedDict
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp
@@ -32,7 +32,6 @@ class _SeriesPattern(NamedTuple):
     max_number: int
 
 
-# Pre-compiled patterns tried in order. Each captures (series_name, number).
 _SERIES_PATTERNS: list[_SeriesPattern] = [
     # (Series Name, #N) or (Series Name #N) — N may be fractional (e.g. #2.5
     # for half-numbered novellas like "Gods of Risk (The Expanse, #2.5)").
@@ -131,7 +130,6 @@ def _extract_series_from_title(title: str) -> tuple[str, float] | None:
         if 1 <= number <= 100 and len(series_name) >= 2:
             return (series_name, float(number))
 
-    # Try Roman numerals
     match = _TITLE_ROMAN_PATTERN.match(title.strip())
     if match:
         series_name = match.group(1).strip()
@@ -173,13 +171,11 @@ def extract_series_info(
     Returns:
         Tuple of (series_name, item_number) if found, None otherwise
     """
-    # First try to extract from metadata if available
     if metadata:
         series_info = _extract_from_metadata(metadata, content_type)
         if series_info:
             return series_info
 
-    # Try each pre-compiled pattern in order
     for pattern in _SERIES_PATTERNS:
         match = pattern.regex.search(title)
         if match:
@@ -214,7 +210,6 @@ def _extract_from_metadata(
     Returns:
         Tuple of (series_name, item_number) if found, None otherwise
     """
-    # Try to find series name
     series_name = None
     for key in ["series_name", "series", "series_title", "franchise"]:
         if key in metadata and metadata[key]:
@@ -224,11 +219,9 @@ def _extract_from_metadata(
     if not series_name:
         return None
 
-    # Try to find item number based on content type
     item_num: float | None = None
 
     if content_type == ContentType.TV_SHOW:
-        # For TV shows, look for season number
         for key in ["series_position", "season", "season_number", "season_num"]:
             if key in metadata and metadata[key]:
                 try:
@@ -237,7 +230,6 @@ def _extract_from_metadata(
                 except (ValueError, TypeError):
                     continue
     elif content_type == ContentType.MOVIE:
-        # For movies, look for part/episode number
         for key in [
             "series_position",
             "part",
@@ -253,12 +245,10 @@ def _extract_from_metadata(
                 except (ValueError, TypeError):
                     continue
     else:
-        # For books and games, look for series number
         for key in [
             "series_position",
             "series_number",
             "series_num",
-            # Calibre's own field name, and what the Calibre-Web plugin stores.
             "series_index",
             "book_number",
             "book_num",
@@ -286,19 +276,6 @@ def _extract_from_metadata(
 
 
 def get_series_name_from_metadata(metadata: dict | None) -> str | None:
-    """Extract series name from metadata without requiring an item number.
-
-    Used for show-level items that carry a series_name but no season marker.
-    Unlike :func:`extract_series_info`, this does not require an item number,
-    so it returns a result for show-level entries like ``{"series_name": "The
-    Expanse"}`` that lack a ``season`` field.
-
-    Args:
-        metadata: Metadata dictionary, or None.
-
-    Returns:
-        Series name if found, None otherwise.
-    """
     if not metadata:
         return None
     for key in ("series_name", "series", "series_title", "franchise"):
@@ -307,6 +284,19 @@ def get_series_name_from_metadata(metadata: dict | None) -> str | None:
             stripped = str(val).strip()
             if stripped:
                 return stripped
+    return None
+
+
+def get_series_position_from_metadata(metadata: dict | None) -> float | None:
+    if not metadata:
+        return None
+    for key in ("series_position", "series_index"):
+        try:
+            position = float(metadata[key])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if math.isfinite(position):
+            return position
     return None
 
 
@@ -508,7 +498,6 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
         base_id = item.id or ""
         show_title = item.title
 
-        # Determine which seasons to skip (already watched)
         seasons_watched_raw = item.metadata.get("seasons_watched")
         watched_set: set[int] = set()
         if isinstance(seasons_watched_raw, list):
@@ -663,13 +652,11 @@ def should_recommend_item(
     """
     series_info = extract_series_info(item.title, item.metadata, item.content_type)
     if not series_info:
-        # Not in a series, always recommend
         return True
 
     series_name, item_num = series_info
     consumed_numbers = series_tracking.get(series_name, set())
 
-    # Build set of unconsumed item numbers for this series
     unconsumed_item_nums: set[float] = set()
     if unconsumed_items:
         for unconsumed in unconsumed_items:
@@ -738,7 +725,6 @@ def find_earliest_recommendable(
         The earliest unconsumed item in the series that passes
         :func:`should_recommend_item`, or ``None`` if none qualifies.
     """
-    # Collect unconsumed items belonging to this series, paired with their number
     series_candidates: list[tuple[float, ContentItem]] = []
     for item in unconsumed_items:
         series_info = extract_series_info(item.title, item.metadata, item.content_type)
@@ -748,7 +734,6 @@ def find_earliest_recommendable(
     if not series_candidates:
         return None
 
-    # Sort by item number (ascending) so earliest comes first
     series_candidates.sort(key=lambda pair: pair[0])
 
     for _item_number, candidate in series_candidates:
@@ -793,6 +778,34 @@ def is_active_series_continuation(
         # Unstarted series (or untracked) — starting fresh is not continuation.
         return False
     return should_recommend_item(item, series_tracking, unconsumed_items)
+
+
+_SERIES_MARKER = re.compile(
+    r"\s*\(([^()]*?)(?:(?:,\s*|\s+)#\s*|,\s*Book\s+)"
+    r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*\d+(?:\.\d+)?)?\)",
+    re.IGNORECASE,
+)
+
+
+class SeriesFields(TypedDict, total=False):
+    series: str
+    series_index: float
+
+
+def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
+    """The work's own title, and the series a marker in it states.
+
+    A shelf appends what Calibre states separately, so one book arrives under
+    two spellings. "Book 1" needs its comma: "(Malazan Book 2)" names a work.
+    """
+    match = _SERIES_MARKER.search(title)
+    if match is None:
+        return title, {}
+    bare = f"{title[: match.start()].strip()} {title[match.end() :].strip()}".strip()
+    series = match.group(1).strip()
+    if not bare or not series:
+        return title, {}
+    return bare, {"series": series, "series_index": float(match.group(2))}
 
 
 def strip_series_suffix_from_title(title: str) -> str:

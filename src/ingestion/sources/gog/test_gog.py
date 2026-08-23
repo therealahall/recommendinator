@@ -265,7 +265,7 @@ class TestGogPluginFetch:
         assert wishlist_item.metadata["gog_owned"] is False
         assert wishlist_item.metadata["gog_wishlisted"] is True
         assert wishlist_item.metadata["genres"] == ["RPG", "Adventure"]
-        assert wishlist_item.metadata["developers"] == ["Dev Studio"]
+        assert wishlist_item.metadata["developer"] == ["Dev Studio"]
 
     @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
     @patch("src.ingestion.sources.gog.gog.get_owned_games")
@@ -480,8 +480,8 @@ class TestGogPluginFetch:
         plugin = GogPlugin()
         items = list(plugin.fetch({"refresh_token": "token"}))
 
-        assert items[0].metadata["developers"] == ["Bare Name", "Object Name"]
-        assert items[0].metadata["publishers"] == ["Lone Object"]
+        assert items[0].metadata["developer"] == ["Bare Name", "Object Name"]
+        assert items[0].metadata["publisher"] == ["Lone Object"]
 
     @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_api_error_raises_source_error(self, mock_refresh: Mock) -> None:

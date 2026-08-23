@@ -40,6 +40,7 @@ __all__ = [
     "parse_json_list",
     "regions_conflict",
     "resolve_status_forward",
+    "stated_creator",
     "stated_region",
     "stated_release_year",
     "years_conflict",
@@ -185,8 +186,6 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
 # ---------------------------------------------------------------------------
 
 
-# Goodreads RSS appends "(Series, #N)" where Calibre appends nothing.
-_SERIES_MARKER = re.compile(r"#\s*\d")
 # "The Office (US)" and "DOOM (2016)" collapse onto their namesakes; the year
 # veto below and _title_match's refusal to pick between two rows back that.
 _REGION_QUALIFIERS = frozenset({"us", "usa", "uk", "gb", "au", "nz", "ca", "jp", "eu"})
@@ -206,7 +205,7 @@ _TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 def _is_qualifier(inner: str) -> bool:
     """Whether a trailing parenthetical qualifies the work rather than names it."""
     inner = inner.strip()
-    if _SERIES_MARKER.search(inner) or _YEAR.match(inner):
+    if _YEAR.match(inner):
         return True
     if _EDITION.search(inner) and not _NUMBERED.search(inner):
         return True
@@ -333,18 +332,26 @@ def _collapse_initials(tokens: list[str]) -> list[str]:
     return collapsed
 
 
-# Calibre-Web's OPDS names "Unknown" where a book has no author, and a veto on
-# it hides the very match it was asked about.
+# A word standing in for a name it is not, so a veto on it hides a real match.
 _PLACEHOLDER_CREATORS = frozenset({"unknown", "author unknown"})
 
 
 def normalize_creator_for_matching(creator: str | None) -> str:
-    """The veto's key, order-free: Goodreads writes "Rowling, J.K."."""
+    """The veto's key, order-free: a shelf writes "Rowling, J.K."."""
     if not creator:
         return ""
     tokens = re.sub(r"[\W_]", " ", creator.lower()).split()
     normalized = " ".join(sorted(_collapse_initials(tokens)))
     return "" if normalized in _PLACEHOLDER_CREATORS else normalized
+
+
+def stated_creator(creator: str | None) -> str | None:
+    """The creator a value names, or None for a placeholder naming nobody.
+
+    The column is fill-only, so a stored "Unknown" is permanent — an import
+    writing one undoes what the schema-17 step cleared.
+    """
+    return creator if normalize_creator_for_matching(creator) else None
 
 
 # Two Preys shared only "Studios", enough for the veto to read one developer and

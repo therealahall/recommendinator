@@ -42,8 +42,10 @@ your user ID. You can paste either the bare number or the whole URL into
 - Metadata keys: `book_id`, `isbn`, `pages`, and `year_published` are shared
   with the [Goodreads CSV importer](../../importers/goodreads_csv/README.md).
   It also carries `average_rating`, `description` and `shelf`, the shelf it
-  came from. `isbn13` and `publisher` are **not** provided — RSS does not
-  expose them, so those keys are absent rather than empty.
+  came from, plus `series` and `series_index` when the feed's title states a
+  series — the marker is taken out of the title. `isbn13` and `publisher` are
+  **not** provided: RSS does not expose them, so those keys are absent rather
+  than empty.
 - Status mapping: `read` → completed, `currently-reading` → currently consuming,
   `to-read` and any custom shelf → unread.
 - Rating: `user_rating` of `0` means unrated (stored as no rating); `1`–`5` are

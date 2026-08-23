@@ -311,6 +311,29 @@ class TestGoodreadsRssPluginFetch:
         assert "isbn13" not in item.metadata
         assert "publisher" not in item.metadata
 
+    def test_a_shelved_series_title_arrives_as_a_title_and_a_series(
+        self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_get = _make_get(
+            {
+                "read": [
+                    _feed(
+                        _item(
+                            title="All Systems Red (The Murderbot Diaries, #1)",
+                            book_id="32758901",
+                        )
+                    )
+                ]
+            }
+        )
+        monkeypatch.setattr(goodreads_rss.requests, "get", fake_get)
+
+        items = list(plugin.fetch({"user_id": "12345", "shelves": ["read"]}))
+
+        assert items[0].title == "All Systems Red"
+        assert items[0].metadata["series"] == "The Murderbot Diaries"
+        assert items[0].metadata["series_index"] == 1.0
+
     def test_pages_from_nested_book_element(
         self, plugin: GoodreadsRssPlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
