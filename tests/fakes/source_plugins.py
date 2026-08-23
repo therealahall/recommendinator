@@ -1,19 +1,20 @@
-"""Shared fake ``SourcePlugin`` implementations for source-config tests.
+"""Shared fake ``SourcePlugin`` implementations and registry states.
 
-Both the web (``tests/web/test_source_config_api.py``) and CLI
-(``tests/cli/test_source_commands.py``) suites need a lightweight plugin
-without secrets and one with a sensitive ``api_key`` plus a mix of
-``str``/``int``/``bool``/``list`` fields. They share the same fakes so a
-future change to ``SourcePlugin`` only has to update one file.
+The web, CLI and registry suites all need them, so a change to
+``SourcePlugin`` or to discovery only has to update one file.
 """
 
 from __future__ import annotations
 
+import importlib
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from src.ingestion import registry as registry_module
 from src.ingestion.plugin_base import ConfigField, SourcePlugin
 from src.ingestion.registry import PluginRegistry
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -187,5 +188,62 @@ def registry_with_a_failed_import() -> Iterator[None]:
     registry.register(FakeFilePlugin())
     registry.register(FakeApiPlugin())
     registry._import_errors[FAILED_PLUGIN_MODULE] = FAILED_PLUGIN_REASON
+    yield
+    PluginRegistry.reset_instance()
+
+
+#: What the broken private module is called and why it dies, spelled out so an
+#: interface that stops carrying either one fails rather than following the code.
+BROKEN_PRIVATE_MODULE = "broken_provider"
+BROKEN_PRIVATE_REASON = "ModuleNotFoundError: no module named 'httpx'"
+
+
+def _private_module_names() -> list[str]:
+    """The imported ``private`` package and its submodules, if any."""
+    return [
+        name
+        for name in list(sys.modules)
+        if name == "private" or name.startswith("private.")
+    ]
+
+
+@pytest.fixture()
+def private_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """An empty ``private/plugins/`` the next discovery pass scans instead.
+
+    The scan reads the project root off ``registry.py``, three levels down.
+    """
+    private_path = tmp_path / "private" / "plugins"
+    private_path.mkdir(parents=True)
+    (private_path.parent / "__init__.py").write_text("")
+    (private_path / "__init__.py").write_text("")
+    monkeypatch.setattr(
+        registry_module,
+        "__file__",
+        str(tmp_path / "src" / "ingestion" / "registry.py"),
+    )
+    for name in _private_module_names():
+        monkeypatch.delitem(sys.modules, name)
+    importlib.invalidate_caches()
+
+    yield private_path
+
+    for name in _private_module_names():
+        del sys.modules[name]
+    if str(tmp_path) in sys.path:
+        sys.path.remove(str(tmp_path))
+
+
+@pytest.fixture()
+def registry_with_a_broken_private_module(private_plugins: Path) -> Iterator[None]:
+    """A private module that raises on import, reached through real discovery.
+
+    Nothing is injected here, unlike ``registry_with_a_failed_import``, so the
+    whole path from the private scan to the interface is under test.
+    """
+    (private_plugins / f"{BROKEN_PRIVATE_MODULE}.py").write_text(
+        "raise ModuleNotFoundError(\"no module named 'httpx'\")\n"
+    )
+    PluginRegistry.reset_instance()
     yield
     PluginRegistry.reset_instance()
