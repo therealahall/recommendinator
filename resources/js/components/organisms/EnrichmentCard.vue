@@ -21,6 +21,12 @@ const typeLabel = computed(() =>
 // The manager caps this list itself, last entry a count of the rest, so the
 // whole of it renders: the line saying why a run stopped is usually the last.
 const jobErrors = computed<string[]>(() => data.enrichmentJob?.errors ?? [])
+// The count, not the lines: fifty of them read aloud is not a status message.
+const errorsAnnouncement = computed(() => {
+  const count = jobErrors.value.length
+  if (count === 0) return ''
+  return `This enrichment run reported ${count} ${count === 1 ? 'error' : 'errors'}.`
+})
 const resettable = computed(() =>
   enrichType.value || !stats.value
     ? null
@@ -157,6 +163,7 @@ const onReset = (provider: string) =>
         <ul
           class="enrichment-errors-list"
           data-testid="enrichment-errors"
+          role="list"
           aria-labelledby="enrichment-errors-title"
         >
           <li v-for="(line, index) in jobErrors" :key="index">{{ line }}</li>
@@ -164,7 +171,8 @@ const onReset = (provider: string) =>
       </div>
     </template>
 
-    <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
+    <!-- Mounted while silent: inserted populated they read as content (4.1.3).
+         The last is all a poll-delivered result has; nothing else announces it. -->
     <p
       class="enrichment-error focus-fallback"
       data-testid="enrichment-error"
@@ -178,6 +186,13 @@ const onReset = (provider: string) =>
       aria-live="polite"
       aria-atomic="true"
     >{{ message }}</p>
+    <p
+      class="sr-only"
+      data-testid="enrichment-errors-status"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ errorsAnnouncement }}</p>
   </div>
 </template>
 
