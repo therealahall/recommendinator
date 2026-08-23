@@ -234,6 +234,10 @@ The host `./private/` directory has to exist and hold your plugin files. If it
 did not exist, Docker created it owned by root and the container user cannot read
 it. Chown it as above.
 
+It also has to be a package: `private/__init__.py` and
+`private/plugins/__init__.py` both have to be there, or the scan stops before it
+reads a plugin and logs that only at debug level.
+
 ## Local development
 
 ```bash

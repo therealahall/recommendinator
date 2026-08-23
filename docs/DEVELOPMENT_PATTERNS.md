@@ -143,11 +143,10 @@ for the patterns it names.
 ### Shell discipline
 
 - **One Bash call per logical step.** Never chain with `&&` or `;`.
-- **Run `python3.11 -m black src/ tests/ scripts/ conftest.py` and
-  `python3.11 -m ruff check src/ tests/ scripts/ conftest.py --fix` BEFORE
-  `command make check`**, so it cannot fail on auto-fixable formatting. The
-  directory list must match what `make check` inspects, or an edit gets
-  format-checked without being pre-formatted.
+- **Run `make format` and `python3.11 -m ruff check src/ tests/ conftest.py
+  --fix` BEFORE `command make check`**, so it cannot fail on auto-fixable
+  formatting. `private/` is gitignored, so `make format` hands black those
+  files by name and ruff needs a `--no-respect-gitignore private/ --fix` pass.
 - **Do not read raw subagent output files.** The agent returns its finding in its
   tool result.
 - **Never poll or wait on background agents.** The runtime notifies on completion.

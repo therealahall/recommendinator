@@ -147,9 +147,9 @@ private/              # Gitignored — private plugins NOT in the open source re
 - **Never use `sed` or `awk` to edit files.** Use the `Edit` tool instead — it provides atomic replacements, is reviewable, and avoids regex escaping bugs. There are no exceptions.
 - **Never pipe test output or use head, tail, etc.** Run each command directly:
   - `python3.11 -m pytest tests/` (not `pytest | head` or similar)
-  - `python3.11 -m black --check src/ tests/ scripts/ conftest.py`
-  - `python3.11 -m mypy src/ scripts/ conftest.py`
-  - `python3.11 -m ruff check src/ tests/ scripts/ conftest.py`
+  - `python3.11 -m black --check src/ tests/ conftest.py`
+  - `python3.11 -m mypy src/ conftest.py`
+  - `python3.11 -m ruff check src/ tests/ conftest.py`
 
 ### Python Version
 
@@ -273,6 +273,6 @@ For Plan Mode, Adding Features, Adding Data Sources, Bug Fixes, and the Anti-Chu
    - **Every cut is stated explicitly with its reason.** A finding dropped silently is a finding nobody decided about.
    - **Every deferral gets a tracker issue naming the stream it lands in.** A deferral with no tracker entry is a cut pretending otherwise.
 6. Plan the atomic commit split before staging anything.
-7. Run `command make check` (the review-agent check first, then black, ruff, mypy, pytest, and the frontend `vue-tsc` and Vitest checks).
+7. Run `command make check` (black, ruff, mypy, pytest, those four again over `private/` when it exists, then the frontend `vue-tsc` and Vitest checks). The review agents in step 1 are a workflow you run, not a make target.
 8. Commit following the split plan. If staging triggers a formatter or any other code edit, the loop restarts at step 4 — agents must approve the exact tree that gets committed.
 9. Verify commit structure and messages before pushing.
