@@ -315,6 +315,8 @@ export interface EnrichmentJobStatusResponse {
 export interface EnrichmentStatsResponse {
   enabled: boolean
   total: number
+  /** Items an unfiltered reset re-queues: the ones with enrichment status tracked. */
+  resettable: number
   enriched: number
   pending: number
   not_found: number

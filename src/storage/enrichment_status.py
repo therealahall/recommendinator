@@ -113,8 +113,9 @@ class EnrichmentStore:
             )
 
     def stats(self, user_id: int | None = None) -> dict[str, int | dict[str, int]]:
-        """Return ``total``/``enriched``/``pending``/``not_found``/``failed``
-        counts plus ``by_provider`` and ``by_quality`` breakdowns.
+        """Return ``total``/``resettable``/``enriched``/``pending``/
+        ``not_found``/``failed`` counts plus ``by_provider`` and
+        ``by_quality`` breakdowns.
 
         ``pending`` and ``failed`` are both queued for retry and are reported
         apart: ``pending`` is the ones whose last attempt did not error.

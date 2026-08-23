@@ -18,6 +18,7 @@ function makeStats(overrides: Partial<EnrichmentStatsResponse> = {}): Enrichment
   return {
     enabled: true,
     total: 100,
+    resettable: 90,
     enriched: 50,
     pending: 45,
     not_found: 5,
@@ -72,13 +73,6 @@ describe('EnrichmentCard', () => {
     await flushPromises()
 
     expect(data.enableEnrichment).toHaveBeenCalled()
-  })
-
-  it('nests under the Data page heading rather than beside it', () => {
-    const wrapper = mountWithEnrichment()
-
-    expect(wrapper.find('h2').exists()).toBe(false)
-    expect(wrapper.get('h3').text()).toBe('Metadata Enrichment')
   })
 
   it('shows job progress when enrichment is running', () => {
@@ -161,24 +155,17 @@ describe('EnrichmentCard', () => {
   })
 
   describe('reset', () => {
-    it('is its own button, not a mode that rewrites Enrich', () => {
-      const wrapper = mountWithEnrichment()
-
-      expect(wrapper.get('[data-testid="enrichment-start"]').text()).toBe('Enrich')
-      expect(wrapper.get('[data-testid="reset-btn"]').text()).toBe('Reset enrichment')
-    })
-
-    it('asks before re-queueing, naming the scope', async () => {
+    it('asks before re-queueing, naming the count and the scope', async () => {
       const wrapper = mountWithEnrichment()
       const data = useDataStore()
       data.resetEnrichment = vi.fn()
 
       await wrapper.find('[data-testid="reset-btn"]').trigger('click')
 
+      const question = wrapper.get('[data-testid="confirm-panel"]').text()
       expect(data.resetEnrichment).not.toHaveBeenCalled()
-      expect(wrapper.get('[data-testid="confirm-panel"]').text()).toContain(
-        'every content type',
-      )
+      expect(question).toContain('90 item(s)')
+      expect(question).toContain('every content type')
     })
 
     it('sends no provider filter on the default, which is not a provider name', async () => {

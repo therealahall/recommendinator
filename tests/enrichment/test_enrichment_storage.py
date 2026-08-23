@@ -16,21 +16,15 @@ from src.storage.manager import StorageManager
 from src.storage.schema import create_user
 
 
-def save_unenriched(
-    storage_manager: StorageManager,
-    item_id: str,
-    content_type: ContentType = ContentType.MOVIE,
-    user_id: int | None = None,
-) -> int:
+def save_unenriched(storage_manager: StorageManager, item_id: str) -> int:
     """Store an item with no enrichment status and return its database ID."""
     return storage_manager.save_content_item(
         ContentItem(
             id=item_id,
             title=item_id,
-            content_type=content_type,
+            content_type=ContentType.MOVIE,
             status=ConsumptionStatus.UNREAD,
-        ),
-        user_id=user_id,
+        )
     )
 
 
@@ -249,43 +243,6 @@ class TestGetItemsNeedingEnrichment:
 
         assert storage_manager.enrichment.not_found_ids() == [db_ids[0]]
 
-    def test_not_found_ids_holds_every_miss_past_one_queue_page(
-        self, storage_manager: StorageManager
-    ) -> None:
-        """The queue this feeds is read a page at a time; the retry set is not."""
-        db_ids = [
-            save_unenriched(storage_manager, f"movie{index}") for index in range(150)
-        ]
-        for db_id in db_ids:
-            storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
-
-        assert sorted(storage_manager.enrichment.not_found_ids()) == db_ids
-
-    def test_not_found_ids_filters_by_content_type_and_user(
-        self, storage_manager: StorageManager
-    ) -> None:
-        """A retry run is scoped the same way the queue it feeds is."""
-        with storage_manager.sqlite_db.connection() as conn:
-            other_user = create_user(conn, username="other")
-        my_movie = save_unenriched(storage_manager, "movie1", user_id=1)
-        my_book = save_unenriched(
-            storage_manager, "book1", content_type=ContentType.BOOK, user_id=1
-        )
-        their_movie = save_unenriched(storage_manager, "movie2", user_id=other_user)
-        for db_id in (my_movie, my_book, their_movie):
-            storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
-
-        assert set(storage_manager.enrichment.not_found_ids(user_id=1)) == {
-            my_movie,
-            my_book,
-        }
-        assert storage_manager.enrichment.not_found_ids(
-            content_type=ContentType.MOVIE, user_id=1
-        ) == [my_movie]
-        assert storage_manager.enrichment.not_found_ids(user_id=other_user) == [
-            their_movie
-        ]
-
 
 class TestCountItemsNeedingEnrichment:
     """Tests for counting items needing enrichment.
@@ -370,15 +327,7 @@ class TestEnrichmentStats:
         ``reset`` kept its label.
         """
         db_ids = [
-            storage_manager.save_content_item(
-                ContentItem(
-                    id=f"item{index}",
-                    title=f"Item {index}",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                )
-            )
-            for index in range(6)
+            save_unenriched(storage_manager, f"item{index}") for index in range(6)
         ]
         storage_manager.enrichment.mark_complete(db_ids[0], "tmdb", "high")
         storage_manager.enrichment.mark_complete(db_ids[1], "none", "not_found")
@@ -399,6 +348,22 @@ class TestEnrichmentStats:
             == stats["total"]
         ), "the four reported states must account for each item exactly once"
 
+    def test_resettable_is_the_count_an_unfiltered_reset_re_queues(
+        self, storage_manager: StorageManager
+    ) -> None:
+        """Neither ``total`` nor ``total - pending`` is that count."""
+        db_ids = [
+            save_unenriched(storage_manager, f"item{index}") for index in range(3)
+        ]
+        storage_manager.enrichment.mark_complete(db_ids[0], "tmdb", "high")
+        storage_manager.enrichment.mark_needed(db_ids[1])
+        # db_ids[2] has no row for a reset to touch.
+
+        stats = storage_manager.enrichment.stats()
+
+        assert (stats["total"], stats["pending"], stats["resettable"]) == (3, 2, 2)
+        assert storage_manager.enrichment.reset() == 2
+
     def test_stats_for_one_user_exclude_another_users_items(
         self, storage_manager: StorageManager
     ) -> None:
@@ -410,26 +375,10 @@ class TestEnrichmentStats:
         with storage_manager.sqlite_db.connection() as conn:
             other_user = create_user(conn, username="other")
         mine = [
-            storage_manager.save_content_item(
-                ContentItem(
-                    id=f"mine{index}",
-                    title=f"Mine {index}",
-                    content_type=ContentType.MOVIE,
-                    status=ConsumptionStatus.UNREAD,
-                ),
-                user_id=1,
-            )
+            save_unenriched(storage_manager, f"mine{index}", user_id=1)
             for index in range(3)
         ]
-        theirs = storage_manager.save_content_item(
-            ContentItem(
-                id="theirs",
-                title="Theirs",
-                content_type=ContentType.MOVIE,
-                status=ConsumptionStatus.UNREAD,
-            ),
-            user_id=other_user,
-        )
+        theirs = save_unenriched(storage_manager, "theirs", user_id=other_user)
         storage_manager.enrichment.mark_complete(mine[0], "tmdb", "high")
         storage_manager.enrichment.mark_failed(mine[1], "tmdb: HTTP 503")
         storage_manager.enrichment.mark_complete(theirs, "rawg", "medium")

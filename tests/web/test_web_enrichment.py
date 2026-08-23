@@ -218,10 +218,11 @@ class TestEnrichmentStats:
     """Tests for GET /api/enrichment/stats endpoint."""
 
     def test_get_stats(self) -> None:
-        """Test getting enrichment statistics."""
+        """Every counted field reaches the response, the CLI's shape included."""
         storage = MagicMock(spec=StorageManager)
-        storage.enrichment.stats.return_value = {
+        stats = {
             "total": 100,
+            "resettable": 88,
             "enriched": 80,
             "pending": 15,
             "not_found": 3,
@@ -229,17 +230,13 @@ class TestEnrichmentStats:
             "by_provider": {"tmdb": 50, "openlibrary": 30},
             "by_quality": {"high": 60, "medium": 20},
         }
+        storage.enrichment.stats.return_value = stats
 
         with _client(storage, {}) as client:
             response = client.get("/api/enrichment/stats")
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["enabled"] is False
-        assert data["total"] == 100
-        assert data["enriched"] == 80
-        assert data["pending"] == 15
-        assert data["by_provider"]["tmdb"] == 50
+        assert response.json() == {"enabled": False, **stats}
 
 
 class TestEnrichmentReset:
