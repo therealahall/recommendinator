@@ -11,6 +11,6 @@ function reload() {
 <template>
   <div v-if="app.showUpdateBanner" class="update-banner visible" role="alert" aria-live="assertive">
     A new version is available.
-    <button class="update-banner-btn" @click="reload">Reload</button>
+    <button class="btn btn-secondary btn-small" @click="reload">Reload</button>
   </div>
 </template>

@@ -219,8 +219,6 @@ async function submit(): Promise<void> {
                file they are meant to fill in — and they need it before the
                upload, not after. -->
           <p v-if="templateUrl" class="import-template">
-            <!-- Carries the button tokens rather than a link colour of its own:
-                 --accent-light reaches only 3.8:1 on Snowstorm's white card. -->
             <a
               class="btn btn-secondary btn-small"
               :href="templateUrl"

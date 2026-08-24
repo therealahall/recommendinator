@@ -129,8 +129,9 @@ between, so a theme that sets those inherits it and need not override it.
 | `--color-info` | `var(--accent)` | Loading, sync |
 
 These are sized for fills and fall under 4.5:1 as text, so `base.css` derives
-`--color-success-text`, `--color-error-text` and `--color-info-text` by mixing
-each toward `--text-primary`. Override the fill and the text colour follows.
+`--color-success-text`, `--color-error-text`, `--color-info-text` and
+`--color-warning-text` by mixing each toward `--text-primary`. Override the fill
+and the text colour follows.
 
 ### Overlays and shadows
 

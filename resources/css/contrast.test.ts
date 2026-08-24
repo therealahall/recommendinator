@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 
-// A profile tag's text is a genre name, so nothing stands in for it and it owes
-// 4.5:1 (WCAG 1.4.3). Measured in both themes, because a theme overrides only
-// tokens and a token move is what breaks this silently.
+// Measured from the real CSS in both themes, because a theme overrides only
+// tokens and a token move is what breaks a floor silently (WCAG 1.4.3).
 
 const AA_NORMAL_TEXT = 4.5
 
@@ -21,7 +20,7 @@ const REJECTED: Record<string, Record<string, [string, string]>> = {
     '2.28': ['var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
   },
   Snowstorm: {
-    '3.21': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+    '4.05': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
   },
 }
 
@@ -342,6 +341,15 @@ const RING_SURFACES = [
   '--bg-sidebar',
 ]
 
+const ACCENT_LIGHT_FILLS: [string, string, string][] = [
+  [
+    'a hovered primary button',
+    ".btn-primary:hover:not(:disabled):not([aria-disabled='true'])",
+    '.btn-primary',
+  ],
+  ['a hovered active pill', '.pill.active:hover', '.pill.active'],
+]
+
 describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
   const ratio = (token: string, surface: string): number =>
@@ -371,6 +379,19 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
 
     expect(contrast(toRgba('var(--accent-light)', vars), bar)).toBeGreaterThanOrEqual(NON_TEXT)
   })
+
+  it.each(ACCENT_LIGHT_FILLS)(
+    '%s keeps its label readable on the --accent-light it fills with',
+    (_label, hoverSelector, labelSelector) => {
+      const base = read(BASE)
+      const fill = declaration(ruleBody(base, hoverSelector), 'background')
+      const text = declaration(ruleBody(base, labelSelector), 'color')
+
+      expect(contrast(toRgba(text, vars), toRgba(fill, vars))).toBeGreaterThanOrEqual(
+        AA_NORMAL_TEXT,
+      )
+    },
+  )
 })
 
 /** Controls that declare both their edge and the fill it encloses. */
@@ -480,7 +501,12 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a content-type badge', BASE, '.badge-type', '--bg-card'],
   ['a score badge', BASE, '.badge-score', '--bg-card'],
   ['a finished-status badge', BASE, '.badge-status', '--bg-card'],
+  ['an unstarted-status badge', BASE, '.badge-status.unread', '--bg-card'],
   ['an in-progress badge', BASE, '.badge-status.currently_consuming', '--bg-card'],
+  ['an ignored badge', BASE, '.badge-ignored', '--bg-card'],
+  ['an unenriched badge', BASE, '.badge-enrichment', '--bg-card'],
+  ['a new version being available', BASE, '.update-banner', '--bg-primary'],
+  ['the Reload button on it', BASE, '.btn-secondary', '--bg-primary'],
   ['a score breakdown', BASE, '.score-details summary', '--bg-card'],
   ['a hovered score breakdown', BASE, '.score-details summary:hover', '--bg-card'],
   ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
