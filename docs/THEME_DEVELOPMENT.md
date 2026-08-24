@@ -171,6 +171,9 @@ radius (`--radius-*`), transitions (`--transition-*`) and layout dimensions
 
 ## Persistence
 
-The selection is saved per user, so it follows them across browsers and devices.
-`localStorage` caches it for fast first paint before preferences load. New users
-get `nord`.
+The selection is a row of its own, in the `user_ui_settings` table, one per
+user — so it follows them across browsers and devices, and `preferences reset`,
+which rewrites the scoring preferences, leaves it alone. Both interfaces reach
+it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`.
+`localStorage` caches it for fast first paint. A user who has picked nothing is
+stored as the empty string and painted `nord`.

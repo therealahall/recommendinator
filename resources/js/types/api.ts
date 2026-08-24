@@ -109,7 +109,6 @@ export interface UserPreferenceResponse {
   variety_penalty: number
   custom_rules: string[]
   content_length_preferences: Record<string, string>
-  theme: string
 }
 
 export interface UserPreferenceUpdateRequest {
@@ -118,7 +117,6 @@ export interface UserPreferenceUpdateRequest {
   variety_penalty?: number
   custom_rules?: string[]
   content_length_preferences?: Record<string, string>
-  theme?: string
 }
 
 // --- Sync ---
@@ -351,6 +349,11 @@ export interface ThemeResponse {
   author: string
   version: string
   theme_type: string
+}
+
+// The stored pick and the built-in default answer in the same shape.
+export interface ThemePreferenceResponse {
+  theme: string
 }
 
 // --- Preference profile ---

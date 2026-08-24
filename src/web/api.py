@@ -1,10 +1,8 @@
 """REST API endpoints."""
 
-import json
 import logging
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from pathlib import Path
 from typing import Annotated, Any, assert_never, cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
@@ -181,6 +179,14 @@ from src.web.state import (
 )
 from src.web.sync_dispatch import build_sync_job
 from src.web.sync_manager import get_sync_manager
+from src.web.themes import (
+    DEFAULT_THEME_ID,
+    MAX_THEME_ID_LENGTH,
+    THEMES_DIR,
+    ThemeResponse,
+    discover_themes,
+    installed_theme_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +290,7 @@ LengthPreferenceName = Annotated[
     ),
 ]
 
-ThemeId = Annotated[str, Field(max_length=UserPreferenceConfig.MAX_THEME_ID_LENGTH)]
+ThemeId = Annotated[str, Field(max_length=MAX_THEME_ID_LENGTH)]
 
 #: ``json.loads`` accepts the ``Infinity`` and ``NaN`` literals and
 #: ``JSONResponse`` refuses to render them, so one stored non-finite weight
@@ -537,7 +543,6 @@ class UserPreferenceResponse(BaseModel):
     )
     custom_rules: list[str]
     content_length_preferences: dict[str, str] = Field(default_factory=dict)
-    theme: str = ""
 
 
 class SyncSourceProgressResponse(BaseModel):
@@ -622,7 +627,6 @@ class UserPreferenceUpdateRequest(BaseModel):
     content_length_preferences: dict[ContentTypeName, LengthPreferenceName] | None = (
         None
     )
-    theme: ThemeId | None = None
 
 
 class IgnoreItemRequest(BaseModel):
@@ -772,15 +776,16 @@ class EnrichmentStatsResponse(BaseModel):
     by_quality: dict[str, int] = Field(default_factory=dict)
 
 
-class ThemeResponse(BaseModel):
-    """Response model for a theme."""
+class ThemePreferenceResponse(BaseModel):
+    """The theme a user's interface paints, empty when they have picked none."""
 
-    id: str
-    name: str
-    description: str
-    author: str
-    version: str
-    theme_type: str
+    theme: str
+
+
+class ThemePreferenceRequest(BaseModel):
+    """Request model for picking a user's theme."""
+
+    theme: ThemeId
 
 
 class SourceFieldSchema(BaseModel):
@@ -1054,54 +1059,6 @@ class DeclineDuplicateRequest(BaseModel):
     other_ids: Annotated[
         list[ItemDbId], Field(min_length=1, max_length=MAX_DECLINE_OTHERS)
     ]
-
-
-def discover_themes(themes_dir: Path) -> list[ThemeResponse]:
-    """Scan the themes directory for valid themes.
-
-    Each theme must be a subdirectory containing a theme.json file
-    with name, description, author, version, and type fields.
-
-    Args:
-        themes_dir: Path to the themes directory.
-
-    Returns:
-        List of theme metadata, sorted alphabetically by directory name.
-    """
-    themes: list[ThemeResponse] = []
-
-    if not themes_dir.is_dir():
-        return themes
-
-    for entry in sorted(themes_dir.iterdir()):
-        if not entry.is_dir():
-            continue
-
-        theme_file = entry / "theme.json"
-        if not theme_file.is_file():
-            continue
-
-        try:
-            raw = json.loads(theme_file.read_text(encoding="utf-8"))
-            themes.append(
-                ThemeResponse(
-                    id=entry.name,
-                    name=raw["name"],
-                    description=raw["description"],
-                    author=raw["author"],
-                    version=raw["version"],
-                    theme_type=raw["type"],
-                )
-            )
-        except (json.JSONDecodeError, KeyError, OSError):
-            # A directory name may hold anything but "/" and NUL, and this one
-            # arrived with whatever theme the operator unpacked.
-            logger.warning(
-                "Skipping invalid theme directory: %s", sanitize_for_log(entry.name)
-            )
-            continue
-
-    return themes
 
 
 def _get_recommendations_config(config: dict[str, Any] | None) -> RecommendationsConfig:
@@ -1868,8 +1825,6 @@ def update_user_preferences(
             existing.content_length_preferences.update(
                 request.content_length_preferences
             )
-        if request.theme is not None:
-            existing.theme = request.theme
 
     # The write is an UPDATE keyed on the id, so it is the write that knows
     # whether the user exists. A pre-check here is a second answer to the same
@@ -2748,8 +2703,6 @@ def regenerate_profile(
 # Theme endpoints
 # ---------------------------------------------------------------------------
 
-THEMES_DIR = Path(__file__).resolve().parent / "static" / "themes"
-
 
 @router.get("/themes", response_model=list[ThemeResponse])
 def list_themes() -> list[ThemeResponse]:
@@ -2765,15 +2718,46 @@ def list_themes() -> list[ThemeResponse]:
 
 @router.get("/themes/default")
 def get_default_theme() -> dict[str, str]:
-    """Get the default theme for new users.
-
-    Returns "nord" as the built-in default. Per-user theme preferences
-    are stored via the user preferences API and take priority.
+    """Get the theme a user who has picked none is painted.
 
     Returns:
         Dictionary with the default theme ID.
     """
-    return {"theme": "nord"}
+    return {"theme": DEFAULT_THEME_ID}
+
+
+@router.get("/users/{user_id}/theme", response_model=ThemePreferenceResponse)
+def get_user_theme(
+    user_id: UserIdPath, storage: RequiredStorage
+) -> ThemePreferenceResponse:
+    """Get the theme this user's interface paints, empty when none is stored.
+
+    Returns:
+        The stored theme id.
+    """
+    return ThemePreferenceResponse(theme=storage.ui_settings.get_theme(user_id))
+
+
+@router.put("/users/{user_id}/theme", response_model=ThemePreferenceResponse)
+def set_user_theme(
+    user_id: UserIdPath, request: ThemePreferenceRequest, storage: RequiredStorage
+) -> ThemePreferenceResponse:
+    """Set the theme this user's interface paints, as ``theme set`` does.
+
+    Returns:
+        The stored theme id.
+
+    Raises:
+        HTTPException: 400 for a theme this install does not have, 404 when
+            nobody carries *user_id*.
+    """
+    if request.theme not in installed_theme_ids(THEMES_DIR):
+        raise HTTPException(status_code=400, detail="Theme not installed.")
+    try:
+        storage.ui_settings.set_theme(user_id, request.theme)
+    except UnknownUserError as error:
+        raise HTTPException(status_code=404, detail="User not found.") from error
+    return ThemePreferenceResponse(theme=request.theme)
 
 
 # ---------------------------------------------------------------------------

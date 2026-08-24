@@ -13,8 +13,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.storage.manager import StorageManager
-from src.web.api import discover_themes, router
+from src.web.api import router
 from src.web.state import app_state
+from src.web.themes import discover_themes
 from tests.factories import authenticated_client
 
 
@@ -44,7 +45,7 @@ def test_client() -> Generator[TestClient, None, None]:
     """Create a test client with minimal state for theme endpoints."""
     original_state = _save_state()
 
-    app_state.config = {"web": {"theme": "nord"}}
+    app_state.config = {}
     app_state.storage = Mock(spec=StorageManager)
 
     with authenticated_client(_mounted_bare()) as client:
@@ -111,36 +112,12 @@ class TestDiscoverThemes:
 class TestThemeEndpoints:
     """Tests for theme API endpoints."""
 
-    def test_list_themes_returns_builtin_themes(self, test_client: TestClient) -> None:
-        """GET /api/themes returns the built-in themes."""
-        response = test_client.get("/api/themes")
-
-        assert response.status_code == 200
-        themes = response.json()
-        theme_ids = [theme["id"] for theme in themes]
-        assert "nord" in theme_ids
-
-    def test_get_default_theme_returns_config_value(
-        self,
-        test_client: TestClient,
+    def test_the_default_is_a_theme_this_install_ships(
+        self, test_client: TestClient
     ) -> None:
-        """GET /api/themes/default returns the configured default theme."""
-        response = test_client.get("/api/themes/default")
+        """Naming one it does not leaves a new user's first paint on a 404."""
+        default = test_client.get("/api/themes/default").json()["theme"]
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["theme"] == "nord"
-
-    def test_get_default_theme_falls_back_to_nord(self) -> None:
-        """GET /api/themes/default falls back to nord when not configured."""
-        original_state = _save_state()
-        app_state.config = {"web": {}}
-        app_state.storage = Mock(spec=StorageManager)
-
-        with authenticated_client(_mounted_bare()) as client:
-            response = client.get("/api/themes/default")
-
-        _restore_state(original_state)
-
-        assert response.status_code == 200
-        assert response.json()["theme"] == "nord"
+        assert default in [
+            theme["id"] for theme in test_client.get("/api/themes").json()
+        ]

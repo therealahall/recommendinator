@@ -87,6 +87,7 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
+from src.web.themes import discover_themes
 from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
@@ -1172,7 +1173,7 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
     """A partial update merges onto what was stored, not onto the defaults."""
     back_mock_preference_store(
         mock_components["storage"],
-        UserPreferenceConfig(theme="midnight", custom_rules=["no horror"]),
+        UserPreferenceConfig(series_in_order=False, custom_rules=["no horror"]),
     )
 
     response = client.put(
@@ -1183,7 +1184,7 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
     assert response.status_code == 200
     data = response.json()
     assert data["variety_penalty"] == 1.0
-    assert data["theme"] == "midnight"
+    assert data["series_in_order"] is False
     assert data["custom_rules"] == ["no horror"]
 
 
@@ -1206,7 +1207,6 @@ def test_put_user_preferences_merges_for_the_user_named_in_the_path(
     assert merge.call_args.args[0] == 2
 
 
-_OVER_LONG_THEME_ID = "k" * (UserPreferenceConfig.MAX_THEME_ID_LENGTH + 1)
 _CONTENT_TYPE_NAMES = [member.value for member in ContentType]
 
 
@@ -1234,7 +1234,6 @@ class TestUserPreferenceBounds:
                 },
                 id="over-long-rule",
             ),
-            pytest.param({"theme": _OVER_LONG_THEME_ID}, id="over-long-theme"),
         ],
     )
     def test_an_over_long_payload_is_rejected_rather_than_persisted(
@@ -1257,7 +1256,6 @@ class TestUserPreferenceBounds:
         bytes would cut this one to a quarter of the documented 500.
         """
         merge = back_mock_preference_store(mock_components["storage"])
-        at_bound_theme_id = "k" * UserPreferenceConfig.MAX_THEME_ID_LENGTH
         at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
 
         response = client.put(
@@ -1268,7 +1266,6 @@ class TestUserPreferenceBounds:
                 "content_length_preferences": dict.fromkeys(
                     _CONTENT_TYPE_NAMES, "long"
                 ),
-                "theme": at_bound_theme_id,
             },
         )
 
@@ -1279,7 +1276,6 @@ class TestUserPreferenceBounds:
             _CONTENT_TYPE_NAMES, "long"
         )
         assert body["custom_rules"][0] == at_bound_rule
-        assert body["theme"] == at_bound_theme_id
         merge.assert_called_once()
 
     @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
@@ -1441,7 +1437,6 @@ class TestPreferenceReset:
                 "variety_penalty": 3.0,
                 "custom_rules": ["no horror"],
                 "content_length_preferences": {"book": "short"},
-                "theme": "midnight",
             },
         )
 
@@ -1452,11 +1447,57 @@ class TestPreferenceReset:
         stored = client.get("/api/users/1/preferences")
         assert stored.json() == UserPreferenceConfig().to_dict()
 
+    def test_the_chosen_theme_survives_the_reset(self, settings_app):
+        """Regression: the theme rode in the preference blob this write
+        replaces, so resetting the scoring preferences reverted it."""
+        client, _storage = settings_app
+        client.put("/api/users/1/theme", json={"theme": "snowstorm"})
+
+        client.delete("/api/users/1/preferences")
+
+        assert client.get("/api/users/1/theme").json() == {"theme": "snowstorm"}
+
     def test_a_reset_naming_an_unknown_user_is_refused(self, settings_app):
         """As the CLI's is, rather than reporting a write it did not make."""
         client, _storage = settings_app
 
         response = client.delete("/api/users/999/preferences")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "User not found."
+
+
+class TestThemeEndpoints:
+    """The theme is per-user state of its own, reachable from both interfaces."""
+
+    def test_a_picked_theme_reads_back(self, settings_app):
+        client, _storage = settings_app
+
+        written = client.put("/api/users/1/theme", json={"theme": "snowstorm"})
+
+        assert written.status_code == 200
+        assert written.json() == {"theme": "snowstorm"}
+        assert client.get("/api/users/1/theme").json() == {"theme": "snowstorm"}
+
+    def test_a_user_who_has_picked_nothing_reads_empty(self, settings_app):
+        """The client resolves the default, as it does for a retired theme."""
+        client, _storage = settings_app
+
+        assert client.get("/api/users/1/theme").json() == {"theme": ""}
+
+    def test_a_theme_this_install_does_not_have_is_refused(self, settings_app):
+        """Stored, it would name a stylesheet no request can fetch."""
+        client, _storage = settings_app
+
+        response = client.put("/api/users/1/theme", json={"theme": "../evil"})
+
+        assert response.status_code == 400
+        assert client.get("/api/users/1/theme").json() == {"theme": ""}
+
+    def test_a_pick_naming_an_unknown_user_is_refused(self, settings_app):
+        client, _storage = settings_app
+
+        response = client.put("/api/users/999/theme", json={"theme": "snowstorm"})
 
         assert response.status_code == 404
         assert response.json()["detail"] == "User not found."
@@ -3970,6 +4011,19 @@ _GUARDED_ENDPOINTS = [
         url="/api/users/1/preferences",
     ),
     _Endpoint(
+        "GET",
+        "/api/users/{user_id}/theme",
+        ("storage",),
+        url="/api/users/1/theme",
+    ),
+    _Endpoint(
+        "PUT",
+        "/api/users/{user_id}/theme",
+        ("storage",),
+        url="/api/users/1/theme",
+        body={"theme": "nord"},
+    ),
+    _Endpoint(
         "POST",
         "/api/complete",
         ("storage",),
@@ -4959,8 +5013,10 @@ class TestOverlappingPreferenceWritesRegression:
             ),
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
-            theme = pool.submit(
-                client.put, "/api/users/1/preferences", json={"theme": "midnight"}
+            rules = pool.submit(
+                client.put,
+                "/api/users/1/preferences",
+                json={"custom_rules": ["no horror"]},
             )
             assert parked.wait(timeout=_STALL_TIMEOUT_SECONDS)
 
@@ -4969,17 +5025,17 @@ class TestOverlappingPreferenceWritesRegression:
                 "/api/users/1/preferences",
                 json={"scorer_weights": {"genre_match": 3.0}},
             )
-            # Merged in the handler, the second request reads the pre-theme
-            # blob and finishes here rather than waiting for the save lock.
+            # Merged in the handler, the second request reads the pre-rule blob
+            # and finishes here rather than waiting for the save lock.
             with pytest.raises(TimeoutError):
                 weights.result(timeout=_BLOCKED_GRACE_SECONDS)
 
             release.set()
-            assert theme.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
+            assert rules.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
             assert weights.result(timeout=_STALL_TIMEOUT_SECONDS).status_code == 200
 
         stored = storage.get_user_preference_config(1)
-        assert stored.theme == "midnight"
+        assert stored.custom_rules == ["no horror"]
         assert stored.scorer_weights == {"genre_match": 3.0}
 
 
@@ -5167,12 +5223,12 @@ class TestANonUtf8ThemeNameStillWritesItsWarningRegression:
         log_file = tmp_path / "app.log"
         handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(levelname)s | %(message)s"))
-        api_logger = logging.getLogger("src.web.api")
-        api_logger.addHandler(handler)
+        themes_logger = logging.getLogger("src.web.themes")
+        themes_logger.addHandler(handler)
         try:
-            assert src.web.api.discover_themes(tmp_path) == []
+            assert discover_themes(tmp_path) == []
         finally:
-            api_logger.removeHandler(handler)
+            themes_logger.removeHandler(handler)
             handler.close()
 
         written = log_file.read_text(encoding="utf-8")

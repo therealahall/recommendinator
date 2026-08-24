@@ -57,17 +57,8 @@ function answerBoot(storedTheme: string) {
     const path = String(url)
     if (path === '/api/themes') return Promise.resolve(jsonResponse(200, THEMES))
     if (path === '/api/themes/default') return Promise.resolve(jsonResponse(200, { theme: 'nord' }))
-    if (path === '/api/users/1/preferences') {
-      return Promise.resolve(
-        jsonResponse(200, {
-          scorer_weights: {},
-          series_in_order: true,
-          variety_penalty: 0,
-          content_length_preferences: {},
-          custom_rules: [],
-          theme: storedTheme,
-        }),
-      )
+    if (path === '/api/users/1/theme') {
+      return Promise.resolve(jsonResponse(200, { theme: storedTheme }))
     }
     return Promise.resolve(
       jsonResponse(200, {
@@ -134,7 +125,7 @@ describe('App', () => {
       painted: 'snowstorm',
     },
     {
-      browser: 'the default again, once a reset elsewhere cleared the stored theme',
+      browser: 'the default, on a browser caching a theme this user never picked',
       cached: 'snowstorm',
       stored: '',
       painted: 'nord',
@@ -142,8 +133,8 @@ describe('App', () => {
   ]
 
   // Regression: boot painted the cache, or the config default when there was
-  // none, so a pick or a reset made elsewhere arrived only on the Preferences
-  // page, flipping the theme as it mounted.
+  // none, so a pick made elsewhere arrived only on the Preferences page,
+  // flipping the theme as it mounted.
   it.each(BOOTS)('boots on $browser', async ({ cached, stored, painted }) => {
     vi.spyOn(useAppStore(), 'fetchStatus').mockResolvedValue(undefined)
     if (cached) localStorage.setItem('theme', cached)

@@ -21,7 +21,6 @@ function preferences(customRules: string[] = []) {
     variety_penalty: 0.0,
     content_length_preferences: {},
     custom_rules: customRules,
-    theme: 'nord',
   }
 }
 
@@ -157,6 +156,15 @@ describe('PreferencesPage', () => {
 
     expect(mockDelete).toHaveBeenCalledWith('/users/1/preferences')
     expect(wrapper.text()).not.toContain('prefer westerns')
+  })
+
+  it('does not offer to clear the theme, which the reset leaves alone', async () => {
+    const { wrapper } = await mountPage()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await wrapper.findAll('button').find((b) => b.text() === 'Reset to defaults')!.trigger('click')
+
+    expect(String(confirm.mock.calls[0][0])).not.toMatch(/theme/i)
   })
 
   // A button disabled mid-request is blurred by the browser, dropping the

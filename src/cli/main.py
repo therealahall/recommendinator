@@ -22,6 +22,7 @@ from src.cli.commands import (
     settings,
     source,
     status,
+    theme,
     update,
 )
 from src.config.service import (
@@ -154,6 +155,7 @@ cli.add_command(library)
 cli.add_command(profile)
 cli.add_command(source)
 cli.add_command(settings)
+cli.add_command(theme)
 
 
 if __name__ == "__main__":
