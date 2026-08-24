@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import StatusBar from './StatusBar.vue'
 import { useAppStore } from '@/stores/app'
@@ -82,5 +82,56 @@ describe('StatusBar', () => {
     await wrapper.find('[data-testid="status-retry"]').trigger('click')
 
     expect(retry).toHaveBeenCalled()
+  })
+
+  it('says something new while the retry runs, so a repeat failure is announced', async () => {
+    const app = useAppStore()
+    let settle: () => void = () => {}
+    vi.spyOn(app, 'fetchStatus').mockImplementation(
+      () => new Promise((resolve) => { settle = () => resolve() }),
+    )
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
+    const wrapper = mount(StatusBar)
+    const failure = wrapper.find('.status-bar').text()
+
+    await wrapper.find('[data-testid="status-retry"]').trigger('click')
+
+    expect(wrapper.find('.status-bar').text()).not.toBe(failure)
+
+    settle()
+    await flushPromises()
+
+    expect(wrapper.find('.status-bar').text()).toBe(failure)
+  })
+
+  it('keeps Try again focusable while the retry is in flight', async () => {
+    const app = useAppStore()
+    vi.spyOn(app, 'fetchStatus').mockImplementation(() => new Promise(() => {}))
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
+    const wrapper = mount(StatusBar, { attachTo: document.body })
+    const button = wrapper.find('[data-testid="status-retry"]')
+    ;(button.element as HTMLButtonElement).focus()
+
+    await button.trigger('click')
+
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(document.activeElement).toBe(button.element)
+    wrapper.unmount()
+  })
+
+  it('does not ask the server twice while the first attempt is in flight', async () => {
+    const app = useAppStore()
+    const retry = vi.spyOn(app, 'fetchStatus').mockImplementation(() => new Promise(() => {}))
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
+    const wrapper = mount(StatusBar)
+    const button = wrapper.find('[data-testid="status-retry"]')
+
+    await button.trigger('click')
+    await button.trigger('click')
+
+    expect(retry).toHaveBeenCalledTimes(1)
   })
 })

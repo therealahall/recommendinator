@@ -1,7 +1,18 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
+const retrying = ref(false)
+
+const message = computed(() => (retrying.value ? 'Reconnecting…' : app.statusMessage))
+
+async function retry(): Promise<void> {
+  if (retrying.value) return
+  retrying.value = true
+  await app.fetchStatus()
+  retrying.value = false
+}
 </script>
 
 <template>
@@ -16,13 +27,14 @@ const app = useAppStore()
       loading: app.status === 'loading',
     }"
   >
-    {{ app.statusMessage }}
+    {{ message }}
     <button
       v-if="app.status === 'error'"
       type="button"
       class="btn btn-secondary btn-small"
       data-testid="status-retry"
-      @click="app.fetchStatus()"
+      :aria-disabled="retrying || undefined"
+      @click="retry"
     >
       Try again
     </button>
