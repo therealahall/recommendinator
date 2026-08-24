@@ -113,7 +113,6 @@ def account_set_password(ctx: click.Context, user_id: int, output_format: str) -
 
     try:
         storage.accounts.revoke_all_sessions(user_id)
-        storage.accounts.purge_expired_sessions()
     except Exception as error:
         abort_after_failure(ctx, SESSION_SWEEP_FAILED, error)
 

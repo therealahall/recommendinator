@@ -11,6 +11,7 @@ from typing import Any
 import click
 
 from src.cli._shared import abort_after_failure
+from src.cli.commands._enrichment import run_enrichment
 from src.config.service import auto_enrich_enabled
 from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
@@ -27,6 +28,7 @@ from src.ingestion.sync import (
 from src.sources.service import (
     ResolvedInput,
     build_sources_view,
+    enrichment_content_type,
     get_available_sync_sources,
     misconfigured_detail,
     redact_credentials,
@@ -316,20 +318,32 @@ def update(
     view = _status_view(label, results, started_at, datetime.now())
     job = view["jobs"][0]
 
-    if output_format == "json":
+    json_output = output_format == "json"
+    if json_output:
         click.echo(json.dumps(view, indent=2))
-        return
-
-    for source_view, result, entry in zip(job["sources"], results, valid, strict=True):
-        click.echo(
-            f"  {entry.plugin.display_name} ({entry.source_id}): {_counts(source_view)}"
-        )
-        for message in result.errors:
-            click.echo(f"    Warning: {message}", err=True)
-
-    if job["items_processed"] == 0:
-        click.echo(
-            "No items were updated. Check your configuration and source settings."
-        )
     else:
-        click.echo(f"Total: {_counts(job)}.")
+        for source_view, result, entry in zip(
+            job["sources"], results, valid, strict=True
+        ):
+            click.echo(
+                f"  {entry.plugin.display_name} ({entry.source_id}): "
+                f"{_counts(source_view)}"
+            )
+            for message in result.errors:
+                click.echo(f"    Warning: {message}", err=True)
+
+        if job["items_processed"] == 0:
+            click.echo(
+                "No items were updated. Check your configuration and source settings."
+            )
+        else:
+            click.echo(f"Total: {_counts(job)}.")
+
+    # The web enriches off the same two conditions, on the same completion
+    # hook. Here the run is waited on rather than backgrounded: this process
+    # exits, and its claim would outlive it.
+    if auto_enrich and job["status"] == "completed":
+        if not run_enrichment(
+            storage, config, enrichment_content_type(valid), err=json_output
+        ):
+            click.echo("Enrichment is already running; left to finish.", err=True)

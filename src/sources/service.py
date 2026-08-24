@@ -24,6 +24,7 @@ from src.ingestion.schedule import (
 )
 from src.ingestion.urls import CredentialHost, NoOrigin, UrlOrigin, url_origin
 from src.models.config_field import ConfigField
+from src.models.content import ContentType
 from src.utils.dates import parse_iso_timestamp, utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
 
@@ -287,6 +288,28 @@ def resolve_inputs(
         )
 
     return resolved
+
+
+def enrichment_content_type(resolved: list[ResolvedInput]) -> ContentType | None:
+    """Shared so the web's auto-start and ``update`` narrow a run alike."""
+    # Anything but one source enriches every type: nothing narrows a mixed run.
+    if len(resolved) != 1:
+        return None
+    # str() at the read, not at the log call: config.yaml can put anything
+    # here, and ContentType refuses a non-member either way.
+    raw_content_type = resolved[0].config.get("content_type")
+    content_type_str = str(raw_content_type) if raw_content_type else ""
+    if not content_type_str:
+        return None
+    try:
+        return ContentType(content_type_str)
+    except ValueError:
+        logger.warning(
+            "Invalid content_type '%s' for source %s, enriching all types",
+            sanitize_for_log(content_type_str),
+            sanitize_for_log(resolved[0].source_id),
+        )
+        return None
 
 
 def configured_source_plugins(

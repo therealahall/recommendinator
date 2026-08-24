@@ -734,6 +734,122 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
     assert storage.sync_runs.claim(1, "steam") is True
 
 
+@pytest.mark.parametrize("auto_enrich", [True, False])
+def test_update_enriches_what_it_synced_unless_auto_enrich_is_off(
+    tmp_path: Path, auto_enrich: bool
+) -> None:
+    """A web sync enriched on completion and ``update`` only queued, so items
+    synced from a terminal stayed unenriched until someone opened the UI."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "enrichment": {"enabled": True, "auto_enrich_on_sync": auto_enrich},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code == 0, result.output
+    record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
+    assert record.items_processed == (1 if auto_enrich else 0)
+    assert (record.started_at is not None) is auto_enrich
+    # The command waits the run out: a backgrounded one dies with the process
+    # and leaves the claim held until it goes stale.
+    assert record.running is False
+
+
+def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> None:
+    """The enrichment summary on stdout would break ``update --format json | jq``."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "enrichment": {"enabled": True, "auto_enrich_on_sync": True},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner(mix_stderr=False).invoke(
+            cli, ["update", "--source", "steam", "--format", "json"]
+        )
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["jobs"][0]["status"] == "completed"
+    # Anchors the parse above, which a run that never enriched also satisfies.
+    record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
+    assert record.items_processed == 1
+
+
+def test_update_leaves_the_enrichment_run_the_server_already_owns(
+    tmp_path: Path,
+) -> None:
+    """The operator syncs from a terminal while the web UI is mid-enrichment."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "enrichment": {"enabled": True, "auto_enrich_on_sync": True},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    storage = StorageManager(sqlite_path=db_path)
+    assert storage.enrichment_jobs.claim(None) is True
+    games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code == 0, result.output
+    record = storage.enrichment_jobs.read()
+    assert record.running is True
+    assert record.finished_at is None
+
+
 def test_update_refuses_a_source_another_process_is_already_syncing(
     tmp_path: Path,
 ) -> None:
