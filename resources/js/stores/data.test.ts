@@ -913,6 +913,32 @@ describe('useDataStore', () => {
       ).rejects.toBeInstanceOf(ApiError)
     })
 
+    it('loadSourceRuns asks for that source only and caches what came back', async () => {
+      const runs = [
+        {
+          source_id: 'steam',
+          started_at: '2026-08-17T10:00:00+00:00',
+          finished_at: '2026-08-17T10:00:30+00:00',
+          status: 'failed',
+          items_added: 0,
+          items_updated: 0,
+          items_unchanged: 0,
+          total_items: 0,
+          errors: ['Steam API returned 401 Unauthorized'],
+        },
+      ]
+      mockGet.mockResolvedValueOnce(runs)
+
+      const store = useDataStore()
+      await store.loadSourceRuns('steam')
+
+      expect(mockGet).toHaveBeenCalledWith('/sync/runs', {
+        source_id: 'steam',
+        limit: 10,
+      })
+      expect(store.sourceRuns.steam).toEqual(runs)
+    })
+
     it('loadAvailablePlugins caches the plugins and what failed to load', async () => {
       const plugins = [
         {
@@ -1000,6 +1026,7 @@ describe('useDataStore', () => {
         goner: { enabled: true, connected: true, authUrl: null },
       }
       store.oauthMessages = { goner: 'Disconnected. You can reconnect below.' }
+      store.sourceRuns = { goner: [] }
 
       await store.deleteSource('goner')
 
@@ -1010,6 +1037,7 @@ describe('useDataStore', () => {
       // of that name a connection state and an announcement it never earned.
       expect(store.oauthStatus.goner).toBeUndefined()
       expect(store.oauthMessages.goner).toBeUndefined()
+      expect(store.sourceRuns.goner).toBeUndefined()
     })
 
     it('drops a status read still in flight when the source is deleted', async () => {

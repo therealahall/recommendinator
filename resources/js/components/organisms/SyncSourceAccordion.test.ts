@@ -468,7 +468,21 @@ describe('SyncSourceAccordion', () => {
     expect(status.attributes('role')).toBe('alert')
   })
 
-  describe('schedule', () => {
+  describe('schedule and run history', () => {
+    function failedRun(message: string) {
+      return {
+        source_id: 'steam',
+        started_at: TWO_HOURS_AGO,
+        finished_at: TWO_HOURS_AGO,
+        status: 'failed',
+        items_added: 0,
+        items_updated: 0,
+        items_unchanged: 0,
+        total_items: 0,
+        errors: [message],
+      }
+    }
+
     it('states the last run, its outcome and the next one without expanding', () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
@@ -626,6 +640,86 @@ describe('SyncSourceAccordion', () => {
       const status = wrapper.get('[data-testid="cadence-status-steam"]')
       expect(status.text()).toContain('refused')
       expect(status.attributes('role')).toBe('alert')
+    })
+
+    it('fetches the run history when the disclosure opens, not on page load', async () => {
+      // Spied before the mount, or the page-load half below asserts nothing.
+      const store = useDataStore()
+      const loadRuns = vi
+        .spyOn(store, 'loadSourceRuns')
+        .mockImplementation(async (id: string) => {
+          store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
+          return store.sourceRuns[id]
+        })
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      await flushPromises()
+
+      expect(loadRuns).not.toHaveBeenCalled()
+
+      const toggle = wrapper.get('[data-testid="run-history-toggle-steam"]')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      await toggle.trigger('click')
+      await flushPromises()
+
+      expect(loadRuns).toHaveBeenCalledWith('steam')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      // As reported: a failed sync showed a count and no way to see the cause.
+      expect(wrapper.get('[data-testid="run-history-steam"]').text()).toContain(
+        'Steam API returned 401 Unauthorized',
+      )
+    })
+
+    it('reports a run-history read that failed rather than saying nothing', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockRejectedValue(
+        new Error('Service Unavailable'),
+      )
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="run-history-status-steam"]').text()).toContain(
+        'Service Unavailable',
+      )
+    })
+
+    it('says something when a source has no runs instead of opening onto nothing', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: neverSyncedSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockResolvedValue([])
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="run-history-status-steam"]').text()).not.toBe(
+        '',
+      )
+    })
+
+    it('shows the item errors of a run that completed, not only of a failed one', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      const partial = { ...failedRun('book 12 has no title'), status: 'completed' }
+      vi.spyOn(store, 'loadSourceRuns').mockImplementation(async (id: string) => {
+        store.sourceRuns[id] = [partial]
+        return store.sourceRuns[id]
+      })
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="run-history-steam"]').text()).toContain(
+        'book 12 has no title',
+      )
     })
   })
 

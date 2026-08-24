@@ -149,6 +149,19 @@ export interface SyncSourceResponse {
   next_run_at: string | null
 }
 
+/** One finished sync run, newest first from GET /sync/runs. */
+export interface SyncRunResponse {
+  source_id: string
+  started_at: string
+  finished_at: string
+  status: string
+  items_added: number
+  items_updated: number
+  items_unchanged: number
+  total_items: number
+  errors: string[]
+}
+
 /** A cadence preset. Server-side, so no interface retypes the list. */
 export interface SyncIntervalOption {
   key: string

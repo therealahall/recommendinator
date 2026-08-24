@@ -9,6 +9,7 @@ import type {
   SyncStatusResponse,
   SyncErrorResponse,
   SyncJobResponse,
+  SyncRunResponse,
   EnrichmentStatsResponse,
   EnrichmentJobStatusResponse,
   SourceSchemaResponse,
@@ -613,6 +614,7 @@ export const useDataStore = defineStore('data', () => {
 
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
   const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
+  const sourceRuns = ref<Record<string, SyncRunResponse[]>>({})
   const availablePlugins = ref<PluginInfoResponse[]>([])
   const pluginImportErrors = ref<PluginImportErrorResponse[]>([])
 
@@ -701,6 +703,20 @@ export const useDataStore = defineStore('data', () => {
     syncSources.value = await api.get<SyncSourceResponse[]>('/sync/sources')
   }
 
+  /** Called when the history disclosure opens, so a page load is not one of
+   *  these per row. */
+  async function loadSourceRuns(
+    sourceId: string,
+    limit = 10,
+  ): Promise<SyncRunResponse[]> {
+    const runs = await api.get<SyncRunResponse[]>('/sync/runs', {
+      source_id: sourceId,
+      limit,
+    })
+    sourceRuns.value = { ...sourceRuns.value, [sourceId]: runs }
+    return runs
+  }
+
   async function loadAvailablePlugins(): Promise<PluginInfoResponse[]> {
     const view = await api.get<PluginListResponse>('/plugins')
     availablePlugins.value = view.plugins
@@ -732,6 +748,9 @@ export const useDataStore = defineStore('data', () => {
     const remainingSchemas = { ...sourceSchemas.value }
     delete remainingSchemas[sourceId]
     sourceSchemas.value = remainingSchemas
+    const remainingRuns = { ...sourceRuns.value }
+    delete remainingRuns[sourceId]
+    sourceRuns.value = remainingRuns
     const remainingStatus = { ...oauthStatus.value }
     delete remainingStatus[sourceId]
     oauthStatus.value = remainingStatus
@@ -797,6 +816,7 @@ export const useDataStore = defineStore('data', () => {
     enrichmentEnabled,
     sourceSchemas,
     sourceConfigs,
+    sourceRuns,
     availablePlugins,
     pluginImportErrors,
     importers,
@@ -829,6 +849,7 @@ export const useDataStore = defineStore('data', () => {
     clearSourceSecret,
     setSourceEnabled,
     setSourceSchedule,
+    loadSourceRuns,
     loadAvailablePlugins,
     createSource,
     deleteSource,

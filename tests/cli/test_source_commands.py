@@ -34,14 +34,21 @@ def storage(tmp_path: Path) -> StorageManager:
 
 
 def _record_run(
-    storage: StorageManager, *, status: SyncRunStatus = "completed"
+    storage: StorageManager,
+    *,
+    source_id: str = "my_books",
+    status: SyncRunStatus = "completed",
+    minute: int = 0,
+    errors: tuple[str, ...] = (),
 ) -> None:
+    started_at = _RUN_START + timedelta(minutes=minute)
     storage.sync_runs.record(
         1,
-        "my_books",
-        started_at=_RUN_START,
-        finished_at=_RUN_START + timedelta(seconds=30),
+        source_id,
+        started_at=started_at,
+        finished_at=started_at + timedelta(seconds=30),
         status=status,
+        errors=errors,
     )
 
 
@@ -312,6 +319,84 @@ class TestSourceSchedule:
         )
 
         assert result.exit_code != 0
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestSourceHistory:
+    def test_history_json_reports_runs_newest_first_in_the_api_key_set(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        failures = ("429 from the API", "book 12 has no title", "timed out")
+        _record_run(storage, minute=0)
+        _record_run(storage, minute=10, status="failed", errors=failures)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert [run["status"] for run in payload] == ["failed", "completed"]
+        assert payload[0]["errors"] == list(failures)
+        # Exact key match against SyncRunResponse, so a key added on one side
+        # without the other is caught immediately.
+        assert set(payload[0].keys()) == {
+            "source_id",
+            "started_at",
+            "finished_at",
+            "status",
+            "items_added",
+            "items_updated",
+            "items_unchanged",
+            "total_items",
+            "errors",
+        }
+
+    def test_history_with_nothing_recorded_is_an_empty_json_list_not_prose(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        as_json = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+        as_table = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert json.loads(as_json.output) == []
+        assert "No sync runs recorded." in as_table.output
+
+    def test_history_without_a_source_id_spans_every_source_and_limit_trims_it(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        _record_run(storage, source_id="my_books", minute=0)
+        _record_run(storage, source_id="my_games", minute=10)
+
+        newest = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "--limit", "1", "--format", "json"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert [run["source_id"] for run in json.loads(newest.output)] == ["my_games"]
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

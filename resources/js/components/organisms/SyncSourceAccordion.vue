@@ -111,6 +111,23 @@ const syncLabel = computed(() =>
   props.syncing && props.source.enabled ? 'Syncing…' : 'Sync',
 )
 
+const runsLoading = ref(false)
+const runsError = ref('')
+const runs = computed(() => data.sourceRuns[props.source.id] ?? [])
+
+async function onOpenRunHistory(): Promise<void> {
+  if (runsLoading.value) return
+  runsLoading.value = true
+  runsError.value = ''
+  try {
+    await data.loadSourceRuns(props.source.id)
+  } catch (err) {
+    runsError.value = err instanceof Error ? err.message : 'Unknown error'
+  } finally {
+    runsLoading.value = false
+  }
+}
+
 const intervalOptions = computed(() => schema.value?.sync_intervals ?? [])
 // Only the schema carries the labels, so a collapsed row reads the raw key.
 const intervalLabel = computed(
@@ -158,10 +175,15 @@ const intervalLabel = computed(
     <template #notice>
       <SourceSyncSchedule
         :source-id="source.id"
+        :source-name="source.display_name"
         :interval-label="intervalLabel"
         :last-run-at="source.last_run_at"
         :last-run-status="source.last_run_status"
         :next-run-at="source.next_run_at"
+        :runs="runs"
+        :loading="runsLoading"
+        :error="runsError"
+        @open="onOpenRunHistory"
       />
       <SourceSyncOutcome
         :source-id="source.id"
