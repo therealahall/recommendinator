@@ -32,11 +32,6 @@ const messages = computed<string[]>(() => {
     .map((entry) => entry.message)
 })
 
-// One entry per failed item, so a large library failing item by item would
-// otherwise push the rest of the page off screen.
-const MAX_SHOWN = 5
-const shown = computed<string[]>(() => messages.value.slice(0, MAX_SHOWN))
-const unshown = computed<number>(() => Math.max(0, messages.value.length - MAX_SHOWN))
 const title = computed<string>(() => `Last sync errors for ${props.sourceName}`)
 const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId))
 </script>
@@ -61,8 +56,9 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
       data-testid="source-sync-errors"
       :aria-labelledby="titleId"
     >
-      <li v-for="(message, index) in shown" :key="index">{{ message }}</li>
-      <li v-if="unshown">… and {{ unshown }} more</li>
+      <!-- Rendered whole: the sync executor caps the list and writes its own
+           tail, so a second cap here would append a second one. -->
+      <li v-for="(message, index) in messages" :key="index">{{ message }}</li>
     </ul>
   </div>
 </template>

@@ -619,6 +619,25 @@ describe('SyncSourceAccordion', () => {
       expect(select.attributes('aria-describedby')).toBe(status.attributes('id'))
     })
 
+    it('clears a refusal the operator read before collapsing the row', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      vi.spyOn(store, 'setSourceSchedule').mockRejectedValue(new Error('refused'))
+
+      const trigger = wrapper.find('button.accordion-trigger')
+      await trigger.trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="cadence-select-steam"]').setValue('off')
+      await flushPromises()
+      await trigger.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="cadence-status-steam"]').text()).toBe('')
+    })
+
     it('keeps a refusal that landed while the row was collapsed', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false },
@@ -1029,9 +1048,9 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.text()).not.toContain('Other thing')
     })
 
-    it('caps this source after the filter, not job.errors before it', () => {
-      // Capping job.errors first leaves a source whose failures all fall past
-      // the cap rendering nothing, on the umbrella run that produced them.
+    it('renders every message the server sent for this source', () => {
+      // The sync executor caps the list and writes its own tally, so a second
+      // cap here hides messages and appends a second '… and N more'.
       const job = makeJob({
         source: 'All Sources',
         status: 'completed',
@@ -1054,14 +1073,9 @@ describe('SyncSourceAccordion', () => {
         .get('[data-testid="source-sync-errors"]')
         .findAll('li')
         .map((li) => li.text())
-      expect(items).toEqual([
-        'Steam 0 failed',
-        'Steam 1 failed',
-        'Steam 2 failed',
-        'Steam 3 failed',
-        'Steam 4 failed',
-        '… and 1 more',
-      ])
+      expect(items).toEqual(
+        Array.from({ length: 6 }, (_, index) => `Steam ${index} failed`),
+      )
     })
 
     it('shows only the errors belonging to this source', () => {

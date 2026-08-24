@@ -35,6 +35,7 @@ from src.enrichment.manager import EnrichmentManager
 from src.ingestion.paths import get_allowed_source_roots
 from src.ingestion.sync import (
     ALL_SOURCES_KEY,
+    MAX_REPORTED_ERRORS,
     SyncResult,
     SyncResultCallback,
     already_syncing_detail,
@@ -770,7 +771,7 @@ def test_update_endpoint_steam(client, mock_components):
     }
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
-    sync_manager.start_sync.return_value = (True, "Started sync for Steam")
+    sync_manager.start_sync.return_value = None
 
     with patch("src.web.api.get_sync_manager", return_value=sync_manager):
         response = client.post("/api/update", json={"source": "steam"})
@@ -1002,7 +1003,7 @@ class TestUpdateResolvesTheSourceOnceRegression:
         }
         sync_manager = Mock(spec=SyncManager)
         sync_manager.is_running.return_value = False
-        sync_manager.start_sync.return_value = (True, "Started sync for Probe Me 42")
+        sync_manager.start_sync.return_value = None
 
         with (
             patch("src.web.api.get_sync_manager", return_value=sync_manager),
@@ -1032,7 +1033,7 @@ def _sync_a_source_typed(client, content_type):
     }
     sync_manager = Mock(spec=SyncManager)
     sync_manager.is_running.return_value = False
-    sync_manager.start_sync.return_value = (True, "Started sync for Typed")
+    sync_manager.start_sync.return_value = None
     enrichment_manager = Mock(spec=EnrichmentManager)
     enrichment_manager.start_enrichment.return_value = True
 
@@ -2646,7 +2647,7 @@ class TestUpdateEndpoint409Conflict:
         with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.is_running.return_value = False
-            mock_manager.start_sync.return_value = (False, "Sync already in progress")
+            mock_manager.start_sync.return_value = "Sync already in progress"
             mock_get_sync_manager.return_value = mock_manager
 
             with patch(
@@ -2895,10 +2896,10 @@ class TestUpdateEndpointParallelSync:
         # Patch Thread so start_sync's daemon thread never runs and the
         # planted per-source progress survives until /sync/status is hit.
         with patch("src.web.sync_manager.threading.Thread"):
-            success, _ = manager.start_sync(
+            refusal = manager.start_sync(
                 source="All Sources", sync_function=lambda _job: 0
             )
-        assert success
+        assert refusal is None
 
         manager.update_progress(
             source="All Sources",
@@ -2941,13 +2942,11 @@ class TestUpdateEndpointParallelSync:
         with patch("src.web.sync_manager.threading.Thread"):
             # Insert in REVERSE alphabetical order so the assertion
             # below proves sorting, not insertion order.
-            ok_steam, _ = manager.start_sync(
-                source="Steam", sync_function=lambda _job: 0
-            )
-            ok_goodreads, _ = manager.start_sync(
+            steam = manager.start_sync(source="Steam", sync_function=lambda _job: 0)
+            goodreads = manager.start_sync(
                 source="Goodreads", sync_function=lambda _job: 0
             )
-        assert ok_steam and ok_goodreads
+        assert steam is None and goodreads is None
 
         response = client.get("/api/sync/status")
         assert response.status_code == 200
@@ -3003,6 +3002,43 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
         job = client.get("/api/sync/status").json()["jobs"][0]
         assert job["status"] == "completed"
         assert job["errors"] == [{"source": "Sonarr", "message": self.REMEDY}]
+
+
+class TestSyncStatusBoundsThePerItemErrorList:
+    def test_a_run_that_failed_every_item_polls_back_the_capped_list(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        """The cap is the executor's, so the poll carries it without its own."""
+        storage = mock_components["storage"]
+        failures = 5000
+        recorded = threading.Event()
+        storage.sync_runs.record.side_effect = lambda *_args, **_kwargs: recorded.set()
+        storage.save_content_item_outcome.side_effect = ValueError("db error")
+
+        with (
+            patch(
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                return_value=[],
+            ),
+            patch(
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.fetch",
+                return_value=iter(
+                    make_item(f"Book {index}", item_id=f"b{index}")
+                    for index in range(failures)
+                ),
+            ),
+        ):
+            response = client.post("/api/update", json={"source": "goodreads_rss"})
+            assert recorded.wait(timeout=30.0), "background sync did not record a run"
+
+        assert response.status_code == 200, response.text
+        job = client.get("/api/sync/status").json()["jobs"][0]
+        assert len(job["errors"]) == MAX_REPORTED_ERRORS + 1
+        assert job["errors"][-1]["message"] == (
+            f"… and {failures - MAX_REPORTED_ERRORS} more"
+        )
+        # Bounded list, unrounded count.
+        assert job["total_items"] == failures
 
 
 class TestUpdateEndpointRecordsTheRun:

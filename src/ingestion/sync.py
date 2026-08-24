@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
 
 
+# One entry per failed item, so a library refusing every one of them put
+# thousands of lines into every two-second /api/sync/status poll. The cap lives
+# here, at the producer, so both interfaces list the same misses.
+MAX_REPORTED_ERRORS = 200
+
+
 @dataclass
 class SyncResult:
     """Result of a sync operation.
@@ -47,6 +53,14 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=utc_now)
     finished_at: datetime = field(default_factory=utc_now)
+    omitted_errors: int = 0
+
+    def record_item_error(self, message: str) -> None:
+        """Report a failed item, or count it once the list is full."""
+        if len(self.errors) < MAX_REPORTED_ERRORS:
+            self.errors.append(message)
+        else:
+            self.omitted_errors += 1
 
     @property
     def items_added(self) -> int:
@@ -313,11 +327,14 @@ def execute_sync(
                 safe_title,
                 exception_for_log(error),
             )
-            result.errors.append(f"Failed to process '{safe_title}'")
+            result.record_item_error(f"Failed to process '{safe_title}'")
 
-    # Reported because the web reads no log file, and once per source because
-    # the queue write is the same row for every item: a fault that hits one
-    # hits all, and per-item errors made one sync report thousands of them.
+    if result.omitted_errors:
+        result.errors.append(f"… and {result.omitted_errors} more")
+
+    # Once per source and past the cap: the queue write is the same row for
+    # every item, so a fault that hits one hits all, and it speaks for the run
+    # rather than for an item.
     if enrichment_queue_failures:
         result.errors.append(
             f"Saved {enrichment_queue_failures} item(s) but could not queue them"

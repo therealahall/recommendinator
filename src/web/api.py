@@ -2052,11 +2052,11 @@ def update_data(
         max_workers=request.max_workers,
     )
 
-    success, _ = sync_manager.start_sync(
+    refusal = sync_manager.start_sync(
         job_key, dispatch.run, on_complete=dispatch.on_complete
     )
 
-    if not success:
+    if refusal is not None:
         release_sources(storage, claimed)
         raise HTTPException(status_code=409, detail="A sync is already in progress")
 

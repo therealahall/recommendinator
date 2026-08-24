@@ -52,8 +52,10 @@ python3.11 -m src.cli update --source roms --format json
 
 Each source reports how many items the plugin found, how many were saved, and
 how those split into added, updated and unchanged — so a second run of the same
-sync reads as 40 unchanged rather than as another 40 items. `--format json`
-emits the document `GET /api/sync/status` serves for the same run.
+sync reads as 40 unchanged rather than as another 40 items. Failed items are
+listed per source, capped at the first 200 with a `… and N more` tally after
+them. `--format json` emits the document `GET /api/sync/status` serves for the
+same run.
 
 ### `import`
 
