@@ -149,7 +149,11 @@ from src.utils.duplicate_serialization import (
     suggestion_page_to_dict,
 )
 from src.utils.export import export_items_csv, export_items_json
-from src.utils.item_serialization import item_to_dict
+from src.utils.item_serialization import (
+    completion_to_dict,
+    ignore_result_to_dict,
+    item_to_dict,
+)
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import (
@@ -327,6 +331,11 @@ class CompletionRequest(BaseModel):
     )
     rating: int | None = Field(None, ge=1, le=5, description="Rating (1-5)")
     review: CompletionReviewText | None = Field(None, description="Review text")
+
+
+class CompletionResponse(BaseModel):
+    message: str
+    id: int
 
 
 class UpdateRequest(BaseModel):
@@ -601,6 +610,13 @@ class IgnoreItemRequest(BaseModel):
     """Request model for setting item ignored status."""
 
     ignored: bool = Field(..., description="Whether to ignore the item")
+
+
+class IgnoreItemResponse(BaseModel):
+    db_id: int
+    title: str
+    ignored: bool
+    message: str
 
 
 class ItemEditRequest(BaseModel):
@@ -1533,13 +1549,13 @@ def import_upload(
     )
 
 
-@router.patch("/items/{db_id}/ignore")
+@router.patch("/items/{db_id}/ignore", response_model=IgnoreItemResponse)
 def set_item_ignored(
     db_id: int,
     request: IgnoreItemRequest,
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
-) -> dict[str, Any]:
+) -> IgnoreItemResponse:
     """Set the ignored status of a content item.
 
     Ignored items are excluded from recommendations.
@@ -1561,15 +1577,9 @@ def set_item_ignored(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update item")
 
-    # Not ``sanitize_for_log``: JSON carries a line break as an escape of its
-    # own, and the client is not a single-line log file.
-    title = item.title
-    return {
-        "db_id": db_id,
-        "title": title,
-        "ignored": request.ignored,
-        "message": f"Item '{title}' {'ignored' if request.ignored else 'unignored'}",
-    }
+    return IgnoreItemResponse.model_validate(
+        ignore_result_to_dict(db_id, item.title, request.ignored)
+    )
 
 
 @router.get("/items/{db_id}", response_model=ContentItemResponse)
@@ -1873,10 +1883,10 @@ def reset_user_preferences(
     return UserPreferenceResponse(**defaults.to_dict())
 
 
-@router.post("/complete")
+@router.post("/complete", response_model=CompletionResponse)
 def mark_complete(
     request: CompletionRequest, storage: RequiredStorage
-) -> dict[str, Any]:
+) -> CompletionResponse:
     """Mark content as completed.
 
     A blank ``review`` is rejected rather than stored, as it is on the edit
@@ -1918,7 +1928,7 @@ def mark_complete(
             status_code=500, detail="Failed to mark content as completed"
         ) from error
 
-    return {"message": f"Marked '{request.title}' as completed", "id": db_id}
+    return CompletionResponse.model_validate(completion_to_dict(request.title, db_id))
 
 
 @router.post("/update")

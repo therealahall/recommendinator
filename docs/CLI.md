@@ -90,6 +90,9 @@ kept, so completing something an import already dated does not re-date it.
 `--review` replaces the stored review, so a blank one is refused rather than
 written. To erase a review, use `library edit --clear-review`.
 
+`--format json` emits what `POST /api/complete` answers: the message and the
+`id` of the row it wrote.
+
 ## System status
 
 `status` reports system health, component readiness and feature flags.
@@ -170,14 +173,18 @@ takes no `--release-year`, because `year_published` dates the edition rather
 than the work. Both set a value and neither clears one: pass the name or year
 you want stored.
 
+`--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
+
 ### `library ignore` / `library unignore`
 
 Ignored items are excluded from recommendations.
 
 ```bash
 python3.11 -m src.cli library ignore --id 42
-python3.11 -m src.cli library unignore --id 42
+python3.11 -m src.cli library unignore --id 42 --format json
 ```
+
+`--format json` emits what `PATCH /api/items/<id>/ignore` answers.
 
 ### Duplicates and merges
 

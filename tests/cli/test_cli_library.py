@@ -40,6 +40,7 @@ from src.utils.duplicate_serialization import (
 )
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
+from src.web.api import ContentItemResponse, IgnoreItemResponse
 
 from .conftest import _invoke_with_mocks
 
@@ -643,6 +644,40 @@ class TestLibraryEdit:
         assert call_kwargs["tags"] == ["co-op"]
         assert call_kwargs["description"] == "A grand adventure."
 
+    def test_edit_json_carries_the_web_item_response_keys(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "edit-json.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+            ),
+            user_id=1,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            [
+                "library",
+                "edit",
+                "--id",
+                str(db_id),
+                "--rating",
+                "5",
+                "--format",
+                "json",
+            ],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert set(parsed) == set(ContentItemResponse.model_fields)
+        assert parsed["rating"] == 5
+
 
 class TestLibraryEditRegression:
     """Regression tests for the library edit command's input validation."""
@@ -1105,7 +1140,7 @@ class TestLibraryIgnore:
     def test_ignore_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test ignoring a non-existent item."""
         mock_storage = MagicMock(spec=StorageManager)
-        mock_storage.set_item_ignored.return_value = False
+        mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(
             cli_runner, ["library", "ignore", "--id", "999"], mock_storage
@@ -1113,6 +1148,63 @@ class TestLibraryIgnore:
 
         assert result.exit_code != 0
         assert "not found" in result.output.lower()
+
+    @pytest.mark.parametrize(
+        ("command", "ignored"), [("ignore", True), ("unignore", False)]
+    )
+    def test_ignoring_json_carries_the_web_ignore_response_keys(
+        self, cli_runner: CliRunner, tmp_path: Path, command: str, ignored: bool
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "ignore-json.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            user_id=1,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", command, "--id", str(db_id), "--format", "json"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert set(parsed) == set(IgnoreItemResponse.model_fields)
+        assert parsed["db_id"] == db_id
+        assert parsed["title"] == "Dune"
+        assert parsed["ignored"] is ignored
+
+    def test_unignore_reaches_an_item_that_is_already_ignored(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        storage = StorageManager(sqlite_path=tmp_path / "unignore.db")
+        db_id = storage.save_content_item(
+            ContentItem(
+                id="book-1",
+                title="Dune",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.COMPLETED,
+            ),
+            user_id=1,
+        )
+        assert storage.set_item_ignored(db_id=db_id, ignored=True, user_id=1)
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["library", "unignore", "--id", str(db_id), "--format", "json"],
+            storage,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["ignored"] is False
+        restored = storage.get_content_item(db_id, user_id=1)
+        assert restored is not None
+        assert restored.ignored is False
 
 
 class TestLibraryExport:

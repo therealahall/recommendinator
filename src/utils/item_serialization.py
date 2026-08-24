@@ -1,8 +1,7 @@
-"""Shared serialization helpers for ContentItem.
+"""Shared serialization for ContentItem and the mutations on it.
 
-Used by both the CLI commands and the web API to guarantee identical
-JSON output shapes between the two interfaces. Any new field on the
-web ContentItemResponse must be added here so the CLI emits it too.
+Both interfaces build their JSON here, so a field added to a web response
+model without a line here is a field the CLI stops emitting.
 """
 
 from src.models.content import ContentItem, get_enum_value
@@ -70,4 +69,17 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "genres": metadata.get("genres") or [],
         "tags": metadata.get("tags") or [],
         "description": metadata.get("description"),
+    }
+
+
+def completion_to_dict(title: str, db_id: int) -> dict[str, object]:
+    return {"message": f"Marked '{title}' as completed", "id": db_id}
+
+
+def ignore_result_to_dict(db_id: int, title: str, ignored: bool) -> dict[str, object]:
+    return {
+        "db_id": db_id,
+        "title": title,
+        "ignored": ignored,
+        "message": f"Item '{title}' {'ignored' if ignored else 'unignored'}",
     }

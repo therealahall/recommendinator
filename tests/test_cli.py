@@ -1,5 +1,6 @@
 """Tests for CLI commands."""
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -21,6 +22,7 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
+from src.web.api import CompletionResponse
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import (
     back_mock_preference_store,
@@ -412,6 +414,24 @@ def test_complete_refuses_a_blank_title_the_web_door_would_refuse(
     assert result.exit_code != 0
     assert "--title" in result.output
     assert storage.get_content_items(content_type=ContentType.BOOK) == []
+
+
+def test_complete_json_carries_the_web_completion_response_keys(
+    tmp_path: Path,
+) -> None:
+    storage = StorageManager(sqlite_path=tmp_path / "complete-json.db")
+
+    result = _invoke_with_mocks(
+        CliRunner(),
+        ["complete", "--type", "book", "--title", "Piranesi", "--format", "json"],
+        storage,
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.output)
+    assert set(parsed) == set(CompletionResponse.model_fields)
+    stored = storage.get_content_items(content_type=ContentType.BOOK)
+    assert parsed["id"] == stored[0].db_id
 
 
 def test_complete_command_invalid_rating(mock_components):

@@ -65,6 +65,7 @@ from src.storage.manager import (
 )
 from src.storage.schema import update_user_settings
 from src.utils.dotted_path import get_leaf
+from src.utils.item_serialization import ignore_result_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import LINE_BREAKS
@@ -1633,10 +1634,7 @@ def test_ignore_item_success(client, mock_components):
         json={"ignored": True},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["db_id"] == 42
-    assert data["title"] == "Test Book"
-    assert data["ignored"] is True
+    assert response.json() == ignore_result_to_dict(42, "Test Book", True)
 
     # Verify storage method was called
     mock_components["storage"].set_item_ignored.assert_called_once_with(
