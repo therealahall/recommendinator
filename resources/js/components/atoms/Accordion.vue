@@ -67,7 +67,7 @@ function toggle(): void {
 .accordion {
   border: 2px solid var(--border-default);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--bg-card);
   overflow: hidden;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
@@ -99,7 +99,7 @@ function toggle(): void {
 
 .accordion-row:hover,
 .accordion-row:focus-within {
-  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  background: var(--bg-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {

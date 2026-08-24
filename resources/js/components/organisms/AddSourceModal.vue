@@ -438,7 +438,7 @@ async function submit(): Promise<void> {
 }
 
 .add-source-modal-content {
-  background: var(--bg-card, var(--surface));
+  background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   padding: var(--space-4);
@@ -469,8 +469,8 @@ async function submit(): Promise<void> {
 .add-source-field input[type="password"],
 .add-source-field select {
   padding: var(--space-2) var(--space-3);
-  background: var(--bg-card, var(--surface));
-  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
@@ -504,7 +504,7 @@ async function submit(): Promise<void> {
 .add-source-hint {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--text-secondary, var(--text-primary));
+  color: var(--text-secondary);
 }
 
 .add-source-import-errors {
