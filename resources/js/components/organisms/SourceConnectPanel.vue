@@ -86,6 +86,7 @@ const showConnected = computed(() => !gate.failed.value && oauth.value.connected
 
 const panel = ref<HTMLElement | null>(null)
 const retrying = ref(false)
+const disconnecting = ref(false)
 // Tracks the visible label, which speech-input users say back (WCAG 2.5.3).
 const retryStatusLabel = computed(
   () =>
@@ -109,13 +110,16 @@ watch([() => oauth.value.connected, gate.failed], () => {
 // so showing the status as unknown puts one statement on screen, with the Retry
 // that can settle it.
 async function onDisconnect(): Promise<void> {
-  if (props.disabled) return
+  if (props.disabled || disconnecting.value) return
+  disconnecting.value = true
   try {
     if (isGog.value) await data.disconnectGog(props.sourceId)
     else if (isEpic.value) await data.disconnectEpic(props.sourceId)
     else if (isTrakt.value) await data.disconnectTrakt(props.sourceId)
   } catch {
     gate.failed.value = true
+  } finally {
+    disconnecting.value = false
   }
 }
 
@@ -165,7 +169,7 @@ async function onRetryStatus(): Promise<void> {
         class="btn btn-danger"
         :data-testid="`disconnect-btn-${sourceId}`"
         :aria-label="disconnectLabel"
-        :aria-disabled="disabled || undefined"
+        :aria-disabled="disabled || disconnecting || undefined"
         @click="onDisconnect"
       >Disconnect</button>
 

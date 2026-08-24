@@ -12,7 +12,9 @@ const props = withDefaults(
     secretStatus: Record<string, boolean>
     sourceName: string
     saving?: boolean
-    disabled?: boolean
+    /** Locks the secret and enable verbs and nothing else: a running sync reads
+     *  those live, where it resolved its field values before it started. */
+    verbsLocked?: boolean
     enabled?: boolean | null
     enableBusy?: boolean
     saveStatus?: SaveStatus
@@ -22,7 +24,7 @@ const props = withDefaults(
   }>(),
   {
     saving: false,
-    disabled: false,
+    verbsLocked: false,
     enabled: null,
     enableBusy: false,
     saveStatus: 'idle',
@@ -155,12 +157,8 @@ function onFloatInput(name: string, raw: string): void {
   formValues[name] = Number.isFinite(n) ? n : 0
 }
 
-// `disabled` (a sync is running) and the per-verb busy flags below both lock
-// with aria-disabled rather than native disabled, which would blur the control
-// the user just pressed — or, when a scheduled sync starts, one they are simply
-// standing in. aria-disabled does not block activation, so each verb guards.
 function onSave(): void {
-  if (props.saving || props.disabled) return
+  if (props.saving) return
   const out: Record<string, unknown> = {}
   for (const field of nonSensitiveFields.value) {
     // The API merges, so an omitted field stays unset — which is what an
@@ -172,8 +170,9 @@ function onSave(): void {
   emit('save', out)
 }
 
+// aria-disabled, which still activates, so every locked verb guards.
 function onToggleEnabled(): void {
-  if (props.enableBusy || props.disabled) return
+  if (props.enableBusy || props.verbsLocked) return
   emit('toggle-enabled', !props.enabled)
 }
 
@@ -196,7 +195,7 @@ function secretBusy(name: string): boolean {
 // Each verb removes the control that was clicked, so focus is placed on what
 // replaced it rather than left to fall to <body> (WCAG 2.4.3).
 async function startReplace(name: string): Promise<void> {
-  if (props.disabled || secretBusy(name)) return
+  if (props.verbsLocked || secretBusy(name)) return
   secretEditing[name] = true
   secretDrafts[name] = ''
   await nextTick()
@@ -214,12 +213,12 @@ async function cancelReplace(name: string): Promise<void> {
 // refused one identically.
 function saveSecret(name: string): void {
   const value = secretDrafts[name] ?? ''
-  if (!value || props.disabled || secretBusy(name)) return
+  if (!value || props.verbsLocked || secretBusy(name)) return
   emit('set-secret', name, value)
 }
 
 function askClear(name: string): void {
-  if (props.disabled || secretBusy(name)) return
+  if (props.verbsLocked || secretBusy(name)) return
   clearConfirming.value = name
 }
 
@@ -372,7 +371,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-secondary"
             :aria-label="`Replace ${field.name}`"
             :data-testid="`secret-replace-${field.name}`"
-            :aria-disabled="disabled || secretBusy(field.name) || undefined"
+            :aria-disabled="verbsLocked || secretBusy(field.name) || undefined"
             @click="startReplace(field.name)"
           >Replace</button>
           <button
@@ -381,7 +380,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-danger"
             :aria-label="`Clear ${field.name}`"
             :data-testid="`secret-clear-${field.name}`"
-            :aria-disabled="disabled || secretBusy(field.name) || undefined"
+            :aria-disabled="verbsLocked || secretBusy(field.name) || undefined"
             @click="askClear(field.name)"
           >Clear</button>
           <!-- Mounted while silent: inserted populated it reads as content
@@ -424,7 +423,7 @@ function isSecretSet(name: string): boolean {
             :aria-label="`New value for ${field.name}`"
             :data-testid="`secret-input-${field.name}`"
             :value="secretDrafts[field.name] ?? ''"
-            :readonly="disabled || secretBusy(field.name)"
+            :readonly="verbsLocked || secretBusy(field.name)"
             @input="
               secretDrafts[field.name] = ($event.target as HTMLInputElement).value
             "
@@ -434,10 +433,10 @@ function isSecretSet(name: string): boolean {
             class="btn btn-primary"
             :aria-label="`Save ${field.name}`"
             :data-testid="`secret-save-${field.name}`"
-            :aria-disabled="disabled || secretBusy(field.name) || undefined"
+            :aria-disabled="verbsLocked || secretBusy(field.name) || undefined"
             @click="saveSecret(field.name)"
           >{{ secretBusy(field.name) ? 'Saving…' : 'Save secret' }}</button>
-          <!-- Not gated on `disabled`: it is the only way out of the edit row. -->
+          <!-- Not locked: it is the only way out of the edit row. -->
           <button
             type="button"
             class="btn btn-secondary"
@@ -469,7 +468,7 @@ function isSecretSet(name: string): boolean {
         class="btn source-form-toggle-btn"
         :class="enabled ? 'btn-danger' : 'btn-success'"
         data-testid="form-toggle-enabled"
-        :aria-disabled="enableBusy || disabled || undefined"
+        :aria-disabled="enableBusy || verbsLocked || undefined"
         :aria-pressed="enabled"
         @click="onToggleEnabled"
       >{{
@@ -498,7 +497,7 @@ function isSecretSet(name: string): boolean {
           type="button"
           class="btn btn-primary"
           data-testid="form-save"
-          :aria-disabled="saving || disabled || undefined"
+          :aria-disabled="saving || undefined"
           @click="onSave"
         >{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
@@ -534,10 +533,11 @@ function isSecretSet(name: string): boolean {
   border-color: var(--accent);
 }
 
-/* The lock a `readonly` input carries is invisible without this, where the
-   `disabled` it replaced was greyed by the UA. Matches .btn's inactive look. */
+/* On the edge and the fill, never a fade: a `readonly` control is not exempt
+   from 4.5:1 the way the `disabled` it replaced was (WCAG 1.4.3). */
 .source-form-field input[readonly] {
-  opacity: 0.6;
+  border-style: dashed;
+  background: var(--bg-elevated);
   cursor: not-allowed;
 }
 

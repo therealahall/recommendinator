@@ -147,12 +147,27 @@ describe('SourceConfigForm', () => {
     const input = wrapper.get('input[name="path"]').element as HTMLInputElement
     input.focus()
 
-    await wrapper.setProps({ disabled: true })
+    await wrapper.setProps({ verbsLocked: true })
 
     expect(document.activeElement).toBe(input)
     input.blur()
     input.focus()
     expect(document.activeElement).toBe(input)
+  })
+
+  it('saves an edit typed while a sync is running instead of dropping it', async () => {
+    const wrapper = mountForm({
+      schema: [field({ name: 'path' })],
+      values: { path: '/old' },
+      verbsLocked: true,
+    })
+    const save = wrapper.get('[data-testid="form-save"]')
+
+    await wrapper.find('input[name="path"]').setValue('/new')
+    await save.trigger('click')
+
+    expect(wrapper.emitted('save')![0][0]).toEqual({ path: '/new' })
+    expect(save.attributes('aria-disabled')).toBeUndefined()
   })
 
   it('renders an error pill with message when saveStatus is "error"', () => {
