@@ -866,17 +866,51 @@ class TestScheduledSyncDispatch:
     ) -> None:
         _steam_source(storage, "hourly")
         _recorded_run(storage, timedelta(hours=2))
-        assert storage.sync_runs.claim(1, "steam") is True
+        held = storage.sync_runs.claim(1, "steam")
+        assert held is not None
         manager = _accepting_manager()
 
         self._tick(storage, manager)
 
         manager.start_sync.assert_not_called()
 
-        storage.sync_runs.release(1, "steam")
+        storage.sync_runs.release(held)
         self._tick(storage, manager)
 
         assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+
+    def test_a_dispatch_the_manager_declines_leaves_the_source_claimable(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _recorded_run(storage, timedelta(hours=2))
+        manager = _accepting_manager()
+        manager.start_sync.return_value = "A sync is already in progress"
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_called_once()
+        assert storage.sync_runs.claim(1, "steam") is not None
+
+    def test_a_dispatched_run_that_raises_leaves_the_source_claimable(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _recorded_run(storage, timedelta(hours=2))
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        with (
+            patch(
+                "src.web.sync_dispatch.execute_multi_source_sync",
+                side_effect=RuntimeError("the worker pool died"),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            manager.start_sync.call_args.args[1](MagicMock(spec=SyncJob))
+
+        assert storage.sync_runs.claim(1, "steam") is not None
 
     def test_the_umbrellas_own_run_leaves_the_declined_source_not_due_again(
         self, storage: StorageManager
@@ -958,6 +992,7 @@ class TestAutoEnrichGate:
             MagicMock(spec=SyncManager),
             STEAM_LABEL,
             [ResolvedInput("steam", MagicMock(), {"_source_id": "steam"})],
+            [7],
             MagicMock(spec=StorageManager),
             {"enrichment": {"enabled": True, "auto_enrich_on_sync": False}},
         )

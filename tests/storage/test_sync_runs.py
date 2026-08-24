@@ -148,7 +148,7 @@ def test_two_racing_claims_leave_exactly_one_holder_of_the_source(
 ) -> None:
     barrier = threading.Barrier(2)
     lock = threading.Lock()
-    outcomes: list[bool] = []
+    outcomes: list[int | None] = []
 
     def take() -> None:
         barrier.wait()
@@ -162,28 +162,45 @@ def test_two_racing_claims_leave_exactly_one_holder_of_the_source(
     for racer in racers:
         racer.join()
 
-    assert sorted(outcomes) == [False, True]
+    assert sum(1 for outcome in outcomes if outcome is not None) == 1
     _record(storage)
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
 
 
 def test_a_claim_a_killed_run_left_open_is_taken_over_once_it_goes_stale(
     storage: StorageManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert storage.sync_runs.claim(1, "steam") is True
-    assert storage.sync_runs.claim(1, "steam") is False
+    first = storage.sync_runs.claim(1, "steam")
+    assert first is not None
+    assert storage.sync_runs.claim(1, "steam") is None
 
     later = utc_now() + STALE_AFTER + timedelta(seconds=1)
     monkeypatch.setattr(sync_runs, "utc_now", lambda: later)
 
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") not in (None, first)
+
+
+def test_a_run_releases_its_own_claim_and_not_the_one_that_replaced_it(
+    storage: StorageManager,
+) -> None:
+    """Released by source id, a finished run's exit dropped the next run's claim."""
+    first = storage.sync_runs.claim(1, "steam")
+    assert first is not None
+    _record(storage)
+    second = storage.sync_runs.claim(1, "steam")
+    assert second is not None
+
+    storage.sync_runs.release(first)
+
+    assert storage.sync_runs.claim(1, "steam") is None
+    assert [run["id"] for run in storage.sync_runs.list_recent(1, 10)] == [first]
 
 
 def test_an_in_flight_claim_is_not_read_as_a_finished_run(
     storage: StorageManager,
 ) -> None:
     failed = _record(storage, minute=0, status="failed")
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
 
     assert storage.sync_runs.latest_per_source(1)["steam"]["status"] == "failed"
     assert storage.sync_runs.consecutive_failures(1, "steam") == 1
@@ -248,7 +265,7 @@ def test_the_runs_a_version_seventeen_library_holds_survive_the_rebuild(
     run = storage.sync_runs.latest_per_source(1)["steam"]
     assert (run["status"], run["items_added"], run["total_items"]) == ("failed", 3, 12)
     assert run["errors"] == ["timed out"]
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
 
 
 def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(

@@ -1338,6 +1338,9 @@ class TestLibraryExport:
         assert destination.read_text(encoding="utf-8") == "title\nmy own work\n"
 
         confirmed = export(input_text="y\n")
+
+        assert "Test Book" in destination.read_text(encoding="utf-8")
+
         destination.write_text("title\nmy own work\n", encoding="utf-8")
         forced = export("--yes")
 

@@ -57,7 +57,10 @@ def dispatch_due_syncs(
                 sanitize_for_log(label),
             )
             continue
-        dispatch = build_sync_job(sync_manager, label, [entry], storage, config)
+        claim_ids = list(claimed.values())
+        dispatch = build_sync_job(
+            sync_manager, label, [entry], claim_ids, storage, config
+        )
         refusal = sync_manager.start_sync(
             label, dispatch.run, on_complete=dispatch.on_complete
         )
@@ -67,7 +70,7 @@ def dispatch_due_syncs(
             logger.info("Scheduled sync started for %s", sanitize_for_log(label))
             # One start a tick, so the rest stagger over the minutes after it.
             break
-        release_sources(storage, claimed, user_id)
+        release_sources(storage, claim_ids)
         logger.info("Scheduled sync declined: %s", sanitize_for_log(refusal))
 
 

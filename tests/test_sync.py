@@ -1,6 +1,7 @@
 """Tests for the shared sync executor."""
 
 import logging
+import sqlite3
 import threading
 import time
 from collections.abc import Iterator
@@ -393,7 +394,7 @@ class TestAClaimOutlastsTheWaitAndTheSilence:
         monkeypatch.setattr(sync, "HEARTBEAT_EVERY", timedelta(milliseconds=5))
         claim_sources(storage, list(self._SOURCES))
         aged = {source: self._strand(storage, source) for source in self._SOURCES}
-        stolen: list[bool] = []
+        stolen: list[int | None] = []
 
         def silent_fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
             """Reports no progress, and holds the only worker while it runs."""
@@ -413,7 +414,45 @@ class TestAClaimOutlastsTheWaitAndTheSilence:
             max_workers=1,
         )
 
-        assert stolen == [False, False]
+        assert stolen == [None, None]
+
+    def test_one_heartbeat_write_that_raises_ends_no_other_sources_beat(
+        self, storage: StorageManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sync, "HEARTBEAT_EVERY", timedelta(milliseconds=5))
+        claim_sources(storage, list(self._SOURCES))
+        aged = {source: self._strand(storage, source) for source in self._SOURCES}
+        beat = storage.sync_runs.heartbeat
+        refused = threading.Event()
+
+        def refuse_first_write(user_id: int, source_id: str) -> None:
+            if not refused.is_set():
+                refused.set()
+                raise sqlite3.OperationalError("database is locked")
+            beat(user_id, source_id)
+
+        monkeypatch.setattr(storage.sync_runs, "heartbeat", refuse_first_write)
+        stolen: list[int | None] = []
+
+        def silent_fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            for source, stamp in aged.items():
+                self._await_beat(storage, source, stamp)
+            stolen.extend(
+                storage.sync_runs.claim(1, source) for source in self._SOURCES
+            )
+            return iter([])
+
+        execute_multi_source_sync(
+            sources=[
+                (self._plugin("slow", silent_fetch), {"_source_id": "slow"}),
+                (self._plugin("queued"), {"_source_id": "queued"}),
+            ],
+            storage_manager=storage,
+            max_workers=1,
+        )
+
+        assert refused.is_set()
+        assert stolen == [None, None]
 
 
 class TestEverySyncLeavesARun:

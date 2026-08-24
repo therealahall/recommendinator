@@ -708,6 +708,24 @@ describe('SyncSourceAccordion', () => {
       )
     })
 
+    it('announces that the runs arrived rather than going quiet on success', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const store = useDataStore()
+      vi.spyOn(store, 'loadSourceRuns').mockImplementation(async (id: string) => {
+        store.sourceRuns[id] = [failedRun('Steam API returned 401 Unauthorized')]
+        return store.sourceRuns[id]
+      })
+
+      await wrapper.find('[data-testid="run-history-toggle-steam"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="run-history-status-steam"]').text()).not.toBe(
+        '',
+      )
+    })
+
     it('says something when a source has no runs instead of opening onto nothing', async () => {
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: neverSyncedSource, syncing: false },
@@ -1055,33 +1073,38 @@ describe('SyncSourceAccordion', () => {
       // run's failures pushes every other source's Sync button off the page.
       const reported = 200
       const omitted = 4800
+      // Sonarr's failures come first, so capping before filtering renders
+      // another source's errors here, or none at all.
+      const failures = (source: string) =>
+        Array.from({ length: reported }, (_, i) => ({
+          source,
+          message: `${source} ${i} failed`,
+        }))
+      const slot = (source: string) => ({
+        source,
+        items_processed: 0,
+        total_items: reported + omitted,
+        current_item: null,
+        progress_percent: 0,
+        items_added: 0,
+        items_updated: 0,
+        items_unchanged: 0,
+        omitted_errors: omitted,
+      })
       const job = makeJob({
         source: 'All Sources',
         status: 'completed',
-        errors: Array.from({ length: reported }, (_, i) => ({
-          source: 'Steam',
-          message: `Steam ${i} failed`,
-        })),
-        sources: [
-          {
-            source: 'Steam',
-            items_processed: 0,
-            total_items: reported + omitted,
-            current_item: null,
-            progress_percent: 0,
-            items_added: 0,
-            items_updated: 0,
-            items_unchanged: 0,
-            omitted_errors: omitted,
-          },
-        ],
+        errors: [...failures('Sonarr'), ...failures('Steam')],
+        sources: [slot('Sonarr'), slot('Steam')],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false, job },
       })
 
       const items = wrapper.get('[data-testid="source-sync-errors"]').findAll('li')
+      expect(items.length).toBeGreaterThan(0)
       expect(items.length).toBeLessThan(reported)
+      expect(items.every((li) => li.text().startsWith('Steam '))).toBe(true)
       const tails = wrapper.findAll('[data-testid="source-sync-errors-more"]')
       expect(tails).toHaveLength(1)
       expect(tails[0].text()).toContain(String(reported + omitted))

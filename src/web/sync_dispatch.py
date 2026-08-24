@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +36,7 @@ def build_sync_job(
     sync_manager: SyncManager,
     source_label: str,
     resolved: list[ResolvedInput],
+    claim_ids: Sequence[int],
     storage: StorageManager,
     config: dict[str, Any],
     max_workers: int | None = None,
@@ -84,7 +85,7 @@ def build_sync_job(
                 max_workers=resolve_max_workers(config, override=max_workers),
             )
         finally:
-            release_sources(storage, [entry.source_id for entry in resolved])
+            release_sources(storage, claim_ids)
         return sum(result.items_synced for result in results)
 
     def on_sync_complete() -> None:

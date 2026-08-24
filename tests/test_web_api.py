@@ -2741,7 +2741,7 @@ class TestASourceAnotherProcessHoldsIsRefused:
     def test_update_is_refused_when_the_database_claim_is_lost(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        mock_components["storage"].sync_runs.claim.return_value = False
+        mock_components["storage"].sync_runs.claim.return_value = None
 
         with patch(
             "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
@@ -2779,7 +2779,7 @@ class TestASourceAnotherProcessHoldsIsRefused:
         }
         storage = mock_components["storage"]
         storage.sync_runs.claim.side_effect = lambda _user, source_id: (
-            source_id != "shelf"
+            None if source_id == "shelf" else 7
         )
 
         with (

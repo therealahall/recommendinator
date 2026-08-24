@@ -114,9 +114,9 @@ class SyncRunStore:
             conn.commit()
             return run_id
 
-    def claim(self, user_id: int, source_id: str) -> bool:
-        """Take the source, unless a live run holds it: the partial unique index
-        decides the race, and a killed run's claim goes stale rather than reaped."""
+    def claim(self, user_id: int, source_id: str) -> int | None:
+        """Take the source and return the claim's id, None if a live run holds it:
+        the unique index decides the race, and a killed claim goes stale."""
         now = utc_now()
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
@@ -131,9 +131,9 @@ class SyncRunStore:
                 "VALUES (?, ?, ?, 'running', ?) ON CONFLICT DO NOTHING",
                 (user_id, source_id, _stamp(now), _stamp(now)),
             )
-            claimed = cursor.rowcount == 1
+            claim_id = cursor.lastrowid if cursor.rowcount == 1 else None
             conn.commit()
-            return claimed
+            return claim_id
 
     def heartbeat(self, user_id: int, source_id: str) -> None:
         with self._sqlite_db.connection() as conn:
@@ -144,12 +144,11 @@ class SyncRunStore:
             )
             conn.commit()
 
-    def release(self, user_id: int, source_id: str) -> None:
+    def release(self, claim_id: int) -> None:
         with self._sqlite_db.connection() as conn:
             conn.execute(
-                "DELETE FROM sync_runs "
-                "WHERE user_id = ? AND source_id = ? AND finished_at IS NULL",
-                (user_id, source_id),
+                "DELETE FROM sync_runs WHERE id = ? AND finished_at IS NULL",
+                (claim_id,),
             )
             conn.commit()
 

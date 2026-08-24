@@ -263,7 +263,7 @@ def update(
     claimed, refused = claim_sources(storage, [entry.source_id for entry in valid])
     if refused:
         click.echo(f"Error: {already_syncing_detail(refused)}", err=True)
-    valid = [entry for entry in valid if entry.source_id in set(claimed)]
+    valid = [entry for entry in valid if entry.source_id in claimed]
     if not valid:
         report_nothing_ran()
         raise click.Abort()
@@ -318,7 +318,7 @@ def update(
         # Ctrl-C raises a BaseException, which walks past the clause above:
         # released only there, the claim outlived the process and refused the
         # source at both Start doors until it went stale.
-        release_sources(storage, claimed)
+        release_sources(storage, claimed.values())
 
     label = ALL_SOURCES_LABEL if source == "all" else humanize_source_id(source)
     view = _status_view(label, results, started_at, datetime.now())

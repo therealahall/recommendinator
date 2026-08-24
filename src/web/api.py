@@ -2041,7 +2041,7 @@ def update_data(
     claimed, refused = claim_sources(storage, [entry.source_id for entry in resolved])
     if not claimed:
         raise HTTPException(status_code=409, detail=already_syncing_detail(refused))
-    resolved = [entry for entry in resolved if entry.source_id in set(claimed)]
+    resolved = [entry for entry in resolved if entry.source_id in claimed]
 
     sources_to_sync = [entry.source_id for entry in resolved]
 
@@ -2051,6 +2051,7 @@ def update_data(
         sync_manager,
         job_key,
         resolved,
+        list(claimed.values()),
         storage,
         config,
         max_workers=request.max_workers,
@@ -2061,7 +2062,7 @@ def update_data(
     )
 
     if refusal is not None:
-        release_sources(storage, claimed)
+        release_sources(storage, claimed.values())
         raise HTTPException(status_code=409, detail="A sync is already in progress")
 
     # humanize_source_id title-cases but strips nothing, so the request's own
