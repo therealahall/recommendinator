@@ -109,7 +109,7 @@ describe('SettingSecret', () => {
       props: { setting: secret({ has_secret: true }), busy: true },
       attachTo: document.body,
     })
-    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(document.activeElement).toBe(document.body)
 
     await wrapper.setProps({ busy: false })
     await flushPromises()
