@@ -173,7 +173,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
   margin-bottom: var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-card);
   color: var(--text-secondary);
   font-size: var(--text-sm);
 }

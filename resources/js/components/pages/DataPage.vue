@@ -266,7 +266,7 @@ const orderedSources = computed(() => {
   padding: var(--space-3) var(--space-4);
   border: 2px solid var(--border-default);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--bg-card);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 

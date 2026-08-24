@@ -521,8 +521,8 @@ function isSecretSet(name: string): boolean {
 .source-form-field input[type="password"] {
   width: 100%;
   padding: var(--space-2) var(--space-3);
-  background: var(--bg-card, var(--surface));
-  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;
@@ -539,7 +539,7 @@ function isSecretSet(name: string): boolean {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: var(--surface-alt, rgba(0, 0, 0, 0.06));
+  background: var(--bg-elevated);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
 }
@@ -547,8 +547,8 @@ function isSecretSet(name: string): boolean {
 .chips-field {
   display: flex;
   flex-direction: column;
-  background: var(--bg-card, var(--surface));
-  border: 1px solid var(--border-default);
+  background: var(--bg-card);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
