@@ -8,6 +8,9 @@ const props = defineProps<{
   /** Absent until the session is resolved; the footer waits rather than
    *  rendering a nameless row. */
   user?: UserResponse | null
+  /** Closed on a narrow viewport: on screen it is gone, but without this every
+   *  control in it is still tabbable and still read out. */
+  offscreen?: boolean
 }>()
 
 const router = useRouter()
@@ -35,7 +38,12 @@ function isActive(name: string): boolean {
 </script>
 
 <template>
-  <aside class="sidebar" id="sidebar">
+  <aside
+    class="sidebar"
+    id="sidebar"
+    :inert="offscreen || undefined"
+    :aria-hidden="offscreen || undefined"
+  >
     <div class="sidebar-header">
       <h1>Recommendinator</h1>
       <span v-if="app.version" class="version-label">v{{ app.version }}</span>

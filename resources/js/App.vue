@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
@@ -19,6 +19,12 @@ const theme = useThemeStore()
 const gate = useSubmission()
 
 const sidebarOpen = ref(false)
+// Kept in step with the width base.css slides the sidebar off screen at.
+const narrowViewport = window.matchMedia('(max-width: 768px)')
+const isNarrow = ref(narrowViewport.matches)
+/** `left: -100%` moves the closed sidebar out of sight and nothing else: every
+ *  control in it stays tabbable, and stays in the accessibility tree. */
+const sidebarOffscreen = computed(() => isNarrow.value && !sidebarOpen.value)
 const mainContent = ref<HTMLElement | null>(null)
 /** Why the sign-in form is on screen, as opposed to a refusal of what was typed
  *  into it: marking an untouched field invalid announces "invalid entry". */
@@ -26,6 +32,10 @@ const notice = ref('')
 
 function closeSidebar() {
   sidebarOpen.value = false
+}
+
+function trackViewport(change: MediaQueryListEvent) {
+  isNarrow.value = change.matches
 }
 
 function load() {
@@ -54,6 +64,13 @@ function signIn(credentials: LoginRequest) {
   gate.submit(() => auth.signIn(credentials))
 }
 
+onMounted(() => narrowViewport.addEventListener('change', trackViewport))
+
+onUnmounted(() => {
+  narrowViewport.removeEventListener('change', trackViewport)
+  app.stopPolling()
+})
+
 onMounted(async () => {
   // Themes are static files behind no session, and the sign-in screen is the one
   // a user who cannot read light-on-dark has no way to skip.
@@ -70,6 +87,9 @@ watch(
   () => auth.isAuthenticated,
   async (authenticated, wasAuthenticated) => {
     if (!authenticated) {
+      // Every /api route 401s from here, and each refusal signs the session out
+      // again, so a poll left running talks to the sign-in screen forever.
+      app.stopPolling()
       // The shell disappearing without a word reads as a crash, and every route
       // out of it — a revoked session or a deliberate sign-out — ended one. Said
       // one tick late, because a live region that first enters the tree already
@@ -126,7 +146,7 @@ watch(
     />
 
     <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
-      <AppSidebar :user="auth.user" @navigate="closeSidebar" />
+      <AppSidebar :user="auth.user" :offscreen="sidebarOffscreen" @navigate="closeSidebar" />
       <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
         <UpdateBanner />
         <StatusBar />
