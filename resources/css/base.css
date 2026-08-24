@@ -96,6 +96,14 @@
   /* Layout */
   --sidebar-width: 240px;
   --sidebar-collapsed: 60px;
+
+  --z-sticky: 20;
+  --z-dropdown: 50;
+  --z-tooltip: 100;
+  --z-overlay: 900;
+  --z-drawer: 910;
+  --z-drawer-toggle: 920;
+  --z-modal: 1000;
 }
 
 /* Reset */
@@ -463,13 +471,12 @@ input[type="checkbox"] {
   margin-bottom: var(--space-5);
 }
 
-/* Mobile Sidebar Toggle */
 .sidebar-toggle {
   display: none;
   position: fixed;
   top: var(--space-3);
   left: var(--space-3);
-  z-index: 1001;
+  z-index: var(--z-drawer-toggle);
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -870,7 +877,7 @@ input[type="checkbox"] {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-  z-index: 50;
+  z-index: var(--z-dropdown);
   padding: var(--space-1) 0;
 }
 
@@ -1010,7 +1017,7 @@ input[type="checkbox"] {
   font-weight: 400;
   line-height: 1.45;
   box-shadow: var(--shadow-tooltip);
-  z-index: 100;
+  z-index: var(--z-tooltip);
   white-space: normal;
 }
 
@@ -1500,33 +1507,7 @@ input[type="checkbox"] {
   to { transform: rotate(360deg); }
 }
 
-/* Edit Modal */
-.edit-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--overlay-dark);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-
-.edit-modal-content {
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  padding: var(--space-6);
-  border-radius: var(--radius-lg);
-  width: 90%;
-  max-width: 500px;
-  max-height: 85vh;
-  overflow-y: auto;
-}
-
-.edit-modal-content h3 {
+.edit-modal-title {
   margin: 0 0 var(--space-1) 0;
   color: var(--text-primary);
   font-size: var(--text-lg);
@@ -1612,13 +1593,6 @@ input[type="checkbox"] {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   margin: 0 0 var(--space-3) 0;
-}
-
-.edit-modal-actions {
-  display: flex;
-  gap: var(--space-2);
-  justify-content: flex-end;
-  margin-top: var(--space-5);
 }
 
 .btn-ignore {
@@ -1732,7 +1706,7 @@ input[type="checkbox"] {
     position: fixed;
     left: -100%;
     top: 0;
-    z-index: 1000;
+    z-index: var(--z-drawer);
     width: 260px;
     transition: left var(--transition-base);
     box-shadow: var(--shadow-lg);
@@ -1747,7 +1721,7 @@ input[type="checkbox"] {
     position: fixed;
     inset: 0;
     background: var(--overlay-medium);
-    z-index: 999;
+    z-index: var(--z-overlay);
   }
 
   .main-content {

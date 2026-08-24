@@ -3,8 +3,8 @@ import { ref, computed, nextTick, watch } from 'vue'
 import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { MAX_CREATOR_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
-import { useFocusTrap } from '@/composables/useFocusTrap'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
+import ModalDialog from '@/components/atoms/ModalDialog.vue'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
 import TagInput from '@/components/atoms/TagInput.vue'
@@ -25,7 +25,8 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const modalContent = ref<HTMLElement | null>(null)
+const dialog = ref<InstanceType<typeof ModalDialog> | null>(null)
+const modalContent = computed(() => dialog.value?.surface ?? null)
 
 const isTvShow = computed(() => props.item.content_type === 'tv_show' && props.item.total_seasons)
 
@@ -163,148 +164,140 @@ const { confirming, requestClose, keepEditing } = useDiscardGuard(
   modalContent,
 )
 
-useFocusTrap(modalContent, requestClose)
-
 function save() {
+  if (props.saving) return
   emit('save', props.item.db_id!, edits.value)
 }
-
-function onBackdropClick(event: MouseEvent) {
-  if (event.target === event.currentTarget) {
-    requestClose()
-  }
-}
-
 </script>
 
 <template>
-  <div class="edit-modal" @click="onBackdropClick">
-    <div ref="modalContent" class="edit-modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title" tabindex="-1">
-      <h3 id="edit-modal-title">{{ item.title }}</h3>
-      <div class="edit-modal-subtitle">
-        <span v-if="item.author">{{ item.author }} </span>
-        <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
-      </div>
-
-      <div class="edit-field">
-        <label for="edit-creator">Creator</label>
-        <input
-          id="edit-creator"
-          v-model="creator"
-          type="text"
-          :maxlength="MAX_CREATOR_LENGTH"
-          placeholder="Author, director or developer..."
-          v-bind="refusalFor('edit-creator')"
-        >
-      </div>
-
-      <div v-if="hasReleaseYear" class="edit-field">
-        <label for="edit-release-year">Release year</label>
-        <!-- Text: a number input eats a pasted "2016 (remaster)" and rolls
-             the year under a stray mouse wheel. -->
-        <input
-          id="edit-release-year"
-          v-model="releaseYear"
-          type="text"
-          inputmode="numeric"
-          v-bind="refusalFor('edit-release-year')"
-        >
-      </div>
-
-      <div class="edit-field">
-        <label for="edit-status">Status</label>
-        <select id="edit-status" :value="status" @change="onStatusChange">
-          <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
-          <option value="currently_consuming">In Progress</option>
-          <option value="completed">Completed</option>
-        </select>
-      </div>
-
-      <div class="edit-field">
-        <label id="edit-rating-label">Rating</label>
-        <StarRating v-model="rating" aria-labelledby="edit-rating-label" />
-      </div>
-
-      <div class="edit-field">
-        <label for="edit-review">Review</label>
-        <textarea
-          id="edit-review"
-          v-model="review"
-          placeholder="Write a review..."
-          v-bind="refusalFor('edit-review')"
-        />
-      </div>
-
-      <div v-if="isTvShow" class="edit-field">
-        <SeasonChecklist
-          :model-value="seasonsWatched"
-          :total-seasons="item.total_seasons!"
-          @update:model-value="onSeasonsChange"
-        />
-      </div>
-
-      <hr class="edit-modal-divider">
-      <h4 class="edit-modal-section">Enrichment metadata</h4>
-      <p class="edit-modal-note">Editing these opts the item out of automatic enrichment.</p>
-
-      <div class="edit-field">
-        <p ref="enrichmentStatus" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
-          {{ item.manually_enriched
-            ? "This item's metadata is manual, so automatic enrichment skips it."
-            : 'Automatic enrichment fills in this item\'s metadata.' }}
-        </p>
-        <button
-          v-if="item.manually_enriched"
-          class="btn btn-secondary"
-          @click="emit('restoreEnrichment', item.db_id!)"
-        >
-          Restore automatic enrichment
-        </button>
-      </div>
-
-      <div class="edit-field">
-        <TagInput
-          v-model="genres"
-          label="Genres"
-          input-id="edit-genres"
-          placeholder="Add a genre..."
-          empty-text="No genres yet"
-        />
-      </div>
-
-      <div class="edit-field">
-        <TagInput
-          v-model="tags"
-          label="Tags"
-          input-id="edit-tags"
-          placeholder="Add a tag..."
-          empty-text="No tags yet"
-        />
-      </div>
-
-      <div class="edit-field">
-        <label for="edit-description">Description</label>
-        <textarea id="edit-description" v-model="description" maxlength="10000" placeholder="Add a description..." />
-      </div>
-
-      <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
-      <p id="edit-save-error" ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
-
-      <ConfirmPanel
-        v-if="confirming"
-        message="Discard your unsaved changes?"
-        confirm-label="Discard"
-        cancel-label="Keep editing"
-        @cancel="keepEditing"
-        @confirm="emit('close')"
-      />
-
-      <div class="edit-modal-actions">
-        <button class="btn btn-secondary" @click="requestClose">Cancel</button>
-        <button class="btn btn-primary" :disabled="saving" @click="save">
-          {{ saving ? 'Saving...' : 'Save' }}
-        </button>
-      </div>
+  <ModalDialog ref="dialog" labelled-by="edit-modal-title" @dismiss="requestClose">
+    <h3 id="edit-modal-title" class="edit-modal-title">{{ item.title }}</h3>
+    <div class="edit-modal-subtitle">
+      <span v-if="item.author">{{ item.author }} </span>
+      <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
     </div>
-  </div>
+
+    <div class="edit-field">
+      <label for="edit-creator">Creator</label>
+      <input
+        id="edit-creator"
+        v-model="creator"
+        type="text"
+        :maxlength="MAX_CREATOR_LENGTH"
+        placeholder="Author, director or developer..."
+        v-bind="refusalFor('edit-creator')"
+      >
+    </div>
+
+    <div v-if="hasReleaseYear" class="edit-field">
+      <label for="edit-release-year">Release year</label>
+      <!-- Text: a number input eats a pasted "2016 (remaster)" and rolls
+           the year under a stray mouse wheel. -->
+      <input
+        id="edit-release-year"
+        v-model="releaseYear"
+        type="text"
+        inputmode="numeric"
+        v-bind="refusalFor('edit-release-year')"
+      >
+    </div>
+
+    <div class="edit-field">
+      <label for="edit-status">Status</label>
+      <select id="edit-status" :value="status" @change="onStatusChange">
+        <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
+        <option value="currently_consuming">In Progress</option>
+        <option value="completed">Completed</option>
+      </select>
+    </div>
+
+    <div class="edit-field">
+      <label id="edit-rating-label">Rating</label>
+      <StarRating v-model="rating" aria-labelledby="edit-rating-label" />
+    </div>
+
+    <div class="edit-field">
+      <label for="edit-review">Review</label>
+      <textarea
+        id="edit-review"
+        v-model="review"
+        placeholder="Write a review..."
+        v-bind="refusalFor('edit-review')"
+      />
+    </div>
+
+    <div v-if="isTvShow" class="edit-field">
+      <SeasonChecklist
+        :model-value="seasonsWatched"
+        :total-seasons="item.total_seasons!"
+        @update:model-value="onSeasonsChange"
+      />
+    </div>
+
+    <hr class="edit-modal-divider">
+    <h4 class="edit-modal-section">Enrichment metadata</h4>
+    <p class="edit-modal-note">Editing these opts the item out of automatic enrichment.</p>
+
+    <div class="edit-field">
+      <p ref="enrichmentStatus" class="edit-modal-note focus-fallback" role="status" tabindex="-1">
+        {{ item.manually_enriched
+          ? "This item's metadata is manual, so automatic enrichment skips it."
+          : 'Automatic enrichment fills in this item\'s metadata.' }}
+      </p>
+      <button
+        v-if="item.manually_enriched"
+        class="btn btn-secondary"
+        @click="emit('restoreEnrichment', item.db_id!)"
+      >
+        Restore automatic enrichment
+      </button>
+    </div>
+
+    <div class="edit-field">
+      <TagInput
+        v-model="genres"
+        label="Genres"
+        input-id="edit-genres"
+        placeholder="Add a genre..."
+        empty-text="No genres yet"
+      />
+    </div>
+
+    <div class="edit-field">
+      <TagInput
+        v-model="tags"
+        label="Tags"
+        input-id="edit-tags"
+        placeholder="Add a tag..."
+        empty-text="No tags yet"
+      />
+    </div>
+
+    <div class="edit-field">
+      <label for="edit-description">Description</label>
+      <textarea id="edit-description" v-model="description" maxlength="10000" placeholder="Add a description..." />
+    </div>
+
+    <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
+    <p id="edit-save-error" ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
+
+    <ConfirmPanel
+      v-if="confirming"
+      message="Discard your unsaved changes?"
+      confirm-label="Discard"
+      cancel-label="Keep editing"
+      @cancel="keepEditing"
+      @confirm="emit('close')"
+    />
+
+    <template #actions>
+      <button class="btn btn-secondary" @click="requestClose">Cancel</button>
+      <!-- aria-disabled, not disabled: locking the button the user just
+           pressed drops focus to <body> and moves the trap's wrap boundary. -->
+      <button class="btn btn-primary" :aria-disabled="saving || undefined" @click="save">
+        {{ saving ? 'Saving...' : 'Save' }}
+      </button>
+    </template>
+  </ModalDialog>
 </template>

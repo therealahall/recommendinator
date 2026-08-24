@@ -436,6 +436,25 @@ describe('EditModal', () => {
     wrapper.unmount()
   })
 
+  it('keeps Save under the focus that pressed it, and sends one request for two presses', async () => {
+    const wrapper = mount(EditModal, {
+      props: { item: defaultItem, saving: false, saveError: '' },
+      attachTo: document.body,
+    })
+    await wrapper.get('[aria-label="4 stars"]').trigger('click')
+    const save = wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!
+    ;(save.element as HTMLElement).focus()
+
+    await save.trigger('click')
+    await wrapper.setProps({ saving: true })
+
+    expect(save.element.matches('[disabled]')).toBe(false)
+    expect(document.activeElement).toBe(save.element)
+    await save.trigger('click')
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   it.each([
     ['Review must be at most 10000 characters.', '#edit-review'],
     ['Creator cannot be empty.', '#edit-creator'],

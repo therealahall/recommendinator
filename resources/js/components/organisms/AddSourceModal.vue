@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useFocusTrap } from '@/composables/useFocusTrap'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
 import { useDataStore } from '@/stores/data'
+import ModalDialog from '@/components/atoms/ModalDialog.vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
 import type { PluginInfoResponse, SourceCreateRequest } from '@/types/api'
 
 const data = useDataStore()
-const modalContent = ref<HTMLElement | null>(null)
+const dialog = ref<InstanceType<typeof ModalDialog> | null>(null)
+const modalContent = computed(() => dialog.value?.surface ?? null)
 
 const emit = defineEmits<{
   created: [sourceId: string]
@@ -49,8 +50,6 @@ const { confirming, requestClose, keepEditing } = useDiscardGuard(
   () => emit('close'),
   modalContent,
 )
-
-useFocusTrap(modalContent, requestClose)
 
 onMounted(async () => {
   if (data.availablePlugins.length === 0) {
@@ -207,15 +206,8 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="add-source-modal" @click.self="requestClose">
-    <div
-      ref="modalContent"
-      class="add-source-modal-content"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-source-title"
-      tabindex="-1"
-    >
+  <ModalDialog ref="dialog" labelled-by="add-source-title" wide @dismiss="requestClose">
+    <div class="add-source-body">
       <h3 id="add-source-title">Add data source</h3>
       <p class="help-text">
         Create a new database-backed source. Passwords and API keys entered
@@ -402,50 +394,31 @@ async function submit(): Promise<void> {
         @cancel="keepEditing"
         @confirm="emit('close')"
       />
-
-      <div class="add-source-actions">
-        <!-- Cancel stays focusable while submitting so the dialog always has at
-             least one tabbable element and the focus trap cannot collapse. -->
-        <button
-          type="button"
-          class="btn btn-secondary"
-          :aria-disabled="submitting || undefined"
-          @click="onCancel"
-        >Cancel</button>
-        <button
-          type="button"
-          class="btn btn-primary"
-          data-testid="add-source-submit"
-          :disabled="!isValid"
-          :aria-disabled="submitting || undefined"
-          @click="submit"
-        >{{ submitting ? 'Creating…' : 'Create' }}</button>
-      </div>
     </div>
-  </div>
+
+    <template #actions>
+      <!-- Cancel stays focusable while submitting so the dialog always has at
+           least one tabbable element and the focus trap cannot collapse. -->
+      <button
+        type="button"
+        class="btn btn-secondary"
+        :aria-disabled="submitting || undefined"
+        @click="onCancel"
+      >Cancel</button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        data-testid="add-source-submit"
+        :disabled="!isValid"
+        :aria-disabled="submitting || undefined"
+        @click="submit"
+      >{{ submitting ? 'Creating…' : 'Create' }}</button>
+    </template>
+  </ModalDialog>
 </template>
 
 <style scoped>
-.add-source-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  padding: var(--space-3);
-}
-
-.add-source-modal-content {
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4);
-  width: 100%;
-  max-width: 38rem;
-  max-height: 90vh;
-  overflow: auto;
+.add-source-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -519,13 +492,5 @@ async function submit(): Promise<void> {
 
 .add-source-import-errors li + li {
   margin-top: var(--space-1);
-}
-
-.add-source-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-default);
 }
 </style>

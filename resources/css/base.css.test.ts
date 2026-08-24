@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 
 // base.css is a static asset: importing it through Vite yields an empty stub
@@ -169,6 +169,65 @@ describe('library card divider (issue #108)', () => {
     expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
   })
 
+})
+
+const DIALOG = 'resources/js/components/atoms/ModalDialog.vue'
+
+function styledFiles(directory: string): string[] {
+  return readdirSync(`${process.cwd()}/${directory}`, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory()
+      ? styledFiles(`${directory}/${entry.name}`)
+      : /\.(css|vue)$/.test(entry.name)
+        ? [`${directory}/${entry.name}`]
+        : [],
+  )
+}
+
+function stackingDeclarations(): [string, string][] {
+  return styledFiles('resources').flatMap((path) =>
+    [
+      ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(
+        /(?<![-\w])z-index:\s*([^;}"']+)/g,
+      ),
+    ].map(([, value]): [string, string] => [path, value.trim()]),
+  )
+}
+
+function scale(source: string): Map<string, number> {
+  return new Map(
+    [...source.matchAll(/(--z-[\w-]+):\s*(\d+);/g)].map(([, name, value]) => [name, Number(value)]),
+  )
+}
+
+function step(steps: Map<string, number>, value: string): number {
+  const named = value.match(/^var\((--z-[\w-]+)\)$/)
+  if (!named) throw new Error(`${value} is not a step on the scale`)
+  const height = steps.get(named[1])
+  if (height === undefined) throw new Error(`${named[1]} is declared nowhere`)
+  return height
+}
+
+describe('stacking order', () => {
+  it('leaves no raw z-index and no unused step, so one scale decides what covers what', () => {
+    const declared = [...scale(readBase()).keys()]
+    const found = stackingDeclarations()
+    const used = new Set(found.map(([, value]) => value))
+
+    expect(found.filter(([, value]) => !/^var\(--z-[\w-]+\)$/.test(value))).toEqual([])
+    expect(declared.filter((name) => !used.has(`var(${name})`))).toEqual([])
+  })
+
+  it('puts an open dialog over every other surface, the mobile drawer and its toggle included', () => {
+    const steps = scale(readBase())
+    const source = readFileSync(`${process.cwd()}/${DIALOG}`, 'utf8')
+    const dialog = step(steps, declaration(ruleBlock(source, '.dialog-backdrop'), 'z-index'))
+    const behind = stackingDeclarations().filter(([path]) => path !== DIALOG)
+
+    expect(behind.length).toBeGreaterThan(0)
+    for (const [path, value] of behind) {
+      expect(dialog, `${path} draws over an open dialog`).toBeGreaterThan(step(steps, value))
+    }
+  })
 })
 
 describe('recommendation card header (issue #98)', () => {
