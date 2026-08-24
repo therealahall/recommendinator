@@ -308,7 +308,7 @@ input[type="checkbox"] {
 .sidebar-header h1 {
   font-size: var(--text-md);
   font-weight: 600;
-  color: var(--accent-light);
+  color: var(--text-primary);
   letter-spacing: -0.01em;
 }
 
@@ -353,7 +353,7 @@ input[type="checkbox"] {
 
 .nav-item.active {
   background: var(--bg-active);
-  color: var(--accent-light);
+  color: var(--text-primary);
 }
 
 .nav-item svg {
@@ -1066,7 +1066,7 @@ input[type="checkbox"] {
   text-align: right;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  color: var(--accent-light);
+  color: var(--text-primary);
 }
 
 .toggle-row {
@@ -1182,7 +1182,7 @@ input[type="checkbox"] {
 
 .badge-type {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent-light);
+  color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
@@ -1219,7 +1219,7 @@ input[type="checkbox"] {
 
 .badge-score {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent-light);
+  color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   font-weight: 600;
   font-family: var(--font-mono);
@@ -1293,7 +1293,7 @@ input[type="checkbox"] {
 }
 
 .score-details summary:hover {
-  color: var(--accent-light);
+  color: var(--text-primary);
 }
 
 .score-breakdown {
