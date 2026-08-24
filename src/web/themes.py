@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
-from starlette.staticfiles import StaticFiles
 
 from src.utils.text import sanitize_for_log
 
@@ -26,11 +25,6 @@ DEFAULT_THEME_ID = "nord"
 
 #: Longest theme id a door accepts, so a refusal comes before the disk scan.
 MAX_THEME_ID_LENGTH = 64
-
-
-class PrivateThemeFiles(StaticFiles):
-    async def check_config(self) -> None:
-        """No check: an absent private/themes is a 404, and its mount is read-only."""
 
 
 class ThemeResponse(BaseModel):

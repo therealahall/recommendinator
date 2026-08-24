@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -79,6 +81,26 @@ class TestTheme:
         assert result.exit_code != 0
         assert "No user with id 999" in result.output
         assert storage.ui_settings.get_theme(999) == ""
+
+
+class TestTheThemeGroupCostsTheCliNoWebServer:
+    def test_reading_the_installed_themes_loads_no_asgi_stack(self) -> None:
+        """Every invocation pays this module's imports, ``--help`` included."""
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys\n"
+                "import src.cli.commands._theme\n"
+                "print(any(name.startswith(('starlette', 'anyio')) "
+                "for name in sys.modules))\n",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert child.stdout.strip() == "False"
 
 
 class TestBothDoorsOnOneStore:
