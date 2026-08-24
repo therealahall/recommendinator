@@ -119,7 +119,7 @@ describe('DataPage rows during a Sync All', () => {
 
     const button = wrapper.get('[data-testid="sync-btn-goodreads"]')
     expect(button.text()).toBe('Syncing…')
-    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.attributes('aria-disabled')).toBe('true')
     await button.trigger('click')
     expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([
       ['/update', { source: 'all' }],
@@ -144,7 +144,7 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  it('disables Sync All while a per-source run nobody triggered here is in flight', async () => {
+  it('refuses a Sync All while a per-source run nobody triggered here is in flight', async () => {
     const goodreads = {
       ...enabledSource,
       id: 'goodreads',
@@ -176,10 +176,46 @@ describe('DataPage rows during a Sync All', () => {
     await flushPromises()
 
     const button = wrapper.get('.sync-all-card button')
-    expect(button.attributes('disabled')).toBeDefined()
+    expect(button.attributes('aria-disabled')).toBe('true')
     expect(button.attributes('aria-label')).toBe(
       'Sync all sources — another sync is in progress',
     )
+    await button.trigger('click')
+    expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('keeps focus on Sync All for the whole run instead of dropping it to <body>', async () => {
+    const goodreads = {
+      ...enabledSource,
+      id: 'goodreads',
+      display_name: 'Goodreads',
+      plugin_display_name: 'Goodreads',
+    }
+    mockPost.mockImplementation((path: string) =>
+      path === '/update' ? new Promise(() => {}) : Promise.resolve({}),
+    )
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') return Promise.resolve([enabledSource, goodreads])
+      if (path === '/sync/status') return Promise.resolve({ status: 'idle', jobs: [] })
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const button = wrapper.get('.sync-all-card button')
+    ;(button.element as HTMLButtonElement).focus()
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(document.activeElement).toBe(button.element)
+    await button.trigger('click')
+    expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toHaveLength(1)
     wrapper.unmount()
   })
 

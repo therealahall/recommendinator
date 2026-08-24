@@ -86,6 +86,7 @@ async function onToggleExpanded(value: boolean): Promise<void> {
 
 function onSyncClick(event: MouseEvent): void {
   event.stopPropagation()
+  if (props.syncing) return
   emit('sync', props.source.id)
 }
 
@@ -104,7 +105,6 @@ async function onMigrate(): Promise<void> {
   }
 }
 
-const syncDisabled = computed(() => props.syncing || !props.source.enabled)
 // A disabled source never runs, and the accessible name below says so: letting
 // the visible label read "Syncing…" would leave the two disagreeing (WCAG 2.5.3).
 const syncLabel = computed(() =>
@@ -160,7 +160,8 @@ const intervalLabel = computed(
         type="button"
         class="btn btn-primary sync-btn"
         :data-testid="`sync-btn-${source.id}`"
-        :disabled="syncDisabled"
+        :disabled="!props.source.enabled"
+        :aria-disabled="props.syncing || undefined"
         :aria-label="
           !props.source.enabled
             ? `Sync ${source.display_name} — source is disabled`
@@ -232,7 +233,7 @@ const intervalLabel = computed(
           type="button"
           class="btn btn-primary"
           :data-testid="`migrate-btn-${source.id}`"
-          :disabled="migrating"
+          :aria-disabled="migrating || undefined"
           @click="onMigrate"
         >{{ migrating ? 'Migrating…' : 'Migrate to DB' }}</button>
         <p

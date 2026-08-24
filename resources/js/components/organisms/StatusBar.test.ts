@@ -11,6 +11,14 @@ vi.mock('@/composables/useApi', () => ({
   }),
 }))
 
+function mainRegion(): HTMLElement {
+  const main = document.createElement('main')
+  main.id = 'main-content'
+  main.tabIndex = -1
+  document.body.appendChild(main)
+  return main
+}
+
 describe('StatusBar', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -119,6 +127,46 @@ describe('StatusBar', () => {
     expect(button.attributes('disabled')).toBeUndefined()
     expect(document.activeElement).toBe(button.element)
     wrapper.unmount()
+  })
+
+  it('lands focus on the main region when a working retry takes Try again away', async () => {
+    const app = useAppStore()
+    const main = mainRegion()
+    vi.spyOn(app, 'fetchStatus').mockImplementation(async () => {
+      app.status = 'ready'
+      app.statusMessage = ''
+    })
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
+    const wrapper = mount(StatusBar, { attachTo: main })
+    const button = wrapper.find('[data-testid="status-retry"]')
+    ;(button.element as HTMLButtonElement).focus()
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="status-retry"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(main)
+    wrapper.unmount()
+    main.remove()
+  })
+
+  it('leaves focus alone when the retry fails and Try again is still there', async () => {
+    const app = useAppStore()
+    const main = mainRegion()
+    vi.spyOn(app, 'fetchStatus').mockResolvedValue(undefined)
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
+    const wrapper = mount(StatusBar, { attachTo: document.body })
+    const button = wrapper.find('[data-testid="status-retry"]')
+    ;(button.element as HTMLButtonElement).focus()
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(button.element)
+    wrapper.unmount()
+    main.remove()
   })
 
   it('does not ask the server twice while the first attempt is in flight', async () => {

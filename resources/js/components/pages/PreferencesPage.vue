@@ -24,6 +24,11 @@ onBeforeRouteLeave(
     window.confirm('Your preference changes have not been saved. Discard them?'),
 )
 
+function save() {
+  if (prefs.saving) return
+  prefs.save()
+}
+
 function resetToDefaults() {
   if (prefs.saving) return
   if (
@@ -121,9 +126,12 @@ async function onRetry(): Promise<void> {
       <RulesPrefs />
       <ProfilePanel />
       <div class="pref-actions">
-        <button class="btn btn-primary" :disabled="prefs.saving" @click="prefs.save()">
-          {{ prefs.saving ? 'Saving...' : 'Save Preferences' }}
-        </button>
+        <button
+          class="btn btn-primary"
+          data-testid="preferences-save"
+          :aria-disabled="prefs.saving || undefined"
+          @click="save"
+        >{{ prefs.saving ? 'Saving...' : 'Save Preferences' }}</button>
         <button
           class="btn btn-secondary"
           :aria-disabled="prefs.saving || undefined"
