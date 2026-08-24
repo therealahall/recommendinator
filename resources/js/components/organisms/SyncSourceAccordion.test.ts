@@ -381,6 +381,31 @@ describe('SyncSourceAccordion', () => {
       wrapper.unmount()
     })
 
+    it('will not remove the source from a Remove a running sync has disabled', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+        attachTo: document.body,
+      })
+      const store = useDataStore()
+      primeStore(store, migratedConfig)
+      const remove = vi.spyOn(store, 'deleteSource').mockImplementation(async () => {})
+
+      await wrapper.find('button.accordion-trigger').trigger('click')
+      await flushPromises()
+      const button = wrapper.get('[data-testid="remove-btn-steam"]')
+      ;(button.element as HTMLElement).focus()
+      await wrapper.setProps({ syncing: true })
+
+      expect(document.activeElement).toBe(button.element)
+      expect(button.attributes('aria-disabled')).toBe('true')
+
+      await button.trigger('click')
+
+      expect(wrapper.find('[data-testid="confirm-panel"]').exists()).toBe(false)
+      expect(remove).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
     it('says so when the removal is refused, instead of only ending the spinner', async () => {
       const { wrapper } = await expandWith(async () => {
         throw new Error('source is syncing')
@@ -1039,6 +1064,33 @@ describe('SyncSourceAccordion', () => {
         ...overrides,
       }
     }
+
+    it('announces progress outside the trigger, whose name polls leave alone', async () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: false },
+      })
+      const trigger = wrapper.get('button.accordion-trigger')
+      const idleName = trigger.text()
+      expect(wrapper.get('.source-progress-counts').text()).toBe('')
+
+      await wrapper.setProps({ syncing: true, job: makeJob() })
+      await wrapper.setProps({ job: makeJob({ items_processed: 9, progress_percent: 90 }) })
+
+      expect(trigger.find('[role="progressbar"]').exists()).toBe(false)
+      expect(trigger.text()).toBe(idleName)
+      expect(wrapper.get('.source-progress-counts').text()).toContain('9/10')
+    })
+
+    it('keeps the progress region out of the panel a collapsed row hides', () => {
+      const wrapper = mount(SyncSourceAccordion, {
+        props: { source: baseSource, syncing: true, job: makeJob() },
+      })
+
+      expect(
+        wrapper.get('button.accordion-trigger').attributes('aria-expanded'),
+      ).toBe('false')
+      expect(wrapper.get('.source-progress-counts').element.closest('[hidden]')).toBeNull()
+    })
 
     it('renders progress bar from a single-source running job', () => {
       const wrapper = mount(SyncSourceAccordion, {

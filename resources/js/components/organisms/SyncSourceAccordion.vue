@@ -151,7 +151,6 @@ const intervalLabel = computed(
           v-if="!props.source.enabled"
           class="source-accordion-status-badge"
         >Disabled</span>
-        <SourceSyncProgress :source-name="source.display_name" :job="job" />
       </span>
     </template>
 
@@ -186,6 +185,7 @@ const intervalLabel = computed(
         :error="runsError"
         @open="onOpenRunHistory"
       />
+      <SourceSyncProgress :source-name="source.display_name" :job="job" />
       <SourceSyncOutcome
         :source-id="source.id"
         :source-name="source.display_name"

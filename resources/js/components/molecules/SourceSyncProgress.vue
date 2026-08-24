@@ -41,13 +41,10 @@ const label = computed<string>(() => {
 </script>
 
 <template>
-  <!--
-    v-show (not v-if) keeps the live region in the DOM so JAWS/NVDA announce
-    progress as values change rather than treating each poll as a fresh
-    insertion (WCAG 4.1.3). Every deref below is null-safe so the children
-    evaluate cleanly while the region is hidden.
-  -->
-  <span v-show="progress" class="source-progress" aria-live="polite">
+  <!-- Belongs outside the accordion trigger: inside it the counts joined the
+       button's accessible name and role="progressbar" nested a widget role in
+       a button. Mounted while silent, or the first poll announces nothing. -->
+  <span class="source-progress" :class="{ 'source-progress--running': progress }">
     <span
       v-if="progress?.progress_percent != null"
       class="source-progress-bar"
@@ -55,14 +52,18 @@ const label = computed<string>(() => {
       :aria-valuenow="progress.progress_percent"
       aria-valuemin="0"
       aria-valuemax="100"
-      :aria-label="`${sourceName} sync progress: ${progress.progress_percent}%`"
+      :aria-label="`${sourceName} sync progress`"
     >
       <span
         class="source-progress-fill"
         :style="{ width: `${Math.min(100, progress.progress_percent)}%` }"
       />
     </span>
-    <span class="source-progress-counts">{{ label }}</span>
+    <span
+      class="source-progress-counts"
+      aria-live="polite"
+      aria-atomic="true"
+    ><span v-if="label" class="sr-only">{{ sourceName }}: </span>{{ label }}</span>
     <span
       v-if="progress?.current_item"
       class="source-progress-item"
@@ -72,13 +73,16 @@ const label = computed<string>(() => {
 
 <style scoped>
 .source-progress {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: var(--space-3);
   font-size: var(--text-xs);
   color: var(--text-secondary);
   flex-wrap: wrap;
+}
+
+.source-progress--running {
+  padding: 0 var(--space-4) var(--space-2);
 }
 
 .source-progress-bar {

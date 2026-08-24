@@ -99,6 +99,11 @@ const removeQuestion = computed(
     '(if any) will reappear next reload.',
 )
 
+function askRemove(): void {
+  if (removing.value || props.disabled) return
+  removeConfirming.value = true
+}
+
 async function onRemove(): Promise<void> {
   removeConfirming.value = false
   if (removing.value) return
@@ -149,8 +154,8 @@ onBeforeUnmount(() => {
         class="btn btn-danger"
         :data-testid="`remove-btn-${source.id}`"
         :aria-label="`Remove ${source.display_name} from the database`"
-        :disabled="removing || disabled"
-        @click="removeConfirming = true"
+        :aria-disabled="removing || disabled || undefined"
+        @click="askRemove"
       >{{ removing ? 'Removing…' : 'Remove' }}</button>
     </template>
   </SourceConfigForm>

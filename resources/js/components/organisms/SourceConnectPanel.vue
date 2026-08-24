@@ -109,6 +109,7 @@ watch([() => oauth.value.connected, gate.failed], () => {
 // so showing the status as unknown puts one statement on screen, with the Retry
 // that can settle it.
 async function onDisconnect(): Promise<void> {
+  if (props.disabled) return
   try {
     if (isGog.value) await data.disconnectGog(props.sourceId)
     else if (isEpic.value) await data.disconnectEpic(props.sourceId)
@@ -164,7 +165,7 @@ async function onRetryStatus(): Promise<void> {
         class="btn btn-danger"
         :data-testid="`disconnect-btn-${sourceId}`"
         :aria-label="disconnectLabel"
-        :disabled="disabled"
+        :aria-disabled="disabled || undefined"
         @click="onDisconnect"
       >Disconnect</button>
 

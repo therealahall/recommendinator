@@ -108,18 +108,19 @@ const onReset = (provider: string) =>
       </div>
 
       <div
-        v-if="data.enrichmentJob?.running"
         class="enrichment-status"
         aria-live="polite"
         aria-atomic="true"
       >
-        <span class="spinner" aria-hidden="true" />
-        <span class="sr-only">Enriching: </span>
-        {{ data.enrichmentJob.current_item
-          ? truncate(data.enrichmentJob.current_item, 50)
-          : 'Processing...' }}
-        ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
-        - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
+        <template v-if="data.enrichmentJob?.running">
+          <span class="spinner" aria-hidden="true" />
+          <span class="sr-only">Enriching: </span>
+          {{ data.enrichmentJob.current_item
+            ? truncate(data.enrichmentJob.current_item, 50)
+            : 'Processing...' }}
+          ({{ data.enrichmentJob.items_processed }}/{{ data.enrichmentJob.total_items }}
+          - {{ Math.round(data.enrichmentJob.progress_percent) }}%)
+        </template>
       </div>
 
       <div class="enrichment-toolbar">
@@ -213,9 +214,12 @@ const onReset = (provider: string) =>
 }
 
 .enrichment-status {
-  margin-top: var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+.enrichment-status:not(:empty) {
+  margin-top: var(--space-3);
 }
 
 .enrichment-errors {
