@@ -7,8 +7,6 @@ declare module 'vue-router' {
   }
 }
 
-export const APP_NAME = 'Recommendinator'
-
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
