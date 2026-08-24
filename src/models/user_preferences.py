@@ -33,9 +33,6 @@ class UserPreferenceConfig:
             Maps content type string to length preference string
             (e.g. ``{"book": "short", "movie": "any"}``).
             Valid values: ``"any"``, ``"short"``, ``"medium"``, ``"long"``.
-        theme: User's preferred UI theme ID. Persisted to the backend so
-            it syncs across browsers/devices. Empty string means "use
-            system default (nord)".
     """
 
     scorer_weights: dict[str, float] = field(default_factory=dict)
@@ -43,7 +40,6 @@ class UserPreferenceConfig:
     variety_penalty: float = 0.0
     custom_rules: list[str] = field(default_factory=list)
     content_length_preferences: dict[str, str] = field(default_factory=dict)
-    theme: str = ""
 
     #: Highest variety strength a user may set, on the same 0.0-5.0 scale as the
     #: scorer weights. The engine divides this preference by ``MAX_VARIETY_PENALTY``
@@ -55,9 +51,6 @@ class UserPreferenceConfig:
     #: ``users.settings`` blob that each recommendation request parses, and
     #: free text is the one collection here no closed key set bounds.
     MAX_CUSTOM_RULES: ClassVar[int] = 50
-
-    #: Longest theme id.
-    MAX_THEME_ID_LENGTH: ClassVar[int] = 64
 
     #: Longest single rule. Free text with no closed key set to bound it.
     MAX_CUSTOM_RULE_LENGTH: ClassVar[int] = 500
@@ -121,7 +114,6 @@ class UserPreferenceConfig:
             variety_penalty=cls._resolve_variety_penalty(data),
             custom_rules=data.get("custom_rules", []),
             content_length_preferences=data.get("content_length_preferences", {}),
-            theme=data.get("theme", ""),
         )
 
     @classmethod

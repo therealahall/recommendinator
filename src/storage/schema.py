@@ -95,12 +95,13 @@ class SyncRunDict(TypedDict):
 # 16 reduces a list column holding an object and clears a re-queued item's
 # stale quality; 17 splits a crammed series title, drops a placeholder author,
 # folds a company name, re-normalizes every title and re-derives every row's
-# sort and search columns; 18 rebuilds sync_runs, whose unfinished row is a claim.
+# sort and search columns; 18 rebuilds sync_runs, whose unfinished row is a
+# claim; 19 carries the UI theme out of the preference blob.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -431,6 +432,18 @@ def create_schema(conn: sqlite3.Connection) -> None:
     """
     )
 
+    # What the interface looks like for one user. Its own table rather than a
+    # key in ``users.settings``: that blob is the preference config, and
+    # resetting the scoring preferences must not change how the app looks.
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS user_ui_settings ("
+        "user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
+        "theme TEXT NOT NULL DEFAULT ''"
+        ")"
+    )
+    if stored_version < 19:
+        _move_themes_off_preference_blob(cursor)
+
     # Credentials table for encrypted source credentials (API keys, tokens)
     cursor.execute(
         """
@@ -689,6 +702,27 @@ def _rebuild_sync_runs(cursor: sqlite3.Cursor) -> None:
         f"INSERT INTO sync_runs ({carried}) SELECT {carried} FROM sync_runs_old"
     )
     cursor.execute("DROP TABLE sync_runs_old")
+
+
+def _move_themes_off_preference_blob(cursor: sqlite3.Cursor) -> None:
+    """Carry each user's stored theme into ``user_ui_settings``.
+
+    Only this step can reach the theme an upgrading operator picked; without
+    it, the first open after the upgrade paints the default instead.
+    """
+    cursor.execute("SELECT id, settings FROM users WHERE settings IS NOT NULL")
+    for row in cursor.fetchall():
+        try:
+            settings = json.loads(row["settings"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        blob = settings.get("preference_config") if isinstance(settings, dict) else None
+        theme = blob.get("theme") if isinstance(blob, dict) else None
+        if isinstance(theme, str) and theme:
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_ui_settings (user_id, theme) VALUES (?, ?)",
+                (row["id"], theme),
+            )
 
 
 def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None:
@@ -1047,6 +1081,10 @@ def _add_column_if_not_exists(
 # User management functions
 
 
+class UnknownUserError(LookupError):
+    """A write named a user id no ``users`` row carries."""
+
+
 def _row_to_user_dict(row: tuple) -> UserDict:
     """Convert a user row tuple to a user dict."""
     settings = None
@@ -1169,6 +1207,32 @@ def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
 def get_default_user_id() -> int:
     """Get the default user ID."""
     return 1
+
+
+def get_user_theme(conn: sqlite3.Connection, user_id: int) -> str:
+    """Get the user's UI theme id, empty when they have not picked one."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT theme FROM user_ui_settings WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    return str(row[0]) if row else ""
+
+
+def set_user_theme(conn: sqlite3.Connection, user_id: int, theme_id: str) -> bool:
+    """Set the user's UI theme id.
+
+    Returns:
+        False when the write matched no ``users`` row, so a caller can tell a
+        write that landed from one naming a user that does not exist.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO user_ui_settings (user_id, theme) "
+        "SELECT id, ? FROM users WHERE id = ? "
+        "ON CONFLICT(user_id) DO UPDATE SET theme = excluded.theme",
+        (theme_id, user_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # Enrichment status functions
