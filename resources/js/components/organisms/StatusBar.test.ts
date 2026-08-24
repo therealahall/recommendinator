@@ -70,15 +70,17 @@ describe('StatusBar', () => {
     expect(bar.classes()).not.toContain('loading')
   })
 
-  it('applies status role and polite aria-live when ready', () => {
+  it('offers a way to ask the server again once it could not be reached', async () => {
+    // Regression: the connection error was final — no control, and nothing
+    // saying a reload was the only way out of it.
     const app = useAppStore()
-    app.status = 'ready'
-    // Force visibility to verify ARIA attributes in ready state
-    app.statusMessage = 'Ready'
+    const retry = vi.spyOn(app, 'fetchStatus').mockResolvedValue(undefined)
+    app.status = 'error'
+    app.statusMessage = 'Failed to connect to server'
 
     const wrapper = mount(StatusBar)
-    const bar = wrapper.find('.status-bar')
-    expect(bar.attributes('role')).toBe('status')
-    expect(bar.attributes('aria-live')).toBe('polite')
+    await wrapper.find('[data-testid="status-retry"]').trigger('click')
+
+    expect(retry).toHaveBeenCalled()
   })
 })

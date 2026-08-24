@@ -17,5 +17,14 @@ const app = useAppStore()
     }"
   >
     {{ app.statusMessage }}
+    <button
+      v-if="app.status === 'error'"
+      type="button"
+      class="btn btn-secondary btn-small"
+      data-testid="status-retry"
+      @click="app.fetchStatus()"
+    >
+      Try again
+    </button>
   </div>
 </template>
