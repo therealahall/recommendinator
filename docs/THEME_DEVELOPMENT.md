@@ -31,6 +31,8 @@ src/web/static/themes/     # or private/themes/, which is gitignored
 A private theme is listed and served exactly like a shipped one, from
 `/static/private-themes/`. An id already taken by a shipped theme is refused,
 and so is a folder name outside `[A-Za-z0-9_-]`: the id reaches an `href`.
+A folder dropped in while the server is running lists and can be picked at
+once, but its `colors.css` is served only after a restart.
 
 ## theme.json
 
