@@ -46,17 +46,25 @@ function customProperties(source: string): [string, string][] {
   ])
 }
 
+/** Finds the rule the selector opens, whether or not it shares it with others.
+ *  Anchored so `.pill` never resolves to `.pill-group`. */
 function ruleBody(source: string, selector: string): string {
-  const pattern = new RegExp(`^${selector.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`, 'm')
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`^${escaped}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, 'm')
   const match = source.match(pattern)
   if (!match) throw new Error(`${selector} rule not found`)
   return match[1]
 }
 
-function declaration(body: string, property: string): string {
+function optional(body: string, property: string): string | null {
   const match = body.match(new RegExp(`(?:^|;)\\s*${property}:\\s*([^;]+)`))
-  if (!match) throw new Error(`no ${property} declared`)
-  return match[1].trim()
+  return match ? match[1].trim() : null
+}
+
+function declaration(body: string, property: string): string {
+  const value = optional(body, property)
+  if (value === null) throw new Error(`no ${property} declared`)
+  return value
 }
 
 /** Splits on the commas that are not inside a nested function call. */
@@ -303,4 +311,150 @@ describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) =>
       contrast(toRgba(text, vars), toRgba('var(--bg-primary)', vars)),
     ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
+})
+
+const NON_TEXT = 3
+
+const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
+const ADD_SOURCE_MODAL = 'resources/js/components/organisms/AddSourceModal.vue'
+const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
+const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
+const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
+const RECOMMENDATIONS_PAGE = 'resources/js/components/pages/RecommendationsPage.vue'
+const SEARCH_INPUT = 'resources/js/components/atoms/SearchInput.vue'
+const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
+const SETTING_CONTROL = 'resources/js/components/molecules/SettingControl.vue'
+const SETTING_SECRET = 'resources/js/components/molecules/SettingSecret.vue'
+const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
+
+const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
+const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
+const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary']
+
+describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
+  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const ratio = (token: string, surface: string): number =>
+    contrast(toRgba(`var(${token})`, vars), toRgba(`var(${surface})`, vars))
+
+  // Help text, empty states, hints and secondary labels all default to this at
+  // 12-13px, so a theme cannot tune it as a decorative grey.
+  it.each(MUTED_SURFACES)('--text-muted stays readable on %s', (surface) => {
+    expect(ratio('--text-muted', surface)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+
+  // In a light theme a field and the card behind it are both white, so this
+  // edge is the only thing saying where the field is (WCAG 1.4.11).
+  it.each(CONTROL_SURFACES)('--border-interactive divides a control from %s', (surface) => {
+    expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  // The app's one focus indicator, and the measurement THEME_DEVELOPMENT.md
+  // promises a theme author.
+  it.each(RING_SURFACES)('--accent-light rings a focused control on %s', (surface) => {
+    expect(ratio('--accent-light', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+})
+
+/** Controls that declare both their edge and the fill it encloses. */
+const CONTROL_EDGES: [string, string, string][] = [
+  ['a preferences field', BASE, '.form-group select'],
+  ['a library filter select', BASE, '.toolbar-select'],
+  ['a content-type pill', BASE, '.pill'],
+  ['a settings toggle', BASE, '.toggle-switch'],
+  ['the theme select', BASE, '.length-select'],
+  ['the add-rule field', BASE, '.add-rule-form input[type="text"]'],
+  ['an edit-modal field', BASE, '.edit-field input'],
+  ['an OAuth code field', BASE, '.gog-input-row input'],
+  ['the library search field', SEARCH_INPUT, '.search-input'],
+  ['a source-config field', SOURCE_CONFIG_FORM, '.source-form-field input[type="text"]'],
+  ['a source-config chips field', SOURCE_CONFIG_FORM, '.chips-field'],
+  ['an add-source field', ADD_SOURCE_MODAL, '.add-source-field input[type="text"]'],
+  ['a settings field', SETTING_CONTROL, ".setting-control input[type='text']"],
+  ['a settings secret field', SETTING_SECRET, ".secret-edit-row input[type='password']"],
+]
+
+/** The colour out of a `border: <width> <style> <colour>` shorthand. */
+function borderColour(body: string): string {
+  return declaration(body, 'border').split(/\s+/).slice(2).join(' ')
+}
+
+describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
+  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+
+  const edgeAgainst = (edge: string, fill: string): number =>
+    contrast(toRgba(edge, vars), toRgba(fill, vars))
+
+  it.each(CONTROL_EDGES)('%s is distinguishable from its own fill', (_label, path, selector) => {
+    const body = ruleBody(read(path), selector)
+
+    expect(
+      edgeAgainst(borderColour(body), declaration(body, 'background')),
+    ).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  it('the number stepper frames the value rather than blending into it', () => {
+    const source = read(NUMBER_STEPPER)
+    const edge = borderColour(ruleBody(source, '.number-stepper'))
+
+    expect(
+      edgeAgainst(edge, declaration(ruleBody(source, '.stepper-input'), 'background')),
+    ).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+})
+
+/** Text that paints its own tint, or none at all, over the surface it lands on. */
+const TINTED_TEXT: [string, string, string, string][] = [
+  ['a page that failed to load', BASE, '.status-bar.error', '--bg-primary'],
+  ['a page loading', BASE, '.status-bar.loading', '--bg-primary'],
+  ['a preferences save that failed', PREFERENCES_PAGE, '.text-error', '--bg-card'],
+  ['a preferences save that landed', PREFERENCES_PAGE, '.text-success', '--bg-card'],
+  ['the number of a watched season', SEASON_CHECKLIST, '.season-checkbox.checked', '--bg-card'],
+  ['the version under the app name', BASE, '.version-label', '--bg-sidebar'],
+]
+
+describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
+  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+
+  // opacity is folded into the measurement rather than forbidden, because a
+  // faded token reads as its blend and a rule is free to earn the ratio anyway.
+  it.each(TINTED_TEXT)('%s says so readably', (_label, path, selector, surface) => {
+    const body = ruleBody(read(path), selector)
+    const beneath = toRgba(`var(${surface})`, vars)
+    const tint = optional(body, 'background')
+    const behind = tint ? over(toRgba(tint, vars), beneath) : beneath
+    const text = toRgba(declaration(body, 'color'), vars)
+    const fade = Number(optional(body, 'opacity') ?? 1)
+
+    expect(contrast({ ...text, a: text.a * fade }, behind)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+})
+
+/** Backgrounds that named an undefined token, so they painted nothing and the
+ *  text inside them was measured against a surface it never met. */
+const RESTORED_SURFACES: [string, string, string, string, string][] = [
+  ['an accordion header', ACCORDION, '.accordion-trigger', ACCORDION, '.accordion'],
+  ['the All Sources hint', BASE, '.sync-plugin-name', DATA_PAGE, '.sync-all-card'],
+  [
+    'an ignored recommendation',
+    RECOMMENDATIONS_PAGE,
+    '.rec-ignored',
+    RECOMMENDATIONS_PAGE,
+    '.rec-ignored',
+  ],
+]
+
+describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, themePath) => {
+  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+
+  it.each(RESTORED_SURFACES)(
+    '%s reads against the background that now paints',
+    (_label, textPath, textSelector, surfacePath, surfaceSelector) => {
+      const text = declaration(ruleBody(read(textPath), textSelector), 'color')
+      const surface = declaration(ruleBody(read(surfacePath), surfaceSelector), 'background')
+
+      expect(contrast(toRgba(text, vars), toRgba(surface, vars))).toBeGreaterThanOrEqual(
+        AA_NORMAL_TEXT,
+      )
+    },
+  )
 })

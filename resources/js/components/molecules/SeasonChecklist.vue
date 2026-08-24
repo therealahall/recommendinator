@@ -126,10 +126,13 @@ function deselectAll() {
   outline-offset: 2px;
 }
 
+/* The season number is exposed text on this tint and owes 4.5:1, where the
+   check glyph beside it is a graphical object owing 3:1 — --accent-light was
+   enough for the glyph and short for the number. */
 .season-checkbox.checked {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   border-color: var(--accent);
-  color: var(--accent-light);
+  color: var(--text-primary);
 }
 
 .season-check {

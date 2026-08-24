@@ -163,10 +163,10 @@ async function onRetry(): Promise<void> {
 }
 
 .text-success {
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 
 .text-error {
-  color: var(--color-error);
+  color: var(--color-error-text);
 }
 </style>
