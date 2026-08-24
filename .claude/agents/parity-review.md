@@ -61,7 +61,6 @@ CLI `--format json` and the corresponding API response should carry the same fie
 ### Step 4: Identify Intentional Exclusions
 
 These are NOT parity gaps — do not flag them:
-- Theme selection (`GET /api/themes`, `GET /api/themes/default`) — web-only visual concern
 - OAuth redirect UI chrome (the browser callback page — CLI uses code paste instead)
 - `POST /api/config/reload` — CLI reloads config on every invocation
 - WebSocket streaming — CLI uses synchronous equivalents
