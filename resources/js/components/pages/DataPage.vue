@@ -37,6 +37,11 @@ async function onRetrySources(): Promise<void> {
   }
 }
 
+function onSyncAll(): void {
+  if (data.anySyncRunning) return
+  data.triggerSync('all')
+}
+
 onMounted(() => {
   data.loadSyncSources()
   data.checkSyncStatus()
@@ -181,7 +186,7 @@ const orderedSources = computed(() => {
             <button
               type="button"
               class="btn btn-secondary sync-btn"
-              :disabled="data.anySyncRunning"
+              :aria-disabled="data.anySyncRunning || undefined"
               :aria-label="
                 data.isSourceIdSyncing('all')
                   ? 'Syncing all sources — in progress'
@@ -189,7 +194,7 @@ const orderedSources = computed(() => {
                   ? 'Sync all sources — another sync is in progress'
                   : 'Sync all sources'
               "
-              @click="data.triggerSync('all')"
+              @click="onSyncAll"
             >{{ syncAllLabel }}</button>
           </div>
         </div>

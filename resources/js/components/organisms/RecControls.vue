@@ -7,15 +7,18 @@ import NumberStepper from '@/components/atoms/NumberStepper.vue'
 
 const recs = useRecommendationsStore()
 const app = useAppStore()
+
+function onGenerate(): void {
+  if (recs.loading) return
+  recs.fetch()
+}
 </script>
 
 <template>
   <div class="card">
     <div class="rec-toolbar">
-      <!-- Desktop: Type pills; Mobile: Type dropdown -->
       <TypePills v-model="recs.contentType" :include-all="false" class="rec-pills" />
 
-      <!-- Mobile: dropdown replaces pills -->
       <TypeSelect v-model="recs.contentType" :include-all="false" class="toolbar-select rec-type-select" />
 
       <NumberStepper
@@ -31,9 +34,10 @@ const app = useAppStore()
       <div class="toolbar-zone toolbar-actions">
         <button
           class="btn btn-primary"
-          :disabled="recs.loading"
-          @click="recs.fetch()"
-        >Generate</button>
+          data-testid="generate-btn"
+          :aria-disabled="recs.loading || undefined"
+          @click="onGenerate"
+        >{{ recs.loading ? 'Generating…' : 'Generate' }}</button>
       </div>
     </div>
   </div>

@@ -25,6 +25,7 @@ function preferences(customRules: string[] = []) {
 }
 
 const mockPost = vi.fn()
+const mockPut = vi.fn()
 const mockDelete = vi.fn()
 const mockPreferencesGet = vi.fn()
 
@@ -33,7 +34,7 @@ vi.mock('@/composables/useApi', () => ({
     get: (path: string) =>
       path === '/profile' ? Promise.resolve(PROFILE) : mockPreferencesGet(path),
     post: (...args: unknown[]) => mockPost(...args),
-    put: vi.fn().mockResolvedValue({}),
+    put: (...args: unknown[]) => mockPut(...args),
     delete: (...args: unknown[]) => mockDelete(...args),
   }),
 }))
@@ -66,6 +67,8 @@ describe('PreferencesPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockPost.mockReset()
+    mockPut.mockReset()
+    mockPut.mockResolvedValue({})
     mockDelete.mockReset()
     mockPreferencesGet.mockReset()
     mockPreferencesGet.mockImplementation(() => Promise.resolve(preferences()))
@@ -188,6 +191,31 @@ describe('PreferencesPage', () => {
 
     expect(document.activeElement).toBe(reset.element)
     wrapper.unmount()
+  })
+
+  it('keeps focus on Save Preferences for the whole save instead of dropping it to <body>', async () => {
+    const { wrapper } = await mountPage(document.body)
+    mockPut.mockImplementation(() => new Promise(() => {}))
+    const save = wrapper.get('[data-testid="preferences-save"]')
+    ;(save.element as HTMLButtonElement).focus()
+
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(save.attributes('disabled')).toBeUndefined()
+    expect(document.activeElement).toBe(save.element)
+    wrapper.unmount()
+  })
+
+  it('sends one save when Save Preferences is activated twice in flight', async () => {
+    const { wrapper } = await mountPage()
+    mockPut.mockImplementation(() => new Promise(() => {}))
+    const save = wrapper.get('[data-testid="preferences-save"]')
+
+    await save.trigger('click')
+    await save.trigger('click')
+
+    expect(mockPut.mock.calls.filter(([path]) => path === '/users/1/preferences')).toHaveLength(1)
   })
 
   it('does not send a second reset while the first is in flight', async () => {

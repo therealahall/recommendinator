@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
@@ -9,9 +9,17 @@ const message = computed(() => (retrying.value ? 'Reconnecting…' : app.statusM
 
 async function retry(): Promise<void> {
   if (retrying.value) return
+  const trigger = document.activeElement
   retrying.value = true
   await app.fetchStatus()
   retrying.value = false
+  await nextTick()
+  const triggerUnmounted = trigger instanceof HTMLElement && !trigger.isConnected
+  const focusFellToBody =
+    document.activeElement === null || document.activeElement === document.body
+  if (triggerUnmounted && focusFellToBody) {
+    document.getElementById('main-content')?.focus()
+  }
 }
 </script>
 

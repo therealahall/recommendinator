@@ -187,6 +187,25 @@ describe('SyncSourceAccordion', () => {
     expect(migrate).toHaveBeenCalledWith('steam')
   })
 
+  it('migrates once when Migrate to DB is activated twice in flight', async () => {
+    const wrapper = mount(SyncSourceAccordion, {
+      props: { source: baseSource, syncing: false },
+    })
+    const store = useDataStore()
+    primeStore(store, yamlConfig)
+    const migrate = vi
+      .spyOn(store, 'migrateSource')
+      .mockImplementation(() => new Promise<never>(() => {}))
+
+    await wrapper.find('button.accordion-trigger').trigger('click')
+    await flushPromises()
+    const button = wrapper.find('[data-testid="migrate-btn-steam"]')
+    await button.trigger('click')
+    await button.trigger('click')
+
+    expect(migrate).toHaveBeenCalledTimes(1)
+  })
+
   it('disables the Sync button and shows a Disabled badge when source.enabled is false', () => {
     const wrapper = mount(SyncSourceAccordion, {
       props: { source: disabledSource, syncing: false },
