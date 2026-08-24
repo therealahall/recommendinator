@@ -860,6 +860,23 @@ class TestScheduledSyncDispatch:
         # skip that outranked the real run read as no history at all.
         assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
+    def test_a_source_another_process_holds_is_dispatched_once_it_is_released(
+        self, storage: StorageManager
+    ) -> None:
+        _steam_source(storage, "hourly")
+        _recorded_run(storage, timedelta(hours=2))
+        assert storage.sync_runs.claim(1, "steam") is True
+        manager = _accepting_manager()
+
+        self._tick(storage, manager)
+
+        manager.start_sync.assert_not_called()
+
+        storage.sync_runs.release(1, "steam")
+        self._tick(storage, manager)
+
+        assert manager.start_sync.call_args.args[0] == STEAM_LABEL
+
     def test_the_umbrellas_own_run_leaves_the_declined_source_not_due_again(
         self, storage: StorageManager
     ) -> None:

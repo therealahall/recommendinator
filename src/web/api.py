@@ -60,7 +60,14 @@ from src.ingestion.importers.registry import IMPORTERS, get_importer
 from src.ingestion.importers.service import decode_import_text, import_file
 from src.ingestion.plugin_base import SourcePlugin
 from src.ingestion.schedule import SYNC_INTERVAL_KEYS
-from src.ingestion.sync import ALL_SOURCES_KEY, ALL_SOURCES_LABEL, MAX_WORKERS_CEILING
+from src.ingestion.sync import (
+    ALL_SOURCES_KEY,
+    ALL_SOURCES_LABEL,
+    MAX_WORKERS_CEILING,
+    already_syncing_detail,
+    claim_sources,
+    release_sources,
+)
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_DESCRIPTION_LENGTH,
@@ -2002,6 +2009,11 @@ def update_data(
     if not resolved:
         return {"message": "No sources enabled or configured for sync", "count": 0}
 
+    claimed, refused = claim_sources(storage, [entry.source_id for entry in resolved])
+    if not claimed:
+        raise HTTPException(status_code=409, detail=already_syncing_detail(refused))
+    resolved = [entry for entry in resolved if entry.source_id in set(claimed)]
+
     sources_to_sync = [entry.source_id for entry in resolved]
 
     # The same builder the scheduler dispatches through, so a requested run and
@@ -2020,6 +2032,7 @@ def update_data(
     )
 
     if not success:
+        release_sources(storage, claimed)
         raise HTTPException(status_code=409, detail="A sync is already in progress")
 
     # humanize_source_id title-cases but strips nothing, so the request's own

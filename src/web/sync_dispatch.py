@@ -12,6 +12,7 @@ from src.enrichment.manager import EnrichmentManager
 from src.ingestion.sync import (
     SyncResult,
     execute_multi_source_sync,
+    release_sources,
     resolve_max_workers,
     sync_run_recorder,
 )
@@ -93,15 +94,18 @@ def build_sync_job(
                 sync_manager.add_error(source_label, result.source_name, error_message)
             record_run(result)
 
-        results = execute_multi_source_sync(
-            sources=source_pairs,
-            storage_manager=storage,
-            progress_callback=progress_callback,
-            result_callback=result_callback,
-            mark_for_enrichment=auto_enrich,
-            user_id=1,
-            max_workers=resolve_max_workers(config, override=max_workers),
-        )
+        try:
+            results = execute_multi_source_sync(
+                sources=source_pairs,
+                storage_manager=storage,
+                progress_callback=progress_callback,
+                result_callback=result_callback,
+                mark_for_enrichment=auto_enrich,
+                user_id=1,
+                max_workers=resolve_max_workers(config, override=max_workers),
+            )
+        finally:
+            release_sources(storage, [entry.source_id for entry in resolved])
         return sum(result.items_synced for result in results)
 
     def on_sync_complete() -> None:

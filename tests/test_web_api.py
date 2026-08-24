@@ -33,7 +33,12 @@ from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
 from src.config.service import load_config
 from src.enrichment.manager import EnrichmentManager
 from src.ingestion.paths import get_allowed_source_roots
-from src.ingestion.sync import ALL_SOURCES_KEY, SyncResult, SyncResultCallback
+from src.ingestion.sync import (
+    ALL_SOURCES_KEY,
+    SyncResult,
+    SyncResultCallback,
+    already_syncing_detail,
+)
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_RELEASE_YEAR,
@@ -2731,6 +2736,66 @@ class TestSyncingEverythingWaitsForTheRunInFlight:
         assert allowed.status_code != 409, allowed.text
         assert refused.status_code == 409
         assert refused.json()["detail"] == "A sync is already in progress"
+
+
+class TestASourceAnotherProcessHoldsIsRefused:
+    def test_update_is_refused_when_the_database_claim_is_lost(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        mock_components["storage"].sync_runs.claim.return_value = False
+
+        with patch(
+            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            return_value=[],
+        ):
+            response = client.post("/api/update", json={"source": "goodreads_rss"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == already_syncing_detail(["goodreads_rss"])
+
+    def test_a_started_sync_claims_the_source_it_names(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        storage = mock_components["storage"]
+
+        with (
+            patch(
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                return_value=[],
+            ),
+            patch("src.web.sync_dispatch.execute_multi_source_sync", return_value=[]),
+        ):
+            response = client.post("/api/update", json={"source": "goodreads_rss"})
+
+        assert response.status_code == 200, response.text
+        assert storage.sync_runs.claim.call_args.args == (1, "goodreads_rss")
+
+    def test_syncing_everything_names_the_source_it_could_not_claim(
+        self, client: TestClient, mock_components: dict
+    ) -> None:
+        app_state.config["inputs"]["shelf"] = {
+            "plugin": "goodreads_rss",
+            "user_id": "999",
+            "enabled": True,
+        }
+        storage = mock_components["storage"]
+        storage.sync_runs.claim.side_effect = lambda _user, source_id: (
+            source_id != "shelf"
+        )
+
+        with (
+            patch(
+                "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+                return_value=[],
+            ),
+            patch("src.web.sync_dispatch.execute_multi_source_sync", return_value=[]),
+        ):
+            response = client.post("/api/update", json={"source": "all"})
+
+        assert response.status_code == 200, response.text
+        assert "shelf" not in response.json()["sources"]
+        # The CLI names it in the same state; a silent drop reads as "all synced".
+        assert already_syncing_detail(["shelf"]) in response.text
 
 
 class TestUpdateEndpointParallelSync:

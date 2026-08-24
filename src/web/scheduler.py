@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.ingestion.schedule import is_due
-from src.ingestion.sync import ALL_SOURCES_KEY
+from src.ingestion.sync import ALL_SOURCES_KEY, claim_sources, release_sources
 from src.sources.service import resolve_inputs, schedule_state
 from src.utils.dates import utc_now
 from src.utils.text import humanize_source_id, sanitize_for_log
@@ -50,6 +50,13 @@ def dispatch_due_syncs(
             continue
 
         label = humanize_source_id(entry.source_id)
+        claimed, _refused = claim_sources(storage, [entry.source_id], user_id)
+        if not claimed:
+            logger.debug(
+                "Scheduled sync skipped: %s is already syncing",
+                sanitize_for_log(label),
+            )
+            continue
         dispatch = build_sync_job(sync_manager, label, [entry], storage, config)
         started, message = sync_manager.start_sync(
             label, dispatch.run, on_complete=dispatch.on_complete
@@ -60,6 +67,7 @@ def dispatch_due_syncs(
             logger.info("Scheduled sync started for %s", sanitize_for_log(label))
             # One start a tick, so the rest stagger over the minutes after it.
             break
+        release_sources(storage, claimed, user_id)
         logger.info("Scheduled sync declined: %s", sanitize_for_log(message))
 
 

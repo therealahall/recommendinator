@@ -1,10 +1,15 @@
+import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from src.storage import sync_runs
 from src.storage.manager import StorageManager
 from src.storage.schema import SyncRunStatus
+from src.storage.sync_runs import STALE_AFTER
+from src.utils.dates import utc_now
 
 _START = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
@@ -95,6 +100,97 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
     _record(storage, minute=25, status="completed")
 
     assert storage.sync_runs.consecutive_failures(1, "steam") == 0
+
+
+def test_two_racing_claims_leave_exactly_one_holder_of_the_source(
+    storage: StorageManager,
+) -> None:
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    outcomes: list[bool] = []
+
+    def take() -> None:
+        barrier.wait()
+        claimed = storage.sync_runs.claim(1, "steam")
+        with lock:
+            outcomes.append(claimed)
+
+    racers = [threading.Thread(target=take) for _ in range(2)]
+    for racer in racers:
+        racer.start()
+    for racer in racers:
+        racer.join()
+
+    assert sorted(outcomes) == [False, True]
+    _record(storage)
+    assert storage.sync_runs.claim(1, "steam") is True
+
+
+def test_a_claim_a_killed_run_left_open_is_taken_over_once_it_goes_stale(
+    storage: StorageManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is False
+
+    later = utc_now() + STALE_AFTER + timedelta(seconds=1)
+    monkeypatch.setattr(sync_runs, "utc_now", lambda: later)
+
+    assert storage.sync_runs.claim(1, "steam") is True
+
+
+def test_an_in_flight_claim_is_not_read_as_a_finished_run(
+    storage: StorageManager,
+) -> None:
+    _record(storage, minute=0, status="failed")
+    assert storage.sync_runs.claim(1, "steam") is True
+
+    assert storage.sync_runs.latest_per_source(1)["steam"]["status"] == "failed"
+    assert storage.sync_runs.consecutive_failures(1, "steam") == 1
+
+
+_SYNC_RUNS_AT_VERSION_SEVENTEEN = (
+    "CREATE TABLE sync_runs ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+    "source_id TEXT NOT NULL, "
+    "started_at TIMESTAMP NOT NULL, "
+    "finished_at TIMESTAMP NOT NULL, "
+    "status TEXT NOT NULL, "
+    "items_added INTEGER NOT NULL DEFAULT 0, "
+    "items_updated INTEGER NOT NULL DEFAULT 0, "
+    "items_unchanged INTEGER NOT NULL DEFAULT 0, "
+    "total_items INTEGER NOT NULL DEFAULT 0, "
+    "errors_json TEXT NOT NULL DEFAULT '[]'"
+    ")"
+)
+
+
+def test_the_runs_a_version_seventeen_library_holds_survive_the_rebuild(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "test.db"
+    StorageManager(sqlite_path=db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE sync_runs")
+        conn.execute(_SYNC_RUNS_AT_VERSION_SEVENTEEN)
+        conn.execute(
+            "INSERT INTO sync_runs (user_id, source_id, started_at, finished_at, "
+            "status, items_added, total_items, errors_json) "
+            "VALUES (1, 'steam', ?, ?, 'failed', 3, 12, '[\"timed out\"]')",
+            (_START.isoformat(), (_START + timedelta(minutes=1)).isoformat()),
+        )
+        conn.execute("PRAGMA user_version = 17")
+        conn.commit()
+    finally:
+        conn.close()
+
+    storage = StorageManager(sqlite_path=db_path)
+
+    run = storage.sync_runs.latest_per_source(1)["steam"]
+    assert (run["status"], run["items_added"], run["total_items"]) == ("failed", 3, 12)
+    assert run["errors"] == ["timed out"]
+    assert storage.sync_runs.claim(1, "steam") is True
 
 
 def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(

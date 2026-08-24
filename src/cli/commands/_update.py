@@ -16,7 +16,10 @@ from src.ingestion.sync import (
     ALL_SOURCES_LABEL,
     MAX_WORKERS_CEILING,
     SyncResult,
+    already_syncing_detail,
+    claim_sources,
     execute_multi_source_sync,
+    release_sources,
     resolve_max_workers,
     sync_run_failed,
     sync_run_recorder,
@@ -254,6 +257,13 @@ def update(
         )
         return
 
+    claimed, refused = claim_sources(storage, [entry.source_id for entry in valid])
+    if refused:
+        click.echo(f"Error: {already_syncing_detail(refused)}", err=True)
+    valid = [entry for entry in valid if entry.source_id in set(claimed)]
+    if not valid:
+        raise click.Abort()
+
     max_workers = resolve_max_workers(config, override=workers)
 
     click.echo(
@@ -299,6 +309,7 @@ def update(
             max_workers=max_workers,
         )
     except Exception as error:
+        release_sources(storage, claimed)
         abort_after_failure(ctx, SYNC_FAILED, error)
 
     label = ALL_SOURCES_LABEL if source == "all" else humanize_source_id(source)

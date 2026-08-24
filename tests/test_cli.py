@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from src.cli.main import cli
-from src.ingestion.sync import SyncResult
+from src.ingestion.sync import SyncResult, already_syncing_detail
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
@@ -706,8 +706,47 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
         result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code == 0, result.output
-    run = StorageManager(sqlite_path=db_path).sync_runs.latest_per_source(1)["steam"]
+    storage = StorageManager(sqlite_path=db_path)
+    run = storage.sync_runs.latest_per_source(1)["steam"]
     assert run["status"] == "completed"
+    # Recording the run is what releases the claim, so a run that only inserts
+    # leaves the source refused until the staleness bound passes.
+    assert storage.sync_runs.claim(1, "steam") is True
+
+
+def test_update_refuses_a_source_another_process_is_already_syncing(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    storage = StorageManager(sqlite_path=db_path)
+    assert storage.sync_runs.claim(1, "steam") is True
+    games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code != 0
+    assert already_syncing_detail(["steam"]) in result.output
+    assert storage.get_content_items(user_id=1) == []
 
 
 def test_preferences_get(mock_components):

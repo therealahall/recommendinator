@@ -94,12 +94,12 @@ class SyncRunDict(TypedDict):
 # 16 reduces a list column holding an object and clears a re-queued item's
 # stale quality; 17 splits a crammed series title, drops a placeholder author,
 # folds a company name, re-normalizes every title and re-derives every row's
-# sort and search columns.
+# sort and search columns; 18 rebuilds sync_runs, whose unfinished row is a claim.
 
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 17
+_SCHEMA_VERSION = 18
 
 # Leaves that were settings-registry entries on an earlier iteration of the
 # database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
@@ -261,6 +261,23 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
         )
     """,
 }
+
+_SYNC_RUNS_TABLE = (
+    "CREATE TABLE IF NOT EXISTS sync_runs ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+    "source_id TEXT NOT NULL, "
+    "started_at TIMESTAMP NOT NULL, "
+    "finished_at TIMESTAMP, "
+    "status TEXT NOT NULL, "
+    "items_added INTEGER NOT NULL DEFAULT 0, "
+    "items_updated INTEGER NOT NULL DEFAULT 0, "
+    "items_unchanged INTEGER NOT NULL DEFAULT 0, "
+    "total_items INTEGER NOT NULL DEFAULT 0, "
+    "errors_json TEXT NOT NULL DEFAULT '[]', "
+    "heartbeat_at TIMESTAMP"
+    ")"
+)
 
 _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
@@ -451,27 +468,17 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     _add_column_if_not_exists(cursor, "source_configs", "sync_interval", "TEXT")
 
-    # Pruned per source by SyncRunStore.record.
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            source_id TEXT NOT NULL,
-            started_at TIMESTAMP NOT NULL,
-            finished_at TIMESTAMP NOT NULL,
-            status TEXT NOT NULL,  -- completed or failed
-            items_added INTEGER NOT NULL DEFAULT 0,
-            items_updated INTEGER NOT NULL DEFAULT 0,
-            items_unchanged INTEGER NOT NULL DEFAULT 0,
-            total_items INTEGER NOT NULL DEFAULT 0,
-            errors_json TEXT NOT NULL DEFAULT '[]'
-        )
-        """
-    )
+    cursor.execute(_SYNC_RUNS_TABLE)
+    if stored_version < 18:
+        _rebuild_sync_runs(cursor)
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_sync_runs_source "
         "ON sync_runs(user_id, source_id, started_at DESC)"
+    )
+    # The claim: neither process can see the other's memory, so this refuses.
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_runs_claim "
+        "ON sync_runs(user_id, source_id) WHERE finished_at IS NULL"
     )
 
     # One row, because one job runs at a time. In the database rather than on
@@ -663,6 +670,20 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
     )
 
     cursor.execute("DROP TABLE content_items_old")
+
+
+def _rebuild_sync_runs(cursor: sqlite3.Cursor) -> None:
+    """A rebuild because SQLite cannot drop ``finished_at``'s NOT NULL in place."""
+    cursor.execute("ALTER TABLE sync_runs RENAME TO sync_runs_old")
+    cursor.execute(_SYNC_RUNS_TABLE)
+    old_columns = set(_column_names(cursor, "sync_runs_old"))
+    carried = ", ".join(
+        column for column in _column_names(cursor, "sync_runs") if column in old_columns
+    )
+    cursor.execute(
+        f"INSERT INTO sync_runs ({carried}) SELECT {carried} FROM sync_runs_old"
+    )
+    cursor.execute("DROP TABLE sync_runs_old")
 
 
 def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None:
