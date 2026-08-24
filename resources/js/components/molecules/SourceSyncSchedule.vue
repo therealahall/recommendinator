@@ -83,7 +83,7 @@ const statusText = computed(() => {
   if (props.loading) return 'Loading recent runs…'
   if (props.error) return `Error: ${props.error}`
   if (props.runs.length === 0) return 'No runs recorded yet.'
-  return ''
+  return `${props.runs.length} recent run${props.runs.length === 1 ? '' : 's'}.`
 })
 </script>
 

@@ -135,24 +135,24 @@ def claim_sources(
     storage_manager: StorageManager,
     source_ids: Sequence[str],
     user_id: int = 1,
-) -> tuple[list[str], list[str]]:
-    claimed: list[str] = []
+) -> tuple[dict[str, int], list[str]]:
+    claimed: dict[str, int] = {}
     refused: list[str] = []
     for source_id in source_ids:
-        if storage_manager.sync_runs.claim(user_id, source_id):
-            claimed.append(source_id)
-        else:
+        claim_id = storage_manager.sync_runs.claim(user_id, source_id)
+        if claim_id is None:
             refused.append(source_id)
+        else:
+            claimed[source_id] = claim_id
     return claimed, refused
 
 
 def release_sources(
     storage_manager: StorageManager,
-    source_ids: Sequence[str],
-    user_id: int = 1,
+    claim_ids: Iterable[int],
 ) -> None:
-    for source_id in source_ids:
-        storage_manager.sync_runs.release(user_id, source_id)
+    for claim_id in claim_ids:
+        storage_manager.sync_runs.release(claim_id)
 
 
 class _ClaimHeartbeat:
@@ -195,7 +195,19 @@ class _ClaimHeartbeat:
             with self._lock:
                 outstanding = list(self._outstanding)
             for source_id in outstanding:
-                self._storage_manager.sync_runs.heartbeat(self._user_id, source_id)
+                self._beat_one(source_id)
+
+    def _beat_one(self, source_id: str) -> None:
+        # A write waiting out ``busy_timeout`` raises, and an escaped one ended
+        # every source's beat for the rest of the run.
+        try:
+            self._storage_manager.sync_runs.heartbeat(self._user_id, source_id)
+        except Exception as error:
+            logger.warning(
+                "[SYNC] %s: claim heartbeat failed: %s",
+                sanitize_for_log(source_id),
+                exception_for_log(error),
+            )
 
 
 def already_syncing_detail(source_ids: Sequence[str]) -> str:
@@ -237,22 +249,7 @@ def execute_sync(
     mark_for_enrichment: bool = False,
     user_id: int = 1,
 ) -> SyncResult:
-    """Execute a sync for a single plugin source.
-
-    Fetches items from the plugin and saves each to storage. Progress is
-    reported via the callback.
-
-    Args:
-        plugin: The source plugin to fetch from.
-        plugin_config: Plugin-ready configuration dict.
-        storage_manager: Storage manager for saving items.
-        progress_callback: Optional callback(items_processed, total, current_item).
-        mark_for_enrichment: Whether to mark items as needing enrichment after save.
-        user_id: User ID for credential storage (default 1).
-
-    Returns:
-        SyncResult with counts and any errors.
-    """
+    """Fetch one source's items and save each, reporting counts and misses."""
     source_id = _configured_source_id(plugin_config)
     source_name = humanize_source_id(source_id) if source_id else plugin.display_name
     result = SyncResult(source_name=source_name, source_id=source_id)
@@ -271,7 +268,6 @@ def execute_sync(
     # as absent.
     source_identifier = plugin.get_source_identifier(plugin_config)
 
-    # Inject credential rotation callback so plugins can persist rotated tokens
     def on_credential_rotated(key: str, value: str) -> None:
         safe_key = sanitize_for_log(key)
         try:
@@ -294,7 +290,6 @@ def execute_sync(
 
     plugin_config = {**plugin_config, "_on_credential_rotated": on_credential_rotated}
 
-    # Fetch items from plugin
     def fetch_progress(
         items_processed: int, total_items: int | None, current_item: str | None
     ) -> None:
@@ -313,7 +308,6 @@ def execute_sync(
         "[SYNC] %s: Found %d items, saving...", safe_source_name, result.total_items
     )
 
-    # Save each item
     enrichment_queue_failures = 0
     for index, item in enumerate(items):
         item_num = index + 1
@@ -327,7 +321,6 @@ def execute_sync(
             if progress_callback:
                 # Report ``item_num`` (1-based) so the UI shows the current
                 # item number rather than the count of completed items.
-                # Final iteration produces ``items_processed == total_items``.
                 progress_callback(item_num, result.total_items, safe_title, source_name)
 
             logger.debug(

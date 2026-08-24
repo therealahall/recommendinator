@@ -735,7 +735,7 @@ def test_update_records_the_run_it_just_finished(tmp_path: Path) -> None:
     assert run["status"] == "completed"
     # Recording the run is what releases the claim, so a run that only inserts
     # leaves the source refused until the staleness bound passes.
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
 
 
 @pytest.mark.parametrize("auto_enrich", [True, False])
@@ -951,7 +951,7 @@ def test_update_refuses_a_source_another_process_is_already_syncing(
         },
     }
     storage = StorageManager(sqlite_path=db_path)
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
     games = [make_item("Game", ContentType.VIDEO_GAME, item_id="g1")]
 
     with (
@@ -986,7 +986,7 @@ def test_update_json_answers_with_a_document_when_every_source_is_claimed(
         },
     }
     storage = StorageManager(sqlite_path=db_path)
-    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam") is not None
 
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -1034,7 +1034,7 @@ def test_update_interrupted_by_ctrl_c_leaves_the_source_claimable(
         result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code != 0
-    assert StorageManager(sqlite_path=db_path).sync_runs.claim(1, "steam") is True
+    assert StorageManager(sqlite_path=db_path).sync_runs.claim(1, "steam") is not None
 
 
 def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
@@ -1055,7 +1055,7 @@ def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
         },
     }
     storage = StorageManager(sqlite_path=db_path)
-    assert storage.sync_runs.claim(1, "steam_backlog") is True
+    assert storage.sync_runs.claim(1, "steam_backlog") is not None
 
     with (
         patch("src.cli.main.load_config", return_value=config),
@@ -1070,8 +1070,50 @@ def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
         result = CliRunner().invoke(cli, ["update", "--source", "all"])
 
     assert already_syncing_detail(["steam_backlog"]) in result.output
-    assert storage.sync_runs.claim(1, "steam") is True
-    assert storage.sync_runs.claim(1, "steam_backlog") is False
+    assert storage.sync_runs.claim(1, "steam") is not None
+    assert storage.sync_runs.claim(1, "steam_backlog") is None
+
+
+def test_update_interrupted_after_a_source_recorded_keeps_the_next_runs_claim(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    storage = StorageManager(sqlite_path=db_path)
+    taken_by_the_web: list[int | None] = []
+
+    def record_then_hand_over(*_args: object, **_kwargs: object) -> None:
+        moment = datetime.now(UTC)
+        storage.sync_runs.record(
+            1, "steam", started_at=moment, finished_at=moment, status="completed"
+        )
+        taken_by_the_web.append(storage.sync_runs.claim(1, "steam"))
+        raise KeyboardInterrupt
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.cli.commands._update.execute_multi_source_sync",
+            side_effect=record_then_hand_over,
+        ),
+    ):
+        CliRunner().invoke(cli, ["update", "--source", "all"])
+
+    assert taken_by_the_web[0] is not None
+    assert storage.sync_runs.claim(1, "steam") is None
 
 
 def test_preferences_get(mock_components):
