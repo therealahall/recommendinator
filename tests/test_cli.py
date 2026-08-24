@@ -1311,8 +1311,10 @@ class TestPreferencesResetConfirms:
         )
 
         assert result.exit_code == 0
-        # The prompt sizes the loss rather than just asking.
+        # The prompt sizes the loss rather than just asking, and does not offer
+        # the theme, which the reset leaves alone.
         assert "3" in result.output
+        assert "theme" not in result.output.lower()
         assert storage.get_user_preference_config(1) == before
 
     def test_yes_resets_without_prompting(self, storage: StorageManager) -> None:
@@ -1323,6 +1325,15 @@ class TestPreferencesResetConfirms:
 
         assert result.exit_code == 0
         assert storage.get_user_preference_config(1) == UserPreferenceConfig()
+
+    def test_the_chosen_theme_survives_the_reset(self, storage: StorageManager) -> None:
+        """Regression: the theme rode in the preference blob this write
+        replaces, so resetting the scoring preferences reverted it."""
+        storage.ui_settings.set_theme(1, "snowstorm")
+
+        _invoke_with_mocks(CliRunner(), ["preferences", "reset", "--yes"], storage)
+
+        assert storage.ui_settings.get_theme(1) == "snowstorm"
 
 
 def test_set_length_preference(mock_components):

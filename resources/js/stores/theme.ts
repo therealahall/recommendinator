@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
-import type { ThemeResponse, UserPreferenceResponse } from '@/types/api'
+import type { ThemePreferenceResponse, ThemeResponse } from '@/types/api'
 
 const STORAGE_KEY = 'theme'
 const THEME_ID_RE = /^[a-zA-Z0-9_-]+$/
@@ -14,17 +14,17 @@ export const useThemeStore = defineStore('theme', () => {
   const currentThemeId = ref<string | null>(null)
   const defaultThemeId = ref('nord')
 
-  /** The one thing that decides the theme: the stored preference, or the
-   *  default when nothing has been picked. localStorage only caches it, so a
-   *  pick made on another browser reaches this one here, at boot. */
+  /** The one thing that decides the theme: the stored pick, or the default
+   *  when nothing has been picked. localStorage only caches it, so a pick made
+   *  on another browser reaches this one here, at boot. */
   async function fetchThemes() {
     const app = useAppStore()
     try {
-      const [themeList, defaultData, prefs] = await Promise.all([
+      const [themeList, defaultData, stored] = await Promise.all([
         api.get<ThemeResponse[]>('/themes'),
-        api.get<{ theme: string }>('/themes/default'),
+        api.get<ThemePreferenceResponse>('/themes/default'),
         api
-          .get<UserPreferenceResponse>(`/users/${app.currentUserId}/preferences`)
+          .get<ThemePreferenceResponse>(`/users/${app.currentUserId}/theme`)
           .catch(() => null),
       ])
 
@@ -34,13 +34,13 @@ export const useThemeStore = defineStore('theme', () => {
 
       defaultThemeId.value = defaultData.theme || 'nord'
 
-      // A read that failed is not a preference naming nothing: falling back
-      // would repaint over the cache and overwrite it with the default.
-      if (prefs === null && currentThemeId.value) return
+      // A read that failed is not a pick naming nothing: falling back would
+      // repaint over the cache and overwrite it with the default.
+      if (stored === null && currentThemeId.value) return
 
-      const stored = prefs?.theme
-      const installed = themes.value.length === 0 || themes.value.some((t) => t.id === stored)
-      applyTheme(stored && installed ? stored : defaultThemeId.value)
+      const picked = stored?.theme
+      const installed = themes.value.length === 0 || themes.value.some((t) => t.id === picked)
+      applyTheme(picked && installed ? picked : defaultThemeId.value)
     } catch {
       // Nothing to decide with: the browser keeps the theme it painted from cache.
     }

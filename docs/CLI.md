@@ -381,6 +381,17 @@ python3.11 -m src.cli preferences custom-rules clear --yes
 
 At most 50 rules of 500 characters each, the same bound the web API applies.
 
+## Theme
+
+```bash
+python3.11 -m src.cli theme list                  # the installed themes
+python3.11 -m src.cli theme show --format json    # what this user's UI paints
+python3.11 -m src.cli theme set snowstorm
+```
+
+The theme is not a scoring preference: `preferences reset` leaves it alone, and
+only an installed theme id is accepted. `show` and `set` take `--user`.
+
 ## Enrichment
 
 Enrichment is critical for recommendation quality. See

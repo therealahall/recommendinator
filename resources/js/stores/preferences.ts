@@ -134,14 +134,10 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function selectTheme(themeId: string) {
     const theme = useThemeStore()
     theme.applyTheme(themeId)
-    // Without a loaded config there is nothing to merge into, and localStorage
-    // holds the theme either way, so this browser keeps it.
-    if (!hasLoaded.value) return
 
     const app = useAppStore()
-    const payload: UserPreferenceUpdateRequest = { theme: themeId }
     try {
-      await api.put(`/users/${app.currentUserId}/preferences`, payload)
+      await api.put(`/users/${app.currentUserId}/theme`, { theme: themeId })
     } catch (err) {
       // Applied but not stored: another browser still shows the old theme, and
       // saying nothing reads as saved.
@@ -161,10 +157,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
         `/users/${app.currentUserId}/preferences`,
       )
       adopt(defaults)
-      // The CLI's reset clears the stored theme too, so leaving this one
-      // applied would make the surfaces disagree about the defaults.
-      const theme = useThemeStore()
-      theme.applyTheme(theme.defaultThemeId)
       reportSaved()
     } catch (err) {
       saveStatus.value = 'error'
@@ -191,8 +183,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
         content_length_preferences: contentLengthPreferences.value,
         custom_rules: customRules.value,
       }
-      // The theme is not in the payload: it was stored when it was picked, and
-      // sending a stale copy here would undo a selection made since.
       const sent = fields()
       await api.put(`/users/${app.currentUserId}/preferences`, payload)
       // What was sent, not what is on screen now: an edit made during the round

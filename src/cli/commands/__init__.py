@@ -16,6 +16,7 @@ from src.cli.commands._recommend import recommend
 from src.cli.commands._settings import settings
 from src.cli.commands._source import source
 from src.cli.commands._status import status
+from src.cli.commands._theme import theme
 from src.cli.commands._update import update
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "settings",
     "source",
     "status",
+    "theme",
     "update",
 ]

@@ -197,7 +197,7 @@ def preferences_reset(ctx: click.Context, user_id: int, yes: bool) -> None:
         rules = len(storage.get_user_preference_config(user_id).custom_rules)
         if not click.confirm(
             "Reset the scorer weights, length preferences, variety penalty, "
-            "series ordering, theme and "
+            "series ordering and "
             f"{rules} custom rule(s) for user {user_id} to defaults?"
         ):
             click.echo("Aborted.")

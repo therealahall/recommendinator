@@ -33,7 +33,6 @@ const STORED_PREFS = {
   variety_penalty: 0,
   content_length_preferences: {},
   custom_rules: [],
-  theme: '',
 }
 
 /** A store in the only state the Save button is reachable from: loaded. */
@@ -61,7 +60,6 @@ describe('usePreferencesStore', () => {
       variety_penalty: 0.5,
       content_length_preferences: { book: 'short' },
       custom_rules: ['avoid horror'],
-      theme: '',
     })
 
     const store = usePreferencesStore()
@@ -134,39 +132,40 @@ describe('usePreferencesStore', () => {
     await store.selectTheme('snowstorm')
 
     expect(mockApplyTheme).toHaveBeenCalledWith('snowstorm')
-    expect(mockPut).toHaveBeenCalledWith('/users/1/preferences', { theme: 'snowstorm' })
+    expect(mockPut).toHaveBeenCalledWith('/users/1/theme', { theme: 'snowstorm' })
     // The theme is not an edit the Save button holds.
     expect(store.isDirty).toBe(false)
   })
 
-  it('a theme picked before preferences load is applied but not written', async () => {
+  it('stores a theme picked before the preferences load, which it no longer rides with', async () => {
     mockGet.mockRejectedValue(new Error('Network error'))
+    mockPut.mockResolvedValue({})
     const store = usePreferencesStore()
     await store.load()
 
     await store.selectTheme('snowstorm')
 
-    expect(mockApplyTheme).toHaveBeenCalledWith('snowstorm')
-    // A write from here would land a config this store never loaded.
-    expect(mockPut).not.toHaveBeenCalled()
+    expect(mockPut).toHaveBeenCalledWith('/users/1/theme', { theme: 'snowstorm' })
   })
 
   it('load leaves the theme alone: boot already applied the stored one', async () => {
     // Regression: opening this page was where the stored theme was read, so the
     // whole UI restyled the moment it mounted.
     appliedThemeId = 'snowstorm'
-    mockGet.mockResolvedValue({ ...STORED_PREFS, theme: 'nord' })
+    mockGet.mockResolvedValue(STORED_PREFS)
 
     await usePreferencesStore().load()
 
     expect(mockApplyTheme).not.toHaveBeenCalled()
   })
 
-  it('reset shows the defaults the server answers with, theme included', async () => {
+  it('reset shows the defaults the server answers with, and leaves the theme painted', async () => {
+    // Regression: resetting the scoring preferences repainted the default over
+    // the theme the user picked, which the reset no longer touches.
     const store = await loadedStore()
     store.customRules = ['no horror']
     store.varietyPenalty = 3.0
-    mockDelete.mockResolvedValue({ ...STORED_PREFS, theme: '' })
+    mockDelete.mockResolvedValue(STORED_PREFS)
 
     await store.resetToDefaults()
 
@@ -174,8 +173,7 @@ describe('usePreferencesStore', () => {
     expect(store.customRules).toEqual([])
     expect(store.varietyPenalty).toBe(0)
     expect(store.isDirty).toBe(false)
-    // `preferences reset` clears the stored theme, so this one follows it back.
-    expect(mockApplyTheme).toHaveBeenCalledWith('nord')
+    expect(mockApplyTheme).not.toHaveBeenCalled()
   })
 })
 

@@ -534,7 +534,8 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
 - Themes are folder-per-theme in `src/web/static/themes/`, each a `theme.json`
   and a `colors.css` overriding the `:root` vars `base.css` declares.
   `color-mix()` means a theme defines only core colors. Selection persists per
-  user, defaulting to `nord`. See
+  user in `user_ui_settings`, defaulting to `nord`, and is untouched by a
+  preference reset. See
   [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
 - The UI polls `GET /api/status` every 5 minutes and banners a newer server
   version.
