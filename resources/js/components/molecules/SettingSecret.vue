@@ -79,7 +79,7 @@ watch(
         class="btn btn-secondary"
         :aria-label="`${setting.has_secret ? 'Replace' : 'Set'} ${setting.label}`"
         :data-testid="`secret-replace-${setting.key}`"
-        :aria-disabled="verbsLocked || busy || undefined"
+        :aria-disabled="locked() || undefined"
         @click="startReplace"
       >{{ setting.has_secret ? 'Replace' : 'Set' }}</button>
       <button
@@ -88,7 +88,7 @@ watch(
         class="btn btn-danger"
         :aria-label="`Clear ${setting.label}`"
         :data-testid="`secret-clear-${setting.key}`"
-        :aria-disabled="verbsLocked || busy || undefined"
+        :aria-disabled="locked() || undefined"
         @click="clear"
       >Clear</button>
     </div>
@@ -103,7 +103,7 @@ watch(
         autocomplete="new-password"
         :aria-label="`New value for ${setting.label}`"
         :value="draft"
-        :readonly="verbsLocked || busy"
+        :readonly="locked()"
         @input="draft = ($event.target as HTMLInputElement).value"
       />
       <button
@@ -111,7 +111,7 @@ watch(
         class="btn btn-primary"
         :aria-label="`Save ${setting.label}`"
         :data-testid="`secret-save-${setting.key}`"
-        :aria-disabled="verbsLocked || busy || undefined"
+        :aria-disabled="locked() || undefined"
         @click="save"
       >Save secret</button>
       <!-- Not locked: it is the only way out of the edit row. -->
