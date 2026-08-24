@@ -249,7 +249,7 @@ function onFloatBlur(event: Event): void {
   min-width: 14rem;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font: inherit;

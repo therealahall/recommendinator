@@ -49,7 +49,7 @@ function clear() {
 
 .star-rating-star {
   font-size: 1.25rem;
-  color: var(--border-default);
+  color: var(--border-interactive);
   cursor: pointer;
   background: none;
   border: none;

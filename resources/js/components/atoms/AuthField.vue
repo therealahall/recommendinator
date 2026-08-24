@@ -87,8 +87,6 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
-/* --border-default is only 1.36:1 on a card, which leaves the field with no
-   visible edge. --text-muted clears the 3:1 a control boundary needs. */
 .auth-field input {
   width: 100%;
   /* 44px so the field is a thumb-sized target, and 1rem because anything under
@@ -97,7 +95,7 @@ onMounted(() => {
   min-height: 44px;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--text-muted);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-family: inherit;

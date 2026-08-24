@@ -317,6 +317,7 @@ const NON_TEXT = 3
 
 const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
 const ADD_SOURCE_MODAL = 'resources/js/components/organisms/AddSourceModal.vue'
+const AUTH_FIELD = 'resources/js/components/atoms/AuthField.vue'
 const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
 const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
 const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
@@ -326,6 +327,7 @@ const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
 const SETTING_CONTROL = 'resources/js/components/molecules/SettingControl.vue'
 const SETTING_SECRET = 'resources/js/components/molecules/SettingSecret.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
+const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
@@ -371,6 +373,8 @@ const CONTROL_EDGES: [string, string, string][] = [
   ['an add-source field', ADD_SOURCE_MODAL, '.add-source-field input[type="text"]'],
   ['a settings field', SETTING_CONTROL, ".setting-control input[type='text']"],
   ['a settings secret field', SETTING_SECRET, ".secret-edit-row input[type='password']"],
+  ['a sign-in field', AUTH_FIELD, '.auth-field input'],
+  ['the file picker button', DROP_ZONE, '.drop-zone-input::file-selector-button'],
 ]
 
 /** The colour out of a `border: <width> <style> <colour>` shorthand. */
@@ -392,6 +396,12 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
     ).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
+  it('an unfilled star stays visible against the dialog that rates it', () => {
+    const colour = declaration(ruleBody(read(STAR_RATING), '.star-rating-star'), 'color')
+
+    expect(edgeAgainst(colour, 'var(--bg-card)')).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
   it('the number stepper frames the value rather than blending into it', () => {
     const source = read(NUMBER_STEPPER)
     const edge = borderColour(ruleBody(source, '.number-stepper'))
@@ -410,6 +420,9 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a preferences save that landed', PREFERENCES_PAGE, '.text-success', '--bg-card'],
   ['the number of a watched season', SEASON_CHECKLIST, '.season-checkbox.checked', '--bg-card'],
   ['the version under the app name', BASE, '.version-label', '--bg-sidebar'],
+  ['a sync that failed', BASE, '.sync-status-error', '--bg-card'],
+  ['a sync still running', BASE, '.sync-status-info', '--bg-card'],
+  ['a sync that finished', BASE, '.sync-status-success', '--bg-card'],
 ]
 
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
