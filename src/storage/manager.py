@@ -33,6 +33,7 @@ from src.storage.item_merges import MergeError as MergeError
 from src.storage.item_merges import MergeEvidence as MergeEvidence
 from src.storage.item_merges import MergeRecord as MergeRecord
 from src.storage.profiles import ProfileStore
+from src.storage.schema import UnknownUserError as UnknownUserError
 from src.storage.schema import (
     UserDict,
     get_all_users,
@@ -59,10 +60,7 @@ from src.storage.sqlite_db import UncorrectableFieldError as UncorrectableFieldE
 from src.storage.sqlite_db import Unset as Unset
 from src.storage.sqlite_db import unset_if_none as unset_if_none
 from src.storage.sync_runs import SyncRunStore
-
-
-class UnknownUserError(LookupError):
-    """A write named a user id no ``users`` row carries."""
+from src.storage.ui_settings import UiSettingsStore
 
 
 class StorageManager:
@@ -117,6 +115,10 @@ class StorageManager:
     @functools.cached_property
     def sync_runs(self) -> SyncRunStore:
         return SyncRunStore(self.sqlite_db)
+
+    @functools.cached_property
+    def ui_settings(self) -> UiSettingsStore:
+        return UiSettingsStore(self.sqlite_db)
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
