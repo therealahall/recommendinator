@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterView } from 'vue-router'
+import router, { APP_NAME } from '@/router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
@@ -19,11 +20,8 @@ const theme = useThemeStore()
 const gate = useSubmission()
 
 const sidebarOpen = ref(false)
-// Kept in step with the width base.css slides the sidebar off screen at.
 const narrowViewport = window.matchMedia('(max-width: 768px)')
 const isNarrow = ref(narrowViewport.matches)
-/** `left: -100%` moves the closed sidebar out of sight and nothing else: every
- *  control in it stays tabbable, and stays in the accessibility tree. */
 const sidebarOffscreen = computed(() => isNarrow.value && !sidebarOpen.value)
 const mainContent = ref<HTMLElement | null>(null)
 /** Why the sign-in form is on screen, as opposed to a refusal of what was typed
@@ -83,6 +81,13 @@ onMounted(async () => {
   noticeFromGate()
 })
 
+// Setup, sign-in and the session check render outside RouterView, so the route
+// behind them titles a page that is not on screen (WCAG 2.4.2).
+watchEffect(() => {
+  const page = auth.isAuthenticated ? router.currentRoute.value.meta.title : ''
+  document.title = page ? `${page} · ${APP_NAME}` : APP_NAME
+})
+
 watch(
   () => auth.isAuthenticated,
   async (authenticated, wasAuthenticated) => {
@@ -131,8 +136,13 @@ watch(
   />
 
   <template v-else-if="auth.isAuthenticated">
-    <!-- Mobile sidebar toggle -->
-    <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" aria-label="Toggle navigation">
+    <button
+      class="sidebar-toggle"
+      aria-label="Toggle navigation"
+      aria-controls="sidebar"
+      :aria-expanded="isNarrow ? sidebarOpen : undefined"
+      @click="sidebarOpen = !sidebarOpen"
+    >
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="3" y1="6" x2="21" y2="6" />
         <line x1="3" y1="12" x2="21" y2="12" />

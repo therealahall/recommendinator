@@ -55,8 +55,7 @@ const router = createRouter({
   ],
 })
 
-router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · ${APP_NAME}` : APP_NAME
+router.afterEach(() => {
   nextTick(() => {
     document.getElementById('main-content')?.focus()
   })

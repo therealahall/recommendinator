@@ -1,34 +1,26 @@
 import { describe, it, expect } from 'vitest'
 import { nextTick } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
-import router, { APP_NAME } from './index'
+import router from './index'
 
-const ROUTE_NAMES = router.getRoutes().flatMap((route) => (route.name ? [route.name] : []))
+const TITLES = router.getRoutes().flatMap((route) => (route.name ? [route.meta.title] : []))
 
 async function navigate(target: RouteLocationRaw) {
-  document.title = ''
   await router.push(target)
   await nextTick()
 }
 
 describe('router', () => {
-  it('gives every route a distinct title ending in the app name', async () => {
-    const titles = new Set<string>()
-    for (const name of ROUTE_NAMES) {
-      await navigate({ name })
-      expect(document.title.endsWith(APP_NAME)).toBe(true)
-      expect(document.title.length).toBeGreaterThan(APP_NAME.length)
-      titles.add(document.title)
-    }
-    expect(ROUTE_NAMES.length).toBeGreaterThanOrEqual(3)
-    expect(titles.size).toBe(ROUTE_NAMES.length)
+  it('names every route distinctly, so App can title the page it renders', () => {
+    expect(TITLES.length).toBeGreaterThanOrEqual(3)
+    expect(TITLES.filter(Boolean)).toHaveLength(TITLES.length)
+    expect(new Set(TITLES).size).toBe(TITLES.length)
   })
 
-  it('titles the route the bare / redirect lands on', async () => {
+  it('lands the bare / redirect on a named route rather than an untitled one', async () => {
     await navigate({ name: 'settings' })
     await navigate('/')
-    expect(document.title.endsWith(APP_NAME)).toBe(true)
-    expect(document.title).not.toBe(APP_NAME)
+    expect(router.currentRoute.value.meta.title).toBeTruthy()
   })
 
   it('still moves focus to the main landmark after navigating', async () => {
