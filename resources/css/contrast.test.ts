@@ -364,6 +364,13 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   it.each(RING_SURFACES)('--accent-light rings a focused control on %s', (surface) => {
     expect(ratio('--accent-light', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
+
+  it("--accent-light rings Try again on the error bar's own tint", () => {
+    const tint = declaration(ruleBody(read(BASE), '.status-bar.error'), 'background')
+    const bar = over(toRgba(tint, vars), toRgba('var(--bg-primary)', vars))
+
+    expect(contrast(toRgba('var(--accent-light)', vars), bar)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
 })
 
 /** Controls that declare both their edge and the fill it encloses. */
@@ -472,7 +479,11 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a scorer weight', BASE, '.slider-value', '--bg-card'],
   ['a content-type badge', BASE, '.badge-type', '--bg-card'],
   ['a score badge', BASE, '.badge-score', '--bg-card'],
+  ['a finished-status badge', BASE, '.badge-status', '--bg-card'],
+  ['an in-progress badge', BASE, '.badge-status.currently_consuming', '--bg-card'],
+  ['a score breakdown', BASE, '.score-details summary', '--bg-card'],
   ['a hovered score breakdown', BASE, '.score-details summary:hover', '--bg-card'],
+  ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
   ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
 ]
 

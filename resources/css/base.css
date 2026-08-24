@@ -993,7 +993,7 @@ input[type="checkbox"] {
 .scorer-tooltip-wrap:hover .scorer-tooltip-icon,
 .scorer-tooltip-wrap:focus .scorer-tooltip-icon {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 /* Hidden from sighted users but kept in the accessibility tree so the
@@ -1188,7 +1188,7 @@ input[type="checkbox"] {
 
 .badge-status {
   background: color-mix(in srgb, var(--color-success) 10%, transparent);
-  color: var(--color-success);
+  color: var(--color-success-text);
   border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 
@@ -1200,7 +1200,7 @@ input[type="checkbox"] {
 
 .badge-status.currently_consuming {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
+  color: var(--text-primary);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
@@ -1286,7 +1286,7 @@ input[type="checkbox"] {
 /* Score Breakdown */
 .score-details summary {
   font-size: var(--text-sm);
-  color: var(--accent);
+  color: var(--color-info-text);
   cursor: pointer;
   font-weight: 500;
   padding: var(--space-1) 0;
