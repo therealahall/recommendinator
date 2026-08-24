@@ -12,8 +12,8 @@ const props = withDefaults(
     secretStatus: Record<string, boolean>
     sourceName: string
     saving?: boolean
-    /** Locks the secret and enable verbs and nothing else: a running sync reads
-     *  those live, where it resolved its field values before it started. */
+    /** Locks the secret and enable verbs, never the fields: each refetches the
+     *  config, and syncFormFromProps then wipes an edit typed but not saved. */
     verbsLocked?: boolean
     enabled?: boolean | null
     enableBusy?: boolean

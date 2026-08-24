@@ -18,8 +18,8 @@ const props = defineProps<{
   source: SyncSourceResponse
   fields: SourceFieldSchema[]
   config: SourceConfigResponse
-  /** Locks the secret, enable and remove verbs only: a running sync reads those
-   *  live, where it resolved its field values before it started. */
+  /** Locks the secret, enable and remove verbs, never the fields: each refetches
+   *  or drops the config the form is bound to, wiping an unsaved edit. */
   verbsLocked: boolean
 }>()
 
