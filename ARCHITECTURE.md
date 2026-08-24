@@ -55,7 +55,7 @@ SQLite holds everything.
 | `settings` | Global config, dotted leaf key to JSON value, only what a user set |
 | `enrichment_status` | Enrichment tracking |
 | `enrichment_job` | The live enrichment run, one row, so either interface can watch and stop it |
-| `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source |
+| `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source. An unfinished row claims its source, so no two processes sync it at once |
 | `preference_profiles` | The generated per-user taste profile |
 
 #### User-owned fields

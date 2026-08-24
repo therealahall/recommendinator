@@ -192,6 +192,45 @@ describe('useDataStore', () => {
     expect(store.isSourceIdSyncing('steam')).toBe(false)
   })
 
+  it('checkSyncStatus reports the run that just finished, not every retained job', async () => {
+    mockGet.mockResolvedValue({
+      status: 'idle',
+      jobs: [
+        {
+          source: 'Steam',
+          status: 'completed',
+          started_at: '2026-08-23T10:00:00',
+          items_processed: 8,
+          total_items: 9,
+          items_added: 5,
+          items_updated: 2,
+          items_unchanged: 1,
+          errors: [],
+          sources: [],
+        },
+        {
+          source: 'Roms',
+          status: 'completed',
+          started_at: '2026-08-23T10:05:00',
+          items_processed: 3,
+          total_items: 3,
+          items_added: 3,
+          items_updated: 0,
+          items_unchanged: 0,
+          errors: [],
+          sources: [],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncMessage).toContain('Roms')
+    expect(store.syncMessage).toContain('3 of 3')
+    expect(store.syncMessage).not.toContain('11 of 12')
+  })
+
   it('checkSyncStatus starts enrichment polling when a completed sync auto-triggered enrichment', async () => {
     // Reported in #59: after a sync that auto-triggers enrichment
     // (enrichment.auto_enrich_on_sync), the data view did not reflect that

@@ -17,6 +17,7 @@ from src.ingestion.plugin_base import SourceError, SourcePlugin
 from src.models.content import ContentItem, get_enum_value
 from src.storage.manager import SaveCounts
 from src.storage.schema import SyncRunStatus
+from src.storage.sync_runs import HEARTBEAT_EVERY
 from src.utils.dates import utc_now
 from src.utils.text import exception_for_log, humanize_source_id, sanitize_for_log
 
@@ -113,6 +114,35 @@ def resolve_max_workers(
 def sync_run_failed(items_synced: int, errors: Sequence[object]) -> bool:
     """Saved nothing while reporting errors — the rule every door applies."""
     return items_synced == 0 and bool(errors)
+
+
+def claim_sources(
+    storage_manager: StorageManager,
+    source_ids: Sequence[str],
+    user_id: int = 1,
+) -> tuple[list[str], list[str]]:
+    claimed: list[str] = []
+    refused: list[str] = []
+    for source_id in source_ids:
+        if storage_manager.sync_runs.claim(user_id, source_id):
+            claimed.append(source_id)
+        else:
+            refused.append(source_id)
+    return claimed, refused
+
+
+def release_sources(
+    storage_manager: StorageManager,
+    source_ids: Sequence[str],
+    user_id: int = 1,
+) -> None:
+    for source_id in source_ids:
+        storage_manager.sync_runs.release(user_id, source_id)
+
+
+def already_syncing_detail(source_ids: Sequence[str]) -> str:
+    named = ", ".join(humanize_source_id(source_id) for source_id in source_ids)
+    return f"A sync is already in progress for {named}."
 
 
 def sync_run_recorder(
@@ -362,16 +392,45 @@ def execute_multi_source_sync(
         List of SyncResult, one per source, in the same order as ``sources``.
     """
 
+    def _beating(plugin_config: dict[str, Any]) -> SyncProgressCallback | None:
+        # The claim expires on its own, and progress is a run's only pulse.
+        source_id = _configured_source_id(plugin_config)
+        if not source_id:
+            return progress_callback
+        beat_at = utc_now()
+
+        def report(
+            items_processed: int,
+            total_items: int | None,
+            current_item: str | None,
+            current_source: str | None,
+        ) -> None:
+            nonlocal beat_at
+            now = utc_now()
+            if now - beat_at >= HEARTBEAT_EVERY:
+                beat_at = now
+                storage_manager.sync_runs.heartbeat(user_id, source_id)
+            if progress_callback:
+                progress_callback(
+                    items_processed, total_items, current_item, current_source
+                )
+
+        return report
+
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
         started_at = utc_now()
-        result = _sync_one(plugin, plugin_config)
+        result = _sync_one(plugin, plugin_config, _beating(plugin_config))
         result.started_at = started_at
         result.finished_at = utc_now()
         if result_callback:
             result_callback(result)
         return result
 
-    def _sync_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
+    def _sync_one(
+        plugin: SourcePlugin,
+        plugin_config: dict[str, Any],
+        report: SyncProgressCallback | None,
+    ) -> SyncResult:
         safe_plugin_name = sanitize_for_log(plugin.name)
         logger.info("[SYNC] === Starting sync for source: %s ===", safe_plugin_name)
         try:
@@ -379,7 +438,7 @@ def execute_multi_source_sync(
                 plugin=plugin,
                 plugin_config=plugin_config,
                 storage_manager=storage_manager,
-                progress_callback=progress_callback,
+                progress_callback=report,
                 mark_for_enrichment=mark_for_enrichment,
                 user_id=user_id,
             )
