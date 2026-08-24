@@ -17,6 +17,7 @@ from src.web.api import router
 from src.web.state import app_state
 from src.web.themes import (
     DEFAULT_THEME_ID,
+    PRIVATE_THEMES_URL,
     THEMES_URL,
     discover_themes,
     installed_theme_ids,
@@ -260,6 +261,20 @@ class TestShellRoute:
 
         assert "midnight" in installed_theme_ids()
         assert served.status_code == 200
+
+    def test_a_private_stylesheet_404s_without_the_app_writing_to_its_mount(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stock install mounts ./private read-only and ships no theme in it."""
+        absent = tmp_path / "absent"
+        monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", absent)
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get(f"{PRIVATE_THEMES_URL}/midnight/colors.css")
+
+        assert served.status_code == 404
+        assert not absent.exists()
 
     def test_the_themed_shell_carries_no_style_the_csp_would_block(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
