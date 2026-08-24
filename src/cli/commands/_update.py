@@ -60,6 +60,7 @@ def _source_view(result: SyncResult) -> dict[str, Any]:
         "items_added": result.items_added,
         "items_updated": result.items_updated,
         "items_unchanged": result.items_unchanged,
+        "omitted_errors": result.omitted_errors,
     }
 
 
@@ -335,6 +336,13 @@ def update(
             )
             for message in result.errors:
                 click.echo(f"    Warning: {message}", err=True)
+            if result.omitted_errors:
+                total = len(result.errors) + result.omitted_errors
+                click.echo(
+                    f"    Warning: {total} errors in total, "
+                    f"{result.omitted_errors} not shown.",
+                    err=True,
+                )
 
         if job["items_processed"] == 0:
             click.echo(

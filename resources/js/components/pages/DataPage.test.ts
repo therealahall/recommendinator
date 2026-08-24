@@ -56,6 +56,7 @@ function allSourcesRunning(): SyncJobResponse {
         total_items: 8,
         current_item: 'Portal 2',
         progress_percent: 87,
+        omitted_errors: 0,
         items_added: 5,
         items_updated: 1,
         items_unchanged: 1,

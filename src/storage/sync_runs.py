@@ -20,7 +20,7 @@ HEARTBEAT_EVERY = timedelta(seconds=30)
 
 _COLUMNS = (
     "id, source_id, started_at, finished_at, status, items_added, "
-    "items_updated, items_unchanged, total_items, errors_json"
+    "items_updated, items_unchanged, total_items, errors_json, omitted_errors"
 )
 
 # The id breaks a tie on the stamp, so same-instant runs keep their order.
@@ -44,6 +44,7 @@ def _to_dict(row: sqlite3.Row) -> SyncRunDict:
         items_unchanged=row["items_unchanged"],
         total_items=row["total_items"],
         errors=json.loads(row["errors_json"]),
+        omitted_errors=row["omitted_errors"],
     )
 
 
@@ -64,6 +65,7 @@ class SyncRunStore:
         items_unchanged: int = 0,
         total_items: int = 0,
         errors: Sequence[str] = (),
+        omitted_errors: int = 0,
     ) -> int:
         outcome = (
             _stamp(started_at),
@@ -74,6 +76,7 @@ class SyncRunStore:
             items_unchanged,
             total_items,
             json.dumps(list(errors)),
+            omitted_errors,
         )
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
@@ -87,8 +90,8 @@ class SyncRunStore:
                 cursor.execute(
                     "INSERT INTO sync_runs (started_at, finished_at, status, "
                     "items_added, items_updated, items_unchanged, total_items, "
-                    "errors_json, user_id, source_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "errors_json, omitted_errors, user_id, source_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*outcome, user_id, source_id),
                 )
                 # Read before the prune, which leaves it meaning nothing.
@@ -98,8 +101,8 @@ class SyncRunStore:
                 cursor.execute(
                     "UPDATE sync_runs SET started_at = ?, finished_at = ?, "
                     "status = ?, items_added = ?, items_updated = ?, "
-                    "items_unchanged = ?, total_items = ?, errors_json = ? "
-                    "WHERE id = ?",
+                    "items_unchanged = ?, total_items = ?, errors_json = ?, "
+                    "omitted_errors = ? WHERE id = ?",
                     (*outcome, run_id),
                 )
             cursor.execute(

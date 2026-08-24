@@ -7,7 +7,7 @@ import pytest
 
 from src.storage import sync_runs
 from src.storage.manager import StorageManager
-from src.storage.schema import SyncRunStatus
+from src.storage.schema import _SYNC_RUNS_TABLE, SyncRunStatus, create_schema
 from src.storage.sync_runs import STALE_AFTER
 from src.utils.dates import utc_now
 
@@ -50,6 +50,7 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
         items_unchanged=7,
         total_items=12,
         errors=("timed out", "429 from Steam"),
+        omitted_errors=48,
     )
 
     run = storage.sync_runs.latest_per_source(1)["steam"]
@@ -65,6 +66,46 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
     )
     assert run["total_items"] == 12
     assert run["errors"] == ["timed out", "429 from Steam"]
+    # The capped list cannot be totalled by counting it.
+    assert run["omitted_errors"] == 48
+
+
+_OMITTED_COLUMN = "omitted_errors INTEGER NOT NULL DEFAULT 0, "
+
+
+def _legacy_sync_runs_db(path: Path) -> None:
+    """A database whose ``sync_runs`` predates the omitted-error column."""
+    legacy_table = _SYNC_RUNS_TABLE.replace(_OMITTED_COLUMN, "")
+    # The schema version did not move for this column, so an ALTER is all that
+    # tells an operator's existing database from a fresh one.
+    assert legacy_table != _SYNC_RUNS_TABLE
+    conn = sqlite3.connect(path)
+    try:
+        create_schema(conn)
+        conn.execute("DROP TABLE sync_runs")
+        conn.execute(legacy_table)
+        conn.execute(
+            "INSERT INTO sync_runs (user_id, source_id, started_at, finished_at, "
+            "status, errors_json) VALUES (1, 'steam', ?, ?, 'failed', ?)",
+            (_START.isoformat(), _START.isoformat(), '["timed out"]'),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_database_written_before_the_count_still_serves_its_history(
+    tmp_path: Path,
+) -> None:
+    """Every run read names the column, so an upgrade that did not add it takes
+    run history down on the databases that already had runs in them."""
+    db_path = tmp_path / "legacy.db"
+    _legacy_sync_runs_db(db_path)
+
+    run = StorageManager(sqlite_path=db_path).sync_runs.latest_per_source(1)["steam"]
+
+    assert run["errors"] == ["timed out"]
+    assert run["omitted_errors"] == 0
 
 
 def test_latest_per_source_reports_each_source_newest_run(

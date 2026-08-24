@@ -160,6 +160,7 @@ export interface SyncRunResponse {
   items_unchanged: number
   total_items: number
   errors: string[]
+  omitted_errors: number
 }
 
 /** A cadence preset. Server-side, so no interface retypes the list. */
@@ -237,6 +238,9 @@ export interface SyncSourceProgressResponse {
   items_added: number
   items_updated: number
   items_unchanged: number
+  /** Failures past the executor's cap, so a shorter slice can still name the
+   *  run's true error total instead of guessing one from a list length. */
+  omitted_errors: number
 }
 
 export interface SyncErrorResponse {

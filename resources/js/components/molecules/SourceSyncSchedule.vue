@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { domId, formatRelativeTime } from '@/utils/format'
+import { boundSyncErrors, domId, formatRelativeTime } from '@/utils/format'
 import type { SyncRunResponse } from '@/types/api'
 
 const props = defineProps<{
@@ -54,17 +54,24 @@ const nextRunLabel = computed(() => {
 const lastRunFailed = computed(() => props.lastRunStatus === 'failed')
 
 const rows = computed(() =>
-  props.runs.map((run) => ({
-    key: `${run.started_at}-${run.status}`,
-    startedAt: run.started_at,
-    when: formatRelativeTime(run.started_at),
-    outcome: RUN_OUTCOMES[run.status] ?? run.status,
-    failed: run.status === 'failed',
-    counts:
-      `${run.items_added} added, ${run.items_updated} updated, ` +
-      `${run.items_unchanged} unchanged of ${run.total_items}`,
-    errors: run.errors,
-  })),
+  props.runs.map((run) => {
+    const bounded = boundSyncErrors(run.errors, run.omitted_errors)
+    return {
+      key: `${run.started_at}-${run.status}`,
+      startedAt: run.started_at,
+      when: formatRelativeTime(run.started_at),
+      outcome: RUN_OUTCOMES[run.status] ?? run.status,
+      failed: run.status === 'failed',
+      counts:
+        `${run.items_added} added, ${run.items_updated} updated, ` +
+        `${run.items_unchanged} unchanged of ${run.total_items}`,
+      errors: bounded.shown,
+      moreErrors:
+        bounded.hidden > 0
+          ? `Showing ${bounded.shown.length} of ${bounded.total} errors.`
+          : '',
+    }
+  }),
 )
 
 // Opens with the visible words in it, so speech input can say them back
@@ -134,6 +141,7 @@ const statusText = computed(() => {
           <ul v-if="row.errors.length" class="run-row-errors" role="list">
             <li v-for="(message, index) in row.errors" :key="index">{{ message }}</li>
           </ul>
+          <p v-if="row.moreErrors" class="run-row-errors">{{ row.moreErrors }}</p>
         </li>
       </ul>
     </div>

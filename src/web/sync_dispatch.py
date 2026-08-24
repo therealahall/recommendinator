@@ -67,6 +67,7 @@ def build_sync_job(
                 items_added=result.items_added,
                 items_updated=result.items_updated,
                 items_unchanged=result.items_unchanged,
+                omitted_errors=result.omitted_errors,
             )
             for error_message in result.errors:
                 sync_manager.add_error(source_label, result.source_name, error_message)

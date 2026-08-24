@@ -551,6 +551,9 @@ class SyncSourceProgressResponse(BaseModel):
     items_added: int
     items_updated: int
     items_unchanged: int
+    #: Failures past the executor's cap, so a door showing fewer than it was
+    #: sent can still name the run's true error total.
+    omitted_errors: int
 
 
 class SyncErrorResponse(BaseModel):
@@ -597,6 +600,7 @@ class SyncRunResponse(BaseModel):
     items_unchanged: int
     total_items: int
     errors: list[str]
+    omitted_errors: int
 
 
 class UserPreferenceUpdateRequest(BaseModel):

@@ -108,11 +108,11 @@ class TestExecuteSync:
         assert "Bad" in result.errors[0]
         assert "db error" not in result.errors[0]
 
-    def test_a_source_failing_every_item_reports_a_capped_list_and_a_tally(
+    def test_a_source_failing_every_item_counts_the_omissions_outside_the_list(
         self,
     ) -> None:
-        """Uncapped, a library failing item by item put one line per item into
-        every two-second /api/sync/status poll for the length of the run."""
+        """The count is a number, not a line: a door rendering a shorter slice
+        states one total instead of appending a tail under the producer's."""
         failures = MAX_REPORTED_ERRORS + 12
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -124,8 +124,8 @@ class TestExecuteSync:
 
         result = execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
 
-        assert len(result.errors) == MAX_REPORTED_ERRORS + 1
-        assert result.errors[-1] == "… and 12 more"
+        assert len(result.errors) == MAX_REPORTED_ERRORS
+        assert result.omitted_errors == 12
         # The list is bounded; what the run did to the library is not rounded.
         assert result.total_items == failures
         assert result.items_synced == 0

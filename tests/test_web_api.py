@@ -3005,10 +3005,10 @@ class TestSyncStatusNamesTheSourceThatFailedRegression:
 
 
 class TestSyncStatusBoundsThePerItemErrorList:
-    def test_a_run_that_failed_every_item_polls_back_the_capped_list(
+    def test_a_run_that_failed_every_item_polls_back_the_cap_and_the_omitted_count(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """The cap is the executor's, so the poll carries it without its own."""
+        """The client must not have to infer the total from the list it got."""
         storage = mock_components["storage"]
         failures = 5000
         recorded = threading.Event()
@@ -3033,10 +3033,10 @@ class TestSyncStatusBoundsThePerItemErrorList:
 
         assert response.status_code == 200, response.text
         job = client.get("/api/sync/status").json()["jobs"][0]
-        assert len(job["errors"]) == MAX_REPORTED_ERRORS + 1
-        assert job["errors"][-1]["message"] == (
-            f"… and {failures - MAX_REPORTED_ERRORS} more"
-        )
+        assert len(job["errors"]) == MAX_REPORTED_ERRORS
+        slot = job["sources"][0]
+        assert slot["omitted_errors"] == failures - MAX_REPORTED_ERRORS
+        assert len(job["errors"]) + slot["omitted_errors"] == failures
         # Bounded list, unrounded count.
         assert job["total_items"] == failures
 

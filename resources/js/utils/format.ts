@@ -120,6 +120,22 @@ export function domId(prefix: string, sourceId: string): string {
   return `${prefix}-${sourceId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
+/** A per-item failure hits every item or none, so an uncapped list is hundreds
+ *  of lines in a region the Data page always shows. */
+const MAX_SHOWN_ERRORS = 5
+
+/** Bound a sync error list, keeping the total the server stated: the client
+ *  never infers one from a length, which is what let two "and N more" tails
+ *  land under the same list. */
+export function boundSyncErrors(
+  messages: string[],
+  omitted: number,
+): { shown: string[]; total: number; hidden: number } {
+  const shown = messages.slice(0, MAX_SHOWN_ERRORS)
+  const total = messages.length + omitted
+  return { shown, total, hidden: total - shown.length }
+}
+
 /** Truncate a string to a max length, appending ellipsis if needed */
 export function truncate(str: string, maxLen: number): string {
   return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'

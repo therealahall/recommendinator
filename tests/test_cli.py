@@ -9,7 +9,11 @@ import pytest
 from click.testing import CliRunner, Result
 
 from src.cli.main import cli
-from src.ingestion.sync import SyncResult, already_syncing_detail
+from src.ingestion.sync import (
+    MAX_REPORTED_ERRORS,
+    SyncResult,
+    already_syncing_detail,
+)
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
@@ -22,7 +26,7 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
-from src.web.api import CompletionResponse
+from src.web.api import CompletionResponse, SyncStatusResponse
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import (
     back_mock_preference_store,
@@ -810,6 +814,87 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
     # Anchors the parse above, which a run that never enriched also satisfies.
     record = StorageManager(sqlite_path=db_path).enrichment_jobs.read()
     assert record.items_processed == 1
+
+
+def test_update_reports_the_omitted_error_count_the_web_payload_carries(
+    tmp_path: Path,
+) -> None:
+    """Both doors must total a capped list the same way, and neither can do it
+    by counting the list: the count is a field, so the CLI must serve it too."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    failures = MAX_REPORTED_ERRORS + 12
+    games = [
+        make_item(f"Game {index}", ContentType.VIDEO_GAME, item_id=f"g{index}")
+        for index in range(failures)
+    ]
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.fetch", return_value=iter(games)
+        ),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.storage.manager.StorageManager.save_content_item_outcome",
+            side_effect=ValueError("db error"),
+        ),
+    ):
+        result = CliRunner(mix_stderr=False).invoke(
+            cli, ["update", "--source", "steam", "--format", "json"]
+        )
+
+    assert result.exit_code == 0, result.stderr
+    # Parsed by the web's own model, so a field only one door serves fails here.
+    job = SyncStatusResponse(**json.loads(result.stdout)).jobs[0]
+    assert len(job.errors) == MAX_REPORTED_ERRORS
+    assert len(job.errors) + job.sources[0].omitted_errors == failures
+
+
+def test_update_in_a_terminal_names_the_error_total_it_did_not_print(
+    tmp_path: Path,
+) -> None:
+    """The count rides on the payload, so the default report has it too: read as
+    the whole story, the printed list understates a bad run by thousands."""
+    config = {
+        "storage": {"database_path": str(tmp_path / "test.db")},
+        "inputs": {"steam": {"plugin": "steam", "api_key": "k", "enabled": True}},
+    }
+    omitted = 4800
+    ran = SyncResult(
+        source_name="Steam",
+        source_id="steam",
+        items_synced=1,
+        total_items=6000,
+        errors=[f"Failed to process 'Game {index}'" for index in range(200)],
+        omitted_errors=omitted,
+    )
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch("src.cli.commands._update.execute_multi_source_sync", return_value=[ran]),
+    ):
+        result = CliRunner(mix_stderr=False).invoke(
+            cli, ["update", "--source", "steam"]
+        )
+
+    assert result.exit_code == 0, result.stderr
+    assert str(len(ran.errors) + omitted) in result.stderr
 
 
 def test_update_leaves_the_enrichment_run_the_server_already_owns(

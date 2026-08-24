@@ -480,6 +480,7 @@ describe('SyncSourceAccordion', () => {
         items_unchanged: 0,
         total_items: 0,
         errors: [message],
+        omitted_errors: 0,
       }
     }
 
@@ -1032,6 +1033,7 @@ describe('SyncSourceAccordion', () => {
             items_added: 7,
             items_updated: 0,
             items_unchanged: 0,
+            omitted_errors: 0,
           },
         ],
       })
@@ -1048,34 +1050,41 @@ describe('SyncSourceAccordion', () => {
       expect(wrapper.text()).not.toContain('Other thing')
     })
 
-    it('renders every message the server sent for this source', () => {
-      // The sync executor caps the list and writes its own tally, so a second
-      // cap here hides messages and appends a second '… and N more'.
+    it('bounds the error list and states the server total exactly once', () => {
+      // This renders outside the collapsible panel, so a list as long as the
+      // run's failures pushes every other source's Sync button off the page.
+      const reported = 200
+      const omitted = 4800
       const job = makeJob({
         source: 'All Sources',
         status: 'completed',
-        errors: [
-          ...Array.from({ length: 6 }, (_, i) => ({
-            source: 'Sonarr',
-            message: `Sonarr ${i} failed`,
-          })),
-          ...Array.from({ length: 6 }, (_, i) => ({
+        errors: Array.from({ length: reported }, (_, i) => ({
+          source: 'Steam',
+          message: `Steam ${i} failed`,
+        })),
+        sources: [
+          {
             source: 'Steam',
-            message: `Steam ${i} failed`,
-          })),
+            items_processed: 0,
+            total_items: reported + omitted,
+            current_item: null,
+            progress_percent: 0,
+            items_added: 0,
+            items_updated: 0,
+            items_unchanged: 0,
+            omitted_errors: omitted,
+          },
         ],
       })
       const wrapper = mount(SyncSourceAccordion, {
         props: { source: baseSource, syncing: false, job },
       })
 
-      const items = wrapper
-        .get('[data-testid="source-sync-errors"]')
-        .findAll('li')
-        .map((li) => li.text())
-      expect(items).toEqual(
-        Array.from({ length: 6 }, (_, index) => `Steam ${index} failed`),
-      )
+      const items = wrapper.get('[data-testid="source-sync-errors"]').findAll('li')
+      expect(items.length).toBeLessThan(reported)
+      const tails = wrapper.findAll('[data-testid="source-sync-errors-more"]')
+      expect(tails).toHaveLength(1)
+      expect(tails[0].text()).toContain(String(reported + omitted))
     })
 
     it('shows only the errors belonging to this source', () => {

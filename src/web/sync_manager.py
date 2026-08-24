@@ -45,6 +45,7 @@ class _SourceProgress:
     items_added: int = 0
     items_updated: int = 0
     items_unchanged: int = 0
+    omitted_errors: int = 0
 
 
 @dataclass
@@ -80,6 +81,7 @@ class SyncJob:
                 "items_added": progress.items_added,
                 "items_updated": progress.items_updated,
                 "items_unchanged": progress.items_unchanged,
+                "omitted_errors": progress.omitted_errors,
             }
             for name, progress in sorted(self.source_progress.items())
         ]
@@ -347,6 +349,7 @@ class SyncManager:
         items_added: int,
         items_updated: int,
         items_unchanged: int,
+        omitted_errors: int,
     ) -> None:
         """Record what one finished source did, on the job keyed by ``source``.
 
@@ -361,6 +364,7 @@ class SyncManager:
             slot.items_added = items_added
             slot.items_updated = items_updated
             slot.items_unchanged = items_unchanged
+            slot.omitted_errors = omitted_errors
 
     def add_error(self, source: str, failed_source: str, error: str) -> None:
         """Append an error to the job keyed by ``source``.
