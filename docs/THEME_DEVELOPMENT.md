@@ -104,8 +104,8 @@ keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
 Both accents are also fills under `--text-inverse`: `--accent` on a primary
 button or active pill at rest, `--accent-light` on the same two hovered. Each
 owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter. The
-shipped Snowstorm misses it at 4.03:1, tracked in `qs5i.2.47`; the suite
-measures the hovered pair only, so check `--accent` by hand.
+shipped Snowstorm misses it at 4.03:1; the suite measures the hovered pair
+only, so check `--accent` by hand.
 
 ### Borders
 
@@ -182,7 +182,7 @@ variants yourself.
 4. Start the server, select the theme from the Preferences tab or with
    `theme set`, and check every page for text readability, badge contrast and
    button visibility. `resources/css/contrast.test.ts` measures every floor
-   above for each shipped theme, except the resting `--accent` one it names.
+   above for each shipped theme, except the resting `--accent` one named there.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override
