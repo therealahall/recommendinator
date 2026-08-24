@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from typing import Any
 
 import click
@@ -41,6 +42,8 @@ _VALUE_TYPE_ERRORS = {
     "float": "expected a number",
 }
 
+RESTART_ADVISORY = "Takes effect after a restart"
+
 
 def _format_value(value: Any) -> str:
     """Render a setting value for human output."""
@@ -56,6 +59,18 @@ def _format_setting_value(view: dict[str, Any]) -> str:
     if view["sensitive"]:
         return "********" if view["has_secret"] else "(not set)"
     return _format_value(view["value"])
+
+
+def _echo_restart_advisory(keys: Iterable[str], output_format: str) -> None:
+    if output_format == "json":
+        return
+    deferred = [
+        key
+        for key in keys
+        if (entry := get_entry(key)) is not None and entry.restart_required
+    ]
+    if deferred:
+        click.echo(f"{RESTART_ADVISORY}: {', '.join(deferred)}")
 
 
 def _setting_flags(view: dict[str, Any]) -> str:
@@ -219,10 +234,7 @@ def settings_set(ctx: click.Context, key: str, value: str, output_format: str) -
         lambda: build_settings_view(config, storage),
         f"Set {key} = {_format_value(storage.settings.get(key))}.",
     )
-    # The restart hint is advice for a human; the JSON view carries the same
-    # fact structurally as `restart_required` on the entry.
-    if entry.restart_required and output_format != "json":
-        click.echo("This change takes effect after a restart.")
+    _echo_restart_advisory([key], output_format)
 
 
 @settings.command("apply")
@@ -264,6 +276,7 @@ def settings_apply(ctx: click.Context, from_json: str, output_format: str) -> No
         lambda: build_settings_view(config, storage),
         f"Applied {len(updates)} setting(s).",
     )
+    _echo_restart_advisory(updates, output_format)
 
 
 @settings.command("reset")
@@ -292,6 +305,7 @@ def settings_reset(ctx: click.Context, key: str, output_format: str) -> None:
         lambda: build_settings_view(config, storage),
         f"Reset {key} to its default.",
     )
+    _echo_restart_advisory([key], output_format)
 
 
 @settings.command("set-secret")

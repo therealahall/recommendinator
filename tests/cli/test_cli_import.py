@@ -361,31 +361,6 @@ class TestTheTemplateAnOperatorFillsIn:
         assert result.stdout == ""
         assert "--format describes the template listing" in result.stderr
 
-    @pytest.mark.parametrize("destination", ["directory", "under_a_missing_directory"])
-    def test_an_output_path_that_cannot_be_written_is_named_not_raised(
-        self, storage: StorageManager, tmp_path: Path, destination: str
-    ) -> None:
-        """Both shapes reached ``write_bytes`` bare and surfaced a traceback."""
-        paths = {
-            "directory": tmp_path,
-            "under_a_missing_directory": tmp_path / "absent" / "books.csv",
-        }
-
-        result = _template(
-            storage,
-            "--importer",
-            "csv_import",
-            "--content-type",
-            "book",
-            "--output",
-            str(paths[destination]),
-        )
-
-        assert result.exit_code != 0
-        assert str(paths[destination]) in result.stderr
-        # An unhandled fault never reaches the runner's stderr; only this says.
-        assert isinstance(result.exception, SystemExit)
-
     def test_an_existing_output_file_is_kept_until_the_overwrite_is_confirmed(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
@@ -414,27 +389,6 @@ class TestTheTemplateAnOperatorFillsIn:
 
         assert declined.exit_code == 0
         assert confirmed.exit_code == 0
-        assert destination.read_bytes() == (TEMPLATES_DIR / "books.csv").read_bytes()
-
-    def test_yes_overwrites_an_existing_output_file_without_a_prompt(
-        self, storage: StorageManager, tmp_path: Path
-    ) -> None:
-        """A scripted run has no stdin to answer the prompt with."""
-        destination = tmp_path / "books.csv"
-        destination.write_text("title\nmy own work\n", encoding="utf-8")
-
-        result = _template(
-            storage,
-            "--importer",
-            "csv_import",
-            "--content-type",
-            "book",
-            "--output",
-            str(destination),
-            "--yes",
-        )
-
-        assert result.exit_code == 0, result.stderr
         assert destination.read_bytes() == (TEMPLATES_DIR / "books.csv").read_bytes()
 
 

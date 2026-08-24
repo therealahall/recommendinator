@@ -18,7 +18,11 @@ import pytest
 import requests
 from click.testing import CliRunner
 
-from src.cli.commands._account import PASSWORD_WRITE_FAILED, RENAME_FAILED
+from src.cli.commands._account import (
+    PASSWORD_WRITE_FAILED,
+    RENAME_FAILED,
+    SESSION_SWEEP_FAILED,
+)
 from src.cli.commands._complete import COMPLETE_FAILED
 from src.cli.commands._profile import PROFILE_LOAD_FAILED, PROFILE_REGENERATE_FAILED
 from src.cli.commands._update import SYNC_FAILED
@@ -121,27 +125,43 @@ class TestTheAccountWritesHideTheFaultToo:
         _assert_generic(result, RENAME_FAILED)
         assert _FAULT in caplog.text
 
-    def test_a_failed_password_write_is_generic_and_the_log_holds_the_reason(
-        self, cli_runner: CliRunner, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        ("method", "message", "password_changed"),
+        [
+            ("set_password", PASSWORD_WRITE_FAILED, False),
+            ("revoke_all_sessions", SESSION_SWEEP_FAILED, True),
+        ],
+    )
+    def test_each_step_refuses_in_its_own_words_and_reports_the_password(
+        self,
+        cli_runner: CliRunner,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        method: str,
+        message: str,
+        password_changed: bool,
     ) -> None:
         """No server is running on this path, so the log is the only diagnosis."""
+        storage = self._claimed(tmp_path)
         with (
             caplog.at_level(logging.ERROR, logger="src.cli._shared"),
             patch.object(
-                AccountStore,
-                "set_password",
-                side_effect=sqlite3.OperationalError(_FAULT),
+                AccountStore, method, side_effect=sqlite3.OperationalError(_FAULT)
             ),
         ):
             result = _invoke_with_mocks(
                 cli_runner,
                 ["account", "set-password"],
-                self._claimed(tmp_path),
+                storage,
                 input_text=f"{self._PASSWORD}\n{self._PASSWORD}\n",
             )
 
-        _assert_generic(result, PASSWORD_WRITE_FAILED)
+        _assert_generic(result, message)
         assert _FAULT in caplog.text
+        both = (PASSWORD_WRITE_FAILED, SESSION_SWEEP_FAILED)
+        assert [step for step in both if step in result.output] == [message]
+        changed = storage.accounts.verify_password("owner", self._PASSWORD) is not None
+        assert changed is password_changed
 
 
 class TestProfileHidesTheStorageFault:
