@@ -85,6 +85,7 @@ class SyncRunDict(TypedDict):
     items_unchanged: int
     total_items: int
     errors: list[str]
+    omitted_errors: int
 
 
 # One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
@@ -275,6 +276,7 @@ _SYNC_RUNS_TABLE = (
     "items_unchanged INTEGER NOT NULL DEFAULT 0, "
     "total_items INTEGER NOT NULL DEFAULT 0, "
     "errors_json TEXT NOT NULL DEFAULT '[]', "
+    "omitted_errors INTEGER NOT NULL DEFAULT 0, "
     "heartbeat_at TIMESTAMP"
     ")"
 )
@@ -471,6 +473,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor.execute(_SYNC_RUNS_TABLE)
     if stored_version < 18:
         _rebuild_sync_runs(cursor)
+    _add_column_if_not_exists(
+        cursor, "sync_runs", "omitted_errors", "INTEGER NOT NULL DEFAULT 0"
+    )
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_sync_runs_source "
         "ON sync_runs(user_id, source_id, started_at DESC)"

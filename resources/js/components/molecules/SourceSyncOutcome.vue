@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { domId } from '@/utils/format'
+import { boundSyncErrors, domId } from '@/utils/format'
 import type { SyncJobResponse } from '@/types/api'
 
 const props = defineProps<{
@@ -25,12 +25,20 @@ const resultLabel = computed<string>(() => {
 
 // An "All Sources" job carries every source's failures, and the remedy for one
 // source is wrong on the next row.
-const messages = computed<string[]>(() => {
-  if (props.syncing || !props.job) return []
-  return props.job.errors
+const bounded = computed(() => {
+  if (props.syncing || !props.job) return boundSyncErrors([], 0)
+  const messages = props.job.errors
     .filter((entry) => entry.source === props.sourceName)
     .map((entry) => entry.message)
+  const slot = props.job.sources.find((entry) => entry.source === props.sourceName)
+  return boundSyncErrors(messages, slot?.omitted_errors ?? 0)
 })
+
+const tail = computed<string>(() =>
+  bounded.value.hidden > 0
+    ? `Showing ${bounded.value.shown.length} of ${bounded.value.total} errors.`
+    : '',
+)
 
 const title = computed<string>(() => `Last sync errors for ${props.sourceName}`)
 const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId))
@@ -47,7 +55,7 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
   <p v-if="resultLabel" class="source-outcome-result" data-testid="source-sync-result">
     {{ resultLabel }}
   </p>
-  <div v-if="messages.length" class="source-outcome-errors">
+  <div v-if="bounded.shown.length" class="source-outcome-errors">
     <p :id="titleId" class="source-outcome-title" data-testid="source-sync-errors-title">
       {{ title }}
     </p>
@@ -56,10 +64,12 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
       data-testid="source-sync-errors"
       :aria-labelledby="titleId"
     >
-      <!-- Rendered whole: the sync executor caps the list and writes its own
-           tail, so a second cap here would append a second one. -->
-      <li v-for="(message, index) in messages" :key="index">{{ message }}</li>
+      <li v-for="(message, index) in bounded.shown" :key="index">{{ message }}</li>
     </ul>
+    <!-- Outside the list: it is a count of failures, not one of them. -->
+    <p v-if="tail" class="source-outcome-more" data-testid="source-sync-errors-more">
+      {{ tail }}
+    </p>
   </div>
 </template>
 
@@ -92,5 +102,10 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
 
 .source-outcome-list li + li {
   margin-top: var(--space-1);
+}
+
+.source-outcome-more {
+  margin: var(--space-1) 0 0;
+  font-variant-numeric: tabular-nums;
 }
 </style>

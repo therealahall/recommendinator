@@ -418,6 +418,39 @@ describe('useDataStore', () => {
     expect(store.syncMessage).toContain('Steam')
   })
 
+  it('counts the errors a running run had, not the ones its payload carried', async () => {
+    mockGet.mockResolvedValue({
+      status: 'running',
+      jobs: [
+        {
+          source: 'All Sources',
+          status: 'running',
+          items_processed: 200,
+          total_items: 6000,
+          errors: Array.from({ length: 200 }, (_, index) => ({
+            source: 'Steam',
+            message: `Steam ${index} failed`,
+          })),
+          sources: [
+            {
+              source: 'Steam',
+              items_processed: 0,
+              total_items: 5000,
+              current_item: null,
+              progress_percent: 0,
+              omitted_errors: 4800,
+            },
+          ],
+        },
+      ],
+    })
+
+    const store = useDataStore()
+    await store.checkSyncStatus()
+
+    expect(store.syncMessage).toContain('5000')
+  })
+
   it('checkSyncStatus aggregates running jobs into a single banner', async () => {
     mockGet.mockResolvedValue({
       status: 'running',

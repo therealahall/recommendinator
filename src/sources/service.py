@@ -732,6 +732,7 @@ def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
             "items_unchanged": run["items_unchanged"],
             "total_items": run["total_items"],
             "errors": run["errors"],
+            "omitted_errors": run["omitted_errors"],
         }
         for run in runs
     ]

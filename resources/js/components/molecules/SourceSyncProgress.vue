@@ -9,7 +9,9 @@ const props = defineProps<{
 
 // A single-source run carries this source's counters at the top of the job;
 // the umbrella "All Sources" run carries them in this source's own slot.
-const progress = computed<SyncSourceProgressResponse | null>(() => {
+// Minus the error count: nothing here reads it, and the top of a running job
+// has none to borrow.
+const progress = computed<Omit<SyncSourceProgressResponse, 'omitted_errors'> | null>(() => {
   const job = props.job
   if (!job || job.status !== 'running') return null
   if (job.source === props.sourceName) {

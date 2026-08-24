@@ -40,6 +40,7 @@ def _record_run(
     status: SyncRunStatus = "completed",
     minute: int = 0,
     errors: tuple[str, ...] = (),
+    omitted_errors: int = 0,
 ) -> None:
     started_at = _RUN_START + timedelta(minutes=minute)
     storage.sync_runs.record(
@@ -49,6 +50,7 @@ def _record_run(
         finished_at=started_at + timedelta(seconds=30),
         status=status,
         errors=errors,
+        omitted_errors=omitted_errors,
     )
 
 
@@ -331,7 +333,9 @@ class TestSourceHistory:
     ) -> None:
         failures = ("429 from the API", "book 12 has no title", "timed out")
         _record_run(storage, minute=0)
-        _record_run(storage, minute=10, status="failed", errors=failures)
+        _record_run(
+            storage, minute=10, status="failed", errors=failures, omitted_errors=4997
+        )
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -344,6 +348,8 @@ class TestSourceHistory:
         payload = json.loads(result.output)
         assert [run["status"] for run in payload] == ["failed", "completed"]
         assert payload[0]["errors"] == list(failures)
+        # The capped list is not the run's error count, so the count travels.
+        assert len(payload[0]["errors"]) + payload[0]["omitted_errors"] == 5000
         # Exact key match against SyncRunResponse, so a key added on one side
         # without the other is caught immediately.
         assert set(payload[0].keys()) == {
@@ -356,7 +362,32 @@ class TestSourceHistory:
             "items_unchanged",
             "total_items",
             "errors",
+            "omitted_errors",
         }
+
+    def test_history_table_names_the_error_total_behind_the_listed_ones(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        base_config: dict[str, Any],
+    ) -> None:
+        _record_run(
+            storage,
+            minute=0,
+            status="failed",
+            errors=("429 from the API",),
+            omitted_errors=4999,
+        )
+
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["source", "history", "my_books"],
+            mock_storage=storage,
+            config=base_config,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "5000" in result.output
 
     def test_history_with_nothing_recorded_is_an_empty_json_list_not_prose(
         self,

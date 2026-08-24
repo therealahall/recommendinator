@@ -353,6 +353,15 @@ def source_schedule(
     )
 
 
+def _run_errors_cell(run: dict[str, Any]) -> str:
+    """The run's failures, ending in the total when the executor capped them."""
+    messages = list(run["errors"])
+    if run["omitted_errors"]:
+        total = len(messages) + run["omitted_errors"]
+        messages.append(f"({total} errors in total, {run['omitted_errors']} not shown)")
+    return "; ".join(messages)
+
+
 @source.command("history")
 @click.argument("source_id", required=False)
 @click.option(
@@ -400,7 +409,7 @@ def source_history(
             run["status"],
             f"{run['items_added']}/{run['items_updated']}/{run['items_unchanged']}",
             str(run["total_items"]),
-            "; ".join(run["errors"]),
+            _run_errors_cell(run),
         ]
         for run in view
     ]

@@ -32,8 +32,8 @@ SyncProgressCallback = Callable[[int, int | None, str | None, str | None], None]
 
 
 # One entry per failed item, so a library refusing every one of them put
-# thousands of lines into every two-second /api/sync/status poll. The cap lives
-# here, at the producer, so both interfaces list the same misses.
+# thousands of lines into every two-second /api/sync/status poll. One cap, at
+# the producer, so both interfaces list the same misses.
 MAX_REPORTED_ERRORS = 200
 
 
@@ -57,7 +57,7 @@ class SyncResult:
     omitted_errors: int = 0
 
     def record_item_error(self, message: str) -> None:
-        """Report a failed item, or count it once the list is full."""
+        """Report a failed item, or count it in ``omitted_errors`` once full."""
         if len(self.errors) < MAX_REPORTED_ERRORS:
             self.errors.append(message)
         else:
@@ -223,6 +223,7 @@ def sync_run_recorder(
             items_unchanged=result.items_unchanged,
             total_items=result.total_items,
             errors=result.errors,
+            omitted_errors=result.omitted_errors,
         )
 
     return record
@@ -372,9 +373,6 @@ def execute_sync(
                 exception_for_log(error),
             )
             result.record_item_error(f"Failed to process '{safe_title}'")
-
-    if result.omitted_errors:
-        result.errors.append(f"… and {result.omitted_errors} more")
 
     # Once per source and past the cap: the queue write is the same row for
     # every item, so a fault that hits one hits all, and it speaks for the run
