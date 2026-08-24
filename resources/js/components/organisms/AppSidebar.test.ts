@@ -45,6 +45,29 @@ describe('AppSidebar', () => {
     expect(wrapper.find('.sidebar-user-name').text()).toBe('carol')
   })
 
+  const SCREEN: Array<{ state: string; offscreen: boolean; hidden: boolean }> = [
+    { state: 'closed on a phone', offscreen: true, hidden: true },
+    { state: 'open, or on a desktop', offscreen: false, hidden: false },
+  ]
+
+  // Regression: the mobile sidebar was only slid off screen, so its six nav
+  // buttons stayed tabbable and stayed in the accessibility tree — six Tab
+  // presses landing on controls nobody could see.
+  it.each(SCREEN)('is reachable only when it is $state', async ({ offscreen, hidden }) => {
+    const router = createTestRouter()
+    await router.push('/recommendations')
+    await router.isReady()
+
+    const wrapper = mount(AppSidebar, {
+      props: { offscreen },
+      global: { plugins: [router] },
+    })
+
+    const aside = wrapper.find('.sidebar')
+    expect(aside.attributes('aria-hidden')).toBe(hidden ? 'true' : undefined)
+    expect('inert' in aside.attributes()).toBe(hidden)
+  })
+
   it('emits navigate on nav click', async () => {
     const router = createTestRouter()
     await router.push('/recommendations')

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import App from './App.vue'
+import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
 import { ApiError, useApi } from '@/composables/useApi'
@@ -79,6 +80,34 @@ function answerBoot(storedTheme: string) {
   })
 }
 
+/** jsdom implements no matchMedia at all, so every mount needs a viewport and a
+ *  narrow one has to be played back by hand. */
+function stubViewport(narrow: boolean) {
+  const listeners = new Set<(change: MediaQueryListEvent) => void>()
+  const query = {
+    matches: narrow,
+    addEventListener: (_: string, listener: (change: MediaQueryListEvent) => void) =>
+      listeners.add(listener),
+    removeEventListener: (_: string, listener: (change: MediaQueryListEvent) => void) =>
+      listeners.delete(listener),
+  }
+  vi.stubGlobal('matchMedia', () => query)
+  return {
+    resizeTo(matches: boolean) {
+      for (const listener of listeners) listener({ matches } as MediaQueryListEvent)
+    },
+    watchers: () => listeners.size,
+  }
+}
+
+async function shell() {
+  spyOnLoad()
+  answerSession(true, true, AARON)
+  const wrapper = mount(App, { shallow: true })
+  await flushPromises()
+  return wrapper
+}
+
 function paintedTheme(): string {
   return (document.getElementById('theme-stylesheet') as HTMLLinkElement | null)?.href ?? ''
 }
@@ -88,6 +117,7 @@ describe('App', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     vi.stubGlobal('fetch', vi.fn())
+    stubViewport(false)
   })
 
   afterEach(() => {
@@ -269,6 +299,61 @@ describe('App', () => {
     expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
     // Booting again is what a reload looks like from here.
     expect(sessionCalls()).toBe(1)
+  })
+
+  const VIEWPORTS: Array<{ screen: string; narrow: boolean; open: boolean; offscreen: boolean }> = [
+    { screen: 'a phone with the sidebar shut', narrow: true, open: false, offscreen: true },
+    { screen: 'a phone with the sidebar pulled out', narrow: true, open: true, offscreen: false },
+    { screen: 'a desktop with the sidebar pulled out', narrow: false, open: true, offscreen: false },
+    // The default state of every desktop load, and the only row that fails if
+    // the viewport drops out of the condition and the whole sidebar goes inert.
+    { screen: 'a desktop with the toggle never touched', narrow: false, open: false, offscreen: false },
+  ]
+
+  // Regression: the shut mobile sidebar was only slid off screen, so Tab still
+  // walked through its nav buttons before reaching anything on the page.
+  it.each(VIEWPORTS)('hides the sidebar from the keyboard on $screen', async ({ narrow, open, offscreen }) => {
+    stubViewport(narrow)
+    const wrapper = await shell()
+
+    if (open) await wrapper.find('.sidebar-toggle').trigger('click')
+
+    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(offscreen)
+  })
+
+  it('hides it again when the window itself narrows', async () => {
+    // The viewport can cross the breakpoint without the toggle being touched —
+    // a rotated tablet, a resized window — and the state has to follow it.
+    const viewport = stubViewport(false)
+    const wrapper = await shell()
+    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(false)
+
+    viewport.resizeTo(true)
+    await flushPromises()
+
+    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(true)
+  })
+
+  it('stops watching the viewport once the shell goes away', async () => {
+    const viewport = stubViewport(true)
+    const wrapper = await shell()
+    expect(viewport.watchers()).toBe(1)
+
+    wrapper.unmount()
+
+    expect(viewport.watchers()).toBe(0)
+  })
+
+  it('stops polling the server it can no longer ask when the session ends', async () => {
+    // Every /api call 401s from the sign-in screen, and each one signs the
+    // session out again, so a poll left running never settles.
+    await shell()
+    const stopped = vi.spyOn(useAppStore(), 'stopPolling')
+
+    useAuthStore().reject()
+    await flushPromises()
+
+    expect(stopped).toHaveBeenCalled()
   })
 
   it('clears the password on a second refusal worded exactly like the first', async () => {
