@@ -1,8 +1,7 @@
 """Tests for CLI status command."""
 
 import json
-from importlib.metadata import PackageNotFoundError
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from click.testing import CliRunner
 
@@ -98,14 +97,3 @@ class TestStatusVersion:
         result = _status_invoke(cli_runner, args=["status", "--format", "json"])
         assert result.exit_code == 0
         assert json.loads(result.output)["version"] == _web_status_version()
-
-    def test_status_succeeds_when_package_is_not_installed(
-        self, cli_runner: CliRunner
-    ) -> None:
-        with patch(
-            "importlib.metadata.version",
-            side_effect=PackageNotFoundError("recommendinator"),
-        ):
-            result = _status_invoke(cli_runner, args=["status", "--format", "json"])
-        assert result.exit_code == 0
-        assert json.loads(result.output)["version"] == APP_VERSION

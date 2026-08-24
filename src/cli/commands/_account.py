@@ -17,6 +17,7 @@ from src.storage.accounts import (
 from src.storage.manager import StorageManager
 
 PASSWORD_WRITE_FAILED = "Could not set the password"
+SESSION_SWEEP_FAILED = "The password was changed, but the sessions were not signed out"
 RENAME_FAILED = "Could not rename the account"
 
 
@@ -107,10 +108,14 @@ def account_set_password(ctx: click.Context, user_id: int, output_format: str) -
 
     try:
         storage.accounts.set_password(user_id, password)
+    except Exception as error:
+        abort_after_failure(ctx, PASSWORD_WRITE_FAILED, error)
+
+    try:
         storage.accounts.revoke_all_sessions(user_id)
         storage.accounts.purge_expired_sessions()
     except Exception as error:
-        abort_after_failure(ctx, PASSWORD_WRITE_FAILED, error)
+        abort_after_failure(ctx, SESSION_SWEEP_FAILED, error)
 
     emit_view(
         output_format,

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from src.cli.commands._settings import RESTART_ADVISORY
 from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
@@ -427,6 +428,65 @@ class TestSettingsApply:
         assert "leak" not in result.output
         assert storage.settings.list() == {}
         assert storage.secrets.has(_SECRET_KEY) is False
+
+
+class TestEveryWriteNamesTheLeavesItCouldNotApply:
+    _MIXED = json.dumps({_INT_KEY: 9, _LIST_KEY: ["https://a.example"]})
+    _LIVE = json.dumps({_INT_KEY: 9})
+
+    @pytest.mark.parametrize(
+        ("args", "payload", "deferred"),
+        [
+            pytest.param(["reset", _LIST_KEY], None, [_LIST_KEY], id="reset-deferred"),
+            pytest.param(["reset", _INT_KEY], None, [], id="reset-live"),
+            pytest.param(
+                ["apply", "--from-json", "-"], _MIXED, [_LIST_KEY], id="apply-mixed"
+            ),
+            pytest.param(["apply", "--from-json", "-"], _LIVE, [], id="apply-live"),
+        ],
+    )
+    def test_the_restart_advisory_names_them_and_nothing_else(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        args: list[str],
+        payload: str | None,
+        deferred: list[str],
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner, ["settings", *args], storage, input_text=payload
+        )
+
+        assert result.exit_code == 0, result.output
+        advisory = "".join(
+            line for line in result.output.splitlines() if RESTART_ADVISORY in line
+        )
+        assert [key for key in (_INT_KEY, _LIST_KEY) if key in advisory] == deferred
+
+    @pytest.mark.parametrize(
+        ("args", "payload"),
+        [
+            pytest.param(["set", _LIST_KEY, "https://a.example"], None, id="set"),
+            pytest.param(["apply", "--from-json", "-"], _MIXED, id="apply"),
+            pytest.param(["reset", _LIST_KEY], None, id="reset"),
+        ],
+    )
+    def test_the_advisory_stays_out_of_the_json_a_caller_pipes(
+        self,
+        cli_runner: CliRunner,
+        storage: StorageManager,
+        args: list[str],
+        payload: str | None,
+    ) -> None:
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["settings", *args, "--format", "json"],
+            storage,
+            input_text=payload,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["sections"]
 
 
 class TestSettingsBootSecretMigration:

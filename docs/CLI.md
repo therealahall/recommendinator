@@ -304,7 +304,8 @@ override.
 view rather than a one-line confirmation.
 
 Restart-required settings (`web.*`, `logging.*`) persist and apply
-on the next boot. The CLI says so when a change needs one.
+on the next boot. `set`, `apply` and `reset` each name the keys still waiting on
+one.
 
 ### `settings apply`
 
