@@ -192,6 +192,34 @@ def test_a_source_named_goodreads_keeps_its_items_across_a_web_boot(
     ]
 
 
+def test_a_lapsed_session_is_deleted_by_the_web_boot(tmp_path: Path) -> None:
+    """The boot sweep is the only one left: ``account set-password`` dropped its
+    own, and nothing else deletes a lapsed row."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(_config_yaml(tmp_path))
+    storage = StorageManager(sqlite_path=tmp_path / "recommendations.db")
+    lapsed = "2000-01-01T00:00:00"
+    live = "2099-01-01T00:00:00"
+    with storage.connection() as conn:
+        conn.execute(
+            "INSERT INTO sessions VALUES ('lapsed-digest', 1, ?, ?, ?)",
+            (lapsed, lapsed, lapsed),
+        )
+        # A restart that signed the operator out would pass on the lapsed row
+        # alone.
+        conn.execute(
+            "INSERT INTO sessions VALUES ('live-digest', 1, ?, ?, ?)",
+            (lapsed, live, lapsed),
+        )
+        conn.commit()
+
+    create_app(config_path)
+
+    with storage.connection() as conn:
+        remaining = conn.execute("SELECT token_hash FROM sessions").fetchall()
+    assert [row["token_hash"] for row in remaining] == ["live-digest"]
+
+
 # ---------------------------------------------------------------------------
 # ConfigWatcher tests
 # ---------------------------------------------------------------------------

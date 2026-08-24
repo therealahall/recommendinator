@@ -21,7 +21,6 @@ from src.storage.accounts import (
     PASSWORD_TOO_SHORT,
 )
 from src.storage.manager import StorageManager
-from src.storage.schema import create_user
 from tests.cli.conftest import _invoke_with_mocks
 
 _NEW_PASSWORD = "a longer passphrase"
@@ -31,9 +30,6 @@ _OLD_PASSWORD = "correct horse"
 _TYPED_TWICE = f"{_NEW_PASSWORD}\n{_NEW_PASSWORD}\n"
 
 _SET_PASSWORD = ["account", "set-password"]
-
-#: Before any session this suite opens, so a row stamped with it has lapsed.
-_LONG_AGO = "2000-01-01T00:00:00"
 
 
 @pytest.fixture
@@ -63,11 +59,6 @@ def _stored_password(storage: StorageManager) -> Any:
         return conn.execute(
             "SELECT password_hash, password_salt FROM users WHERE id = 1"
         ).fetchone()
-
-
-def _session_rows(storage: StorageManager) -> int:
-    with storage.sqlite_db.connection() as conn:
-        return int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
 
 
 class TestResettingThePasswordWithNoServerRunning:
@@ -100,28 +91,6 @@ class TestResettingThePasswordWithNoServerRunning:
             None,
             None,
         ]
-
-    def test_it_also_sweeps_the_sessions_that_have_already_lapsed(
-        self, cli_runner: CliRunner, claimed: StorageManager
-    ) -> None:
-        """Nothing else deletes a lapsed row, so the table grew without bound.
-
-        Revoking is scoped to the account being reset, which is why the sweep
-        is only visible on a row that reset does not own.
-        """
-        with claimed.sqlite_db.connection() as conn:
-            other = create_user(conn, "second")
-            conn.execute(
-                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?)",
-                ("lapsed-digest", other, _LONG_AGO, _LONG_AGO, _LONG_AGO),
-            )
-            conn.commit()
-        assert _session_rows(claimed) == 1
-
-        result = _run(cli_runner, claimed, _SET_PASSWORD, _TYPED_TWICE)
-
-        assert result.exit_code == 0, result.output
-        assert _session_rows(claimed) == 0
 
 
 class TestTheFloorTheWebFormAlsoKeeps:

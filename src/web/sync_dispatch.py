@@ -16,8 +16,7 @@ from src.ingestion.sync import (
     resolve_max_workers,
     sync_run_recorder,
 )
-from src.models.content import ContentType
-from src.utils.text import sanitize_for_log
+from src.sources.service import enrichment_content_type
 from src.web.sync_manager import SyncJob, SyncManager
 
 if TYPE_CHECKING:
@@ -33,27 +32,6 @@ class SyncDispatch:
     on_complete: Callable[[], None]
 
 
-def _enrichment_content_type(resolved: list[ResolvedInput]) -> ContentType | None:
-    # Anything but one source enriches every type: nothing narrows a mixed run.
-    if len(resolved) != 1:
-        return None
-    # str() at the read, not at the log call: config.yaml can put anything
-    # here, and ContentType refuses a non-member either way.
-    raw_content_type = resolved[0].config.get("content_type")
-    content_type_str = str(raw_content_type) if raw_content_type else ""
-    if not content_type_str:
-        return None
-    try:
-        return ContentType(content_type_str)
-    except ValueError:
-        logger.warning(
-            "Invalid content_type '%s' for source %s, enriching all types",
-            sanitize_for_log(content_type_str),
-            sanitize_for_log(resolved[0].source_id),
-        )
-        return None
-
-
 def build_sync_job(
     sync_manager: SyncManager,
     source_label: str,
@@ -65,7 +43,7 @@ def build_sync_job(
     auto_enrich = auto_enrich_enabled(config)
     source_pairs = [(entry.plugin, entry.config) for entry in resolved]
     record_run = sync_run_recorder(storage)
-    enrichment_content_type = _enrichment_content_type(resolved)
+    content_type = enrichment_content_type(resolved)
 
     def run_sync(job: SyncJob) -> int:
         def progress_callback(
@@ -112,7 +90,7 @@ def build_sync_job(
         if not auto_enrich:
             return
         started = EnrichmentManager(storage, config).start_enrichment(
-            content_type=enrichment_content_type,
+            content_type=content_type,
         )
         if started:
             logger.info("[ENRICHMENT] Auto-started after sync")

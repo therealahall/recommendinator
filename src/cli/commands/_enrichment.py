@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import click
 
 from src.cli._shared import abort_with
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager, job_status
 from src.models.content import ContentType
+from src.storage.manager import StorageManager
 
 
-def _echo_errors(errors: list[str]) -> None:
+def _echo_errors(errors: list[str], *, err: bool = False) -> None:
     if not errors:
         return
-    click.echo("  Errors:")
+    click.echo("  Errors:", err=err)
     for error in errors:
-        click.echo(f"    - {error}")
+        click.echo(f"    - {error}", err=err)
 
 
 def _finished_state(status: EnrichmentJobStatus) -> str:
@@ -26,6 +28,80 @@ def _finished_state(status: EnrichmentJobStatus) -> str:
     if status.completed:
         return "completed"
     return "stopped on an error"
+
+
+def run_enrichment(
+    storage: StorageManager,
+    config: dict[str, Any],
+    content_type: ContentType | None,
+    *,
+    user_id: int = 1,
+    include_not_found: bool = False,
+    err: bool = False,
+) -> bool:
+    """Enrich to completion here; False when a run already holds the claim.
+
+    Never backgrounded: the worker is a daemon thread, so a CLI that exited
+    first would strand the claim until it went stale.
+    """
+    manager = EnrichmentManager(storage, config)
+    if not manager.start_enrichment(
+        content_type=content_type,
+        user_id=user_id,
+        include_not_found=include_not_found,
+    ):
+        return False
+
+    type_desc = content_type.value if content_type else "all types"
+    click.echo(f"Started enrichment for {type_desc}...", err=True)
+
+    try:
+        while True:
+            status = manager.get_status()
+            if not status.running:
+                break
+
+            progress = status.progress_percent
+            current = status.current_item or "..."
+            click.echo(
+                f"  Progress: {progress:.1f}% - Processing: {current[:40]}",
+                nl=False,
+                err=True,
+            )
+            click.echo("\r", nl=False, err=True)
+            time.sleep(1)
+
+        click.echo("", err=True)
+        click.echo(f"Enrichment {_finished_state(status)}.", err=err)
+
+        click.echo(f"  Items processed: {status.items_processed}", err=err)
+        click.echo(f"  Items enriched: {status.items_enriched}", err=err)
+        click.echo(f"  Items not found: {status.items_not_found}", err=err)
+        click.echo(f"  Items failed: {status.items_failed}", err=err)
+        click.echo(f"  Elapsed time: {status.elapsed_seconds:.1f}s", err=err)
+
+        _echo_errors(status.errors, err=err)
+
+    except KeyboardInterrupt:
+        click.echo("\nStopping after the item in flight, up to 10s...", err=True)
+        manager.stop_enrichment()
+        # A daemon worker leaves the claim held when the process exits first,
+        # blocking both Start doors until it goes stale. A second Ctrl-C is
+        # caught here rather than escaping the join, which would do the same.
+        try:
+            released = manager._wait_for_completion(timeout=10.0)
+        except KeyboardInterrupt:
+            released = False
+        if not released:
+            # Extended, not replaced: the reason for interrupting is usually in
+            # the failures the run had already published.
+            errors = [*storage.enrichment_jobs.read().errors, "Interrupted."]
+            storage.enrichment_jobs.finish(
+                completed=False, cancelled=True, errors=errors
+            )
+        click.echo("Enrichment stopped.", err=err)
+
+    return True
 
 
 @click.group()
@@ -80,66 +156,15 @@ def enrichment_start(
         ContentType.from_string(content_type_str) if content_type_str else None
     )
 
-    manager = EnrichmentManager(storage, config)
-
-    if not manager.start_enrichment(
-        content_type=content_type,
+    if not run_enrichment(
+        storage,
+        config,
+        content_type,
         user_id=user_id,
         include_not_found=retry_not_found,
     ):
         click.echo("Enrichment job is already running.", err=True)
         raise click.Abort()
-
-    type_desc = content_type_str if content_type_str else "all types"
-    click.echo(f"Started enrichment for {type_desc}...", err=True)
-
-    # Poll for completion
-    try:
-        while True:
-            status = manager.get_status()
-            if not status.running:
-                break
-
-            progress = status.progress_percent
-            current = status.current_item or "..."
-            click.echo(
-                f"  Progress: {progress:.1f}% - Processing: {current[:40]}",
-                nl=False,
-                err=True,
-            )
-            click.echo("\r", nl=False, err=True)
-            time.sleep(1)
-
-        # Final status
-        click.echo("", err=True)
-        click.echo(f"Enrichment {_finished_state(status)}.")
-
-        click.echo(f"  Items processed: {status.items_processed}")
-        click.echo(f"  Items enriched: {status.items_enriched}")
-        click.echo(f"  Items not found: {status.items_not_found}")
-        click.echo(f"  Items failed: {status.items_failed}")
-        click.echo(f"  Elapsed time: {status.elapsed_seconds:.1f}s")
-
-        _echo_errors(status.errors)
-
-    except KeyboardInterrupt:
-        click.echo("\nStopping after the item in flight, up to 10s...", err=True)
-        manager.stop_enrichment()
-        # A daemon worker leaves the claim held when the process exits first,
-        # blocking both Start doors until it goes stale. A second Ctrl-C is
-        # caught here rather than escaping the join, which would do the same.
-        try:
-            released = manager._wait_for_completion(timeout=10.0)
-        except KeyboardInterrupt:
-            released = False
-        if not released:
-            # Extended, not replaced: the reason for interrupting is usually in
-            # the failures the run had already published.
-            errors = [*storage.enrichment_jobs.read().errors, "Interrupted."]
-            storage.enrichment_jobs.finish(
-                completed=False, cancelled=True, errors=errors
-            )
-        click.echo("Enrichment stopped.")
 
 
 #: Matches ``EnrichmentJobStatusResponse`` in src/web/api.py key for key; the

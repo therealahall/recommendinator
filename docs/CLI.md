@@ -57,6 +57,11 @@ listed per source, capped at the first 200 with a `… and N more` tally after
 them. `--format json` emits the document `GET /api/sync/status` serves for the
 same run.
 
+With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on — each
+defaults off — a sync that saved something enriches
+it before the command returns — the run the web starts after its own sync,
+waited out here because the claim would outlive a process that exited.
+
 ### `import`
 
 Reads one file: no source, no cadence, no sync run. `--importer` picks the
