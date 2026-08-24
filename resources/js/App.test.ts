@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import App from './App.vue'
+import router, { APP_NAME } from '@/router'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
@@ -310,6 +311,38 @@ describe('App', () => {
     if (open) await wrapper.find('.sidebar-toggle').trigger('click')
 
     expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(offscreen)
+  })
+
+  // `inert` made the toggle a real disclosure control, with no state saying
+  // whether pressing it had brought the six nav buttons into being.
+  it.each(VIEWPORTS)('states what the toggle controls on $screen', async ({ narrow, open }) => {
+    stubViewport(narrow)
+    const wrapper = await shell()
+    const toggle = wrapper.find('.sidebar-toggle')
+
+    if (open) await toggle.trigger('click')
+
+    const sidebar = mount(AppSidebar, { global: { plugins: [router] } })
+    expect(toggle.attributes('aria-controls')).toBe(sidebar.find('aside').attributes('id'))
+    expect(toggle.attributes('aria-expanded')).toBe(narrow ? String(open) : undefined)
+  })
+
+  // The sign-in, setup and session screens render outside RouterView, so the
+  // title named a page nobody could see (WCAG 2.4.2).
+  it.each([
+    { screen: 'the sign-in form', authenticated: false },
+    { screen: 'the shell', authenticated: true },
+  ])('titles the document for $screen, not the route behind it', async ({ authenticated }) => {
+    spyOnLoad()
+    answerSession(true, authenticated, authenticated ? AARON : null)
+    await router.push({ name: 'library' })
+
+    mount(App, { shallow: true })
+    await flushPromises()
+
+    const page = String(router.currentRoute.value.meta.title)
+    expect(document.title.includes(page)).toBe(authenticated)
+    expect(document.title).toContain(APP_NAME)
   })
 
   it('hides it again when the window itself narrows', async () => {

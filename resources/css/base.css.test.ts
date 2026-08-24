@@ -230,6 +230,33 @@ describe('stacking order', () => {
   })
 })
 
+const APP = 'resources/js/App.vue'
+
+function drawerBreakpoints(): string[] {
+  return ['resources/css/base.css', APP].flatMap((path) =>
+    [
+      ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(
+        /@media \(max-width: ([^)]+)\)\s*\{([\s\S]*?)\n\}/g,
+      ),
+    ].flatMap(([, width, body]) => (/\.sidebar\s*\{[^}]*left:/.test(body) ? [width] : [])),
+  )
+}
+
+describe('the mobile sidebar drawer', () => {
+  // Widen the CSS alone and an 800px tablet has the sidebar off screen with
+  // isNarrow false, so it never goes inert and Tab walks six invisible buttons.
+  it('goes inert at the width the CSS slides it off screen', () => {
+    const watched = readFileSync(`${process.cwd()}/${APP}`, 'utf8').match(
+      /matchMedia\('\(max-width: ([^)]+)\)'\)/,
+    )
+    if (!watched) throw new Error('App.vue watches no viewport width')
+    const breakpoints = drawerBreakpoints()
+
+    expect(breakpoints.length).toBeGreaterThan(0)
+    expect([...new Set(breakpoints)]).toEqual([watched[1]])
+  })
+})
+
 describe('recommendation card header (issue #98)', () => {
   /**
    * Bug: at 375px the score badge and buttons squeezed the title. Root cause:

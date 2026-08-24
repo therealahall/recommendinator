@@ -42,7 +42,6 @@ describe('useThemeStore', () => {
     mockGet.mockReset()
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.themeType
-    // Remove any leftover theme-stylesheet from previous tests
     const existing = document.getElementById('theme-stylesheet')
     if (existing) existing.remove()
   })
