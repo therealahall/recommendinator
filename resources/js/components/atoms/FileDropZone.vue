@@ -113,7 +113,7 @@ const selection = computed(() =>
 .drop-zone-input::file-selector-button {
   margin-right: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text-primary);
