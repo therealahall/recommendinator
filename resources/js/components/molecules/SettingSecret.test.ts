@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import SettingSecret from './SettingSecret.vue'
 import type { SettingViewSecret } from '@/types/api'
 
@@ -51,6 +51,36 @@ describe('SettingSecret', () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret({ has_secret: true }) } })
     await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
     expect(wrapper.emitted('clear')).toHaveLength(1)
+  })
+
+  it('keeps Clear focusable while its own write is in flight, and drops the press', async () => {
+    const wrapper = mount(SettingSecret, {
+      props: { setting: secret({ has_secret: true }), busy: true },
+    })
+    const clear = wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]')
+
+    await clear.trigger('click')
+
+    expect(clear.attributes('disabled')).toBeUndefined()
+    expect(clear.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.emitted('clear')).toBeUndefined()
+  })
+
+  it('lands focus on Replace when Save secret closes the row', async () => {
+    const wrapper = mount(SettingSecret, {
+      props: { setting: secret() },
+      attachTo: document.body,
+    })
+    await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-123')
+
+    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
+    )
+    wrapper.unmount()
   })
 
   it('closes the input on Cancel without emitting set', async () => {

@@ -246,7 +246,7 @@ onBeforeUnmount(clearSaveTimer)
           v-for="setting in secrets"
           :key="setting.key"
           :setting="setting"
-          :disabled="saving"
+          :verbs-locked="saving"
           :busy="secretBusy[setting.key] ?? false"
           @set="onSetSecret(setting.key, $event)"
           @clear="onClearSecret(setting.key)"

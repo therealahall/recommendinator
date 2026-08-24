@@ -5,10 +5,11 @@ import type { SettingViewSecret } from '@/types/api'
 const props = withDefaults(
   defineProps<{
     setting: SettingViewSecret
-    disabled?: boolean
+    /** Locks the verbs while the section around them saves; Cancel stays open. */
+    verbsLocked?: boolean
     busy?: boolean
   }>(),
-  { disabled: false, busy: false },
+  { verbsLocked: false, busy: false },
 )
 
 const emit = defineEmits<{
@@ -21,9 +22,12 @@ const draft = ref('')
 const draftInput = ref<HTMLInputElement | null>(null)
 const replaceButton = ref<HTMLButtonElement | null>(null)
 
-// Each action removes the just-clicked control from the DOM, so move focus to
-// the control that replaces it rather than letting it drop to <body> (WCAG 2.4.3).
+const locked = (): boolean => props.verbsLocked || props.busy
+
+// Each verb removes the control that was clicked, so focus is placed on what
+// replaced it (WCAG 2.4.3). aria-disabled still activates, so each verb guards.
 async function startReplace(): Promise<void> {
+  if (locked()) return
   editing.value = true
   draft.value = ''
   await nextTick()
@@ -37,18 +41,22 @@ async function cancel(): Promise<void> {
   replaceButton.value?.focus()
 }
 
-function save(): void {
+function clear(): void {
+  if (locked()) return
+  emit('clear')
+}
+
+async function save(): Promise<void> {
   const value = draft.value
-  if (!value) return
+  if (!value || locked()) return
   emit('set', value)
   editing.value = false
   draft.value = ''
+  await nextTick()
+  replaceButton.value?.focus()
 }
 
-// A Save or Clear round-trips through the parent, which disables the Replace/Set
-// button (busy) for the request's duration; focusing it while disabled is a
-// silent no-op. Wait for busy to fall back to false, then return focus to the
-// button that replaced the just-clicked control (WCAG 2.4.3).
+// Clear unmounts its own button once the secret is gone, and only then.
 watch(
   () => props.busy,
   (busy, wasBusy) => {
@@ -71,7 +79,7 @@ watch(
         class="btn btn-secondary"
         :aria-label="`${setting.has_secret ? 'Replace' : 'Set'} ${setting.label}`"
         :data-testid="`secret-replace-${setting.key}`"
-        :disabled="disabled || busy"
+        :aria-disabled="verbsLocked || busy || undefined"
         @click="startReplace"
       >{{ setting.has_secret ? 'Replace' : 'Set' }}</button>
       <button
@@ -80,8 +88,8 @@ watch(
         class="btn btn-danger"
         :aria-label="`Clear ${setting.label}`"
         :data-testid="`secret-clear-${setting.key}`"
-        :disabled="disabled || busy"
-        @click="emit('clear')"
+        :aria-disabled="verbsLocked || busy || undefined"
+        @click="clear"
       >Clear</button>
     </div>
 
@@ -95,7 +103,7 @@ watch(
         autocomplete="new-password"
         :aria-label="`New value for ${setting.label}`"
         :value="draft"
-        :disabled="disabled || busy"
+        :readonly="verbsLocked || busy"
         @input="draft = ($event.target as HTMLInputElement).value"
       />
       <button
@@ -103,13 +111,10 @@ watch(
         class="btn btn-primary"
         :aria-label="`Save ${setting.label}`"
         :data-testid="`secret-save-${setting.key}`"
-        :disabled="disabled || busy"
+        :aria-disabled="verbsLocked || busy || undefined"
         @click="save"
       >Save secret</button>
-      <!-- Cancel is deliberately NOT gated on `disabled`: it issues no request,
-           and it is the only way out of the edit row. Locking the escape hatch
-           during a section save would trap a user who opened the row by mistake
-           until an unrelated request finished. -->
+      <!-- Not locked: it is the only way out of the edit row. -->
       <button
         type="button"
         class="btn btn-secondary"
@@ -148,7 +153,13 @@ watch(
   transition: border-color 0.15s ease;
 }
 
-.secret-edit-row input[type='password']:hover {
+.secret-edit-row input[type='password']:hover:not([readonly]) {
   border-color: var(--accent);
+}
+
+.secret-edit-row input[readonly] {
+  border-style: dashed;
+  background: var(--bg-elevated);
+  cursor: not-allowed;
 }
 </style>
