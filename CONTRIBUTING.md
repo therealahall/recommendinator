@@ -261,8 +261,9 @@ registry out.
 
 ## UI themes
 
-Each theme is a folder in `src/web/static/themes/` holding `theme.json` and a
-`colors.css` that overrides CSS color variables. See
+Each theme is a folder in `src/web/static/themes/`, or in the gitignored
+`private/themes/`, holding `theme.json` and a `colors.css` that overrides CSS
+color variables. See
 [docs/THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
 
 ## Questions?

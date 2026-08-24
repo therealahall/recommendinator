@@ -349,6 +349,7 @@ export interface ThemeResponse {
   author: string
   version: string
   theme_type: string
+  css_url: string
 }
 
 // The stored pick and the built-in default answer in the same shape.

@@ -39,6 +39,7 @@ describe('dev server defaults', () => {
     expect(options.port).toBe(5173)
     expect(proxyFor(options, '/api').target).toBe(DEFAULT_TARGET)
     expect(proxyFor(options, '/static/themes').target).toBe(DEFAULT_TARGET)
+    expect(proxyFor(options, '/static/private-themes').target).toBe(DEFAULT_TARGET)
   })
 
   it('binds IPv4 loopback, which is the address Caddy proxies to', () => {
@@ -78,8 +79,8 @@ describe('dev server overrides', () => {
   })
 
   it('retargets every proxied prefix at once', () => {
-    // Both prefixes hit the same backend, so one variable has to move both.
-    // Splitting them would let /api and /static/themes drift apart.
+    // Every prefix hits the same backend, so one variable has to move them all.
+    // Splitting them would let /api and the theme roots drift apart.
     const options = devServerOptions({ DEV_SERVER_API_TARGET: 'http://127.0.0.1:9000' })
 
     expect(proxyFor(options, '/api').target).toBe('http://127.0.0.1:9000')
@@ -157,7 +158,11 @@ describe('vite.config.ts wiring', () => {
   it('hands the dev server the proxied prefixes', async () => {
     const config = await resolveViteConfig()
 
-    expect(Object.keys(config.server?.proxy ?? {})).toEqual(['/api', '/static/themes'])
+    expect(Object.keys(config.server?.proxy ?? {})).toEqual([
+      '/api',
+      '/static/themes',
+      '/static/private-themes',
+    ])
   })
 
   it('reads variables that are not VITE_ prefixed', async () => {

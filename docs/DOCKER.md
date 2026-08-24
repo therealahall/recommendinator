@@ -89,7 +89,7 @@ above 1024.
 | `/app/config` | `rw` | `config.yaml`, created from `example.yaml` on first run and never overwritten. Edit it on the host. |
 | `/app/data` | `rw` | SQLite database, credential key, cache. **This is the volume to back up.** |
 | `/app/inputs` | `ro` | Directories a source scans. Imports are uploaded, not mounted. |
-| `/app/private` | `ro` | Optional private plugin code. |
+| `/app/private` | `ro` | Optional private plugin code and themes. |
 
 ### Ports
 

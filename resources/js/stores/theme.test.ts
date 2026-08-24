@@ -15,8 +15,24 @@ vi.mock('@/composables/useApi', () => ({
 }))
 
 const THEMES = [
-  { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-  { id: 'snowstorm', name: 'Snowstorm', description: '', author: '', version: '1.0.0', theme_type: 'light' },
+  {
+    id: 'nord',
+    name: 'Nord',
+    description: '',
+    author: '',
+    version: '1.0.0',
+    theme_type: 'dark',
+    css_url: '/static/themes/nord/colors.css',
+  },
+  {
+    id: 'snowstorm',
+    name: 'Snowstorm',
+    description: '',
+    author: '',
+    version: '1.0.0',
+    theme_type: 'light',
+    css_url: '/static/themes/snowstorm/colors.css',
+  },
 ]
 
 describe('useThemeStore', () => {
@@ -24,6 +40,8 @@ describe('useThemeStore', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     mockGet.mockReset()
+    delete document.documentElement.dataset.theme
+    delete document.documentElement.dataset.themeType
     // Remove any leftover theme-stylesheet from previous tests
     const existing = document.getElementById('theme-stylesheet')
     if (existing) existing.remove()
@@ -55,9 +73,7 @@ describe('useThemeStore', () => {
 
   it('applyTheme validates against known themes', () => {
     const store = useThemeStore()
-    store.themes = [
-      { id: 'nord', name: 'Nord', description: '', author: '', version: '1.0.0', theme_type: 'dark' },
-    ]
+    store.themes = [THEMES[0]]
     store.applyTheme('unknown')
 
     expect(store.currentThemeId).toBeNull()
@@ -145,5 +161,65 @@ describe('useThemeStore', () => {
 
     expect(store.themes).toEqual(THEMES)
     expect(store.currentThemeId).toBe('nord')
+  })
+
+  it('leaves the theme the server rendered into the shell alone', () => {
+    document.documentElement.dataset.theme = 'snowstorm'
+    localStorage.setItem('theme', 'nord')
+
+    const store = useThemeStore()
+    store.applyStoredTheme()
+
+    expect(store.currentThemeId).toBe('snowstorm')
+    expect(document.getElementById('theme-stylesheet')).toBeNull()
+  })
+
+  it('switching a theme reuses the link the server rendered', () => {
+    const rendered = document.createElement('link')
+    rendered.id = 'theme-stylesheet'
+    rendered.rel = 'stylesheet'
+    rendered.href = '/static/themes/nord/colors.css'
+    document.head.appendChild(rendered)
+    document.documentElement.dataset.theme = 'nord'
+
+    const store = useThemeStore()
+    store.themes = THEMES
+    store.applyTheme('snowstorm')
+
+    expect(document.querySelectorAll('#theme-stylesheet')).toHaveLength(1)
+    expect(rendered.href).toContain('/static/themes/snowstorm/colors.css')
+    expect(document.documentElement.dataset.themeType).toBe('light')
+  })
+
+  it('corrects a cached private theme onto the url it is really served from', async () => {
+    localStorage.setItem('theme', 'midnight')
+    const midnight = {
+      ...THEMES[0],
+      id: 'midnight',
+      css_url: '/static/private-themes/midnight/colors.css',
+    }
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/themes') return Promise.resolve([midnight])
+      if (path === '/themes/default') return Promise.resolve({ theme: 'nord' })
+      return Promise.resolve({ theme: 'midnight' })
+    })
+
+    const store = useThemeStore()
+    store.applyStoredTheme()
+    await store.fetchThemes()
+
+    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
+    expect(link.href).toContain('/static/private-themes/midnight/colors.css')
+  })
+
+  it('paints a private theme from the url the server gave it', () => {
+    const store = useThemeStore()
+    store.themes = [
+      { ...THEMES[0], id: 'midnight', css_url: '/static/private-themes/midnight/colors.css' },
+    ]
+    store.applyTheme('midnight')
+
+    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
+    expect(link.href).toContain('/static/private-themes/midnight/colors.css')
   })
 })

@@ -1,15 +1,18 @@
 # Theme Development Guide
 
-A theme is a folder in `src/web/static/themes/` that overrides CSS color
-variables.
+A theme is a folder in `src/web/static/themes/`, or in `private/themes/` for one
+you do not want in the repo, that overrides CSS color variables.
 
 ## How theming works
 
 - **`:root` variables** in `resources/css/base.css` are the source of truth.
-- **A theme's `colors.css`** overrides the `:root` variables through a
-  dynamically loaded `<link>`.
-- Themes are **not part of the Vite build**. They are served from
-  `/static/themes/` and loaded at runtime.
+- **A theme's `colors.css`** overrides the `:root` variables through a `<link>`.
+- Themes are **not part of the Vite build**. The server renders the stored
+  theme's `<link>` into the page it serves, after the bundle it overrides, so
+  the first paint is already themed. A `<link>` and not an inline `<style>`,
+  which the CSP forbids. Switching swaps that link's `href`.
+- The served `<html>` carries `data-theme` and `data-theme-type`, kept in step
+  by the theme store.
 
 So an override needs no rebuild: every rule in the app reads the custom
 properties, and the `<link>` redeclares them.
@@ -17,13 +20,17 @@ properties, and the `<link>` redeclares them.
 ## Layout
 
 ```
-src/web/static/themes/
+src/web/static/themes/     # or private/themes/, which is gitignored
 └── my-theme/
     ├── theme.json      # required: metadata
     ├── colors.css      # required: color variable overrides
     ├── README.md       # recommended: design notes
     └── preview.png     # optional: screenshot
 ```
+
+A private theme is listed and served exactly like a shipped one, from
+`/static/private-themes/`. An id already taken by a shipped theme is refused,
+and so is a folder name outside `[A-Za-z0-9_-]`: the id reaches an `href`.
 
 ## theme.json
 
@@ -45,7 +52,7 @@ Every field is required.
 | `description` | Brief description |
 | `author` | Author, or "Built-in" for included themes |
 | `version` | Semantic version |
-| `type` | `"dark"` or `"light"`, an informational label |
+| `type` | `"dark"` or `"light"`; anything else is not a theme. Becomes `data-theme-type` |
 
 ## Color variables
 
@@ -147,12 +154,14 @@ variants yourself.
 
 ## Creating a theme
 
-1. `mkdir src/web/static/themes/my-theme`
+1. `mkdir src/web/static/themes/my-theme`, or `private/themes/my-theme`.
 2. Write `theme.json`, per the schema above.
-3. Write `colors.css`:
+3. Write `colors.css`, declaring `color-scheme` so the browser paints native
+   controls and scrollbars to match:
 
    ```css
    :root {
+       color-scheme: dark;
        --accent: #e06c75;
        --accent-light: #e5c07b;
        --color-success: #98c379;
@@ -179,5 +188,7 @@ The selection is a row of its own, in the `user_ui_settings` table, one per
 user — so it follows them across browsers and devices, and `preferences reset`,
 which rewrites the scoring preferences, leaves it alone. Both interfaces reach
 it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`.
-`localStorage` caches it for fast first paint. A user who has picked nothing is
-stored as the empty string and painted `nord`.
+The server reads the row before it serves the page, so no request decides the
+first paint; `localStorage` still caches it for the Vite dev server, which
+serves its own page. A user who has picked nothing is stored as the empty
+string and painted `nord`.

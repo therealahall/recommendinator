@@ -1,4 +1,7 @@
 /* Nord Theme — Default
-   Nord is the built-in default theme. All color variables are defined in
-   :root in resources/css/base.css, so this file intentionally contains no
-   overrides. It exists so the theme loader can reference it without errors. */
+   Every color variable is already declared in :root in resources/css/base.css,
+   so this file overrides none of them. */
+
+:root {
+    color-scheme: dark;
+}

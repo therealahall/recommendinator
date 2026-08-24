@@ -531,11 +531,12 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
   truncates in `setFilter`. Within the bound, titles normalize on Python's `\w`,
   which spans every script. An ASCII-only class normalizes a Cyrillic or
   Japanese title to the empty string and makes it unreachable.
-- Themes are folder-per-theme in `src/web/static/themes/`, each a `theme.json`
-  and a `colors.css` overriding the `:root` vars `base.css` declares.
-  `color-mix()` means a theme defines only core colors. Selection persists per
-  user in `user_ui_settings`, defaulting to `nord`, and is untouched by a
-  preference reset. See
+- Themes are folder-per-theme in `src/web/static/themes/` or `private/themes/`,
+  each a `theme.json` and a `colors.css` overriding the `:root` vars `base.css`
+  declares. `color-mix()` means a theme defines only core colors. Selection
+  persists per user in `user_ui_settings`, defaulting to `nord`, is untouched by
+  a preference reset, and is rendered into the page shell so the first paint
+  needs no request. See
   [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
 - The UI polls `GET /api/status` every 5 seconds until the backend answers
   ready, then every 5 minutes, and banners a newer server version. A call that

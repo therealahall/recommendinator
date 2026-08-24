@@ -9,12 +9,7 @@ from tabulate import tabulate
 
 from src.cli._shared import abort_with, emit_view, require_storage
 from src.storage.manager import UnknownUserError
-from src.web.themes import (
-    DEFAULT_THEME_ID,
-    THEMES_DIR,
-    discover_themes,
-    installed_theme_ids,
-)
+from src.web.themes import DEFAULT_THEME_ID, installed_theme_ids, installed_themes
 
 
 @click.group()
@@ -32,7 +27,7 @@ def theme() -> None:
 )
 def theme_list(output_format: str) -> None:
     """List the themes installed on this instance."""
-    themes = discover_themes(THEMES_DIR)
+    themes = installed_themes()
 
     if output_format == "json":
         click.echo(json.dumps([one.model_dump() for one in themes], indent=2))
@@ -98,7 +93,7 @@ def theme_set(
     preference.
     """
     storage = require_storage(ctx)
-    installed = installed_theme_ids(THEMES_DIR)
+    installed = installed_theme_ids()
     if theme_id not in installed:
         abort_with(f"Unknown theme '{theme_id}'. Installed: {', '.join(installed)}")
 
