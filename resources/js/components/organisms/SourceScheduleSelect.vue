@@ -12,6 +12,7 @@ const props = defineProps<{
   sourceName: string
   interval: string
   options: SyncIntervalOption[]
+  expanded: boolean
 }>()
 
 const data = useDataStore()
@@ -35,6 +36,21 @@ watch([() => props.interval, status], () => {
   if (status.value !== 'saving') selected.value = props.interval
 })
 
+// A refusal that settled while the row was collapsed was never on screen, so
+// it waits for the next expand rather than being dismissed unread.
+let refusalSeen = false
+watch(
+  () => props.expanded,
+  (isExpanded) => {
+    if (status.value !== 'error') return
+    if (isExpanded) refusalSeen = true
+    else if (refusalSeen) {
+      status.value = 'idle'
+      error.value = ''
+    }
+  },
+)
+
 // Arrow-keying a closed <select> fires a change per keystroke, outrunning the
 // save, so the last one of a burst is queued rather than dropped.
 async function save(next: string): Promise<void> {
@@ -56,6 +72,7 @@ async function save(next: string): Promise<void> {
     }, SAVED_STATUS_MS)
   } catch (err) {
     pending = null
+    refusalSeen = props.expanded
     status.value = 'error'
     error.value = err instanceof Error ? err.message : 'Unknown error'
   }

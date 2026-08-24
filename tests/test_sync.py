@@ -13,6 +13,7 @@ import requests
 
 from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
 from src.ingestion.sync import (
+    MAX_REPORTED_ERRORS,
     MAX_WORKERS_CEILING,
     SyncResult,
     execute_multi_source_sync,
@@ -101,6 +102,57 @@ class TestExecuteSync:
         # credential bytes.
         assert "Bad" in result.errors[0]
         assert "db error" not in result.errors[0]
+
+    def test_a_source_failing_every_item_reports_a_capped_list_and_a_tally(
+        self,
+    ) -> None:
+        """Uncapped, a library failing item by item put one line per item into
+        every two-second /api/sync/status poll for the length of the run."""
+        failures = MAX_REPORTED_ERRORS + 12
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(
+            make_item(f"Book {index}") for index in range(failures)
+        )
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item_outcome.side_effect = ValueError("db error")
+
+        result = execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
+
+        assert len(result.errors) == MAX_REPORTED_ERRORS + 1
+        assert result.errors[-1] == "… and 12 more"
+        # The list is bounded; what the run did to the library is not rounded.
+        assert result.total_items == failures
+        assert result.items_synced == 0
+
+    def test_the_enrichment_advisory_is_not_crowded_out_by_item_misses(self) -> None:
+        """It speaks for the whole run, so a full per-item list must not
+        displace it, and it is not one of the misses the tally counts."""
+        saved = SavedItem(db_id=1, outcome=SaveOutcome.ADDED)
+        misses = MAX_REPORTED_ERRORS + 5
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.display_name = "TestPlugin"
+        plugin.fetch.return_value = iter(
+            make_item(f"Book {index}") for index in range(misses + 1)
+        )
+        storage = MagicMock(spec=StorageManager)
+        storage.save_content_item_outcome.side_effect = [
+            *[ValueError("db error")] * misses,
+            saved,
+        ]
+        storage.enrichment.mark_needed.side_effect = RuntimeError("queue down")
+
+        result = execute_sync(
+            plugin=plugin,
+            plugin_config={},
+            storage_manager=storage,
+            mark_for_enrichment=True,
+        )
+
+        assert result.errors[-1] == (
+            "Saved 1 item(s) but could not queue them for enrichment"
+        )
+        assert result.omitted_errors == 5
 
     def test_progress_callback_reports_one_based_item_number(self) -> None:
         """Progress callback emits ``index + 1`` so the final iteration

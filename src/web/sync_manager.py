@@ -167,30 +167,12 @@ class SyncManager:
         source: str,
         sync_function: Callable[[SyncJob], int],
         on_complete: Callable[[], None] | None = None,
-    ) -> tuple[bool, str]:
-        """Start a background sync job keyed by ``source``.
-
-        A second start with the same ``source`` while the previous job is
-        still running is rejected. Different ``source`` values can run
-        concurrently.
-
-        Args:
-            source: Label that identifies the job, e.g. ``"Steam"``. Used
-                as the dict key.
-            sync_function: Function that performs the sync. Should accept a
-                SyncJob parameter for progress updates and return the count
-                of items processed.
-            on_complete: Optional callback to run after sync completes
-                successfully.
-
-        Returns:
-            Tuple of ``(success, message)``. Success is ``False`` if a job
-            for the same ``source`` is still running.
-        """
+    ) -> str | None:
+        """Start a job keyed by ``source``, or return why it was refused."""
         with self._lock:
             existing = self._jobs.get(source)
             if existing is not None and existing.status == SyncStatus.RUNNING:
-                return False, f"Sync already in progress for {job_label(source)}"
+                return f"Sync already in progress for {job_label(source)}"
 
             self._jobs[source] = SyncJob(
                 source=source,
@@ -212,7 +194,7 @@ class SyncManager:
         )
         thread.start()
 
-        return True, f"Started sync for {job_label(source)}"
+        return None
 
     def _evict_history_locked(self) -> None:
         """Drop the oldest non-running jobs once history exceeds the cap.

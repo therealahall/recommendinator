@@ -82,6 +82,12 @@ class TestSyncJobToDict:
         job = SyncJob(source="steam", items_processed=5, total_items=0)
         assert job.to_dict()["progress_percent"] is None
 
+    def test_the_umbrella_job_is_served_under_its_label_not_its_key(self) -> None:
+        # The SPA matches the umbrella job by label; served the sentinel key it
+        # matches nothing and a Sync All run renders no progress at all.
+        job = SyncJob(source=ALL_SOURCES_KEY)
+        assert job.to_dict()["source"] == ALL_SOURCES_LABEL
+
 
 class TestSyncManagerStateMachine:
     """State transitions for a single tracked job."""
@@ -91,12 +97,11 @@ class TestSyncManagerStateMachine:
         mock_thread.return_value = MagicMock()
         manager = SyncManager()
 
-        success, message = manager.start_sync(
+        refusal = manager.start_sync(
             source="steam", sync_function=MagicMock(return_value=10)
         )
 
-        assert success is True
-        assert "steam" in message
+        assert refusal is None
         assert manager.is_running("steam") is True
         assert manager.is_running() is True
 
@@ -164,15 +169,11 @@ class TestSyncManagerConcurrentJobs:
         manager = SyncManager()
         sync_function = MagicMock(return_value=10)
 
-        first, _ = manager.start_sync(source="steam", sync_function=sync_function)
-        second, message = manager.start_sync(
-            source="steam", sync_function=sync_function
-        )
+        first = manager.start_sync(source="steam", sync_function=sync_function)
+        second = manager.start_sync(source="steam", sync_function=sync_function)
 
-        assert first is True
-        assert second is False
-        assert "already in progress" in message
-        assert "steam" in message
+        assert first is None
+        assert second == "Sync already in progress for steam"
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_distinct_sources_run_concurrently(self, mock_thread: MagicMock) -> None:
@@ -180,11 +181,11 @@ class TestSyncManagerConcurrentJobs:
         manager = SyncManager()
         sync_function = MagicMock(return_value=10)
 
-        first, _ = manager.start_sync(source="steam", sync_function=sync_function)
-        second, _ = manager.start_sync(source="goodreads", sync_function=sync_function)
+        first = manager.start_sync(source="steam", sync_function=sync_function)
+        second = manager.start_sync(source="goodreads", sync_function=sync_function)
 
-        assert first is True
-        assert second is True
+        assert first is None
+        assert second is None
         assert manager.is_running("steam") is True
         assert manager.is_running("goodreads") is True
         assert manager.is_running() is True
@@ -758,7 +759,7 @@ def _recorded_run(
 def _accepting_manager() -> MagicMock:
     manager = MagicMock(spec=SyncManager)
     manager.is_running.return_value = False
-    manager.start_sync.return_value = (True, f"Started sync for {STEAM_LABEL}")
+    manager.start_sync.return_value = None
     return manager
 
 

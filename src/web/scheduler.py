@@ -58,17 +58,17 @@ def dispatch_due_syncs(
             )
             continue
         dispatch = build_sync_job(sync_manager, label, [entry], storage, config)
-        started, message = sync_manager.start_sync(
+        refusal = sync_manager.start_sync(
             label, dispatch.run, on_complete=dispatch.on_complete
         )
         # No config validation before dispatch, unlike the single-source POST:
         # nobody is here to read a refusal, and the failed run backs it off.
-        if started:
+        if refusal is None:
             logger.info("Scheduled sync started for %s", sanitize_for_log(label))
             # One start a tick, so the rest stagger over the minutes after it.
             break
         release_sources(storage, claimed, user_id)
-        logger.info("Scheduled sync declined: %s", sanitize_for_log(message))
+        logger.info("Scheduled sync declined: %s", sanitize_for_log(refusal))
 
 
 class SyncScheduler:

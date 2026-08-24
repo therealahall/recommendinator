@@ -259,6 +259,7 @@ const intervalLabel = computed(
           :source-name="source.display_name"
           :interval="source.sync_interval"
           :options="intervalOptions"
+          :expanded="expanded"
         />
 
         <SourceSettingsPanel
