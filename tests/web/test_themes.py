@@ -305,6 +305,59 @@ class TestShellRoute:
         assert served.status_code == 200
 
 
+class TestThePrivateMountServesNothingAboveItself:
+    """PrivateThemeFiles waives StaticFiles' directory check, not its path one."""
+
+    @staticmethod
+    def _mounted_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        private = tmp_path / "themes"
+        _write_theme(private / "midnight")
+        (tmp_path / "outside.css").write_text(":root { --leaked: 1; }")
+        monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", private)
+        return private
+
+    @pytest.mark.parametrize(
+        "escape", ["../outside.css", "..%2Foutside.css", "%2e%2e%2foutside.css"]
+    )
+    def test_a_url_climbing_out_of_the_mount_reaches_no_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escape: str
+    ) -> None:
+        self._mounted_on(tmp_path, monkeypatch)
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get(f"{PRIVATE_THEMES_URL}/{escape}")
+
+        assert served.status_code == 404
+        assert "--leaked" not in served.text
+
+    def test_a_symlink_planted_in_a_theme_reaches_no_file_outside_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        private = self._mounted_on(tmp_path, monkeypatch)
+        (private / "midnight" / "escape.css").symlink_to(tmp_path / "outside.css")
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get(f"{PRIVATE_THEMES_URL}/midnight/escape.css")
+
+        assert served.status_code == 404
+        assert "--leaked" not in served.text
+
+    def test_the_mount_hands_back_no_file_from_the_installation_around_it(
+        self, tmp_path: Path
+    ) -> None:
+        """The stock mount, whose parent holds the config the app boots from."""
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get(
+                f"{PRIVATE_THEMES_URL}/../../config/example.yaml"
+            )
+
+        assert served.status_code == 404
+
+
 class TestThemeEndpoints:
     """Tests for theme API endpoints."""
 
