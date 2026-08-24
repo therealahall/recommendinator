@@ -61,13 +61,14 @@ describe('useDataStore', () => {
 
   /** The per-source slots an umbrella run carries — one per source it
    *  resolved to sync, which is how a row knows the run includes it. */
-  function ranSources(...names: string[]) {
-    return names.map((source) => ({
+  function ranSources(omittedBySource: Record<string, number>) {
+    return Object.entries(omittedBySource).map(([source, omitted_errors]) => ({
       source,
       items_processed: 0,
       total_items: null,
       current_item: null,
       progress_percent: null,
+      omitted_errors,
     }))
   }
 
@@ -334,7 +335,7 @@ describe('useDataStore', () => {
               { source: 'Sonarr', message: 'TLS verification failed' },
               { source: 'Steam', message: 'Rate limit exceeded' },
             ],
-            sources: ranSources('Sonarr', 'Steam'),
+            sources: ranSources({ Sonarr: 4800, Steam: 0 }),
           },
           {
             source: 'Steam',
@@ -356,7 +357,7 @@ describe('useDataStore', () => {
       expect(store.jobForSourceId('steam')?.source).toBe('All Sources')
       expect(store.jobForSourceId('sonarr')?.source).toBe('All Sources')
       expect(store.syncMessage).toContain('Sonarr: TLS verification failed')
-      expect(store.syncMessage).toContain('(+1 more)')
+      expect(store.syncMessage).toContain('4801')
     })
 
     it('leaves out an error the source has since re-synced past', async () => {
@@ -372,7 +373,7 @@ describe('useDataStore', () => {
               { source: 'Sonarr', message: 'TLS verification failed' },
               { source: 'Steam', message: 'Rate limit exceeded' },
             ],
-            sources: ranSources('Sonarr', 'Steam'),
+            sources: ranSources({ Sonarr: 0, Steam: 4800 }),
           },
           {
             source: 'Steam',
@@ -967,7 +968,7 @@ describe('useDataStore', () => {
 
       expect(mockGet).toHaveBeenCalledWith('/sync/runs', {
         source_id: 'steam',
-        limit: 10,
+        limit: 20,
       })
       expect(store.sourceRuns.steam).toEqual(runs)
     })

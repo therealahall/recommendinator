@@ -254,11 +254,11 @@ export const useDataStore = defineStore('data', () => {
           }`
         } else {
           syncStatus.value = 'completed'
-          const errors = visibleErrors()
+          const { errors, total } = visibleErrors(syncJobs.value)
           // Named: two per-source syncs can run at once.
           const newest = newestJob(syncJobs.value)
           let msg = `Completed (${newest.source}): ${buildCountsSummary(newest)}`
-          if (errors.length > 0) msg += ` — ${describeErrors(errors)}`
+          if (errors.length > 0) msg += ` — ${describeErrors(errors, total)}`
           syncMessage.value = msg
         }
         stopSyncPolling()
@@ -292,10 +292,20 @@ export const useDataStore = defineStore('data', () => {
     }
   }
 
-  function visibleErrors(): SyncErrorResponse[] {
-    return syncJobs.value.flatMap((job) =>
-      job.errors.filter((error) => currentJobForLabel(error.source) === job),
-    )
+  function visibleErrors(jobs: SyncJobResponse[]): {
+    errors: SyncErrorResponse[]
+    total: number
+  } {
+    const errors: SyncErrorResponse[] = []
+    let omitted = 0
+    for (const job of jobs) {
+      const owns = (label: string) => currentJobForLabel(label) === job
+      errors.push(...job.errors.filter((error) => owns(error.source)))
+      for (const slot of job.sources) {
+        if (owns(slot.source)) omitted += slot.omitted_errors
+      }
+    }
+    return { errors, total: errors.length + omitted }
   }
 
   /** The run the banner reports on. Terminal jobs are retained across runs,
@@ -320,9 +330,10 @@ export const useDataStore = defineStore('data', () => {
 
   // The first message in full, not a count of them: the text is what names
   // the setting to change, and the rest are one row away in the accordion.
-  function describeErrors(errors: SyncErrorResponse[]): string {
-    const [first, ...rest] = errors
-    const more = rest.length > 0 ? ` (+${rest.length} more)` : ''
+  function describeErrors(errors: SyncErrorResponse[], total: number): string {
+    const [first] = errors
+    const rest = total - 1
+    const more = rest > 0 ? ` (+${rest} more)` : ''
     return `${first.source}: ${first.message}${more}`
   }
 
@@ -349,7 +360,7 @@ export const useDataStore = defineStore('data', () => {
     // Errors land on the job as each source finishes, so a run that is still
     // going has a count worth showing: the accordion rows only render them
     // once the whole run is over.
-    const failures = running.reduce((sum, j) => sum + j.errors.length, 0)
+    const failures = visibleErrors(running).total
     const errorNote = failures > 0 ? ` — ${failures} error(s) so far` : ''
 
     if (running.length === 1) {
@@ -707,7 +718,7 @@ export const useDataStore = defineStore('data', () => {
    *  these per row. */
   async function loadSourceRuns(
     sourceId: string,
-    limit = 10,
+    limit = 20,
   ): Promise<SyncRunResponse[]> {
     const runs = await api.get<SyncRunResponse[]>('/sync/runs', {
       source_id: sourceId,

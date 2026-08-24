@@ -970,6 +970,39 @@ def test_update_refuses_a_source_another_process_is_already_syncing(
     assert storage.get_content_items(user_id=1) == []
 
 
+def test_update_json_answers_with_a_document_when_every_source_is_claimed(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+    storage = StorageManager(sqlite_path=db_path)
+    assert storage.sync_runs.claim(1, "steam") is True
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+    ):
+        result = CliRunner(mix_stderr=False).invoke(
+            cli, ["update", "--source", "steam", "--format", "json"]
+        )
+
+    assert result.exit_code != 0
+    assert json.loads(result.stdout) == {"status": "idle", "jobs": []}
+    assert already_syncing_detail(["steam"]) in result.stderr
+
+
 def test_update_interrupted_by_ctrl_c_leaves_the_source_claimable(
     tmp_path: Path,
 ) -> None:
