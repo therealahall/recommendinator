@@ -128,7 +128,6 @@ function addChip(name: string): void {
 const formRoot = ref<HTMLFormElement | null>(null)
 
 async function removeChip(name: string, index: number): Promise<void> {
-  if (props.disabled) return
   const list = getList(name).filter((_, i) => i !== index)
   formValues[name] = list
   // The × button the user just pressed unmounts with its chip, dropping focus
@@ -156,11 +155,12 @@ function onFloatInput(name: string, raw: string): void {
   formValues[name] = Number.isFinite(n) ? n : 0
 }
 
+// `disabled` (a sync is running) and the per-verb busy flags below both lock
+// with aria-disabled rather than native disabled, which would blur the control
+// the user just pressed — or, when a scheduled sync starts, one they are simply
+// standing in. aria-disabled does not block activation, so each verb guards.
 function onSave(): void {
-  // aria-disabled conveys the in-flight state without blurring the button the
-  // user just pressed, but unlike native disabled it does not block activation
-  // — so a second Enter/click has to be dropped here or it double-submits.
-  if (props.saving) return
+  if (props.saving || props.disabled) return
   const out: Record<string, unknown> = {}
   for (const field of nonSensitiveFields.value) {
     // The API merges, so an omitted field stays unset — which is what an
@@ -170,6 +170,11 @@ function onSave(): void {
     out[field.name] = formValues[field.name]
   }
   emit('save', out)
+}
+
+function onToggleEnabled(): void {
+  if (props.enableBusy || props.disabled) return
+  emit('toggle-enabled', !props.enabled)
 }
 
 const secretEditing = reactive<Record<string, boolean>>({})
@@ -191,6 +196,7 @@ function secretBusy(name: string): boolean {
 // Each verb removes the control that was clicked, so focus is placed on what
 // replaced it rather than left to fall to <body> (WCAG 2.4.3).
 async function startReplace(name: string): Promise<void> {
+  if (props.disabled || secretBusy(name)) return
   secretEditing[name] = true
   secretDrafts[name] = ''
   await nextTick()
@@ -208,11 +214,12 @@ async function cancelReplace(name: string): Promise<void> {
 // refused one identically.
 function saveSecret(name: string): void {
   const value = secretDrafts[name] ?? ''
-  if (!value || secretBusy(name)) return
+  if (!value || props.disabled || secretBusy(name)) return
   emit('set-secret', name, value)
 }
 
 function askClear(name: string): void {
+  if (props.disabled || secretBusy(name)) return
   clearConfirming.value = name
 }
 
@@ -269,7 +276,6 @@ function isSecretSet(name: string): boolean {
         :name="field.name"
         type="text"
         :required="field.required"
-        :disabled="disabled"
         :value="formValues[field.name] as string"
         @input="formValues[field.name] = ($event.target as HTMLInputElement).value"
       />
@@ -281,7 +287,6 @@ function isSecretSet(name: string): boolean {
         type="number"
         step="1"
         :required="field.required"
-        :disabled="disabled"
         :value="formValues[field.name] as number"
         @input="onIntInput(field.name, ($event.target as HTMLInputElement).value)"
       />
@@ -293,7 +298,6 @@ function isSecretSet(name: string): boolean {
         type="number"
         step="any"
         :required="field.required"
-        :disabled="disabled"
         :value="formValues[field.name] as number"
         @input="onFloatInput(field.name, ($event.target as HTMLInputElement).value)"
       />
@@ -304,7 +308,6 @@ function isSecretSet(name: string): boolean {
         :name="field.name"
         type="checkbox"
         :required="field.required"
-        :disabled="disabled"
         :checked="formValues[field.name] as boolean"
         @change="formValues[field.name] = ($event.target as HTMLInputElement).checked"
       />
@@ -326,7 +329,6 @@ function isSecretSet(name: string): boolean {
               class="chip-remove"
               :data-testid="`chip-remove-${field.name}-${index}`"
               :aria-label="`Remove ${chip}`"
-              :disabled="disabled"
               @click="removeChip(field.name, index)"
             >×</button>
           </span>
@@ -337,7 +339,6 @@ function isSecretSet(name: string): boolean {
           class="chip-input"
           :data-testid="`chip-input-${field.name}`"
           :placeholder="`Add ${field.name}…`"
-          :disabled="disabled"
           :value="chipDrafts[field.name] ?? ''"
           @input="chipDrafts[field.name] = ($event.target as HTMLInputElement).value"
           @keydown.enter.prevent="addChip(field.name)"
@@ -371,7 +372,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-secondary"
             :aria-label="`Replace ${field.name}`"
             :data-testid="`secret-replace-${field.name}`"
-            :disabled="disabled || secretBusy(field.name)"
+            :aria-disabled="disabled || secretBusy(field.name) || undefined"
             @click="startReplace(field.name)"
           >Replace</button>
           <button
@@ -380,7 +381,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-danger"
             :aria-label="`Clear ${field.name}`"
             :data-testid="`secret-clear-${field.name}`"
-            :disabled="disabled || secretBusy(field.name)"
+            :aria-disabled="disabled || secretBusy(field.name) || undefined"
             @click="askClear(field.name)"
           >Clear</button>
           <!-- Mounted while silent: inserted populated it reads as content
@@ -423,7 +424,7 @@ function isSecretSet(name: string): boolean {
             :aria-label="`New value for ${field.name}`"
             :data-testid="`secret-input-${field.name}`"
             :value="secretDrafts[field.name] ?? ''"
-            :disabled="disabled || secretBusy(field.name)"
+            :readonly="disabled || secretBusy(field.name)"
             @input="
               secretDrafts[field.name] = ($event.target as HTMLInputElement).value
             "
@@ -433,8 +434,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-primary"
             :aria-label="`Save ${field.name}`"
             :data-testid="`secret-save-${field.name}`"
-            :disabled="disabled"
-            :aria-disabled="secretBusy(field.name) || undefined"
+            :aria-disabled="disabled || secretBusy(field.name) || undefined"
             @click="saveSecret(field.name)"
           >{{ secretBusy(field.name) ? 'Saving…' : 'Save secret' }}</button>
           <!-- Not gated on `disabled`: it is the only way out of the edit row. -->
@@ -469,9 +469,9 @@ function isSecretSet(name: string): boolean {
         class="btn source-form-toggle-btn"
         :class="enabled ? 'btn-danger' : 'btn-success'"
         data-testid="form-toggle-enabled"
-        :disabled="enableBusy || disabled"
+        :aria-disabled="enableBusy || disabled || undefined"
         :aria-pressed="enabled"
-        @click="emit('toggle-enabled', !enabled)"
+        @click="onToggleEnabled"
       >{{
         enableBusy
           ? (enabled ? 'Disabling…' : 'Enabling…')
@@ -498,8 +498,7 @@ function isSecretSet(name: string): boolean {
           type="button"
           class="btn btn-primary"
           data-testid="form-save"
-          :disabled="disabled"
-          :aria-disabled="saving || undefined"
+          :aria-disabled="saving || disabled || undefined"
           @click="onSave"
         >{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
@@ -531,8 +530,15 @@ function isSecretSet(name: string): boolean {
 
 .source-form-field input[type="text"]:hover,
 .source-form-field input[type="number"]:hover,
-.source-form-field input[type="password"]:hover {
+.source-form-field input[type="password"]:hover:not([readonly]) {
   border-color: var(--accent);
+}
+
+/* The lock a `readonly` input carries is invisible without this, where the
+   `disabled` it replaced was greyed by the UA. Matches .btn's inactive look. */
+.source-form-field input[readonly] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .secret-status-badge {
@@ -705,7 +711,7 @@ function isSecretSet(name: string): boolean {
   font-weight: 600;
 }
 
-:deep(.btn-success:hover:not(:disabled)) {
+:deep(.btn-success:hover:not(:disabled):not([aria-disabled='true'])) {
   background: color-mix(in srgb, var(--color-success) 88%, black);
   border-color: color-mix(in srgb, var(--color-success) 88%, black);
 }

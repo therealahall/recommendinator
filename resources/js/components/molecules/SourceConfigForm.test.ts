@@ -121,6 +121,40 @@ describe('SourceConfigForm', () => {
     expect(wrapper.emitted('toggle-enabled')).toEqual([[false]])
   })
 
+  it('keeps Enable in the tab order while its request is in flight, and drops the second press', async () => {
+    const wrapper = mountForm({
+      schema: [field({ name: 'path' })],
+      values: { path: 'x' },
+      enabled: false,
+    })
+    const button = wrapper.get('[data-testid="form-toggle-enabled"]')
+    const element = button.element as HTMLButtonElement
+    element.focus()
+
+    await button.trigger('click')
+    await wrapper.setProps({ enableBusy: true })
+    await button.trigger('click')
+
+    expect(wrapper.emitted('toggle-enabled')).toEqual([[true]])
+    expect(document.activeElement).toBe(element)
+    element.blur()
+    element.focus()
+    expect(document.activeElement).toBe(element)
+  })
+
+  it('keeps the fields reachable when a scheduled sync starts mid-edit', async () => {
+    const wrapper = mountForm({ schema: [field({ name: 'path' })], values: { path: 'x' } })
+    const input = wrapper.get('input[name="path"]').element as HTMLInputElement
+    input.focus()
+
+    await wrapper.setProps({ disabled: true })
+
+    expect(document.activeElement).toBe(input)
+    input.blur()
+    input.focus()
+    expect(document.activeElement).toBe(input)
+  })
+
   it('renders an error pill with message when saveStatus is "error"', () => {
     const wrapper = mountForm({
       schema: [field({ name: 'path' })],

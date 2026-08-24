@@ -75,6 +75,14 @@ describe('EnrichmentCard', () => {
     expect(data.enableEnrichment).toHaveBeenCalled()
   })
 
+  it('mounts the progress region before the first tick, not along with it', () => {
+    const wrapper = mountWithEnrichment()
+
+    const region = wrapper.get('.enrichment-status')
+    expect(region.attributes('aria-live')).toBe('polite')
+    expect(region.text()).toBe('')
+  })
+
   it('shows job progress when enrichment is running', () => {
     const wrapper = mountWithEnrichment({
       enrichmentJob: makeRunningJob({
