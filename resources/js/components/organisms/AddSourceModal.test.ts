@@ -252,6 +252,24 @@ describe('AddSourceModal', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
+  it('asks before Escape discards a typed id, and declining lands focus back inside the dialog', async () => {
+    const { wrapper } = await mountWithPlugins([calibrePlugin], document.body)
+    const id = wrapper.find('#add-source-id')
+    await id.setValue('my-library')
+    ;(id.element as HTMLInputElement).focus()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.emitted('close')).toBeFalsy()
+
+    await wrapper.get('[data-testid="confirm-panel-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toBeFalsy()
+    expect(wrapper.get('[aria-modal="true"]').element.contains(document.activeElement)).toBe(true)
+    wrapper.unmount()
+  })
+
   describe('while a create is in flight', () => {
     const FOCUSABLE =
       'button:not([disabled]), input:not([disabled]), select:not([disabled]),' +

@@ -197,7 +197,7 @@ onUnmounted(() => {
   .card {
     position: sticky;
     top: 0;
-    z-index: 20;
+    z-index: var(--z-sticky);
   }
 
   .lib-pills,
