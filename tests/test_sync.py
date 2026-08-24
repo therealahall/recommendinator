@@ -2,6 +2,7 @@
 
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,11 +12,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from src.ingestion import sync
 from src.ingestion.plugin_base import ConfigField, SourceError, SourcePlugin
 from src.ingestion.sync import (
     MAX_REPORTED_ERRORS,
     MAX_WORKERS_CEILING,
     SyncResult,
+    claim_sources,
     execute_multi_source_sync,
     execute_sync,
     resolve_max_workers,
@@ -24,6 +27,8 @@ from src.ingestion.sync import (
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import SavedItem, SaveOutcome, StorageManager
 from src.storage.schema import SyncRunDict
+from src.storage.sync_runs import STALE_AFTER
+from src.utils.dates import utc_now
 from src.utils.text import LINE_BREAKS
 from tests.factories import make_item
 
@@ -325,6 +330,90 @@ class TestExecuteMultiSourceSync:
             ("Failing", ("boom",)),
             ("Working", ()),
         }
+
+
+class TestAClaimOutlastsTheWaitAndTheSilence:
+    """Reported: a claim expired before the sync it was taken for started.
+
+    Only a plugin reporting progress used to beat, so a source queued behind
+    ``max_workers`` or inside a silent fetch was reaped and taken over mid-run.
+    """
+
+    _SOURCES = ("slow", "queued")
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path) -> StorageManager:
+        return StorageManager(sqlite_path=tmp_path / "test.db")
+
+    @staticmethod
+    def _stamp(moment: datetime) -> str:
+        return moment.isoformat(timespec="microseconds")
+
+    @staticmethod
+    def _heartbeat_at(storage: StorageManager, source_id: str) -> str:
+        with storage.connection() as conn:
+            row = conn.execute(
+                "SELECT heartbeat_at FROM sync_runs"
+                " WHERE source_id = ? AND finished_at IS NULL",
+                (source_id,),
+            ).fetchone()
+        return str(row["heartbeat_at"]) if row else ""
+
+    def _strand(self, storage: StorageManager, source_id: str) -> str:
+        """Age a claim past the window, as a run left unbeaten for 15 minutes."""
+        gone = self._stamp(utc_now() - STALE_AFTER - timedelta(seconds=1))
+        with storage.connection() as conn:
+            conn.execute(
+                "UPDATE sync_runs SET heartbeat_at = ? WHERE source_id = ?",
+                (gone, source_id),
+            )
+            conn.commit()
+        return gone
+
+    def _await_beat(self, storage: StorageManager, source_id: str, aged: str) -> None:
+        deadline = time.monotonic() + 5
+        while (
+            time.monotonic() < deadline
+            and self._heartbeat_at(storage, source_id) == aged
+        ):
+            time.sleep(0.01)
+
+    @staticmethod
+    def _plugin(name: str, fetch: Any = None) -> MagicMock:
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = name
+        plugin.display_name = name.title()
+        plugin.fetch.side_effect = fetch
+        plugin.fetch.return_value = iter([])
+        return plugin
+
+    def test_neither_source_can_be_taken_over_while_the_run_owns_it(
+        self, storage: StorageManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sync, "HEARTBEAT_EVERY", timedelta(milliseconds=5))
+        claim_sources(storage, list(self._SOURCES))
+        aged = {source: self._strand(storage, source) for source in self._SOURCES}
+        stolen: list[bool] = []
+
+        def silent_fetch(*_args: object, **_kwargs: object) -> Iterator[ContentItem]:
+            """Reports no progress, and holds the only worker while it runs."""
+            for source, stamp in aged.items():
+                self._await_beat(storage, source, stamp)
+            stolen.extend(
+                storage.sync_runs.claim(1, source) for source in self._SOURCES
+            )
+            return iter([])
+
+        execute_multi_source_sync(
+            sources=[
+                (self._plugin("slow", silent_fetch), {"_source_id": "slow"}),
+                (self._plugin("queued"), {"_source_id": "queued"}),
+            ],
+            storage_manager=storage,
+            max_workers=1,
+        )
+
+        assert stolen == [False, False]
 
 
 class TestEverySyncLeavesARun:
