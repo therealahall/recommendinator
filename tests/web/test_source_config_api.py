@@ -1,11 +1,5 @@
-"""Tests for the per-source configuration API endpoints.
-
-These endpoints back the data-source accordions in the web UI: schema
-introspection, current values (with secrets stripped), one-shot
-migration of a YAML entry into the database, incremental updates of
-non-sensitive fields, secrets, the enabled flag and the sync cadence, and the
-recorded run history behind each accordion's header.
-"""
+"""Tests for the per-source configuration API endpoints behind the web UI's
+data-source accordions."""
 
 from __future__ import annotations
 
