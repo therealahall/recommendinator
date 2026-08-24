@@ -245,6 +245,38 @@ class TestShellRoute:
         assert midnight.css_url in body
         assert served.status_code == 200
 
+    def test_a_private_theme_added_after_boot_is_served_without_a_restart(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        private = tmp_path / "private-themes"
+        _write_theme(private / "midnight")
+        monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", private)
+        monkeypatch.setattr("src.web.themes.PRIVATE_THEMES_DIR", private)
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            _write_theme(private / "aurora", theme_type="light")
+            aurora = next(t for t in installed_themes() if t.id == "aurora")
+            served = TestClient(app).get(aurora.css_url)
+
+        assert served.status_code == 200
+
+    def test_the_first_private_theme_is_listed_but_unserved_until_a_restart(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        private = tmp_path / "private-themes"
+        monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", private)
+        monkeypatch.setattr("src.web.themes.PRIVATE_THEMES_DIR", private)
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            _write_theme(private / "midnight")
+            midnight = next(t for t in installed_themes() if t.id == "midnight")
+            served = TestClient(app).get(midnight.css_url)
+
+        assert "midnight" in installed_theme_ids()
+        assert served.status_code == 404
+
     def test_the_themed_shell_carries_no_style_the_csp_would_block(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

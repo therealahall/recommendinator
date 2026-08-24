@@ -69,15 +69,15 @@ export const useThemeStore = defineStore('theme', () => {
 
   function applyTheme(themeId: string) {
     if (!themeId || !THEME_ID_RE.test(themeId)) return
-    // The stored preference confirming what the cache already painted must not
-    // reload the stylesheet: that is the flash this was all built to avoid.
-    if (themeId === currentThemeId.value) return
 
     const installed = themes.value.find((t) => t.id === themeId)
     if (themes.value.length > 0 && !installed) return
 
+    // Keyed on the href, not the id: the cache paints a private theme at the
+    // wrong url, and rewriting an unchanged one refetches it — the flash to avoid.
+    const href = installed?.css_url ?? `/static/themes/${themeId}/colors.css`
     const link = getOrCreateThemeLink()
-    link.href = installed?.css_url ?? `/static/themes/${themeId}/colors.css`
+    if (link.getAttribute('href') !== href) link.setAttribute('href', href)
     document.documentElement.dataset.theme = themeId
     if (installed) document.documentElement.dataset.themeType = installed.theme_type
     localStorage.setItem(STORAGE_KEY, themeId)

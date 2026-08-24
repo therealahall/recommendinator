@@ -174,21 +174,41 @@ describe('useThemeStore', () => {
     expect(document.getElementById('theme-stylesheet')).toBeNull()
   })
 
-  it('switching a theme reuses the link the server rendered', () => {
+  function renderedShellLink(themeId: string): HTMLLinkElement {
     const rendered = document.createElement('link')
     rendered.id = 'theme-stylesheet'
     rendered.rel = 'stylesheet'
-    rendered.href = '/static/themes/nord/colors.css'
+    rendered.href = `/static/themes/${themeId}/colors.css`
     document.head.appendChild(rendered)
-    document.documentElement.dataset.theme = 'nord'
+    document.documentElement.dataset.theme = themeId
+    return rendered
+  }
+
+  it('switching themes over and over reuses the one link the server rendered', () => {
+    const rendered = renderedShellLink('nord')
 
     const store = useThemeStore()
     store.themes = THEMES
+    store.applyTheme('snowstorm')
+    store.applyTheme('nord')
     store.applyTheme('snowstorm')
 
     expect(document.querySelectorAll('#theme-stylesheet')).toHaveLength(1)
     expect(rendered.href).toContain('/static/themes/snowstorm/colors.css')
     expect(document.documentElement.dataset.themeType).toBe('light')
+  })
+
+  it('boot does not rewrite the href the server already rendered', async () => {
+    const rendered = renderedShellLink('nord')
+    const rewrite = vi.spyOn(rendered, 'setAttribute')
+    answerBoot('nord', 'nord')
+
+    const store = useThemeStore()
+    store.applyStoredTheme()
+    await store.fetchThemes()
+
+    expect(rewrite).not.toHaveBeenCalled()
+    expect(store.currentThemeId).toBe('nord')
   })
 
   it('corrects a cached private theme onto the url it is really served from', async () => {
@@ -207,17 +227,6 @@ describe('useThemeStore', () => {
     const store = useThemeStore()
     store.applyStoredTheme()
     await store.fetchThemes()
-
-    const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
-    expect(link.href).toContain('/static/private-themes/midnight/colors.css')
-  })
-
-  it('paints a private theme from the url the server gave it', () => {
-    const store = useThemeStore()
-    store.themes = [
-      { ...THEMES[0], id: 'midnight', css_url: '/static/private-themes/midnight/colors.css' },
-    ]
-    store.applyTheme('midnight')
 
     const link = document.getElementById('theme-stylesheet') as HTMLLinkElement
     expect(link.href).toContain('/static/private-themes/midnight/colors.css')
