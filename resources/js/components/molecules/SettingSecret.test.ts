@@ -36,14 +36,18 @@ describe('SettingSecret', () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret() } })
     await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
     await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-123')
-    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
+    const save = wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]')
+    expect(save.attributes('aria-disabled')).toBeUndefined()
+    await save.trigger('click')
     expect(wrapper.emitted('set')).toEqual([['sk-123']])
   })
 
-  it('does not emit set for an empty draft', async () => {
+  it('exposes Save secret as unavailable on an empty draft rather than swallowing the press', async () => {
     const wrapper = mount(SettingSecret, { props: { setting: secret() } })
     await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
-    await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
+    const save = wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]')
+    expect(save.attributes('aria-disabled')).toBe('true')
+    await save.trigger('click')
     expect(wrapper.emitted('set')).toBeUndefined()
   })
 
@@ -75,6 +79,39 @@ describe('SettingSecret', () => {
     await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-123')
 
     await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(
+      wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').element,
+    )
+    wrapper.unmount()
+  })
+
+  it('leaves focus where the operator tabbed to when a write finishes', async () => {
+    const elsewhere = document.createElement('button')
+    document.body.appendChild(elsewhere)
+    const wrapper = mount(SettingSecret, {
+      props: { setting: secret({ has_secret: true }), busy: true },
+      attachTo: document.body,
+    })
+    elsewhere.focus()
+
+    await wrapper.setProps({ busy: false })
+    await flushPromises()
+
+    expect(document.activeElement).toBe(elsewhere)
+    wrapper.unmount()
+    elsewhere.remove()
+  })
+
+  it('rescues focus to Replace when the write left it stranded on <body>', async () => {
+    const wrapper = mount(SettingSecret, {
+      props: { setting: secret({ has_secret: true }), busy: true },
+      attachTo: document.body,
+    })
+    ;(document.activeElement as HTMLElement | null)?.blur()
+
+    await wrapper.setProps({ busy: false })
     await flushPromises()
 
     expect(document.activeElement).toBe(
