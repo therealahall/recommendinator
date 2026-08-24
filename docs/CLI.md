@@ -245,12 +245,18 @@ python3.11 -m src.cli source set my_roms paths inputs/roms
 python3.11 -m src.cli source migrate my_roms    # or move a YAML source in, once
 python3.11 -m src.cli source show my_roms       # also schema, enable, disable, remove
 python3.11 -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
+python3.11 -m src.cli source history my_roms    # past runs; omit the id for all
 ```
 
 `source schedule` takes a migrated source and one of those five keys. The web
 server syncs each source on its cadence while it is running; `off` leaves it to
 `update`. Unscheduled, a migrated source uses its plugin's default, and one that
 has never synced is due on the next tick. One still in `config.yaml` stays off.
+
+`source history` lists finished runs newest first — what each moved and what a
+failure said, so a failed sync is readable without the server log. `--limit`
+caps it at 20 by default. A sync still in flight is not one of these — it
+appears once it finishes.
 
 Every `source` subcommand except `set-secret` and `clear-secret` accepts
 `--format json`.

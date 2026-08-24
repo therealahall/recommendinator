@@ -141,11 +141,28 @@ def test_a_claim_a_killed_run_left_open_is_taken_over_once_it_goes_stale(
 def test_an_in_flight_claim_is_not_read_as_a_finished_run(
     storage: StorageManager,
 ) -> None:
-    _record(storage, minute=0, status="failed")
+    failed = _record(storage, minute=0, status="failed")
     assert storage.sync_runs.claim(1, "steam") is True
 
     assert storage.sync_runs.latest_per_source(1)["steam"]["status"] == "failed"
     assert storage.sync_runs.consecutive_failures(1, "steam") == 1
+    assert [run["id"] for run in storage.sync_runs.list_for_source(1, "steam", 10)] == [
+        failed
+    ]
+    assert [run["id"] for run in storage.sync_runs.list_recent(1, 10)] == [failed]
+
+
+def test_list_recent_spans_every_source_newest_first(storage: StorageManager) -> None:
+    oldest = _record(storage, "steam", minute=0)
+    middle = _record(storage, "trakt", minute=5)
+    newest = _record(storage, "steam", minute=10)
+
+    assert [run["id"] for run in storage.sync_runs.list_recent(1, 10)] == [
+        newest,
+        middle,
+        oldest,
+    ]
+    assert [run["id"] for run in storage.sync_runs.list_recent(1, 1)] == [newest]
 
 
 _SYNC_RUNS_AT_VERSION_SEVENTEEN = (

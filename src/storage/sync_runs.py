@@ -160,6 +160,32 @@ class SyncRunStore:
             conn.commit()
             return cursor.rowcount
 
+    # Both listings skip the unfinished row: it is a claim on the source, not a
+    # run that happened, and it carries neither counts nor a recorded status.
+    def list_for_source(
+        self, user_id: int, source_id: str, limit: int
+    ) -> list[SyncRunDict]:
+        with self._sqlite_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT {_COLUMNS} FROM sync_runs "
+                "WHERE user_id = ? AND source_id = ? AND finished_at IS NOT NULL "
+                f"{_NEWEST_FIRST} LIMIT ?",
+                (user_id, source_id, limit),
+            )
+            return [_to_dict(row) for row in cursor.fetchall()]
+
+    def list_recent(self, user_id: int, limit: int) -> list[SyncRunDict]:
+        with self._sqlite_db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"SELECT {_COLUMNS} FROM sync_runs "
+                "WHERE user_id = ? AND finished_at IS NOT NULL "
+                f"{_NEWEST_FIRST} LIMIT ?",
+                (user_id, limit),
+            )
+            return [_to_dict(row) for row in cursor.fetchall()]
+
     def latest_per_source(self, user_id: int) -> dict[str, SyncRunDict]:
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
