@@ -138,9 +138,8 @@ function onDecline(copyId: number, otherIds: number[]): void {
   gap: var(--space-2);
 }
 
-/* Not the shared .badge-type: --accent-light on its accent wash is 4.06:1 on
-   the plain card and less on this one. The type is the quieter of the two
-   labels here, so it takes a text token and the evidence keeps the colour. */
+/* The type is the quieter of the two labels here, so the evidence badges keep
+   the colour and this one takes a neutral text token. */
 .dup-badge-type {
   background: transparent;
   color: var(--text-secondary);

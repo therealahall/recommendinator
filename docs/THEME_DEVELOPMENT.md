@@ -97,9 +97,13 @@ theme, and the darkest in a light one, is the one that binds.
 
 `--accent-light` is the one focus indicator the whole app uses, drawn just
 outside the control. Keep it at 3:1 or better against every surface a ring can
-land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated` and
-`--bg-sidebar` — or keyboard users lose the only cue telling them where they
-are (WCAG 1.4.11).
+land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated`,
+`--bg-sidebar` and the error status bar's tint, where Try again sits — or
+keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
+
+It is also the fill under `--text-inverse` on a hovered primary button or
+active pill, so it owes that pairing 4.5:1 too — tune it to just clear the 3:1
+above and a hovered Save goes unreadable (WCAG 1.4.3).
 
 ### Borders
 
