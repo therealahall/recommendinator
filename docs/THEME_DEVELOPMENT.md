@@ -101,9 +101,11 @@ land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated`,
 `--bg-sidebar` and the error status bar's tint, where Try again sits — or
 keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
 
-It is also the fill under `--text-inverse` on a hovered primary button or
-active pill, so it owes that pairing 4.5:1 too — tune it to just clear the 3:1
-above and a hovered Save goes unreadable (WCAG 1.4.3).
+Both accents are also fills under `--text-inverse`: `--accent` on a primary
+button or active pill at rest, `--accent-light` on the same two hovered. Each
+owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter. The
+shipped Snowstorm misses it at 4.03:1, tracked in `qs5i.2.47`; the suite
+measures the hovered pair only, so check `--accent` by hand.
 
 ### Borders
 
@@ -179,8 +181,8 @@ variants yourself.
 
 4. Start the server, select the theme from the Preferences tab or with
    `theme set`, and check every page for text readability, badge contrast and
-   button visibility. `resources/css/contrast.test.ts` measures every floor on
-   this page, for each shipped theme.
+   button visibility. `resources/css/contrast.test.ts` measures every floor
+   above for each shipped theme, except the resting `--accent` one it names.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override
