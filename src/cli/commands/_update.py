@@ -165,11 +165,11 @@ def update(
     storage = ctx.obj["storage"]
     config = ctx.obj["config"]
 
-    def report_nothing_ran(message: str) -> None:
+    def report_nothing_ran(message: str = "") -> None:
         """Answer a run that had no source to sync, in the asked-for format."""
         if output_format == "json":
             click.echo(json.dumps({"status": "idle", "jobs": []}, indent=2))
-        else:
+        elif message:
             click.echo(message)
 
     # Handle 'list' to show available sources (read-only — no migration needed).
@@ -265,6 +265,7 @@ def update(
         click.echo(f"Error: {already_syncing_detail(refused)}", err=True)
     valid = [entry for entry in valid if entry.source_id in set(claimed)]
     if not valid:
+        report_nothing_ran()
         raise click.Abort()
 
     max_workers = resolve_max_workers(config, override=workers)

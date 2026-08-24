@@ -3010,7 +3010,7 @@ class TestSyncStatusBoundsThePerItemErrorList:
     ) -> None:
         """The client must not have to infer the total from the list it got."""
         storage = mock_components["storage"]
-        failures = 5000
+        failures = MAX_REPORTED_ERRORS + 50
         recorded = threading.Event()
         storage.sync_runs.record.side_effect = lambda *_args, **_kwargs: recorded.set()
         storage.save_content_item_outcome.side_effect = ValueError("db error")
@@ -3029,7 +3029,7 @@ class TestSyncStatusBoundsThePerItemErrorList:
             ),
         ):
             response = client.post("/api/update", json={"source": "goodreads_rss"})
-            assert recorded.wait(timeout=30.0), "background sync did not record a run"
+            assert recorded.wait(timeout=5.0), "background sync did not record a run"
 
         assert response.status_code == 200, response.text
         job = client.get("/api/sync/status").json()["jobs"][0]
