@@ -56,9 +56,9 @@ python3.11 -m src.cli update --source roms --format json
 Each source reports how many items the plugin found, how many were saved, and
 how those split into added, updated and unchanged — so a second run of the same
 sync reads as 40 unchanged rather than as another 40 items. Failed items are
-listed per source, capped at the first 200 with a `… and N more` tally after
-them. `--format json` emits the document `GET /api/sync/status` serves for the
-same run.
+listed per source, capped at the first 200, and a source that hit the cap adds a
+line giving its error total and how many are not shown. `--format json` emits
+the document `GET /api/sync/status` serves for the same run.
 
 With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on, each
 off by default, a sync that saved something enriches it before the command
@@ -96,8 +96,9 @@ python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 
 It takes no date. An item with no date is stamped today, and an existing date is
 kept, so completing something an import already dated does not re-date it.
 
-`--review` replaces the stored review, so a blank one is refused rather than
-written. To erase a review, use `library edit --clear-review`.
+A blank or whitespace-only `--title` is refused. `--review` replaces the stored
+review, so a blank one is refused rather than written. To erase a review, use
+`library edit --clear-review`.
 
 `--format json` emits what `POST /api/complete` answers: the message and the
 `id` of the row it wrote.

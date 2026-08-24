@@ -204,6 +204,8 @@ reduces a list column holding an object and clears a re-queued item's stale
 quality. Version 17 moves a book title's `(Series, #N)` marker into its
 metadata, clears a placeholder author, folds a stranded company name,
 re-normalizes every title and clears the derived columns for the backfill.
+Version 18 rebuilds `sync_runs`, whose unfinished row is a claim and so cannot
+keep `finished_at` NOT NULL.
 
 No step merges or unmerges rows: an upgraded library rewrites its keys and
 leaves the merge door to decide the rest.
