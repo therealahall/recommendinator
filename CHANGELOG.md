@@ -1,6 +1,71 @@
 # CHANGELOG
 
 
+## v0.47.0 (2026-08-24)
+
+### Bug Fixes
+
+- **cli**: Each account write refuses in its own words, and every settings write advises a restart
+  ([`9b965a8`](https://github.com/therealahall/recommendinator/commit/9b965a8943d965cfc471e9d45ca3f95d5064899a))
+
+- **cli**: Guard the last two destructive commands and confirm what was written
+  ([`fb46717`](https://github.com/therealahall/recommendinator/commit/fb4671751822c22169a3316d91e7322737a2bad9))
+
+- **cli**: Name an unwritable --output, confirm an overwrite, refuse a blank title
+  ([`05f89ce`](https://github.com/therealahall/recommendinator/commit/05f89ce1ae97db279901c3ecb8c8ed2d8c52b65d))
+
+- **cli**: Profile failures reach the error funnel, and one builder serves both doors
+  ([`e87159f`](https://github.com/therealahall/recommendinator/commit/e87159f15f454e8b8d431b40a58ebb746b01c21b))
+
+- **cli**: Status reads the version the web serves
+  ([`b17935c`](https://github.com/therealahall/recommendinator/commit/b17935cb32d0d3fec2f6c354883fcc1d366d096e))
+
+- **sync**: A claim is released by the run that took it
+  ([`488adca`](https://github.com/therealahall/recommendinator/commit/488adcafb87d004c354d08db0386caed665089b0))
+
+- **sync**: A claim outlasts the wait, the silence and the interrupt
+  ([`2d5d7bb`](https://github.com/therealahall/recommendinator/commit/2d5d7bb8d1a62b10f8ca46effcb3e7fa58551451))
+
+- **sync**: One error cap, at the producer
+  ([`ba8f7be`](https://github.com/therealahall/recommendinator/commit/ba8f7bec7e860133bc9964643d3794739a9e7847))
+
+- **sync**: The omitted error count travels as a number, not a second tail
+  ([`ae8cd2f`](https://github.com/therealahall/recommendinator/commit/ae8cd2fd9fd2d6f1c3447a58ed734f84ac4da85b))
+
+- **web**: Sync All names a source it could not claim
+  ([`f2aa97b`](https://github.com/therealahall/recommendinator/commit/f2aa97b156074998fdefc4f6ce8fc1bf2bfdb84a))
+
+- **web**: The sync banner counts the errors the run had, not the ones it sent
+  ([`a7abc15`](https://github.com/therealahall/recommendinator/commit/a7abc15f2666911f1bece1980667bf8201967aaa))
+
+### Documentation
+
+- The error tally, the blank title and schema 18
+  ([`8b01830`](https://github.com/therealahall/recommendinator/commit/8b01830e180032b2bf7e51ccca96c1cb44a57931))
+
+- **cli**: The confirmation rule is its own section
+  ([`172f3eb`](https://github.com/therealahall/recommendinator/commit/172f3eb73c582c2e8c34ca33b06afdd815efeb9e))
+
+### Features
+
+- **cli**: Complete and the library ignore commands answer in JSON
+  ([`bfa104e`](https://github.com/therealahall/recommendinator/commit/bfa104e5d3ce6e13ac5e804b76cc801fc05fa478))
+
+- **cli**: Update enriches what it synced, and the account sweep stops over-claiming
+  ([`a5623de`](https://github.com/therealahall/recommendinator/commit/a5623de3e2d8ce70a4c7cf45f55887f57bb6e495))
+
+- **sync**: A source is claimed in the database, so two processes cannot sync it at once
+  ([`78b1171`](https://github.com/therealahall/recommendinator/commit/78b11716611d6602e0055d8379fa709660699535))
+
+- **sync**: Run history is readable again from both interfaces
+  ([`7579d0e`](https://github.com/therealahall/recommendinator/commit/7579d0e3e6bb04e0b4102a0696a8d9e3fac2d82d))
+
+### Testing
+
+- **cli**: Pin the two account funnel messages and drop a false claim
+  ([`f6287a5`](https://github.com/therealahall/recommendinator/commit/f6287a58584d603bd6f5dde9e9d660c7a1cafe62))
+
+
 ## v0.46.0 (2026-08-23)
 
 ### Bug Fixes
