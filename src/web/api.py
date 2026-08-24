@@ -2050,8 +2050,13 @@ def update_data(
     logger.info(
         "[SYNC] Started background sync for: %s", sanitize_for_log(source_label)
     )
+    started = f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress."
     return {
-        "message": f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress.",
+        # The CLI names a source it could not claim and syncs the rest; dropping
+        # `refused` here would read to the operator as "all of them synced".
+        "message": (
+            f"{already_syncing_detail(refused)} {started}" if refused else started
+        ),
         "sources": sources_to_sync,
     }
 
