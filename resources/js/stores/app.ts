@@ -3,6 +3,11 @@ import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
 import type { StatusResponse, RecommendationsConfig } from '@/types/api'
 
+// A backend that is still coming up is worth asking again shortly; once it is
+// ready the same call is only watching for a version it was not built against.
+const WARMING_POLL_MS = 5_000
+const READY_POLL_MS = 300_000
+
 export const useAppStore = defineStore('app', () => {
   const api = useApi()
 
@@ -20,56 +25,52 @@ export const useAppStore = defineStore('app', () => {
     default_count: 5,
   })
 
-  let versionPollTimer: ReturnType<typeof setInterval> | null = null
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let polling = false
 
   // Actions
   async function fetchStatus() {
+    // Claimed before the request rather than after it: a 401 mid-flight signs
+    // the user out, and stopPolling() has to beat this call booking the next.
+    polling = true
     try {
       const data = await api.get<StatusResponse>('/status')
-      status.value = data.status === 'ready' ? 'ready' : 'loading'
-      statusMessage.value = data.status === 'ready' ? '' : 'System initializing...'
+      const ready = data.status === 'ready'
+      status.value = ready ? 'ready' : 'loading'
+      statusMessage.value = ready ? '' : 'System initializing...'
 
       if (data.version) {
         version.value = data.version
         if (!loadedVersion.value) {
           loadedVersion.value = data.version
         }
+        showUpdateBanner.value = data.version !== loadedVersion.value
       }
 
       if (data.recommendations_config) {
         recommendationsConfig.value = data.recommendations_config
       }
-
-      startVersionPolling()
     } catch {
       status.value = 'error'
       statusMessage.value = 'Failed to connect to server'
     }
+    if (polling) schedulePoll()
   }
 
-  function startVersionPolling() {
-    if (versionPollTimer !== null) return
-    versionPollTimer = setInterval(async () => {
-      try {
-        const data = await api.get<StatusResponse>('/status')
-        if (data.version && data.version !== loadedVersion.value) {
-          showUpdateBanner.value = true
-        }
-      } catch {
-        // Silently ignore polling errors
-      }
-    }, 300_000) // 5 minutes
+  function schedulePoll() {
+    if (pollTimer !== null) clearTimeout(pollTimer)
+    pollTimer = setTimeout(
+      fetchStatus,
+      status.value === 'ready' ? READY_POLL_MS : WARMING_POLL_MS,
+    )
   }
 
-  function stopVersionPolling() {
-    if (versionPollTimer !== null) {
-      clearInterval(versionPollTimer)
-      versionPollTimer = null
+  function stopPolling() {
+    polling = false
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer)
+      pollTimer = null
     }
-  }
-
-  function dismissStatus() {
-    statusMessage.value = ''
   }
 
   return {
@@ -83,8 +84,6 @@ export const useAppStore = defineStore('app', () => {
     recommendationsConfig,
     // Actions
     fetchStatus,
-    startVersionPolling,
-    stopVersionPolling,
-    dismissStatus,
+    stopPolling,
   }
 })
