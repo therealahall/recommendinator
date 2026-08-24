@@ -45,7 +45,6 @@ from src.web.themes import (
     PRIVATE_THEMES_DIR,
     PRIVATE_THEMES_URL,
     STATIC_DIR,
-    PrivateThemeFiles,
     themed_shell,
 )
 
@@ -94,6 +93,11 @@ async def _raised_refusal_json_can_carry(_request: Request, exc: Exception) -> R
 def _stored_theme_id() -> str:
     storage = app_state.storage
     return storage.ui_settings.get_theme(get_default_user_id()) if storage else ""
+
+
+class PrivateThemeFiles(StaticFiles):
+    async def check_config(self) -> None:
+        """No check: an absent private/themes is a 404, and its mount is read-only."""
 
 
 _app: FastAPI | None = None

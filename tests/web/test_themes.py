@@ -17,6 +17,7 @@ from src.web.api import router
 from src.web.state import app_state
 from src.web.themes import (
     DEFAULT_THEME_ID,
+    PRIVATE_THEMES_DIR,
     PRIVATE_THEMES_URL,
     THEMES_URL,
     discover_themes,
@@ -316,17 +317,17 @@ class TestThePrivateMountServesNothingAboveItself:
         monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", private)
         return private
 
-    @pytest.mark.parametrize(
-        "escape", ["../outside.css", "..%2Foutside.css", "%2e%2e%2foutside.css"]
-    )
     def test_a_url_climbing_out_of_the_mount_reaches_no_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escape: str
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The climb has to be percent-encoded: httpx normalises a literal `../`
+        # out of the path before sending, which is how this test once passed
+        # against a request that never reached the mount.
         self._mounted_on(tmp_path, monkeypatch)
         storage = StorageManager(sqlite_path=tmp_path / "theme.db")
 
         with booted_web_app(storage, {}) as app:
-            served = TestClient(app).get(f"{PRIVATE_THEMES_URL}/{escape}")
+            served = TestClient(app).get(f"{PRIVATE_THEMES_URL}/..%2Foutside.css")
 
         assert served.status_code == 404
         assert "--leaked" not in served.text
@@ -348,14 +349,16 @@ class TestThePrivateMountServesNothingAboveItself:
         self, tmp_path: Path
     ) -> None:
         """The stock mount, whose parent holds the config the app boots from."""
+        config = PRIVATE_THEMES_DIR.parents[1] / "config" / "example.yaml"
         storage = StorageManager(sqlite_path=tmp_path / "theme.db")
 
         with booted_web_app(storage, {}) as app:
             served = TestClient(app).get(
-                f"{PRIVATE_THEMES_URL}/../../config/example.yaml"
+                f"{PRIVATE_THEMES_URL}/..%2F..%2Fconfig%2Fexample.yaml"
             )
 
         assert served.status_code == 404
+        assert config.read_text(encoding="utf-8") not in served.text
 
 
 class TestThemeEndpoints:
