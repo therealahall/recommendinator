@@ -30,6 +30,7 @@ from src.settings.metadata import default_of
 from src.storage.credential_migration import migrate_config_credentials
 from src.storage.global_secrets import migrate_config_secrets
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
+from src.storage.schema import get_default_user_id
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
 from src.utils.text import exception_for_log
@@ -40,6 +41,12 @@ from src.web.auth_api import router as auth_router
 from src.web.responses import SurrogateSafeJSONResponse
 from src.web.scheduler import sync_scheduler
 from src.web.state import app_state, get_config
+from src.web.themes import (
+    PRIVATE_THEMES_DIR,
+    PRIVATE_THEMES_URL,
+    STATIC_DIR,
+    themed_shell,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,11 @@ async def _raised_refusal_json_can_carry(_request: Request, exc: Exception) -> R
         content={"detail": refusal.detail},
         headers=refusal.headers,
     )
+
+
+def _stored_theme_id() -> str:
+    storage = app_state.storage
+    return storage.ui_settings.get_theme(get_default_user_id()) if storage else ""
 
 
 _app: FastAPI | None = None
@@ -314,30 +326,32 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(auth_router)
 
-    # Serve static files (for web UI)
-    static_dir = Path("src/web/static")
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    # Mounted ahead of /static, which matches this prefix too and would 404.
+    if PRIVATE_THEMES_DIR.is_dir():
+        app.mount(
+            PRIVATE_THEMES_URL,
+            StaticFiles(directory=PRIVATE_THEMES_DIR),
+            name="private-themes",
+        )
 
-    # Serve the Vue SPA from Vite build output
-    dist_index = Path("src/web/static/dist/index.html")
+    if STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    dist_index = STATIC_DIR / "dist" / "index.html"
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
-        """Serve the main web UI.
+        """Serve the Vue SPA, with the stored theme already linked in it.
 
-        Serves the Vite-built SPA (dist/index.html) when present. Vite uses
-        content-hashed filenames so no manual cache-busting is needed. When
-        the SPA has not been built, returns a plain API-running message.
+        Vite content-hashes its filenames, so no manual cache-busting is needed.
         """
         if dist_index.exists():
             # Vite writes UTF-8 and the response declares it; reading it in the
             # locale's encoding answered 500 on the first accented byte.
-            return HTMLResponse(content=dist_index.read_text(encoding="utf-8"))
-        # Only advertise /docs when it actually exists. docs_url/redoc_url/
-        # openapi_url are all left unset unless debug_mode, so on a default
-        # install this sentence pointed at a 404 — the sibling of the same fix
-        # in src/web/main.py's startup banner.
+            document = dist_index.read_text(encoding="utf-8")
+            return HTMLResponse(content=themed_shell(document, _stored_theme_id()))
+        # docs_url/redoc_url/openapi_url are unset unless debug_mode, so on a
+        # default install advertising /docs pointed at a 404.
         docs_hint = " Use /docs for API documentation." if debug_mode else ""
         return HTMLResponse(
             content=f"<h1>Recommendinator API</h1><p>API is running.{docs_hint}</p>"

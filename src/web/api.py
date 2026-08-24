@@ -182,10 +182,9 @@ from src.web.sync_manager import get_sync_manager
 from src.web.themes import (
     DEFAULT_THEME_ID,
     MAX_THEME_ID_LENGTH,
-    THEMES_DIR,
     ThemeResponse,
-    discover_themes,
     installed_theme_ids,
+    installed_themes,
 )
 
 logger = logging.getLogger(__name__)
@@ -2706,14 +2705,12 @@ def regenerate_profile(
 
 @router.get("/themes", response_model=list[ThemeResponse])
 def list_themes() -> list[ThemeResponse]:
-    """List all available UI themes.
-
-    Scans the themes directory for subdirectories containing theme.json.
+    """List the UI themes this install ships and the ones in private/themes/.
 
     Returns:
-        List of theme metadata sorted alphabetically.
+        Theme metadata sorted by id, each naming where its stylesheet is served.
     """
-    return discover_themes(THEMES_DIR)
+    return installed_themes()
 
 
 @router.get("/themes/default")
@@ -2751,7 +2748,7 @@ def set_user_theme(
         HTTPException: 400 for a theme this install does not have, 404 when
             nobody carries *user_id*.
     """
-    if request.theme not in installed_theme_ids(THEMES_DIR):
+    if request.theme not in installed_theme_ids():
         raise HTTPException(status_code=400, detail="Theme not installed.")
     try:
         storage.ui_settings.set_theme(user_id, request.theme)

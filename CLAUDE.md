@@ -130,8 +130,10 @@ docker-compose.override.yml.example  # Dev override to copy: bind-mount + --relo
 docker-compose.override.yml  # The copy, plus personal mounts (gitignored)
 .claude/agents/       # The native parity-review agent
 private/              # Gitignored — private plugins NOT in the open source repo
-└── plugins/          # Private source plugins and enrichment providers, both
-                      # registries scan here (personal_site_games.py, etc.)
+├── plugins/          # Private source plugins and enrichment providers, both
+│                     # registries scan here (personal_site_games.py, etc.)
+└── themes/           # Private UI themes, same folder-per-theme layout as
+                      # src/web/static/themes/, served from /static/private-themes
 ```
 
 ## Private Plugins (gitignored)

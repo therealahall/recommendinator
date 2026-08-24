@@ -3,6 +3,8 @@
    Accent and semantic colors adjusted for white-background readability. */
 
 :root {
+    color-scheme: light;
+
     /* Frost accents — deeper for contrast on white */
     --accent: #5e81ac;
     --accent-light: #5490a3;

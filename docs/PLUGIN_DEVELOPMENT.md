@@ -355,6 +355,9 @@ imported at all — the scan logs that it skipped it.
 `private/__init__.py` and `private/plugins/__init__.py` have to exist as well,
 or the scan stops before any plugin, saying so only at debug level.
 
+A theme is not a plugin: it is a folder of CSS in `private/themes/` with no
+`__init__.py`. See [THEME_DEVELOPMENT.md](THEME_DEVELOPMENT.md).
+
 Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
 source.
 

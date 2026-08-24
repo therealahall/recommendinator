@@ -11,7 +11,8 @@ export const useThemeStore = defineStore('theme', () => {
   const api = useApi()
 
   const themes = ref<ThemeResponse[]>([])
-  const currentThemeId = ref<string | null>(null)
+  const serverPaintedThemeId = document.documentElement.dataset.theme ?? null
+  const currentThemeId = ref<string | null>(serverPaintedThemeId)
   const defaultThemeId = ref('nord')
 
   /** The one thing that decides the theme: the stored pick, or the default
@@ -47,6 +48,7 @@ export const useThemeStore = defineStore('theme', () => {
   }
 
   function applyStoredTheme() {
+    if (serverPaintedThemeId) return
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       applyTheme(stored)
@@ -71,10 +73,13 @@ export const useThemeStore = defineStore('theme', () => {
     // reload the stylesheet: that is the flash this was all built to avoid.
     if (themeId === currentThemeId.value) return
 
-    if (themes.value.length > 0 && !themes.value.some((t) => t.id === themeId)) return
+    const installed = themes.value.find((t) => t.id === themeId)
+    if (themes.value.length > 0 && !installed) return
 
     const link = getOrCreateThemeLink()
-    link.href = `/static/themes/${themeId}/colors.css`
+    link.href = installed?.css_url ?? `/static/themes/${themeId}/colors.css`
+    document.documentElement.dataset.theme = themeId
+    if (installed) document.documentElement.dataset.themeType = installed.theme_type
     localStorage.setItem(STORAGE_KEY, themeId)
     currentThemeId.value = themeId
   }

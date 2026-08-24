@@ -7,7 +7,7 @@ const DEFAULT_PORT = 5173
 const DEFAULT_API_TARGET = 'http://localhost:18473'
 
 /** Prefixes FastAPI owns; the dev server serves everything else itself. */
-const PROXIED_PREFIXES = ['/api', '/static/themes']
+const PROXIED_PREFIXES = ['/api', '/static/themes', '/static/private-themes']
 
 /**
  * Trees holding no frontend source.

@@ -87,7 +87,7 @@ from src.web.sync_manager import (
     get_sync_manager,
     reset_sync_manager,
 )
-from src.web.themes import discover_themes
+from src.web.themes import THEMES_URL, discover_themes
 from tests.factories import (
     authenticated_client,
     back_mock_preference_store,
@@ -5226,7 +5226,7 @@ class TestANonUtf8ThemeNameStillWritesItsWarningRegression:
         themes_logger = logging.getLogger("src.web.themes")
         themes_logger.addHandler(handler)
         try:
-            assert discover_themes(tmp_path) == []
+            assert discover_themes(tmp_path, THEMES_URL) == []
         finally:
             themes_logger.removeHandler(handler)
             handler.close()
