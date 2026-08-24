@@ -71,8 +71,13 @@ want to change. Anything unset keeps its dark-theme default.
 |----------|---------|-------------|
 | `--text-primary` | `#eceff4` | Primary text |
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
-| `--text-muted` | `#97abbe` | Muted/label text |
+| `--text-muted` | `#b3c7da` | Muted/label text |
 | `--text-inverse` | `#2e3440` | Text on accent backgrounds |
+
+`--text-muted` carries help text, hints and empty states at 12-13px, so keep it
+at 4.5:1 or better against `--bg-primary`, `--bg-card`, `--bg-sidebar`,
+`--bg-elevated` and `--bg-input` (WCAG 1.4.3). The lightest of those in a dark
+theme, and the darkest in a light one, is the one that binds.
 
 ### Accents
 
@@ -86,9 +91,15 @@ want to change. Anything unset keeps its dark-theme default.
 
 | Variable | Default | Used for |
 |----------|---------|-------------|
-| `--border-default` | `#4c566a` | Standard borders |
+| `--border-default` | `#4c566a` | Dividers and decorative edges |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
 | `--border-focus` | `var(--accent)` | Border of a focused field |
+| `--border-interactive` | `color-mix(in srgb, var(--border-default) 50%, var(--text-primary))` | The edge of every field, select, pill and toggle |
+
+`--border-interactive` is what separates an editable control from its own fill
+and from the surface behind it, so it owes 3:1 against `--bg-card`, `--bg-input`
+and `--bg-elevated` (WCAG 1.4.11). It is derived from the two tokens it sits
+between, so a theme that sets those inherits it and need not override it.
 
 ### Semantic
 
@@ -148,8 +159,8 @@ variants yourself.
    outside the control. Keep it at 3:1 or better against `--bg-card`,
    `--bg-input` and `--bg-primary` — the three surfaces a ring around a field
    lands on — or keyboard users lose the only cue telling them where they are
-   (WCAG 1.4.11). `resources/css/base.css.test.ts` measures this for every
-   shipped theme.
+   (WCAG 1.4.11). `resources/css/contrast.test.ts` measures this, and every
+   other floor on this page, for each shipped theme.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override

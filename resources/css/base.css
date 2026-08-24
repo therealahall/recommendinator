@@ -18,10 +18,12 @@
   --bg-secondary: #3b4252;
   --bg-active: color-mix(in srgb, var(--accent) 20%, transparent);
 
-  /* Text */
+  /* Text. --text-muted carries help text and hints at 12-13px, so it owes
+     4.5:1 on all five backgrounds; --bg-elevated, the nearest one to it in
+     either theme, is what binds (WCAG 1.4.3). */
   --text-primary: #eceff4;
   --text-secondary: #d8dee9;
-  --text-muted: #97abbe;
+  --text-muted: #b3c7da;
   --text-inverse: #2e3440;
 
   /* Borders */
@@ -29,16 +31,24 @@
   --border-subtle: #434c5e;
   --border-focus: var(--accent);
 
+  /* The edge of an editable control, where --border-default's 1.4:1 leaves a
+     white field and the white card behind it undivided in Snowstorm (WCAG
+     1.4.11). Derived, so a theme inherits it by overriding nothing.
+     --border-default stays for decorative dividers. */
+  --border-interactive: color-mix(in srgb, var(--border-default) 50%, var(--text-primary));
+
   /* Semantic colors */
   --color-success: #a3be8c;
   --color-warning: #ebcb8b;
   --color-error: #bf616a;
   --color-info: var(--accent);
 
-  /* --color-error is a fill colour and reaches only 2.46:1 as text on
-     --bg-card. Mixing toward --text-primary tracks whichever palette is
-     active: 4.82:1 on Nord, 8.54:1 on Snowstorm. */
+  /* Semantic colours are sized for fills and fall under 4.5:1 as text (error
+     reaches 2.46:1 on --bg-card, info 3.24:1 on its own tint). Mixing toward
+     --text-primary tracks whichever palette is active. */
   --color-error-text: color-mix(in srgb, var(--color-error) 50%, var(--text-primary));
+  --color-info-text: color-mix(in srgb, var(--color-info) 50%, var(--text-primary));
+  --color-success-text: color-mix(in srgb, var(--color-success) 50%, var(--text-primary));
 
   /* Overlays */
   --overlay-dark: rgba(0, 0, 0, 0.6);
@@ -123,8 +133,8 @@ svg {
 }
 
 /* The one focus indicator (WCAG 2.4.7), offset so it lands on the surface
-   behind the control rather than on its edge: a border swap to --accent is
-   1.14:1 against a resting --text-muted edge, so no component replaces this. */
+   behind the control rather than on its edge: swapping the border to --accent
+   barely differs from a resting edge, so no component replaces this. */
 :focus-visible {
   outline: 2px solid var(--accent-light);
   outline-offset: 2px;
@@ -300,7 +310,6 @@ input[type="checkbox"] {
   color: var(--text-muted);
   font-weight: 400;
   margin-top: var(--space-1);
-  opacity: 0.7;
 }
 
 .sidebar-nav {
@@ -364,7 +373,6 @@ input[type="checkbox"] {
 
 .sidebar-user-label {
   font-size: var(--text-xs);
-  /* --text-secondary, not --text-muted: muted misses 4.5:1 at this size. */
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -419,13 +427,13 @@ input[type="checkbox"] {
 
 .status-bar.error {
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  color: var(--color-error);
+  color: var(--color-error-text);
   border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
 }
 
 .status-bar.loading {
   background: color-mix(in srgb, var(--color-info) 10%, transparent);
-  color: var(--color-info);
+  color: var(--color-info-text);
   border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
 }
 
@@ -501,7 +509,7 @@ input[type="checkbox"] {
 .form-group textarea {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -773,7 +781,7 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: 9999px;
   background: var(--bg-elevated);
   color: var(--text-secondary);
@@ -808,7 +816,7 @@ input[type="checkbox"] {
   align-items: center;
   width: 36px;
   height: 20px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: 9999px;
   background: var(--bg-elevated);
   cursor: pointer;
@@ -897,7 +905,7 @@ input[type="checkbox"] {
 .toolbar-select {
   padding: var(--space-2) var(--space-6) var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -1085,7 +1093,7 @@ input[type="checkbox"] {
 .theme-select {
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -1143,7 +1151,7 @@ input[type="checkbox"] {
   flex: 1;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -1195,9 +1203,7 @@ input[type="checkbox"] {
   border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
-/* Neutral marker for items lacking enrichment metadata. Uses the readable
-   --text-secondary token (not --text-muted) to clear 4.5:1 contrast on the
-   elevated background across themes. */
+/* Neutral marker for items lacking enrichment metadata. */
 .badge-enrichment {
   background: var(--bg-elevated);
   color: var(--text-secondary);
@@ -1554,7 +1560,7 @@ input[type="checkbox"] {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
@@ -1598,7 +1604,6 @@ input[type="checkbox"] {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  /* --text-secondary (not --text-muted) to clear WCAG 4.5:1 at this size on all themes */
   color: var(--text-secondary);
   margin: 0 0 var(--space-4) 0;
 }
@@ -1710,11 +1715,9 @@ input[type="checkbox"] {
 .sync-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
 .gog-connect-flow, .epic-connect-flow { text-align: left; }
 .gog-input-row, .epic-input-row, .oauth-input-row { display: flex; gap: var(--space-2); }
-/* Why a Connect button is inactive — shared by both OAuth flows. Text is
-   --text-secondary, not the --text-muted of .help-text: the muted token misses
-   4.5:1 at this size on --bg-card, as .edit-modal-section above records. */
+/* Why a Connect button is inactive — shared by both OAuth flows. */
 .oauth-connect-hint { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
-.gog-input-row input, .epic-input-row input, .oauth-input-row input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--bg-input); border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-primary); font-size: var(--text-sm); font-family: inherit; }
+.gog-input-row input, .epic-input-row input, .oauth-input-row input { flex: 1; padding: var(--space-2) var(--space-3); background: var(--bg-input); border: 1px solid var(--border-interactive); border-radius: var(--radius-md); color: var(--text-primary); font-size: var(--text-sm); font-family: inherit; }
 .my-2 { margin-top: var(--space-2); margin-bottom: var(--space-2); }
 .mt-2 { margin-top: var(--space-2); }
 .text-muted { color: var(--text-muted); }

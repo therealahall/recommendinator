@@ -119,7 +119,7 @@ function onInput(event: Event) {
 .number-stepper {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   overflow: hidden;
   /* min-height, not height: font-size is rem-derived, so under text-only zoom
