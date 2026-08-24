@@ -326,13 +326,14 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(auth_router)
 
-    # Mounted ahead of /static, which matches this prefix too and would 404.
-    if PRIVATE_THEMES_DIR.is_dir():
-        app.mount(
-            PRIVATE_THEMES_URL,
-            StaticFiles(directory=PRIVATE_THEMES_DIR),
-            name="private-themes",
-        )
+    # Mounted ahead of /static, which matches this prefix too and would 404. No
+    # check_dir: StaticFiles resolves per request, so the operator's first
+    # private theme is served without a restart.
+    app.mount(
+        PRIVATE_THEMES_URL,
+        StaticFiles(directory=PRIVATE_THEMES_DIR, check_dir=False),
+        name="private-themes",
+    )
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
