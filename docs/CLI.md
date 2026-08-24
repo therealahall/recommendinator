@@ -34,10 +34,13 @@ python3.11 -m src.cli --verbose recommend --type book
 Startup is the exception, reported in full: it happens before there is a log
 file to send anyone to.
 
+## Confirmations
+
 The commands that destroy stored data — `source clear-secret`, `source remove`,
 `settings clear-secret`, `preferences reset`, `preferences custom-rules clear`,
 `enrichment reset` and `auth disconnect` — each prompt first, naming what goes.
-Pass `--yes` to skip the prompt in a script.
+So does overwriting an existing `--output` file, in `import-template` and
+`library export`. Pass `--yes` to skip the prompt in a script.
 
 ## Import and recommend
 
@@ -57,10 +60,10 @@ listed per source, capped at the first 200 with a `… and N more` tally after
 them. `--format json` emits the document `GET /api/sync/status` serves for the
 same run.
 
-With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on — each
-defaults off — a sync that saved something enriches
-it before the command returns — the run the web starts after its own sync,
-waited out here because the claim would outlive a process that exited.
+With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on, each
+off by default, a sync that saved something enriches it before the command
+returns — the run the web starts after its own sync, waited out here because
+the claim would outlive a process that exited.
 
 ### `import`
 
@@ -70,8 +73,7 @@ format and `--content-type` the type where the format decides none.
 `total_rows` and a line per refused row, capped at the first 200 with a
 `… and N more` tally after them, plus `notes` for what happened to the file.
 `import-formats` lists the formats; `import-template` writes one to
-`--output` or stdout, or lists them. An existing `--output` file is overwritten
-only after a prompt, which `--yes` skips.
+`--output` or stdout, or lists them.
 
 ```bash
 python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
@@ -237,9 +239,7 @@ python3.11 -m src.cli library export --output library.csv   # every type
 Without `--type` the file covers the whole library. A CSV header then carries
 all four types' columns plus a `content_type` column naming each row's type, so
 each row leaves the columns its own type does not have blank.
-Ignored items are exported either way, as the web Export button does. An
-existing `--output` file is overwritten only after a prompt, which `--yes`
-skips.
+Ignored items are exported either way, as the web Export button does.
 
 ## Source management
 
