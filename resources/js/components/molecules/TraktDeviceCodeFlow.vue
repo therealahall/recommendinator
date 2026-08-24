@@ -268,7 +268,7 @@ onBeforeUnmount(clearPoll)
 }
 
 .trakt-flow-link {
-  color: var(--accent-light);
+  color: var(--text-primary);
   text-decoration: underline;
 }
 

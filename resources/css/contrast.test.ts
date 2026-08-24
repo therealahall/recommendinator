@@ -329,6 +329,7 @@ const SETTING_CONTROL = 'resources/js/components/molecules/SettingControl.vue'
 const SETTING_SECRET = 'resources/js/components/molecules/SettingSecret.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
 const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
+const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
@@ -466,6 +467,13 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a sync that failed', BASE, '.sync-status-error', '--bg-card'],
   ['a sync still running', BASE, '.sync-status-info', '--bg-card'],
   ['a sync that finished', BASE, '.sync-status-success', '--bg-card'],
+  ['the page the sidebar is on', BASE, '.nav-item.active', '--bg-sidebar'],
+  ['the app name over the nav', BASE, '.sidebar-header h1', '--bg-sidebar'],
+  ['a scorer weight', BASE, '.slider-value', '--bg-card'],
+  ['a content-type badge', BASE, '.badge-type', '--bg-card'],
+  ['a score badge', BASE, '.badge-score', '--bg-card'],
+  ['a hovered score breakdown', BASE, '.score-details summary:hover', '--bg-card'],
+  ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
 ]
 
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
