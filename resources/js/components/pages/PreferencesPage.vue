@@ -29,7 +29,7 @@ function resetToDefaults() {
   if (
     window.confirm(
       'Reset every preference to its defaults? This clears your scorer ' +
-        'weights, custom rules, length preferences and theme.',
+        'weights, custom rules and length preferences.',
     )
   ) {
     prefs.resetToDefaults()

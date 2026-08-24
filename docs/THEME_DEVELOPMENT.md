@@ -87,6 +87,11 @@ theme, and the darkest in a light one, is the one that binds.
 | `--accent-light` | `#88c0d0` | Highlights, and the keyboard focus ring |
 | `--accent-teal` | `#8fbcbb` | Supplementary |
 
+`--accent-light` is the one focus indicator the whole app uses, drawn just
+outside the control. Keep it at 3:1 or better against `--bg-card`, `--bg-input`
+and `--bg-primary` — the three surfaces a ring around a field lands on — or
+keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
+
 ### Borders
 
 | Variable | Default | Used for |
@@ -109,6 +114,10 @@ between, so a theme that sets those inherits it and need not override it.
 | `--color-warning` | `#ebcb8b` | Unread badge, rating stars, ignored badge |
 | `--color-error` | `#bf616a` | Danger buttons, failures |
 | `--color-info` | `var(--accent)` | Loading, sync |
+
+These are sized for fills and fall under 4.5:1 as text, so `base.css` derives
+`--color-success-text`, `--color-error-text` and `--color-info-text` by mixing
+each toward `--text-primary`. Override the fill and the text colour follows.
 
 ### Overlays and shadows
 
@@ -152,15 +161,10 @@ variants yourself.
    }
    ```
 
-4. Start the server, select the theme from the Preferences tab, and check every
-   page for text readability, badge contrast and button visibility.
-
-   `--accent-light` is the one focus indicator the whole app uses, drawn just
-   outside the control. Keep it at 3:1 or better against `--bg-card`,
-   `--bg-input` and `--bg-primary` — the three surfaces a ring around a field
-   lands on — or keyboard users lose the only cue telling them where they are
-   (WCAG 1.4.11). `resources/css/contrast.test.ts` measures this, and every
-   other floor on this page, for each shipped theme.
+4. Start the server, select the theme from the Preferences tab or with
+   `theme set`, and check every page for text readability, badge contrast and
+   button visibility. `resources/css/contrast.test.ts` measures every floor on
+   this page, for each shipped theme.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override

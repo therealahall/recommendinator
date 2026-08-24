@@ -537,8 +537,9 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
   user in `user_ui_settings`, defaulting to `nord`, and is untouched by a
   preference reset. See
   [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
-- The UI polls `GET /api/status` every 5 minutes and banners a newer server
-  version.
+- The UI polls `GET /api/status` every 5 seconds until the backend answers
+  ready, then every 5 minutes, and banners a newer server version. A call that
+  fails outright offers a retry rather than waiting out the next poll.
 - Library export: `GET /api/items/export?type=book&format=csv`. `type` is
   optional on both interfaces and omitting it exports every content type, under
   a header carrying all four types' columns.
