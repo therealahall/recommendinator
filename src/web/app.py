@@ -45,6 +45,7 @@ from src.web.themes import (
     PRIVATE_THEMES_DIR,
     PRIVATE_THEMES_URL,
     STATIC_DIR,
+    PrivateThemeFiles,
     themed_shell,
 )
 
@@ -326,12 +327,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(auth_router)
 
-    # Mounted ahead of /static, which matches this prefix too and would 404. No
-    # check_dir: StaticFiles resolves per request, so the operator's first
-    # private theme is served without a restart.
+    # Ahead of /static, which matches this prefix too. Resolved per request, so
+    # a theme dropped in later needs no restart.
     app.mount(
         PRIVATE_THEMES_URL,
-        StaticFiles(directory=PRIVATE_THEMES_DIR, check_dir=False),
+        PrivateThemeFiles(directory=PRIVATE_THEMES_DIR, check_dir=False),
         name="private-themes",
     )
 
