@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from src.cli._shared import abort_after_failure, is_blank_review
+from src.cli._shared import abort_after_failure, emit_view, is_blank_review
 from src.models.content import (
     MAX_CREATOR_LENGTH,
     MAX_REVIEW_LENGTH,
@@ -13,6 +13,7 @@ from src.models.content import (
     ContentItem,
     ContentType,
 )
+from src.utils.item_serialization import completion_to_dict
 from src.utils.text import is_blank
 
 #: What ``POST /api/complete`` answers with; the title and review that failed
@@ -36,6 +37,13 @@ COMPLETE_FAILED = "Failed to mark content as completed"
     help="Rating (1-5)",
 )
 @click.option("--review", help="Review text")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
 @click.pass_context
 def complete(
     ctx: click.Context,
@@ -44,6 +52,7 @@ def complete(
     author: str | None,
     rating: int | None,
     review: str | None,
+    output_format: str,
 ) -> None:
     """Mark content as completed.
 
@@ -104,4 +113,8 @@ def complete(
     except Exception as error:
         abort_after_failure(ctx, COMPLETE_FAILED, error)
 
-    click.echo(f"Marked '{title}' as completed (ID: {db_id})")
+    emit_view(
+        output_format,
+        lambda: completion_to_dict(title, db_id),
+        f"Marked '{title}' as completed (ID: {db_id})",
+    )

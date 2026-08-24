@@ -56,7 +56,7 @@ from src.utils.duplicate_serialization import (
     suggestion_page_to_dict,
 )
 from src.utils.export import export_items_csv, export_items_json
-from src.utils.item_serialization import item_to_dict
+from src.utils.item_serialization import ignore_result_to_dict, item_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 
@@ -385,6 +385,13 @@ def library_show(
     help="Correct the author, director, creators or developer",
 )
 @click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
     "--user",
     "user_id",
     type=int,
@@ -409,6 +416,7 @@ def library_edit(
     description: str | None,
     release_year: int | None,
     creator: str | None,
+    output_format: str,
     user_id: int,
 ) -> None:
     """Edit an item's status, rating, review, release year, creator or metadata."""
@@ -558,36 +566,51 @@ def library_edit(
     except UncorrectableFieldError as error:
         abort_with(str(error))
 
-    if updated:
-        click.echo(f"Updated item {item_id} ({item.title}).")
-    else:
+    if not updated:
         click.echo(f"Error: Failed to update item {item_id}.", err=True)
         raise click.Abort()
+
+    def refreshed() -> dict[str, object]:
+        edited = storage.get_content_item(item_id, user_id=user_id)
+        if edited is None:
+            abort_with(f"Item {item_id} not found after update.")
+        return item_to_dict(edited)
+
+    emit_view(output_format, refreshed, f"Updated item {item_id} ({item.title}).")
+
+
+def _apply_ignored(
+    ctx: click.Context,
+    item_id: int,
+    user_id: int,
+    output_format: str,
+    ignored: bool,
+) -> None:
+    storage = ctx.obj["storage"]
+
+    item = storage.get_content_item(item_id, user_id=user_id)
+    if item is None or not storage.set_item_ignored(
+        db_id=item_id, ignored=ignored, user_id=user_id
+    ):
+        abort_with(f"Item {item_id} not found.")
+
+    title = item.title
+    emit_view(
+        output_format,
+        lambda: ignore_result_to_dict(item_id, title, ignored),
+        f"{'Ignored' if ignored else 'Unignored'} item {item_id}.",
+    )
 
 
 @library.command("ignore")
 @click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
-    "--user",
-    "user_id",
-    type=int,
-    default=1,
-    help="User ID",
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
 )
-@click.pass_context
-def library_ignore(ctx: click.Context, item_id: int, user_id: int) -> None:
-    """Ignore an item (exclude from recommendations)."""
-    storage = ctx.obj["storage"]
-
-    if storage.set_item_ignored(db_id=item_id, ignored=True, user_id=user_id):
-        click.echo(f"Ignored item {item_id}.")
-    else:
-        click.echo(f"Error: Item {item_id} not found.", err=True)
-        raise click.Abort()
-
-
-@library.command("unignore")
-@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
 @click.option(
     "--user",
     "user_id",
@@ -596,15 +619,35 @@ def library_ignore(ctx: click.Context, item_id: int, user_id: int) -> None:
     help="User ID",
 )
 @click.pass_context
-def library_unignore(ctx: click.Context, item_id: int, user_id: int) -> None:
-    """Unignore an item (include in recommendations again)."""
-    storage = ctx.obj["storage"]
+def library_ignore(
+    ctx: click.Context, item_id: int, output_format: str, user_id: int
+) -> None:
+    """Ignore an item (exclude from recommendations)."""
+    _apply_ignored(ctx, item_id, user_id, output_format, True)
 
-    if storage.set_item_ignored(db_id=item_id, ignored=False, user_id=user_id):
-        click.echo(f"Unignored item {item_id}.")
-    else:
-        click.echo(f"Error: Item {item_id} not found.", err=True)
-        raise click.Abort()
+
+@library.command("unignore")
+@click.option("--id", "item_id", type=int, required=True, help="Item database ID")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"], case_sensitive=False),
+    default="table",
+    help="Output format",
+)
+@click.option(
+    "--user",
+    "user_id",
+    type=int,
+    default=1,
+    help="User ID",
+)
+@click.pass_context
+def library_unignore(
+    ctx: click.Context, item_id: int, output_format: str, user_id: int
+) -> None:
+    """Unignore an item (include in recommendations again)."""
+    _apply_ignored(ctx, item_id, user_id, output_format, False)
 
 
 @library.command("export")
