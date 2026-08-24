@@ -311,8 +311,12 @@ def update(
             max_workers=max_workers,
         )
     except Exception as error:
-        release_sources(storage, claimed)
         abort_after_failure(ctx, SYNC_FAILED, error)
+    finally:
+        # Ctrl-C raises a BaseException, which walks past the clause above:
+        # released only there, the claim outlived the process and refused the
+        # source at both Start doors until it went stale.
+        release_sources(storage, claimed)
 
     label = ALL_SOURCES_LABEL if source == "all" else humanize_source_id(source)
     view = _status_view(label, results, started_at, datetime.now())

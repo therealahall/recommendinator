@@ -7,7 +7,8 @@ duplicated sync logic across callers.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -152,6 +153,49 @@ def release_sources(
 ) -> None:
     for source_id in source_ids:
         storage_manager.sync_runs.release(user_id, source_id)
+
+
+class _ClaimHeartbeat:
+    """Beat every claim a run still owes, from the driver, not from a worker.
+
+    A source queued behind ``max_workers``, or one whose plugin reports no
+    progress, has nothing beating for it and loses its claim mid-run.
+    """
+
+    def __init__(
+        self,
+        storage_manager: StorageManager,
+        user_id: int,
+        source_ids: Iterable[str],
+    ) -> None:
+        self._storage_manager = storage_manager
+        self._user_id = user_id
+        self._outstanding = set(source_ids)
+        self._lock = threading.Lock()
+        self._stopped = threading.Event()
+        self._thread = threading.Thread(
+            target=self._beat, name="sync-heartbeat", daemon=True
+        )
+
+    def __enter__(self) -> _ClaimHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self._stopped.set()
+        self._thread.join()
+
+    def done(self, source_id: str) -> None:
+        """Drop a recorded source: the next claim on it belongs to another run."""
+        with self._lock:
+            self._outstanding.discard(source_id)
+
+    def _beat(self) -> None:
+        while not self._stopped.wait(HEARTBEAT_EVERY.total_seconds()):
+            with self._lock:
+                outstanding = list(self._outstanding)
+            for source_id in outstanding:
+                self._storage_manager.sync_runs.heartbeat(self._user_id, source_id)
 
 
 def already_syncing_detail(source_ids: Sequence[str]) -> str:
@@ -409,38 +453,14 @@ def execute_multi_source_sync(
         List of SyncResult, one per source, in the same order as ``sources``.
     """
 
-    def _beating(plugin_config: dict[str, Any]) -> SyncProgressCallback | None:
-        # The claim expires on its own, and progress is a run's only pulse.
-        source_id = _configured_source_id(plugin_config)
-        if not source_id:
-            return progress_callback
-        beat_at = utc_now()
-
-        def report(
-            items_processed: int,
-            total_items: int | None,
-            current_item: str | None,
-            current_source: str | None,
-        ) -> None:
-            nonlocal beat_at
-            now = utc_now()
-            if now - beat_at >= HEARTBEAT_EVERY:
-                beat_at = now
-                storage_manager.sync_runs.heartbeat(user_id, source_id)
-            if progress_callback:
-                progress_callback(
-                    items_processed, total_items, current_item, current_source
-                )
-
-        return report
-
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
         started_at = utc_now()
-        result = _sync_one(plugin, plugin_config, _beating(plugin_config))
+        result = _sync_one(plugin, plugin_config, progress_callback)
         result.started_at = started_at
         result.finished_at = utc_now()
         if result_callback:
             result_callback(result)
+        heartbeat.done(_configured_source_id(plugin_config))
         return result
 
     def _sync_one(
@@ -486,18 +506,24 @@ def execute_multi_source_sync(
             )
 
     effective_workers = min(max_workers, len(sources)) if sources else 1
+    claimed = {
+        source_id
+        for source_id in (_configured_source_id(cfg) for _, cfg in sources)
+        if source_id
+    }
 
-    if effective_workers > 1:
-        with ThreadPoolExecutor(
-            max_workers=effective_workers, thread_name_prefix="sync"
-        ) as executor:
-            futures = [
-                executor.submit(_run_one, plugin, plugin_config)
-                for plugin, plugin_config in sources
-            ]
-            results = [future.result() for future in futures]
-    else:
-        results = [_run_one(plugin, cfg) for plugin, cfg in sources]
+    with _ClaimHeartbeat(storage_manager, user_id, claimed) as heartbeat:
+        if effective_workers > 1:
+            with ThreadPoolExecutor(
+                max_workers=effective_workers, thread_name_prefix="sync"
+            ) as executor:
+                futures = [
+                    executor.submit(_run_one, plugin, plugin_config)
+                    for plugin, plugin_config in sources
+                ]
+                results = [future.result() for future in futures]
+        else:
+            results = [_run_one(plugin, cfg) for plugin, cfg in sources]
 
     total_synced = sum(result.items_synced for result in results)
     logger.info("[SYNC] === Completed. Total items processed: %d ===", total_synced)

@@ -885,6 +885,77 @@ def test_update_refuses_a_source_another_process_is_already_syncing(
     assert storage.get_content_items(user_id=1) == []
 
 
+def test_update_interrupted_by_ctrl_c_leaves_the_source_claimable(
+    tmp_path: Path,
+) -> None:
+    """KeyboardInterrupt is not an Exception, so it walked past the release and
+    left the operator refused by both interfaces for the staleness window."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            "steam": {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+        },
+    }
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.cli.commands._update.execute_multi_source_sync",
+            side_effect=KeyboardInterrupt,
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
+
+    assert result.exit_code != 0
+    assert StorageManager(sqlite_path=db_path).sync_runs.claim(1, "steam") is True
+
+
+def test_update_interrupted_by_ctrl_c_releases_only_the_claims_it_took(
+    tmp_path: Path,
+) -> None:
+    """The operator Ctrl-Cs a run over every source while the web syncs one."""
+    db_path = tmp_path / "test.db"
+    config = {
+        "storage": {"database_path": str(db_path)},
+        "inputs": {
+            source_id: {
+                "plugin": "steam",
+                "api_key": "test_api_key",
+                "steam_id": "76561198000000000",
+                "enabled": True,
+            }
+            for source_id in ("steam", "steam_backlog")
+        },
+    }
+    storage = StorageManager(sqlite_path=db_path)
+    assert storage.sync_runs.claim(1, "steam_backlog") is True
+
+    with (
+        patch("src.cli.main.load_config", return_value=config),
+        patch(
+            "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
+        ),
+        patch(
+            "src.cli.commands._update.execute_multi_source_sync",
+            side_effect=KeyboardInterrupt,
+        ),
+    ):
+        result = CliRunner().invoke(cli, ["update", "--source", "all"])
+
+    assert already_syncing_detail(["steam_backlog"]) in result.output
+    assert storage.sync_runs.claim(1, "steam") is True
+    assert storage.sync_runs.claim(1, "steam_backlog") is False
+
+
 def test_preferences_get(mock_components):
     """Test preferences get command."""
     mock_components["storage"].get_user_preference_config = Mock(
