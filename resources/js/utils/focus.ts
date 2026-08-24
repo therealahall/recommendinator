@@ -1,5 +1,11 @@
 import { nextTick, type Ref } from 'vue'
 
+/** True when focus fell to <body>, the only state a rescue may move it out of. */
+export function focusStranded(): boolean {
+  const active = document.activeElement
+  return active === null || active === document.body
+}
+
 /** Sends focus where a decision left something to read (WCAG 2.4.3): the
  *  *refusal* it drew, else, where it unmounted the row, *preferred* if that
  *  survived and the nearest row below if not. Read after the run. */
@@ -23,7 +29,7 @@ export async function keepFocusInList(
     return
   }
   if (!(focused instanceof HTMLElement) || focused.isConnected) return
-  if (document.activeElement !== null && document.activeElement !== document.body) return
+  if (!focusStranded()) return
   const after = keys()
   const kept = preferred()
   const next = after.includes(kept)

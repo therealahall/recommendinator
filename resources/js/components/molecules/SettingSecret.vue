@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import { focusStranded } from '@/utils/focus'
 import type { SettingViewSecret } from '@/types/api'
 
 const props = withDefaults(
@@ -23,6 +24,7 @@ const draftInput = ref<HTMLInputElement | null>(null)
 const replaceButton = ref<HTMLButtonElement | null>(null)
 
 const locked = (): boolean => props.verbsLocked || props.busy
+const saveBlocked = (): boolean => locked() || draft.value === ''
 
 // Each verb removes the control that was clicked, so focus is placed on what
 // replaced it (WCAG 2.4.3). aria-disabled still activates, so each verb guards.
@@ -48,7 +50,7 @@ function clear(): void {
 
 async function save(): Promise<void> {
   const value = draft.value
-  if (!value || locked()) return
+  if (saveBlocked()) return
   emit('set', value)
   editing.value = false
   draft.value = ''
@@ -56,11 +58,14 @@ async function save(): Promise<void> {
   replaceButton.value?.focus()
 }
 
-// Clear unmounts its own button once the secret is gone, and only then.
+// Clear unmounts its own button, stranding focus; a Tab away keeps its place.
 watch(
   () => props.busy,
   (busy, wasBusy) => {
-    if (wasBusy && !busy) nextTick(() => replaceButton.value?.focus())
+    if (!wasBusy || busy) return
+    nextTick(() => {
+      if (focusStranded()) replaceButton.value?.focus()
+    })
   },
 )
 </script>
@@ -111,7 +116,7 @@ watch(
         class="btn btn-primary"
         :aria-label="`Save ${setting.label}`"
         :data-testid="`secret-save-${setting.key}`"
-        :aria-disabled="locked() || undefined"
+        :aria-disabled="saveBlocked() || undefined"
         @click="save"
       >Save secret</button>
       <!-- Not locked: it is the only way out of the edit row. -->

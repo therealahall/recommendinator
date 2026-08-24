@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { flushPromises, mount, enableAutoUnmount } from '@vue/test-utils'
 import { afterEach } from 'vitest'
 import SourceConfigForm from './SourceConfigForm.vue'
 import type { SourceFieldSchema } from '@/types/api'
@@ -36,9 +36,25 @@ describe('SourceConfigForm', () => {
 
     await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
     await wrapper.find('input[name="api_key"]').setValue('rotated')
-    await wrapper.find('[data-testid="secret-save-api_key"]').trigger('click')
+    const save = wrapper.get('[data-testid="secret-save-api_key"]')
+    expect(save.attributes('aria-disabled')).toBeUndefined()
+    await save.trigger('click')
 
     expect(wrapper.emitted('set-secret')).toEqual([['api_key', 'rotated']])
+  })
+
+  it('exposes Save secret as unavailable on an empty draft rather than swallowing the press', async () => {
+    const wrapper = mountForm({
+      schema: [field({ name: 'api_key', sensitive: true })],
+      secretStatus: { api_key: false },
+    })
+
+    await wrapper.find('[data-testid="secret-replace-api_key"]').trigger('click')
+    const save = wrapper.get('[data-testid="secret-save-api_key"]')
+    await save.trigger('click')
+
+    expect(save.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.emitted('set-secret')).toBeUndefined()
   })
 
   it('emits save with the merged values on Save click', async () => {
@@ -280,6 +296,21 @@ describe('SourceConfigForm', () => {
       expect(document.activeElement).toBe(
         wrapper.get('[data-testid="secret-replace-api_key"]').element,
       )
+    })
+
+    it('leaves focus where the operator tabbed to when the store confirms', async () => {
+      const wrapper = mountForm({ schema: apiKey, secretStatus: { api_key: false } })
+
+      await typeSecret(wrapper)
+      const elsewhere = wrapper.get('[data-testid="form-save"]').element as HTMLButtonElement
+      elsewhere.focus()
+      await wrapper.setProps({
+        secretSave: { api_key: 'saved' },
+        secretStatus: { api_key: true },
+      })
+      await flushPromises()
+
+      expect(document.activeElement).toBe(elsewhere)
     })
 
     it('says the key was cleared, not saved, when the round trip left it unset', async () => {

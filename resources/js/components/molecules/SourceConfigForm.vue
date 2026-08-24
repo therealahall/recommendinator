@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
+import { focusStranded } from '@/utils/focus'
 import type { SourceFieldSchema } from '@/types/api'
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -192,8 +193,11 @@ function secretBusy(name: string): boolean {
   return secretSaveStatus(name) === 'saving'
 }
 
-// Each verb removes the control that was clicked, so focus is placed on what
-// replaced it rather than left to fall to <body> (WCAG 2.4.3).
+function saveSecretBlocked(name: string): boolean {
+  return props.verbsLocked || secretBusy(name) || (secretDrafts[name] ?? '') === ''
+}
+
+// Each verb unmounts the control clicked, so focus lands on what replaced it (WCAG 2.4.3).
 async function startReplace(name: string): Promise<void> {
   if (props.verbsLocked || secretBusy(name)) return
   secretEditing[name] = true
@@ -212,9 +216,8 @@ async function cancelReplace(name: string): Promise<void> {
 // The row stays open: collapsing on the emit reported a stored key and a
 // refused one identically.
 function saveSecret(name: string): void {
-  const value = secretDrafts[name] ?? ''
-  if (!value || props.verbsLocked || secretBusy(name)) return
-  emit('set-secret', name, value)
+  if (saveSecretBlocked(name)) return
+  emit('set-secret', name, secretDrafts[name] ?? '')
 }
 
 function askClear(name: string): void {
@@ -233,11 +236,12 @@ function confirmClear(name: string): void {
   emit('clear-secret', name)
 }
 
+// Closing the row strands focus on <body>; a Tab away mid-write keeps its place.
 async function settleSecret(name: string): Promise<void> {
   secretEditing[name] = false
   secretDrafts[name] = ''
   await nextTick()
-  control(`secret-replace-${name}`)?.focus()
+  if (focusStranded()) control(`secret-replace-${name}`)?.focus()
 }
 
 watch(
@@ -433,7 +437,7 @@ function isSecretSet(name: string): boolean {
             class="btn btn-primary"
             :aria-label="`Save ${field.name}`"
             :data-testid="`secret-save-${field.name}`"
-            :aria-disabled="verbsLocked || secretBusy(field.name) || undefined"
+            :aria-disabled="saveSecretBlocked(field.name) || undefined"
             @click="saveSecret(field.name)"
           >{{ secretBusy(field.name) ? 'Saving…' : 'Save secret' }}</button>
           <!-- Not locked: it is the only way out of the edit row. -->
