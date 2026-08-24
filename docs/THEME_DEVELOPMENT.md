@@ -30,9 +30,8 @@ src/web/static/themes/     # or private/themes/, which is gitignored
 
 A private theme is listed and served exactly like a shipped one, from
 `/static/private-themes/`. An id already taken by a shipped theme is refused,
-and so is a folder name outside `[A-Za-z0-9_-]`: the id reaches an `href`.
-A folder dropped in while the server is running lists and can be picked at
-once, but its `colors.css` is served only after a restart.
+and so is a folder name outside `[A-Za-z0-9_-]`: the id reaches an `href`. A
+theme is listed and served the moment it is dropped in, restart or no.
 
 ## theme.json
 
@@ -97,9 +96,10 @@ theme, and the darkest in a light one, is the one that binds.
 | `--accent-teal` | `#8fbcbb` | Supplementary |
 
 `--accent-light` is the one focus indicator the whole app uses, drawn just
-outside the control. Keep it at 3:1 or better against `--bg-card`, `--bg-input`
-and `--bg-primary` — the three surfaces a ring around a field lands on — or
-keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
+outside the control. Keep it at 3:1 or better against every surface a ring can
+land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated` and
+`--bg-sidebar` — or keyboard users lose the only cue telling them where they
+are (WCAG 1.4.11).
 
 ### Borders
 
@@ -186,11 +186,9 @@ radius (`--radius-*`), transitions (`--transition-*`) and layout dimensions
 
 ## Persistence
 
-The selection is a row of its own, in the `user_ui_settings` table, one per
-user — so it follows them across browsers and devices, and `preferences reset`,
-which rewrites the scoring preferences, leaves it alone. Both interfaces reach
-it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`.
-The server reads the row before it serves the page, so no request decides the
-first paint; `localStorage` still caches it for the Vite dev server, which
-serves its own page. A user who has picked nothing is stored as the empty
-string and painted `nord`.
+The selection is a row in `user_ui_settings`, one per user, so it follows them
+across browsers and `preferences reset` leaves it alone. Both interfaces reach
+it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`. The
+server reads the row before serving the page, so no request decides the first
+paint; `localStorage` still caches it for the Vite dev server. A user who has
+picked nothing is stored empty and painted `nord`.

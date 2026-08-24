@@ -79,7 +79,7 @@ def discover_themes(themes_dir: Path, url_prefix: str) -> list[ThemeResponse]:
 
 
 def installed_theme_ids() -> list[str]:
-    """The ids both doors accept; a new private one paints once the server restarts."""
+    """The ids both doors accept."""
     return [theme.id for theme in installed_themes()]
 
 
