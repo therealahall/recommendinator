@@ -18,7 +18,9 @@ const props = defineProps<{
   source: SyncSourceResponse
   fields: SourceFieldSchema[]
   config: SourceConfigResponse
-  disabled: boolean
+  /** Locks the secret, enable and remove verbs only: a running sync reads those
+   *  live, where it resolved its field values before it started. */
+  verbsLocked: boolean
 }>()
 
 const emit = defineEmits<{
@@ -100,7 +102,7 @@ const removeQuestion = computed(
 )
 
 function askRemove(): void {
-  if (removing.value || props.disabled) return
+  if (removing.value || props.verbsLocked) return
   removeConfirming.value = true
 }
 
@@ -138,7 +140,7 @@ onBeforeUnmount(() => {
     :secret-save="secret.status"
     :secret-save-error="secret.error"
     :saving="savingConfig"
-    :disabled="disabled"
+    :verbs-locked="verbsLocked"
     :enabled="config.enabled"
     :enable-busy="togglingEnabled"
     :save-status="saveStatus"
@@ -154,7 +156,7 @@ onBeforeUnmount(() => {
         class="btn btn-danger"
         :data-testid="`remove-btn-${source.id}`"
         :aria-label="`Remove ${source.display_name} from the database`"
-        :aria-disabled="removing || disabled || undefined"
+        :aria-disabled="removing || verbsLocked || undefined"
         @click="askRemove"
       >{{ removing ? 'Removing…' : 'Remove' }}</button>
     </template>

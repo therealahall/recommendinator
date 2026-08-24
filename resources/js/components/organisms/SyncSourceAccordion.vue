@@ -267,7 +267,7 @@ const intervalLabel = computed(
           :source="source"
           :fields="schema.fields"
           :config="config"
-          :disabled="props.syncing"
+          :verbs-locked="props.syncing"
           @gate-changed="gateRevision += 1"
         />
       </template>

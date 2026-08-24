@@ -857,6 +857,22 @@ describe('SyncSourceAccordion', () => {
       expect(disconnect).toHaveBeenCalledWith('trakt_work')
     })
 
+    it('disconnects once when Disconnect is activated twice in flight', async () => {
+      const { wrapper, store } = await expandTrakt(true)
+      // The second DELETE 404s, and the panel reported the connection status
+      // unreadable after a disconnect that had in fact worked.
+      const disconnect = vi
+        .spyOn(store, 'disconnectTrakt')
+        .mockImplementation(() => new Promise<never>(() => {}))
+
+      const button = wrapper.find('[data-testid="disconnect-btn-trakt_work"]')
+      await button.trigger('click')
+      await button.trigger('click')
+
+      expect(disconnect).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-testid="oauth-status-error"]').exists()).toBe(false)
+    })
+
     it('carries a trakt disconnect failure in the panel live region', async () => {
       const { wrapper, store } = await expandTrakt(true)
 
