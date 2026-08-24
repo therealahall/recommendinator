@@ -21,7 +21,7 @@ const REJECTED: Record<string, Record<string, [string, string]>> = {
     '2.28': ['var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
   },
   Snowstorm: {
-    '3.00': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+    '3.21': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
   },
 }
 
@@ -332,7 +332,14 @@ const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
-const RING_SURFACES = ['--bg-card', '--bg-input', '--bg-primary']
+const RING_SURFACES = [
+  '--bg-card',
+  '--bg-input',
+  '--bg-primary',
+  // The CSV drop zone and the export menu, both of which a Tab reaches.
+  '--bg-elevated',
+  '--bg-sidebar',
+]
 
 describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
@@ -378,6 +385,23 @@ const CONTROL_EDGES: [string, string, string][] = [
   ['the file picker button', DROP_ZONE, '.drop-zone-input::file-selector-button'],
 ]
 
+/** Secret fields that go `readonly` mid-write: the rule painting one open, then
+ *  the rule painting it locked. */
+const LOCKED_FIELDS: [string, string, string, string][] = [
+  [
+    'a source secret',
+    SOURCE_CONFIG_FORM,
+    '.source-form-field input[type="text"]',
+    '.source-form-field input[readonly]',
+  ],
+  [
+    'a settings secret',
+    SETTING_SECRET,
+    ".secret-edit-row input[type='password']",
+    '.secret-edit-row input[readonly]',
+  ],
+]
+
 /** The colour out of a `border: <width> <style> <colour>` shorthand. */
 function borderColour(body: string): string {
   return declaration(body, 'border').split(/\s+/).slice(2).join(' ')
@@ -396,6 +420,24 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
       edgeAgainst(borderColour(body), declaration(body, 'background')),
     ).toBeGreaterThanOrEqual(NON_TEXT)
   })
+
+  // `readonly` is not exempt from 1.4.3 the way `disabled` is. Folding opacity
+  // is what CONTROL_EDGES never did, which is how a 3.69:1 fade shipped.
+  it.each(LOCKED_FIELDS)(
+    '%s keeps the value being typed readable',
+    (_label, path, editable, locked) => {
+      const source = read(path)
+      const field = ruleBody(source, editable)
+      const lock = ruleBody(source, locked)
+      const text = toRgba(declaration(field, 'color'), vars)
+      const fade = Number(optional(lock, 'opacity') ?? 1)
+      const fill = optional(lock, 'background') ?? declaration(field, 'background')
+
+      expect(
+        contrast({ ...text, a: text.a * fade }, toRgba(fill, vars)),
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    },
+  )
 
   it('an unfilled star stays visible against the dialog that rates it', () => {
     const colour = declaration(ruleBody(read(STAR_RATING), '.star-rating-star'), 'color')

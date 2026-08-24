@@ -220,7 +220,7 @@ async function submit(): Promise<void> {
                upload, not after. -->
           <p v-if="templateUrl" class="import-template">
             <!-- Carries the button tokens rather than a link colour of its own:
-                 --accent-light reaches only 3.3:1 on Snowstorm's white card. -->
+                 --accent-light reaches only 3.8:1 on Snowstorm's white card. -->
             <a
               class="btn btn-secondary btn-small"
               :href="templateUrl"
