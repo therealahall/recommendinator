@@ -66,6 +66,11 @@ services:
       - ./inputs:/app/inputs:ro
       # optional private plugin directory; leave empty if you don't have any
       - ./private:/app/private:ro
+      # The application log — unmounted it dies with the container, and every
+      # other surface sanitises the cause away. Create ./logs before the first
+      # `up`: docker invents a missing bind source as root:root, and a
+      # /app/logs the container user cannot write aborts the boot.
+      - ./logs:/app/logs
     restart: unless-stopped
     # The image already runs as an unprivileged user and binds a high port, so
     # it needs no capability and nothing in it should be able to acquire one.
