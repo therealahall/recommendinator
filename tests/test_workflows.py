@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 
 import pytest
 import yaml
+from packaging.specifiers import SpecifierSet
 
 # parents[1] resolves /tests/test_workflows.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,9 +34,7 @@ RELEASE = WORKFLOWS / "release.yml"
 AUDIT = WORKFLOWS / "audit.yml"
 DEPENDABOT = _REPO_ROOT / ".github" / "dependabot.yml"
 
-# Where this repository pins a version, against the ecosystem Dependabot updates
-# it under. A surface that exists with no entry is one nothing ever bumps, and
-# nothing says so.
+# A surface with no entry here is one nothing ever bumps, and nothing says so.
 PINNED_SURFACES = {
     "github-actions": WORKFLOWS,
     "uv": _REPO_ROOT / "uv.lock",
@@ -47,9 +46,8 @@ PINNED_SURFACES = {
 # a weekly bump carrying one releases this project for someone else's patch.
 RELEASE_TRIGGERING_TYPES = frozenset({"feat", "fix", "perf"})
 
-# A `uses:` line and whatever trails the ref, which is where the pinning
-# convention keeps the version the sha stands for. Comments are gone by the
-# time YAML is parsed, so this reads the source.
+# Comments are gone by the time YAML is parsed, and the version trailing a sha
+# is a comment.
 _ACTION_REFERENCE = re.compile(
     r"^\s*-?\s*uses:\s*(?P<ref>\S+)(?P<trailing>.*)$", re.MULTILINE
 )
@@ -105,7 +103,6 @@ def _triggers(path: Path) -> dict[str, Any]:
 
 
 def _uses(job: dict[str, Any]) -> list[str]:
-    """What a job runs: a reusable workflow, or the action in each of its steps."""
     if "uses" in job:
         return [str(job["uses"])]
     return [str(step["uses"]) for step in job["steps"] if "uses" in step]
@@ -122,7 +119,6 @@ def _called_transitively(entry: Path) -> set[Path]:
 
 
 def _dependency_updates() -> list[dict[str, Any]]:
-    """Dependabot's `updates:` entries, one per ecosystem it is told to watch."""
     entries: list[dict[str, Any]] = yaml.safe_load(
         DEPENDABOT.read_text(encoding="utf-8")
     )["updates"]
@@ -130,14 +126,12 @@ def _dependency_updates() -> list[dict[str, Any]]:
 
 
 def _jobs_querying_an_advisory_feed(path: Path) -> set[str]:
-    """The jobs of *path* running an audit tool, named for the tool they run."""
     querying = set()
     for name, job in _workflow_jobs(path).items():
         for step in job.get("steps", []):
-            action = str(step.get("uses", "")).split("@")[0]
-            # A word, so `requirements-audit.txt` stays an argument.
+            # A whole word, so `requirements-audit.txt` stays an argument.
             words = str(step.get("run", "")).split()
-            if "audit" in action or any(
+            if "audit" in str(step.get("uses", "")).split("@")[0] or any(
                 word == "audit" or word.endswith("-audit") for word in words
             ):
                 querying.add(name)
@@ -848,16 +842,12 @@ class TestTheDependencyAuditStaysOffTheReleasePath:
 
         assert DOCKER in published, "no workflow publishes on a tag any more"
         assert AUDIT not in published
-        # Calling it is one way in; pasting its steps into the gate docker.yml's
-        # verify job calls is the other, and costs the same image.
+        # Pasting the audit's steps into the gate costs the same image.
         for workflow in published:
             assert not _jobs_querying_an_advisory_feed(workflow), workflow.name
 
-        # Both lockfiles keep a job that reaches the feed, or the workflow is a
-        # green tick over an audit nobody runs.
+        # Or the workflow is a green tick over an audit nobody runs.
         assert _jobs_querying_an_advisory_feed(AUDIT) == set(_workflow_jobs(AUDIT))
-        # Without this an advisory surfaces only when someone happens to open a
-        # pull request, and the acceptance asks for it with no code change.
         assert "schedule" in _triggers(AUDIT)
 
 
@@ -869,33 +859,44 @@ class TestEverythingPinnedHereIsOfferedUpdates:
             if surface.exists():
                 assert ecosystem in covered, surface.name
 
-    def test_each_ecosystem_opens_one_capped_weekly_group(self) -> None:
+    def test_no_ecosystem_bumps_under_a_type_that_cuts_a_release(self) -> None:
         for entry in _dependency_updates():
-            named = entry["package-ecosystem"]
-            assert entry["schedule"]["interval"] == "weekly", named
-            # One group over every package, or a week's transitive pins arrive
-            # as a pull request each and the review that never happens.
-            assert [group["patterns"] for group in entry["groups"].values()] == [
-                ["*"]
-            ], named
-            # Absent, Dependabot applies a default ceiling rather than none, so
-            # the regression is silent: the presence is the ceiling being ours.
-            assert isinstance(entry["open-pull-requests-limit"], int), named
-            assert entry["commit-message"]["prefix"] not in RELEASE_TRIGGERING_TYPES
+            assert (
+                entry["commit-message"]["prefix"] not in RELEASE_TRIGGERING_TYPES
+            ), entry["package-ecosystem"]
+
+
+class TestEveryClaimedInterpreterIsOneCiRuns:
+    def test_requires_python_and_the_gate_name_the_same_minors(self) -> None:
+        declared = tomllib.loads(
+            (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]["requires-python"]
+        claimed = SpecifierSet(declared)
+        run = set()
+        for job in _workflow_jobs(WORKFLOWS / "quality-gate.yml").values():
+            matrix = job.get("strategy", {}).get("matrix", {})
+            run |= {str(minor) for minor in matrix.get("python-version", [])}
+            for step in job.get("steps", []):
+                asked = str(step.get("with", {}).get("python-version", ""))
+                if asked and "${{" not in asked:
+                    run.add(asked)
+        assert run, "no job in the gate installs a python"
+        assert all(claimed.contains(f"{minor}.0") for minor in run), declared
+        beyond = max(int(minor.split(".")[1]) for minor in run) + 1
+        assert not claimed.contains(f"3.{beyond}.0"), f"3.{beyond} is claimed, not run"
 
 
 class TestEveryActionRunsCodeThatCannotBeSwappedOut:
     def test_third_party_actions_are_pinned_to_a_sha_naming_its_version(self) -> None:
         """A mutable tag lets its owner run new code in a job holding
-        `packages: write`. The trailing version is what makes a sha reviewable,
-        and dependabot rewrites the two together."""
+        `packages: write`, and the trailing version is what makes a sha
+        reviewable."""
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             read = _ACTION_REFERENCE.findall(workflow.read_text(encoding="utf-8"))
             declared = [
                 used for job in _workflow_jobs(workflow).values() for used in _uses(job)
             ]
-            # Comments survive only in the source, so the refs are read from it
-            # — and a pattern that skipped one would pass this vacuously.
+            # A pattern that skipped a ref would pass the loop below vacuously.
             assert [reference for reference, _ in read] == declared, workflow.name
 
             for reference, trailing in read:

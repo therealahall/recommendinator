@@ -1,6 +1,6 @@
 .PHONY: help install install-dev lock test lint format format-check
 .PHONY: type-check clean run install-frontend build-frontend check-frontend check
-.PHONY: check-private
+.PHONY: check-private check-python
 
 # Through uv.lock, not PATH: a cryptography bump once went green locally
 # against the version it replaced. CI overrides with its provisioned .venv.
@@ -26,6 +26,7 @@ help:
 	@echo "  make build-frontend    - Build Vue frontend (Vite + vue-tsc)"
 	@echo "  make check-frontend    - Run frontend type-check and tests"
 	@echo "  make check-private     - Run the Python checks over private/, if present"
+	@echo "  make check-python      - Run every Python check, on the interpreter in use"
 	@echo "  make check             - Run all checks (Python + frontend)"
 	@echo "  make clean             - Clean build artifacts"
 	@echo "  make run               - Run the application"
@@ -82,7 +83,9 @@ ifneq ($(PRIVATE_SOURCES),)
 	$(PYTHON) -m pytest private/ || [ $$? -eq 5 ]
 endif
 
-check: format-check lint type-check test check-private check-frontend
+check-python: format-check lint type-check test check-private
+
+check: check-python check-frontend
 
 clean:
 	find . -type d -name __pycache__ -exec rm -r {} +
