@@ -13,13 +13,13 @@ Imports books from a [Calibre-Web](https://github.com/janeczku/calibre-web) inst
 ## Configuration
 
 ```bash
-python3.11 -m src.cli source create calibre_web calibre_web
-python3.11 -m src.cli source set calibre_web url http://localhost:8083
-python3.11 -m src.cli source set calibre_web username reader
-python3.11 -m src.cli source set calibre_web verify_ssl true
+uv run python -m src.cli source create calibre_web calibre_web
+uv run python -m src.cli source set calibre_web url http://localhost:8083
+uv run python -m src.cli source set calibre_web username reader
+uv run python -m src.cli source set calibre_web verify_ssl true
 
 # The password is a secret: hidden prompt, stored encrypted, never in a file
-python3.11 -m src.cli source set-secret calibre_web password
+uv run python -m src.cli source set-secret calibre_web password
 ```
 
 Or add it from the **Data** tab with **+ Add source**, which prompts for the
@@ -41,7 +41,7 @@ stored encrypted). To set or rotate it later, use the Replace action on the
 source's panel or the CLI:
 
 ```
-python3.11 -m src.cli source set-secret calibre_web password
+uv run python -m src.cli source set-secret calibre_web password
 ```
 
 ## How it works

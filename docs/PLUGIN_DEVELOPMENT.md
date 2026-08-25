@@ -358,7 +358,7 @@ or the scan stops before any plugin, saying so only at debug level.
 A theme is not a plugin: it is a folder of CSS in `private/themes/` with no
 `__init__.py`. See [THEME_DEVELOPMENT.md](THEME_DEVELOPMENT.md).
 
-Confirm discovery with `python3.11 -m src.cli update --help`, which lists your
+Confirm discovery with `uv run python -m src.cli update --help`, which lists your
 source.
 
 A module that raises on import is kept as a failure rather than dropped:

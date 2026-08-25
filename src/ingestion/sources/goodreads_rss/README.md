@@ -17,8 +17,8 @@ network.
 Add it from the **Data** tab with **+ Add source**, or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create goodreads_rss goodreads_rss
-python3.11 -m src.cli source set goodreads_rss user_id 12345   # numeric ID or profile URL
+uv run python -m src.cli source create goodreads_rss goodreads_rss
+uv run python -m src.cli source set goodreads_rss user_id 12345   # numeric ID or profile URL
 ```
 
 The `shelves` list defaults to `read`, `currently-reading`, and `to-read`; edit it

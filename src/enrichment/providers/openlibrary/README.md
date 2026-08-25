@@ -13,7 +13,7 @@ Fills in metadata for books using the [OpenLibrary](https://openlibrary.org) pub
 Set this from the **Settings** page (Enrichment section), or the CLI:
 
 ```bash
-python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
+uv run python -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
 | Field | Type | Required | Description |

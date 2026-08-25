@@ -676,8 +676,8 @@ one save path.
 
 ## Technology Stack
 
-Python 3.11, SQLite, FastAPI and Click. Tested with pytest, checked with Black,
-MyPy strict and Ruff.
+Python 3.11 through 3.14, SQLite, FastAPI and Click. Tested with pytest,
+checked with Black, MyPy strict and Ruff.
 
 ### Development Tooling (Claude Code)
 
@@ -700,7 +700,7 @@ The deployment guide is [docs/DOCKER.md](docs/DOCKER.md). This is the shape.
 One image, `ghcr.io/therealahall/recommendinator:VERSION`, carrying the
 application, the frontend build and the Python dependencies. It publishes a
 multi-arch manifest for `linux/amd64` and `linux/arm64`. `linux/arm/v7` is
-unsupported because the Python 3.11 wheel ecosystem is too thin there.
+unsupported because the Python wheel ecosystem is too thin there.
 
 `Dockerfile` is multi-stage:
 

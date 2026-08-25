@@ -13,9 +13,9 @@
 #
 #   * Global settings — recommendations, sync, enrichment, logging, and CORS
 #     origins. Settings page, or the `settings` CLI
-#     (`python3.11 -m src.cli settings --help`).
+#     (`uv run python -m src.cli settings --help`).
 #   * Data sources — Data tab -> "+ Add source", or the `source` CLI
-#     (`python3.11 -m src.cli source create <id> <plugin>`). See
+#     (`uv run python -m src.cli source create <id> <plugin>`). See
 #     docs/DATA_SOURCES.md for the available plugins and their fields.
 #   * API keys, passwords, and tokens — NEVER in this file. They are stored
 #     encrypted in the credentials table and entered in the Add-source modal, a

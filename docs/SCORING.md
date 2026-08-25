@@ -40,8 +40,8 @@ From the **Settings** page (Recommendations section) or the CLI. Both take
 effect immediately:
 
 ```bash
-python3.11 -m src.cli settings set recommendations.scorer_weights.genre_match 3.0
-python3.11 -m src.cli settings list --section recommendations   # every weight
+uv run python -m src.cli settings set recommendations.scorer_weights.genre_match 3.0
+uv run python -m src.cli settings list --section recommendations   # every weight
 ```
 
 A `recommendations.scorer_weights` block in `config.yaml` moves the baseline

@@ -13,7 +13,7 @@ Imports a video game library from a directory of ROM files (e.g. an EmulationSta
 Add it from the **Data** tab with **+ Add source**, or create it from the CLI:
 
 ```bash
-python3.11 -m src.cli source create roms roms
+uv run python -m src.cli source create roms roms
 ```
 
 Then set the scan paths and the optional filters from the source's panel in the

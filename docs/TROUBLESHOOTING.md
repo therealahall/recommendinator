@@ -34,7 +34,7 @@ SQLite ignored the `legacy_alter_table` pragma the rebuild sets. Report it with
 your SQLite version:
 
 ```bash
-python3.11 -c "import sqlite3; print(sqlite3.sqlite_version)"
+uv run python -c "import sqlite3; print(sqlite3.sqlite_version)"
 ```
 
 ### Items disappear after a restart
@@ -69,7 +69,7 @@ Recommendations come from items you have **not** consumed, so:
 Confirm it saved with `preferences custom-rules list`, then see how it parses:
 
 ```bash
-python3.11 -m src.cli preferences custom-rules interpret "your rule"
+uv run python -m src.cli preferences custom-rules interpret "your rule"
 ```
 
 Rules bias scoring. They do not override it.
@@ -82,7 +82,7 @@ Export from Goodreads (My Books → Import/Export → Export Library) and import
 that file. The CSV needs Title and Author columns.
 
 ```bash
-python3.11 -m src.cli import goodreads_library_export.csv --importer goodreads_csv
+uv run python -m src.cli import goodreads_library_export.csv --importer goodreads_csv
 ```
 
 ### Steam import fails
@@ -106,7 +106,7 @@ merge some of them and the rest are offered again.
 
 ### Blank page, or "Failed to connect"
 
-Is the server running (`python3.11 -m src.web`), on the port you are asking for
+Is the server running (`uv run python -m src.web`), on the port you are asking for
 (18473 by default)? Then check the browser console.
 
 ### I have forgotten the password
@@ -115,7 +115,7 @@ There is no email and no reset link. Run this on the machine holding the
 database, then sign in again:
 
 ```bash
-python3.11 -m src.cli account set-password
+uv run python -m src.cli account set-password
 ```
 
 ### 401 Unauthorized, or the UI returns to the login form
@@ -146,15 +146,15 @@ returned. A 401 there is the session again.
 ### `No such command`
 
 ```bash
-python3.11 -m src.cli --help
-python3.11 -m src.cli preferences --help    # it may be a subcommand
+uv run python -m src.cli --help
+uv run python -m src.cli preferences --help    # it may be a subcommand
 ```
 
 ### `Configuration file not found`
 
 ```bash
 cp config/example.yaml config/config.yaml
-python3.11 -m src.cli --config path/to/config.yaml status
+uv run python -m src.cli --config path/to/config.yaml status
 ```
 
 ## Docker

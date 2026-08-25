@@ -4,11 +4,11 @@
 
 ```bash
 uv sync --locked --extra dev
-python3.11 -m pytest
+make test
 ```
 
-Python 3.11 is required: `requires-python` refuses every other minor. Branch,
-change, get the checks green, open a PR.
+Python 3.11 through 3.14 all work, and CI runs the gate on each of them.
+Branch, change, get the checks green, open a PR.
 
 ## Local development with Docker
 
@@ -62,8 +62,8 @@ It runs Black, Ruff, MyPy, pytest, the same four over `private/` when you have
 one, then `vue-tsc` and Vitest. Both dependency sets are installed first when
 they are missing, so a fresh clone or worktree needs no separate `uv sync` or
 `pnpm install`, and the Python tools run against exactly what `uv.lock` pins
-rather than whatever is on your `PATH`. When you run one of those tools
-directly, spell the interpreter `python3.11`, never bare `python` or `python3`.
+rather than whatever is on your `PATH`. Run one of them on its own with
+`uv run --locked --extra dev python -m …`, which resolves the same way.
 
 CI runs the same command and reports it as one status, `check / check`. That
 name is new — the gate moved into a reusable workflow — so branch protection
@@ -116,9 +116,9 @@ plugin tests live next to the plugin. Mock every external dependency. Never make
 a real network request.
 
 ```bash
-python3.11 -m pytest                              # All tests
-python3.11 -m pytest tests/test_web_api.py -v     # One file
-python3.11 -m pytest --cov=src --cov-report=html  # With coverage
+make test                                                                 # All tests
+uv run --locked --extra dev python -m pytest tests/test_web_api.py -v     # One file
+uv run --locked --extra dev python -m pytest --cov=src --cov-report=html  # Coverage
 ```
 
 Every bug fix gets a regression test that fails before the fix and passes after.
