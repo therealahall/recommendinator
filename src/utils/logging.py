@@ -7,6 +7,7 @@ under absolute imports the ``import logging`` below is still the stdlib one.
 from __future__ import annotations
 
 import logging
+import socket
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -215,8 +216,12 @@ def configure_logging(
     file_handler.setLevel(log_level)
     file_handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            "%(asctime)s | %(origin)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
+            # The container bind-mounts the host's logs/, so its records and a
+            # host-side CLI run's share one file and only the hostname (docker
+            # gives the container its own) tells them apart.
+            defaults={"origin": socket.gethostname()},
         )
     )
 

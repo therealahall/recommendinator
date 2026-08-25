@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,10 @@ DEFAULT_MAPPING = "127.0.0.1:18473:8000"
 # The host part of that mapping: what an operator overrides to publish any
 # further than this machine.
 LOOPBACK_PREFIX = "127.0.0.1:"
+
+# Read-write, and the container path the app's own `logs/` resolves to under
+# the image's /app workdir.
+LOG_MOUNT = "./logs:/app/logs"
 
 # The two forms this file uses, which differ on an empty value —
 # APP_BIND_PREFIX relies on that. `${NAME}` and `${NAME:?err}` would be left
@@ -166,6 +171,30 @@ class TestComposeDefaultPortMapping:
         assert rendered.startswith(
             LOOPBACK_PREFIX
         ), f"{rendered} is published beyond this host by default"
+
+
+class TestTheApplicationLogOutlivesTheContainer:
+    """Regression: nothing mounted ``./logs``, so the log went to the
+    container's writable layer and `compose pull && up -d` destroyed the only
+    copy of the one surface that keeps a sync failure's real cause.
+    """
+
+    def test_the_log_directory_is_bind_mounted(self) -> None:
+        assert LOG_MOUNT in _services()[APP_SERVICE]["volumes"]
+
+    def test_a_fresh_clone_gets_the_bind_source(self) -> None:
+        """Docker root-owns a missing one, and a ``/app/logs`` the container
+        user cannot write raises inside ``create_app``. Presence here is half
+        of it: an ignored keepfile is checked out by nobody."""
+        assert (_REPO_ROOT / "logs" / ".gitkeep").is_file()
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", "logs/.gitkeep"],
+            cwd=_REPO_ROOT,
+            check=False,
+        )
+
+        # 1 is "no pattern matches"; 0 is ignored and 128 is a git fault.
+        assert ignored.returncode == 1
 
 
 class TestTheTimezoneOverrideReachesTheContainer:
