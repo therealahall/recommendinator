@@ -104,6 +104,9 @@ src/
 └── utils/            # Utility functions (list_merge, series, sorting, export,
                       # csv_formula, urls for the bare-origin/local-host guards,
                       # logging: the root-logger wiring both interfaces call,
+                      # dependencies: the installed-versus-declared check both
+                      # report, kept out of src/__init__.py so importing the
+                      # package stays stdlib-only for the healthcheck,
                       # private_plugins: the private/plugins/ scan both
                       # registries share)
 
@@ -115,9 +118,10 @@ index.html            # Vite SPA entry point
 vite.config.ts        # Vite build configuration
 tests/                # Cross-cutting tests (CLI, web, storage, recommendations).
                       # Plugin-local tests live next to the plugin: src/.../<plugin>/test_<plugin>.py.
-conftest.py           # Five autouse fixtures, function-scoped, applying to every test in
+conftest.py           # Six autouse fixtures, function-scoped, applying to every test in
                       # every tree: each test is kept off the real credential key and the
-                      # production log file, runs with the timezone pinned to UTC (request
+                      # production log file, starts with the dependency-drift cache empty,
+                      # runs with the timezone pinned to UTC (request
                       # `host_timezone` to use another), may read only under its own
                       # tmp_path (request `allowed_source_roots` to add a root), and
                       # cannot reach any host but loopback (request `outbound_network`
@@ -157,9 +161,10 @@ private/              # Gitignored — private plugins NOT in the open source re
 
 ### Python Version
 
-**Python 3.11 through 3.14 are supported**, and every one of them runs the gate
-in CI. Name no minor in a command: a `make` target, or `uv run python -m …`,
-takes the interpreter `.python-version` and `uv.lock` agree on.
+**Python 3.11 through 3.14 are supported.** CI runs `make check` on 3.11 and
+`make check-python` on the rest, so the frontend checks run once. Name no minor
+in a command: a `make` target, or `uv run python -m …`, takes the interpreter
+`.python-version` and `uv.lock` agree on.
 
 ### Code Quality (ALL must pass — always green)
 
