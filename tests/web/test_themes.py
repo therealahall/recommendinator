@@ -306,9 +306,8 @@ class TestShellRoute:
         with booted_web_app(storage, {}) as app:
             served = TestClient(app).get("/")
 
-        # Nothing under the cwd, so no relative resolution of the shell can
-        # succeed here — chdir into the directory holding the dist would let
-        # the regression this names pass.
+        # Empty, so no relative resolution could succeed here — chdir into the
+        # directory holding the dist and the regression passes vacuously.
         assert not any(Path.cwd().iterdir())
         assert served.status_code == 200
         assert served.headers["content-type"].startswith("text/html")

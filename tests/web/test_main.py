@@ -389,7 +389,6 @@ class TestMainReloadBehavior:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Resolving ``app`` is the only reader of the variable above."""
         config_file = tmp_path / "myconfig.yaml"
         monkeypatch.setenv("CONFIG_PATH", str(config_file))
 

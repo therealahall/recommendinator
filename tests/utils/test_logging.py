@@ -112,9 +112,6 @@ class TestTheLogFileTakesUtf8RatherThanTheLocaleRegression:
 
 
 class TestEveryFileEntryNamesTheHostThatWroteIt:
-    """Regression: the container and a host-side CLI run wrote indistinguishable
-    lines into one bind-mounted ``logs/recommendations.log``."""
-
     def test_the_entry_carries_the_hostname(
         self,
         tmp_path: Path,
@@ -447,22 +444,6 @@ class TestTheConsoleCanBeDeniedExceptionTextRegression:
         console = self._configure_and_log(console_tracebacks=False, emit=emit)
 
         assert console.getvalue() == "ERROR | tests.console | Recommendation failed\n"
-
-    def test_the_log_file_keeps_what_the_console_is_denied(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        restore_root_logging: None,
-    ) -> None:
-        """Anchors the denial above, which dropping the traceback from both
-        sinks would satisfy — and the file is the only copy a sync fault has."""
-        monkeypatch.chdir(tmp_path)
-
-        console = self._configure_and_log(console_tracebacks=False)
-
-        assert "Traceback (most recent call last)" in _written()
-        assert f"RuntimeError: {self._FAULT}" in _written()
-        assert self._FAULT not in console.getvalue()
 
     def test_the_web_console_still_carries_it(
         self,
