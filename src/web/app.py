@@ -100,9 +100,6 @@ class PrivateThemeFiles(StaticFiles):
         """No check: an absent private/themes is a 404, and its mount is read-only."""
 
 
-_app: FastAPI | None = None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application lifecycle — config file watcher and sync scheduler."""
@@ -366,25 +363,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
 
 def get_app() -> FastAPI:
-    """Get or create the FastAPI app instance.
-
-    This function is used when running with uvicorn reload mode,
-    which requires an import string. It will use the config path
-    from the CONFIG_PATH environment variable, or let load_config()
-    use its default logic (config/config.yaml -> config/example.yaml).
-
-    Returns:
-        FastAPI application instance
-    """
-    global _app
-    # Always recreate when called (allows reload to work properly)
-    # Get config path from environment, or None to let load_config() decide
+    """Build the app for uvicorn's reload mode, which needs an import string."""
     config_path_str = os.environ.get("CONFIG_PATH")
     config_path = Path(config_path_str) if config_path_str else None
-    # Don't override with example.yaml - let load_config() handle defaults
-    # (it correctly tries config/config.yaml first, then example.yaml)
-    _app = create_app(config_path)
-    return _app
+    # No path beats example.yaml: load_config tries config/config.yaml first.
+    return create_app(config_path)
 
 
 def __getattr__(name: str) -> FastAPI:

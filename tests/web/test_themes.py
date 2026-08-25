@@ -293,6 +293,28 @@ class TestShellRoute:
         assert "nonce-" not in policy
         assert "<style" not in served.text
 
+    def test_a_foreign_working_directory_never_swaps_the_shell_for_the_api_stub(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A CWD-relative dist path would lose the whole UI, and log nothing."""
+        monkeypatch.setattr("src.web.app.STATIC_DIR", _dist_holding(tmp_path))
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get("/")
+
+        # Nothing under the cwd, so no relative resolution of the shell can
+        # succeed here — chdir into the directory holding the dist would let
+        # the regression this names pass.
+        assert not any(Path.cwd().iterdir())
+        assert served.status_code == 200
+        assert served.headers["content-type"].startswith("text/html")
+        assert 'href="/static/dist/assets/app.css"' in served.text
+        assert "Recommendinator API" not in served.text
+
     def test_the_stylesheet_is_served_from_any_working_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

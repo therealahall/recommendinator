@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.web.app
 from src.config.service import BOOTSTRAP_WEB_HOST, BOOTSTRAP_WEB_PORT
 from src.web.main import get_local_ip_addresses, main
 
@@ -380,3 +381,19 @@ class TestMainReloadBehavior:
             main()
 
         assert os.environ["CONFIG_PATH"] == str(config_file.resolve())
+
+    @patch("src.web.app.create_app")
+    def test_the_import_string_builds_from_the_config_path_main_handed_over(
+        self,
+        mock_create_app: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resolving ``app`` is the only reader of the variable above."""
+        config_file = tmp_path / "myconfig.yaml"
+        monkeypatch.setenv("CONFIG_PATH", str(config_file))
+
+        built = src.web.app.app
+
+        assert built is mock_create_app.return_value
+        assert mock_create_app.call_args.args[0] == config_file
