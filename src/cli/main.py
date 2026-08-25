@@ -7,7 +7,6 @@ from typing import Any
 
 import click
 
-from src import log_dependency_drift
 from src.cli.commands import (
     account,
     auth,
@@ -36,6 +35,7 @@ from src.storage.global_secrets import migrate_config_secrets
 from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
+from src.utils.dependencies import log_dependency_drift
 from src.utils.text import exception_for_log, strip_lone_surrogates
 
 

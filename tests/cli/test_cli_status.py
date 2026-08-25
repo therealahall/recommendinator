@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from src import PackageDrift
 from src import __version__ as APP_VERSION
 from src.cli.main import cli
 from src.recommendations.engine import RecommendationEngine
 from src.storage.manager import StorageManager
+from src.utils.dependencies import PackageDrift
 from tests.factories import (
     authenticated_client,
     back_mock_settings_store,
@@ -98,7 +98,7 @@ class TestStatusParity:
     ) -> None:
         drift = PackageDrift(package="newdep", declared=">=2.0,<3.0", installed=None)
         with (
-            patch("src.dependency_drift", return_value=(drift,)),
+            patch("src.utils.dependencies.dependency_drift", return_value=(drift,)),
             patch("src.cli.commands._status.dependency_drift", return_value=(drift,)),
             patch("src.web.api.dependency_drift", return_value=(drift,)),
             caplog.at_level(logging.WARNING, logger="src"),

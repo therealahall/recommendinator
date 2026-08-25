@@ -10,7 +10,6 @@ from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
-from src import PackageDrift, dependency_drift
 from src import __version__ as APP_VERSION
 from src.auth.epic import (
     EPIC_PLUGIN,
@@ -142,6 +141,7 @@ from src.storage.manager import (
     Unset,
 )
 from src.storage.schema import UserDict
+from src.utils.dependencies import PackageDrift, dependency_drift
 from src.utils.duplicate_serialization import (
     decline_refusal_message,
     declined_pair_to_dict,
