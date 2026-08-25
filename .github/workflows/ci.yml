@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Branch protection must require `check / check`: this job's name, then the
-  # job inside the reusable workflow. The name changed when the gate moved
-  # there, so the rule needs editing in settings — until it is, no merge passes.
+  # Two contexts report here: `check / check` (the gate on 3.11) and
+  # `check / interpreters` (Python checks on 3.12-3.14). Branch protection
+  # still names the pre-move context, so no merge passes until settings are
+  # edited — and `interpreters` blocks nothing unless added there too.
   check:
     uses: ./.github/workflows/quality-gate.yml

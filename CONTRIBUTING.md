@@ -7,7 +7,8 @@ uv sync --locked --extra dev
 make test
 ```
 
-Python 3.11 through 3.14 all work, and CI runs the gate on each of them.
+Python 3.11 through 3.14 all work: CI runs the full gate on 3.11 and the Python
+checks alone on the rest.
 Branch, change, get the checks green, open a PR.
 
 ## Local development with Docker

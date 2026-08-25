@@ -1,7 +1,8 @@
 # Python Version Setup
 
-**Any of Python 3.11, 3.12, 3.13 or 3.14.** CI runs the whole gate on each of
-them, and `requires-python` claims exactly that range. `.python-version` names
+**Any of Python 3.11, 3.12, 3.13 or 3.14.** CI runs the whole gate on 3.11 and
+the Python half of it (`make check-python`, so no frontend checks) on the other
+three; `requires-python` claims exactly that range. `.python-version` names
 3.11, the floor and the minor the published image ships, so that is what uv
 reaches for unless you ask for another.
 
