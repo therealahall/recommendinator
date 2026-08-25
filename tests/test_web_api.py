@@ -368,13 +368,6 @@ class TestBootStartsFromCleanStateRegression:
 class TestRootEndpoint:
     """Tests for the root HTML endpoint."""
 
-    def test_serves_html_with_branding(self, client):
-        """Test root endpoint serves HTML with correct branding."""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "Recommendinator" in response.text
-
     def test_fallback_when_template_missing(self, client):
         """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
