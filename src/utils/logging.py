@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from src.settings.metadata import default_of
+from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,14 @@ class _MessageOnlyFormatter(logging.Formatter):
         if self.usesTime():
             record.asctime = self.formatTime(record, self.datefmt)
         return self.formatMessage(record)
+
+
+class _OneLineFormatter(logging.Formatter):
+    """Escape the traceback the base class appends verbatim: one record is one
+    line here, and a frame quoting a source's response forges an entry."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return sanitize_for_log(super().format(record))
 
 
 def _safe_log_path(log_file: str) -> tuple[Path, str | None]:
@@ -215,7 +224,7 @@ def configure_logging(
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(
-        logging.Formatter(
+        _OneLineFormatter(
             "%(asctime)s | %(origin)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
             # Container and host-side CLI runs share one bind-mounted file, and
