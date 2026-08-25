@@ -1,7 +1,7 @@
 """What ``src.utils.logging`` writes to the log file, and where.
 
-``logging.file`` is network-settable, so a path escaping ``logs/`` falls back
-to the registry default, and the encoding must not be the locale's.
+``logging.file`` is network-settable, so a path escaping ``data/logs/`` falls
+back to the registry default, and the encoding must not be the locale's.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class TestTheLogFileTakesUtf8RatherThanTheLocaleRegression:
         than on whichever alias spelling the stream echoes back.
         """
         monkeypatch.chdir(tmp_path)
-        _configure({"logging": {"level": "INFO", "file": "logs/app.log"}})
+        _configure({"logging": {"level": "INFO", "file": "data/logs/app.log"}})
 
         stream = _file_handler().stream
 
@@ -104,7 +104,7 @@ class TestTheLogFileTakesUtf8RatherThanTheLocaleRegression:
         either, and strict errors make the encoder delete the whole entry.
         """
         monkeypatch.chdir(tmp_path)
-        _configure({"logging": {"level": "INFO", "file": "logs/app.log"}})
+        _configure({"logging": {"level": "INFO", "file": "data/logs/app.log"}})
 
         logging.getLogger("tests.log_encoding").info("title=%s", "Dune\udcff")
 
@@ -120,7 +120,7 @@ class TestEveryFileEntryNamesTheHostThatWroteIt:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(socket, "gethostname", lambda: "in-a-container")
-        _configure({"logging": {"level": "INFO", "file": "logs/app.log"}})
+        _configure({"logging": {"level": "INFO", "file": "data/logs/app.log"}})
 
         logging.getLogger("tests.origin").info("Sync finished")
 
@@ -138,7 +138,7 @@ class TestOneRecordIsOneLineInTheFile:
         restore_root_logging: None,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _configure({"logging": {"level": "INFO", "file": "logs/app.log"}})
+        _configure({"logging": {"level": "INFO", "file": "data/logs/app.log"}})
 
         try:
             raise ValueError("boom\n2026-01-01 00:00:00 | host | ERROR | forged")
@@ -151,21 +151,7 @@ class TestOneRecordIsOneLineInTheFile:
 
 
 class TestConfigureLoggingContainment:
-    """The FileHandler path is confined to the logs/ directory."""
-
-    def test_normal_log_path_is_used(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        restore_root_logging: None,
-    ) -> None:
-        """A plain ``logs/x.log`` value opens a handler under logs/."""
-        monkeypatch.chdir(tmp_path)
-        config: dict[str, Any] = {"logging": {"level": "INFO", "file": "logs/app.log"}}
-
-        _configure(config)
-
-        assert _file_handler_path() == (tmp_path / "logs" / "app.log").resolve()
+    """The FileHandler path is confined to the data/logs/ directory."""
 
     @pytest.mark.parametrize(
         "section",
@@ -198,7 +184,7 @@ class TestConfigureLoggingContainment:
 
         assert (
             _file_handler_path()
-            == (tmp_path / "logs" / "recommendations.log").resolve()
+            == (tmp_path / "data" / "logs" / "recommendations.log").resolve()
         )
         assert logging.getLogger().level == logging.INFO
 
@@ -228,7 +214,7 @@ class TestConfigureLoggingContainment:
         """
         monkeypatch.chdir(tmp_path)
 
-        _configure({"logging": {"level": level, "file": "logs/app.log"}})
+        _configure({"logging": {"level": level, "file": "data/logs/app.log"}})
 
         assert logging.getLogger().level == logging.INFO
         # One phrase, not two substrings: separately they pass on a file
@@ -258,19 +244,21 @@ class TestConfigureLoggingContainment:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         storage.settings.set("logging.file", "logs/../../evil.log")
 
-        config: dict[str, Any] = {"logging": {"level": "INFO", "file": "logs/app.log"}}
+        config: dict[str, Any] = {"logging": {"file": "data/logs/app.log"}}
         migrate_config_settings(config, storage)
 
-        # The overlay applied the stored value verbatim — no re-validation.
-        assert config["logging"]["file"] == "logs/../../evil.log"
+        # Relocated by the overlay, never re-validated by it.
+        assert config["logging"]["file"] == "data/logs/../../evil.log"
 
         _configure(config)
 
         assert (
             _file_handler_path()
-            == (tmp_path / "logs" / "recommendations.log").resolve()
+            == (tmp_path / "data" / "logs" / "recommendations.log").resolve()
         )
-        assert not (tmp_path.parent / "evil.log").exists()
+        assert not (tmp_path / "evil.log").exists()
+        # Unwarned, the operator tails the path they configured and sees nothing.
+        assert "resolves outside the data/logs/ directory" in _written()
 
 
 class TestSafeLogPath:
@@ -278,21 +266,22 @@ class TestSafeLogPath:
 
     Load-bearing for the inputs that pattern never sees: an unvalidated
     ``config.yaml``, a row persisted before the ``..`` lookahead, and a symlink
-    under ``logs/``.
+    under ``data/logs/``.
     """
 
-    def test_path_inside_logs_is_returned_resolved(self) -> None:
-        assert _safe_log_path("logs/app.log")[0] == (Path("logs") / "app.log").resolve()
+    def test_path_inside_the_base_is_returned_resolved(self) -> None:
+        inside = _LOG_BASE_DIR / "app.log"
+        assert _safe_log_path(str(inside))[0] == inside.resolve()
 
     @pytest.mark.parametrize(
         "escaping",
         [
-            "logs/../../../tmp/pwned.log",
+            "data/logs/../../../tmp/pwned.log",
             "/etc/cron.d/evil.log",
         ],
     )
-    def test_path_escaping_logs_falls_back_to_the_default(self, escaping: str) -> None:
-        """Anything resolving outside logs/ falls back — fail safe, never write.
+    def test_an_escaping_path_falls_back_to_the_default(self, escaping: str) -> None:
+        """Anything resolving outside the base falls back — fail safe, never write.
 
         Unreachable from the Settings API now, but a hand-edited
         ``config.yaml`` is unvalidated and a row predating the ``..`` lookahead
@@ -307,25 +296,25 @@ class TestSafeLogPath:
 
         Regression: it returned ``Path(default_of(...)).resolve()``, and
         ``resolve`` follows symlinks — so planting the default log file as a
-        link out of ``logs/`` redirected every refused path. Now built from the
+        link out of the base redirected every refused path. Now built from the
         base.
         """
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").mkdir()
+        (tmp_path / _LOG_BASE_DIR).mkdir(parents=True)
         outside = tmp_path / "outside"
         outside.mkdir()
         default_name = Path(default_of("logging.file")).name
-        (tmp_path / "logs" / default_name).symlink_to(outside / "pwned.log")
+        (tmp_path / _LOG_BASE_DIR / default_name).symlink_to(outside / "pwned.log")
 
-        fallback = _safe_log_path("logs/../../evil.log")[0]
+        fallback = _safe_log_path("data/logs/../../evil.log")[0]
 
         assert _LOG_BASE_DIR.resolve() in fallback.parents
         assert fallback != (outside / "pwned.log").resolve()
 
-    def test_the_logs_directory_itself_is_refused(
+    def test_the_base_directory_itself_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``file: logs`` names the directory, which is never a valid log file.
+        """``file: data/logs`` names the directory, never a valid log file.
 
         Regression: containment accepted ``resolved == base``, so the
         FileHandler opened on a directory and raised inside ``create_app``'s
@@ -333,53 +322,53 @@ class TestSafeLogPath:
         """
         monkeypatch.chdir(tmp_path)
 
-        fallback = _safe_log_path("logs")[0]
+        fallback = _safe_log_path("data/logs")[0]
 
         assert fallback != _LOG_BASE_DIR.resolve()
         assert _LOG_BASE_DIR.resolve() in fallback.parents
 
-    def test_symlink_out_of_logs_is_refused(
+    def test_symlink_out_of_the_base_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The third input the pattern cannot see.
 
-        ``logs/app.log`` satisfies the pattern completely. If it is a symlink,
-        containment is the only thing between a network-set value and an
-        arbitrary file opened for append.
+        ``data/logs/app.log`` satisfies the pattern completely. If it is a
+        symlink, containment is the only thing between a network-set value and
+        an arbitrary file opened for append.
         """
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").mkdir()
+        (tmp_path / _LOG_BASE_DIR).mkdir(parents=True)
         outside = tmp_path / "outside"
         outside.mkdir()
-        (tmp_path / "logs" / "app.log").symlink_to(outside / "pwned.log")
+        (tmp_path / _LOG_BASE_DIR / "app.log").symlink_to(outside / "pwned.log")
 
         # The RESOLVED path is what is compared: a check written against the
         # unresolved string would pass this.
-        resolved = _safe_log_path("logs/app.log")[0]
+        resolved = _safe_log_path("data/logs/app.log")[0]
 
         assert resolved != (outside / "pwned.log").resolve()
         assert resolved == Path(default_of("logging.file")).resolve()
 
 
-def _logs_is_a_file(tmp_path: Path) -> None:
+def _the_data_directory_is_a_file(tmp_path: Path) -> None:
     """``mkdir`` is what refuses: nothing has been built yet."""
-    (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+    (tmp_path / "data").write_text("not a directory", encoding="utf-8")
 
 
 def _the_log_file_is_a_directory(tmp_path: Path) -> None:
     """Contained by ``_safe_log_path`` and still unopenable: ``IsADirectoryError``."""
-    (tmp_path / "logs" / "app.log").mkdir(parents=True)
+    (tmp_path / _LOG_BASE_DIR / "app.log").mkdir(parents=True)
 
 
-#: Every shape a ``logs/app.log`` this process cannot open comes in.
+#: Every shape a ``data/logs/app.log`` this process cannot open comes in.
 _REFUSALS = {
-    "logs-is-a-file": _logs_is_a_file,
+    "data-is-a-file": _the_data_directory_is_a_file,
     "the-log-file-is-a-directory": _the_log_file_is_a_directory,
 }
 
 
 class TestAnUnopenableDestinationLeavesTheRootLoggerAloneRegression:
-    """Reported by QA: an unwritable ``logs/`` killed every CLI command.
+    """Reported by QA: an unwritable log directory killed every CLI command.
 
     Bug: handlers were attached as built, so a refused open left the root
     logger stripped.
@@ -403,7 +392,7 @@ class TestAnUnopenableDestinationLeavesTheRootLoggerAloneRegression:
         level_before = root.level
 
         with pytest.raises(OSError):
-            _configure({"logging": {"level": "DEBUG", "file": "logs/app.log"}})
+            _configure({"logging": {"level": "DEBUG", "file": "data/logs/app.log"}})
 
         # Anchors the comparison: an empty list would match a stripped logger.
         assert sentinel in handlers_before
@@ -437,7 +426,7 @@ class TestTheConsoleCanBeDeniedExceptionTextRegression:
     ) -> io.StringIO:
         console = io.StringIO()
         _configure(
-            {"logging": {"level": "INFO", "file": "logs/app.log"}},
+            {"logging": {"level": "INFO", "file": "data/logs/app.log"}},
             console=console,
             console_tracebacks=console_tracebacks,
         )
@@ -506,7 +495,7 @@ class TestTheConsoleKeepsARecordItsCodecCannotEncodeRegression:
         # so cannot see this bug.
         console = io.TextIOWrapper(raw, encoding="utf-8")
         _configure(
-            {"logging": {"level": "INFO", "file": "logs/app.log"}}, console=console
+            {"logging": {"level": "INFO", "file": "data/logs/app.log"}}, console=console
         )
 
         logging.getLogger("tests.console_encoding").info("Scanning %s", self._SCANNED)
@@ -529,7 +518,7 @@ class TestTheConsoleKeepsARecordItsCodecCannotEncodeRegression:
         raw = io.BytesIO()
         console = io.TextIOWrapper(raw, encoding="ascii")
         _configure(
-            {"logging": {"level": "INFO", "file": "logs/app.log"}}, console=console
+            {"logging": {"level": "INFO", "file": "data/logs/app.log"}}, console=console
         )
 
         logging.getLogger("tests.console_encoding").info("Imported %s", "Pokémon Red")
@@ -566,7 +555,8 @@ class TestTheTransportsStayQuietWhenTheLevelIsDebugRegression:
         for transport in _QUIETED_TRANSPORTS:
             logging.getLogger(transport).setLevel(logging.NOTSET)
         _configure(
-            {"logging": {"level": "DEBUG", "file": "logs/app.log"}}, console=console
+            {"logging": {"level": "DEBUG", "file": "data/logs/app.log"}},
+            console=console,
         )
 
     @pytest.mark.parametrize(

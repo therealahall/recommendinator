@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from src.utils.logging import _LOG_BASE_DIR
 from src.web import healthcheck
 
 # parents[2] resolves /tests/docker/test_compose.py -> repo root.
@@ -44,8 +44,6 @@ DEFAULT_MAPPING = "127.0.0.1:18473:8000"
 # The host part of that mapping: what an operator overrides to publish any
 # further than this machine.
 LOOPBACK_PREFIX = "127.0.0.1:"
-
-LOG_MOUNT = "./logs:/app/logs"
 
 # The two forms this file uses, which differ on an empty value —
 # APP_BIND_PREFIX relies on that. `${NAME}` and `${NAME:?err}` would be left
@@ -172,19 +170,10 @@ class TestComposeDefaultPortMapping:
 
 
 class TestTheApplicationLogOutlivesTheContainer:
-    def test_the_log_directory_is_bind_mounted(self) -> None:
-        assert LOG_MOUNT in _services()[APP_SERVICE]["volumes"]
+    def test_the_log_directory_rides_a_mount_the_deployment_already_has(self) -> None:
+        root = _LOG_BASE_DIR.parts[0]
 
-    def test_a_fresh_clone_gets_the_bind_source(self) -> None:
-        """Docker root-owns a missing one, and create_app raises on it."""
-        keepfile = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "logs/.gitkeep"],
-            cwd=_REPO_ROOT,
-            check=False,
-        )
-
-        # Tracked, not merely present: an ignored one is checked out by nobody.
-        assert keepfile.returncode == 0
+        assert f"./{root}:/app/{root}" in _services()[APP_SERVICE]["volumes"]
 
 
 class TestTheTimezoneOverrideReachesTheContainer:

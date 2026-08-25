@@ -87,7 +87,7 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _config_that_warns_at_boot("logs/cli.log"),
+            _config_that_warns_at_boot("data/logs/cli.log"),
             ["status", "--format", "json"],
         )
 
@@ -96,7 +96,7 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         # Anchors the assertion above: without a record on the wire it holds
         # over an invocation that logged nothing at all.
         assert _BOOT_WARNING in result.stderr
-        assert _BOOT_WARNING in (tmp_path / "logs" / "cli.log").read_text(
+        assert _BOOT_WARNING in (tmp_path / "data" / "logs" / "cli.log").read_text(
             encoding="utf-8"
         )
 
@@ -110,7 +110,10 @@ def test_the_log_level_comes_from_the_settings_table(
     monkeypatch.chdir(tmp_path)
 
     result = _invoke_with_real_logging(
-        CliRunner(), storage, _config_that_warns_at_boot("logs/cli.log"), ["status"]
+        CliRunner(),
+        storage,
+        _config_that_warns_at_boot("data/logs/cli.log"),
+        ["status"],
     )
 
     assert result.exit_code == 0, result.output
@@ -143,7 +146,7 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _log_to("logs/cli.log"),
+            _log_to("data/logs/cli.log"),
             ["recommend", "--type", "book"],
             engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
@@ -152,13 +155,13 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         assert "Check logs for details" in result.stderr
         # The data channel stays empty on the failure path too.
         assert result.stdout == ""
-        written = (tmp_path / "logs" / "cli.log").read_text(encoding="utf-8")
+        written = (tmp_path / "data" / "logs" / "cli.log").read_text(encoding="utf-8")
         assert RECOMMEND_FAILED in written
         assert "RuntimeError: the library is unreadable" in written
 
 
 class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
-    """Reported by QA: an unwritable ``logs/`` killed every CLI command.
+    """Reported by QA: an unwritable log directory killed every CLI command.
 
     Bug: the configure call sat inside the callback's ``except Exception``, so
     a refusal read as "Error initializing components".
@@ -177,13 +180,13 @@ class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
         clean, which is what makes ``--format json`` survive the degraded run.
         """
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+        (tmp_path / "data").write_text("not a directory", encoding="utf-8")
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _log_to("logs/cli.log"),
+            _log_to("data/logs/cli.log"),
             ["status", "--format", "json"],
         )
 
@@ -192,7 +195,7 @@ class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
         reported = result.stderr.splitlines()
         assert len(reported) == 1
         assert reported[0].startswith("Warning: no log file for this run: ")
-        assert str((tmp_path / "logs").resolve()) in reported[0]
+        assert str((tmp_path / "data" / "logs").resolve()) in reported[0]
 
 
 class TestTheConsoleWithholdsTracebacksRegression:
@@ -215,7 +218,7 @@ class TestTheConsoleWithholdsTracebacksRegression:
         result = _invoke_with_real_logging(
             CliRunner(mix_stderr=False),
             storage,
-            _log_to("logs/cli.log"),
+            _log_to("data/logs/cli.log"),
             ["recommend", "--type", "book"],
             engine=_failing_engine(RuntimeError("the library is unreadable")),
         )
@@ -225,5 +228,5 @@ class TestTheConsoleWithholdsTracebacksRegression:
         assert "the library is unreadable" not in result.stderr
         # Anchors both: the record carried a traceback for the console to drop.
         assert "Traceback (most recent call last):" in (
-            tmp_path / "logs" / "cli.log"
+            tmp_path / "data" / "logs" / "cli.log"
         ).read_text(encoding="utf-8")

@@ -9,7 +9,7 @@ Python wheel ecosystem is too thin there. It lives in
 ## Quick start
 
 ```bash
-mkdir -p recommendinator/{config,data,inputs,logs}
+mkdir -p recommendinator/{config,data,inputs}
 cd recommendinator
 
 docker run -d \
@@ -18,7 +18,6 @@ docker run -d \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/inputs:/app/inputs:ro" \
-  -v "$(pwd)/logs:/app/logs" \
   --restart unless-stopped \
   ghcr.io/therealahall/recommendinator:latest
 ```
@@ -39,7 +38,7 @@ Compose is the cleaner path on a busy host: the volumes, the port and the
 hardening options live in a file rather than in your shell history.
 
 ```bash
-mkdir -p recommendinator/{config,data,inputs,logs}
+mkdir -p recommendinator/{config,data,inputs}
 cd recommendinator
 curl -L https://github.com/therealahall/recommendinator/releases/latest/download/docker-compose.yml \
   -o docker-compose.yml
@@ -69,17 +68,10 @@ services:
       - ./data:/app/data
       - ./inputs:/app/inputs:ro
       - ./private:/app/private:ro   # optional
-      - ./logs:/app/logs
     restart: unless-stopped
 ```
 
 With no private plugins, leave `./private` empty or drop that volume.
-
-**Create every host directory before the first `up`.** Docker creates a missing
-one owned by `root`, and the container runs as UID 1000 — for `./logs` that
-means the app cannot open its log file and refuses to start. If your host user
-is not 1000, `chown -R 1000:1000` the directories (see
-[`permission denied`](#permission-denied-writing-to-appdata)).
 
 The service also carries `cap_drop: [ALL]` and
 `security_opt: [no-new-privileges:true]`. Every `/api` route already requires a
@@ -95,10 +87,9 @@ above 1024.
 | Path | Mode | Holds |
 |------|------|-------|
 | `/app/config` | `rw` | `config.yaml`, created from `example.yaml` on first run and never overwritten. Edit it on the host. |
-| `/app/data` | `rw` | SQLite database, credential key, cache. **This is the volume to back up.** |
+| `/app/data` | `rw` | SQLite database, credential key, cache, and `logs/recommendations.log`. **This is the volume to back up.** |
 | `/app/inputs` | `ro` | Directories a source scans. Imports are uploaded, not mounted. |
 | `/app/private` | `ro` | Optional private plugin code and themes. |
-| `/app/logs` | `rw` | `recommendations.log`. Unmounted it dies with the container, and it is the only place a sync failure's real cause is written. |
 
 ### Ports
 
@@ -202,11 +193,11 @@ docker pull --platform linux/arm64 ghcr.io/therealahall/recommendinator:latest
 ### A sync failed and the UI only says "Sync failed"
 
 The messages the UI and CLI show are sanitised, because a plugin fault can quote
-an API key. The cause, with its traceback, is in `./logs/recommendations.log` on
-the host:
+an API key. The cause, with its traceback, is in
+`./data/logs/recommendations.log` on the host:
 
 ```bash
-tail -f logs/recommendations.log
+tail -f data/logs/recommendations.log
 ```
 
 Each entry names the host that wrote it, in the field after the timestamp — the
@@ -246,11 +237,11 @@ The container runs as non-root. On hosts with a restrictive umask or SELinux,
 chown the host directories:
 
 ```bash
-chown -R 1000:1000 ./data ./config ./logs
+chown -R 1000:1000 ./data ./config
 ```
 
-An unwritable `./logs` stops the app starting rather than degrading it: a server
-with nowhere to log serves unlogged for weeks otherwise.
+An unwritable `./data` stops the app starting rather than degrading it: a server
+that can neither store nor log anything serves broken for weeks otherwise.
 
 If 1000 is wrong, `docker exec <container> id appuser` gives you the real UID.
 

@@ -62,7 +62,7 @@ class TestPluginLocalIsolationRegression:
         handlers_before = list(root_logger.handlers)
 
         log_config.configure_logging(
-            {"logging": {"file": "logs/recommendations.log"}},
+            {"logging": {"file": "data/logs/recommendations.log"}},
             console_stream=sys.stdout,
             console_tracebacks=True,
             console_floor=logging.NOTSET,

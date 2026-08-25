@@ -104,7 +104,7 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
                 console_floor=logging.WARNING,
             )
         except OSError as error:
-            # `logs/` is routinely a bind mount the web container owns, and the
+            # `data/` is routinely a bind mount the web container owns, and the
             # CLI is run by someone else. Losing the log is not losing the
             # command, so this reports and carries on rather than exiting 1.
             click.echo(
