@@ -474,7 +474,7 @@ def execute_multi_source_sync(
             # Ours, and written for the operator: it names the setting to
             # change. Every plugin whose credential rides in the url scrubs
             # the request fault before wording one of these.
-            logger.error(
+            logger.exception(
                 "[SYNC] Sync failed for %s: %s",
                 safe_plugin_name,
                 exception_for_log(error),
@@ -486,8 +486,9 @@ def execute_multi_source_sync(
         except Exception as error:
             # See sibling note in execute_sync: keep raw exception text
             # out of result.errors. Plugin failures can include
-            # credential bytes in their messages.
-            logger.error(
+            # credential bytes in their messages. The traceback rides the
+            # record instead, since a bug here has no other diagnosable trace.
+            logger.exception(
                 "[SYNC] Sync failed for %s: %s",
                 safe_plugin_name,
                 exception_for_log(error),
