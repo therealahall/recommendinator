@@ -59,10 +59,11 @@ make check
 ```
 
 It runs Black, Ruff, MyPy, pytest, the same four over `private/` when you have
-one, then `vue-tsc` and Vitest, installing the frontend dependencies first when
-`node_modules` is missing — a fresh clone or worktree needs no separate `pnpm
-install`. When you run one of those tools directly, spell the interpreter
-`python3.11`, never bare `python` or `python3`.
+one, then `vue-tsc` and Vitest. Both dependency sets are installed first when
+they are missing, so a fresh clone or worktree needs no separate `uv sync` or
+`pnpm install`, and the Python tools run against exactly what `uv.lock` pins
+rather than whatever is on your `PATH`. When you run one of those tools
+directly, spell the interpreter `python3.11`, never bare `python` or `python3`.
 
 CI runs the same command and reports it as one status, `check / check`. That
 name is new — the gate moved into a reusable workflow — so branch protection
