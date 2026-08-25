@@ -1,14 +1,8 @@
 name: Dependency audit
 
-# Deliberately not a step in quality-gate.yml. That workflow also gates the tag
-# push, through docker.yml's verify job, so an advisory published between merge
-# and release — or an advisory feed that is merely down — would stop the image
-# being built for a commit CI already passed. An advisory is news about code
-# that merged days ago; it belongs on its own trigger.
-#
-# The weekly run is how news reaches anyone without a code change: its failure
-# mails whoever last edited the cron below, which is the only notification a
-# scheduled run has.
+# Not a step in quality-gate.yml: that gates the tag push too, so a fresh
+# advisory — or a feed merely down — would withhold the image for a commit CI
+# already passed. An advisory is news about code that merged days ago.
 on:
   pull_request:
     branches: [main]
@@ -35,24 +29,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Extras included: a vulnerable dev tool still runs on this runner and on
-      # every contributor's machine. Hashes are omitted because the audit below
-      # resolves nothing that could verify them.
+      # Extras included: a vulnerable dev tool still runs on this runner.
       - name: Export what uv.lock pins
         run: uv export --locked --all-extras --no-emit-project --no-hashes --output-file requirements-audit.txt
 
-      # No severity floor here, unlike the frontend: PyPI advisories often carry
-      # no severity at all, so filtering on one would wave an unrated critical
-      # through. The waiver is the release valve instead.
+      # No severity floor, unlike the frontend: PyPI advisories often carry no
+      # severity, so filtering on one waves an unrated critical through.
       - name: Audit the Python lockfile
         uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
         with:
           inputs: requirements-audit.txt
           no-deps: true
-          # An advisory with no fixed release goes here, whitespace separated,
-          # with the reason above it. The frontend's equivalent is
-          # `pnpm.auditConfig.ignoreCves` in package.json, since pnpm 9 has no
-          # flag for it.
+          # An advisory with no fixed release goes here, reason above it. The
+          # frontend's waiver is `pnpm.auditConfig.ignoreCves` in package.json.
           ignore-vulns: ""
 
   frontend:

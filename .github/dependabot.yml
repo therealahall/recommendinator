@@ -1,18 +1,14 @@
-# Grouped hard on purpose. Ungrouped, four ecosystems and every transitive pin
-# between them open tens of pull requests a week, and automation nobody reviews
-# is worse than none: one group per ecosystem, one open pull request at a time.
-# Security updates ignore that ceiling, so an advisory still gets its own pull
-# request the day it lands.
+# Grouped hard: ungrouped, four ecosystems open tens of pull requests a week,
+# and automation nobody reviews is worse than none. Security updates ignore the
+# ceiling, so an advisory still lands its own the day it arrives.
 #
-# `chore` throughout because python-semantic-release parses the type: a bumped
-# pin is not a fix to this project, and `fix` would cut a patch release
-# claiming one.
+# `chore` throughout because python-semantic-release parses the type, and `fix`
+# would cut a patch release claiming someone else's bump as ours.
 version: 2
 
 updates:
-  # Every workflow ref here is `<sha> # vX.Y.Z`. Dependabot rewrites the
-  # comment along with the sha whenever the two share a line, so the pinning
-  # convention survives its pull requests.
+  # Dependabot rewrites the `# vX.Y.Z` along with the sha when they share a
+  # line, so the pinning convention survives its pull requests.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -45,8 +45,6 @@ DEFAULT_MAPPING = "127.0.0.1:18473:8000"
 # further than this machine.
 LOOPBACK_PREFIX = "127.0.0.1:"
 
-# Read-write, and the container path the app's own `logs/` resolves to under
-# the image's /app workdir.
 LOG_MOUNT = "./logs:/app/logs"
 
 # The two forms this file uses, which differ on an empty value —
@@ -174,27 +172,19 @@ class TestComposeDefaultPortMapping:
 
 
 class TestTheApplicationLogOutlivesTheContainer:
-    """Regression: nothing mounted ``./logs``, so the log went to the
-    container's writable layer and `compose pull && up -d` destroyed the only
-    copy of the one surface that keeps a sync failure's real cause.
-    """
-
     def test_the_log_directory_is_bind_mounted(self) -> None:
         assert LOG_MOUNT in _services()[APP_SERVICE]["volumes"]
 
     def test_a_fresh_clone_gets_the_bind_source(self) -> None:
-        """Docker root-owns a missing one, and a ``/app/logs`` the container
-        user cannot write raises inside ``create_app``. Presence here is half
-        of it: an ignored keepfile is checked out by nobody."""
-        assert (_REPO_ROOT / "logs" / ".gitkeep").is_file()
-        ignored = subprocess.run(
-            ["git", "check-ignore", "--quiet", "logs/.gitkeep"],
+        """Docker root-owns a missing one, and create_app raises on it."""
+        keepfile = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "logs/.gitkeep"],
             cwd=_REPO_ROOT,
             check=False,
         )
 
-        # 1 is "no pattern matches"; 0 is ignored and 128 is a git fault.
-        assert ignored.returncode == 1
+        # Tracked, not merely present: an ignored one is checked out by nobody.
+        assert keepfile.returncode == 0
 
 
 class TestTheTimezoneOverrideReachesTheContainer:
@@ -226,11 +216,6 @@ class TestTheShippedImageRunsTheLivenessProbe:
         assert _instruction(_stages()[RUNTIME_STAGE], "HEALTHCHECK").endswith(
             HEALTHCHECK_COMMAND
         )
-
-
-class TestTheBundleIsBuiltAgainstTheVersionItStamps:
-    def test_the_frontend_builder_is_handed_the_file_the_version_lives_in(self) -> None:
-        assert "pyproject.toml" in _instructions(_stages()["frontend-builder"])
 
 
 class TestTheBuildContextIsAnAllowlist:

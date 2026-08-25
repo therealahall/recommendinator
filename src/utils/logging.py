@@ -218,9 +218,8 @@ def configure_logging(
         logging.Formatter(
             "%(asctime)s | %(origin)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
-            # The container bind-mounts the host's logs/, so its records and a
-            # host-side CLI run's share one file and only the hostname (docker
-            # gives the container its own) tells them apart.
+            # Container and host-side CLI runs share one bind-mounted file, and
+            # the hostname is what tells their records apart.
             defaults={"origin": socket.gethostname()},
         )
     )
