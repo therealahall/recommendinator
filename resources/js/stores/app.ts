@@ -15,7 +15,6 @@ const READY_POLL_MS = 300_000
 export const useAppStore = defineStore('app', () => {
   const api = useApi()
 
-  // State
   // The claimed account is always the first row, and there is nobody to switch
   // to: a second person signs in with their own credentials.
   const currentUserId = ref(1)
@@ -24,6 +23,7 @@ export const useAppStore = defineStore('app', () => {
   const version = ref('')
   const loadedVersion = ref(bundleVersion())
   const showUpdateBanner = ref(false)
+  const staleBundle = ref(false)
   const dependencyDrift = ref<PackageDrift[]>([])
   const recommendationsConfig = ref<RecommendationsConfig>({
     max_count: 20,
@@ -32,8 +32,8 @@ export const useAppStore = defineStore('app', () => {
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let polling = false
+  let versionChecked = false
 
-  // Actions
   async function fetchStatus() {
     // Claimed before the request rather than after it: a 401 mid-flight signs
     // the user out, and stopPolling() has to beat this call booking the next.
@@ -50,6 +50,8 @@ export const useAppStore = defineStore('app', () => {
           loadedVersion.value = data.version
         }
         showUpdateBanner.value = data.version !== loadedVersion.value
+        if (!versionChecked) staleBundle.value = showUpdateBanner.value
+        versionChecked = true
       }
 
       if (data.recommendations_config) {
@@ -81,16 +83,15 @@ export const useAppStore = defineStore('app', () => {
   }
 
   return {
-    // State
     currentUserId,
     status,
     statusMessage,
     version,
     loadedVersion,
     showUpdateBanner,
+    staleBundle,
     dependencyDrift,
     recommendationsConfig,
-    // Actions
     fetchStatus,
     stopPolling,
   }

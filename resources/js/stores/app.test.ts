@@ -50,6 +50,7 @@ describe('useAppStore', () => {
     await store.fetchStatus()
 
     expect(store.showUpdateBanner).toBe(true)
+    expect(store.staleBundle).toBe(true)
     expect(store.dependencyDrift).toEqual([drift])
   })
 
@@ -162,5 +163,6 @@ describe('useAppStore', () => {
     await vi.advanceTimersByTimeAsync(AN_HOUR)
 
     expect(store.showUpdateBanner).toBe(true)
+    expect(store.staleBundle).toBe(false)
   })
 })
