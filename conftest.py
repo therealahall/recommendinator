@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from src.ingestion.paths import get_allowed_source_roots, set_allowed_source_roots
+from src.utils.dependencies import dependency_drift
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", ""}
 
@@ -109,12 +110,18 @@ def _isolate_production_log_handlers() -> Iterator[None]:
 
     Patched at its one definition, the file-opening entry point both interfaces
     reach, so neither imports the name. ``configure_console_only`` opens no
-    file; a test on the CLI's degrade path takes ``restore_root_logging``.
+    file; a test on either interface's degrade path takes ``restore_root_logging``.
     """
     _remove_production_log_handlers()
     with patch("src.utils.logging.configure_logging"):
         yield
     _remove_production_log_handlers()
+
+
+@pytest.fixture(autouse=True)
+def _clear_dependency_drift_cache() -> None:
+    """Cached under one test's patched environment, it is the next test's answer."""
+    dependency_drift.cache_clear()
 
 
 @pytest.fixture(autouse=True)

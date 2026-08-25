@@ -7,7 +7,7 @@ import json
 import click
 
 from src import __version__ as APP_VERSION
-from src import dependency_drift
+from src.utils.dependencies import dependency_drift
 
 
 @click.command()

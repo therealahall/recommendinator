@@ -19,7 +19,6 @@ from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from src import log_dependency_drift
 from src.config.service import (
     create_recommendation_engine,
     create_storage_manager,
@@ -34,6 +33,7 @@ from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.schema import get_default_user_id
 from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
+from src.utils.dependencies import log_dependency_drift
 from src.utils.text import exception_for_log
 from src.web.api import APP_VERSION
 from src.web.api import router as api_router
@@ -151,15 +151,13 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         # the database wins over YAML for the rest of the process.
         migrate_config_settings(config, storage)
 
-        # Configure logging from the (now DB-overlaid) config. Reached through
-        # the module so the root conftest's patch of the one definition holds
-        # for every caller; stdout because that is what `docker logs` shows.
+        # Through the module so the root conftest's patch of the one definition
+        # holds for every caller; stdout at no floor of its own, because this
+        # server's console is its log viewer and `docker logs` is where it goes.
         log_config.configure_logging(
             config,
             console_stream=sys.stdout,
             console_tracebacks=True,
-            # A server's console is its log viewer, so it takes what
-            # ``logging.level`` names rather than a floor of its own.
             console_floor=logging.NOTSET,
         )
         # Left to the caller that runs a server: neither library is on the
