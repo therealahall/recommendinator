@@ -239,7 +239,7 @@ uv sync --locked
 - [ ] `config/config.yaml` is git-ignored and `0600`
 - [ ] The web account is claimed, with a password only you know
 - [ ] API keys are not in code
-- [ ] `logs/` is treated as sensitive and not shipped anywhere
+- [ ] `data/logs/` is treated as sensitive and not shipped anywhere
 - [ ] Database file has restricted permissions
 - [ ] Web interface on localhost (Docker's default), or behind a TLS proxy
 - [ ] Docker containers run as a non-root user

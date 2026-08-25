@@ -100,6 +100,18 @@ class TestMigrateConfigSettings:
         # Still no writes — only the pre-existing leaf lives in the DB.
         assert storage.settings.list() == {"recommendations.default_count": 9}
 
+    def test_a_stored_log_path_follows_the_log_out_of_its_old_directory(
+        self, storage: StorageManager
+    ) -> None:
+        """An upgraded install still names ``logs/``, which no longer validates
+        and which containment would discard for the default on every boot."""
+        storage.settings.set("logging.file", "logs/mine.log")
+        config: dict[str, Any] = {}
+
+        migrate_config_settings(config, storage)
+
+        assert config["logging"]["file"] == "data/logs/mine.log"
+
     def test_out_of_scope_sections_untouched(self, storage: StorageManager) -> None:
         """The ``storage`` and ``inputs`` sections are left exactly as-is."""
         config: dict[str, Any] = {

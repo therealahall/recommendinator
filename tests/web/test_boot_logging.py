@@ -27,8 +27,8 @@ class TestAnUnopenableLogAbortsTheBoot:
         restore_root_logging: None,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
-        config: dict[str, Any] = {"logging": {"file": "logs/app.log"}}
+        (tmp_path / "data").write_text("not a directory", encoding="utf-8")
+        config: dict[str, Any] = {"logging": {"file": "data/logs/app.log"}}
 
         with (
             patch("src.utils.logging.configure_logging", configure_logging),

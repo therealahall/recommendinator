@@ -69,6 +69,22 @@ SENSITIVE_LEAF_KEYS: frozenset[str] = frozenset(
 )
 
 
+#: Where ``logging.file`` pointed before the log moved under the ``data/`` mount.
+_PRE_MOVE_LOG_DIR = "logs/"
+
+
+def _relocate_pre_move_log_file(section: dict[str, Any]) -> None:
+    """Carry a ``logs/x.log`` an upgrade left behind under ``data/``.
+
+    Nothing rewrites the row or the YAML holding it, so otherwise containment
+    discards that file name for the default on every boot while the Settings
+    page still shows the old path.
+    """
+    configured = section.get("file")
+    if isinstance(configured, str) and configured.startswith(_PRE_MOVE_LOG_DIR):
+        section["file"] = f"data/{configured}"
+
+
 def migrate_config_settings(
     config: dict[str, Any],
     storage: StorageManager,
@@ -121,4 +137,6 @@ def migrate_config_settings(
             rel_path = tuple(db_key[len(section_prefix) :].split("."))
             set_leaf(merged, rel_path, db_value)
 
+        if section == "logging":
+            _relocate_pre_move_log_file(merged)
         config[section] = merged

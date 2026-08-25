@@ -90,8 +90,8 @@ RUN chmod +x /app/docker/entrypoint.sh
 COPY --from=frontend-builder --chown=appuser:appuser /app/src/web/static/dist/ ./src/web/static/dist/
 
 # Create directories for data and inputs
-RUN mkdir -p data inputs config logs && \
-    chown -R appuser:appuser data inputs config logs
+RUN mkdir -p data inputs config && \
+    chown -R appuser:appuser data inputs config
 
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"

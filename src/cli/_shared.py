@@ -45,7 +45,7 @@ def report_failure(
     """Refuse in the web's words, keeping the fault's own out of the terminal.
 
     Root ``--verbose`` is for the operator whose log file is unreadable — a
-    root-owned ``logs/`` bind mount, say. It adds the message, never the
+    root-owned ``data/`` bind mount, say. It adds the message, never the
     traceback.
     """
     logger.error("%s", message, exc_info=True)

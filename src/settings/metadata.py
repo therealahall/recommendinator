@@ -353,15 +353,14 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
     _entry(
         "logging.file",
         label="Log file",
-        help="Path to the application log file; must sit under logs/ (e.g. logs/recommendations.log).",
+        help="Path to the application log file; must sit under data/logs/ (e.g. data/logs/recommendations.log).",
         type="string",
-        default="logs/recommendations.log",
+        default="data/logs/recommendations.log",
         # The negative lookahead rejects `..` at the API boundary. Without it the
-        # char class admits `.` and `/`, so `logs/../../tmp/x.log` validated,
-        # persisted, and rendered as the effective log file — then got silently
-        # discarded at boot by _safe_log_path, with the warning written to the
-        # log the user was trying to repoint. Both layers now agree.
-        validation=Validation(pattern=r"logs/(?!.*\.\.)[A-Za-z0-9_.\-/]+\.log"),
+        # char class admits `.` and `/`, so `data/logs/../x.log` validated and
+        # rendered as the effective log file while _safe_log_path silently
+        # discarded it at boot. Both layers now agree.
+        validation=Validation(pattern=r"data/logs/(?!.*\.\.)[A-Za-z0-9_.\-/]+\.log"),
         restart_required=True,
         advanced=True,
     ),

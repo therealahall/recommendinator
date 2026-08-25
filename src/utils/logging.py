@@ -16,10 +16,10 @@ from src.utils.text import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
-# Every log file must live under this directory. ``logging.file`` is settable
-# over the network Settings API, so a resolved path escaping this base is
-# refused before a FileHandler ever opens it (see ``_safe_log_path``).
-_LOG_BASE_DIR = Path("logs")
+# Every log file lives here, inside ``data/`` — whose bind mount already carries
+# it to the host. ``logging.file`` is network-settable, so a path escaping this
+# base is refused before a FileHandler opens it (see ``_safe_log_path``).
+_LOG_BASE_DIR = Path("data/logs")
 
 # The authoritative name -> level map, minus NOTSET. ``logging.NOTSET`` is a
 # real name in that mapping but not a usable threshold: the root logger has no
@@ -56,36 +56,23 @@ class _OneLineFormatter(logging.Formatter):
 
 
 def _safe_log_path(log_file: str) -> tuple[Path, str | None]:
-    """Resolve *log_file*, refusing any path that escapes the ``logs/`` directory.
+    """Resolve *log_file*, refusing any path escaping ``data/logs/``.
 
-    ``logging.file`` is a network-settable string. The registry ``pattern`` now
-    rejects traversal and absolute paths at the Settings API, but this backstop
-    is still load-bearing, for three inputs the pattern never sees:
-    ``config.yaml`` is unvalidated; rows persisted before the pattern gained its
-    ``..`` lookahead still overlay onto config at boot without re-validation; and
-    a symlink planted under ``logs/`` satisfies any pattern. Any path resolving
-    outside ``logs/`` falls back to the registry default's file name inside
-    ``logs/``, so logging never writes to an arbitrary location (fail safe).
-
-    Args:
-        log_file: Configured log file path (relative or absolute).
-
-    Returns:
-        The resolved, contained path — the registry default's file name under
-        ``logs/`` when the configured one escapes — and the fallback its caller
-        reports once the handlers exist.
+    The backstop behind the registry pattern, for what it cannot see: an
+    unvalidated ``config.yaml``, a row predating the ``..`` lookahead, a
+    symlink. An escaper takes the default's name inside the base.
     """
     base = _LOG_BASE_DIR.resolve()
     resolved = Path(log_file).resolve()
-    # ``base`` itself is excluded deliberately: `file: logs` names the directory,
-    # which FileHandler cannot open (IsADirectoryError), not a log file.
+    # ``base`` itself is excluded deliberately: it names the directory, which
+    # FileHandler cannot open (IsADirectoryError), not a log file.
     if base in resolved.parents:
         return resolved, None
     # Built from ``base`` rather than resolving the default, so the fail-safe
     # branch cannot itself escape — via an absolute registry default or a
     # symlinked default file.
     return base / Path(default_of("logging.file")).name, (
-        f"Log file {log_file!r} resolves outside the logs/ directory; "
+        f"Log file {log_file!r} resolves outside the data/logs/ directory; "
         "using the default."
     )
 
@@ -115,7 +102,7 @@ def _resolve_level(section: dict[str, Any]) -> tuple[int, list[str]]:
 
 
 def _resolve_path(section: dict[str, Any]) -> tuple[Path, list[str]]:
-    """Resolve ``logging.file`` and contain it under logs/, with its fallbacks."""
+    """Resolve ``logging.file`` and contain it under the base, with its fallbacks."""
     fallbacks: list[str] = []
 
     raw_file = section.get("file", default_of("logging.file"))

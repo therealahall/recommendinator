@@ -54,7 +54,7 @@ def config() -> dict[str, Any]:
     """
     return {
         "recommendations": {"default_count": 5, "max_count": 20},
-        "logging": {"level": "INFO", "file": "logs/recommendations.log"},
+        "logging": {"level": "INFO", "file": "data/logs/recommendations.log"},
     }
 
 
@@ -337,7 +337,7 @@ class TestCoerceAndValidate:
     def test_logging_file_pattern_rejects_absolute_traversal_and_non_logs_paths(
         self,
     ) -> None:
-        """logging.file only accepts a contained ``logs/*.log`` path.
+        """logging.file only accepts a contained ``data/logs/*.log`` path.
 
         Traversal is rejected HERE now, by a negative lookahead. It previously
         validated and was caught later by ``src.utils.logging._safe_log_path``, which
@@ -348,14 +348,15 @@ class TestCoerceAndValidate:
         """
         entry = _entry("logging.file")
 
-        assert coerce_and_validate(entry, "logs/app.log") == "logs/app.log"
-        assert coerce_and_validate(entry, "logs/sub/app.log") == "logs/sub/app.log"
+        for good in ("data/logs/app.log", "data/logs/sub/app.log"):
+            assert coerce_and_validate(entry, good) == good
         for bad in (
             "/etc/cron.d/evil",
             "/var/log/app.log",
             "secrets/app.txt",
-            "logs/../../../tmp/pwned.log",
-            "logs/../secrets.log",
+            "logs/recommendations.log",
+            "data/logs/../../../tmp/pwned.log",
+            "data/logs/../secrets.log",
         ):
             with pytest.raises(SettingsValidationError):
                 coerce_and_validate(entry, bad)

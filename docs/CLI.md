@@ -19,7 +19,7 @@ The trade: a file path in that shape is refused as missing.
 
 Tracebacks are written to the log file only. On the console a command prints
 its own error line, which is why several of them say to check the log. If the
-log file cannot be opened at all — a root-owned `logs/` bind mount, say — the
+log file cannot be opened at all — a root-owned `data/` bind mount, say — the
 command says so once on stderr and runs anyway, with its warnings and errors on
 stderr, tracebacks still withheld, and nothing on disk.
 
