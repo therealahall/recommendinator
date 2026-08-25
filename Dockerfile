@@ -20,7 +20,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Copy frontend source files
-COPY index.html vite.config.ts tsconfig.json env.d.ts ./
+COPY index.html vite.config.ts tsconfig.json env.d.ts pyproject.toml ./
 COPY resources/ ./resources/
 
 # Build the frontend (vue-tsc + vite build -> src/web/static/dist/)

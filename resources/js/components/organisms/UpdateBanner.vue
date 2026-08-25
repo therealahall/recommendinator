@@ -13,4 +13,7 @@ function reload() {
     A new version is available.
     <button class="btn btn-secondary btn-small" @click="reload">Reload</button>
   </div>
+  <div v-if="app.dependencyDrift.length" class="update-banner visible" role="status">
+    Dependency drift: {{ app.dependencyDrift.map((entry) => entry.message).join('; ') }}
+  </div>
 </template>

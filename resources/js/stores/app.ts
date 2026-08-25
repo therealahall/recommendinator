@@ -1,7 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi } from '@/composables/useApi'
-import type { StatusResponse, RecommendationsConfig } from '@/types/api'
+import type { StatusResponse, RecommendationsConfig, PackageDrift } from '@/types/api'
+
+function bundleVersion(): string {
+  return typeof __BUNDLE_VERSION__ === 'string' ? __BUNDLE_VERSION__ : ''
+}
 
 // A backend that is still coming up is worth asking again shortly; once it is
 // ready the same call is only watching for a version it was not built against.
@@ -18,8 +22,9 @@ export const useAppStore = defineStore('app', () => {
   const status = ref<'loading' | 'ready' | 'error'>('loading')
   const statusMessage = ref('')
   const version = ref('')
-  const loadedVersion = ref('')
+  const loadedVersion = ref(bundleVersion())
   const showUpdateBanner = ref(false)
+  const dependencyDrift = ref<PackageDrift[]>([])
   const recommendationsConfig = ref<RecommendationsConfig>({
     max_count: 20,
     default_count: 5,
@@ -50,6 +55,8 @@ export const useAppStore = defineStore('app', () => {
       if (data.recommendations_config) {
         recommendationsConfig.value = data.recommendations_config
       }
+
+      dependencyDrift.value = data.dependency_drift ?? []
     } catch {
       status.value = 'error'
       statusMessage.value = 'Failed to connect to server'
@@ -81,6 +88,7 @@ export const useAppStore = defineStore('app', () => {
     version,
     loadedVersion,
     showUpdateBanner,
+    dependencyDrift,
     recommendationsConfig,
     // Actions
     fetchStatus,

@@ -7,6 +7,7 @@ import json
 import click
 
 from src import __version__ as APP_VERSION
+from src import dependency_drift
 
 
 @click.command()
@@ -39,6 +40,7 @@ def status(ctx: click.Context, output_format: str) -> None:
 
     all_ready = all(components.values())
     status_str = "ready" if all_ready else "initializing"
+    drift = dependency_drift()
 
     if output_format == "json":
         output = {
@@ -46,6 +48,7 @@ def status(ctx: click.Context, output_format: str) -> None:
             "version": APP_VERSION,
             "components": components,
             "recommendations_config": recommendations_config,
+            "dependency_drift": [entry.model_dump() for entry in drift],
         }
         click.echo(json.dumps(output, indent=2))
     else:
@@ -55,6 +58,11 @@ def status(ctx: click.Context, output_format: str) -> None:
         for name, ready in components.items():
             label = "ready" if ready else "not available"
             click.echo(f"  {name}: {label}")
+
+        if drift:
+            click.echo("\nDependency drift:")
+            for entry in drift:
+                click.echo(f"  {entry.message}")
 
         click.echo(
             f"\nRecommendations: max={recommendations_config['max_count']}, "

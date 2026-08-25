@@ -1,10 +1,13 @@
 """Tests for CLI status command."""
 
 import json
-from unittest.mock import MagicMock
+import logging
+from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
+from src import PackageDrift
 from src import __version__ as APP_VERSION
 from src.cli.main import cli
 from src.recommendations.engine import RecommendationEngine
@@ -38,13 +41,13 @@ def _status_invoke(
         return cli_runner.invoke(cli, args or ["status"])
 
 
-def _web_status_version() -> str:
-    """Return the version GET /api/status serves for this tree."""
+def _web_status() -> dict:
+    """Return the body GET /api/status serves for this tree."""
     storage = MagicMock(spec=StorageManager)
     with booted_web_app(
         storage, {}, engine=MagicMock(spec=RecommendationEngine)
     ) as app:
-        return str(authenticated_client(app).get("/api/status").json()["version"])
+        return dict(authenticated_client(app).get("/api/status").json())
 
 
 class TestStatusTable:
@@ -78,6 +81,7 @@ class TestStatusJson:
             "version",
             "components",
             "recommendations_config",
+            "dependency_drift",
         }
         assert data["status"] == "ready"
         assert set(data["components"].keys()) == {"engine", "storage"}
@@ -88,12 +92,22 @@ class TestStatusJson:
         assert data["recommendations_config"]["default_count"] == 3
 
 
-class TestStatusVersion:
-    """Both interfaces serve the version src/__init__.py resolves."""
-
-    def test_status_json_version_matches_web_status_endpoint(
-        self, cli_runner: CliRunner
+class TestStatusParity:
+    def test_the_cli_serves_what_the_web_status_endpoint_does(
+        self, cli_runner: CliRunner, caplog: pytest.LogCaptureFixture
     ) -> None:
-        result = _status_invoke(cli_runner, args=["status", "--format", "json"])
-        assert result.exit_code == 0
-        assert json.loads(result.output)["version"] == _web_status_version()
+        drift = PackageDrift(package="newdep", declared=">=2.0,<3.0", installed=None)
+        with (
+            patch("src.dependency_drift", return_value=(drift,)),
+            patch("src.cli.commands._status.dependency_drift", return_value=(drift,)),
+            patch("src.web.api.dependency_drift", return_value=(drift,)),
+            caplog.at_level(logging.WARNING, logger="src"),
+        ):
+            tabled = _status_invoke(cli_runner)
+            emitted = _status_invoke(cli_runner, args=["status", "--format", "json"])
+            served = _web_status()
+
+        assert json.loads(emitted.output) == served
+        assert served["dependency_drift"] == [drift.model_dump()]
+        assert "newdep is not installed" in tabled.output
+        assert "newdep is not installed" in caplog.text

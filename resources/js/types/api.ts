@@ -94,11 +94,19 @@ export interface RecommendationsConfig {
   default_count: number
 }
 
+export interface PackageDrift {
+  package: string
+  declared: string
+  installed: string | null
+  message: string
+}
+
 export interface StatusResponse {
   status: string
   version: string
   components: Record<string, boolean>
   recommendations_config: RecommendationsConfig
+  dependency_drift: PackageDrift[]
 }
 
 // --- Preferences ---

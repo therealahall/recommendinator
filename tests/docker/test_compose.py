@@ -228,6 +228,11 @@ class TestTheShippedImageRunsTheLivenessProbe:
         )
 
 
+class TestTheBundleIsBuiltAgainstTheVersionItStamps:
+    def test_the_frontend_builder_is_handed_the_file_the_version_lives_in(self) -> None:
+        assert "pyproject.toml" in _instructions(_stages()["frontend-builder"])
+
+
 class TestTheBuildContextIsAnAllowlist:
     """Denying by default makes an unreviewed path a build failure rather than a
     disclosure: the narrow COPYs keep secrets out of the image, everything else

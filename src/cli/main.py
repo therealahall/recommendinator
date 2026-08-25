@@ -7,6 +7,7 @@ from typing import Any
 
 import click
 
+from src import log_dependency_drift
 from src.cli.commands import (
     account,
     auth,
@@ -119,6 +120,7 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
                 console_tracebacks=False,
                 console_floor=logging.WARNING,
             )
+        log_dependency_drift()
         # Per-source credentials, on every command as the web app does it on
         # every startup: while it ran inside ``update`` alone, ``auth status``
         # read a file-held token as not connected until a sync had happened.

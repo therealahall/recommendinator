@@ -2,6 +2,8 @@ from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import src
 
 
@@ -46,3 +48,29 @@ class TestStaleEditableInstallRegression:
         fake_init.parent.mkdir()
         fake_init.touch()
         assert src._read_source_version(str(fake_init)) is None
+
+
+class TestDependencyDrift:
+    def test_a_missing_dependency_is_drift_unless_it_is_a_dev_extra(self) -> None:
+        with patch("src._pkg_version", side_effect=PackageNotFoundError):
+            missing = src._drift_of("newdep>=2.0")
+            assert src._drift_of('newdep>=2.0; extra == "dev"') is None
+        assert missing is not None
+        assert missing.message == "newdep is not installed (needs >=2.0)"
+
+    def test_a_dependency_outside_its_range_is_named_with_what_is_there(self) -> None:
+        with patch("src._pkg_version", return_value="1.0"):
+            drift = src._drift_of("newdep>=2.0")
+        assert drift and drift.message == "newdep 1.0 is installed (needs >=2.0)"
+
+    def test_what_the_mounted_source_declares_is_checked_not_what_was_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\ndependencies = ["newdep>=2.0"]\n', encoding="utf-8"
+        )
+        monkeypatch.setattr(src, "__file__", str(tmp_path / "src" / "__init__.py"))
+        with patch("src._pkg_version", side_effect=PackageNotFoundError):
+            drift = src.dependency_drift.__wrapped__()
+        assert [entry.package for entry in drift] == ["newdep"]
