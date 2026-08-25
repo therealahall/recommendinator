@@ -1,6 +1,118 @@
 # CHANGELOG
 
 
+## v0.48.0 (2026-08-25)
+
+### Bug Fixes
+
+- **web**: --accent-light stops painting text it cannot carry
+  ([`b8b7b8a`](https://github.com/therealahall/recommendinator/commit/b8b7b8a85543567c12ca0abad4efbab9cf0f8bee))
+
+- **web**: --surface and --surface-alt were never defined
+  ([`0d5c9be`](https://github.com/therealahall/recommendinator/commit/0d5c9be9d5c34679f023d92efa4899c3c0f12eab))
+
+- **web**: A cached theme corrects itself onto the url it is served from
+  ([`34d159e`](https://github.com/therealahall/recommendinator/commit/34d159e9e787965cf341a1cc4fd68268baa559c2))
+
+- **web**: A missing private themes directory is a 404, not a 500
+  ([`28b8669`](https://github.com/therealahall/recommendinator/commit/28b8669093c62c687e2ecd60324305813a0c8404))
+
+- **web**: A private theme is served the moment it is dropped in
+  ([`475345a`](https://github.com/therealahall/recommendinator/commit/475345a9bd7cac13bf0626bf11aee7c89eb02095))
+
+- **web**: A repeated retry announces itself
+  ([`b98f32e`](https://github.com/therealahall/recommendinator/commit/b98f32e2fb3032ea3bdc86a3017739134743d7e8))
+
+- **web**: A secret verb exposes what it refuses
+  ([`439b138`](https://github.com/therealahall/recommendinator/commit/439b13869d1103d788c082c318392a7f0e88c204))
+
+- **web**: A settings secret keeps focus while it saves
+  ([`baef7ca`](https://github.com/therealahall/recommendinator/commit/baef7caade1d14d769d6987bcb1b0a36590ab732))
+
+- **web**: A source config edit during a sync saves instead of vanishing
+  ([`9cfc064`](https://github.com/therealahall/recommendinator/commit/9cfc0649cfcb88fc9ebec4e7299985804c9a8a41))
+
+- **web**: An in-flight lock keeps the user's focus
+  ([`847db7a`](https://github.com/therealahall/recommendinator/commit/847db7a08b39d36f46965447a29ec2e5651a2639))
+
+- **web**: Each route sets its own page title
+  ([`7c56e27`](https://github.com/therealahall/recommendinator/commit/7c56e27f83ded30c1d94fceb6e031cb093b81781))
+
+- **web**: Every semantic fill used as text has a token that clears 4.5:1
+  ([`ae79061`](https://github.com/therealahall/recommendinator/commit/ae790612288ccb51f72c2d03cd1e999946a27440))
+
+- **web**: Sync progress announces from outside the accordion trigger
+  ([`d17bfa3`](https://github.com/therealahall/recommendinator/commit/d17bfa3c9a9a3c4ce15d26f3e4c9513dfca096cc))
+
+- **web**: The closed mobile sidebar leaves the tab order
+  ([`cff2023`](https://github.com/therealahall/recommendinator/commit/cff20232a8cf384def9b1c034fdeea727f76f287))
+
+- **web**: The contrast sweep reaches the controls it missed
+  ([`52d4c1a`](https://github.com/therealahall/recommendinator/commit/52d4c1a02420360696af43d5d21f3c032671b138))
+
+- **web**: The contrast sweep reaches the rules it stopped short of
+  ([`c8c8f82`](https://github.com/therealahall/recommendinator/commit/c8c8f825707bc3ec206cf4c4945660c636514fdd))
+
+- **web**: The focus ring clears 3:1 on every surface it lands on
+  ([`5c7e13b`](https://github.com/therealahall/recommendinator/commit/5c7e13b9766639c1005b2f208d9580ef1e7e731e))
+
+- **web**: The palette is measured against the surfaces it lands on
+  ([`451fede`](https://github.com/therealahall/recommendinator/commit/451fedeaa6aa2650e2f46c544b4e8e31eb2c9c86))
+
+- **web**: The secret verbs bind the predicate they guard on
+  ([`cd63bd1`](https://github.com/therealahall/recommendinator/commit/cd63bd1157cbb6578d75b33943001b6dd352ae0b))
+
+- **web**: The shell names the screen it is actually showing
+  ([`5443165`](https://github.com/therealahall/recommendinator/commit/54431654c6dbe1a316dd08975e9b85411ef0360e))
+
+- **web**: The startup bar clears itself and offers a retry
+  ([`9374727`](https://github.com/therealahall/recommendinator/commit/9374727ce07c57ed10e7b63efec374f47b3581c4))
+
+### Documentation
+
+- The resting accent is the tighter fill, and it is unmeasured
+  ([`e33970e`](https://github.com/therealahall/recommendinator/commit/e33970ec9d1df33c4623b665699732041d737375))
+
+- The source config lock names what actually constrains it
+  ([`a7c4a15`](https://github.com/therealahall/recommendinator/commit/a7c4a152ee3239cde80753cbce1d82722682196f))
+
+- The theme guide cites nothing a clone cannot resolve
+  ([`9e74698`](https://github.com/therealahall/recommendinator/commit/9e746981da1f3f4e0870ab72079d4d0abda887f0))
+
+- Three claims this branch made false
+  ([`dbece6f`](https://github.com/therealahall/recommendinator/commit/dbece6ff57d548a83e27ee90a5dfe7935037664f))
+
+### Features
+
+- **cli,web**: Both interfaces read and set the theme off its own store
+  ([`51da20f`](https://github.com/therealahall/recommendinator/commit/51da20ff42ec0b008e3385c8216a2dccfcf14346))
+
+- **storage**: The UI theme gets its own per-user table
+  ([`8843cd4`](https://github.com/therealahall/recommendinator/commit/8843cd4d108e25d97215982f7970e4af6e9b1950))
+
+- **web**: The shell arrives already themed, and private themes are served
+  ([`7d4d5d9`](https://github.com/therealahall/recommendinator/commit/7d4d5d92be72b84f6202e61270e2ce95cca8cafb))
+
+### Refactoring
+
+- **web**: One dialog primitive and a named z-index scale
+  ([`80709a5`](https://github.com/therealahall/recommendinator/commit/80709a546631968d2342c78838cefbdc9e5e5e5a))
+
+- **web**: Reading a theme id loads no ASGI stack
+  ([`1d351a6`](https://github.com/therealahall/recommendinator/commit/1d351a6c32a2bbc7dc60685688df5a75e1f3ae24))
+
+- **web**: The app name lives with what titles the document
+  ([`c486d58`](https://github.com/therealahall/recommendinator/commit/c486d58c8bfccd99dbe77dcb7efd7fbb4583b33e))
+
+### Testing
+
+- **web**: The private mount serves nothing above itself
+  ([`1b28962`](https://github.com/therealahall/recommendinator/commit/1b289629fa3221fed4f80cde647c8ab870a0e3fd))
+
+- **web**: The stranded-focus case asserts its own precondition
+  ([`23132a6`](https://github.com/therealahall/recommendinator/commit/23132a68319993e941174919e7169b0c1140aea4))
+
+
 ## v0.47.0 (2026-08-24)
 
 ### Bug Fixes
