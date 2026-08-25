@@ -6,11 +6,11 @@ scored.
 ## Adding rules
 
 ```bash
-python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences custom-rules list
-python3.11 -m src.cli preferences custom-rules interpret "prefer sci-fi"   # dry run
-python3.11 -m src.cli preferences custom-rules remove 0
-python3.11 -m src.cli preferences custom-rules clear --yes
+uv run python -m src.cli preferences custom-rules add "avoid horror"
+uv run python -m src.cli preferences custom-rules list
+uv run python -m src.cli preferences custom-rules interpret "prefer sci-fi"   # dry run
+uv run python -m src.cli preferences custom-rules remove 0
+uv run python -m src.cli preferences custom-rules clear --yes
 ```
 
 In the web UI: **Preferences** tab, **Rules** section, **Custom rules**. Type

@@ -150,14 +150,16 @@ private/              # Gitignored — private plugins NOT in the open source re
 - **Never use `cd` in front of commands.** The workspace path is already the project root.
 - **Never use `sed` or `awk` to edit files.** Use the `Edit` tool instead — it provides atomic replacements, is reviewable, and avoids regex escaping bugs. There are no exceptions.
 - **Never pipe test output or use head, tail, etc.** Run each command directly:
-  - `python3.11 -m pytest tests/` (not `pytest | head` or similar)
-  - `python3.11 -m black --check src/ tests/ conftest.py`
-  - `python3.11 -m mypy src/ conftest.py`
-  - `python3.11 -m ruff check src/ tests/ conftest.py`
+  - `make test` (not `pytest | head` or similar)
+  - `make format-check`
+  - `make type-check`
+  - `make lint`
 
 ### Python Version
 
-**Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
+**Python 3.11 through 3.14 are supported**, and every one of them runs the gate
+in CI. Name no minor in a command: a `make` target, or `uv run python -m …`,
+takes the interpreter `.python-version` and `uv.lock` agree on.
 
 ### Code Quality (ALL must pass — always green)
 
@@ -195,7 +197,7 @@ config = load_config(Path("config/config.yaml"))
 
 ## Technology Stack
 
-- **Python**: 3.11 only — `requires-python` refuses every other minor
+- **Python**: 3.11 through 3.14 — `requires-python` claims exactly the minors CI runs
 - **Package manager**: uv (lockfile: `uv.lock`, Python version: `.python-version`)
 - **SQL DB**: SQLite
 - **Web backend**: FastAPI

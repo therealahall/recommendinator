@@ -1,7 +1,7 @@
 # CLI Reference
 
 Every Recommendinator feature is reachable from the CLI. It is a peer of the web
-UI, not a subset. Run commands as `python3.11 -m src.cli <command>`. Most
+UI, not a subset. Run commands as `uv run python -m src.cli <command>`. Most
 read-only commands accept `--format json`.
 
 Diagnostics go to the same log file the web server writes, at the level
@@ -28,7 +28,7 @@ with, and the underlying error goes to the log. `--verbose` puts that error on
 the terminal too. It is a root option, so it comes before the subcommand:
 
 ```bash
-python3.11 -m src.cli --verbose recommend --type book
+uv run python -m src.cli --verbose recommend --type book
 ```
 
 Startup is the exception, reported in full: it happens before there is a log
@@ -49,8 +49,8 @@ So does overwriting an existing `--output` file, in `import-template` and
 Syncs one source or all of them.
 
 ```bash
-python3.11 -m src.cli update --source all
-python3.11 -m src.cli update --source roms --format json
+uv run python -m src.cli update --source all
+uv run python -m src.cli update --source roms --format json
 ```
 
 Each source reports how many items the plugin found, how many were saved, and
@@ -76,13 +76,13 @@ format and `--content-type` the type where the format decides none.
 `--output` or stdout, or lists them.
 
 ```bash
-python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
+uv run python -m src.cli import movies.csv --importer csv_import --content-type movie
 ```
 
 ### `recommend`
 
 ```bash
-python3.11 -m src.cli recommend --type book --count 10
+uv run python -m src.cli recommend --type book --count 10
 ```
 
 ### `complete`
@@ -90,7 +90,7 @@ python3.11 -m src.cli recommend --type book --count 10
 Marks something finished, adding it to the library if it is not there yet.
 
 ```bash
-python3.11 -m src.cli complete --type book --title "Project Hail Mary" --rating 5
+uv run python -m src.cli complete --type book --title "Project Hail Mary" --rating 5
 ```
 
 It takes no date. An item with no date is stamped today, and an existing date is
@@ -108,7 +108,7 @@ review, so a blank one is refused rather than written. To erase a review, use
 `status` reports system health, component readiness and feature flags.
 
 ```bash
-python3.11 -m src.cli status --format json
+uv run python -m src.cli status --format json
 ```
 
 ## Library management
@@ -118,10 +118,10 @@ python3.11 -m src.cli status --format json
 Filters and sorts the library.
 
 ```bash
-python3.11 -m src.cli library list --type book --status completed --sort rating --limit 20
-python3.11 -m src.cli library list --enrichment not_enriched
-python3.11 -m src.cli library list --search "die hard"
-python3.11 -m src.cli library list --needs-rating --type movie
+uv run python -m src.cli library list --type book --status completed --sort rating --limit 20
+uv run python -m src.cli library list --enrichment not_enriched
+uv run python -m src.cli library list --search "die hard"
+uv run python -m src.cli library list --needs-rating --type movie
 ```
 
 - `--enrichment` takes `enriched` or `not_enriched`, matching the table's
@@ -136,20 +136,20 @@ python3.11 -m src.cli library list --needs-rating --type movie
 ### `library show`
 
 ```bash
-python3.11 -m src.cli library show --id 42
+uv run python -m src.cli library show --id 42
 ```
 
 ### `library edit`
 
 ```bash
-python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
-python3.11 -m src.cli library edit --id 42 --clear-rating
-python3.11 -m src.cli library edit --id 42 --clear-review
-python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3
-python3.11 -m src.cli library edit --id 42 --clear-seasons
-python3.11 -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
-python3.11 -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
-python3.11 -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
+uv run python -m src.cli library edit --id 42 --rating 5 --status completed
+uv run python -m src.cli library edit --id 42 --clear-rating
+uv run python -m src.cli library edit --id 42 --clear-review
+uv run python -m src.cli library edit --id 42 --seasons-watched 1,2,3
+uv run python -m src.cli library edit --id 42 --clear-seasons
+uv run python -m src.cli library edit --id 42 --genre Action --tag co-op --description "A grand adventure."
+uv run python -m src.cli library edit --id 42 --clear-genres --clear-tags --description ""
+uv run python -m src.cli library edit --id 42 --release-year 1993 --creator "id Software"
 ```
 
 **Only the flags you pass are written**, so a status-only edit cannot erase a
@@ -190,8 +190,8 @@ you want stored.
 Ignored items are excluded from recommendations.
 
 ```bash
-python3.11 -m src.cli library ignore --id 42
-python3.11 -m src.cli library unignore --id 42 --format json
+uv run python -m src.cli library ignore --id 42
+uv run python -m src.cli library unignore --id 42 --format json
 ```
 
 `--format json` emits what `PATCH /api/items/<id>/ignore` answers.
@@ -199,13 +199,13 @@ python3.11 -m src.cli library unignore --id 42 --format json
 ### Duplicates and merges
 
 ```bash
-python3.11 -m src.cli library duplicates --type book --limit 25
-python3.11 -m src.cli library merge --survivor 42 --absorbed 77
-python3.11 -m src.cli library merges
-python3.11 -m src.cli library unmerge --merge-id 3
-python3.11 -m src.cli library decline-duplicate --one 42 --other 77 --other 91
-python3.11 -m src.cli library declined-duplicates
-python3.11 -m src.cli library undecline-duplicate --one 42 --other 77
+uv run python -m src.cli library duplicates --type book --limit 25
+uv run python -m src.cli library merge --survivor 42 --absorbed 77
+uv run python -m src.cli library merges
+uv run python -m src.cli library unmerge --merge-id 3
+uv run python -m src.cli library decline-duplicate --one 42 --other 77 --other 91
+uv run python -m src.cli library declined-duplicates
+uv run python -m src.cli library undecline-duplicate --one 42 --other 77
 ```
 
 `duplicates` lists one block per work, naming every copy of it, with Keep ID
@@ -233,8 +233,8 @@ back onto a pair the list can offer.
 ### `library export`
 
 ```bash
-python3.11 -m src.cli library export --type book --format csv --output books.csv
-python3.11 -m src.cli library export --output library.csv   # every type
+uv run python -m src.cli library export --type book --format csv --output books.csv
+uv run python -m src.cli library export --output library.csv   # every type
 ```
 
 Without `--type` the file covers the whole library. A CSV header then carries
@@ -247,13 +247,13 @@ Ignored items are exported either way, as the web Export button does.
 Add, edit, enable, disable and remove data sources without touching YAML.
 
 ```bash
-python3.11 -m src.cli source plugins            # available plugin types
-python3.11 -m src.cli source create my_roms roms
-python3.11 -m src.cli source set my_roms paths inputs/roms
-python3.11 -m src.cli source migrate my_roms    # or move a YAML source in, once
-python3.11 -m src.cli source show my_roms       # also schema, enable, disable, remove
-python3.11 -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
-python3.11 -m src.cli source history my_roms    # past runs; omit the id for all
+uv run python -m src.cli source plugins            # available plugin types
+uv run python -m src.cli source create my_roms roms
+uv run python -m src.cli source set my_roms paths inputs/roms
+uv run python -m src.cli source migrate my_roms    # or move a YAML source in, once
+uv run python -m src.cli source show my_roms       # also schema, enable, disable, remove
+uv run python -m src.cli source schedule my_roms weekly   # off, hourly, 6h, daily, weekly
+uv run python -m src.cli source history my_roms    # past runs; omit the id for all
 ```
 
 `source schedule` takes a migrated source and one of those five keys. The web
@@ -274,7 +274,7 @@ Every `source` subcommand except `set-secret` and `clear-secret` accepts
 
 ```bash
 echo '{"paths": ["inputs/roms"]}' \
-  | python3.11 -m src.cli source apply my_roms --from-json -
+  | uv run python -m src.cli source apply my_roms --from-json -
 ```
 
 `source set-secret` prompts with hidden input. For Docker entrypoints and CI, set
@@ -283,7 +283,7 @@ history and the visible process list:
 
 ```bash
 RECOMMENDINATOR_SECRET_VALUE="$STEAM_API_KEY" \
-  python3.11 -m src.cli source set-secret my_steam api_key
+  uv run python -m src.cli source set-secret my_steam api_key
 ```
 
 ## Global settings
@@ -299,10 +299,10 @@ The web **Settings** page is the same thing over the same
 ### `settings list` / `settings get`
 
 ```bash
-python3.11 -m src.cli settings list
-python3.11 -m src.cli settings list --advanced
-python3.11 -m src.cli settings list --section recommendations
-python3.11 -m src.cli settings get recommendations.default_count
+uv run python -m src.cli settings list
+uv run python -m src.cli settings list --advanced
+uv run python -m src.cli settings list --section recommendations
+uv run python -m src.cli settings get recommendations.default_count
 ```
 
 Advanced infra and security settings (CORS origins, logging) stay hidden unless
@@ -312,9 +312,9 @@ a secret's value, only whether one is set.
 ### `settings set` / `settings reset`
 
 ```bash
-python3.11 -m src.cli settings set recommendations.default_count 8
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings reset recommendations.default_count
+uv run python -m src.cli settings set recommendations.default_count 8
+uv run python -m src.cli settings set enrichment.enabled true
+uv run python -m src.cli settings reset recommendations.default_count
 ```
 
 The value is parsed to the setting's type, with booleans as true/false and lists
@@ -334,7 +334,7 @@ The atomic multi-key update, the equivalent of `PUT /api/settings`:
 
 ```bash
 echo '{"recommendations.default_count": 8, "recommendations.max_count": 30}' \
-  | python3.11 -m src.cli settings apply --from-json -
+  | uv run python -m src.cli settings apply --from-json -
 ```
 
 Every key is validated up front, so **one bad key rejects the whole batch** and
@@ -348,8 +348,8 @@ plaintext, so `settings set` refuses them. `set-secret` prompts with hidden
 input, or reads `RECOMMENDINATOR_SECRET_VALUE` for non-interactive use.
 
 ```bash
-python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
-python3.11 -m src.cli settings clear-secret enrichment.providers.tmdb.api_key
+uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+uv run python -m src.cli settings clear-secret enrichment.providers.tmdb.api_key
 ```
 
 ## Preferences
@@ -358,12 +358,12 @@ See [SCORING.md](SCORING.md) for what each weight does and
 [CUSTOM_RULES.md](CUSTOM_RULES.md) for rule syntax.
 
 ```bash
-python3.11 -m src.cli preferences get --format json
-python3.11 -m src.cli preferences set-weight genre_match 3.0
-python3.11 -m src.cli preferences set-length book short
-python3.11 -m src.cli preferences set-toggle series_in_order off
-python3.11 -m src.cli preferences set-variety 4.0      # 0.0 off to 5.0 full strength
-python3.11 -m src.cli preferences reset
+uv run python -m src.cli preferences get --format json
+uv run python -m src.cli preferences set-weight genre_match 3.0
+uv run python -m src.cli preferences set-length book short
+uv run python -m src.cli preferences set-toggle series_in_order off
+uv run python -m src.cli preferences set-variety 4.0      # 0.0 off to 5.0 full strength
+uv run python -m src.cli preferences reset
 ```
 
 Every one of these takes `--user`, and a `--user` naming nobody is refused
@@ -372,11 +372,11 @@ rather than reporting a write it did not make.
 Custom rules are natural-language preferences, matched against genres and tags:
 
 ```bash
-python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences custom-rules list
-python3.11 -m src.cli preferences custom-rules interpret "avoid horror"
-python3.11 -m src.cli preferences custom-rules remove 0
-python3.11 -m src.cli preferences custom-rules clear --yes
+uv run python -m src.cli preferences custom-rules add "avoid horror"
+uv run python -m src.cli preferences custom-rules list
+uv run python -m src.cli preferences custom-rules interpret "avoid horror"
+uv run python -m src.cli preferences custom-rules remove 0
+uv run python -m src.cli preferences custom-rules clear --yes
 ```
 
 At most 50 rules of 500 characters each, the same bound the web API applies.
@@ -384,9 +384,9 @@ At most 50 rules of 500 characters each, the same bound the web API applies.
 ## Theme
 
 ```bash
-python3.11 -m src.cli theme list                  # the installed themes
-python3.11 -m src.cli theme show --format json    # what this user's UI paints
-python3.11 -m src.cli theme set snowstorm
+uv run python -m src.cli theme list                  # the installed themes
+uv run python -m src.cli theme show --format json    # what this user's UI paints
+uv run python -m src.cli theme set snowstorm
 ```
 
 The theme is not a scoring preference: `preferences reset` leaves it alone, and
@@ -398,14 +398,14 @@ Enrichment is critical for recommendation quality. See
 [ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md).
 
 ```bash
-python3.11 -m src.cli enrichment start
-python3.11 -m src.cli enrichment start --type movie
-python3.11 -m src.cli enrichment start --retry-not-found   # providers drift over time
-python3.11 -m src.cli enrichment status                    # library counts by provider
-python3.11 -m src.cli enrichment job                       # the live run, if there is one
-python3.11 -m src.cli enrichment stop
-python3.11 -m src.cli enrichment reset                     # re-process on the next run
-python3.11 -m src.cli enrichment reset --id 42             # one item, back to automatic
+uv run python -m src.cli enrichment start
+uv run python -m src.cli enrichment start --type movie
+uv run python -m src.cli enrichment start --retry-not-found   # providers drift over time
+uv run python -m src.cli enrichment status                    # library counts by provider
+uv run python -m src.cli enrichment job                       # the live run, if there is one
+uv run python -m src.cli enrichment stop
+uv run python -m src.cli enrichment reset                     # re-process on the next run
+uv run python -m src.cli enrichment reset --id 42             # one item, back to automatic
 ```
 
 `enrichment job` and `enrichment stop` reach the run whatever started it — the
@@ -423,18 +423,18 @@ the same thing.
 ## Authentication (GOG/Epic/Trakt)
 
 ```bash
-python3.11 -m src.cli auth status                   # every OAuth source, enabled and connected
-python3.11 -m src.cli auth connect --source gog     # browser OAuth
-python3.11 -m src.cli auth connect --source trakt   # device code, prints a URL
-python3.11 -m src.cli auth disconnect --source gog
+uv run python -m src.cli auth status                   # every OAuth source, enabled and connected
+uv run python -m src.cli auth connect --source gog     # browser OAuth
+uv run python -m src.cli auth connect --source trakt   # device code, prints a URL
+uv run python -m src.cli auth disconnect --source gog
 ```
 
 `--source` names the provider; the token belongs to a source id. Pass
 `--source-id` when yours is not called after its plugin:
 
 ```bash
-python3.11 -m src.cli auth connect --source gog --source-id gog_work
-python3.11 -m src.cli auth disconnect --source gog --source-id gog_work
+uv run python -m src.cli auth connect --source gog --source-id gog_work
+uv run python -m src.cli auth disconnect --source gog --source-id gog_work
 ```
 
 ## Web account
@@ -444,9 +444,9 @@ CLI reads the database directly rather than going over HTTP, so it is the way
 back in when that password is lost.
 
 ```bash
-python3.11 -m src.cli account show
-python3.11 -m src.cli account set-password    # prompts twice, hidden
-python3.11 -m src.cli account set-name --username owner --display-name "The Owner"
+uv run python -m src.cli account show
+uv run python -m src.cli account set-password    # prompts twice, hidden
+uv run python -m src.cli account set-name --username owner --display-name "The Owner"
 ```
 
 A password is at least 12 characters, the same minimum the web setup screen and
@@ -464,6 +464,6 @@ over-long one in the same sentence. All three commands take `--user` and
 ## User profile
 
 ```bash
-python3.11 -m src.cli profile show --format json
-python3.11 -m src.cli profile regenerate    # rebuild from current library data
+uv run python -m src.cli profile show --format json
+uv run python -m src.cli profile regenerate    # rebuild from current library data
 ```

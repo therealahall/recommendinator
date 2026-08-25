@@ -22,8 +22,8 @@ First, save your `client_id` and `client_secret` so the connect flow can run, th
 
 1. Start the web server and open the **Data** tab, click **+ Add source**, pick
    Trakt, and enter your application's `client_id`. (Or from the CLI:
-   `python3.11 -m src.cli source create trakt trakt` then
-   `python3.11 -m src.cli source set trakt client_id <your-trakt-client-id>`.)
+   `uv run python -m src.cli source create trakt trakt` then
+   `uv run python -m src.cli source set trakt client_id <your-trakt-client-id>`.)
 2. In the Trakt source panel, add your `client_secret` using the **Replace** action (it is stored encrypted).
 3. Click **Connect Trakt Account**.
 4. Go to the verification URL shown (e.g. `https://trakt.tv/activate`) and enter the displayed code.
@@ -36,13 +36,13 @@ After the `client_id` and `client_secret` are saved (via the web UI panel or a m
 ```bash
 # Start the Trakt device-code flow — prints a verification URL and code,
 # then polls until you approve the request on Trakt.
-python3.11 -m src.cli auth connect --source trakt
+uv run python -m src.cli auth connect --source trakt
 
 # Check connection status for all OAuth sources
-python3.11 -m src.cli auth status
+uv run python -m src.cli auth status
 
 # Disconnect and remove the stored refresh token
-python3.11 -m src.cli auth disconnect --source trakt
+uv run python -m src.cli auth disconnect --source trakt
 ```
 
 `auth connect --source trakt` prints `Go to <verification_url> and enter code: <user_code>`, then polls at the cadence Trakt returns until you approve, the code expires, or the request is denied.
@@ -52,8 +52,8 @@ If Trakt sync later fails with an authentication error, reconnect via the web UI
 ## Configuration
 
 ```bash
-python3.11 -m src.cli source set trakt client_id <your-trakt-client-id>
-python3.11 -m src.cli source set trakt include_watchlist true   # Optional, default true
+uv run python -m src.cli source set trakt client_id <your-trakt-client-id>
+uv run python -m src.cli source set trakt include_watchlist true   # Optional, default true
 ```
 
 The `client_id` is a public application identifier, not a secret. Or set both

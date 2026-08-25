@@ -14,11 +14,11 @@ Add the source from the **Data** tab with **+ Add source**, which prompts for th
 API key at create time, or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create radarr radarr
-python3.11 -m src.cli source set radarr url http://localhost:7878
+uv run python -m src.cli source create radarr radarr
+uv run python -m src.cli source set radarr url http://localhost:7878
 
 # The API key is a secret: hidden prompt, stored encrypted, never in a file
-python3.11 -m src.cli source set-secret radarr api_key
+uv run python -m src.cli source set-secret radarr api_key
 ```
 
 | Field | Type | Required | Description |

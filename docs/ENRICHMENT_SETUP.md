@@ -40,9 +40,9 @@ Two optional fields:
 
 ```bash
 # ISO 639-1, optionally with a region (default en-US)
-python3.11 -m src.cli settings set enrichment.providers.tmdb.language de-DE
+uv run python -m src.cli settings set enrichment.providers.tmdb.language de-DE
 # keywords as tags, default true, costs one extra call per item
-python3.11 -m src.cli settings set enrichment.providers.tmdb.include_keywords false
+uv run python -m src.cli settings set enrichment.providers.tmdb.include_keywords false
 ```
 
 **RAWG** fills genres, up to 20 tags, description, developer and publisher,
@@ -54,17 +54,17 @@ Get a key from [rawg.io/apidocs](https://rawg.io/apidocs).
 ## Full setup
 
 ```bash
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true   # recommended
-python3.11 -m src.cli settings set enrichment.batch_size 50              # items per batch
+uv run python -m src.cli settings set enrichment.enabled true
+uv run python -m src.cli settings set enrichment.auto_enrich_on_sync true   # recommended
+uv run python -m src.cli settings set enrichment.batch_size 50              # items per batch
 
-python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
+uv run python -m src.cli settings set enrichment.providers.openlibrary.enabled true
 
-python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+uv run python -m src.cli settings set enrichment.providers.tmdb.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
-python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
+uv run python -m src.cli settings set enrichment.providers.rawg.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
 ```
 
 `set-secret` prompts with hidden input, or reads `RECOMMENDINATOR_SECRET_VALUE`,
@@ -78,9 +78,9 @@ every sync enriches straight afterwards.
 ## Running enrichment
 
 ```bash
-python3.11 -m src.cli enrichment start
-python3.11 -m src.cli enrichment start --type movie   # or tv_show, book, video_game
-python3.11 -m src.cli enrichment status
+uv run python -m src.cli enrichment start
+uv run python -m src.cli enrichment start --type movie   # or tv_show, book, video_game
+uv run python -m src.cli enrichment status
 ```
 
 The **Data** page's **Metadata Enrichment** section shows coverage broken down
@@ -107,7 +107,7 @@ re-enrichment. Everything else is unenriched.
 tags and a description. `library edit` takes the same three:
 
 ```bash
-python3.11 -m src.cli library edit --id 42 \
+uv run python -m src.cli library edit --id 42 \
   --genre Action --genre RPG --tag co-op --description "A grand adventure."
 ```
 
@@ -136,7 +136,7 @@ and TV shows need `tmdb.enabled` plus a stored key, video games need
 A settled answer: the provider replied and had nothing, which is normal for
 niche or very new content. Ordinary runs skip the item from then on. Retry later,
 once the data may have been added upstream, with
-`python3.11 -m src.cli enrichment start --retry-not-found`.
+`uv run python -m src.cli enrichment start --retry-not-found`.
 
 ### Items showing as "failed"
 

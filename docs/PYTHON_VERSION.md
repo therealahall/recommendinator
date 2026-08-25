@@ -1,8 +1,9 @@
 # Python Version Setup
 
-**Use Python 3.11.** It is the only minor the project builds and tests against,
-so `requires-python` refuses every other one.
-`.python-version` pins it and uv reads that file automatically.
+**Any of Python 3.11, 3.12, 3.13 or 3.14.** CI runs the whole gate on each of
+them, and `requires-python` claims exactly that range. `.python-version` names
+3.11, the floor and the minor the published image ships, so that is what uv
+reaches for unless you ask for another.
 
 ## Setup
 
@@ -15,10 +16,10 @@ uv creates and manages the virtual environment at `.venv/`.
 
 ## Running commands
 
-Outside uv, name the interpreter explicitly. Bare `python3` is whatever your
-system ships, which is usually not 3.11:
+Let uv name the interpreter. Bare `python3` is whatever your system ships, and
+may be older than the floor:
 
 ```bash
-python3.11 -m pytest tests/
-python3.11 -m src.cli status
+uv run python -m src.cli status
+uv run --python 3.14 --extra dev python -m pytest tests/   # another supported minor
 ```

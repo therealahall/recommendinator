@@ -133,7 +133,7 @@ unmerge` abort with those same words. The route needs a session.
 **One account, username and password, and a session cookie.** A fresh instance
 has none: the first visitor to the web UI names the account and sets its
 password, and is signed in by that request. Change it later from **Settings →
-Account**, or with `python3.11 -m src.cli account set-password` on the machine
+Account**, or with `uv run python -m src.cli account set-password` on the machine
 holding the database — there is no email and no reset link.
 
 - **The claim window stays open until someone uses it** — boot warns while it
@@ -158,9 +158,9 @@ holding the database — there is no email and no reset link.
 Enter secrets in the app, never in `config.yaml`:
 
 - **Source secrets** (Steam, Sonarr, Radarr, and the rest): the web **Data** tab
-  or `python3.11 -m src.cli source set-secret <source> <key>`.
+  or `uv run python -m src.cli source set-secret <source> <key>`.
 - **Global provider secrets**: the web **Settings** page or
-  `python3.11 -m src.cli settings set-secret <key>`.
+  `uv run python -m src.cli settings set-secret <key>`.
 
 A Steam key comes from https://steamcommunity.com/dev/apikey and grants read
 access to your Steam library. Rotate it by re-running `source set-secret`.

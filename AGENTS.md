@@ -16,7 +16,9 @@ bd sync               # Sync with git
 
 ### Python Version
 
-**Always use `python3.11` for all commands.** Do not use bare `python` or `python3`.
+**Python 3.11 through 3.14 are supported.** Name no minor in a command: a `make`
+target, or `uv run python -m …`, takes the interpreter `.python-version` and
+`uv.lock` agree on.
 
 ### Running Commands
 

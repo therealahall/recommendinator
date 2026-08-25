@@ -15,7 +15,7 @@ body:
 
         Repro:
         1. Configure goodreads source in config.yaml
-        2. Run `python3.11 -m src.cli update --source goodreads`
+        2. Run `uv run python -m src.cli update --source goodreads`
 
         Traceback (most recent call last):
           File "src/ingestion/sources/goodreads.py", line 42, in fetch

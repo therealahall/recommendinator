@@ -13,7 +13,7 @@ Imports owned games and (optionally) wishlist items from a [GOG.com](https://www
 ### Option 1: Web UI (recommended)
 
 1. Start the web server and open the **Data** tab, then click **+ Add source** and
-   pick GOG. (Or from the CLI: `python3.11 -m src.cli source create gog gog`.)
+   pick GOG. (Or from the CLI: `uv run python -m src.cli source create gog gog`.)
 2. Follow the **Connect GOG Account** wizard — it runs the OAuth flow and stores the token securely.
 
 ### Option 2: Manual
@@ -30,7 +30,7 @@ Imports owned games and (optionally) wishlist items from a [GOG.com](https://www
    Copy the entire URL (or just the value after `code=`).
 4. Paste the URL/code into the web UI to complete the connection. The token is encrypted and stored automatically.
 
-If GOG sync later fails with an authentication error, the refresh token has expired — reconnect via the web UI. You can also connect from the CLI with `python3.11 -m src.cli auth connect --source gog`.
+If GOG sync later fails with an authentication error, the refresh token has expired — reconnect via the web UI. You can also connect from the CLI with `uv run python -m src.cli auth connect --source gog`.
 
 ## Configuration
 
@@ -39,8 +39,8 @@ The optional fields are set from the source's panel in the **Data** tab, or from
 the CLI:
 
 ```bash
-python3.11 -m src.cli source set gog include_wishlist true   # Optional, default true
-python3.11 -m src.cli source set gog enrich_wishlist true    # Optional, default true
+uv run python -m src.cli source set gog include_wishlist true   # Optional, default true
+uv run python -m src.cli source set gog enrich_wishlist true    # Optional, default true
 ```
 
 The `refresh_token` is never entered by hand — it comes from the connect flow and

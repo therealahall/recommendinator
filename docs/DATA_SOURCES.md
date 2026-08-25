@@ -43,7 +43,7 @@ Two ways to create a source:
   through the UI.
 
 Every field in a source's config schema is then editable inline or through
-`python3.11 -m src.cli source`. Run `source schema <id>` to see which fields a
+`uv run python -m src.cli source`. Run `source schema <id>` to see which fields a
 given plugin exposes.
 
 **Remove** drops a DB-backed source and every credential stored under its id,
@@ -75,11 +75,11 @@ rather than the sum of all of them. Set the pool from **Settings** (Sync
 section) or the CLI:
 
 ```bash
-python3.11 -m src.cli settings set sync.max_workers 8   # default 4, 1 for sequential
+uv run python -m src.cli settings set sync.max_workers 8   # default 4, 1 for sequential
 ```
 
 The stored value wins over any `sync.max_workers` left in `config.yaml`. Pass
-`--workers N` to override one run: `python3.11 -m src.cli update --workers 8`.
+`--workers N` to override one run: `uv run python -m src.cli update --workers 8`.
 Per-source rate limits are enforced inside each plugin and are untouched by this.
 
 ## Library export
@@ -88,7 +88,7 @@ Click **Export** on the **Library** tab and pick CSV or JSON. The file covers
 the content type you have selected, or the whole library when none is, and
 carries your ignored items either way. Nothing else on screen narrows it: the
 status, search and enrichment filters shape the view, not the export. The CLI
-equivalent is `python3.11 -m src.cli library export`, whose `--type` is
+equivalent is `uv run python -m src.cli library export`, whose `--type` is
 optional for the same reason, see [CLI.md](CLI.md#library-management).
 
 The enrichment filter finds items still missing metadata so you can fill them

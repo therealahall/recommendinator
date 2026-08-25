@@ -14,11 +14,11 @@ Add the source from the **Data** tab with **+ Add source**, which prompts for th
 API key at create time, or from the CLI:
 
 ```bash
-python3.11 -m src.cli source create sonarr sonarr
-python3.11 -m src.cli source set sonarr url http://localhost:8989
+uv run python -m src.cli source create sonarr sonarr
+uv run python -m src.cli source set sonarr url http://localhost:8989
 
 # The API key is a secret: hidden prompt, stored encrypted, never in a file
-python3.11 -m src.cli source set-secret sonarr api_key
+uv run python -m src.cli source set-secret sonarr api_key
 ```
 
 | Field | Type | Required | Description |

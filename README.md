@@ -40,7 +40,7 @@ Then, in order:
    produces poor recommendations.
 2. **Connect a data source**, from the table below.
 3. **Get recommendations**, in the web UI or with
-   `python3.11 -m src.cli recommend --type book --count 5`.
+   `uv run python -m src.cli recommend --type book --count 5`.
 
 > Running from source instead of Docker? See the [Quick Start guide](QUICKSTART.md).
 > For reverse proxies and the full deployment reference, see
@@ -119,9 +119,9 @@ Enrichment can also be switched on from the **Data** tab, beside the controls
 that need it.
 
 ```bash
-python3.11 -m src.cli settings list
-python3.11 -m src.cli settings set recommendations.default_count 10
-python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+uv run python -m src.cli settings list
+uv run python -m src.cli settings set recommendations.default_count 10
+uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 ```
 
 API keys and OAuth tokens are stored encrypted, so enter them from the Settings
@@ -167,10 +167,10 @@ and its number stored beside it.
 ## CLI usage
 
 ```bash
-python3.11 -m src.cli update --source all
-python3.11 -m src.cli recommend --type book --count 10
-python3.11 -m src.cli library list --type book --status completed --sort rating
-python3.11 -m src.cli library list --search "die hard"
+uv run python -m src.cli update --source all
+uv run python -m src.cli recommend --type book --count 10
+uv run python -m src.cli library list --type book --status completed --sort rating
+uv run python -m src.cli library list --search "die hard"
 ```
 
 Full command reference: **[docs/CLI.md](docs/CLI.md)**.
@@ -196,7 +196,8 @@ Full command reference: **[docs/CLI.md](docs/CLI.md)**.
 
 ## Requirements
 
-Python 3.11 (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md)) and SQLite.
+Python 3.11 through 3.14 (see [docs/PYTHON_VERSION.md](docs/PYTHON_VERSION.md))
+and SQLite.
 
 ## License
 

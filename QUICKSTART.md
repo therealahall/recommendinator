@@ -4,8 +4,8 @@ Up and running in under five minutes.
 
 ## Prerequisites
 
-Docker, or Python 3.11 to run from source. Plus your data: a Goodreads export, a
-Steam account, whatever you already have.
+Docker, or Python 3.11 through 3.14 to run from source. Plus your data: a
+Goodreads export, a Steam account, whatever you already have.
 
 ## Install
 
@@ -61,7 +61,7 @@ cp config/example.yaml config/config.yaml
 ```
 
 Nothing in `config/config.yaml` needs editing. Start the server with
-`python3.11 -m src.web`.
+`uv run python -m src.web`.
 
 Node.js is only needed to build the web UI, so CLI-only users can skip those two
 lines. The CLI never signs in — it works directly against the database.
@@ -80,7 +80,7 @@ out**. Change the password from **Settings → Account**, or, if you lose it, fr
 the machine holding the database:
 
 ```bash
-python3.11 -m src.cli account set-password
+uv run python -m src.cli account set-password
 ```
 
 ## Set up enrichment first
@@ -96,16 +96,16 @@ These are database settings, from the **Settings** page or the `settings` CLI.
 Keys go into the encrypted `credentials` table, never `config.yaml`:
 
 ```bash
-python3.11 -m src.cli settings set enrichment.enabled true
-python3.11 -m src.cli settings set enrichment.auto_enrich_on_sync true
+uv run python -m src.cli settings set enrichment.enabled true
+uv run python -m src.cli settings set enrichment.auto_enrich_on_sync true
 
-python3.11 -m src.cli settings set enrichment.providers.tmdb.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.tmdb.api_key
+uv run python -m src.cli settings set enrichment.providers.tmdb.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.tmdb.api_key
 
-python3.11 -m src.cli settings set enrichment.providers.rawg.enabled true
-python3.11 -m src.cli settings set-secret enrichment.providers.rawg.api_key
+uv run python -m src.cli settings set enrichment.providers.rawg.enabled true
+uv run python -m src.cli settings set-secret enrichment.providers.rawg.api_key
 
-python3.11 -m src.cli settings set enrichment.providers.openlibrary.enabled true
+uv run python -m src.cli settings set enrichment.providers.openlibrary.enabled true
 ```
 
 `auto_enrich_on_sync` runs enrichment after every sync, so there is no extra
@@ -124,9 +124,9 @@ field list and takes any secret up front. The same from the CLI:
 
 ```bash
 # A secret is set separately, through a hidden prompt
-python3.11 -m src.cli source create my_steam steam
-python3.11 -m src.cli source set my_steam steam_id 76561198000000000
-python3.11 -m src.cli source set-secret my_steam api_key
+uv run python -m src.cli source create my_steam steam
+uv run python -m src.cli source set my_steam steam_id 76561198000000000
+uv run python -m src.cli source set-secret my_steam api_key
 ```
 
 Sources live in the database, so there is nothing to edit by hand and no
@@ -145,34 +145,34 @@ is read once rather than configured as a source. The **Data** tab's **Import a
 file** panel does the same, blank template included:
 
 ```bash
-python3.11 -m src.cli import movies.csv --importer csv_import --content-type movie
+uv run python -m src.cli import movies.csv --importer csv_import --content-type movie
 ```
 
 ### Sync
 
 ```bash
-python3.11 -m src.cli update --source list      # what is configured
-python3.11 -m src.cli update --source all       # every enabled source
+uv run python -m src.cli update --source list      # what is configured
+uv run python -m src.cli update --source all       # every enabled source
 ```
 
 Or give a source a cadence, here or on the Data page, and let the server run it:
 
 ```bash
-python3.11 -m src.cli source schedule my_steam weekly   # off, hourly, 6h, daily, weekly
+uv run python -m src.cli source schedule my_steam weekly   # off, hourly, 6h, daily, weekly
 ```
 
 Without `auto_enrich_on_sync`, run enrichment yourself:
 
 ```bash
-python3.11 -m src.cli enrichment start
-python3.11 -m src.cli enrichment status
-python3.11 -m src.cli enrichment start --retry-not-found   # providers drift
+uv run python -m src.cli enrichment start
+uv run python -m src.cli enrichment status
+uv run python -m src.cli enrichment start --retry-not-found   # providers drift
 ```
 
 ## Get recommendations
 
 ```bash
-python3.11 -m src.cli recommend --type book --count 5   # or movie, tv_show, video_game
+uv run python -m src.cli recommend --type book --count 5   # or movie, tv_show, video_game
 ```
 
 ## Everyday commands
@@ -181,29 +181,29 @@ The full reference is [docs/CLI.md](docs/CLI.md). Most read-only commands take
 `--format json`.
 
 ```bash
-python3.11 -m src.cli status                    # component health
+uv run python -m src.cli status                    # component health
 
-python3.11 -m src.cli library list --type book --status completed --sort rating
-python3.11 -m src.cli library show --id 42
-python3.11 -m src.cli library edit --id 42 --rating 5 --status completed
-python3.11 -m src.cli library edit --id 42 --seasons-watched 1,2,3   # each 1-200
-python3.11 -m src.cli library ignore --id 42    # and library unignore
+uv run python -m src.cli library list --type book --status completed --sort rating
+uv run python -m src.cli library show --id 42
+uv run python -m src.cli library edit --id 42 --rating 5 --status completed
+uv run python -m src.cli library edit --id 42 --seasons-watched 1,2,3   # each 1-200
+uv run python -m src.cli library ignore --id 42    # and library unignore
 
-python3.11 -m src.cli auth connect --source gog     # or epic, trakt
-python3.11 -m src.cli auth status
+uv run python -m src.cli auth connect --source gog     # or epic, trakt
+uv run python -m src.cli auth status
 ```
 
 The taste profile the engine derives from your library:
 
 ```bash
-python3.11 -m src.cli profile show
-python3.11 -m src.cli profile regenerate
+uv run python -m src.cli profile show
+uv run python -m src.cli profile regenerate
 ```
 
 ## Use the web interface
 
 ```bash
-python3.11 -m src.web
+uv run python -m src.web
 ```
 
 Open <http://localhost:18473>. Browsing, syncing, recommendations, and a
@@ -219,12 +219,12 @@ the list alone.
 ## Tune your preferences
 
 ```bash
-python3.11 -m src.cli preferences get
+uv run python -m src.cli preferences get
 
-python3.11 -m src.cli preferences set-weight genre_match 3.0
-python3.11 -m src.cli preferences set-length book short        # or any, long
-python3.11 -m src.cli preferences custom-rules add "avoid horror"
-python3.11 -m src.cli preferences set-variety 4.0              # 0.0 off, 5.0 full
+uv run python -m src.cli preferences set-weight genre_match 3.0
+uv run python -m src.cli preferences set-length book short        # or any, long
+uv run python -m src.cli preferences custom-rules add "avoid horror"
+uv run python -m src.cli preferences set-variety 4.0              # 0.0 off, 5.0 full
 ```
 
 `set-variety` demotes genres you recently finished, per content type, so

@@ -3,7 +3,7 @@
 The official image, `ghcr.io/therealahall/recommendinator:latest`, covers
 `linux/amd64` and `linux/arm64`, so x86 servers, Apple Silicon, Synology DSM 7+,
 QNAP and Raspberry Pi 4/5 all work. `linux/arm/v7` is unsupported, since the
-Python 3.11 wheel ecosystem is too thin there. It lives in
+Python wheel ecosystem is too thin there. It lives in
 [GHCR](https://github.com/therealahall/recommendinator/pkgs/container/recommendinator).
 
 ## Quick start
