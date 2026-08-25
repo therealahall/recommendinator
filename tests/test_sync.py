@@ -247,6 +247,33 @@ class TestExecuteMultiSourceSync:
 
         assert results[0].errors == ["Sync failed for steam"]
 
+    def test_an_unexpected_plugin_fault_puts_its_traceback_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Regression: a plugin bug reached the log as a sanitised line only.
+
+        The caller gets a string naming no cause on purpose, so with no
+        traceback anywhere an AttributeError inside a plugin was undiagnosable.
+        """
+        plugin = MagicMock(spec=SourcePlugin)
+        plugin.name = "steam"
+        plugin.display_name = "Steam"
+        plugin.fetch.side_effect = AttributeError("'NoneType' has no attribute 'get'")
+
+        with caplog.at_level(logging.ERROR, logger="src.ingestion.sync"):
+            results = execute_multi_source_sync(
+                sources=[(plugin, {})],
+                storage_manager=MagicMock(spec=StorageManager),
+            )
+
+        assert results[0].errors == ["Sync failed for steam"]
+        (failure,) = [r for r in caplog.records if "Sync failed" in r.getMessage()]
+        assert failure.exc_info is not None
+        # The rendered frames, not just the exception name: ``exception_for_log``
+        # already puts that in the message, so a weaker assertion passes on the
+        # bare line the bug produced.
+        assert "Traceback (most recent call last)" in caplog.text
+
     def test_max_workers_runs_sources_concurrently(self) -> None:
         """With max_workers>1, sources fetch in parallel via a thread pool."""
         thread_count = 3
