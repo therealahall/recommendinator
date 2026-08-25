@@ -409,6 +409,17 @@ input[type="checkbox"] {
   gap: var(--space-3);
 }
 
+.update-banner--drift {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.update-banner--drift ul {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
 /* Status Bar */
 .status-bar {
   padding: var(--space-3) var(--space-4);
