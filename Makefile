@@ -2,9 +2,9 @@
 .PHONY: type-check clean run install-frontend build-frontend check-frontend check
 .PHONY: check-private
 
-# CI overrides this with the interpreter uv provisioned into .venv; locally the
-# project's pinned version is on PATH.
-PYTHON ?= python3.11
+# Through uv.lock, not PATH: a cryptography bump once went green locally
+# against the version it replaced. CI overrides with its provisioned .venv.
+PYTHON ?= uv run --locked --extra dev python
 
 # private/ is gitignored, and ruff and black both honour that while walking a
 # directory — so ruff is told not to, and black is handed the files by name.
