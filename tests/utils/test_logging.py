@@ -127,6 +127,29 @@ class TestEveryFileEntryNamesTheHostThatWroteIt:
         assert "| in-a-container |" in _written()
 
 
+class TestOneRecordIsOneLineInTheFile:
+    """``logger.exception`` hands the formatter frames nobody sanitized, and a
+    plugin fault quoting a response body carries the break that forges an entry."""
+
+    def test_a_traceback_quoting_a_forged_entry_stays_on_one_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        restore_root_logging: None,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _configure({"logging": {"level": "INFO", "file": "logs/app.log"}})
+
+        try:
+            raise ValueError("boom\n2026-01-01 00:00:00 | host | ERROR | forged")
+        except ValueError:
+            logging.getLogger("tests.one_line").exception("Sync failed")
+
+        written = _written()
+        assert written.count("\n") == 1
+        assert "Traceback (most recent call last)" in written
+
+
 class TestConfigureLoggingContainment:
     """The FileHandler path is confined to the logs/ directory."""
 
