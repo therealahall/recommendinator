@@ -1,0 +1,62 @@
+# Grouped hard on purpose. Ungrouped, four ecosystems and every transitive pin
+# between them open tens of pull requests a week, and automation nobody reviews
+# is worse than none: one group per ecosystem, one open pull request at a time.
+# Security updates ignore that ceiling, so an advisory still gets its own pull
+# request the day it lands.
+#
+# `chore` throughout because python-semantic-release parses the type: a bumped
+# pin is not a fix to this project, and `fix` would cut a patch release
+# claiming one.
+version: 2
+
+updates:
+  # Every workflow ref here is `<sha> # vX.Y.Z`. Dependabot rewrites the
+  # comment along with the sha whenever the two share a line, so the pinning
+  # convention survives its pull requests.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+
+  # `uv`, not `pip`: `pip` reads pyproject.toml and leaves uv.lock behind, and
+  # every install here — the gate, the image — is `--locked` against that file.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+
+  # pnpm's YAML value is `npm`; it is pnpm-lock.yaml that gets updated.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      frontend:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+
+  # The Dockerfile's tag@sha256 bases, including the uv stage copied from GHCR.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    groups:
+      base-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"

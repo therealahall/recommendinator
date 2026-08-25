@@ -1,8 +1,8 @@
-"""Static checks on the workflows that publish.
+"""Static checks on this repository's workflows.
 
 A workflow only runs on GitHub, so wiring is read from parsed YAML. Every step
-that decides something — the release guard, the tag guards, the alias
-decision — is instead executed under `bash -e`, the shell a `run:` step gets.
+that decides something is instead executed under `bash -e`, the shell a `run:`
+step gets.
 """
 
 from __future__ import annotations
@@ -30,6 +30,29 @@ _CHANGELOG_BULLET = re.compile(r"^- \S.*$", re.MULTILINE)
 
 DOCKER = WORKFLOWS / "docker.yml"
 RELEASE = WORKFLOWS / "release.yml"
+AUDIT = WORKFLOWS / "audit.yml"
+DEPENDABOT = _REPO_ROOT / ".github" / "dependabot.yml"
+
+# Where this repository pins a version, against the ecosystem Dependabot updates
+# it under. A surface that exists with no entry is one nothing ever bumps, and
+# nothing says so.
+PINNED_SURFACES = {
+    "github-actions": WORKFLOWS,
+    "uv": _REPO_ROOT / "uv.lock",
+    "npm": _REPO_ROOT / "pnpm-lock.yaml",
+    "docker": _REPO_ROOT / "Dockerfile",
+}
+
+# python-semantic-release cuts a release from a commit wearing one of these, so
+# a weekly bump carrying one releases this project for someone else's patch.
+RELEASE_TRIGGERING_TYPES = frozenset({"feat", "fix", "perf"})
+
+# A `uses:` line and whatever trails the ref, which is where the pinning
+# convention keeps the version the sha stands for. Comments are gone by the
+# time YAML is parsed, so this reads the source.
+_ACTION_REFERENCE = re.compile(
+    r"^\s*-?\s*uses:\s*(?P<ref>\S+)(?P<trailing>.*)$", re.MULTILINE
+)
 
 # Every spelling GitHub honours in a head commit's message. The tag points at
 # the version commit, so a tag push is a push event carrying whichever is there.
@@ -72,6 +95,53 @@ def _semantic_release_config() -> dict[str, Any]:
 def _workflow_jobs(path: Path) -> dict[str, Any]:
     jobs: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
     return jobs
+
+
+def _triggers(path: Path) -> dict[str, Any]:
+    """The workflow's `on:` block. YAML 1.1 reads the bare key as a boolean."""
+    workflow: dict[Any, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    triggers: dict[str, Any] = workflow[True]
+    return triggers
+
+
+def _uses(job: dict[str, Any]) -> list[str]:
+    """What a job runs: a reusable workflow, or the action in each of its steps."""
+    if "uses" in job:
+        return [str(job["uses"])]
+    return [str(step["uses"]) for step in job["steps"] if "uses" in step]
+
+
+def _called_transitively(entry: Path) -> set[Path]:
+    """*entry* and every local reusable workflow its jobs reach from there."""
+    reached = {entry}
+    for job in _workflow_jobs(entry).values():
+        called = str(job.get("uses", ""))
+        if called.startswith("./"):
+            reached |= _called_transitively(_REPO_ROOT / called.removeprefix("./"))
+    return reached
+
+
+def _dependency_updates() -> list[dict[str, Any]]:
+    """Dependabot's `updates:` entries, one per ecosystem it is told to watch."""
+    entries: list[dict[str, Any]] = yaml.safe_load(
+        DEPENDABOT.read_text(encoding="utf-8")
+    )["updates"]
+    return entries
+
+
+def _jobs_querying_an_advisory_feed(path: Path) -> set[str]:
+    """The jobs of *path* running an audit tool, named for the tool they run."""
+    querying = set()
+    for name, job in _workflow_jobs(path).items():
+        for step in job.get("steps", []):
+            action = str(step.get("uses", "")).split("@")[0]
+            # A word, so `requirements-audit.txt` stays an argument.
+            words = str(step.get("run", "")).split()
+            if "audit" in action or any(
+                word == "audit" or word.endswith("-audit") for word in words
+            ):
+                querying.add(name)
+    return querying
 
 
 def _steps(path: Path, job: str) -> list[dict[str, Any]]:
@@ -763,3 +833,77 @@ class TestFloatingTagsOnlyMoveForward:
             "highest_in_major": "false",
             "highest_in_minor": "false",
         }
+
+
+class TestTheDependencyAuditStaysOffTheReleasePath:
+    """The audit reds a pull request. It must not withhold a published image."""
+
+    def test_the_audit_runs_weekly_and_never_on_a_tag_push(self) -> None:
+        published = {
+            reached
+            for workflow in sorted(WORKFLOWS.glob("*.yml"))
+            if "tags" in (_triggers(workflow).get("push") or {})
+            for reached in _called_transitively(workflow)
+        }
+
+        assert DOCKER in published, "no workflow publishes on a tag any more"
+        assert AUDIT not in published
+        # Calling it is one way in; pasting its steps into the gate docker.yml's
+        # verify job calls is the other, and costs the same image.
+        for workflow in published:
+            assert not _jobs_querying_an_advisory_feed(workflow), workflow.name
+
+        # Both lockfiles keep a job that reaches the feed, or the workflow is a
+        # green tick over an audit nobody runs.
+        assert _jobs_querying_an_advisory_feed(AUDIT) == set(_workflow_jobs(AUDIT))
+        # Without this an advisory surfaces only when someone happens to open a
+        # pull request, and the acceptance asks for it with no code change.
+        assert "schedule" in _triggers(AUDIT)
+
+
+class TestEverythingPinnedHereIsOfferedUpdates:
+    def test_every_pinned_surface_present_in_the_tree_has_an_ecosystem(self) -> None:
+        covered = {entry["package-ecosystem"] for entry in _dependency_updates()}
+
+        for ecosystem, surface in PINNED_SURFACES.items():
+            if surface.exists():
+                assert ecosystem in covered, surface.name
+
+    def test_each_ecosystem_opens_one_capped_weekly_group(self) -> None:
+        for entry in _dependency_updates():
+            named = entry["package-ecosystem"]
+            assert entry["schedule"]["interval"] == "weekly", named
+            # One group over every package, or a week's transitive pins arrive
+            # as a pull request each and the review that never happens.
+            assert [group["patterns"] for group in entry["groups"].values()] == [
+                ["*"]
+            ], named
+            # Absent, Dependabot applies a default ceiling rather than none, so
+            # the regression is silent: the presence is the ceiling being ours.
+            assert isinstance(entry["open-pull-requests-limit"], int), named
+            assert entry["commit-message"]["prefix"] not in RELEASE_TRIGGERING_TYPES
+
+
+class TestEveryActionRunsCodeThatCannotBeSwappedOut:
+    def test_third_party_actions_are_pinned_to_a_sha_naming_its_version(self) -> None:
+        """A mutable tag lets its owner run new code in a job holding
+        `packages: write`. The trailing version is what makes a sha reviewable,
+        and dependabot rewrites the two together."""
+        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+            read = _ACTION_REFERENCE.findall(workflow.read_text(encoding="utf-8"))
+            declared = [
+                used for job in _workflow_jobs(workflow).values() for used in _uses(job)
+            ]
+            # Comments survive only in the source, so the refs are read from it
+            # — and a pattern that skipped one would pass this vacuously.
+            assert [reference for reference, _ in read] == declared, workflow.name
+
+            for reference, trailing in read:
+                if reference.startswith("./"):
+                    continue
+                assert re.fullmatch(
+                    r"[^@]+@[0-9a-f]{40}", reference
+                ), f"{workflow.name}: {reference}"
+                assert re.fullmatch(
+                    r"\s+#\s*\S+", trailing
+                ), f"{workflow.name}: {reference} names no version"
