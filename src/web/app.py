@@ -19,6 +19,7 @@ from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from src import log_dependency_drift
 from src.config.service import (
     create_recommendation_engine,
     create_storage_manager,
@@ -167,6 +168,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
         logging.getLogger("watchfiles").setLevel(logging.WARNING)
         logger.info("Logging configured from application config")
+        log_dependency_drift()
 
         # get_config, not the dict: a hot-reload swaps in a fresh one, and the
         # engine must score against whichever is current at the time.

@@ -2,6 +2,7 @@
 //
 // Build-time config, no DOM involved — and loading vite.config.ts pulls in
 // esbuild, which refuses to run against jsdom's TextEncoder.
+import { readFileSync } from 'fs'
 import type { ProxyOptions, ServerOptions, UserConfig } from 'vite'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
@@ -163,6 +164,14 @@ describe('vite.config.ts wiring', () => {
       '/static/themes',
       '/static/private-themes',
     ])
+  })
+
+  it('stamps the bundle with the version pyproject declares', async () => {
+    const stamped = (await resolveViteConfig()).define?.__BUNDLE_VERSION__
+    const pyproject = readFileSync(new URL('../../pyproject.toml', import.meta.url), 'utf-8')
+
+    expect(stamped).not.toBe('""')
+    expect(pyproject).toContain(`\nversion = ${stamped}\n`)
   })
 
   it('reads variables that are not VITE_ prefixed', async () => {

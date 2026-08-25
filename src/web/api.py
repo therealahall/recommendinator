@@ -10,6 +10,7 @@ from fastapi import Path as PathParam  # this module's ``Path`` is pathlib's
 from fastapi.responses import Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
+from src import PackageDrift, dependency_drift
 from src import __version__ as APP_VERSION
 from src.auth.epic import (
     EPIC_PLUGIN,
@@ -525,6 +526,7 @@ class StatusResponse(BaseModel):
     recommendations_config: RecommendationsConfig = Field(
         default_factory=RecommendationsConfig
     )
+    dependency_drift: list[PackageDrift] = Field(default_factory=list)
 
 
 class UserPreferenceResponse(BaseModel):
@@ -2058,6 +2060,7 @@ def get_status() -> StatusResponse:
         version=APP_VERSION,
         components=components,
         recommendations_config=_get_recommendations_config(config),
+        dependency_drift=list(dependency_drift()),
     )
 
 

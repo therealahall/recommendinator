@@ -38,6 +38,19 @@ describe('useAppStore', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('flags a served bundle older than the backend, and carries its drift', async () => {
+    vi.stubGlobal('__BUNDLE_VERSION__', '1.2.3')
+    const drift = { package: 'newdep', declared: '>=2.0', installed: null, message: 'x' }
+    mockGet.mockResolvedValue({ ...answer('ready', '1.3.0'), dependency_drift: [drift] })
+
+    const store = useAppStore()
+    await store.fetchStatus()
+
+    expect(store.showUpdateBanner).toBe(true)
+    expect(store.dependencyDrift).toEqual([drift])
   })
 
   it('fetchStatus sets state on success', async () => {
