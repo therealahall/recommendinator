@@ -14,11 +14,6 @@ from src.storage.manager import SaveCounts, StorageManager
 from .conftest import _invoke_with_mocks
 
 
-def _piping_runner() -> CliRunner:
-    """Streams kept apart, the way a shell pipe sees them."""
-    return CliRunner(mix_stderr=False)
-
-
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateProgressIsOffTheDataChannel:
     """Both of its progress lines: the header and the per-source counter."""
@@ -43,7 +38,7 @@ class TestUpdateProgressIsOffTheDataChannel:
             "src.cli.commands._update.execute_multi_source_sync", side_effect=sync
         ):
             return _invoke_with_mocks(
-                _piping_runner(),
+                CliRunner(),
                 ["update"],
                 MagicMock(spec=StorageManager),
                 config=self._CONFIG,

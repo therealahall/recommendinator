@@ -1060,7 +1060,7 @@ class TestPrivateModuleImportFailureIsReported:
         registry_with_a_broken_private_module: None,
     ) -> None:
         result = _invoke_with_mocks(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             ["source", "plugins"],
             mock_storage=storage,
             config={"inputs": {}},

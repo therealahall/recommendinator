@@ -85,7 +85,7 @@ class TestTheConsoleNeverWritesToTheDataChannelRegression:
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             storage,
             _config_that_warns_at_boot("data/logs/cli.log"),
             ["status", "--format", "json"],
@@ -144,7 +144,7 @@ class TestCheckLogsForDetailsNamesAFileHoldingThemRegression:
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             storage,
             _log_to("data/logs/cli.log"),
             ["recommend", "--type", "book"],
@@ -184,7 +184,7 @@ class TestAnUnusableLogDestinationDegradesRatherThanAbortingRegression:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
         result = _invoke_with_real_logging(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             storage,
             _log_to("data/logs/cli.log"),
             ["status", "--format", "json"],
@@ -216,7 +216,7 @@ class TestTheConsoleWithholdsTracebacksRegression:
         monkeypatch.chdir(tmp_path)
 
         result = _invoke_with_real_logging(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             storage,
             _log_to("data/logs/cli.log"),
             ["recommend", "--type", "book"],

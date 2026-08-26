@@ -138,7 +138,7 @@ class TestThePasswordIsNeverAnArgvValue:
     ) -> None:
         """``--format json`` is pipeable, so the prompt goes to stderr."""
         result = _run(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             claimed,
             [*_SET_PASSWORD, "--format", "json"],
             _TYPED_TWICE,
@@ -291,7 +291,7 @@ class TestTheJsonViewIsTheRecordStorageHolds:
     def test_the_document_is_the_stored_record(
         self, claimed: StorageManager, args: list[str], input_text: str | None
     ) -> None:
-        result = _run(CliRunner(mix_stderr=False), claimed, args, input_text)
+        result = _run(CliRunner(), claimed, args, input_text)
 
         assert result.exit_code == 0, result.stderr
         assert json.loads(result.stdout) == claimed.accounts.describe(1)
