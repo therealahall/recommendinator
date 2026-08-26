@@ -96,7 +96,7 @@ def test_every_duplicates_payload_carries_the_web_response_model_s_keys() -> Non
     assert set(suggestion_to_dict(_A_SUGGESTION)) == set(
         DuplicateSuggestionResponse.model_fields
     )
-    (copy, _) = suggestion_to_dict(_A_SUGGESTION)["copies"]  # type: ignore[misc]
+    copy, _ = suggestion_to_dict(_A_SUGGESTION)["copies"]  # type: ignore[misc]
     assert set(copy) == set(DuplicateSideResponse.model_fields)
     assert set(suggestion_page_to_dict(SuggestionPage(total=1, suggestions=[]))) == set(
         DuplicateSuggestionPageResponse.model_fields

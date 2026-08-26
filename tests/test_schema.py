@@ -147,20 +147,16 @@ def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
     normalization corrects: one key then names both spellings.
     """
     cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO content_items
+    cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status, rating, source)
            VALUES (1, 'The Witcher III: Wild Hunt',
                    'the witcher iii: wild hunt', 'video_game', 'completed',
-                   5, 'steam')"""
-    )
-    cursor.execute(
-        """INSERT INTO content_items
+                   5, 'steam')""")
+    cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status, review, source)
            VALUES (1, 'Witcher 3 - Wild Hunt',
                    'witcher 3 - wild hunt', 'video_game', 'completed',
-                   'Great writing', 'blog')"""
-    )
+                   'Great writing', 'blog')""")
     conn.execute("PRAGMA user_version = 0")
     conn.commit()
 
@@ -239,11 +235,9 @@ def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
     that predates them still writes into a database that already has them.
     """
     cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO content_items
+    cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status)
-           VALUES (1, 'The Witcher 3', 'witcher 3', 'video_game', 'completed')"""
-    )
+           VALUES (1, 'The Witcher 3', 'witcher 3', 'video_game', 'completed')""")
     cursor.execute(
         "INSERT INTO video_game_details (content_item_id, developer)"
         " VALUES (?, 'CD Projekt Red')",
@@ -381,11 +375,9 @@ class TestTheDerivedColumnBackfill:
         title down with it.
         """
         create_schema(temp_db)
-        temp_db.execute(
-            """INSERT INTO content_items
+        temp_db.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type, status)
-               VALUES (1, 'A Lonely Row', 'lonely row', 'book', 'completed')"""
-        )
+               VALUES (1, 'A Lonely Row', 'lonely row', 'book', 'completed')""")
         temp_db.commit()
 
         create_schema(temp_db)

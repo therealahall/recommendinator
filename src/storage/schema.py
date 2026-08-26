@@ -309,8 +309,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     stored_version = _stored_schema_version(cursor)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -318,8 +317,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             settings TEXT  -- JSON for per-user settings (scorer weights, etc.)
         )
-        """
-    )
+        """)
 
     # Login credentials for that row, NULL until someone claims the instance —
     # which is how the web layer tells a fresh install from a claimed one.
@@ -329,8 +327,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     # Web sessions, keyed by a hash of the token so that reading this table
     # hands over no live session (see src/storage/accounts.py).
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             token_hash TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -338,8 +335,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             expires_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP NOT NULL
         )
-        """
-    )
+        """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
 
     cursor.execute(_CONTENT_ITEMS_TABLE)
@@ -362,12 +358,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     for index_statement in _CONTENT_ITEM_INDEXES:
         cursor.execute(index_statement)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         INSERT OR IGNORE INTO users (id, username, display_name)
         VALUES (1, 'default', 'Default User')
-        """
-    )
+        """)
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
     cursor.execute(
@@ -420,8 +414,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     backfill_derived_columns(cursor)
 
     # Preference profile snapshots (regenerated periodically)
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS preference_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -429,8 +422,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id)  -- One active profile per user
         )
-    """
-    )
+    """)
 
     # What the interface looks like for one user. Its own table rather than a
     # key in ``users.settings``: that blob is the preference config, and
@@ -445,8 +437,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _move_themes_off_preference_blob(cursor)
 
     # Credentials table for encrypted source credentials (API keys, tokens)
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS credentials (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             source_id TEXT NOT NULL,
@@ -455,8 +446,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, source_id, credential_key)
         )
-        """
-    )
+        """)
 
     # Source configs table: per-source non-sensitive config that has been
     # migrated from config.yaml into the database. Once a row exists for
@@ -464,8 +454,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # consulted by resolve_inputs — the database is the source of truth.
     # Sensitive fields (API keys, tokens) keep going through the encrypted
     # ``credentials`` table above; this table holds the rest.
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS source_configs (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             source_id TEXT NOT NULL,
@@ -479,8 +468,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, source_id)
         )
-        """
-    )
+        """)
     _add_column_if_not_exists(cursor, "source_configs", "sync_interval", "TEXT")
 
     cursor.execute(_SYNC_RUNS_TABLE)
@@ -527,15 +515,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # keyed by dotted path (e.g. "recommendations.default_count"). Nothing is
     # seeded here on boot; a stored leaf wins over YAML and the registry const
     # default. Per-source config and credentials keep their own tables above.
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value_json TEXT NOT NULL,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-        """
-    )
+        """)
 
     # Version-guarded one-time settings migrations (see _migrate_settings_table).
     _migrate_settings_table(cursor, stored_version)
