@@ -14,19 +14,19 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "pinia": "^3.0.4",
+    "pinia": "^4.0.3",
     "vue": "^3.5.41",
-    "vue-router": "^4.6.4"
+    "vue-router": "^5.2.0"
   },
   "devDependencies": {
-    "@pinia/testing": "^0.1.7",
+    "@pinia/testing": "^2.0.1",
     "@types/node": "^26.3.0",
-    "@vitejs/plugin-vue": "^5.2.4",
+    "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
-    "jsdom": "^26.1.0",
-    "typescript": "^5.9.3",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7",
-    "vue-tsc": "^2.2.12"
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
   }
 }
