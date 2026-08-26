@@ -20,7 +20,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.routing import APIRoute
+from fastapi.routing import RouteContext
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -93,6 +93,7 @@ from tests.factories import (
     back_mock_preference_store,
     booted_web_app,
     make_item,
+    served_api_operations,
     spec_sub_stores,
 )
 
@@ -4208,10 +4209,9 @@ _GUARD_CASES = [
 def _served_api_routes(app: FastAPI) -> set[tuple[str, str]]:
     """Every ``(method, path)`` under ``/api`` the app actually serves."""
     return {
-        (method, route.path)
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/api")
-        for method in route.methods
+        (method, path)
+        for method, path, _ in served_api_operations(app)
+        if path.startswith("/api")
     }
 
 
@@ -4313,7 +4313,7 @@ _OPEN_API_ROUTES = {
 }
 
 
-def _authenticates(route: APIRoute) -> bool:
+def _authenticates(route: RouteContext) -> bool:
     """Whether ``require_session`` is anywhere in *route*'s dependency tree."""
     pending = list(route.dependant.dependencies)
     while pending:
@@ -4327,11 +4327,9 @@ def _authenticates(route: APIRoute) -> bool:
 def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
     """Every ``/api`` route the app serves without demanding a session."""
     return {
-        (method, route.path)
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/api")
-        for method in route.methods
-        if not _authenticates(route)
+        (method, path)
+        for method, path, route in served_api_operations(app)
+        if path.startswith("/api") and not _authenticates(route)
     }
 
 
@@ -4434,12 +4432,11 @@ class TestInjectedDependenciesStayOffTheWire:
     """
 
     @staticmethod
-    def _operations(app: FastAPI) -> list[tuple[str, str, APIRoute]]:
+    def _operations(app: FastAPI) -> list[tuple[str, str, RouteContext]]:
         return [
-            (method, route.path, route)
-            for route in app.routes
-            if isinstance(route, APIRoute) and route.path.startswith("/api")
-            for method in route.methods & _BODYLESS_METHODS
+            (method, path, route)
+            for method, path, route in served_api_operations(app)
+            if path.startswith("/api") and method in _BODYLESS_METHODS
         ]
 
     def test_no_get_or_delete_route_asks_for_a_body(self, mock_components) -> None:

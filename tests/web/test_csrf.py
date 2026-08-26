@@ -13,13 +13,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from src.storage.manager import StorageManager
 from src.web.auth import SESSION_COOKIE
 from src.web.csrf import CROSS_ORIGIN_DETAIL
-from tests.factories import booted_web_app
+from tests.factories import booted_web_app, served_api_operations
 
 _USERNAME = "owner"
 _PASSWORD = "correct horse battery"
@@ -42,10 +41,9 @@ def _state_changing_routes(client: TestClient) -> list[tuple[str, str]]:
     any of the three routers is covered the day it is registered.
     """
     return sorted(
-        (method, re.sub(r"{[^}]+}", "1", route.path))
-        for route in client.app.routes
-        if isinstance(route, APIRoute)
-        for method in route.methods - _READ_ONLY_METHODS
+        (method, re.sub(r"{[^}]+}", "1", path))
+        for method, path, _ in served_api_operations(client.app)
+        if method not in _READ_ONLY_METHODS
     )
 
 
