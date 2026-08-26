@@ -578,7 +578,7 @@ class TestTheGitHubReleaseCarriesItsAsset:
         """A rerun after the push landed and the creation failed. The asset can
         only go on at creation, so the existing release is deleted first — and
         its tag is kept, since the push that made it public already happened."""
-        (newest, *_) = _changelog_sections()
+        newest, *_ = _changelog_sections()
         _give_the_repository_its_changelog(repository)
         stub = _stub_gh(tmp_path, release_exists=True)
 
@@ -598,7 +598,7 @@ class TestTheGitHubReleaseCarriesItsAsset:
         which point the release is whole. Recreating it notifies every watcher
         twice and reissues the asset's id, for a release identical to the one
         deleted."""
-        (newest, *_) = _changelog_sections()
+        newest, *_ = _changelog_sections()
         _give_the_repository_its_changelog(repository)
         stub = _stub_gh(tmp_path, release_exists=True, assets=("docker-compose.yml",))
 

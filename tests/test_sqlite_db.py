@@ -2175,11 +2175,9 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
         db = SQLiteDB(db_path)
         with db.connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO content_items
+            cursor.execute("""INSERT INTO content_items
                    (user_id, title, normalized_title, content_type, status)
-                   VALUES (1, 'Neuromancer', 'neuromancer', 'book', 'completed')"""
-            )
+                   VALUES (1, 'Neuromancer', 'neuromancer', 'book', 'completed')""")
             cursor.execute(
                 "INSERT INTO book_details (content_item_id, author)"
                 " VALUES (?, 'William Gibson')",
@@ -4441,13 +4439,11 @@ class TestCrossSourceDuplicateDetectionRegression:
         cursor = conn.cursor()
 
         # Insert kept row with some detail data
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type,
                 status, rating, source)
                VALUES (1, 'Dishonored',
-                       'dishonored', 'video_game', 'completed', 5, 'steam')"""
-        )
+                       'dishonored', 'video_game', 'completed', 5, 'steam')""")
         keep_id = cursor.lastrowid
         assert keep_id is not None
         _record_raw_external_id(cursor, keep_id, "steam", "steam-dishonored")
@@ -4460,14 +4456,12 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
 
         # Insert duplicate row with complementary detail data
-        cursor.execute(
-            """INSERT INTO content_items
+        cursor.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type,
                 status, review, source)
                VALUES (1, 'Dishonored',
                        'dishonored', 'video_game', 'completed',
-                       'Masterpiece of level design', 'blog')"""
-        )
+                       'Masterpiece of level design', 'blog')""")
         dup_id = cursor.lastrowid
         assert dup_id is not None
         _record_raw_external_id(cursor, dup_id, "blog", "blog-dishonored")

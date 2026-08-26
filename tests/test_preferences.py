@@ -178,7 +178,7 @@ class TestScoreNormalisationBounds:
         assert -1.0 <= score_b <= 1.0
 
     @pytest.mark.parametrize("min_rating", RATINGS)
-    @pytest.mark.parametrize(("rating_a", "rating_b"), product(RATINGS, repeat=2))
+    @pytest.mark.parametrize(("rating_a", "rating_b"), list(product(RATINGS, repeat=2)))
     def test_scores_stay_in_range_for_every_min_rating(
         self, min_rating, rating_a, rating_b
     ):
