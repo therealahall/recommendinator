@@ -805,7 +805,7 @@ def test_update_json_keeps_the_enrichment_report_off_stdout(tmp_path: Path) -> N
             "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
         ),
     ):
-        result = CliRunner(mix_stderr=False).invoke(
+        result = CliRunner().invoke(
             cli, ["update", "--source", "steam", "--format", "json"]
         )
 
@@ -852,7 +852,7 @@ def test_update_reports_the_omitted_error_count_the_web_payload_carries(
             side_effect=ValueError("db error"),
         ),
     ):
-        result = CliRunner(mix_stderr=False).invoke(
+        result = CliRunner().invoke(
             cli, ["update", "--source", "steam", "--format", "json"]
         )
 
@@ -889,9 +889,7 @@ def test_update_in_a_terminal_names_the_error_total_it_did_not_print(
         ),
         patch("src.cli.commands._update.execute_multi_source_sync", return_value=[ran]),
     ):
-        result = CliRunner(mix_stderr=False).invoke(
-            cli, ["update", "--source", "steam"]
-        )
+        result = CliRunner().invoke(cli, ["update", "--source", "steam"])
 
     assert result.exit_code == 0, result.stderr
     assert str(len(ran.errors) + omitted) in result.stderr
@@ -994,7 +992,7 @@ def test_update_json_answers_with_a_document_when_every_source_is_claimed(
             "src.ingestion.sources.steam.SteamPlugin.validate_config", return_value=[]
         ),
     ):
-        result = CliRunner(mix_stderr=False).invoke(
+        result = CliRunner().invoke(
             cli, ["update", "--source", "steam", "--format", "json"]
         )
 
@@ -1506,24 +1504,20 @@ class TestConfigLoadingRegression:
 
         # config.yaml has steam enabled
         config_yaml = config_dir / "config.yaml"
-        config_yaml.write_text(
-            """
+        config_yaml.write_text("""
 inputs:
   steam:
     enabled: true
     api_key: "test"
-"""
-        )
+""")
 
         # example.yaml has steam disabled
         example_yaml = config_dir / "example.yaml"
-        example_yaml.write_text(
-            """
+        example_yaml.write_text("""
 inputs:
   steam:
     enabled: false
-"""
-        )
+""")
 
         # When load_config is called with None, it should use config.yaml
         # We need to temporarily change the working directory

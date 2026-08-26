@@ -331,7 +331,7 @@ class TestCliBootstrapFailures:
             patch("src.cli.main.create_recommendation_engine"),
             patch(f"src.cli.main.{patched}", side_effect=error),
         ):
-            return CliRunner(mix_stderr=False).invoke(cli, ["status"])
+            return CliRunner().invoke(cli, ["status"])
 
     def test_a_missing_config_file_exits_one_naming_the_fault(self) -> None:
         result = self._boot_failing_at(

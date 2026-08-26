@@ -47,9 +47,9 @@ def _import(
     *args: str,
     config: dict[str, Any] | None = None,
 ) -> Any:
-    """Run ``import`` with the streams kept apart, as a shell pipe sees them."""
+    """Run ``import`` over ``path`` as a book CSV."""
     return _invoke_with_mocks(
-        CliRunner(mix_stderr=False),
+        CliRunner(),
         ["import", str(path), "--importer", "csv_import", "--content-type", "book"]
         + list(args),
         mock_storage=storage,
@@ -58,9 +58,9 @@ def _import(
 
 
 def _formats(storage: StorageManager, *args: str) -> Any:
-    """Run ``import-formats`` with the streams kept apart, as a shell pipe sees."""
+    """Run ``import-formats``."""
     return _invoke_with_mocks(
-        CliRunner(mix_stderr=False),
+        CliRunner(),
         ["import-formats", *args],
         mock_storage=storage,
     )
@@ -69,9 +69,9 @@ def _formats(storage: StorageManager, *args: str) -> Any:
 def _template(
     storage: StorageManager, *args: str, input_text: str | None = None
 ) -> Any:
-    """Run ``import-template`` with the streams kept apart, as a shell pipe sees."""
+    """Run ``import-template``."""
     return _invoke_with_mocks(
-        CliRunner(mix_stderr=False),
+        CliRunner(),
         ["import-template", *args],
         mock_storage=storage,
         input_text=input_text,
@@ -225,7 +225,7 @@ class TestARefusedImport:
         self, storage: StorageManager, books_csv: Path
     ) -> None:
         result = _invoke_with_mocks(
-            CliRunner(mix_stderr=False),
+            CliRunner(),
             ["import", str(books_csv), "--importer", "csv_import"],
             mock_storage=storage,
         )

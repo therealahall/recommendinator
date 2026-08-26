@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 import requests
 from click.testing import CliRunner
@@ -592,9 +593,24 @@ class TestTheSurrogateStripIsOneGate:
     parameter, which is upstream of both sinks a command has.
     """
 
+    @staticmethod
+    def _bound(*argv: str) -> list[str]:
+        """What a command bound under the root group's own class receives."""
+        seen: list[str] = []
+        group = type(cli)(name="recommendinator")
+
+        @group.command()
+        @click.argument("values", nargs=-1)
+        def take(values: tuple[str, ...]) -> None:
+            seen.extend(values)
+
+        result = CliRunner().invoke(group, ["take", *argv], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.stderr
+        return seen
+
     def test_the_root_group_strips_every_token_before_parsing(self) -> None:
-        with cli.make_context("recommendinator", ["source", "show", "a\udcffb"]) as ctx:
-            assert [*ctx.protected_args, *ctx.args] == ["source", "show", "ab"]
+        assert self._bound("a\udcffb", "c\udcffd") == ["ab", "cd"]
 
     def test_text_the_locale_can_decode_survives_the_strip(self) -> None:
         """An emoji is one codepoint outside the BMP, not the surrogate pair
@@ -602,14 +618,7 @@ class TestTheSurrogateStripIsOneGate:
         """
         kept = "Sublime — 日本語 🎉 café"
 
-        with cli.make_context(
-            "recommendinator", ["preferences", "custom-rules", kept]
-        ) as ctx:
-            assert [*ctx.protected_args, *ctx.args] == [
-                "preferences",
-                "custom-rules",
-                kept,
-            ]
+        assert self._bound(kept) == [kept]
 
 
 class TestAGuardSeesTheValueStorageWillGetRegression:

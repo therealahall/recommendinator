@@ -102,7 +102,7 @@ class TestProfileRegenerate:
             mock_pg.regenerate_and_save.return_value = mock_profile
             mock_pg_cls.return_value = mock_pg
             result = _invoke_with_mocks(
-                CliRunner(mix_stderr=False), ["profile", "regenerate"], mock_storage
+                CliRunner(), ["profile", "regenerate"], mock_storage
             )
 
         assert result.exit_code == 0

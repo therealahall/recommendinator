@@ -75,15 +75,6 @@ def _invoke_recommend_with_engine(
     )
 
 
-def _piping_runner() -> CliRunner:
-    """A runner keeping the streams apart, the way a shell pipe sees them.
-
-    The shared ``cli_runner`` fixture merges stderr into stdout, which cannot
-    tell a document from the chatter printed alongside it.
-    """
-    return CliRunner(mix_stderr=False)
-
-
 def _book(
     title: str,
     author: str | None = "Author A",
@@ -141,7 +132,7 @@ class TestRecommendJsonOutput:
         )
 
         result = _invoke_recommend_with_engine(
-            _piping_runner(),
+            CliRunner(),
             ["recommend", "--type", "book", "--format", "json"],
             mock_engine,
         )
@@ -172,7 +163,7 @@ class TestRecommendJsonOutput:
         parsing this document cannot read a paragraph.
         """
         result = _invoke_recommend_with_engine(
-            _piping_runner(),
+            CliRunner(),
             ["recommend", "--type", "book", "--format", "json"],
             _engine_returning(),
         )
@@ -190,7 +181,7 @@ class TestRecommendFailuresLeaveStdoutParseable:
         engine.generate_recommendations.side_effect = RuntimeError("boom")
 
         result = _invoke_recommend_with_engine(
-            _piping_runner(),
+            CliRunner(),
             ["recommend", "--type", "book", "--format", "json"],
             engine,
         )
@@ -223,7 +214,7 @@ class TestRecommendProgressLineOnStdoutRegression:
     def test_the_json_document_is_the_whole_of_stdout_regression(self) -> None:
         """stdout parses whole, and the progress line is on stderr."""
         result = _invoke_recommend_with_engine(
-            _piping_runner(), [*self.ARGS, "--format", "json"], self._engine()
+            CliRunner(), [*self.ARGS, "--format", "json"], self._engine()
         )
 
         assert result.exit_code == 0
@@ -244,9 +235,7 @@ class TestRecommendProgressLineOnStdoutRegression:
 
     def test_the_table_run_still_reports_progress_regression(self) -> None:
         """The human default keeps the line, off the data channel."""
-        result = _invoke_recommend_with_engine(
-            _piping_runner(), self.ARGS, self._engine()
-        )
+        result = _invoke_recommend_with_engine(CliRunner(), self.ARGS, self._engine())
 
         assert result.exit_code == 0
         assert self.PROGRESS in result.stderr
@@ -262,7 +251,7 @@ class TestRecommendTableOutput:
     def test_recommendations_render_as_ranked_rows_in_engine_order(self) -> None:
         """Rank, title, series, creator and score per row, best-scoring first."""
         result = _invoke_recommend_with_engine(
-            _piping_runner(),
+            CliRunner(),
             ["recommend", "--type", "book"],
             _engine_returning(
                 Recommendation(
@@ -299,7 +288,7 @@ class TestRecommendTableOutput:
     def test_an_unknown_author_renders_a_placeholder(self) -> None:
         """A book with no author shows N/A, never the literal None."""
         result = _invoke_recommend_with_engine(
-            _piping_runner(),
+            CliRunner(),
             ["recommend", "--type", "book"],
             _engine_returning(
                 Recommendation(
