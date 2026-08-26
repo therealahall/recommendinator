@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import DEFAULT, MagicMock, Mock, NonCallableMock, patch
 
 from fastapi import FastAPI
+from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
@@ -88,6 +89,21 @@ def issue_session(storage: Any) -> str:
     if isinstance(storage, NonCallableMock):
         return _MOCK_SESSION_TOKEN
     return str(storage.accounts.create_session(get_default_user_id()))
+
+
+def served_api_operations(app: FastAPI) -> list[tuple[str, str, RouteContext]]:
+    """Every ``(method, path, route)`` *app* serves, anchored against an empty
+    sweep: ``app.routes`` holds an included router now, not its routes."""
+    operations = [
+        (method, context.path, context)
+        for context in iter_route_contexts(app.routes)
+        if isinstance(context.original_route, APIRoute)
+        for method in context.methods or ()
+    ]
+    assert ("GET", "/api/status") in {
+        (method, path) for method, path, _ in operations
+    }, "route introspection found no GET /api/status, so this sweep is vacuous"
+    return operations
 
 
 def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
