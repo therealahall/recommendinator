@@ -38,10 +38,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 1
+    # Two, because typescript gets a PR of its own below.
+    open-pull-requests-limit: 2
     groups:
       frontend:
         patterns: ["*"]
+        # TypeScript 7 dropped the ./lib/tsc export vue-tsc resolves, so it
+        # cannot land until @vue/language-tools ships support. Ungrouped, it
+        # sits in its own PR tracking each release instead of holding the
+        # other eight packages behind it.
+        exclude-patterns: ["typescript"]
     commit-message:
       prefix: "chore"
 
