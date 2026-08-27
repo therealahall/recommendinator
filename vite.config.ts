@@ -6,7 +6,7 @@ import { devServerOptions } from './resources/vite/devServer'
 
 function versionThisBundleIsBuiltFrom(): string {
   try {
-    const pyproject = readFileSync(resolve(__dirname, 'pyproject.toml'), 'utf-8')
+    const pyproject = readFileSync(resolve(import.meta.dirname, 'pyproject.toml'), 'utf-8')
     const table = pyproject.split(/^\[/m).find((section) => section.startsWith('project]'))
     return table?.match(/^version = "([^"]+)"/m)?.[1] ?? ''
   } catch {
@@ -21,17 +21,17 @@ export default defineConfig(({ mode }) => ({
   },
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'resources/js'),
+      '@': resolve(import.meta.dirname, 'resources/js'),
     },
   },
   base: '/static/dist/',
   build: {
-    outDir: resolve(__dirname, 'src/web/static/dist'),
+    outDir: resolve(import.meta.dirname, 'src/web/static/dist'),
     emptyOutDir: true,
     modulePreload: { polyfill: false },
   },
   // Empty prefix so the DEV_SERVER_* names are picked up from .env and the shell
   // alike. They deliberately avoid Vite's `VITE_` prefix: they configure the dev
   // server, and a prefixed name would also be inlined into the client bundle.
-  server: devServerOptions(loadEnv(mode, __dirname, '')),
+  server: devServerOptions(loadEnv(mode, import.meta.dirname, '')),
 }))
