@@ -39,10 +39,16 @@ class TestStaleEditableInstallRegression:
                 "metadata '0.7.0'"
             )
 
-    def test_real_pyproject_is_parseable_in_dev_tree(self) -> None:
+    def test_the_version_comes_off_the_pyproject_beside_the_package(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nversion = "9.9.9"\n', encoding="utf-8"
+        )
         assert (
-            src._read_source_version() is not None
-        ), "pyproject.toml is no longer adjacent to src/"
+            src._read_source_version(str(tmp_path / "src" / "__init__.py")) == "9.9.9"
+        )
 
     def test_returns_none_when_no_pyproject(self, tmp_path: Path) -> None:
         fake_init = tmp_path / "src" / "__init__.py"

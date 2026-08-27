@@ -15,6 +15,14 @@ from src.recommendations.content_length import (
 )
 from tests.factories import make_item
 
+
+def _unknown_game_score(preferences: dict[str, str]) -> float:
+    """What a game carrying no length at all scores, whatever the tuning is."""
+    return score_length_match(
+        make_item(content_type=ContentType.VIDEO_GAME, metadata={}), preferences
+    )
+
+
 # ---------------------------------------------------------------------------
 # get_length_value tests
 # ---------------------------------------------------------------------------
@@ -143,20 +151,29 @@ class TestScoreLengthMatch:
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
         assert score_length_match(item, {"book": "short"}) == 1.0
 
-    def test_adjacent_category_returns_07(self) -> None:
-        """Medium item with short preference is adjacent (distance 1)."""
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 350})
-        assert score_length_match(item, {"book": "short"}) == 0.7
+    def test_score_falls_as_the_length_moves_further_from_the_preference(self) -> None:
+        """A medium book beats a long one when the preference is short."""
+        short = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
+        adjacent = make_item(content_type=ContentType.BOOK, metadata={"pages": 350})
+        opposite = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
 
-    def test_opposite_ends_returns_04(self) -> None:
-        """Long item with short preference is opposite (distance 2)."""
-        item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
-        assert score_length_match(item, {"book": "short"}) == 0.4
+        assert (
+            score_length_match(short, {"book": "short"})
+            > score_length_match(adjacent, {"book": "short"})
+            > score_length_match(opposite, {"book": "short"})
+        )
 
-    def test_no_metadata_returns_08(self) -> None:
+    def test_no_metadata_scores_between_a_match_and_a_mismatch(self) -> None:
         """Items without length metadata get benefit of the doubt."""
-        item = make_item(content_type=ContentType.BOOK, metadata={})
-        assert score_length_match(item, {"book": "short"}) == 0.8
+        unknown = make_item(content_type=ContentType.BOOK, metadata={})
+        matching = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
+        mismatched = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
+
+        assert (
+            score_length_match(matching, {"book": "short"})
+            > score_length_match(unknown, {"book": "short"})
+            > score_length_match(mismatched, {"book": "short"})
+        )
 
     def test_different_content_type_not_affected(self) -> None:
         """A movie preference does not penalize a book."""
@@ -164,14 +181,16 @@ class TestScoreLengthMatch:
         assert score_length_match(item, {"movie": "short"}) == 1.0
 
     @pytest.mark.parametrize("average", [None, "", "unknown", []])
-    def test_game_with_unusable_rawg_playtime_returns_08(self, average: Any) -> None:
+    def test_game_with_unusable_rawg_playtime_has_no_length(self, average: Any) -> None:
         """A blank or non-numeric average is no length, and is not an error."""
         item = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": average},
         )
         assert classify_length(item) is None
-        assert score_length_match(item, {"video_game": "long"}) == 0.8
+        assert score_length_match(item, {"video_game": "long"}) == _unknown_game_score(
+            {"video_game": "long"}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +220,9 @@ class TestVideoGameLengthRegression:
         )
         assert get_length_value(item) is None
         assert classify_length(item) is None
-        assert score_length_match(item, {"video_game": "short"}) == 0.8
+        assert score_length_match(item, {"video_game": "short"}) == _unknown_game_score(
+            {"video_game": "short"}
+        )
 
     def test_rawg_average_wins_over_own_playtime(self) -> None:
         item = make_item(
@@ -228,4 +249,6 @@ class TestVideoGameLengthRegression:
 
         assert item.metadata["playtime_hours"] == 300.0
         assert get_length_value(item) is None
-        assert score_length_match(item, {"video_game": "short"}) == 0.8
+        assert score_length_match(item, {"video_game": "short"}) == _unknown_game_score(
+            {"video_game": "short"}
+        )

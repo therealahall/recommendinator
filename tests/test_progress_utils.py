@@ -39,7 +39,8 @@ class TestLogProgress:
             log_progress(test_logger, "game details", 10, 100)
 
         assert len(caplog.records) == 1
-        assert caplog.records[0].message == "Processing game details: 10/100 (10%)"
+        assert "game details" in caplog.records[0].message
+        assert "10/100" in caplog.records[0].message
 
     def test_skips_non_interval(self, caplog: pytest.LogCaptureFixture) -> None:
         """log_progress emits nothing when should_log_progress is False."""

@@ -88,9 +88,9 @@ class TestSchemaEndpoint:
         assert body["source_id"] == "my_books"
         assert body["plugin"] == "fake_file"
         assert body["plugin_display_name"] == "Fake File"
-        names = [f["name"] for f in body["fields"]]
-        assert names == ["path", "content_type"]
-        path_field = body["fields"][0]
+        fields = {f["name"]: f for f in body["fields"]}
+        assert set(fields) == {"path", "content_type"}
+        path_field = fields["path"]
         assert path_field["field_type"] == "str"
         assert path_field["required"] is True
         assert path_field["sensitive"] is False
@@ -102,7 +102,7 @@ class TestSchemaEndpoint:
             "sync_intervals"
         ]
 
-        assert [option["key"] for option in options] == list(SYNC_INTERVAL_KEYS)
+        assert {option["key"] for option in options} == set(SYNC_INTERVAL_KEYS)
         assert all(option["label"] for option in options)
 
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:

@@ -62,7 +62,7 @@ VARIETY_LADDER_STEPS = 5
 # genre fatigue still nudges it down but no longer buries it. Below 1.0 so a
 # continuation is always penalised less than an unrelated repeat, and high
 # enough that a mid-slider setting reorders the pair rather than only narrowing
-# the gap (the crossover pinned in ``TestVarietyCrossoverCharacterisation``).
+# the gap.
 VARIETY_SERIES_CONTINUATION_FACTOR = 0.6
 
 
