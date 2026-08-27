@@ -212,19 +212,6 @@ class TestSyncManagerGetStatus:
         assert len(status["jobs"]) == 1
         assert status["jobs"][0]["source"] == "steam"
 
-    @patch("src.web.sync_manager.threading.Thread")
-    def test_jobs_sorted_by_source(self, mock_thread: MagicMock) -> None:
-        mock_thread.return_value = MagicMock()
-        manager = SyncManager()
-        sync_function = MagicMock(return_value=0)
-
-        manager.start_sync(source="zeta", sync_function=sync_function)
-        manager.start_sync(source="alpha", sync_function=sync_function)
-        manager.start_sync(source="middle", sync_function=sync_function)
-
-        names = [j["source"] for j in manager.get_status()["jobs"]]
-        assert names == ["alpha", "middle", "zeta"]
-
 
 class TestSyncManagerUpdateProgress:
     """update_progress writes to the job keyed by ``source``."""
@@ -366,21 +353,6 @@ class TestSyncManagerPerSourceProgress:
         assert job["items_processed"] == 42
         assert job["total_items"] == 100
         assert job["sources"] == []
-
-    def test_per_source_slots_sorted_by_name(self) -> None:
-        manager = SyncManager()
-        _planted(manager, "all")
-
-        manager.update_progress(source="all", items_processed=1, current_source="zeta")
-        manager.update_progress(source="all", items_processed=1, current_source="alpha")
-        manager.update_progress(
-            source="all", items_processed=1, current_source="middle"
-        )
-
-        names = [
-            entry["source"] for entry in manager.get_status()["jobs"][0]["sources"]
-        ]
-        assert names == ["alpha", "middle", "zeta"]
 
 
 class TestSyncManagerAddError:

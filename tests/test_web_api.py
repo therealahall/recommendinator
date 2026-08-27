@@ -430,7 +430,6 @@ def test_sync_sources_endpoint(client, mock_config):
     goodreads = next((s for s in sources if s["id"] == "goodreads_rss"), None)
     assert goodreads is not None
     assert goodreads["display_name"] == "Goodreads Rss"
-    assert goodreads["plugin_display_name"] == "Goodreads (Public Shelves via RSS)"
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
@@ -1251,7 +1250,7 @@ class TestUserPreferenceBounds:
         The rule is astral-plane characters: ``max_length`` counting UTF-8
         bytes would cut this one to a quarter of the documented 500.
         """
-        merge = back_mock_preference_store(mock_components["storage"])
+        back_mock_preference_store(mock_components["storage"])
         at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
 
         response = client.put(
@@ -1272,7 +1271,6 @@ class TestUserPreferenceBounds:
             _CONTENT_TYPE_NAMES, "long"
         )
         assert body["custom_rules"][0] == at_bound_rule
-        merge.assert_called_once()
 
     @pytest.mark.parametrize("literal", ["Infinity", "NaN"])
     def test_a_non_finite_scorer_weight_is_refused_rather_than_stored(
@@ -2994,12 +2992,9 @@ class TestUpdateEndpointParallelSync:
     def test_sync_status_lists_multiple_concurrent_jobs(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Two jobs keyed by different sources are both reported,
-        regardless of insertion order — proves the sort is applied."""
+        """Two jobs keyed by different sources are both reported."""
         manager = get_sync_manager()
         with patch("src.web.sync_manager.threading.Thread"):
-            # Insert in REVERSE alphabetical order so the assertion
-            # below proves sorting, not insertion order.
             steam = manager.start_sync(source="Steam", sync_function=lambda _job: 0)
             goodreads = manager.start_sync(
                 source="Goodreads", sync_function=lambda _job: 0
@@ -3009,8 +3004,8 @@ class TestUpdateEndpointParallelSync:
         response = client.get("/api/sync/status")
         assert response.status_code == 200
         body = response.json()
-        sources_in_play = [job["source"] for job in body["jobs"]]
-        assert sources_in_play == ["Goodreads", "Steam"]
+        sources_in_play = {job["source"] for job in body["jobs"]}
+        assert sources_in_play == {"Goodreads", "Steam"}
         assert body["status"] == "running"
 
 

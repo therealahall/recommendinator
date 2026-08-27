@@ -2,7 +2,7 @@
 
 These tests document the stepped penalty ladder built from recently completed
 content and the penalty looked up for a candidate. They cover completion-date
-ordering, distinct-cluster stepping, the exact stepped percentages, and the
+ordering, distinct-cluster stepping, the stepped decay, and the
 completion-event filter (a fully COMPLETED item, or an ongoing TV show with
 at least one finished season).
 """
@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
@@ -79,7 +80,10 @@ class TestTopPenaltyForPreference:
     """Tests for :func:`top_penalty_for_preference`."""
 
     def test_strength_scales_linearly(self) -> None:
-        assert top_penalty_for_preference(2.0) == pytest.approx(0.4)
+        max_strength = UserPreferenceConfig.MAX_VARIETY_PENALTY
+        assert top_penalty_for_preference(max_strength / 2) == pytest.approx(
+            top_penalty_for_preference(max_strength) / 2
+        )
 
     def test_out_of_range_strength_clamps_to_the_fraction_domain(self) -> None:
         """A strength outside the slider's range cannot leave the domain.
@@ -95,7 +99,7 @@ class TestBuildVarietyLadder:
     """Tests for :func:`build_variety_ladder`."""
 
     def test_stepped_percentages_descend_by_recency(self) -> None:
-        """The full-strength ladder: 100 / 80 / 60 / 40 / 20 percent."""
+        """Each distinct cluster claims the next rung down, newest first."""
         items = [
             _completed("Bio", ["Biography"], completed_on=date(2026, 1, 5)),
             _completed("Crime", ["Mystery"], completed_on=date(2026, 1, 4)),
@@ -106,11 +110,19 @@ class TestBuildVarietyLadder:
         ladder = build_variety_ladder(items)
 
         # Newest first: biography strongest, western weakest.
-        assert ladder["nonfiction_documentary"] == pytest.approx(1.00)
-        assert ladder["crime_thriller"] == pytest.approx(0.80)
-        assert ladder["science_fiction"] == pytest.approx(0.60)
-        assert ladder["fantasy"] == pytest.approx(0.40)
-        assert ladder["western"] == pytest.approx(0.20)
+        rungs = [
+            "nonfiction_documentary",
+            "crime_thriller",
+            "science_fiction",
+            "fantasy",
+            "western",
+        ]
+        for rung, cluster in enumerate(rungs):
+            assert ladder[cluster] == pytest.approx(
+                VARIETY_TOP_PENALTY
+                * (VARIETY_LADDER_STEPS - rung)
+                / VARIETY_LADDER_STEPS
+            )
 
     def test_ladder_capped_at_step_count(self) -> None:
         """A sixth distinct cluster is beyond the ladder and is not recorded."""

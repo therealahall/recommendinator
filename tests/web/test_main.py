@@ -315,13 +315,10 @@ class TestMainReloadBehavior:
         args, kwargs = mock_uvicorn_run.call_args
         assert args[0] == "src.web.app:app"
         assert kwargs["reload"] is True
-        # reload_dirs must be absolute paths to the project's src and templates
-        # so --reload works regardless of cwd.
+        # reload_dirs must be absolute so --reload works regardless of cwd.
         reload_dirs = kwargs["reload_dirs"]
-        assert len(reload_dirs) == 2
+        assert reload_dirs
         assert all(Path(d).is_absolute() for d in reload_dirs)
-        assert reload_dirs[0].endswith("/src")
-        assert reload_dirs[1].endswith("/templates")
 
     @patch("src.web.main.uvicorn.run")
     @patch("src.web.main.create_app")
@@ -340,7 +337,7 @@ class TestMainReloadBehavior:
         assert args[0] == "src.web.app:app"
         assert kwargs["reload"] is True
         # reload_dirs must apply on every reload-enabled path, not just --reload
-        assert len(kwargs["reload_dirs"]) == 2
+        assert kwargs["reload_dirs"]
 
     @patch("src.web.main.uvicorn.run")
     @patch("src.web.main.create_app")

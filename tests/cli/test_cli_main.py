@@ -290,7 +290,9 @@ class TestUpdateResolvesEachSourceOnceRegression:
         assert synced == synced_ids
         assert resolve_spy.call_count == 1
         decrypted_for = [call.args[1] for call in credential_spy.call_args_list]
-        assert sorted(decrypted_for) == sorted(set(decrypted_for))
+        # Both parametrisations resolve the whole listing before filtering, so
+        # every seeded source is decrypted, and each of them exactly once.
+        assert sorted(decrypted_for) == sorted(self._SOURCE_IDS)
 
 
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
@@ -434,7 +436,8 @@ class TestCliBootstrapFailures:
 
         assert result.exit_code == 1
         assert result.stderr == f"{_COMPONENT_EXIT}ConnectionError\n"
-        assert token not in result.stderr
+        # Both streams: stderr is pinned above, so only stdout can still leak.
+        assert token not in result.output
 
 
 class TestAMalformedInputsBlockDoesNotAbortTheBoot:

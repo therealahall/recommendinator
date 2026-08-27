@@ -1245,15 +1245,16 @@ def test_custom_rules_remove(mock_components):
 
 
 def test_custom_rules_remove_invalid_index(mock_components):
-    """Test removing a rule with invalid index."""
-    merge = back_mock_preference_store(mock_components["storage"])
+    """An out-of-range index leaves the stored rules untouched."""
+    stored = UserPreferenceConfig(custom_rules=["avoid horror"])
+    back_mock_preference_store(mock_components["storage"], stored)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["preferences", "custom-rules", "remove", "99"])
 
     assert result.exit_code != 0
     assert "Invalid index" in result.output
-    merge.assert_called_once()
+    assert stored.custom_rules == ["avoid horror"]
 
 
 def test_custom_rules_clear(mock_components):
