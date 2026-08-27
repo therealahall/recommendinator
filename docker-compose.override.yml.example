@@ -20,7 +20,8 @@ services:
       # The image builds the Vue bundle into this path and the host's copy is
       # gitignored, so the mount above would otherwise serve a blank page. An
       # anonymous volume keeps the image's copy and outlives a rebuild: when the
-      # UI reports a bundle older than the backend, --renew-anon-volumes.
+      # UI reports a bundle older than the backend, --build --renew-anon-volumes
+      # (renewing alone re-seeds from the unrebuilt image).
       - /app/src/web/static/dist
       - ./templates:/app/templates
       # Keeps the runtime __version__ in step with semantic-release bumps
