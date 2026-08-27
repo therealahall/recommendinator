@@ -2239,6 +2239,33 @@ class TestAdditiveGenreSaves:
         assert "Comedy" in genres
         assert "Action" in genres
 
+    def test_reimport_merges_an_object_shaped_genre_as_its_name(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        legacy = ContentItem(
+            id="movie_1",
+            title="Fargo",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.COMPLETED,
+            metadata={"genres": '[{"id": 80, "name": "Crime"}]'},
+        )
+        db_id = temp_db.save_content_item(legacy)
+
+        temp_db.save_content_item(
+            ContentItem(
+                id="movie_1",
+                title="Fargo",
+                content_type=ContentType.MOVIE,
+                status=ConsumptionStatus.COMPLETED,
+                metadata={"genres": ["Drama"]},
+            )
+        )
+
+        retrieved = temp_db.get_content_item(db_id)
+        assert retrieved is not None
+        assert retrieved.metadata is not None
+        assert retrieved.metadata["genres"] == ["Crime", "Drama"]
+
 
 class TestRatingSetOnce:
     """Tests that rating is set once and never overwritten.

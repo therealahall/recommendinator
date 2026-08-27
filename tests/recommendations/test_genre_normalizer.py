@@ -1,6 +1,12 @@
 """Tests for genre normalization: compound splitting, subgenre preservation, and term variants."""
 
-from src.recommendations.genre_normalizer import normalize_term, normalize_terms
+import pytest
+
+from src.recommendations.genre_normalizer import (
+    extract_and_normalize_genres,
+    normalize_term,
+    normalize_terms,
+)
 
 
 class TestCompoundGenreSplitting:
@@ -66,3 +72,46 @@ class TestSubgenrePreservation:
     def test_fantasy_fiction_still_normalizes(self) -> None:
         """'fantasy fiction' should still collapse to 'fantasy' (noise word removal)."""
         assert normalize_term("fantasy fiction") == "fantasy"
+
+
+class TestExtractAndNormalizeGenres:
+    @pytest.mark.parametrize("field", ["genres", "tags"])
+    def test_json_array_string_yields_every_element(self, field: str) -> None:
+        result = extract_and_normalize_genres({field: '["Science Fiction", "Fantasy"]'})
+        assert result == ["science fiction", "fantasy"]
+
+    @pytest.mark.parametrize("field", ["genres", "tags"])
+    def test_comma_separated_string_yields_every_element_stripped(
+        self, field: str
+    ) -> None:
+        result = extract_and_normalize_genres({field: " Science Fiction , Fantasy "})
+        assert result == ["science fiction", "fantasy"]
+
+    @pytest.mark.parametrize("field", ["genres", "tags"])
+    def test_truncated_json_string_keeps_the_element_behind_the_bracket(
+        self, field: str
+    ) -> None:
+        result = extract_and_normalize_genres({field: "[Drama, Fantasy"})
+        assert result == ["drama", "fantasy"]
+
+    def test_genre_list_yields_every_element(self) -> None:
+        result = extract_and_normalize_genres({"genre": ["Science Fiction", "Fantasy"]})
+        assert result == ["science fiction", "fantasy"]
+
+    def test_genre_genres_and_tags_are_unioned_and_deduplicated(self) -> None:
+        result = extract_and_normalize_genres(
+            {
+                "genre": "Drama",
+                "genres": ["Fantasy", "Drama"],
+                "tags": '["Fantasy", "Horror"]',
+            }
+        )
+        assert result == ["drama", "fantasy", "horror"]
+
+    @pytest.mark.parametrize(
+        "metadata", [None, {}, {"genres": ""}, {"genres": []}, {"tags": []}]
+    )
+    def test_absent_or_empty_metadata_yields_no_terms(
+        self, metadata: dict | None
+    ) -> None:
+        assert extract_and_normalize_genres(metadata) == []

@@ -1750,6 +1750,27 @@ def test_list_items_needs_rating_overrides_explicit_status(client, mock_componen
     assert call_kwargs["unrated_only"] is True
 
 
+def test_list_items_answers_for_a_stored_object_shaped_genre(mock_components, tmp_path):
+    """The response model declares ``list[str]``, so an object in the genres
+    column takes the whole listing down rather than one card."""
+    storage = StorageManager(sqlite_path=tmp_path / "genres.db")
+    storage.save_content_item(
+        ContentItem(
+            id="tmdb-275",
+            title="Fargo",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": '[{"id": 80, "name": "Crime"}]'},
+        )
+    )
+    client = _client_on(mock_components["app"], storage)
+
+    response = client.get("/api/items?type=movie")
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["genres"] == ["Crime"]
+
+
 # ---------------------------------------------------------------------------
 # GET /api/items/{db_id} — Single item retrieval
 # ---------------------------------------------------------------------------

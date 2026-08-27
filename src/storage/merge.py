@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
-from src.models.detail_fields import RELEASE_YEAR_FIELDS, ContentTypeFields, to_int
+from src.models.detail_fields import (
+    RELEASE_YEAR_FIELDS,
+    ContentTypeFields,
+    text_names,
+    to_int,
+)
 from src.utils.dates import merge_seasons_watched_dates
 from src.utils.list_merge import merge_string_lists
 from src.utils.series import merge_seasons_watched
@@ -52,13 +57,13 @@ __all__ = [
 
 
 def parse_json_list(raw: str | None) -> list[str]:
-    """Parse a JSON array string; an absent or unparseable value reads as empty."""
+    """Read a JSON array string as its names; absent or unparseable reads empty."""
     if not raw:
         return []
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, list):
-            return [str(item) for item in parsed]
+            return text_names(parsed)
     except (json.JSONDecodeError, TypeError):
         pass
     return []

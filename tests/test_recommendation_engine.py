@@ -3446,3 +3446,31 @@ class TestContentTypeExclusions:
         )
 
         assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
+
+
+class TestObjectShapedGenresFromStorage:
+    """A genre column filled with TMDB's objects must not break a run."""
+
+    def test_an_object_shaped_genre_survives_the_reason_path(
+        self, real_engine, real_storage
+    ):
+        _save_movie(
+            real_storage, title="Blade Runner", genre="Science Fiction", rating=5
+        )
+        real_storage.save_content_item(
+            ContentItem(
+                id="tmdb-275",
+                title="The Big Sleep",
+                content_type=ContentType.BOOK,
+                status=ConsumptionStatus.UNREAD,
+                metadata={"genres": '[{"id": 80, "name": "Crime"}]'},
+            )
+        )
+
+        recs = real_engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        assert [rec.item.title for rec in recs] == ["The Big Sleep"]
+        assert recs[0].item.metadata["genres"] == ["Crime"]
+        assert recs[0].reasoning == "Recommended based on your preferences"
