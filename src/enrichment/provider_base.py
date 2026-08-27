@@ -5,7 +5,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.models.config_field import ConfigField
+# Re-exported: every enrichment provider imports ConfigField from here, the
+# same way source plugins take it from plugin_base.
+from src.models.config_field import ConfigField as ConfigField
 from src.models.content import ContentItem, ContentType
 from src.utils.text import sanitize_for_log
 

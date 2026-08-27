@@ -147,7 +147,7 @@ def _extract_series_from_title(title: str) -> tuple[str, float] | None:
 
 def extract_series_info(
     title: str,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
     content_type: ContentType | None = None,
 ) -> tuple[str, float] | None:
     """Extract series name and item number from title or metadata.
@@ -195,7 +195,7 @@ def extract_series_info(
 
 
 def _extract_from_metadata(
-    metadata: dict, content_type: ContentType | None = None
+    metadata: dict[str, Any], content_type: ContentType | None = None
 ) -> tuple[str, float] | None:
     """Extract series information from metadata.
 
@@ -275,7 +275,7 @@ def _extract_from_metadata(
     return None
 
 
-def get_series_name_from_metadata(metadata: dict | None) -> str | None:
+def get_series_name_from_metadata(metadata: dict[str, Any] | None) -> str | None:
     if not metadata:
         return None
     for key in ("series_name", "series", "series_title", "franchise"):
@@ -287,7 +287,7 @@ def get_series_name_from_metadata(metadata: dict | None) -> str | None:
     return None
 
 
-def get_series_position_from_metadata(metadata: dict | None) -> float | None:
+def get_series_position_from_metadata(metadata: dict[str, Any] | None) -> float | None:
     if not metadata:
         return None
     for key in ("series_position", "series_index"):

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.models.content import ContentItem, ContentType
 from src.recommendations.scorers import extract_genres
+from src.storage.schema import PreferenceProfileRow
 
 if TYPE_CHECKING:
     from src.storage.manager import StorageManager
@@ -43,13 +44,14 @@ class ProfilePayload(TypedDict):
     generated_at: str | None
 
 
-def profile_payload(user_id: int, record: dict[str, Any] | None) -> ProfilePayload:
+def profile_payload(
+    user_id: int, record: PreferenceProfileRow | None
+) -> ProfilePayload:
     """Serialise a ``profiles.get`` record; ``None`` is the empty shape.
 
     The CLI emits this mapping; the web validates it into a ProfileResponse.
     """
-    stored = record or {}
-    profile = stored.get("profile") or {}
+    profile: dict[str, Any] = (record["profile"] if record else None) or {}
     return {
         "user_id": user_id,
         "genre_affinities": profile.get("genre_affinities") or {},
@@ -58,7 +60,8 @@ def profile_payload(user_id: int, record: dict[str, Any] | None) -> ProfilePaylo
         "cross_media_patterns": profile.get("cross_media_patterns") or [],
         # The row's column and the blob's field stamp the same generation; the
         # blob's is in the host's own time, which is what a reader expects.
-        "generated_at": profile.get("generated_at") or stored.get("generated_at"),
+        "generated_at": profile.get("generated_at")
+        or (record["generated_at"] if record else None),
     }
 
 
