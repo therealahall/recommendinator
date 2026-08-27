@@ -69,18 +69,9 @@ extend-exclude = '''
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
+strict = true
+# Not part of strict: it flags a branch the types have already ruled out.
 warn_unreachable = true
-strict_equality = true
 # Plugin and provider tests live next to their implementations under src/, but
 # they follow the loose typing conventions of the tests/ tree (no return
 # annotations on test methods, etc.). Exclude them from strict src/ checks.

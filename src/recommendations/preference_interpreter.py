@@ -15,10 +15,32 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TypedDict
 
 from src.utils.text import sanitize_rule_text
 
 logger = logging.getLogger(__name__)
+
+
+class _GenreMatch(TypedDict):
+    """Genres a rule boosts or penalises, keyed canonical name -> factor."""
+
+    genres: dict[str, float]
+    note: str
+
+
+class _TypeFilterMatch(TypedDict):
+    """Content types a rule restricts to."""
+
+    filters: set[str]
+    note: str
+
+
+class _LengthMatch(TypedDict):
+    """Length a rule prefers, keyed content type -> short/medium/long."""
+
+    preferences: dict[str, str]
+    note: str
 
 
 class PatternConfidence(str, Enum):
@@ -435,7 +457,7 @@ class PatternBasedInterpreter:
 
         return result
 
-    def _try_avoid_patterns(self, rule: str) -> dict | None:
+    def _try_avoid_patterns(self, rule: str) -> _GenreMatch | None:
         """Try to match avoid/penalty patterns.
 
         Args:
@@ -457,7 +479,7 @@ class PatternBasedInterpreter:
                 }
         return None
 
-    def _try_prefer_patterns(self, rule: str) -> dict | None:
+    def _try_prefer_patterns(self, rule: str) -> _GenreMatch | None:
         """Try to match prefer/boost patterns.
 
         Args:
@@ -478,7 +500,7 @@ class PatternBasedInterpreter:
                 }
         return None
 
-    def _try_only_type_patterns(self, rule: str) -> dict | None:
+    def _try_only_type_patterns(self, rule: str) -> _TypeFilterMatch | None:
         """Try to match content type filter patterns.
 
         Args:
@@ -500,7 +522,7 @@ class PatternBasedInterpreter:
                     }
         return None
 
-    def _try_length_patterns(self, rule: str) -> dict | None:
+    def _try_length_patterns(self, rule: str) -> _LengthMatch | None:
         """Try to match length preference patterns.
 
         Args:

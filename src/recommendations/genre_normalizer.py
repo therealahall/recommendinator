@@ -7,6 +7,7 @@ to a common vocabulary, filtering out noise and platform-specific terms.
 import json
 import re
 from types import MappingProxyType
+from typing import Any
 
 # Pre-compiled patterns to strip from the beginning of terms
 PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1185,7 +1186,7 @@ def _terms_from_text(raw: str) -> list[str]:
     return [term.strip() for term in raw.split(",")]
 
 
-def extract_and_normalize_genres(metadata: dict | None) -> list[str]:
+def extract_and_normalize_genres(metadata: dict[str, Any] | None) -> list[str]:
     """Normalize every genre and tag term an item's metadata names."""
     if not metadata:
         return []

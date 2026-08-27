@@ -42,6 +42,15 @@ class UserDict(TypedDict):
     settings: dict[str, Any] | None
 
 
+class PreferenceProfileRow(TypedDict):
+    """A ``preference_profiles`` row, with ``profile_json`` already parsed."""
+
+    id: int
+    user_id: int
+    profile: dict[str, Any]
+    generated_at: str
+
+
 class SourceConfigRow(TypedDict):
     """Raw row from the source_configs table."""
 
@@ -1071,8 +1080,8 @@ class UnknownUserError(LookupError):
     """A write named a user id no ``users`` row carries."""
 
 
-def _row_to_user_dict(row: tuple) -> UserDict:
-    """Convert a user row tuple to a user dict."""
+def _row_to_user_dict(row: sqlite3.Row) -> UserDict:
+    """Convert a ``users`` row to a user dict."""
     settings = None
     if row[4]:
         try:
@@ -1114,7 +1123,7 @@ def create_user(
     conn: sqlite3.Connection,
     username: str,
     display_name: str | None = None,
-    settings: dict | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> int:
     """Create a new user, returning its id."""
     cursor = conn.cursor()
@@ -1128,7 +1137,7 @@ def create_user(
 
 
 def update_user_settings(
-    conn: sqlite3.Connection, user_id: int, settings: dict
+    conn: sqlite3.Connection, user_id: int, settings: dict[str, Any]
 ) -> bool:
     """Merge *settings* into the user's blob.
 
@@ -1484,7 +1493,9 @@ def get_enrichment_stats(
 # Preference profile functions
 
 
-def get_preference_profile(conn: sqlite3.Connection, user_id: int) -> dict | None:
+def get_preference_profile(
+    conn: sqlite3.Connection, user_id: int
+) -> PreferenceProfileRow | None:
     """Get the preference profile for a user."""
     cursor = conn.cursor()
     cursor.execute(

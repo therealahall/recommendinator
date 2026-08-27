@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.recommendations.profile import PreferenceProfile, ProfileGenerator
+from src.recommendations.profile import (
+    PreferenceProfile,
+    ProfileGenerator,
+    profile_payload,
+)
 from src.storage.manager import StorageManager
 
 
@@ -336,6 +340,20 @@ class TestRegenerateAndSave:
         # Verify it was saved
         saved_profile = storage_manager.profiles.get(user_id=1)
         assert saved_profile is not None
+
+    def test_stored_row_carries_the_keys_the_payload_reads(
+        self,
+        profile_generator: ProfileGenerator,
+        sample_items: list[int],
+        storage_manager: StorageManager,
+    ) -> None:
+        generated = profile_generator.regenerate_and_save(user_id=1)
+
+        payload = profile_payload(1, storage_manager.profiles.get(user_id=1))
+
+        assert payload["genre_affinities"] == generated.genre_affinities
+        assert payload["genre_affinities"]
+        assert payload["generated_at"]
 
 
 class TestProfileRegression:

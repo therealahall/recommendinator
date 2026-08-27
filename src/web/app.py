@@ -19,6 +19,7 @@ from fastapi.utils import is_body_allowed_for_status_code
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from src import __version__ as APP_VERSION
 from src.config.service import (
     create_recommendation_engine,
     create_storage_manager,
@@ -35,7 +36,6 @@ from src.storage.settings_migration import migrate_config_settings
 from src.utils import logging as log_config
 from src.utils.dependencies import log_dependency_drift
 from src.utils.text import exception_for_log
-from src.web.api import APP_VERSION
 from src.web.api import router as api_router
 from src.web.auth import set_session_cookie
 from src.web.auth_api import router as auth_router

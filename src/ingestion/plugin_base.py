@@ -6,7 +6,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any, final
 
-from src.models.config_field import ConfigField
+# Re-exported: docs/PLUGIN_DEVELOPMENT.md tells plugin authors to import
+# ConfigField from here, and every plugin in and out of the repo does.
+from src.models.config_field import ConfigField as ConfigField
 from src.models.content import ContentItem, ContentType
 
 if TYPE_CHECKING:

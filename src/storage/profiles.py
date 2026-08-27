@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from src.storage.schema import get_preference_profile, save_preference_profile
+from src.storage.schema import (
+    PreferenceProfileRow,
+    get_preference_profile,
+    save_preference_profile,
+)
 from src.storage.sqlite_db import SQLiteDB
 
 
@@ -12,12 +16,8 @@ class ProfileStore:
     def __init__(self, sqlite_db: SQLiteDB) -> None:
         self._sqlite_db = sqlite_db
 
-    def get(self, user_id: int) -> dict | None:
-        """Return the stored profile record, or ``None`` if none was generated.
-
-        The record wraps the profile: ``profile_json`` carries it, alongside
-        the id and ``generated_at``.
-        """
+    def get(self, user_id: int) -> PreferenceProfileRow | None:
+        """Return the stored profile record, or ``None`` if none was generated."""
         with self._sqlite_db.connection() as conn:
             return get_preference_profile(conn, user_id)
 
