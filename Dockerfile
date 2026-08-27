@@ -96,6 +96,10 @@ RUN mkdir -p data inputs config && \
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
+# The name is the point: every COPY above chowns to appuser:appuser, so pinning
+# a uid here would mean pinning it in useradd and repeating the number at each
+# of those. A host resolving the name is not something this image needs.
+# hadolint ignore=DL3066
 USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
