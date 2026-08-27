@@ -122,14 +122,17 @@ class EnrichmentJobStore:
                 "ON CONFLICT(id) DO NOTHING"
             )
             cursor.execute(
-                "UPDATE enrichment_job SET running = 1, completed = 0, "
-                "cancelled = 0, stop_requested = 0, items_processed = 0, "
-                "items_enriched = 0, items_failed = 0, items_not_found = 0, "
-                "total_items = 0, current_item = '', content_type = ?, "
-                "errors_json = '[]', started_at = ?, finished_at = NULL, "
-                "heartbeat_at = ? "
-                "WHERE id = 1 AND (running = 0 OR heartbeat_at IS NULL "
-                "OR heartbeat_at < ?)",
+                """
+                UPDATE enrichment_job
+                   SET running = 1, completed = 0, cancelled = 0,
+                       stop_requested = 0, items_processed = 0,
+                       items_enriched = 0, items_failed = 0,
+                       items_not_found = 0, total_items = 0, current_item = '',
+                       content_type = ?, errors_json = '[]', started_at = ?,
+                       finished_at = NULL, heartbeat_at = ?
+                 WHERE id = 1
+                   AND (running = 0 OR heartbeat_at IS NULL OR heartbeat_at < ?)
+                """,
                 (content_type, _stamp(now), _stamp(now), cutoff),
             )
             conn.commit()

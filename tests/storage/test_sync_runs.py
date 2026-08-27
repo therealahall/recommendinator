@@ -70,12 +70,14 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
     assert run["omitted_errors"] == 48
 
 
-_OMITTED_COLUMN = "omitted_errors INTEGER NOT NULL DEFAULT 0, "
+_OMITTED_COLUMN = "omitted_errors"
 
 
 def _legacy_sync_runs_db(path: Path) -> None:
     """A database whose ``sync_runs`` predates the omitted-error column."""
-    legacy_table = _SYNC_RUNS_TABLE.replace(_OMITTED_COLUMN, "")
+    legacy_table = "\n".join(
+        line for line in _SYNC_RUNS_TABLE.splitlines() if _OMITTED_COLUMN not in line
+    )
     # The schema version did not move for this column, so an ALTER is all that
     # tells an operator's existing database from a fresh one.
     assert legacy_table != _SYNC_RUNS_TABLE

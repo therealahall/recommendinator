@@ -149,9 +149,8 @@ def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | 
     """Report *user_id*'s names and the state of its password, or None."""
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT username, display_name, password_hash, password_updated_at
-             FROM users
-            WHERE id = ?""",
+        "SELECT username, display_name, password_hash, password_updated_at "
+        "FROM users WHERE id = ?",
         (user_id,),
     )
     row = cursor.fetchone()
@@ -193,10 +192,10 @@ def claim_account(
     # updated rather than a second user inserted, and a claimed instance
     # cannot be claimed again, whatever raced the caller here.
     cursor.execute(
-        """UPDATE users
-              SET username = ?, display_name = ?, password_hash = ?,
-                  password_salt = ?, password_updated_at = ?
-            WHERE id = ? AND password_hash IS NULL""",
+        "UPDATE users "
+        "SET username = ?, display_name = ?, password_hash = ?, "
+        "password_salt = ?, password_updated_at = ? "
+        "WHERE id = ? AND password_hash IS NULL",
         (
             stored_username,
             stored_display_name,
@@ -226,9 +225,9 @@ def set_password(conn: sqlite3.Connection, user_id: int, plaintext: str) -> None
     password_hash, salt, updated_at = _password_columns(plaintext)
     cursor = conn.cursor()
     cursor.execute(
-        """UPDATE users
-              SET password_hash = ?, password_salt = ?, password_updated_at = ?
-            WHERE id = ?""",
+        "UPDATE users "
+        "SET password_hash = ?, password_salt = ?, password_updated_at = ? "
+        "WHERE id = ?",
         (password_hash, salt, updated_at, user_id),
     )
     conn.commit()
@@ -266,9 +265,9 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> str:
     now = utc_now()
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT INTO sessions
-               (token_hash, user_id, created_at, expires_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?)""",
+        "INSERT INTO sessions "
+        "(token_hash, user_id, created_at, expires_at, last_seen_at) "
+        "VALUES (?, ?, ?, ?, ?)",
         (
             _token_hash(token),
             user_id,

@@ -531,10 +531,10 @@ def merge_enrichment_status(
     if kept is not None and not kept["needs_enrichment"]:
         return
     cursor.execute(
-        """INSERT OR REPLACE INTO enrichment_status
-           (content_item_id, last_enriched_at, enrichment_provider,
-            enrichment_quality, needs_enrichment, enrichment_error)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        "INSERT OR REPLACE INTO enrichment_status "
+        "(content_item_id, last_enriched_at, enrichment_provider, "
+        "enrichment_quality, needs_enrichment, enrichment_error) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             keep_id,
             absorbed["last_enriched_at"],

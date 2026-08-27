@@ -273,23 +273,23 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
     """,
 }
 
-_SYNC_RUNS_TABLE = (
-    "CREATE TABLE IF NOT EXISTS sync_runs ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-    "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
-    "source_id TEXT NOT NULL, "
-    "started_at TIMESTAMP NOT NULL, "
-    "finished_at TIMESTAMP, "
-    "status TEXT NOT NULL, "
-    "items_added INTEGER NOT NULL DEFAULT 0, "
-    "items_updated INTEGER NOT NULL DEFAULT 0, "
-    "items_unchanged INTEGER NOT NULL DEFAULT 0, "
-    "total_items INTEGER NOT NULL DEFAULT 0, "
-    "errors_json TEXT NOT NULL DEFAULT '[]', "
-    "omitted_errors INTEGER NOT NULL DEFAULT 0, "
-    "heartbeat_at TIMESTAMP"
-    ")"
-)
+_SYNC_RUNS_TABLE = """
+    CREATE TABLE IF NOT EXISTS sync_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        started_at TIMESTAMP NOT NULL,
+        finished_at TIMESTAMP,
+        status TEXT NOT NULL,
+        items_added INTEGER NOT NULL DEFAULT 0,
+        items_updated INTEGER NOT NULL DEFAULT 0,
+        items_unchanged INTEGER NOT NULL DEFAULT 0,
+        total_items INTEGER NOT NULL DEFAULT 0,
+        errors_json TEXT NOT NULL DEFAULT '[]',
+        omitted_errors INTEGER NOT NULL DEFAULT 0,
+        heartbeat_at TIMESTAMP
+    )
+"""
 
 _CONTENT_ITEM_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_content_user ON content_items(user_id)",
@@ -367,10 +367,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     for index_statement in _CONTENT_ITEM_INDEXES:
         cursor.execute(index_statement)
 
-    cursor.execute("""
-        INSERT OR IGNORE INTO users (id, username, display_name)
-        VALUES (1, 'default', 'Default User')
-        """)
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (id, username, display_name) "
+        "VALUES (1, 'default', 'Default User')"
+    )
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_book_author ON book_details(author)")
     cursor.execute(
@@ -436,12 +436,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # What the interface looks like for one user. Its own table rather than a
     # key in ``users.settings``: that blob is the preference config, and
     # resetting the scoring preferences must not change how the app looks.
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS user_ui_settings ("
-        "user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, "
-        "theme TEXT NOT NULL DEFAULT ''"
-        ")"
-    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_ui_settings (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            theme TEXT NOT NULL DEFAULT ''
+        )
+        """)
     if stored_version < 19:
         _move_themes_off_preference_blob(cursor)
 
@@ -498,26 +498,26 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     # One row, because one job runs at a time. In the database rather than on
     # the manager: the CLI and the server are separate processes.
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS enrichment_job ("
-        "id INTEGER PRIMARY KEY CHECK (id = 1), "
-        "running INTEGER NOT NULL DEFAULT 0, "
-        "completed INTEGER NOT NULL DEFAULT 0, "
-        "cancelled INTEGER NOT NULL DEFAULT 0, "
-        "stop_requested INTEGER NOT NULL DEFAULT 0, "
-        "items_processed INTEGER NOT NULL DEFAULT 0, "
-        "items_enriched INTEGER NOT NULL DEFAULT 0, "
-        "items_failed INTEGER NOT NULL DEFAULT 0, "
-        "items_not_found INTEGER NOT NULL DEFAULT 0, "
-        "total_items INTEGER NOT NULL DEFAULT 0, "
-        "current_item TEXT NOT NULL DEFAULT '', "
-        "content_type TEXT, "
-        "errors_json TEXT NOT NULL DEFAULT '[]', "
-        "started_at TIMESTAMP, "
-        "finished_at TIMESTAMP, "
-        "heartbeat_at TIMESTAMP"
-        ")"
-    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS enrichment_job (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            running INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            stop_requested INTEGER NOT NULL DEFAULT 0,
+            items_processed INTEGER NOT NULL DEFAULT 0,
+            items_enriched INTEGER NOT NULL DEFAULT 0,
+            items_failed INTEGER NOT NULL DEFAULT 0,
+            items_not_found INTEGER NOT NULL DEFAULT 0,
+            total_items INTEGER NOT NULL DEFAULT 0,
+            current_item TEXT NOT NULL DEFAULT '',
+            content_type TEXT,
+            errors_json TEXT NOT NULL DEFAULT '[]',
+            started_at TIMESTAMP,
+            finished_at TIMESTAMP,
+            heartbeat_at TIMESTAMP
+        )
+        """)
 
     # Global/system settings: dotted leaf key -> JSON-encoded value. Holds ONLY
     # the leaves a user explicitly set via the Settings page / `settings` CLI,
@@ -674,11 +674,10 @@ def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
     )
 
     cursor.execute(
-        """INSERT INTO content_item_external_ids
-               (content_item_id, user_id, source, external_id, content_type)
-           SELECT id, user_id, ?, external_id, content_type
-             FROM content_items_old
-            WHERE external_id IS NOT NULL""",
+        "INSERT INTO content_item_external_ids "
+        "(content_item_id, user_id, source, external_id, content_type) "
+        "SELECT id, user_id, ?, external_id, content_type FROM content_items_old "
+        "WHERE external_id IS NOT NULL",
         (_LEGACY_EXTERNAL_ID_SOURCE,),
     )
 
@@ -1081,7 +1080,6 @@ class UnknownUserError(LookupError):
 
 
 def _row_to_user_dict(row: sqlite3.Row) -> UserDict:
-    """Convert a ``users`` row to a user dict."""
     settings = None
     if row[4]:
         try:
@@ -1239,9 +1237,9 @@ def get_enrichment_status(
     """Get enrichment status for a content item."""
     cursor = conn.cursor()
     cursor.execute(
-        """SELECT content_item_id, last_enriched_at, enrichment_provider,
-                  enrichment_quality, needs_enrichment, enrichment_error
-           FROM enrichment_status WHERE content_item_id = ?""",
+        "SELECT content_item_id, last_enriched_at, enrichment_provider, "
+        "enrichment_quality, needs_enrichment, enrichment_error "
+        "FROM enrichment_status WHERE content_item_id = ?",
         (content_item_id,),
     )
     row = cursor.fetchone()
@@ -1268,11 +1266,11 @@ def write_enrichment_complete(
     ``mark_enrichment_complete`` wraps it for a caller that wants the commit.
     """
     cursor.execute(
-        """INSERT OR REPLACE INTO enrichment_status
-           (content_item_id, last_enriched_at, enrichment_provider,
-            enrichment_quality, needs_enrichment, enrichment_error)
-           SELECT id, CURRENT_TIMESTAMP, ?, ?, 0, NULL FROM content_items
-            WHERE id = ? AND merged_into IS NULL""",
+        "INSERT OR REPLACE INTO enrichment_status "
+        "(content_item_id, last_enriched_at, enrichment_provider, "
+        "enrichment_quality, needs_enrichment, enrichment_error) "
+        "SELECT id, CURRENT_TIMESTAMP, ?, ?, 0, NULL FROM content_items "
+        "WHERE id = ? AND merged_into IS NULL",
         (provider, quality, content_item_id),
     )
 
@@ -1303,11 +1301,11 @@ def mark_enrichment_failed(
     """
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT OR REPLACE INTO enrichment_status
-           (content_item_id, last_enriched_at, enrichment_provider,
-            enrichment_quality, needs_enrichment, enrichment_error)
-           SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 1, ? FROM content_items
-            WHERE id = ? AND merged_into IS NULL""",
+        "INSERT OR REPLACE INTO enrichment_status "
+        "(content_item_id, last_enriched_at, enrichment_provider, "
+        "enrichment_quality, needs_enrichment, enrichment_error) "
+        "SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 1, ? FROM content_items "
+        "WHERE id = ? AND merged_into IS NULL",
         (error, content_item_id),
     )
     conn.commit()
@@ -1325,11 +1323,11 @@ def mark_enrichment_settled_failure(
     """
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT OR REPLACE INTO enrichment_status
-           (content_item_id, last_enriched_at, enrichment_provider,
-            enrichment_quality, needs_enrichment, enrichment_error)
-           SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 0, ? FROM content_items
-            WHERE id = ? AND merged_into IS NULL""",
+        "INSERT OR REPLACE INTO enrichment_status "
+        "(content_item_id, last_enriched_at, enrichment_provider, "
+        "enrichment_quality, needs_enrichment, enrichment_error) "
+        "SELECT id, CURRENT_TIMESTAMP, NULL, NULL, 0, ? FROM content_items "
+        "WHERE id = ? AND merged_into IS NULL",
         (error, content_item_id),
     )
     conn.commit()
@@ -1342,10 +1340,9 @@ def mark_item_needs_enrichment(
     """Mark an item as needing enrichment."""
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT OR IGNORE INTO enrichment_status
-           (content_item_id, needs_enrichment)
-           SELECT id, 1 FROM content_items
-            WHERE id = ? AND merged_into IS NULL""",
+        "INSERT OR IGNORE INTO enrichment_status (content_item_id, needs_enrichment) "
+        "SELECT id, 1 FROM content_items "
+        "WHERE id = ? AND merged_into IS NULL",
         (content_item_id,),
     )
     conn.commit()
@@ -1380,13 +1377,15 @@ def reset_enrichment_status(
 
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE enrichment_status"
-        " SET needs_enrichment = 1, enrichment_error = NULL,"
-        "     enrichment_quality = NULL"
-        " WHERE content_item_id IN ("
-        "   SELECT es.content_item_id FROM enrichment_status es"
-        "   JOIN content_items ci ON es.content_item_id = ci.id"
-        f"  WHERE {' AND '.join(conditions)})",
+        f"""
+        UPDATE enrichment_status
+           SET needs_enrichment = 1, enrichment_error = NULL,
+               enrichment_quality = NULL
+         WHERE content_item_id IN (
+               SELECT es.content_item_id FROM enrichment_status es
+               JOIN content_items ci ON es.content_item_id = ci.id
+                WHERE {' AND '.join(conditions)})
+        """,
         params,
     )
     updated = cursor.rowcount
@@ -1496,14 +1495,10 @@ def get_enrichment_stats(
 def get_preference_profile(
     conn: sqlite3.Connection, user_id: int
 ) -> PreferenceProfileRow | None:
-    """Get the preference profile for a user."""
     cursor = conn.cursor()
     cursor.execute(
-        """
-        SELECT id, user_id, profile_json, generated_at
-        FROM preference_profiles
-        WHERE user_id = ?
-        """,
+        "SELECT id, user_id, profile_json, generated_at "
+        "FROM preference_profiles WHERE user_id = ?",
         (user_id,),
     )
     row = cursor.fetchone()
@@ -1529,13 +1524,11 @@ def save_preference_profile(
     """Save or update the user's single preference profile, returning its id."""
     cursor = conn.cursor()
     cursor.execute(
-        """
-        INSERT INTO preference_profiles (user_id, profile_json, generated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-            profile_json = excluded.profile_json,
-            generated_at = CURRENT_TIMESTAMP
-        """,
+        "INSERT INTO preference_profiles (user_id, profile_json, generated_at) "
+        "VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(user_id) DO UPDATE SET "
+        "profile_json = excluded.profile_json, "
+        "generated_at = CURRENT_TIMESTAMP",
         (user_id, profile_json),
     )
     conn.commit()
@@ -1816,13 +1809,11 @@ def set_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
     """
     cursor = conn.cursor()
     cursor.execute(
-        """
-        INSERT INTO settings (key, value_json, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(key) DO UPDATE SET
-            value_json = excluded.value_json,
-            updated_at = CURRENT_TIMESTAMP
-        """,
+        "INSERT INTO settings (key, value_json, updated_at) "
+        "VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(key) DO UPDATE SET "
+        "value_json = excluded.value_json, "
+        "updated_at = CURRENT_TIMESTAMP",
         (key, value_json),
     )
     conn.commit()
