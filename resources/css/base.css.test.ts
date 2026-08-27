@@ -37,6 +37,12 @@ function declaration(block: string, property: string): string {
   return match[1].trim()
 }
 
+function mediaBlock(source: string, maxWidth: string): string {
+  const match = source.match(new RegExp(`@media \\(max-width: ${maxWidth}\\) \\{([\\s\\S]*?)\\n\\}`))
+  if (!match) throw new Error(`${maxWidth} media block not found in base.css`)
+  return match[1]
+}
+
 describe('inactive button styling', () => {
   // Regression: the project had NO `.btn:disabled` rule at all. `.btn` sets a
   // solid background and `cursor: pointer`, so every button locked during a
@@ -83,6 +89,69 @@ describe('error text token', () => {
 
     expect(match[1]).toContain('var(--color-error)')
     expect(match[1]).toContain('var(--text-primary)')
+  })
+})
+
+describe('the reset Tailwind used to supply', () => {
+  // These read as dead resets, so a tidy-up deletes them — and each is the
+  // only rule covering its surface. A redesign sizing headings overrides
+  // these rather than removing them, so the reset itself still needs a guard.
+  it('leaves an unsized heading at body size and weight', () => {
+    const match = readBase().match(/h1,\s*h2,\s*h3,\s*h4,\s*h5,\s*h6\s*\{([^}]*)\}/)
+    if (!match) throw new Error('heading reset not found in base.css')
+
+    expect(match[1]).toMatch(/font-size:\s*inherit/)
+    expect(match[1]).toMatch(/font-weight:\s*inherit/)
+  })
+
+  it('gives every form control the page font rather than the UA one', () => {
+    const match = readBase().match(
+      /button,\s*input,\s*optgroup,\s*select,\s*textarea\s*\{([^}]*)\}/,
+    )
+    if (!match) throw new Error('form-control font reset not found in base.css')
+
+    expect(match[1]).toMatch(/font:\s*inherit/)
+  })
+
+  it('lays an icon out as a block instead of on a text baseline', () => {
+    const match = readBase().match(/^svg\s*\{([^}]*)\}/m)
+    if (!match) throw new Error('svg display rule not found in base.css')
+
+    expect(match[1]).toMatch(/display:\s*block/)
+  })
+})
+
+describe('the stale-bundle banner', () => {
+  // The banner is one flex item, so its min-content floor is its longest word
+  // — and that word is --renew-anon-volumes unless the token can break.
+  it('lets the recovery command break rather than set the row floor', () => {
+    expect(declaration(ruleBlock(readBase(), '.update-banner code'), 'overflow-wrap')).toBe(
+      'anywhere',
+    )
+  })
+})
+
+describe('library card divider (issue #108)', () => {
+  // margin-top:auto is zero on a content-height card, so on a one-column grid
+  // the divider touched the badges — but looked right whenever the card was
+  // rated. The spacing lives on the pills for that reason.
+  it('spaces the badges off the divider whether or not the card is rated', () => {
+    const source = readBase()
+    const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
+
+    expect(gap).not.toBe('0')
+    expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
+  })
+})
+
+describe('recommendation card header (issue #98)', () => {
+  // 1.4.10: at 375px the score badge and buttons squeezed the title until the
+  // card scrolled sideways. Asserted as reflow, not as the breakpoint value.
+  it('gives the heading its own row before the actions crowd it', () => {
+    const mobile = mediaBlock(readBase(), '640px')
+
+    expect(declaration(ruleBlock(mobile, '.rec-header'), 'flex-wrap')).toBe('wrap')
+    expect(declaration(ruleBlock(mobile, '.rec-heading'), 'min-width')).toBe('0')
   })
 })
 

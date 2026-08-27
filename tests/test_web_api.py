@@ -3004,8 +3004,11 @@ class TestUpdateEndpointParallelSync:
         response = client.get("/api/sync/status")
         assert response.status_code == 200
         body = response.json()
-        sources_in_play = {job["source"] for job in body["jobs"]}
-        assert sources_in_play == {"Goodreads", "Steam"}
+        sources_in_play = [job["source"] for job in body["jobs"]]
+        assert set(sources_in_play) == {"Goodreads", "Steam"}
+        # Started in reverse: without the sort a live panel reorders itself
+        # under the reader as each concurrent job registers.
+        assert sources_in_play == sorted(sources_in_play)
         assert body["status"] == "running"
 
 
