@@ -35,7 +35,6 @@ from src.sources.service import (
     resolve_inputs,
     source_plugin_not_loaded,
     unusable_detail,
-    validate_source_config,
 )
 from src.utils.text import humanize_source_id, sanitize_for_log
 
@@ -202,6 +201,7 @@ def update(
     auto_enrich = auto_enrich_enabled(config)
 
     # Determine which sources to sync
+    valid: list[ResolvedInput] = []
     if source == "all":
         resolved = resolve_inputs(config, storage=storage)
         if not resolved:
@@ -210,6 +210,21 @@ def update(
                 "or add one with: source create"
             )
             return
+        # Validating the entries resolved above, rather than resolving each id
+        # again, keeps the run to one credential decrypt per source. Reporting
+        # per source and continuing preserves the sequential path's behaviour.
+        for resolved_entry in resolved:
+            validation_errors = resolved_entry.plugin.validate_config(
+                resolved_entry.config, storage=storage
+            )
+            if validation_errors:
+                click.echo(
+                    f"  {resolved_entry.plugin.display_name}: Error: "
+                    f"{_refusal(resolved_entry, validation_errors)}",
+                    err=True,
+                )
+                continue
+            valid.append(resolved_entry)
     else:
         # Resolve a single source through the DB-aware path (mirrors the web
         # /update endpoint) so a source that lives only in the database — with
@@ -233,26 +248,13 @@ def update(
             )
             raise click.Abort()
 
-        validation_errors = validate_source_config(source, config, storage=storage)
+        validation_errors = resolved[0].plugin.validate_config(
+            resolved[0].config, storage=storage
+        )
         if validation_errors:
             click.echo(f"Error: {_refusal(resolved[0], validation_errors)}", err=True)
             raise click.Abort()
-
-    # Filter out resolved entries that fail validation (preserves the
-    # per-source error reporting from the legacy sequential path).
-    valid: list[ResolvedInput] = []
-    for resolved_entry in resolved:
-        validation_errors = validate_source_config(
-            resolved_entry.source_id, config, storage=storage
-        )
-        if validation_errors:
-            click.echo(
-                f"  {resolved_entry.plugin.display_name}: Error: "
-                f"{_refusal(resolved_entry, validation_errors)}",
-                err=True,
-            )
-            continue
-        valid.append(resolved_entry)
+        valid = resolved
 
     if not valid:
         report_nothing_ran(

@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from src.cli.main import cli
 from src.ingestion.sync import SyncResult
 from src.recommendations.engine import RecommendationEngine
+from src.sources.service import resolve_inputs
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
@@ -218,6 +219,77 @@ class TestUpdateDbOnlySourceRegression:
         assert "enabled" in result.output
         # The listing line carries the cadence too, as ``source list`` does.
         assert "cadence=daily" in result.output
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+class TestUpdateResolvesEachSourceOnceRegression:
+    """Reported: ``update`` resolved the whole listing once per source.
+
+    Each re-resolve Fernet-decrypted every source's credentials, so an
+    N-source sync cost O(N**2) decrypts.
+    """
+
+    _SOURCE_IDS = ("games", "movies")
+
+    def _seeded_storage(self, tmp_path: Path) -> StorageManager:
+        """Two DB-only sources, each with a stored secret to decrypt."""
+        storage = StorageManager(sqlite_path=tmp_path / "test.db")
+        for source_id in self._SOURCE_IDS:
+            storage.sources.upsert(
+                1, source_id, "fake_api", {"user_id": "reader"}, enabled=True
+            )
+            storage.credentials.save(1, source_id, "api_key", "top-secret")
+        return storage
+
+    @pytest.mark.parametrize(
+        ("args", "synced_ids"),
+        [
+            (["update"], list(_SOURCE_IDS)),
+            (["update", "--source", "games"], ["games"]),
+        ],
+    )
+    def test_a_sync_resolves_and_decrypts_once_per_source(
+        self, tmp_path: Path, args: list[str], synced_ids: list[str]
+    ) -> None:
+        storage = self._seeded_storage(tmp_path)
+        synced: list[str] = []
+        # One spy bound under both names: the command holds its own reference,
+        # so patching the service alone would miss the call that starts a sync.
+        resolve_spy = MagicMock(wraps=resolve_inputs)
+
+        def _fake_sync(**kwargs: Any) -> list[SyncResult]:
+            synced.extend(config["_source_id"] for _plugin, config in kwargs["sources"])
+            return [
+                SyncResult(source_name=plugin.display_name)
+                for plugin, _config in kwargs["sources"]
+            ]
+
+        with (
+            patch("src.cli.main.load_config", return_value={"inputs": {}}),
+            patch("src.cli.main.create_storage_manager", return_value=storage),
+            patch(
+                "src.cli.main.create_recommendation_engine",
+                return_value=MagicMock(spec=RecommendationEngine),
+            ),
+            patch(
+                "src.cli.commands._update.execute_multi_source_sync",
+                side_effect=_fake_sync,
+            ),
+            patch("src.cli.commands._update.resolve_inputs", resolve_spy),
+            patch("src.sources.service.resolve_inputs", resolve_spy),
+            patch.object(
+                storage.credentials,
+                "get_for_source",
+                wraps=storage.credentials.get_for_source,
+            ) as credential_spy,
+        ):
+            result = CliRunner().invoke(cli, args)
+
+        assert result.exit_code == 0, result.output
+        assert synced == synced_ids
+        assert resolve_spy.call_count == 1
+        decrypted_for = [call.args[1] for call in credential_spy.call_args_list]
+        assert sorted(decrypted_for) == sorted(set(decrypted_for))
 
 
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
