@@ -25,7 +25,6 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import src.sources.service
 import src.web.api
 from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
@@ -56,7 +55,7 @@ from src.recommendations.record import Recommendation
 from src.recommendations.scorers import SCORER_NAME_MAP
 from src.settings.metadata import default_of
 from src.settings.service import build_settings_view
-from src.sources.service import SOURCE_MISCONFIGURED_DETAIL
+from src.sources.service import SOURCE_MISCONFIGURED_DETAIL, resolve_inputs
 from src.storage.manager import (
     UNSET,
     SavedItem,
@@ -984,7 +983,9 @@ class TestUpdateResolvesTheSourceOnceRegression:
     own unbounded id. Fixed by validating the entry already in hand.
     """
 
-    def test_the_second_lookup_is_never_reached(self, client, mock_components):
+    def test_a_source_deleted_after_it_resolved_still_syncs(
+        self, client, mock_components
+    ):
         """A source vanishing after the first lookup changes no answer.
 
         The sync manager is stubbed because the real one spawns a thread
@@ -1000,17 +1001,19 @@ class TestUpdateResolvesTheSourceOnceRegression:
         sync_manager.is_running.return_value = False
         sync_manager.start_sync.return_value = None
 
+        def resolve_then_delete(*args, **kwargs):
+            entries = resolve_inputs(*args, **kwargs)
+            app_state.config["inputs"].pop("probe_me_42", None)
+            return entries
+
         with (
             patch("src.web.api.get_sync_manager", return_value=sync_manager),
-            patch(
-                "src.sources.service.get_sync_handler", return_value=None
-            ) as second_lookup,
+            patch("src.web.api.resolve_inputs", side_effect=resolve_then_delete),
         ):
             response = client.post("/api/update", json={"source": "probe_me_42"})
 
         assert response.status_code == 200
         assert response.json()["sources"] == ["probe_me_42"]
-        second_lookup.assert_not_called()
 
 
 def _sync_a_source_typed(client, content_type):

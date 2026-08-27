@@ -497,8 +497,8 @@ class TestDisconnectingAnIdNoSourceClaimsRegression:
 class TestADisabledSourceCanStillBeDisconnectedRegression:
     """Reported: disabling a connected source strands its refresh token.
 
-    Cause: the routes resolve through ``get_sync_handler``, which drops
-    disabled sources. Fix: bind on the source's plugin, not its enabled flag.
+    Cause: the routes resolved through a helper that drops disabled sources.
+    Fix: bind on the source's plugin, not its enabled flag.
     """
 
     @pytest.fixture()

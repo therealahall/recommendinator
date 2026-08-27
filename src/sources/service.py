@@ -258,7 +258,7 @@ def resolve_inputs(
         user_id: User ID for credential lookup (default 1).
 
     Returns:
-        List of ResolvedInput for each enabled, valid source.
+        List of ResolvedInput for each enabled, valid source, sorted by ID.
     """
     inputs_config = config.get("inputs", {})
 
@@ -267,10 +267,9 @@ def resolve_inputs(
         for db_row in storage.sources.list(user_id):
             db_configs[db_row["source_id"]] = db_row
 
-    source_ids = set(inputs_config.keys()) | set(db_configs.keys())
     resolved: list[ResolvedInput] = []
 
-    for source_id in source_ids:
+    for source_id in sorted(set(inputs_config.keys()) | set(db_configs.keys())):
         source = _authoritative_source(
             source_id, db_configs.get(source_id), inputs_config.get(source_id)
         )
@@ -523,29 +522,6 @@ def unusable_detail(not_loaded: PluginNotLoaded) -> str:
     )
 
 
-def get_sync_handler(
-    source_id: str,
-    config: dict[str, Any],
-    storage: StorageManager | None = None,
-    user_id: int = 1,
-) -> ResolvedInput | None:
-    """Get the resolved input for a source by its user-defined key.
-
-    Args:
-        source_id: User-defined source key (e.g. "my_books", "tv_shows").
-        config: Full application config.
-        storage: Optional StorageManager for DB credential injection.
-        user_id: User ID for credential lookup (default 1).
-
-    Returns:
-        ResolvedInput or None if not found / not enabled.
-    """
-    for entry in resolve_inputs(config, storage=storage, user_id=user_id):
-        if entry.source_id == source_id:
-            return entry
-    return None
-
-
 def resolve_input_for_plugin(
     source_id: str,
     plugin_name: str,
@@ -570,32 +546,6 @@ def resolve_input_for_plugin(
         config=assemble_plugin_config(
             source_id, source.plugin, source.fields, storage, user_id
         ),
-    )
-
-
-def validate_source_config(
-    source_id: str,
-    config: dict[str, Any],
-    storage: StorageManager | None = None,
-    user_id: int = 1,
-) -> list[str]:
-    """Validate config for a sync source.
-
-    Args:
-        source_id: User-defined source key.
-        config: Full application config.
-        storage: Optional StorageManager for DB credential injection.
-        user_id: User ID for credential lookup (default 1).
-
-    Returns:
-        List of error messages (empty if valid).
-    """
-    resolved = get_sync_handler(source_id, config, storage=storage, user_id=user_id)
-    if resolved is None:
-        return [f"Unknown or disabled source: {source_id}"]
-
-    return resolved.plugin.validate_config(
-        resolved.config, storage=storage, user_id=user_id
     )
 
 
