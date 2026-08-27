@@ -13,14 +13,18 @@ describe('UpdateBanner', () => {
     setActivePinia(createPinia())
   })
 
-  it('asks for a rebuild, and offers no reload, when the served bundle is the old half', () => {
+  it('names both recoveries, and offers no reload, when the served bundle is the old half', () => {
     const app = useAppStore()
     app.showUpdateBanner = true
     app.staleBundle = true
 
     const wrapper = mount(UpdateBanner)
 
-    expect(wrapper.text()).toContain('Rebuild the frontend')
+    // Renewing the anonymous volume without --build re-seeds it from the
+    // unrebuilt image, so the banner comes straight back. Pin each whole.
+    const commands = wrapper.findAll('code').map((node) => node.text())
+    expect(commands).toContain('pnpm build')
+    expect(commands).toContain('docker compose up -d --build --renew-anon-volumes')
     expect(wrapper.find('button').exists()).toBe(false)
   })
 

@@ -66,10 +66,7 @@ they are missing, so a fresh clone or worktree needs no separate `uv sync` or
 rather than whatever is on your `PATH`. Run one of them on its own with
 `uv run --locked --extra dev python -m …`, which resolves the same way.
 
-CI runs the same command and reports it as one status, `check / check`. That
-name is new — the gate moved into a reusable workflow — so branch protection
-has to be repointed at it in the repository settings. Until a maintainer does
-that, every pull request waits on a status nothing reports.
+CI runs the same command and reports it as one status, `check / check`.
 
 ## Code standards
 
@@ -252,9 +249,10 @@ src/
 ├── models/           # Data models
 └── utils/            # Utility functions
 tests/                # Cross-cutting tests. Plugin tests live next to the plugin.
-conftest.py           # Five autouse fixtures for every test in every tree: real
-                      # logs and credentials isolated, timezone pinned to UTC,
-                      # reads confined to tmp_path, network limited to loopback
+conftest.py           # Six autouse fixtures for every test in every tree: real
+                      # logs and credentials isolated, dependency-drift cache
+                      # cleared, timezone pinned to UTC, reads confined to
+                      # tmp_path, network limited to loopback
 config/               # Configuration files
 templates/            # Blank import templates
 docs/                 # Additional documentation

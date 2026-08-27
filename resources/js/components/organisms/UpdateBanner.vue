@@ -12,8 +12,9 @@ function reload() {
   <div v-if="app.showUpdateBanner" class="update-banner visible" role="alert" aria-live="assertive">
     <template v-if="app.staleBundle">
       This page was built from {{ app.loadedVersion }} and the server runs
-      {{ app.version }}. Rebuild the frontend (pnpm build) to catch up — reloading
-      serves the same files again.
+      {{ app.version }}. Reloading serves the same files again: rebuild on the host
+      with <code>pnpm build</code>, or under Docker run
+      <code>docker compose up -d --build --renew-anon-volumes</code>.
     </template>
     <template v-else>
       A new version is available.

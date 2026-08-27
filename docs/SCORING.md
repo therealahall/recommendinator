@@ -53,7 +53,7 @@ The Preferences page and the `preferences` CLI (see [CLI.md](CLI.md#preferences)
 set weights for one user. That map is **sparse**: it overrides only the keys you
 touch, and every other weight falls back to the global value.
 
-Both surfaces take only the eleven keys in the table above, and only finite
+Both surfaces take only the ten keys in the table above, and only finite
 numbers. Anything else is refused where it is written, rather than stored to
 weight nothing.
 
