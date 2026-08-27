@@ -16,7 +16,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make install           - Install runtime dependencies"
 	@echo "  make install-dev       - Install runtime + dev dependencies"
-	@echo "  make install-frontend  - Install frontend dependencies (Node.js 18+ required)"
+	@echo "  make install-frontend  - Install frontend dependencies (Node.js 24 required)"
 	@echo "  make lock              - Regenerate uv.lock from pyproject.toml"
 	@echo "  make test              - Run Python tests"
 	@echo "  make lint              - Run linters"
