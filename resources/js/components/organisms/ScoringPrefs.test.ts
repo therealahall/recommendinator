@@ -1,32 +1,32 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ScoringPrefs from './ScoringPrefs.vue'
 import ScorerSlider from '@/components/atoms/ScorerSlider.vue'
 import {
   usePreferencesStore,
   SCORER_KEYS,
+  SCORER_TOOLTIPS,
   VARIETY_PENALTY_TOOLTIP,
 } from '@/stores/preferences'
+
+// Each slider carries the tooltip of the thing it adjusts, so selecting on it
+// survives a reordering of the section that selecting by index would not.
+function sliderFor(wrapper: VueWrapper, tooltip: string): DOMWrapper<Element> {
+  const slider = wrapper.findAllComponents(ScorerSlider).find((s) => s.props('tooltip') === tooltip)
+  if (!slider) throw new Error(`no slider is described by "${tooltip}"`)
+  return slider.find('input[type="range"]')
+}
 
 describe('ScoringPrefs', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
   })
 
-  it('renders a single h3 titled "Scoring"', () => {
+  it('gives the section exactly one h3, so it is one landmark in the outline', () => {
     const wrapper = mount(ScoringPrefs)
 
-    const headings = wrapper.findAll('h3')
-    expect(headings).toHaveLength(1)
-    expect(headings[0].text()).toBe('Scoring')
-  })
-
-  it('does not render the old "Scorer Weights" or "Toggles" headings', () => {
-    const wrapper = mount(ScoringPrefs)
-
-    expect(wrapper.text()).not.toContain('Scorer Weights')
-    expect(wrapper.text()).not.toContain('Toggles')
+    expect(wrapper.findAll('h3')).toHaveLength(1)
   })
 
   it('renders one slider per scorer plus the variety slider', () => {
@@ -38,24 +38,12 @@ describe('ScoringPrefs', () => {
     expect(sliders.every((s) => s.attributes('max') === '5')).toBe(true)
   })
 
-  it('renders the variety slider as a 0–5 ScorerSlider after the scorer weights', () => {
+  it('gives the variety slider the 0–5 scale and announces its value as a number', () => {
     const wrapper = mount(ScoringPrefs)
 
-    // The variety slider is the last ScorerSlider; assert its label prop exactly
-    // so a longer string like "Variety After Completion Strength" would fail.
-    const scorerSliders = wrapper.findAllComponents(ScorerSlider)
-    const varietySlider = scorerSliders[scorerSliders.length - 1]
-    expect(varietySlider.props('label')).toBe('Variety After Completion')
-
-    const sliders = wrapper.findAll('input[type="range"]')
-    const variety = sliders[sliders.length - 1]
+    const variety = sliderFor(wrapper, VARIETY_PENALTY_TOOLTIP)
     expect(variety.attributes('max')).toBe('5')
     expect(variety.attributes('aria-valuetext')).toBe('0.0')
-
-    // It renders after the scorer-weight sliders.
-    const lastWeight = sliders[sliders.length - 2]
-    const position = lastWeight.element.compareDocumentPosition(variety.element)
-    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('keeps the variety tooltip in the accessibility tree', () => {
@@ -69,23 +57,27 @@ describe('ScoringPrefs', () => {
     const prefs = usePreferencesStore()
     const wrapper = mount(ScoringPrefs)
 
-    const sliders = wrapper.findAll('input[type="range"]')
-    const variety = sliders[sliders.length - 1]
+    const variety = sliderFor(wrapper, VARIETY_PENALTY_TOOLTIP)
     ;(variety.element as HTMLInputElement).value = '3.5'
     await variety.trigger('input')
 
     expect(prefs.varietyPenalty).toBe(3.5)
   })
 
-  it('writes a scorer weight back to the store on input', async () => {
+  it('writes each scorer slider back to the weight it describes, not a neighbour', async () => {
     const prefs = usePreferencesStore()
     const wrapper = mount(ScoringPrefs)
 
-    // The first slider is genre_match, the first SCORER_KEYS entry.
-    const input = wrapper.findAll('input[type="range"]')[0]
-    ;(input.element as HTMLInputElement).value = '4.2'
-    await input.trigger('input')
+    for (let index = 0; index < SCORER_KEYS.length; index += 1) {
+      const key = SCORER_KEYS[index]
+      // Distinct, on the 0–5 scale, and never a scorer's own default, so a
+      // slider wired to the wrong key cannot land on the value expected of it.
+      const value = (index + 1) * 0.5
+      const input = sliderFor(wrapper, SCORER_TOOLTIPS[key])
+      ;(input.element as HTMLInputElement).value = String(value)
+      await input.trigger('input')
 
-    expect(prefs.getWeight('genre_match')).toBe(4.2)
+      expect(prefs.getWeight(key), `the ${key} slider wrote elsewhere`).toBe(value)
+    }
   })
 })

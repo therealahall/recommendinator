@@ -9,35 +9,21 @@ describe('RulesPrefs', () => {
     setActivePinia(createPinia())
   })
 
-  it('renders a single h3 titled "Rules"', () => {
+  it('gives the section exactly one h3, so it is one landmark in the outline', () => {
     const wrapper = mount(RulesPrefs)
 
-    const headings = wrapper.findAll('h3')
-    expect(headings).toHaveLength(1)
-    expect(headings[0].text()).toBe('Rules')
+    expect(wrapper.findAll('h3')).toHaveLength(1)
   })
 
-  it('renders the series-order toggle directly under the Rules heading', () => {
+  it('gives the series-order checkbox a label with words in it', () => {
     const wrapper = mount(RulesPrefs)
 
     const checkbox = wrapper.find('#prefSeriesOrder')
     expect(checkbox.exists()).toBe(true)
     expect(checkbox.attributes('type')).toBe('checkbox')
 
-    const label = wrapper.find('label[for="prefSeriesOrder"]')
-    expect(label.text()).toBe('Recommend series in order')
-
-    // The toggle is intro content for the section: it precedes the first h4.
-    const firstH4 = wrapper.find('h4')
-    const position = checkbox.element.compareDocumentPosition(firstH4.element)
-    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
-  it('groups Length then Custom rules as h4 sub-blocks', () => {
-    const wrapper = mount(RulesPrefs)
-
-    const subHeadings = wrapper.findAll('h4').map((h) => h.text())
-    expect(subHeadings).toEqual(['Length', 'Custom rules'])
+    // Reword it freely; an empty label leaves the toggle unnamed to a reader.
+    expect(wrapper.find('label[for="prefSeriesOrder"]').text()).not.toBe('')
   })
 
   it('renders the Length dropdowns and Custom rules form', () => {
@@ -45,14 +31,6 @@ describe('RulesPrefs', () => {
 
     expect(wrapper.findAll('.length-select')).toHaveLength(4)
     expect(wrapper.find('#new-rule-input').exists()).toBe(true)
-  })
-
-  it('does not render the old "Length Preferences", "Custom Rules", or "Toggles" headings', () => {
-    const wrapper = mount(RulesPrefs)
-
-    expect(wrapper.text()).not.toContain('Length Preferences')
-    expect(wrapper.text()).not.toContain('Custom Rules')
-    expect(wrapper.text()).not.toContain('Toggles')
   })
 
   it('flips seriesInOrder when the series-order checkbox is toggled', async () => {

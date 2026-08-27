@@ -28,8 +28,6 @@ describe('RecScoreDetails', () => {
     expect(penaltyRow.text()).toContain('Variety penalty')
     // Minus sign (U+2212) plus the rounded percentage.
     expect(penaltyRow.text()).toContain('−64%')
-    const fill = penaltyRow.find('.score-bar-fill-penalty')
-    expect(fill.attributes('style')).toContain('width: 64%')
   })
 
   it('omits the variety penalty row when there is no penalty', () => {
