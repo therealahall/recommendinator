@@ -12,17 +12,30 @@ from src.ingestion.registry import PluginRegistry
 from src.ingestion.sync import execute_sync
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.sources.service import (
+    ResolvedInput,
     SourceConfigError,
     create_source,
     delete_source,
     get_available_sync_sources,
-    get_sync_handler,
     redact_credentials,
     resolve_inputs,
     update_source_config_values,
-    validate_source_config,
 )
 from src.storage.manager import StorageManager
+
+
+def _resolve_one(
+    source_id: str, config: dict[str, Any], storage: StorageManager
+) -> ResolvedInput | None:
+    """One source resolved the way both interfaces do it: resolve, then filter."""
+    return next(
+        (
+            entry
+            for entry in resolve_inputs(config, storage=storage)
+            if entry.source_id == source_id
+        ),
+        None,
+    )
 
 
 class FakeBookPlugin(SourcePlugin):
@@ -113,72 +126,6 @@ class FakeGamePlugin(SourcePlugin):
         )
 
 
-class FakeCredentialPlugin(SourcePlugin):
-    """Fake plugin that performs DB credential lookup in validate_config.
-
-    Mimics the pattern used by Epic Games and GOG plugins: when a required
-    sensitive field is missing from config, the plugin checks the DB for
-    stored credentials before reporting an error.
-    """
-
-    @property
-    def name(self) -> str:
-        return "fake_credential"
-
-    @property
-    def display_name(self) -> str:
-        return "Fake Credential"
-
-    @property
-    def content_types(self) -> list[ContentType]:
-        return [ContentType.VIDEO_GAME]
-
-    @property
-    def requires_api_key(self) -> bool:
-        return True
-
-    def get_config_schema(self) -> list[ConfigField]:
-        return [
-            ConfigField(
-                name="refresh_token",
-                field_type=str,
-                required=True,
-                sensitive=True,
-            ),
-        ]
-
-    def validate_config(
-        self,
-        config: dict[str, Any],
-        storage: StorageManager | None = None,
-        user_id: int = 1,
-    ) -> list[str]:
-        errors: list[str] = []
-        if not (config.get("refresh_token") or "").strip():
-            source_id = config.get("_source_id", self.name)
-            if storage is not None:
-                db_creds = storage.credentials.get_for_source(user_id, source_id)
-                if (db_creds.get("refresh_token") or "").strip():
-                    return errors
-            errors.append("'refresh_token' is required")
-        return errors
-
-    @classmethod
-    def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "refresh_token": raw_fields.get("refresh_token", "").strip(),
-        }
-
-    def fetch(self, config: dict[str, Any]) -> Iterator[ContentItem]:
-        yield ContentItem(
-            id="cred_1",
-            title="Fake Credential Game",
-            content_type=ContentType.VIDEO_GAME,
-            status=ConsumptionStatus.UNREAD,
-            source=self.get_source_identifier(config),
-        )
-
-
 class RecordingGamePlugin(FakeGamePlugin):
     """Keeps every config and storage it was asked to validate against."""
 
@@ -204,7 +151,6 @@ def _registry_with_fakes() -> Iterator[None]:
     registry._import_errors.clear()
     registry.register(FakeBookPlugin())
     registry.register(FakeGamePlugin())
-    registry.register(FakeCredentialPlugin())
     yield
     PluginRegistry.reset_instance()
 
@@ -320,66 +266,6 @@ class TestGetAvailableSyncSources:
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
-class TestGetSyncHandler:
-    """Tests for get_sync_handler function."""
-
-    def test_finds_handler_by_source_id(self) -> None:
-        """Test finding a sync handler by its user-defined source ID."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        handler = get_sync_handler("my_books", config)
-
-        assert handler is not None
-        assert handler.source_id == "my_books"
-        assert handler.plugin.name == "fake_books"
-
-    def test_returns_none_for_disabled_source(self) -> None:
-        """Test that disabled source returns None."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": False,
-                    "path": "/data/books.csv",
-                },
-            }
-        }
-
-        handler = get_sync_handler("my_books", config)
-
-        assert handler is None
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
-class TestValidateSourceConfig:
-    """Tests for validate_source_config function."""
-
-    def test_validates_invalid_config(self) -> None:
-        """Test validation fails for invalid config."""
-        config = {
-            "inputs": {
-                "my_books": {
-                    "plugin": "fake_books",
-                    "enabled": True,
-                },
-            }
-        }
-
-        errors = validate_source_config("my_books", config)
-
-        assert len(errors) == 1
-        assert "'path' is required" in errors[0]
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputsWithStorage:
     """Tests for resolve_inputs with DB credential injection."""
 
@@ -405,60 +291,6 @@ class TestResolveInputsWithStorage:
 
         assert len(resolved) == 1
         assert resolved[0].config["api_key"] == "db_key"
-
-
-@pytest.mark.usefixtures("_registry_with_fakes")
-class TestValidateSourceConfigWithStorage:
-    """Integration tests: validate_source_config forwards storage to plugins.
-
-    Regression test for a bug where validate_source_config did not pass
-    storage and user_id through to plugin.validate_config(), preventing
-    DB credential lookup from being reached through the normal code path.
-    """
-
-    @pytest.fixture()
-    def storage(self, tmp_path: Path) -> StorageManager:
-        """Create a StorageManager with a temp DB."""
-        return StorageManager(sqlite_path=tmp_path / "test.db")
-
-    def test_db_credential_satisfies_validation(self, storage: StorageManager) -> None:
-        """validate_source_config returns no errors when credential is in DB.
-
-        The plugin's config has no refresh_token, but the DB has one stored.
-        validate_source_config must forward storage and user_id so the plugin
-        can find the credential and pass validation.
-        """
-        config = {
-            "inputs": {
-                "my_epic": {
-                    "plugin": "fake_credential",
-                    "enabled": True,
-                    # No refresh_token in config
-                },
-            }
-        }
-        storage.credentials.save(1, "my_epic", "refresh_token", "db_token_value")
-
-        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
-
-        assert errors == []
-
-    def test_missing_credential_everywhere_fails(self, storage: StorageManager) -> None:
-        """validate_source_config returns errors when credential is missing from both."""
-        config = {
-            "inputs": {
-                "my_epic": {
-                    "plugin": "fake_credential",
-                    "enabled": True,
-                },
-            }
-        }
-        # No credential in DB either
-
-        errors = validate_source_config("my_epic", config, storage=storage, user_id=1)
-
-        assert len(errors) == 1
-        assert "'refresh_token' is required" in errors[0]
 
 
 @pytest.mark.usefixtures("_registry_with_fakes")
@@ -534,6 +366,36 @@ class TestResolveInputsWithDbSourceConfig:
         resolved = resolve_inputs(config, storage=storage)
 
         assert resolved[0].config["api_key"] == "secret_from_creds"
+
+    def test_sources_resolve_in_id_order_whatever_the_hash_seed(
+        self, storage: StorageManager
+    ) -> None:
+        """Regression: the resolve order came off a set, so it varied per process.
+
+        The scheduler walks this list to decide what is due, and both interfaces
+        print it, so YAML-only and DB-only ids must interleave by id.
+        """
+        config = {
+            "inputs": {
+                "zulu": {"plugin": "fake_books", "enabled": True, "path": "/z.csv"},
+                "bravo": {"plugin": "fake_books", "enabled": True, "path": "/b.csv"},
+            }
+        }
+        storage.sources.upsert(
+            1, "yankee", "fake_books", {"path": "/y.csv"}, enabled=True
+        )
+        storage.sources.upsert(
+            1, "alpha", "fake_books", {"path": "/a.csv"}, enabled=True
+        )
+
+        resolved = resolve_inputs(config, storage=storage)
+
+        assert [entry.source_id for entry in resolved] == [
+            "alpha",
+            "bravo",
+            "yankee",
+            "zulu",
+        ]
 
     def test_db_config_with_unregistered_plugin_is_skipped(
         self, storage: StorageManager
@@ -967,7 +829,7 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     ) -> None:
         """Sync a DB-backed source through the production resolution path."""
         storage.sources.upsert(1, "work_games", plugin_name, {}, enabled=True)
-        resolved = get_sync_handler("work_games", {}, storage)
+        resolved = _resolve_one("work_games", {}, storage)
         assert resolved is not None
 
         execute_sync(
@@ -994,7 +856,7 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
         """SECURITY.md's promise: the operator never reconnects by hand."""
         self._sync_a_rotating_source(plugin_name, storage)
 
-        resolved = get_sync_handler("work_games", {}, storage)
+        resolved = _resolve_one("work_games", {}, storage)
 
         assert resolved is not None
         assert resolved.config["refresh_token"] == ROTATED_TOKEN
@@ -1144,7 +1006,7 @@ class TestARealPluginsItemsCarryTheSourceIdRegression:
             {"api_key": "key", "steam_id": "76561198000000000"},
             enabled=True,
         )
-        resolved = get_sync_handler("work_games", {}, storage)
+        resolved = _resolve_one("work_games", {}, storage)
         assert resolved is not None
 
         execute_sync(
@@ -1167,7 +1029,7 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
     @staticmethod
     def _sync_yaml_source(source_id: str, storage: StorageManager) -> None:
         config = {"inputs": {source_id: {"plugin": "gog", "enabled": True}}}
-        resolved = get_sync_handler(source_id, config, storage)
+        resolved = _resolve_one(source_id, config, storage)
         assert resolved is not None
 
         execute_sync(
