@@ -17,7 +17,7 @@ from tests.enrichment.test_enrichment_manager import (
     http_error,
     save_movie,
 )
-from tests.factories import authenticated_client, booted_web_app
+from tests.factories import authenticated_client, booted_web_app, make_storage_mock
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ class TestEnrichmentStart:
     ) -> None:
         """A dropped kwarg would report a run the operator never asked for."""
         with (
-            _client(MagicMock(spec=StorageManager), mock_config) as client,
+            _client(make_storage_mock(), mock_config) as client,
             patch("src.web.api.EnrichmentManager") as mock_manager_cls,
         ):
             mock_manager = MagicMock(spec=EnrichmentManager)
@@ -118,7 +118,7 @@ class TestEnrichmentStart:
         self, mock_config_disabled: dict
     ) -> None:
         """It used to send the user to a config.yaml key the app no longer reads."""
-        with _client(MagicMock(spec=StorageManager), mock_config_disabled) as client:
+        with _client(make_storage_mock(), mock_config_disabled) as client:
             response = client.post("/api/enrichment/start", json={})
 
         assert response.status_code == 400
@@ -129,7 +129,7 @@ class TestEnrichmentStart:
 
     def test_start_enrichment_invalid_content_type(self, mock_config: dict) -> None:
         """Test error with invalid content type."""
-        with _client(MagicMock(spec=StorageManager), mock_config) as client:
+        with _client(make_storage_mock(), mock_config) as client:
             response = client.post(
                 "/api/enrichment/start",
                 json={"content_type": "invalid"},
@@ -219,7 +219,7 @@ class TestEnrichmentStats:
 
     def test_get_stats(self) -> None:
         """Every counted field reaches the response, the CLI's shape included."""
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         stats = {
             "total": 100,
             "resettable": 88,
@@ -244,7 +244,7 @@ class TestEnrichmentReset:
 
     def test_reset_all(self) -> None:
         """Test resetting all enrichment status."""
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.reset.return_value = 50
 
         with _client(storage, {}) as client:
@@ -257,7 +257,7 @@ class TestEnrichmentReset:
 
     def test_reset_one_item_narrows_the_reset_to_it(self) -> None:
         """The web's half of the per-item reset, worded as the CLI words it."""
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.reset.return_value = 1
 
         with _client(storage, {}) as client:
@@ -271,7 +271,7 @@ class TestEnrichmentReset:
         assert storage.enrichment.reset.call_args[1]["content_item_id"] == 7
 
     def test_reset_refuses_an_item_id_beside_a_filter(self) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
 
         with _client(storage, {}) as client:
             response = client.post(
@@ -283,7 +283,7 @@ class TestEnrichmentReset:
         storage.enrichment.reset.assert_not_called()
 
     def test_reset_reports_an_item_that_is_not_there(self) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.get_content_item.return_value = None
 
         with _client(storage, {}) as client:
@@ -294,7 +294,7 @@ class TestEnrichmentReset:
 
     def test_reset_invalid_content_type(self) -> None:
         """Test error with invalid content type."""
-        with _client(MagicMock(spec=StorageManager), {}) as client:
+        with _client(make_storage_mock(), {}) as client:
             response = client.post(
                 "/api/enrichment/reset",
                 json={"content_type": "invalid"},

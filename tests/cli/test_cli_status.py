@@ -10,12 +10,12 @@ from click.testing import CliRunner
 from src import __version__ as APP_VERSION
 from src.cli.main import cli
 from src.recommendations.engine import RecommendationEngine
-from src.storage.manager import StorageManager
 from src.utils.dependencies import PackageDrift
 from tests.factories import (
     authenticated_client,
     back_mock_settings_store,
     booted_web_app,
+    make_storage_mock,
 )
 
 from .conftest import _cli_patches
@@ -28,7 +28,7 @@ def _status_invoke(
 ) -> object:
     """Invoke the status command against mocked components."""
     p_config, p_storage, p_engine = _cli_patches()
-    mock_storage = MagicMock(spec=StorageManager)
+    mock_storage = make_storage_mock()
     back_mock_settings_store(mock_storage)
     with (
         p_config as mock_load,
@@ -43,7 +43,7 @@ def _status_invoke(
 
 def _web_status() -> dict:
     """Return the body GET /api/status serves for this tree."""
-    storage = MagicMock(spec=StorageManager)
+    storage = make_storage_mock()
     with booted_web_app(
         storage, {}, engine=MagicMock(spec=RecommendationEngine)
     ) as app:

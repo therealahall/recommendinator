@@ -41,6 +41,7 @@ from src.utils.duplicate_serialization import (
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.web.api import ContentItemResponse, IgnoreItemResponse
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -83,7 +84,7 @@ class TestLibraryList:
             _make_item(db_id=2, title="Book Two", author="Author B", rating=3),
         ]
         items[0].metadata = {"series": "The Expanse", "series_index": 2.0}
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
 
         result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
@@ -99,7 +100,7 @@ class TestLibraryList:
         items = [
             _make_item(db_id=1, title="Book One", rating=5, review="Loved it"),
         ]
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
 
         result = _invoke_with_mocks(
@@ -145,7 +146,7 @@ class TestLibraryList:
 
     def test_list_empty_results(self, cli_runner: CliRunner) -> None:
         """Test listing when no items match."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
         result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
@@ -156,7 +157,7 @@ class TestLibraryList:
     def test_list_search_filters_results(self, cli_runner: CliRunner) -> None:
         """Test that --search forwards the query and shows matching items."""
         items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
 
         result = _invoke_with_mocks(
@@ -176,7 +177,7 @@ class TestLibraryList:
         whole scan. The web rejects a longer term with a 422; the CLI has to
         agree or the two interfaces disagree about what a valid search is.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -190,7 +191,7 @@ class TestLibraryList:
 
     def test_list_forwards_sort_limit_offset(self, cli_runner: CliRunner) -> None:
         """Test that --sort, --limit, --offset, --show-ignored reach storage."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
         result = _invoke_with_mocks(
@@ -220,7 +221,7 @@ class TestLibraryList:
         self, cli_runner: CliRunner
     ) -> None:
         """--needs-rating lists completed items with no rating."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
         result = _invoke_with_mocks(
@@ -256,7 +257,7 @@ class TestLibraryListCreatorColumnRegression:
                 content_type=ContentType.MOVIE,
             ),
         ]
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
 
         result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
@@ -279,7 +280,7 @@ class TestLibraryShow:
             rating=5,
             review="Excellent!",
         )
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -298,7 +299,7 @@ class TestLibraryShow:
         item = _make_item(db_id=42)
         item.enriched = True
         item.manually_enriched = True
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -310,7 +311,7 @@ class TestLibraryShow:
 
     def test_show_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test showing a non-existent item."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(
@@ -325,7 +326,7 @@ class TestLibraryShow:
         item = _make_item(
             db_id=42, title="The Great Book", rating=5, review="Masterpiece"
         )
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -379,7 +380,7 @@ class TestLibraryShow:
         source contributed which — the web response names both."""
         item = _make_item(db_id=42)
         item.external_ids.append(ExternalId(source="steam", external_id="440"))
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -397,7 +398,7 @@ class TestLibraryShow:
         second run in --format json."""
         item = _make_item(db_id=42, content_type=ContentType.VIDEO_GAME)
         item.metadata = {"release_year": 2016}
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -415,7 +416,7 @@ class TestLibraryShow:
             db_id=1, title="Breaking Bad", content_type=ContentType.TV_SHOW
         )
         item.metadata = {"seasons_watched": [1, 2, 3], "seasons": "5"}
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -434,7 +435,7 @@ class TestLibraryShow:
     ) -> None:
         item = _make_item(db_id=42, title="All Systems Red")
         item.metadata = {"series": "The Murderbot Diaries", "series_index": 1.0}
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -484,7 +485,7 @@ class TestLibraryShowCreatorLabelRegression:
         item = _make_item(
             db_id=7, title="Fixture", author="Ada Lovelace", content_type=content_type
         )
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -509,7 +510,7 @@ class TestLibraryShowCreatorLabelRegression:
         item = _make_item(
             db_id=7, title="Fixture", author=None, content_type=ContentType.MOVIE
         )
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
 
         result = _invoke_with_mocks(
@@ -528,7 +529,7 @@ class TestLibraryEdit:
     def test_edit_rating(self, cli_runner: CliRunner) -> None:
         """Test editing an item's rating."""
         item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
 
@@ -546,7 +547,7 @@ class TestLibraryEdit:
 
     def test_edit_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test editing a non-existent item."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(
@@ -560,7 +561,7 @@ class TestLibraryEdit:
 
     def test_edit_no_fields(self, cli_runner: CliRunner) -> None:
         """Test that edit aborts when no fields are provided (before storage call)."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
             cli_runner, ["library", "edit", "--id", "1"], mock_storage
@@ -574,7 +575,7 @@ class TestLibraryEdit:
 
     def test_edit_invalid_seasons_watched(self, cli_runner: CliRunner) -> None:
         """Test that non-integer seasons-watched input is rejected."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -600,7 +601,7 @@ class TestLibraryEdit:
     ) -> None:
         """A status says nothing about seasons; only --clear-seasons empties them."""
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
 
@@ -615,7 +616,7 @@ class TestLibraryEdit:
     def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
         """Test setting manual enrichment metadata forwards lists/text to storage."""
         item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
 
@@ -685,7 +686,7 @@ class TestLibraryEditRegression:
     def _tv_storage(self) -> MagicMock:
         """A storage mock returning a TV show item from get_content_item."""
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
         return mock_storage
@@ -757,7 +758,7 @@ class TestLibraryEditRegression:
         Fix: the CLI now rejects over-long reviews before touching storage.
         """
         item = _make_item(db_id=1, title="Book One")
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
         mock_storage.update_item_from_ui.return_value = True
 
@@ -795,7 +796,7 @@ class TestLibraryEditRegression:
         ]
 
         for extra_args in cases:
-            mock_storage = MagicMock(spec=StorageManager)
+            mock_storage = make_storage_mock()
             mock_storage.get_content_item.return_value = item
             mock_storage.update_item_from_ui.return_value = True
 
@@ -1107,7 +1108,7 @@ class TestLibraryEditClearing:
     def test_setting_and_clearing_one_field_together_is_refused(
         self, cli_runner: CliRunner, args: list[str]
     ) -> None:
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = _make_item(db_id=1)
 
         result = _invoke_with_mocks(
@@ -1124,7 +1125,7 @@ class TestLibraryIgnore:
 
     def test_ignore_item(self, cli_runner: CliRunner) -> None:
         """Test ignoring an item."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.set_item_ignored.return_value = True
 
         result = _invoke_with_mocks(
@@ -1139,7 +1140,7 @@ class TestLibraryIgnore:
 
     def test_ignore_item_not_found(self, cli_runner: CliRunner) -> None:
         """Test ignoring a non-existent item."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(
@@ -1213,7 +1214,7 @@ class TestLibraryExport:
     def test_export_to_file(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         """Test exporting to a file (--output)."""
         items = [_make_item(db_id=1, title="Book One")]
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
         output_path = tmp_path / "books.csv"
 
@@ -1245,7 +1246,7 @@ class TestLibraryExport:
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
         """No --type exports the whole library, as the web Export button does."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [
             _make_item(db_id=1, title="Book One"),
             _make_item(db_id=2, title="Movie One", content_type=ContentType.MOVIE),
@@ -1275,7 +1276,7 @@ class TestLibraryExport:
         Every other test here mocks the exporter out, so nothing else proves
         the CLI reaches the guarded writer.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [
             _make_item(db_id=1, title='=HYPERLINK("http://evil","x")')
         ]
@@ -1297,7 +1298,7 @@ class TestLibraryExport:
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
         """It reached ``write_text`` bare and surfaced a traceback."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
         destination = tmp_path / "absent" / "library.csv"
 
@@ -1320,7 +1321,7 @@ class TestLibraryExport:
 
         A bare Enter is the operator not deciding, so it is the second refusal.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
         destination = tmp_path / "library.csv"
         destination.write_text("title\nmy own work\n", encoding="utf-8")
@@ -1943,7 +1944,7 @@ class TestDuplicatesOperatorPath:
 class TestLibraryEditCorrections:
     @staticmethod
     def _game_storage() -> MagicMock:
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = _make_item(
             db_id=1, title="Doom", content_type=ContentType.VIDEO_GAME
         )

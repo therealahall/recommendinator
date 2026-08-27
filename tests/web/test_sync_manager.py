@@ -28,6 +28,7 @@ from src.web.sync_manager import (
     SyncManager,
     SyncStatus,
 )
+from tests.factories import make_storage_mock
 
 
 def _planted(manager: SyncManager, source: str = "steam") -> SyncJob:
@@ -955,7 +956,7 @@ class TestSyncSchedulerLifecycle:
             patch("src.web.scheduler.TICK_SECONDS", 0),
             patch(
                 "src.web.scheduler.get_storage",
-                return_value=MagicMock(spec=StorageManager),
+                return_value=make_storage_mock(),
             ),
             patch("src.web.scheduler.get_config", return_value={}),
             patch("src.web.scheduler.dispatch_due_syncs", side_effect=fail_once),
@@ -993,7 +994,7 @@ class TestAutoEnrichGate:
             STEAM_LABEL,
             [ResolvedInput("steam", MagicMock(), {"_source_id": "steam"})],
             [7],
-            MagicMock(spec=StorageManager),
+            make_storage_mock(),
             {"enrichment": {"enabled": True, "auto_enrich_on_sync": False}},
         )
 

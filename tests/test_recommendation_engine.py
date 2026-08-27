@@ -35,7 +35,7 @@ from src.utils.series import (
     get_series_item_number,
     get_series_name,
 )
-from tests.factories import make_item
+from tests.factories import make_item, make_storage_mock
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def mock_storage():
     existing tests only need to stub ``get_completed_items``. The real
     accessors' own filtering is covered in ``tests/test_storage_manager.py``.
     """
-    storage = Mock(spec=StorageManager)
+    storage = make_storage_mock()
 
     # Each fake narrows get_completed_items itself, the way the real accessors
     # do, so a call recorded on one is a call the engine made and not one its

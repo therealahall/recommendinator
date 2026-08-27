@@ -8,7 +8,7 @@ from click.testing import CliRunner
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
-from src.storage.manager import StorageManager
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -48,7 +48,7 @@ class TestRecommendCountMaxEnforcement:
 
     def test_count_exceeds_max_count_aborts(self, cli_runner: CliRunner) -> None:
         """--count greater than configured max_count aborts."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         config = {"recommendations": {"max_count": 5}}
         result = _invoke_with_mocks(
             cli_runner,
@@ -68,7 +68,7 @@ def _invoke_recommend_with_engine(
     config: dict | None = None,
 ) -> object:
     """Invoke the recommend CLI with a pre-configured engine mock."""
-    mock_storage = MagicMock(spec=StorageManager)
+    mock_storage = make_storage_mock()
     mock_storage.get_user_preference_config.return_value = MagicMock()
     return _invoke_with_mocks(
         cli_runner, args, mock_storage, config=config, engine=mock_engine

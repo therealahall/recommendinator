@@ -20,6 +20,7 @@ from src.auth.epic import (
 )
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
+from tests.factories import make_storage_mock
 
 EPIC_LOGGER = "src.auth.epic"
 
@@ -210,7 +211,7 @@ class TestEpicAuthCredentialChain:
             result = _invoke_with_mocks(
                 CliRunner(),
                 ["auth", "connect", "--source", "epic", "--no-browser"],
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 input_text=f"{code}\n",
             )
 

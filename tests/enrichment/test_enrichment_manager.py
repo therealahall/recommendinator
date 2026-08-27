@@ -27,6 +27,7 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.enrichment_status import EnrichmentStore
 from src.storage.manager import StorageManager
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE
+from tests.factories import make_storage_mock
 
 
 def job_backed(storage: MagicMock, tmp_path: Path) -> MagicMock:
@@ -342,7 +343,7 @@ class TestEnrichmentManager:
     @pytest.fixture
     def mock_storage(self, tmp_path: Path) -> MagicMock:
         """Create a mock storage manager."""
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.items_needing.return_value = []
         # Return an int so `_run_enrichment` can compute total_items without
         # silently producing a MagicMock when tests don't override the value.
@@ -464,7 +465,7 @@ class TestEnrichmentStatusApiKeyScrubbingRegression:
 
     @pytest.fixture
     def mock_storage(self, tmp_path: Path) -> MagicMock:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
         return job_backed(storage, tmp_path)
@@ -614,7 +615,7 @@ class TestAFailureCannotCarryTheItemsTitleRegression:
 
     @pytest.fixture
     def mock_storage(self, tmp_path: Path) -> MagicMock:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
         return job_backed(storage, tmp_path)
@@ -724,7 +725,7 @@ class TestEnrichmentProgressRegression:
 
     @pytest.fixture
     def mock_storage(self, tmp_path: Path) -> MagicMock:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.enrichment.items_needing.return_value = []
         storage.enrichment.count_needing.return_value = 0
         return job_backed(storage, tmp_path)

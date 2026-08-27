@@ -32,7 +32,7 @@ from tests.factories import (
     back_mock_preference_store,
     back_mock_settings_store,
     make_item,
-    spec_sub_stores,
+    make_storage_mock,
 )
 
 
@@ -64,8 +64,7 @@ def mock_components(mock_config):
         patch("src.cli.main.migrate_config_credentials"),
     ):
         # Setup mocks
-        mock_storage_manager = Mock(spec=StorageManager)
-        spec_sub_stores(mock_storage_manager)
+        mock_storage_manager = make_storage_mock()
         mock_storage_manager.credentials.get_for_source.return_value = {}
         mock_storage_manager.sources.list.return_value = []
         # Let the real migrate_config_settings boot hook run against an empty

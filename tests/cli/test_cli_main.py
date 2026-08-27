@@ -15,6 +15,7 @@ from src.recommendations.engine import RecommendationEngine
 from src.sources.service import resolve_inputs
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
+from tests.factories import make_storage_mock
 
 
 def test_a_source_named_goodreads_keeps_its_items_across_boots(
@@ -445,7 +446,7 @@ class TestAMalformedInputsBlockDoesNotAbortTheBoot:
     """
 
     def test_a_read_only_command_still_runs(self, cli_runner: CliRunner) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         config: dict[str, Any] = {"inputs": [{"plugin": "gog", "enabled": True}]}
 
         result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)

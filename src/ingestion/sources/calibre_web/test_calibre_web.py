@@ -20,6 +20,7 @@ from src.sources.service import (
 )
 from src.storage.manager import StorageManager
 from src.storage.sqlite_db import SQLiteDB
+from tests.factories import make_storage_mock
 
 _FEED_HEADER = (
     '<feed xmlns="http://www.w3.org/2005/Atom" '
@@ -126,7 +127,7 @@ class TestCalibreWebValidateConfig:
         self, plugin: CalibreWebPlugin
     ) -> None:
         """Password absent from config but present in the DB should validate."""
-        mock_storage = Mock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.credentials.get_for_source.return_value = {"password": "db_secret"}
         errors = plugin.validate_config(
             {"url": "http://host", "username": "u", "_source_id": "my_calibre"},

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from src.ingestion.sync import SyncResult
-from src.storage.manager import SaveCounts, StorageManager
+from src.storage.manager import SaveCounts
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -40,7 +41,7 @@ class TestUpdateProgressIsOffTheDataChannel:
             return _invoke_with_mocks(
                 CliRunner(),
                 ["update"],
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 config=self._CONFIG,
             )
 
