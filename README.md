@@ -146,15 +146,6 @@ you had on the day you exported. That is how you un-ignore things in bulk.
 
 ### Upgrading
 
-**From 0.32.0 or earlier.** The web UI signs in with a username and password
-now, so `web.api_token` is no longer read: delete it from `config/config.yaml`.
-Nothing replaces it there, because the account lives in the database.
-
-That account does not exist yet, so your instance boots claimable and the first
-visitor to reach it claims it. Claim yours before anything else — especially if
-you widened `APP_BIND_PREFIX` or `web.host` past loopback, where until you do
-the whole network can.
-
 **From 0.36.0 or earlier.** The CSV, JSON, Markdown, Goodreads and StoryGraph
 plugins are gone: those files are imported once now. Sources on them are deleted
 on first boot and named in the log, and an `inputs:` block naming one is

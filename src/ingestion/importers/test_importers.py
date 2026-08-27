@@ -2,8 +2,10 @@
 
 import ast
 import csv
+import inspect
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -87,6 +89,29 @@ def test_no_shipped_format_disappears_from_the_registry() -> None:
         "json_import",
         "markdown_import",
     } - {importer.name for importer in IMPORTERS} == set()
+
+
+DATA_SOURCES_PAGE = Path(__file__).resolve().parents[3] / "docs" / "DATA_SOURCES.md"
+
+_RELATIVE_DOC_LINK = re.compile(r"\]\((\.\.?/[^)\s]+\.md)\)")
+
+
+def test_every_shipped_format_reaches_its_guide_from_the_shared_page() -> None:
+    """DATA_SOURCES.md is the only page an importing operator is sent to, so a
+    format it links nowhere has a guide nobody arrives at.
+    """
+    page = DATA_SOURCES_PAGE.read_text(encoding="utf-8")
+    linked = {
+        (DATA_SOURCES_PAGE.parent / target).resolve()
+        for target in _RELATIVE_DOC_LINK.findall(page)
+    }
+
+    assert {
+        importer.name
+        for importer in IMPORTERS
+        if Path(inspect.getfile(type(importer))).with_name("README.md").resolve()
+        not in linked
+    } == set()
 
 
 def test_every_template_names_a_format_the_registry_offers() -> None:

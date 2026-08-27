@@ -25,6 +25,17 @@ cadence. The **Data** tab's **Import a file** panel and the `import` command
 skipped and failed rows and naming each one they refused. The template link
 beside the format picker is how a Docker install gets a blank file to fill in.
 
+Each format's guide says where that site's export lives and which columns it
+reads.
+
+| Format | `--importer` | Guide |
+|--------|--------------|-------|
+| Goodreads export | `goodreads_csv` | [goodreads_csv](../src/ingestion/importers/goodreads_csv/README.md) |
+| StoryGraph export | `storygraph_csv` | [storygraph_csv](../src/ingestion/importers/storygraph_csv/README.md) |
+| CSV of your own | `csv_import` | [generic_csv](../src/ingestion/importers/generic_csv/README.md) |
+| JSON or JSONL of your own | `json_import` | [generic_json](../src/ingestion/importers/generic_json/README.md) |
+| Markdown list | `markdown_import` | [markdown](../src/ingestion/importers/markdown/README.md) |
+
 ## Adding, editing and removing sources in the UI
 
 The **Data** tab lists every source as an accordion, enabled ones first. A

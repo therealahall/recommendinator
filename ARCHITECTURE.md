@@ -205,7 +205,8 @@ quality. Version 17 moves a book title's `(Series, #N)` marker into its
 metadata, clears a placeholder author, folds a stranded company name,
 re-normalizes every title and clears the derived columns for the backfill.
 Version 18 rebuilds `sync_runs`, whose unfinished row is a claim and so cannot
-keep `finished_at` NOT NULL.
+keep `finished_at` NOT NULL. Version 19 carries the UI theme out of the
+preference blob.
 
 No step merges or unmerges rows: an upgraded library rewrites its keys and
 leaves the merge door to decide the rest.
@@ -503,7 +504,7 @@ framework stays in the package it serves: `fastapi` and `starlette` only under
 
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `account`,
-`profile`, most carrying a `--format json` view. One module
+`profile`, `theme`, most carrying a `--format json` view. One module
 each under `src/cli/commands/`, re-exported from its `__init__` for
 `src/cli/main.py`;
 `src/cli/_shared.py` holds what more than one group uses. Full reference in
@@ -744,4 +745,3 @@ commit is still main's tip. It uploads `docker-compose.yml` as a release asset.
 
 - Discovery mode, surfacing things you did not know about
 - Interactive refinement ("I'm burnt out on sci-fi")
-- Scheduled sync, cron-style

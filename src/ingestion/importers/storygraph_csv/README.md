@@ -22,6 +22,8 @@ time — as long as every row matches the header the file declares.
 - Rating: quarter stars on a 0–5 scale, rounded half up and clamped to 1–5
   (`4.5` → 5, `3.25` → 3). A `0`, blank or unparseable rating is unrated.
 - `ISBN/UID` becomes the item's external id.
+- Metadata carries `series` and `series_index` when the title states a series —
+  the marker is taken out of the title.
 
 ## Skipped lines
 

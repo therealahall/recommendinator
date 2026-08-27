@@ -121,7 +121,6 @@ uv run python -m src.cli account set-password
 ### 401 Unauthorized, or the UI returns to the login form
 
 The session lapsed, or a password change signed that browser out. Sign in again.
-Five wrong passwords lock a username out for five minutes.
 
 ### 403 "Cross-origin requests may not change anything here."
 

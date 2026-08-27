@@ -153,10 +153,6 @@ To pin, set `IMAGE_TAG=X.Y.Z` and run the same two commands. A pin outranks the
 `pull`, which then re-fetches the release you named rather than a newer one, so
 moving forward means raising the pin.
 
-**Coming from 0.32.0 or earlier?** Sign-in changed, one `config.yaml` key is
-dead, and the upgraded instance is claimable until someone claims it. See
-[Upgrading](../README.md#upgrading).
-
 ## Reverse proxy
 
 The app speaks plain HTTP and expects TLS to terminate in front of it, which
