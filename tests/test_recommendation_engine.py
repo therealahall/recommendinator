@@ -975,9 +975,9 @@ class TestReasoningFormatting:
         )
 
         assert "Dune" in reasoning
-        # The grouped fallback also contains "Dune", so only its absence
-        # distinguishes the one-reference branch from a revert to the list.
-        assert "Books:" not in reasoning
+        # The grouped fallback names the same title, so only its shape tells
+        # the branches apart: grouped is always multi-line, lone always one.
+        assert "\n" not in reasoning
 
     def test_multiple_items_still_use_grouped_format(self) -> None:
         """Both references are named, in one string rather than one each."""

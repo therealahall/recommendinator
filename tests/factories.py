@@ -44,13 +44,20 @@ def sub_store_specs() -> dict[str, type]:
     """Each ``StorageManager`` sub-store, mapped to the class it returns.
 
     Read off the class rather than listed, because a list left the store
-    added last unspec'd — the hole this closes.
+    added last unspec'd — the hole this closes. Plain properties count too:
+    the convention is a property, and cached is an implementation detail.
     """
-    return {
-        name: get_type_hints(prop.func)["return"]
-        for name, prop in vars(StorageManager).items()
-        if isinstance(prop, functools.cached_property)
-    }
+    specs = {}
+    for name, prop in vars(StorageManager).items():
+        if isinstance(prop, functools.cached_property):
+            getter = prop.func
+        elif isinstance(prop, property) and prop.fget is not None:
+            getter = prop.fget
+        else:
+            continue
+        specs[name] = get_type_hints(getter)["return"]
+    assert specs, "no sub-store properties found; every mocked storage is unspec'd"
+    return specs
 
 
 def make_storage_mock() -> MagicMock:
