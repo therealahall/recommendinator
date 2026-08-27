@@ -44,6 +44,10 @@ dev = [
     "types-tabulate>=0.9.0",
     "types-defusedxml>=0.7.0",
     "python-semantic-release>=9.0.0,<11.0.0",
+    # 3.1.60 dropped Actor.name_email_regex, which python-semantic-release
+    # 10.6.1 still reads — every release fails on it. Not a direct dependency:
+    # it is here so a bump of something else cannot re-resolve into it again.
+    "gitpython<3.1.60",
 ]
 
 [tool.black]
