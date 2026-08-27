@@ -1,6 +1,168 @@
 # CHANGELOG
 
 
+## v0.49.0 (2026-08-27)
+
+### Bug Fixes
+
+- One log record is one line, whatever the traceback carries
+  ([`4905258`](https://github.com/therealahall/recommendinator/commit/4905258b9ca8f657dc274360f46ccb1561f1aa04))
+
+- **build**: Resolve config paths without __dirname
+  ([`10efc43`](https://github.com/therealahall/recommendinator/commit/10efc43e2d08e572c166be1ff1f9955c965d743a))
+
+- **ci**: Put every Node pin on the same LTS
+  ([`335d260`](https://github.com/therealahall/recommendinator/commit/335d260e723aded7596ac8847350a8799af90fab))
+
+- **cli**: Resolve each source once when starting a sync
+  ([`b45954f`](https://github.com/therealahall/recommendinator/commit/b45954f7bbb6777a71bbd9e38866dc95cbc76ede))
+
+- **deps**: Hold gitpython below the release-breaking drop
+  ([`9f01c54`](https://github.com/therealahall/recommendinator/commit/9f01c54eaecae117f3b721746fa9c907ff6ad6ee))
+
+- **deps**: Hold typescript while vue-tsc cannot read it
+  ([`0430bb6`](https://github.com/therealahall/recommendinator/commit/0430bb662e0195ed77f071b96a94063a1bc942c3))
+
+- **deps**: The click floor admits a version the suite cannot run
+  ([`9c50e32`](https://github.com/therealahall/recommendinator/commit/9c50e32bfbec0fb03f075e48df79af0d22954218))
+
+- **docker**: Install pnpm without corepack
+  ([`9b21148`](https://github.com/therealahall/recommendinator/commit/9b21148aab591251f7a17b66482f599f91568871))
+
+- **docker**: Let the runtime user keep its name
+  ([`0b63852`](https://github.com/therealahall/recommendinator/commit/0b63852d6c07d9d0226a8b6e912d4ec2cd1a66f4))
+
+- **docker**: The application log reaches the host that runs the container
+  ([`b9da89b`](https://github.com/therealahall/recommendinator/commit/b9da89b0ff9b01c927dfaddf8a2aee78791a358a))
+
+- **docker**: The log rides the data mount instead of its own
+  ([`bc13cb5`](https://github.com/therealahall/recommendinator/commit/bc13cb56fc105f7c25423134f61e54a14f1d30b3))
+
+- **ingestion**: An unexpected sync fault writes its traceback to the log
+  ([`c755ae2`](https://github.com/therealahall/recommendinator/commit/c755ae221fb0f46f2570f69efc5ef32548645ed7))
+
+- **sources**: Resolve sources in a stable order
+  ([`2ddab96`](https://github.com/therealahall/recommendinator/commit/2ddab96a53b4c4c8ea13b396ee21e37e6a6d1352))
+
+- **storage**: Read a genre column as names whatever it holds
+  ([`e596e27`](https://github.com/therealahall/recommendinator/commit/e596e27b34ea4d624f7adc5e6d7427111a2d9daa))
+
+- **web**: A stale bundle asks for a rebuild, not a reload
+  ([`1090d40`](https://github.com/therealahall/recommendinator/commit/1090d401d87afe88be65d1bf73b125b362f0dacb))
+
+- **web**: Keep the stale-bundle message reflowing at 320px
+  ([`1e32197`](https://github.com/therealahall/recommendinator/commit/1e32197b2c3c283420a20c815ee6080189ee21ed))
+
+- **web**: Name the working recovery in the dev override too
+  ([`9e539a1`](https://github.com/therealahall/recommendinator/commit/9e539a10837a398d9bb45310909fd3cca5c13027))
+
+### Build System
+
+- The quality gate runs what uv.lock pins
+  ([`3df81ab`](https://github.com/therealahall/recommendinator/commit/3df81ab6e7d925e0ba16d1e4d79b2b8365cfb634))
+
+### Chores
+
+- Bump mypy from 1.20.2 to 2.3.1 in the python group
+  ([`4bf0f95`](https://github.com/therealahall/recommendinator/commit/4bf0f95a0ff487c3138a2c18caa531354488b8b2))
+
+- Bump node from 20-slim to 25-slim in the base-images group
+  ([`c10c104`](https://github.com/therealahall/recommendinator/commit/c10c1049452a6da18f596ea4c62b7c0a0ac84e73))
+
+- Bump the actions group with 11 updates
+  ([`cb9f05d`](https://github.com/therealahall/recommendinator/commit/cb9f05daf7e8614fa724687b4ee9a0633bcd7809))
+
+- Bump the actions group with 2 updates
+  ([`d0844a3`](https://github.com/therealahall/recommendinator/commit/d0844a34d0def65bbc7c93c502855f77e56c338c))
+
+- Bump the frontend group with 9 updates
+  ([`963478a`](https://github.com/therealahall/recommendinator/commit/963478acb088965b93ccf0a974b7db5e5793c569))
+
+- **deps**: Clear the Python advisory backlog
+  ([`49f9cbe`](https://github.com/therealahall/recommendinator/commit/49f9cbe85edf71aff8640e9c34ce07f6202e679c))
+
+- **deps**: Drop pandas, which nothing imports
+  ([`72737d8`](https://github.com/therealahall/recommendinator/commit/72737d8866a1225b5e9886a5bf841490d9bc8d62))
+
+- **deps**: Raise black to 25.x
+  ([`2d532b9`](https://github.com/therealahall/recommendinator/commit/2d532b94d14eda08fe98c12fb8b591c5272ce84b))
+
+- **deps**: Refresh the frontend lockfile
+  ([`7c5c3aa`](https://github.com/therealahall/recommendinator/commit/7c5c3aad109542c9ffc45cb11e6bda253c734fc3))
+
+- **typing**: Set mypy strict, which the docs have claimed all along
+  ([`fdf0d8d`](https://github.com/therealahall/recommendinator/commit/fdf0d8dc5988ff7c943c2c128bacdc60512020a0))
+
+### Code Style
+
+- Black 26 hugs a multiline string's delimiters
+  ([`a9fd16b`](https://github.com/therealahall/recommendinator/commit/a9fd16bf6d7d8eb95ec9a6572d712f9e1e082ba2))
+
+### Continuous Integration
+
+- Nothing proposed a dependency update or read an advisory feed
+  ([`eb33df3`](https://github.com/therealahall/recommendinator/commit/eb33df38a63e1293f896ea721be419f23f8b303b))
+
+### Documentation
+
+- Correct the doc set against the tree
+  ([`4711de1`](https://github.com/therealahall/recommendinator/commit/4711de184f0697a44c1495f65cd03a1682c0fad3))
+
+- No example names an interpreter version
+  ([`f10c19c`](https://github.com/therealahall/recommendinator/commit/f10c19c86d37e868994268192fc6748d5f466286))
+
+- The gate's Python coverage is stated as it runs
+  ([`dfb15f6`](https://github.com/therealahall/recommendinator/commit/dfb15f6316ccce6642024934b9c18fd439e795d0))
+
+- **scoring**: Say where an undated completion lands on the ladder
+  ([`4c0df4b`](https://github.com/therealahall/recommendinator/commit/4c0df4b1b3456adbe64b39e218f731a79f1f6297))
+
+### Features
+
+- Python 3.11 through 3.14 are supported
+  ([`d59c5a1`](https://github.com/therealahall/recommendinator/commit/d59c5a190d13dc2796352d1955f28618ada379f6))
+
+- The running app names a dependency it does not have
+  ([`38b54b7`](https://github.com/therealahall/recommendinator/commit/38b54b79e6e7922e70f46bfcc84032d2541aa4c8))
+
+### Refactoring
+
+- Drift detection leaves the package root
+  ([`8d45d7c`](https://github.com/therealahall/recommendinator/commit/8d45d7c7a5a59f110766cb618cae8bfcae027d73))
+
+- **storage**: One SQL string style, written down
+  ([`e10e2b5`](https://github.com/therealahall/recommendinator/commit/e10e2b5884f0211c0b8a5f3995a179914cbf8cfd))
+
+- **web**: Get_app returns the app it builds, without a global
+  ([`6a2d27f`](https://github.com/therealahall/recommendinator/commit/6a2d27fa972053213ded0739e76ce497d9b6cb8a))
+
+### Testing
+
+- Assert what actually forces the reflow
+  ([`ba4e307`](https://github.com/therealahall/recommendinator/commit/ba4e307cc7725c0293db8f5c932e6c908cffc564))
+
+- Build every mocked StorageManager from one factory
+  ([`60c2670`](https://github.com/therealahall/recommendinator/commit/60c2670091d3ca8f1ded2c467fe2d013a1a21f41))
+
+- Cut the prose and assertions the new tests did not need
+  ([`41745cb`](https://github.com/therealahall/recommendinator/commit/41745cb7776dbc4a622fe723c9324fa9b1fe3fed))
+
+- Put back the coverage the unpinning cut too deep
+  ([`125ac5c`](https://github.com/therealahall/recommendinator/commit/125ac5c6761fe79e843c6ba392c350265b437150))
+
+- Route guards enumerate through FastAPI's own iterator
+  ([`e567c98`](https://github.com/therealahall/recommendinator/commit/e567c982259d1a30541ad9b3cf4a54c4dbc60308))
+
+- Stop pinning wording, ordering, tuning constants and layout
+  ([`1a61ec7`](https://github.com/therealahall/recommendinator/commit/1a61ec7ee453c9cacfc9bb8f86f29c1a6694f960))
+
+- The runner takes click's separated streams as given
+  ([`2f7152a`](https://github.com/therealahall/recommendinator/commit/2f7152a98833cec3fa90f30f6579b8d10b74fbb2))
+
+- **frontend**: Stop pinning layout, ordering and copy
+  ([`60ec74d`](https://github.com/therealahall/recommendinator/commit/60ec74dc017f173f19b58ea53fac295a63a3fa0d))
+
+
 ## v0.48.0 (2026-08-25)
 
 ### Bug Fixes
