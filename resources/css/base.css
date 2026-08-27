@@ -409,6 +409,11 @@ input[type="checkbox"] {
   gap: var(--space-3);
 }
 
+/* --renew-anon-volumes is one unbreakable token wider than a 320px viewport. */
+.update-banner code {
+  overflow-wrap: anywhere;
+}
+
 .update-banner--drift {
   flex-direction: column;
   align-items: flex-start;
