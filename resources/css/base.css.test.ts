@@ -146,12 +146,15 @@ describe('library card divider (issue #108)', () => {
 
 describe('recommendation card header (issue #98)', () => {
   // 1.4.10: at 375px the score badge and buttons squeezed the title until the
-  // card scrolled sideways. Asserted as reflow, not as the breakpoint value.
+  // card scrolled sideways. `.rec-actions` is flex-shrink: 0, so wrapping is
+  // only permission — the full-width bases below are what break the row.
   it('gives the heading its own row before the actions crowd it', () => {
     const mobile = mediaBlock(readBase(), '640px')
 
     expect(declaration(ruleBlock(mobile, '.rec-header'), 'flex-wrap')).toBe('wrap')
+    expect(declaration(ruleBlock(mobile, '.rec-heading'), 'flex')).toBe('1 1 100%')
     expect(declaration(ruleBlock(mobile, '.rec-heading'), 'min-width')).toBe('0')
+    expect(declaration(ruleBlock(mobile, '.rec-actions'), 'width')).toBe('100%')
   })
 })
 
@@ -225,6 +228,21 @@ function step(steps: Map<string, number>, value: string): number {
   if (height === undefined) throw new Error(`${named[1]} is declared nowhere`)
   return height
 }
+
+describe('library filter row (issue #102)', () => {
+  // 1.4.10: a select cannot shrink past its widest option, so three of them
+  // widened the page itself. The basis is what puts two on a row.
+  it('lets the filter selects share a row instead of widening the page', () => {
+    const mobile = mediaBlock(
+      readFileSync(`${process.cwd()}/resources/js/components/organisms/LibraryFilters.vue`, 'utf8'),
+      '640px',
+    )
+    const select = ruleBlock(mobile, '.lib-filter-row .toolbar-select')
+
+    expect(declaration(select, 'flex')).toContain('50%')
+    expect(declaration(select, 'min-width')).toBe('0')
+  })
+})
 
 describe('stacking order', () => {
   it('leaves no raw z-index and no unused step, so one scale decides what covers what', () => {

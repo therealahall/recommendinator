@@ -2957,19 +2957,21 @@ class TestUpdateEndpointParallelSync:
             )
         assert refusal is None
 
-        manager.update_progress(
-            source="All Sources",
-            items_processed=12,
-            total_items=20,
-            current_item="Book 12",
-            current_source="goodreads",
-        )
+        # Reported in reverse: insertion order matching sorted order would let
+        # the per-source sort go without failing anything.
         manager.update_progress(
             source="All Sources",
             items_processed=3,
             total_items=10,
             current_item="Game 3",
             current_source="steam",
+        )
+        manager.update_progress(
+            source="All Sources",
+            items_processed=12,
+            total_items=20,
+            current_item="Book 12",
+            current_source="goodreads",
         )
 
         response = client.get("/api/sync/status")
