@@ -15,6 +15,16 @@ describe('RulesPrefs', () => {
     expect(wrapper.findAll('h3')).toHaveLength(1)
   })
 
+  it('heads each sub-block one level under the section, so the outline skips none', () => {
+    const wrapper = mount(RulesPrefs)
+    const levels = new Set(
+      [...wrapper.element.querySelectorAll('h1,h2,h3,h4,h5,h6')].map((h) => h.tagName),
+    )
+
+    // 1.3.1. Rename or reorder the sub-blocks freely; a demoted one skips h4.
+    expect(levels).toEqual(new Set(['H3', 'H4']))
+  })
+
   it('gives the series-order checkbox a label with words in it', () => {
     const wrapper = mount(RulesPrefs)
 
