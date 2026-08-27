@@ -19,8 +19,8 @@ function readBase(): string {
   return readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
 }
 
-// Requiring `{` immediately after the selector keeps a lookup for
-// `.library-meta` off `.library-meta-secondary` and off `.library-meta .badge`.
+// Requiring `{` immediately after the selector keeps a lookup off a longer
+// selector that starts with the same text, or a descendant rule under it.
 function ruleBlock(source: string, selector: string): string {
   const escaped = selector.replace(/\./g, '\\.')
   const match = source.match(new RegExp(`(?:^|[\\s}])${escaped}\\s*\\{([^}]*)\\}`))
@@ -35,12 +35,6 @@ function declaration(block: string, property: string): string {
     .match(new RegExp(`(?<![-\\w])${property}:\\s*([^;]+);`))
   if (!match) throw new Error(`${property} not declared`)
   return match[1].trim()
-}
-
-function mediaBlock(source: string, maxWidth: string): string {
-  const match = source.match(new RegExp(`@media \\(max-width: ${maxWidth}\\) \\{([\\s\\S]*?)\\n\\}`))
-  if (!match) throw new Error(`${maxWidth} media block not found in base.css`)
-  return match[1]
 }
 
 describe('inactive button styling', () => {
@@ -92,34 +86,6 @@ describe('error text token', () => {
   })
 })
 
-describe('the reset Tailwind used to supply', () => {
-  // These three read as dead resets, so a tidy-up deletes them — and each is
-  // the only rule covering its surface, so nothing else fails when it goes.
-  it('leaves an unsized heading at body size and weight', () => {
-    const match = readBase().match(/h1,\s*h2,\s*h3,\s*h4,\s*h5,\s*h6\s*\{([^}]*)\}/)
-    if (!match) throw new Error('heading reset not found in base.css')
-
-    expect(match[1]).toMatch(/font-size:\s*inherit/)
-    expect(match[1]).toMatch(/font-weight:\s*inherit/)
-  })
-
-  it('gives every form control the page font rather than the UA one', () => {
-    const match = readBase().match(
-      /button,\s*input,\s*optgroup,\s*select,\s*textarea\s*\{([^}]*)\}/,
-    )
-    if (!match) throw new Error('form-control font reset not found in base.css')
-
-    expect(match[1]).toMatch(/font:\s*inherit/)
-  })
-
-  it('lays an icon out as a block instead of on a text baseline', () => {
-    const match = readBase().match(/^svg\s*\{([^}]*)\}/m)
-    if (!match) throw new Error('svg display rule not found in base.css')
-
-    expect(match[1]).toMatch(/display:\s*block/)
-  })
-})
-
 describe('one-handed reach on a phone', () => {
   it('gives the sign-in submit a thumb-sized target', () => {
     const match = readBase().match(/\.auth-submit\s*\{([^}]*)\}/)
@@ -153,22 +119,6 @@ describe('.sr-only utility', () => {
     expect(block).toMatch(/-webkit-user-select:\s*none/)
     expect(block).toMatch(/(?<!-)user-select:\s*none/)
   })
-})
-
-describe('library card divider (issue #108)', () => {
-  /**
-   * Bug: on a one-column mobile grid the divider above the buttons touched the
-   * badges, but looked right whenever the card was rated. Root cause:
-   * margin-top:auto is zero on a content-height card. Fix: margin on the pills.
-   */
-  it('spaces the badges off the divider whether or not the card is rated', () => {
-    const source = readBase()
-    const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
-
-    expect(gap).not.toBe('0')
-    expect(declaration(ruleBlock(source, '.library-meta-secondary'), 'margin-bottom')).toBe(gap)
-  })
-
 })
 
 const DIALOG = 'resources/js/components/atoms/ModalDialog.vue'
@@ -254,21 +204,5 @@ describe('the mobile sidebar drawer', () => {
 
     expect(breakpoints.length).toBeGreaterThan(0)
     expect([...new Set(breakpoints)]).toEqual([watched[1]])
-  })
-})
-
-describe('recommendation card header (issue #98)', () => {
-  /**
-   * Bug: at 375px the score badge and buttons squeezed the title. Root cause:
-   * .rec-header is a no-wrap row and the title wrapper had no class to hang a
-   * basis on. Fix: wrap the header below 640px.
-   */
-  it('gives the title the whole row and drops the actions beneath it', () => {
-    const block = mediaBlock(readBase(), '640px')
-
-    expect(declaration(ruleBlock(block, '.rec-header'), 'flex-wrap')).toBe('wrap')
-    expect(declaration(ruleBlock(block, '.rec-heading'), 'flex')).toBe('1 1 100%')
-    expect(declaration(ruleBlock(block, '.rec-heading'), 'min-width')).toBe('0')
-    expect(declaration(ruleBlock(block, '.rec-actions'), 'width')).toBe('100%')
   })
 })

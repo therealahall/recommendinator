@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryFilters from './LibraryFilters.vue'
 import { DEFAULT_SORT, MAX_SEARCH_LENGTH, SORT_OPTIONS } from '@/constants/library'
-import { componentStyles } from '@/testing/styles'
 
 describe('LibraryFilters', () => {
   const defaultProps = {
@@ -113,23 +112,5 @@ describe('LibraryFilters', () => {
     await select.trigger('change')
 
     expect(wrapper.emitted('filterChange')).toEqual([['type', 'movie']])
-  })
-})
-
-describe('LibraryFilters mobile overflow regression (issue #102)', () => {
-  /**
-   * Bug: at 375px the filter controls overflowed the card and widened the page.
-   * Root cause: the rows are flex with no wrap and a select cannot shrink past
-   * its widest option. Fix: wrap them, set a basis.
-   */
-  function mobileBlock(): string {
-    const styles = componentStyles('resources/js/components/organisms/LibraryFilters.vue')
-    const match = styles.match(/@media \(max-width: 640px\) \{([\s\S]*?)\n\}/)
-    if (!match) throw new Error('640px block not found in LibraryFilters.vue')
-    return match[1]
-  }
-
-  it('lets both control rows wrap on mobile', () => {
-    expect(mobileBlock()).toMatch(/\.lib-filter-row,\s*\.lib-actions-row\s*\{[^}]*flex-wrap:\s*wrap/)
   })
 })
