@@ -122,8 +122,11 @@ The show's next season is a series continuation, so it takes the softened
 penalty.
 
 Completions are ordered by completion date, so something you finish today
-outranks an import dated years ago. Which surface stamps which is in
-[ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
+outranks an import dated years ago. Undated completions sort below every dated
+one, and among themselves by most-recently-added first, so when a content type's
+*dated* completions span fewer than five clusters the last rungs fall to the
+order the rows were added rather than to anything you did. Which surface stamps
+which is in [ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
 
 The date is the calendar day in the host's timezone, not UTC. See
 [DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.

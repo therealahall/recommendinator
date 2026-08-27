@@ -407,3 +407,29 @@ class TestVarietyLadderUsesInAppCompletions:
 
         assert ladder["science_fiction"] == pytest.approx(VARIETY_TOP_PENALTY)
         assert ladder["fantasy"] < ladder["science_fiction"]
+
+
+class TestUndatedCompletionsStillClaimRungs:
+    def test_library_of_only_undated_completions_fills_the_ladder(self) -> None:
+        undated = [
+            _completed("Mistborn", ["Fantasy"], db_id=1),
+            _completed("Dune", ["Science Fiction"], db_id=2),
+            _completed("Gone Girl", ["Thriller"], db_id=3),
+            _completed("Wolf Hall", ["History"], db_id=4),
+            _completed("Bossypants", ["Comedy"], db_id=5),
+        ]
+
+        ladder = build_variety_ladder(undated)
+
+        assert len(ladder) == VARIETY_LADDER_STEPS
+        assert max(ladder.values()) == pytest.approx(VARIETY_TOP_PENALTY)
+
+    def test_undated_completion_ranks_below_every_dated_one(self) -> None:
+        ladder = build_variety_ladder(
+            [
+                _completed("Mistborn", ["Fantasy"], db_id=99),
+                _completed("Dune", ["Science Fiction"], completed_on=date(2019, 1, 1)),
+            ]
+        )
+
+        assert ladder["science_fiction"] > ladder["fantasy"]
