@@ -467,6 +467,24 @@ class TestReducingAKnownShapeToNames:
         assert "Deep" not in (row["metadata"] or "")
 
 
+class TestReadingAListColumnBack:
+    """The read codec answers with names, whatever the column was filled with."""
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ('["Crime", "Drama"]', ["Crime", "Drama"]),
+            ('[{"id": 80, "name": "Crime"}, "Drama"]', ["Crime", "Drama"]),
+            ('[{"id": 80}]', []),
+        ],
+        ids=["names", "object_naming_itself", "object_naming_nothing"],
+    )
+    def test_an_element_is_read_back_as_the_name_it_carries(
+        self, stored: str, expected: list[str]
+    ) -> None:
+        assert detail_fields.parse_json_array(stored) == expected
+
+
 class TestARefusedWriteLeavesNothingBehind:
     """A codec that raises mid-write must not half-save the item.
 

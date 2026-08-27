@@ -1173,55 +1173,32 @@ def normalize_terms(terms: list[str]) -> list[str]:
     return result
 
 
+def _terms_from_text(raw: str) -> list[str]:
+    """Read a metadata string as terms: a JSON array, else comma-separated."""
+    if raw.startswith("["):
+        try:
+            return list(json.loads(raw))
+        except json.JSONDecodeError:
+            # A truncated array still names its first term, and splitting it
+            # with the bracket still attached loses that term.
+            raw = raw.strip("[]")
+    return [term.strip() for term in raw.split(",")]
+
+
 def extract_and_normalize_genres(metadata: dict | None) -> list[str]:
-    """Extract and normalize genres and tags from item metadata.
-
-    Args:
-        metadata: Item metadata dict
-
-    Returns:
-        List of normalized genre/tag terms
-    """
+    """Normalize every genre and tag term an item's metadata names."""
     if not metadata:
         return []
 
-    terms = []
+    terms: list[str] = []
 
-    # Extract from genre field
-    if "genre" in metadata and metadata["genre"]:
-        genre = metadata["genre"]
-        if isinstance(genre, str):
-            terms.append(genre)
-        elif isinstance(genre, list):
-            terms.extend(genre)
-
-    # Extract from genres field
-    if "genres" in metadata and metadata["genres"]:
-        genres = metadata["genres"]
-        if isinstance(genres, str):
-            # Could be comma-separated or JSON
-            if genres.startswith("["):
-                try:
-                    terms.extend(json.loads(genres))
-                except json.JSONDecodeError:
-                    terms.extend(g.strip() for g in genres.split(","))
-            else:
-                terms.extend(g.strip() for g in genres.split(","))
-        elif isinstance(genres, list):
-            terms.extend(genres)
-
-    # Extract from tags field
-    if "tags" in metadata and metadata["tags"]:
-        tags = metadata["tags"]
-        if isinstance(tags, str):
-            if tags.startswith("["):
-                try:
-                    terms.extend(json.loads(tags))
-                except json.JSONDecodeError:
-                    terms.extend(t.strip() for t in tags.split(","))
-            else:
-                terms.extend(t.strip() for t in tags.split(","))
-        elif isinstance(tags, list):
-            terms.extend(tags)
+    for key in ("genre", "genres", "tags"):
+        value = metadata.get(key)
+        if not value:
+            continue
+        if isinstance(value, str):
+            terms.extend(_terms_from_text(value))
+        elif isinstance(value, list):
+            terms.extend(value)
 
     return normalize_terms(terms)

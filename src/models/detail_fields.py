@@ -113,17 +113,20 @@ def to_json_array(value: Any) -> str | None:
     return json.dumps(entries)
 
 
-def parse_json_array(value: Any) -> list[Any] | None:
-    """Read a JSON array column back into a list."""
+def parse_json_array(value: Any) -> list[str] | None:
+    """Read a JSON array column back as the names it holds.
+
+    A row filled before :func:`to_json_array` refused an object still holds
+    one, and every reader of the metadata key treats an element as a name.
+    """
     if value is None:
         return None
-    if isinstance(value, list):
-        return value
-    try:
-        parsed = json.loads(value)
-    except (json.JSONDecodeError, TypeError):
-        return [value] if value else None
-    return parsed if isinstance(parsed, list) else [parsed]
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return text_names(value)
 
 
 class FieldKind(Enum):
