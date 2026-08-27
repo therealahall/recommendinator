@@ -16,13 +16,13 @@ from src.storage.derived import MatchRow, read_live_match_rows, signals_conflict
 from src.storage.item_merges import MergeError, absorbing_merge_id
 from src.storage.merge import bare_title_key
 
-_DECLINE_SELECT = """
-    SELECT d.lower_item_id, d.higher_item_id,
-           l.title AS lower_title, h.title AS higher_title
-      FROM content_item_duplicate_declines d
-      JOIN content_items l ON l.id = d.lower_item_id
-      JOIN content_items h ON h.id = d.higher_item_id
-"""
+_DECLINE_SELECT = (
+    "SELECT d.lower_item_id, d.higher_item_id, "
+    "l.title AS lower_title, h.title AS higher_title "
+    "FROM content_item_duplicate_declines d "
+    "JOIN content_items l ON l.id = d.lower_item_id "
+    "JOIN content_items h ON h.id = d.higher_item_id"
+)
 
 #: A library that has never been reviewed offers hundreds of works at once.
 SUGGESTION_PAGE_DEFAULT = 25

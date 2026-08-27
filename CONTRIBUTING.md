@@ -102,6 +102,10 @@ for class methods are the exceptions.
 - **Copy dicts before mutating** one passed in from outside.
 - **Module-level imports only.** No inline `import` in a function, no
   bottom-of-file import hacks.
+- **One SQL string style.** A triple-quoted block for DDL and for any statement
+  of six lines or more; concatenated single-quoted strings below that, as
+  `src/storage/sync_runs.py` writes them. A statement fitting on one line stays
+  one string.
 - **Never expose internal errors** in HTTP responses. Generic message out, detail
   to the log.
 - **Data-driven patterns** over copy-pasted branches differing only in names.

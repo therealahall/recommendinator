@@ -116,9 +116,9 @@ def absorb_item(
         (survivor_id, absorbed_id, absorbed_id),
     )
     cursor.execute(
-        """INSERT INTO content_item_merges
-           (survivor_id, absorbed_id, evidence, evidence_detail, restore_json)
-           VALUES (?, ?, ?, ?, ?)""",
+        "INSERT INTO content_item_merges "
+        "(survivor_id, absorbed_id, evidence, evidence_detail, restore_json) "
+        "VALUES (?, ?, ?, ?, ?)",
         (
             survivor_id,
             absorbed_id,

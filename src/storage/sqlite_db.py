@@ -357,13 +357,13 @@ _EXTERNAL_IDS_TERM = (
 # Steam's app 440 and GOG's product 440 are different games, hence the source.
 # ``x.user_id`` repeats ``ci.user_id`` because SQLite carries no equality
 # across a join, and an unconstrained id table has no index to seek.
-_ITEM_ID_BY_SOURCE_EXTERNAL_ID = """
-    SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci
-    JOIN content_item_external_ids x ON x.content_item_id = ci.id
-    WHERE x.user_id = :user_id AND x.source = :source
-      AND x.external_id = :external_id
-      AND ci.user_id = :user_id AND ci.content_type = :content_type
-"""
+_ITEM_ID_BY_SOURCE_EXTERNAL_ID = (
+    "SELECT COALESCE(ci.merged_into, ci.id) AS id FROM content_items ci "
+    "JOIN content_item_external_ids x ON x.content_item_id = ci.id "
+    "WHERE x.user_id = :user_id AND x.source = :source "
+    "AND x.external_id = :external_id "
+    "AND ci.user_id = :user_id AND ci.content_type = :content_type"
+)
 
 # A merge group holding another id from the incoming source is that source's
 # other item; the guard spans the group because the SELECT answers as one.
@@ -794,12 +794,10 @@ class SQLiteDB:
             row_changed = bool(changed)
         else:
             cursor.execute(
-                """
-                INSERT INTO content_items
-                (user_id, title, normalized_title, content_type,
-                 status, rating, review, date_completed, source, ignored)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                "INSERT INTO content_items "
+                "(user_id, title, normalized_title, content_type, "
+                "status, rating, review, date_completed, source, ignored) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     effective_user_id,
                     item.title,
@@ -858,9 +856,9 @@ class SQLiteDB:
         if not (item.id and item.source):
             return False
         cursor.execute(
-            """INSERT OR IGNORE INTO content_item_external_ids
-               (content_item_id, user_id, source, external_id, content_type)
-               VALUES (?, ?, ?, ?, ?)""",
+            "INSERT OR IGNORE INTO content_item_external_ids "
+            "(content_item_id, user_id, source, external_id, content_type) "
+            "VALUES (?, ?, ?, ?, ?)",
             (db_id, user_id, item.source, item.id, content_type),
         )
         return cursor.rowcount > 0
@@ -1822,16 +1820,16 @@ class SQLiteDB:
             cursor = conn.cursor()
             if user_id is not None:
                 cursor.execute(
-                    """UPDATE content_items
-                       SET ignored = ?, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ? AND user_id = ? AND merged_into IS NULL""",
+                    "UPDATE content_items "
+                    "SET ignored = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ? AND user_id = ? AND merged_into IS NULL",
                     (1 if ignored else 0, db_id, user_id),
                 )
             else:
                 cursor.execute(
-                    """UPDATE content_items
-                       SET ignored = ?, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ? AND merged_into IS NULL""",
+                    "UPDATE content_items "
+                    "SET ignored = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ? AND merged_into IS NULL",
                     (1 if ignored else 0, db_id),
                 )
             conn.commit()
