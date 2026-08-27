@@ -152,10 +152,10 @@ def build_variety_ladder(
     receives penalty ``top_penalty * (steps - i) / steps``.
 
     Args:
-        completed_items: Consumed items (across content types). Only
-            completion events contribute: items with status COMPLETED, or an
-            ongoing TV show with at least one finished season. Everything
-            else is ignored.
+        completed_items: Consumed items of one content type. Only completion
+            events contribute: items with status COMPLETED, or an ongoing TV
+            show with at least one finished season. Everything else is
+            ignored.
         steps: Number of distinct clusters the ladder spans.
         top_penalty: Penalty fraction for the most recently finished cluster,
             from :func:`top_penalty_for_preference`.
