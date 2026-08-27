@@ -2,14 +2,14 @@
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from src.auth.trakt import DevicePollResult, DevicePollStatus
 from src.storage.manager import StorageManager
-from tests.factories import MALFORMED_IDS
+from tests.factories import MALFORMED_IDS, make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -116,7 +116,7 @@ class TestAuthConnect:
 
     def test_connect_source_not_enabled(self, cli_runner: CliRunner) -> None:
         """Test connecting a source that is not enabled in config."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         with patch("src.cli.commands._auth.is_gog_enabled", return_value=False):
             result = _invoke_with_mocks(
                 cli_runner,
@@ -129,7 +129,7 @@ class TestAuthConnect:
 
     def test_connect_gog(self, cli_runner: CliRunner) -> None:
         """Test connecting GOG account."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         config = _sources(gog="gog")
         # Auth codes must be >=20 chars to pass extract_code_from_input validation
         auth_code = "test-auth-code-abc123xyz"
@@ -162,7 +162,7 @@ class TestAuthConnect:
 
     def test_connect_trakt_success(self, cli_runner: CliRunner) -> None:
         """Trakt device flow connects when the first poll approves."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         flow = {
             "device_code": "dev123",
             "user_code": "ABCD1234",
@@ -202,7 +202,7 @@ class TestAuthConnect:
 
     def test_connect_trakt_denied(self, cli_runner: CliRunner) -> None:
         """Trakt connect aborts when the user denies the request."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         flow = {
             "device_code": "dev123",
             "user_code": "ABCD1234",
@@ -235,7 +235,7 @@ class TestAuthConnect:
 
     def test_connect_no_refresh_token(self, cli_runner: CliRunner) -> None:
         """Test that connect aborts when exchange returns no refresh token."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         auth_code = "test-auth-code-abc123xyz"
         with (
             patch("src.cli.commands._auth.is_gog_enabled", return_value=True),

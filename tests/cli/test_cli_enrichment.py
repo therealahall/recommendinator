@@ -9,6 +9,7 @@ from click.testing import CliRunner
 from src.enrichment.manager import EnrichmentJobStatus, EnrichmentManager
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.storage.manager import StorageManager
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -54,7 +55,7 @@ class TestEnrichmentStart:
         self, cli_runner: CliRunner
     ) -> None:
         """It used to send the user to a config.yaml key the app no longer reads."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         result = _invoke_with_mocks(
             cli_runner,
             ["enrichment", "start"],
@@ -69,7 +70,7 @@ class TestEnrichmentStart:
 
     def test_enrichment_start_success(self, cli_runner: CliRunner) -> None:
         """Test successful enrichment start forwards correct args to the manager."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
         mock_manager.get_status.return_value = _make_status()
@@ -97,7 +98,7 @@ class TestEnrichmentStart:
         API's /api/enrichment/start accepts retry_not_found, so parity
         requires the CLI to do the same.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
         mock_manager.get_status.return_value = _make_status()
@@ -121,7 +122,7 @@ class TestEnrichmentStart:
         """A revoked key abandons the run's only provider, and the summary the
         operator is watching has to say so rather than claim the library is done.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
         status = _make_status(completed=False, items_processed=5, items_enriched=0)
@@ -142,7 +143,7 @@ class TestEnrichmentStart:
 
     def test_enrichment_already_running(self, cli_runner: CliRunner) -> None:
         """Test error when enrichment is already running."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = False
 
@@ -372,7 +373,7 @@ class TestEnrichmentJobControl:
 class TestEnrichmentStatus:
     def test_enrichment_status_json(self, cli_runner: CliRunner) -> None:
         """Parity: the JSON is web EnrichmentStatsResponse, key for key."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         stats = {
             "total": 100,
             "resettable": 88,
@@ -398,7 +399,7 @@ class TestEnrichmentReset:
         self, cli_runner: CliRunner
     ) -> None:
         """The library total under --provider or --type overstates the damage."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.enrichment.stats.return_value = {
             "resettable": 1488,
             "by_provider": {"tmdb": 12},
@@ -423,7 +424,7 @@ class TestEnrichmentReset:
 
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
         """--yes skips the prompt and leaves every filter unset."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.enrichment.reset.return_value = 50
 
         result = _invoke_with_mocks(
@@ -475,7 +476,7 @@ class TestEnrichmentReset:
     def test_enrichment_reset_refuses_an_id_beside_a_filter(
         self, cli_runner: CliRunner
     ) -> None:
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
             cli_runner,
@@ -490,7 +491,7 @@ class TestEnrichmentReset:
     def test_enrichment_reset_names_an_id_that_is_not_there(
         self, cli_runner: CliRunner
     ) -> None:
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
         result = _invoke_with_mocks(

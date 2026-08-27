@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import fields
-from typing import Any
+from typing import Any, get_type_hints
 from unittest.mock import DEFAULT, MagicMock, Mock, NonCallableMock, patch
 
 from fastapi import FastAPI
@@ -14,13 +15,8 @@ from fastapi.testclient import TestClient
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.models.user_preferences import UserPreferenceConfig
-from src.storage.accounts import AccountStore
-from src.storage.credentials import CredentialStore
-from src.storage.global_secrets import SecretStore
+from src.storage.manager import StorageManager
 from src.storage.schema import UserDict, get_default_user_id
-from src.storage.settings_store import SettingsStore
-from src.storage.source_configs import SourceConfigStore
-from src.storage.sync_runs import SyncRunStore
 from src.web.app import create_app
 from src.web.auth import SESSION_COOKIE
 from src.web.state import AppState, app_state
@@ -43,27 +39,36 @@ SESSION_USER: UserDict = {
 # separates a full-match check from a search.
 MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
-_SUB_STORES: dict[str, type] = {
-    "accounts": AccountStore,
-    "credentials": CredentialStore,
-    "secrets": SecretStore,
-    "settings": SettingsStore,
-    "sources": SourceConfigStore,
-    "sync_runs": SyncRunStore,
-}
 
+def sub_store_specs() -> dict[str, type]:
+    """Each ``StorageManager`` sub-store, mapped to the class it returns.
 
-def spec_sub_stores(storage: Any) -> None:
-    """Spec each stubbed sub-store, so a rename cannot orphan a stub.
-
-    ``Mock(spec=StorageManager)`` checks top-level names only, and
-    ``create_autospec`` cannot help: the sub-stores are ``cached_property``,
-    so each child would be spec'd against the descriptor. Idempotent, so
-    pre-stubbing survives.
+    Read off the class rather than listed, because a list left the store
+    added last unspec'd — the hole this closes.
     """
+    return {
+        name: get_type_hints(prop.func)["return"]
+        for name, prop in vars(StorageManager).items()
+        if isinstance(prop, functools.cached_property)
+    }
+
+
+def make_storage_mock() -> MagicMock:
+    """The one supported way to mock storage: sub-stores spec'd too.
+
+    ``create_autospec`` cannot do it: the sub-stores are ``cached_property``,
+    so it specs each child against the descriptor.
+    """
+    storage = MagicMock(spec=StorageManager)
+    _spec_sub_stores(storage)
+    return storage
+
+
+def _spec_sub_stores(storage: Any) -> None:
+    """Spec each sub-store, leaving one a caller already stubbed alone."""
     if not isinstance(storage, NonCallableMock):
         return
-    for name, store in _SUB_STORES.items():
+    for name, store in sub_store_specs().items():
         if not isinstance(getattr(storage, name), store):
             setattr(storage, name, MagicMock(spec=store))
 
@@ -75,7 +80,7 @@ def back_mock_session_store(storage: Any) -> None:
     cookie, and every guess, authenticates. A no-op for real storage.
     """
     if isinstance(storage, NonCallableMock):
-        spec_sub_stores(storage)
+        _spec_sub_stores(storage)
         storage.accounts.lookup_session.side_effect = lambda token: (
             SESSION_USER if token == _MOCK_SESSION_TOKEN else None
         )
@@ -145,7 +150,7 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
     if not isinstance(storage, NonCallableMock):
         return store
 
-    spec_sub_stores(storage)
+    _spec_sub_stores(storage)
     storage.settings.get.side_effect = lambda key: store.get(key)
     storage.settings.set.side_effect = store.__setitem__
     storage.settings.list.side_effect = store.copy

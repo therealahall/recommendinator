@@ -92,8 +92,8 @@ from tests.factories import (
     back_mock_preference_store,
     booted_web_app,
     make_item,
+    make_storage_mock,
     served_api_operations,
-    spec_sub_stores,
 )
 
 
@@ -125,8 +125,7 @@ def mock_components(mock_config):
     # Reset sync manager to ensure clean state between tests
     reset_sync_manager()
 
-    mock_storage_manager = Mock(spec=StorageManager)
-    spec_sub_stores(mock_storage_manager)
+    mock_storage_manager = make_storage_mock()
     mock_storage_manager.credentials.get_for_source.return_value = {}
     mock_storage_manager.sources.list.return_value = []
     mock_storage_manager.sources.get.return_value = None
@@ -5156,7 +5155,7 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
         engine.generate_recommendations.side_effect = ValueError(
             f"no candidate for Real Title{breaker}ERROR forged"
         )
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.get_user_preference_config.return_value = None
 
         with (

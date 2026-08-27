@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from src.recommendations.profile import ProfileGenerator
-from src.storage.manager import StorageManager
 from src.web.api import ProfileResponse
+from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks
 
@@ -33,7 +33,7 @@ class TestProfileShow:
     def test_show_profile_json(self, cli_runner: CliRunner) -> None:
         """Test showing profile in JSON format."""
         profile_record = _stored_profile()
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = profile_record
         result = _invoke_with_mocks(
             cli_runner,
@@ -50,7 +50,7 @@ class TestProfileShow:
         assert parsed["generated_at"] == "2026-01-01T00:00:00"
 
     def test_table_names_every_stored_preference(self, cli_runner: CliRunner) -> None:
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = _stored_profile()
 
         result = _invoke_with_mocks(cli_runner, ["profile", "show"], mock_storage)
@@ -65,7 +65,7 @@ class TestProfileShow:
 
     def test_show_profile_no_profile_json(self, cli_runner: CliRunner) -> None:
         """Empty profile in JSON mode emits the full ProfileResponse shape."""
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = None
         result = _invoke_with_mocks(
             cli_runner,
@@ -91,7 +91,7 @@ class TestProfileRegenerate:
         Chatter shares the channel `recommend` uses for it, so a run whose
         result is piped is not interleaved with what it was doing.
         """
-        mock_storage = MagicMock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         with patch("src.cli.commands._profile.ProfileGenerator") as mock_pg_cls:
             mock_pg = MagicMock(spec=ProfileGenerator)
             mock_profile = MagicMock()

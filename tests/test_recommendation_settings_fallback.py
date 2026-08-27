@@ -29,7 +29,6 @@ from collections.abc import Callable, Iterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -52,7 +51,7 @@ from src.storage.settings_migration import migrate_config_settings
 from src.web.api import _get_recommendations_config
 from src.web.app import create_app
 from src.web.state import app_state, get_config, get_engine, get_storage
-from tests.factories import authenticated_client
+from tests.factories import authenticated_client, make_storage_mock
 
 _GENRE_WEIGHT_KEY = "recommendations.scorer_weights.genre_match"
 _CREATOR_WEIGHT_KEY = "recommendations.scorer_weights.creator_match"
@@ -458,7 +457,7 @@ class TestUnusableRunningConfig:
     def _engine_reading(config: dict[str, Any]) -> Any:
         """An engine whose running config is *config* and nothing else."""
         return RecommendationEngine(
-            storage_manager=Mock(spec=StorageManager),
+            storage_manager=make_storage_mock(),
             min_rating=4,
             config_provider=lambda: config,
         )

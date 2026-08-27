@@ -31,7 +31,7 @@ from src.storage.schema import SyncRunDict
 from src.storage.sync_runs import STALE_AFTER
 from src.utils.dates import utc_now
 from src.utils.text import LINE_BREAKS
-from tests.factories import make_item
+from tests.factories import make_item, make_storage_mock
 
 
 class TestResolveMaxWorkers:
@@ -65,7 +65,7 @@ class TestExecuteSync:
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
 
         result = execute_sync(
             plugin=plugin,
@@ -86,7 +86,7 @@ class TestExecuteSync:
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         saved = SavedItem(db_id=1, outcome=SaveOutcome.ADDED)
         storage.save_content_item_outcome.side_effect = [
             saved,
@@ -120,7 +120,7 @@ class TestExecuteSync:
         plugin.fetch.return_value = iter(
             make_item(f"Book {index}") for index in range(failures)
         )
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.save_content_item_outcome.side_effect = ValueError("db error")
 
         result = execute_sync(plugin=plugin, plugin_config={}, storage_manager=storage)
@@ -141,7 +141,7 @@ class TestExecuteSync:
         plugin.fetch.return_value = iter(
             make_item(f"Book {index}") for index in range(misses + 1)
         )
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.save_content_item_outcome.side_effect = [
             *[ValueError("db error")] * misses,
             saved,
@@ -168,7 +168,7 @@ class TestExecuteSync:
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         progress = MagicMock()
 
         execute_sync(
@@ -207,7 +207,7 @@ class TestExecuteMultiSourceSync:
         plugin_b.display_name = "Working"
         plugin_b.fetch.return_value = iter([make_item("B1")])
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         reported: list[SyncResult] = []
 
         results = execute_multi_source_sync(
@@ -242,7 +242,7 @@ class TestExecuteMultiSourceSync:
 
         results = execute_multi_source_sync(
             sources=[(plugin, {})],
-            storage_manager=MagicMock(spec=StorageManager),
+            storage_manager=make_storage_mock(),
         )
 
         assert results[0].errors == ["Sync failed for steam"]
@@ -258,7 +258,7 @@ class TestExecuteMultiSourceSync:
         with caplog.at_level(logging.ERROR, logger="src.ingestion.sync"):
             results = execute_multi_source_sync(
                 sources=[(plugin, {})],
-                storage_manager=MagicMock(spec=StorageManager),
+                storage_manager=make_storage_mock(),
             )
 
         assert results[0].errors == ["Sync failed for steam"]
@@ -291,7 +291,7 @@ class TestExecuteMultiSourceSync:
             plugin.fetch.side_effect = make_fetch(f"src_{index}")
             plugins.append(plugin)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
 
         results = execute_multi_source_sync(
             sources=[(plugin, {}) for plugin in plugins],
@@ -331,7 +331,7 @@ class TestExecuteMultiSourceSync:
         plugin_b.display_name = "Working"
         plugin_b.fetch.side_effect = fetch_ok
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         reported: list[SyncResult] = []
 
         results = execute_multi_source_sync(
@@ -588,7 +588,7 @@ class TestCredentialRotationCallback:
 
         plugin.fetch.side_effect = capture_fetch
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
 
         execute_sync(
             plugin=plugin,
@@ -620,7 +620,7 @@ class TestCredentialRotationCallback:
 
         plugin.fetch.side_effect = capture_fetch
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.credentials.save.side_effect = Exception("DB locked")
 
         with caplog.at_level(logging.WARNING, logger="src.ingestion.sync"):
@@ -801,7 +801,7 @@ class TestAutoEnrichmentHook:
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.save_content_item_outcome.side_effect = [
             SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
             SavedItem(db_id=2, outcome=SaveOutcome.ADDED),
@@ -826,7 +826,7 @@ class TestAutoEnrichmentHook:
         plugin.display_name = "TestPlugin"
         plugin.fetch.return_value = iter(items)
 
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.save_content_item_outcome.side_effect = [
             SavedItem(db_id=1, outcome=SaveOutcome.ADDED),
             SavedItem(db_id=2, outcome=SaveOutcome.ADDED),
@@ -868,7 +868,7 @@ def _sync_one_forged_title(
     plugin.display_name = "CSV"
     plugin.fetch.return_value = iter([make_item(title, item_id="ext_1")])
 
-    storage = MagicMock(spec=StorageManager)
+    storage = make_storage_mock()
     storage.save_content_item_outcome.return_value = SavedItem(
         db_id=1, outcome=SaveOutcome.ADDED
     )
@@ -941,7 +941,7 @@ class TestTheOtherSyncSinksEscapeTheirValuesToo:
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "CSV"
         plugin.fetch.return_value = iter([])
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
 
         with caplog.at_level(logging.INFO, logger="src.ingestion.sync"):
             result = execute_sync(

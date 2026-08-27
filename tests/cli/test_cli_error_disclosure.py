@@ -38,6 +38,7 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.sources.service import SOURCE_ID_RULE, SOURCE_MISCONFIGURED_DETAIL
 from src.storage.accounts import AccountStore
 from src.storage.manager import StorageManager
+from tests.factories import make_storage_mock
 from tests.fakes.source_plugins import FakeFilePlugin
 
 from .conftest import _invoke_with_mocks
@@ -68,7 +69,7 @@ class TestCompleteHidesTheWriteThatFailed:
     def test_the_refusal_is_generic_and_the_log_holds_the_reason(
         self, cli_runner: CliRunner, caplog: pytest.LogCaptureFixture
     ) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.complete_content_item.side_effect = sqlite3.OperationalError(_FAULT)
 
         with caplog.at_level(logging.ERROR, logger="src.cli._shared"):
@@ -82,7 +83,7 @@ class TestCompleteHidesTheWriteThatFailed:
     def test_verbose_adds_the_reason_and_still_no_traceback(
         self, cli_runner: CliRunner
     ) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.complete_content_item.side_effect = sqlite3.OperationalError(_FAULT)
 
         result = _invoke_with_mocks(
@@ -167,7 +168,7 @@ class TestTheAccountWritesHideTheFaultToo:
 
 class TestProfileHidesTheStorageFault:
     def test_show_refuses_in_the_webs_words(self, cli_runner: CliRunner) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.profiles.get.side_effect = sqlite3.OperationalError(_FAULT)
 
         result = _invoke_with_mocks(cli_runner, ["profile", "show"], storage)
@@ -175,7 +176,7 @@ class TestProfileHidesTheStorageFault:
         _assert_generic(result, PROFILE_LOAD_FAILED)
 
     def test_regenerate_refuses_in_the_webs_words(self, cli_runner: CliRunner) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.get_signal_items.side_effect = sqlite3.OperationalError(_FAULT)
 
         result = _invoke_with_mocks(cli_runner, ["profile", "regenerate"], storage)
@@ -203,7 +204,7 @@ class TestUpdateHidesTheSyncFault:
             result = _invoke_with_mocks(
                 cli_runner,
                 ["--verbose", "update"],
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 config=_source_config(),
             )
 
@@ -227,7 +228,7 @@ class TestUpdateNamesTheSettingRatherThanThePath:
             return _invoke_with_mocks(
                 cli_runner,
                 args,
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 config=_source_config(),
             )
 
@@ -295,7 +296,7 @@ class TestVerboseIsAnsweredByEveryCommandThatRefusesRegression:
             result = _invoke_with_mocks(
                 cli_runner,
                 ["--verbose", "auth", "connect", "--source", "gog"],
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 input_text=self._CODE,
             )
 
@@ -321,7 +322,7 @@ class TestVerboseRendersAFaultTheTerminalCannotEncode:
     def test_the_reason_is_escaped_rather_than_raising(
         self, cli_runner: CliRunner, raw: str, rendered: str
     ) -> None:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         storage.complete_content_item.side_effect = sqlite3.OperationalError(raw)
 
         result = _invoke_with_mocks(
@@ -348,7 +349,7 @@ class TestACustomRuleIsShownSanitizedRegression:
     _CLEANED = "avoid horror"
 
     def _storage_holding(self, rules: list[str]) -> MagicMock:
-        storage = MagicMock(spec=StorageManager)
+        storage = make_storage_mock()
         preferences = UserPreferenceConfig(custom_rules=list(rules))
 
         def merge(_user_id: int, apply: Any) -> UserPreferenceConfig:

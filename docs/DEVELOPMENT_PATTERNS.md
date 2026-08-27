@@ -86,8 +86,9 @@ for the patterns it names.
 ### Tests
 
 - **`spec=RealClass` on every MagicMock** standing in for a real type
-  (StorageManager, RecommendationEngine, ContentItem). A bare `MagicMock()` is
-  almost always wrong.
+  (RecommendationEngine, ContentItem). A bare `MagicMock()` is almost always
+  wrong. Mocked storage comes from `tests.factories.make_storage_mock`, which
+  specs the sub-stores as well.
 - **Use the shared `_invoke_with_mocks` / `_cli_patches`** from
   `tests/cli/conftest.py`. Nesting `with patch():` more than two deep means you
   are duplicating conftest.

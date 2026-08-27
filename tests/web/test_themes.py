@@ -6,7 +6,6 @@ import json
 from collections.abc import Generator
 from dataclasses import fields
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
@@ -25,7 +24,7 @@ from src.web.themes import (
     installed_themes,
     themed_shell,
 )
-from tests.factories import authenticated_client, booted_web_app
+from tests.factories import authenticated_client, booted_web_app, make_storage_mock
 
 
 def _save_state() -> dict:
@@ -85,7 +84,7 @@ def test_client() -> Generator[TestClient, None, None]:
     original_state = _save_state()
 
     app_state.config = {}
-    app_state.storage = Mock(spec=StorageManager)
+    app_state.storage = make_storage_mock()
 
     with authenticated_client(_mounted_bare()) as client:
         yield client

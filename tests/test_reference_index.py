@@ -26,8 +26,7 @@ from src.recommendations import reference_index as reference_index_module
 from src.recommendations.constants import CROSS_TYPE_MIN_OVERLAP
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.reference_index import SignalIndex
-from src.storage.manager import StorageManager
-from tests.factories import make_item
+from tests.factories import make_item, make_storage_mock
 
 # The functions that derive a matchable value from one item. Each takes the
 # item (or one of its strings) and must run once per item per request.
@@ -83,7 +82,7 @@ def _storage_over(items: list[ContentItem]) -> Mock:
             and (content_type is None or item.content_type == content_type)
         ]
 
-    storage = Mock(spec=StorageManager)
+    storage = make_storage_mock()
     storage.get_completed_items = Mock(side_effect=completed)
     storage.get_signal_items = Mock(side_effect=signal)
     storage.get_unconsumed_items = Mock(side_effect=unconsumed)

@@ -21,6 +21,7 @@ from src.auth.gog import (
 from src.ingestion.sources.gog import GOG_CLIENT_SECRET
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
+from tests.factories import make_storage_mock
 
 GOG_LOGGER = "src.auth.gog"
 
@@ -229,7 +230,7 @@ class TestGogAuthCredentialChainRegression:
             result = _invoke_with_mocks(
                 CliRunner(),
                 ["auth", "connect", "--source", "gog", "--no-browser"],
-                MagicMock(spec=StorageManager),
+                make_storage_mock(),
                 input_text=f"{code}\n",
             )
 

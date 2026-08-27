@@ -17,8 +17,8 @@ from src.ingestion.sources.trakt.trakt import (
     refresh_access_token,
 )
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
-from src.storage.manager import StorageManager
 from src.utils.series import expand_tv_shows_to_seasons
+from tests.factories import make_storage_mock
 
 
 def _movie(trakt_id: int, title: str, year: int = 2020) -> dict[str, Any]:
@@ -141,7 +141,7 @@ class TestTraktPluginValidation:
     def test_validate_missing_secret_passes_when_in_db(self) -> None:
         """Test missing sensitive fields are satisfied from the credential DB."""
         plugin = TraktPlugin()
-        mock_storage = Mock(spec=StorageManager)
+        mock_storage = make_storage_mock()
         mock_storage.credentials.get_for_source.return_value = {
             "client_secret": "db_secret",
             "refresh_token": "db_token",
