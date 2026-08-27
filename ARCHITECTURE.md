@@ -704,7 +704,7 @@ unsupported because the Python wheel ecosystem is too thin there.
 
 `Dockerfile` is multi-stage:
 
-1. **frontend-builder**, `node:20-slim` running `pnpm build` into
+1. **frontend-builder**, `node:24-slim` running `pnpm build` into
    `src/web/static/dist/`.
 2. **builder**, `python:3.11-slim` running `uv sync --locked` into `/app/.venv`.
 3. **runtime**, `python:3.11-slim` with the `appuser` non-root account,

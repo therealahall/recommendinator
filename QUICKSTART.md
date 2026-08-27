@@ -54,7 +54,7 @@ cd recommendinator
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if you do not have uv
 uv sync --locked
 
-corepack enable                                   # pnpm, needs Node.js 18+
+corepack enable                                   # pnpm, needs Node.js 24
 make build-frontend                               # installs pnpm deps, builds the UI
 
 cp config/example.yaml config/config.yaml
