@@ -99,13 +99,13 @@ function onEscape(e: KeyboardEvent) {
       </span>
     </div>
     <p v-if="atLimit" :id="limitId" class="search-input-limit">{{ limitMessage }}</p>
+    <!-- The visible notice above carries no live role, or reaching
+         the limit would announce twice. -->
     <!--
       aria-live regions must exist in the DOM before content arrives, otherwise
       some screen readers (notably JAWS) skip the announcement when the region
       is inserted already populated — the user would hit the cap in silence
-      (WCAG 4.1.3 status messages). So this region is persistent and only its
-      text changes. The visible notice above carries no live role, or reaching
-      the limit would announce twice.
+      (WCAG 4.1.3 status messages).
     -->
     <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ limitAnnouncement }}</p>
   </div>

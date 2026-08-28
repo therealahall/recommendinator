@@ -22,9 +22,6 @@ const fieldValues = ref<Record<string, string>>({})
 const submitting = ref(false)
 const errorMessage = ref('')
 
-// Tracks whether the user has hand-edited the Source id. Until they do, the
-// id auto-follows the selected plugin's name so Create works out of the box;
-// once they type their own id we never clobber it on a plugin change.
 const sourceIdEdited = ref(false)
 
 function applyPluginDefaultId(): void {
@@ -76,10 +73,6 @@ const visibleFields = computed(() =>
     : [],
 )
 
-// Sensitive fields (passwords, API keys) are rendered as password inputs and
-// collected here, but they are NEVER sent in the createSource payload — the
-// backend rejects sensitive keys and secrets must stay out of the plaintext
-// config store. They are persisted via ``setSourceSecret`` after creation.
 const sensitiveFields = computed(() =>
   selectedPlugin.value
     ? selectedPlugin.value.fields.filter((f) => f.sensitive)
@@ -106,9 +99,7 @@ const sourceIdDescribedBy = computed(() =>
   idError.value !== '' ? 'add-source-id-error' : 'add-source-id-help',
 )
 
-// Required fields (non-sensitive and sensitive) the user has left empty.
-// Surfacing these explains why Create is disabled instead of leaving a silent
-// dead-end.
+// Surfacing these explains why Create is disabled instead of leaving a silent dead-end.
 const missingRequiredFields = computed(() =>
   (selectedPlugin.value?.fields ?? [])
     .filter((field) => field.required && !fieldValues.value[field.name])
@@ -116,13 +107,7 @@ const missingRequiredFields = computed(() =>
 )
 
 // Split deliberately from `canSubmit`. Validity can only change on input, so
-// gating native `disabled` on it never steals focus from the user. In-flight
-// state is different: `submitting` flips the instant Create is activated, and
-// natively disabling the button under the user's own focus drops them to
-// <body> (WCAG 2.4.3). Worse here than elsewhere — every field and Cancel are
-// also disabled while submitting, so a native lock on Create would leave the
-// dialog with ZERO focusable elements, useFocusTrap bails (it returns early on
-// an empty list), and Tab escapes behind an aria-modal="true" dialog.
+// gating native `disabled` on it never steals focus from the user.
 const isValid = computed(
   () =>
     !!pluginName.value &&
@@ -131,6 +116,9 @@ const isValid = computed(
     missingRequiredFields.value.length === 0,
 )
 
+// In-flight state is different: `submitting` flips the instant Create is
+// activated, and natively disabling the button under the user's own focus drops
+// them to <body> (WCAG 2.4.3).
 const canSubmit = computed(() => isValid.value && !submitting.value)
 
 // aria-disabled does not block activation the way native disabled does, so
@@ -181,10 +169,7 @@ async function submit(): Promise<void> {
       try {
         await data.setSourceSecret(created.source_id, field.name, secret)
       } catch (err) {
-        // The source now exists but this secret failed to save. Refresh the
-        // list (emit created) but keep the modal open so the message is
-        // visible; the user can finish setting "field.name" from the source's
-        // settings panel. Name the actual field — plugins may have several.
+        // The source now exists but this secret failed to save.
         emit('created', created.source_id)
         errorMessage.value =
           (err instanceof Error ? err.message : 'Failed to save secret') +

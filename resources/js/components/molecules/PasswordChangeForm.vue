@@ -8,7 +8,6 @@ import type { PasswordChangeRequest } from '@/types/api'
 
 const props = withDefaults(
   defineProps<{
-    /** Whatever the parent's password-change request came back with. */
     error?: string
     pending?: boolean
     saved?: boolean
@@ -43,7 +42,6 @@ const changedOn = computed(() =>
   props.passwordUpdatedAt ? formatDate(props.passwordUpdatedAt) : 'never',
 )
 
-/** A complaint about the new password this form can make on its own. */
 const complaint = ref('')
 
 // Mounted persistently and bound to a computed, because a live region inserted

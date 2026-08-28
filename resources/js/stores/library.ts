@@ -31,8 +31,8 @@ export const useLibraryStore = defineStore('library', () => {
   // A search started mid-load awaits the real settle, not a resolved promise.
   let inFlightLoad: Promise<void> | null = null
 
-  // Edit modal. A refused save is the dialog's own, not the page's: the page
-  // banner sits behind the overlay and says "Failed to load library" over it.
+  // A refused save is the dialog's own, not the page's: the page banner sits
+  // behind the overlay and says "Failed to load library" over it.
   const editingItem = ref<ContentItemResponse | null>(null)
   const editSaving = ref(false)
   const editError = ref('')

@@ -14,8 +14,7 @@ const watchedSet = computed(() => new Set(props.modelValue))
 
 // Select All, Deselect All and a status change in the parent all rewrite the
 // whole checklist, and this counter is the only thing that reports the result —
-// so it announces rather than merely displays (WCAG 4.1.3). A sentence, because
-// "0 / 5" read aloud is not one.
+// so it announces rather than merely displays (WCAG 4.1.3).
 const watchedLabel = computed(() => {
   const noun = props.totalSeasons === 1 ? 'season' : 'seasons'
   if (props.modelValue.length === 0) return `No ${noun} watched`

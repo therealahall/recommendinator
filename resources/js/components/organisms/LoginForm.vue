@@ -6,7 +6,6 @@ import type { LoginRequest } from '@/types/api'
 
 const props = withDefaults(
   defineProps<{
-    /** Whatever the parent's sign-in request came back with. */
     error?: string
     /** Why this screen is on: a session that ended, or an instance another tab
      *  claimed first. Said, but never blamed on a field nobody has touched. */
@@ -25,7 +24,6 @@ const password = ref('')
 
 const complete = computed(() => username.value.trim() !== '' && password.value !== '')
 
-/** A complaint about the username this screen can make on its own. */
 const complaint = ref('')
 
 // Typing in either field is the retry, so drop the complaint on the keystroke.

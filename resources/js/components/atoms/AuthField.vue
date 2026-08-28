@@ -91,7 +91,7 @@ onMounted(() => {
   width: 100%;
   /* 44px so the field is a thumb-sized target, and 1rem because anything under
      16px makes iOS Safari zoom the page on focus and strand the rest of the
-     form off-screen — this is the surface someone reaches for on a phone. */
+     form off-screen. */
   min-height: 44px;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-input);

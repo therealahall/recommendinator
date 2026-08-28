@@ -75,11 +75,9 @@ describe('DataPage rows during a Sync All', () => {
     mockPut.mockReset()
   })
 
-  /**
-   * Symptom: a second Sync click duplicated a source the run had not reached,
-   * saving it twice at once. Root cause: membership came from progress slots,
-   * which appear only once a source starts. Fix: record what /update resolved.
-   */
+  /** Symptom: a second Sync click duplicated a source the run had not reached,
+   *  saving it twice at once. Root cause: membership came from progress slots,
+   *  which appear only once a source starts. Fix: record what /update resolved. */
   it('locks the Sync button of a source the run has not reached yet', async () => {
     const goodreads = {
       ...enabledSource,
@@ -219,12 +217,9 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  /**
-   * Symptom: Retry had no perceivable outcome. Success unmounted the focused
-   * button silently; a repeat failure left the alert text unchanged. Root
-   * cause: no live region, no focus fallback. Fix: a mounted role="status"
-   * region and a panel to focus.
-   */
+  /** Symptom: Retry had no perceivable outcome. Success unmounted the focused
+   *  button silently; a repeat failure left the alert text unchanged. Root
+   *  cause: no live region, no focus fallback. */
   describe('DataPage retry outcome', () => {
     async function mountFailed(retrySucceeds: boolean) {
       mockPost.mockResolvedValue({})

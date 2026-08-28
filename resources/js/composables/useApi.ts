@@ -17,8 +17,6 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public statusText: string,
-    /** Parsed error response body, when the server returned JSON (e.g. a 422
-     *  `{ detail: { key, reason } }` validation payload). Undefined otherwise. */
     public body?: unknown,
   ) {
     super(stringDetail(body) ?? `${status} ${statusText}`)

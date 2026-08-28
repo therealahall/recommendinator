@@ -127,7 +127,6 @@ describe('useLibraryStore', () => {
       mockGet.mockReturnValueOnce(new Promise((r) => { resolveFirst = r }))
       const store = useLibraryStore()
 
-      // Kick off a load that stays in flight.
       const firstLoad = store.resetAndLoad()
       expect(store.loading).toBe(true)
 
@@ -182,7 +181,6 @@ describe('useLibraryStore', () => {
     mockGet.mockResolvedValue([])
     const store = useLibraryStore()
 
-    // User picks a real status, then toggles needsRating on and back off.
     await store.setFilter('status', 'unread')
     await store.setFilter('needsRating', true)
     await store.setFilter('needsRating', false)

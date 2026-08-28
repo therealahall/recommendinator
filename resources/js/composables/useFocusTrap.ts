@@ -3,11 +3,9 @@ import { type Ref, onMounted, onUnmounted, nextTick } from 'vue'
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-/**
- * Only one focus trap should be active at a time in this application.
- * This composable attaches a document-level keydown listener and does not
- * support stacked/nested traps.
- */
+/** Only one focus trap should be active at a time in this application.
+ *  This composable attaches a document-level keydown listener and does not
+ *  support stacked/nested traps. */
 export function useFocusTrap(
   containerRef: Ref<HTMLElement | null>,
   onEscape: () => void,

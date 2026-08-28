@@ -96,8 +96,7 @@ function refusalFor(inputId: string) {
 
 const hasReleaseYear = computed(() => RELEASE_YEAR_TYPES.includes(props.item.content_type))
 
-// Status and the checklist are two views of one fact, so each derives the
-// other. Handlers, not watchers: a watcher each way retriggers the other.
+// Handlers, not watchers: a watcher each way retriggers the other.
 function onSeasonsChange(watched: number[]) {
   seasonsWatched.value = watched
   if (!isTvShow.value) return

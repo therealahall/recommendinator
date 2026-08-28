@@ -97,9 +97,9 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
       items.value = items.value.filter((i) => i.db_id !== dbId)
       closeEdit()
     } catch (err) {
-      // Surface the failure (mirrors the library store's saveEdit). Leave the
-      // list unchanged and keep the modal open so the user can retry, then
-      // re-throw so the page can react (it skips moving focus out of the form).
+      // Leave the list unchanged and keep the modal open so the user can retry,
+      // then re-throw so the page can react (it skips moving focus out of the
+      // form).
       editError.value = err instanceof Error ? err.message : 'Failed to save'
       editSaving.value = false
       throw err

@@ -138,8 +138,6 @@ function onDecline(copyId: number, otherIds: number[]): void {
   gap: var(--space-2);
 }
 
-/* The type is the quieter of the two labels here, so the evidence badges keep
-   the colour and this one takes a neutral text token. */
 .dup-badge-type {
   background: transparent;
   color: var(--text-secondary);

@@ -65,7 +65,6 @@ describe('useThemeStore', () => {
     const store = useThemeStore()
     store.applyTheme('../evil')
 
-    // Should not have changed currentThemeId
     expect(store.currentThemeId).toBeNull()
     expect(localStorage.getItem('theme')).toBeNull()
   })

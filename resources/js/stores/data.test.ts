@@ -86,8 +86,6 @@ describe('useDataStore', () => {
   })
 
   it('triggerSync clears the optimistic trigger and starts no polling on API error', async () => {
-    // Covers the DB-only-source regression too: the /update backend now
-    // answers 4xx (not a 200 "message") for a disabled/unconfigured source, and
     // triggerSync's catch does not branch on status, so any error status hits
     // this path. The button must re-enable AND no poll timer may start (there
     // is no SyncJob to end it — a leaked timer would leave the button spinning).
@@ -233,14 +231,6 @@ describe('useDataStore', () => {
   })
 
   it('checkSyncStatus starts enrichment polling when a completed sync auto-triggered enrichment', async () => {
-    // Reported in #59: after a sync that auto-triggers enrichment
-    // (enrichment.auto_enrich_on_sync), the data view did not reflect that
-    // enrichment was running and never live-updated — the user had to
-    // navigate away and back. Root cause: the completed branch of
-    // checkSyncStatus called loadEnrichmentStats() once (a one-shot refresh)
-    // instead of checkEnrichmentStatus(), so the running job was never
-    // detected and polling never started. Fix calls checkEnrichmentStatus()
-    // which both refreshes stats and starts the 3s poll when running.
     const runningStatus = {
       running: true,
       completed: false,
@@ -485,10 +475,7 @@ describe('useDataStore', () => {
   describe('enrichment stats poll regression', () => {
     // Reported in #54: EnrichmentCard's "<enriched>/<total>" counter stayed
     // stale while a job was running — the user had to refresh the page to
-    // see progress. Root cause: checkEnrichmentStatus polled
-    // /enrichment/status every 3s but only refreshed /enrichment/stats on
-    // job completion, so the top counter never updated mid-run. Fix
-    // refreshes stats on every poll tick while running.
+    // see progress.
     let store: ReturnType<typeof useDataStore> | null = null
 
     afterEach(() => {
@@ -1078,8 +1065,6 @@ describe('useDataStore', () => {
       const answer = pendingStatusReads()
 
       const store = useDataStore()
-      // Remove is disabled on removing/syncing, not on a pending recheck, so a
-      // read outliving its source is reachable from the panel.
       const inFlight = store.loadOAuthStatus('goner', 'trakt')
       mockDelete.mockResolvedValueOnce(null)
       await store.deleteSource('goner')

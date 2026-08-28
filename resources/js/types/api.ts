@@ -1,7 +1,3 @@
-/* TypeScript interfaces matching backend Pydantic models */
-
-// --- Content ---
-
 /** One source's id for an item; an item holds one per source that named it. */
 export interface ExternalId {
   source: string
@@ -44,8 +40,6 @@ export interface RecommendationResponse {
   variety_penalty: number
 }
 
-// --- Users ---
-
 export interface UserResponse {
   id: number
   username: string
@@ -54,7 +48,6 @@ export interface UserResponse {
   password_updated_at: string | null
 }
 
-/** What the SPA needs on boot to choose setup, sign-in or the app itself. */
 export interface SessionResponse {
   claimed: boolean
   authenticated: boolean
@@ -87,8 +80,6 @@ export interface PasswordChangeRequest {
   new_password: string
 }
 
-// --- Status ---
-
 export interface RecommendationsConfig {
   max_count: number
   default_count: number
@@ -109,8 +100,6 @@ export interface StatusResponse {
   dependency_drift: PackageDrift[]
 }
 
-// --- Preferences ---
-
 export interface UserPreferenceResponse {
   scorer_weights: Record<string, number>
   series_in_order: boolean
@@ -126,8 +115,6 @@ export interface UserPreferenceUpdateRequest {
   custom_rules?: string[]
   content_length_preferences?: Record<string, string>
 }
-
-// --- Sync ---
 
 export interface PluginImportErrorResponse {
   module: string
@@ -283,8 +270,6 @@ export interface UpdateResponse {
   sources?: string[]
 }
 
-// --- Import ---
-
 export interface ImporterResponse {
   name: string
   display_name: string
@@ -317,8 +302,6 @@ export interface ImportResponse {
   notes: string[]
 }
 
-// --- Enrichment ---
-
 export interface EnrichmentJobStatusResponse {
   running: boolean
   completed: boolean
@@ -348,8 +331,6 @@ export interface EnrichmentStatsResponse {
   by_quality: Record<string, number>
 }
 
-// --- Themes ---
-
 export interface ThemeResponse {
   id: string
   name: string
@@ -365,8 +346,6 @@ export interface ThemePreferenceResponse {
   theme: string
 }
 
-// --- Preference profile ---
-
 export interface ProfileResponse {
   user_id: number
   genre_affinities: Record<string, number>
@@ -375,8 +354,6 @@ export interface ProfileResponse {
   cross_media_patterns: string[]
   generated_at: string | null
 }
-
-// --- Auth ---
 
 export interface GogExchangeRequest {
   code_or_url: string
@@ -409,8 +386,6 @@ export interface TraktPollResponse {
   message: string
 }
 
-// --- Item Edit ---
-
 export interface ItemEditRequest {
   status?: string
   rating?: number | null
@@ -429,15 +404,11 @@ export interface IgnoreItemRequest {
   ignored: boolean
 }
 
-// --- Enrichment Requests ---
-
 export interface EnrichmentStartRequest {
   content_type?: string
   user_id?: number
   retry_not_found?: boolean
 }
-
-// --- Settings (global database-backed config) ---
 
 export type SettingType = 'bool' | 'int' | 'float' | 'string' | 'list' | 'enum'
 export type SettingWidget = 'toggle' | 'number' | 'text' | 'tags' | 'select'
@@ -501,8 +472,6 @@ export interface SettingValidationError {
   key: string
   reason: string
 }
-
-// --- Duplicates ---
 
 /** `also_offered` carries why the page holds this copy in a second block, or
  *  is empty where it does not. */

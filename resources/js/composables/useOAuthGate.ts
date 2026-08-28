@@ -6,8 +6,7 @@ import { useDataStore } from '@/stores/data'
 export const RECHECKING_STATUS = 'Rechecking the connection status…'
 const STATUS_UPDATED = 'Connection status updated.'
 
-/** Reading a source's OAuth connection status, and saying what the read found.
- *  `active` is false for a plugin with no connect flow, where every verb here
+/** `active` is false for a plugin with no connect flow, where every verb here
  *  is a no-op. */
 export function useOAuthGate(
   sourceId: Ref<string>,

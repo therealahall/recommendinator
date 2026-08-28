@@ -19,10 +19,7 @@ const props = withDefaults(defineProps<{
   disabled: false,
 })
 // Neither `min` nor `max` has a default: a control must never report or enforce a
-// bound its registry entry does not declare. A default cap silently rewrites a
-// typed value and announces the wrong limit to assistive tech — which is exactly
-// what `max: 100` did to every min-only leaf (enrichment.batch_size,
-// recommendations.max_count, sync.max_workers).
+// bound its registry entry does not declare.
 
 const attrs = useAttrs()
 const resolvedLabel = computed(() =>
@@ -45,10 +42,7 @@ function clamp(value: number): number {
 
 // Bound state uses aria-disabled, NOT native disabled: stepping down to `min`
 // while the Decrease button has focus would blur the element the user is
-// operating and drop focus to <body> mid-interaction (WCAG 2.4.3). Native
-// disabled is reserved for `props.disabled` (an in-flight save), where focus
-// provably cannot be inside the stepper — reaching Save requires focusing Save.
-// aria-disabled does not block activation, so the handlers guard instead.
+// operating and drop focus to <body> mid-interaction (WCAG 2.4.3).
 const atMin = computed(() => props.min != null && props.modelValue <= props.min)
 const atMax = computed(() => props.max != null && props.modelValue >= props.max)
 
@@ -164,14 +158,10 @@ function onInput(event: Event) {
 }
 
 .stepper-input {
-  /* Sized for a six-digit value, the widest a registry int leaf declares. The
-     base.css `box-sizing: border-box` reset makes
-     `width` include the horizontal padding, so it has to be added back: a bare
-     4ch left a ~3-character content box, NARROWER than the 40px this replaced.
-     ch scales with font size, so resizing text keeps working (1.4.4).
-     The @supports gate matters — without field-sizing, `width: auto` on a
-     number input resolves to the intrinsic ~20-character width and the stepper
-     balloons instead. */
+  /* 7ch sizes a six-digit value; one registry int leaf declares a max, of 5.
+     ch, not px: it scales with font size (1.4.4). The base.css
+     `box-sizing: border-box` reset makes `width` include the horizontal
+     padding, so it is added back. */
   width: calc(7ch + var(--space-1) * 2);
   text-align: center;
   background: var(--bg-input);
@@ -183,6 +173,9 @@ function onInput(event: Event) {
   -moz-appearance: textfield;
 }
 
+/* The @supports gate matters — without field-sizing, `width: auto` on a
+   number input resolves to the intrinsic ~20-character width and the stepper
+   balloons instead. */
 @supports (field-sizing: content) {
   .stepper-input {
     width: auto;
@@ -196,12 +189,10 @@ function onInput(event: Event) {
 }
 
 .stepper-input:disabled {
-  /* The value is the one thing that must stay readable while a save is in
-     flight. The UA default greys disabled number text far below what a
-     low-vision user can resolve, and -webkit-text-fill-color wins over color.
-     No opacity here: fading the element would re-composite the text toward the
-     background and undo the restoration. The inert state is already conveyed by
-     both flanking buttons and the cursor. */
+  /* The UA default greys disabled number text below what a low-vision user can
+     resolve, and -webkit-text-fill-color wins over color. Fading it back with
+     opacity would undo that; the buttons and cursor already convey the inert
+     state. */
   color: var(--text-primary);
   -webkit-text-fill-color: var(--text-primary);
   cursor: not-allowed;

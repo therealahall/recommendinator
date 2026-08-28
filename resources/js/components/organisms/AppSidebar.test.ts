@@ -4,7 +4,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
 
-// Mock useApi
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({
     get: vi.fn(),

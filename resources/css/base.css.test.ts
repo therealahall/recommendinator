@@ -5,10 +5,7 @@ import { describe, it, expect } from 'vitest'
 // under Vitest, so read the file off disk to assert on its real contents.
 
 // Isolate the `.sr-only { ... }` declaration block so the assertion cannot be
-// satisfied by an unrelated rule that happens to mention user-select. This
-// assumes `.sr-only` is a standalone selector; if it is ever merged into a
-// multi-selector rule the regex won't match and the test throws "not found",
-// which is the correct fail-mode.
+// satisfied by an unrelated rule that happens to mention user-select.
 function srOnlyBlock(source: string): string {
   const match = source.match(/\.sr-only\s*\{([^}]*)\}/)
   if (!match) throw new Error('.sr-only rule not found in base.css')
@@ -44,16 +41,7 @@ function mediaBlock(source: string, maxWidth: string): string {
 }
 
 describe('inactive button styling', () => {
-  // Regression: the project had NO `.btn:disabled` rule at all. `.btn` sets a
-  // solid background and `cursor: pointer`, so every button locked during a
-  // save — Reset, Add, each chip's ×, Replace/Clear/Save secret, and every
-  // toggle — rendered pixel-identically to a working one and silently ignored
-  // clicks. Native inputs and selects get UA greying; buttons get none, so the
-  // in-flight lock was conveyed to assistive tech and to nobody else (1.3.1).
-  //
-  // Asserted here rather than per component because the whole point is that one
-  // shared rule covers every button; a per-component test would pass while the
-  // next new button shipped unstyled.
+  // Regression: the project had NO `.btn:disabled` rule at all.
   it('dims and re-cursors both inactive spellings', () => {
     const source = readBase()
     const match = source.match(
@@ -94,8 +82,7 @@ describe('error text token', () => {
 
 describe('the reset Tailwind used to supply', () => {
   // These read as dead resets, so a tidy-up deletes them — and each is the
-  // only rule covering its surface. A redesign sizing headings overrides
-  // these rather than removing them, so the reset itself still needs a guard.
+  // only rule covering its surface.
   it('leaves an unsized heading at body size and weight', () => {
     const match = readBase().match(/h1,\s*h2,\s*h3,\s*h4,\s*h5,\s*h6\s*\{([^}]*)\}/)
     if (!match) throw new Error('heading reset not found in base.css')
@@ -134,7 +121,7 @@ describe('the stale-bundle banner', () => {
 describe('library card divider (issue #108)', () => {
   // margin-top:auto is zero on a content-height card, so on a one-column grid
   // the divider touched the badges — but looked right whenever the card was
-  // rated. The spacing lives on the pills for that reason.
+  // rated.
   it('spaces the badges off the divider whether or not the card is rated', () => {
     const source = readBase()
     const gap = declaration(ruleBlock(source, '.library-meta'), 'margin-bottom')
@@ -146,8 +133,7 @@ describe('library card divider (issue #108)', () => {
 
 describe('recommendation card header (issue #98)', () => {
   // 1.4.10: at 375px the score badge and buttons squeezed the title until the
-  // card scrolled sideways. `.rec-actions` is flex-shrink: 0, so wrapping is
-  // only permission — the full-width bases below are what break the row.
+  // card scrolled sideways.
   it('gives the heading its own row before the actions crowd it', () => {
     const mobile = mediaBlock(readBase(), '640px')
 
@@ -177,15 +163,10 @@ describe('one-handed reach on a phone', () => {
 
 describe('.sr-only utility', () => {
   it('disables text selection so hidden labels never enter a copy', () => {
-    // Browsers pull visually-clipped text into a selection, so copying an
-    // on-screen value next to an sr-only label would paste the hidden words.
-    // `user-select: none` is the root-level guard against that defect.
-    //
-    // Require BOTH the standard and the `-webkit-` declarations: the standard
-    // one covers Chrome/Firefox, the prefixed one covers Safari. A loose
-    // /user-select:\s*none/ would match the `-webkit-` line as a substring and
-    // so pass even if the unprefixed declaration were dropped, so assert each
-    // explicitly. The negative lookbehind isolates the unprefixed declaration.
+    // A loose /user-select:\s*none/ would match the `-webkit-` line as a
+    // substring and so pass even if the unprefixed declaration were dropped, so
+    // assert each explicitly. The negative lookbehind isolates the unprefixed
+    // declaration.
     const source = readFileSync(`${process.cwd()}/resources/css/base.css`, 'utf8')
     const block = srOnlyBlock(source)
     expect(block).toMatch(/-webkit-user-select:\s*none/)
@@ -231,7 +212,7 @@ function step(steps: Map<string, number>, value: string): number {
 
 describe('library filter row (issue #102)', () => {
   // 1.4.10: a select cannot shrink past its widest option, so three of them
-  // widened the page itself. The basis is what puts two on a row.
+  // widened the page itself.
   it('lets the filter selects share a row instead of widening the page', () => {
     const mobile = mediaBlock(
       readFileSync(`${process.cwd()}/resources/js/components/organisms/LibraryFilters.vue`, 'utf8'),

@@ -66,8 +66,6 @@ const showTraktConnect = computed(
 // throws while enabled. Only the enable flag tells those apart.
 const connectHint = computed(() => {
   // Mid-refresh the two halves disagree, the settings one having moved first.
-  // Naming a remedy from it alone is how a Trakt source one click from
-  // connectable was told to add the credentials it already had.
   if (gate.refreshing.value) return RECHECKING_STATUS
   if (!props.sourceEnabled) {
     return 'Enable this source in the settings below before you can connect.'
@@ -107,8 +105,7 @@ watch([() => oauth.value.connected, gate.failed], () => {
 
 // Only the status re-read rejects out of these: a refused connect or disconnect
 // is reported in the live region instead. The server has already acted by then,
-// so showing the status as unknown puts one statement on screen, with the Retry
-// that can settle it.
+// so showing the status as unknown puts one statement on screen.
 async function onDisconnect(): Promise<void> {
   if (props.disabled || disconnecting.value) return
   disconnecting.value = true
@@ -250,10 +247,9 @@ async function onRetryStatus(): Promise<void> {
   margin-bottom: var(--space-3);
 }
 
-/* Pointer focus only, mirroring .main-content in base.css. The panel is focused
-   programmatically, which propagates :focus-visible from the control the user
-   just activated — so a keyboard disconnect keeps the ring that says where
-   focus went (2.4.7), and a mouse one never draws it. */
+/* The panel is focused programmatically, which propagates :focus-visible from
+   the control the user just activated — so a keyboard disconnect keeps the ring
+   that says where focus went (2.4.7), and a mouse one never draws it. */
 .source-connect:focus:not(:focus-visible) {
   outline: none;
 }

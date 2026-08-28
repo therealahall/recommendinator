@@ -27,9 +27,8 @@ const PASSWORD_REFUSED = 'That password could not be changed. Check the details 
  *  mid-session: a screen that empties with no word reads as a crash. */
 export const SESSION_ENDED = 'Your session ended. Sign in again.'
 
-/** Which screen the app opens on. 'unknown' renders the boot screen: the call
- *  has not answered, and guessing flashes a sign-in form at someone who is
- *  already signed in. */
+/** 'unknown' renders the boot screen: the call has not answered, and guessing
+ *  flashes a sign-in form at someone who is already signed in. */
 export type SessionState = 'unknown' | 'unclaimed' | 'signed-out' | 'signed-in'
 
 /** The server's own wording, which is written for the user, or *fallback* when
@@ -150,15 +149,12 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
-    // State
     state,
     user,
     minPasswordLength,
-    // Getters
     isAuthenticated,
     needsSetup,
     needsLogin,
-    // Actions
     resolveSession,
     signUp,
     signIn,

@@ -57,7 +57,6 @@ describe('useFocusTrap', () => {
     )
     await vi.runAllTimersAsync()
 
-    // Focus the last button
     ;(wrapper.find('#last').element as HTMLElement).focus()
     expect(document.activeElement?.id).toBe('last')
 

@@ -9,13 +9,10 @@ const DEFAULT_API_TARGET = 'http://localhost:18473'
 /** Prefixes FastAPI owns; the dev server serves everything else itself. */
 const PROXIED_PREFIXES = ['/api', '/static/themes', '/static/private-themes']
 
-/**
- * Trees holding no frontend source.
- *
- * `.claude/worktrees` is the one that bites: each agent worktree is a whole
- * checkout with its own caches, and a few exhaust the inotify limit, which Vite
- * reports as a bare ENOSPC crash at startup.
- */
+/** Trees holding no frontend source. `.claude/worktrees` is the one that bites:
+ *  each agent worktree is a whole checkout with its own caches, and a few
+ *  exhaust the inotify limit, which Vite reports as a bare ENOSPC crash at
+ *  startup. */
 const UNWATCHED = [
   '**/.claude/worktrees/**',
   '**/.mypy_cache/**',
@@ -37,14 +34,8 @@ function readPort(env: Env, name: string): number | undefined {
   return port
 }
 
-/**
- * Build the dev-server section of the Vite config from environment variables.
- *
- * Every setting falls back to the value the project has always used, so an
- * unset environment behaves exactly like the hardcoded config this replaced.
- * The overrides exist for running `pnpm dev` behind a reverse proxy, where the
- * port and scheme the browser talks to are not the ones Vite listens on.
- */
+/** The overrides exist for running `pnpm dev` behind a reverse proxy, where the
+ *  port and scheme the browser talks to are not the ones Vite listens on. */
 export function devServerOptions(env: Env): ServerOptions {
   const target = env.DEV_SERVER_API_TARGET || DEFAULT_API_TARGET
 
@@ -63,9 +54,7 @@ export function devServerOptions(env: Env): ServerOptions {
     hmr: {
       // No `host` on purpose. A dev server behind a proxy is usually reachable
       // under several hostnames, and pinning one would point every other one's
-      // websocket somewhere that browser cannot reach. Left unset, the client
-      // derives the host from the URL it was itself loaded from
-      // (`new URL(import.meta.url).hostname`), which is right for all of them.
+      // websocket somewhere that browser cannot reach.
       clientPort: readPort(env, 'DEV_SERVER_HMR_CLIENT_PORT'),
       protocol: env.DEV_SERVER_HMR_PROTOCOL || undefined,
     },

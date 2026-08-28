@@ -39,8 +39,7 @@ function control(testid: string): HTMLElement | null {
 
 // aria-disabled rather than disabled on the buttons below, because `disabled`
 // blurs the control the user just pressed; the guard here is what stops the
-// second activation. Whichever button the outcome unmounts, the keyboard lands
-// on the refusal or on the one control that is always there (WCAG 2.4.3).
+// second activation.
 async function run(action: () => Promise<string>): Promise<void> {
   if (busy.value) return
   busy.value = true
@@ -53,6 +52,8 @@ async function run(action: () => Promise<string>): Promise<void> {
   } finally {
     busy.value = false
   }
+  // Whichever button the outcome unmounts, the keyboard lands on the refusal or
+  // on the one control that is always there (WCAG 2.4.3).
   await nextTick()
   const landing = error.value ? 'enrichment-error' : 'enrichment-start'
   const focused = document.activeElement

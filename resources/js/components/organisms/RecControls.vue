@@ -65,8 +65,6 @@ function onGenerate(): void {
   display: none;
 }
 
-/* Mobile: dropdown replaces pills; dropdown + stepper share top row;
-   action buttons wrap to their own full-width row below. */
 @media (max-width: 640px) {
   .rec-pills,
   .rec-toolbar > .toolbar-divider {

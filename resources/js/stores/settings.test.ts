@@ -148,9 +148,7 @@ describe('useSettingsStore', () => {
   it('saveSection clears stale field errors for keys absent from this save', async () => {
     // Regression: the clear was scoped to Object.keys(updates), so a field that
     // errored and was then reverted by the user dropped out of `updates` and
-    // kept its error forever. SettingsSection labels the banner with the FIRST
-    // keyed field in the section, so that ghost renamed every later failure
-    // after a field the user had already fixed.
+    // kept its error forever.
     mockGet.mockResolvedValue(twoSettingView())
     const store = useSettingsStore()
     await store.load()

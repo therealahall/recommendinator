@@ -106,8 +106,7 @@ describe('dev server overrides', () => {
     // Load-bearing omission, not an oversight. A dev server behind a proxy is
     // typically reachable under several hostnames, and any single `hmr.host`
     // would send every other one's websocket to an address that browser cannot
-    // reach. Unset, the client falls back to location.hostname, which is right
-    // for all of them. Asserted so nobody "fixes" the gap by adding one.
+    // reach.
     const options = devServerOptions({
       DEV_SERVER_HMR_CLIENT_PORT: '443',
       DEV_SERVER_HMR_PROTOCOL: 'wss',
@@ -177,8 +176,7 @@ describe('vite.config.ts wiring', () => {
   it('reads variables that are not VITE_ prefixed', async () => {
     // Vite's loadEnv filters by prefix and defaults to `VITE_`. With that
     // default these variables would be dropped on the floor and the config
-    // would silently keep its defaults — and any name we did expose would be
-    // baked into the client bundle. Hence the empty prefix.
+    // would silently keep its defaults. Hence the empty prefix.
     vi.stubEnv('DEV_SERVER_API_TARGET', 'http://127.0.0.1:9000')
 
     const config = await resolveViteConfig()

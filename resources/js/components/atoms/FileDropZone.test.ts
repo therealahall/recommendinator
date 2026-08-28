@@ -15,11 +15,9 @@ function mountZone(file: File | null = null) {
 }
 
 describe('FileDropZone', () => {
-  /**
-   * The zone must not be drag-only: a pointer is the one input device a
-   * keyboard user does not have, so the native input is the primary control
-   * and the drop target is the enhancement over it (WCAG 2.1.1).
-   */
+  /** The zone must not be drag-only: a pointer is the one input device a
+   *  keyboard user does not have, so the native input is the primary control
+   *  and the drop target is the enhancement over it (WCAG 2.1.1). */
   it('gives the native file input a label pointing at it', () => {
     const wrapper = mountZone()
 

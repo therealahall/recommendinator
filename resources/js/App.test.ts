@@ -209,7 +209,7 @@ describe('App', () => {
   it('puts the sign-in screen back when the session is revoked mid-session', async () => {
     // Regression: a credential revoked while the app was open surfaced as a 401
     // each store swallowed, leaving a half-empty shell and no way to sign in
-    // again. reject() has to take the whole shell down with it.
+    // again.
     spyOnLoad()
     answerSession(true, true, AARON)
     const wrapper = mount(App, { shallow: true })
@@ -221,8 +221,7 @@ describe('App', () => {
 
     expect(wrapper.findComponent(LoginForm).exists()).toBe(true)
     expect(wrapper.find('#main-content').exists()).toBe(false)
-    // A shell that empties with no word reads as a crash. Said as a notice
-    // rather than an error: no field on this form has been touched yet.
+    // A shell that empties with no word reads as a crash.
     expect(wrapper.findComponent(LoginForm).props('notice')).toBe(SESSION_ENDED)
     expect(wrapper.findComponent(LoginForm).props('error')).toBe('')
   })
