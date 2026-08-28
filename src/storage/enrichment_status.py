@@ -1,5 +1,3 @@
-"""The ``enrichment_status`` table: the metadata queue and each item's outcome."""
-
 from __future__ import annotations
 
 from src.models.content import ContentItem, ContentType
@@ -17,8 +15,6 @@ from src.storage.sqlite_db import SQLiteDB
 
 
 class EnrichmentStore:
-    """The enrichment queue and per-item status. ``StorageManager.enrichment``."""
-
     def __init__(self, sqlite_db: SQLiteDB) -> None:
         self._sqlite_db = sqlite_db
 
@@ -29,11 +25,8 @@ class EnrichmentStore:
         limit: int = 100,
         after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
-        """Return ``(db_id, item)`` for items queued for enrichment.
-
-        An item with no ``enrichment_status`` row counts as queued, which is
-        what puts newly ingested items in front of a provider. *after_db_id*
-        pages forward through the queue.
+        """An item with no ``enrichment_status`` row counts as queued, which is
+        what puts newly ingested items in front of a provider.
         """
         return self._sqlite_db.get_items_needing_enrichment(
             content_type=content_type,
@@ -47,7 +40,6 @@ class EnrichmentStore:
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> int:
-        """Count the queued items :meth:`items_needing` would page through."""
         return self._sqlite_db.count_items_needing_enrichment(
             content_type=content_type,
             user_id=user_id,
@@ -58,38 +50,32 @@ class EnrichmentStore:
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> list[int]:
-        """Return the db_ids whose last enrichment settled as ``not_found``."""
         return self._sqlite_db.get_not_found_ids(
             content_type=content_type,
             user_id=user_id,
         )
 
     def status(self, content_item_id: int) -> EnrichmentStatusDict | None:
-        """Return one item's enrichment status, or ``None`` if it has no row."""
         with self._sqlite_db.connection() as conn:
             return get_enrichment_status(conn, content_item_id)
 
     def mark_complete(self, content_item_id: int, provider: str, quality: str) -> None:
-        """Record a settled outcome: *quality* is "high", "medium" or "not_found"."""
+        """*quality* is "high", "medium" or "not_found"."""
         with self._sqlite_db.connection() as conn:
             mark_enrichment_complete(conn, content_item_id, provider, quality)
 
     def mark_failed(self, content_item_id: int, error: str) -> None:
-        """Record a failed attempt, leaving the item queued for retry.
-
-        A failure is an unknown outcome, not a settled miss, so the next run
+        """A failure is an unknown outcome, not a settled miss, so the next run
         tries the item again.
         """
         with self._sqlite_db.connection() as conn:
             mark_enrichment_failed(conn, content_item_id, error)
 
     def mark_settled_failure(self, content_item_id: int, error: str) -> None:
-        """Retire an item from the queue carrying the error that stopped it."""
         with self._sqlite_db.connection() as conn:
             mark_enrichment_settled_failure(conn, content_item_id, error)
 
     def mark_needed(self, content_item_id: int) -> None:
-        """Queue an item for enrichment."""
         with self._sqlite_db.connection() as conn:
             mark_item_needs_enrichment(conn, content_item_id)
 
@@ -100,11 +86,8 @@ class EnrichmentStore:
         user_id: int | None = None,
         content_item_id: int | None = None,
     ) -> int:
-        """Re-queue enriched items, returning how many were reset.
-
-        Each filter left as ``None`` widens the reset; all unset resets every
-        item. *content_item_id* is what hands one manually edited item back to
-        automatic enrichment.
+        """Each filter left as ``None`` widens the reset; all unset resets every
+        item.
         """
         with self._sqlite_db.connection() as conn:
             content_type_str = content_type.value if content_type else None
@@ -113,11 +96,7 @@ class EnrichmentStore:
             )
 
     def stats(self, user_id: int | None = None) -> dict[str, int | dict[str, int]]:
-        """Return ``total``/``resettable``/``enriched``/``pending``/
-        ``not_found``/``failed`` counts plus ``by_provider`` and
-        ``by_quality`` breakdowns.
-
-        ``pending`` and ``failed`` are both queued for retry and are reported
+        """``pending`` and ``failed`` are both queued for retry and are reported
         apart: ``pending`` is the ones whose last attempt did not error.
         """
         with self._sqlite_db.connection() as conn:

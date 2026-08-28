@@ -1,6 +1,4 @@
-"""One content item merged into another, recorded and reversible.
-
-``merge.py`` holds the field rules. Here the survivor is written under them,
+"""``merge.py`` holds the field rules. Here the survivor is written under them,
 the absorbed row is kept behind ``merged_into``, and what this merge overwrote
 is recorded, so an undo restores both and leaves every later edit standing.
 """
@@ -24,8 +22,6 @@ from src.storage.merge import (
 
 
 class MergeEvidence(Enum):
-    """What a merge was made on. Only the operator makes one, so far."""
-
     MANUAL = "manual"
 
 
@@ -87,7 +83,6 @@ def absorb_item(
     evidence_detail: str | None = None,
     user_id: int | None = None,
 ) -> MergeRecord:
-    """Merge one item into another; *evidence_detail* is the id or title matched."""
     if survivor_id == absorbed_id:
         raise MergeError(f"Item {survivor_id} cannot absorb itself.")
     survivor = _mergeable(cursor, survivor_id, user_id)
@@ -148,9 +143,7 @@ def absorb_item(
 def unmerge_item(
     cursor: sqlite3.Cursor, merge_id: int, user_id: int | None = None
 ) -> MergeRecord | None:
-    """Undo one merge, returning it, or ``None`` when there is none.
-
-    Raises :class:`MergeError` unless this is the newest merge in force over
+    """Raises :class:`MergeError` unless this is the newest merge in force over
     its survivor's group: an undo out of that order restores state a later
     merge has moved on.
     """
@@ -183,7 +176,6 @@ def unmerge_item(
 
 
 def list_merges(cursor: sqlite3.Cursor, user_id: int) -> list[MergeRecord]:
-    """Every merge in force for *user_id*, newest first."""
     cursor.execute(
         f"{_MERGE_SELECT} WHERE s.user_id = ? ORDER BY m.merged_at DESC, m.id DESC",
         (user_id,),
@@ -231,7 +223,6 @@ def _mergeable(cursor: sqlite3.Cursor, db_id: int, user_id: int | None) -> sqlit
 
 
 def absorbing_merge_id(cursor: sqlite3.Cursor, item_id: int) -> int | None:
-    """The merge holding *item_id*: a record stands only while its merge does."""
     cursor.execute(
         "SELECT id FROM content_item_merges WHERE absorbed_id = ?", (item_id,)
     )
@@ -242,9 +233,7 @@ def absorbing_merge_id(cursor: sqlite3.Cursor, item_id: int) -> int | None:
 def _later_merge_id(
     cursor: sqlite3.Cursor, survivor_id: int, merge_id: int
 ) -> int | None:
-    """The first merge into *survivor_id* made after *merge_id*, if one is in force.
-
-    Sequenced by id, not ``merged_at``: two merges within a second share a
+    """Sequenced by id, not ``merged_at``: two merges within a second share a
     timestamp, and SQLite gives each new row a rowid above every live one.
     """
     cursor.execute(
@@ -275,7 +264,6 @@ def _send_back(
 
 
 def _survivor_state(cursor: sqlite3.Cursor, survivor_id: int) -> dict[str, Any]:
-    """Every column a merge can write on the survivor, as it stands now."""
     columns = ", ".join(_SURVIVOR_COLUMNS)
     cursor.execute(f"SELECT {columns} FROM content_items WHERE id = ?", (survivor_id,))
     return {
@@ -289,9 +277,7 @@ def _survivor_state(cursor: sqlite3.Cursor, survivor_id: int) -> dict[str, Any]:
 def _what_this_merge_wrote(
     before: dict[str, Any], after: dict[str, Any]
 ) -> dict[str, Any]:
-    """The columns that moved, and only those.
-
-    Each of the three passes returns without writing when it finds nothing to
+    """Each of the three passes returns without writing when it finds nothing to
     carry, so recording what one left alone takes back an edit made since.
     """
     return {
@@ -311,10 +297,7 @@ def _what_this_merge_wrote(
 def _child_changes(
     before: dict[str, Any] | None, after: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    """One child row's own values, for the columns the merge wrote.
-
-    ``None`` where it wrote the row itself, which an undo takes away again.
-    """
+    """``None`` where it wrote the row itself, which an undo takes away again."""
     if before is None:
         return None
     return {

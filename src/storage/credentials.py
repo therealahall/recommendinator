@@ -1,5 +1,3 @@
-"""The encrypted ``credentials`` table: every secret a source is configured with."""
-
 from __future__ import annotations
 
 import functools
@@ -26,11 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_key_path(sqlite_path: Path) -> Path:
-    """Return the path of the Fernet key file.
-
-    It sits beside the database so both survive a container restart when
-    ``data/`` is the persistent volume. An operator who wants the key out of
-    the database backup points ``RECOMMENDINATOR_KEY_PATH`` elsewhere.
+    """It sits beside the database so both survive a container restart when
+    ``data/`` is the persistent volume.
     """
     env_path = os.environ.get("RECOMMENDINATOR_KEY_PATH")
     if env_path:
@@ -39,8 +34,6 @@ def _resolve_key_path(sqlite_path: Path) -> Path:
 
 
 class CredentialStore:
-    """Per-source credentials, encrypted at rest. ``StorageManager.credentials``."""
-
     def __init__(
         self, sqlite_db: SQLiteDB, sqlite_path: Path, save_lock: threading.Lock
     ) -> None:
@@ -59,7 +52,6 @@ class CredentialStore:
         return CredentialEncryptor(self._key_path)
 
     def get(self, user_id: int, source_id: str, key: str) -> str | None:
-        """Return the decrypted value, or ``None`` when none is stored."""
         with self._sqlite_db.connection() as conn:
             encrypted = get_credential(conn, user_id, source_id, key)
         if encrypted is None:
@@ -81,16 +73,12 @@ class CredentialStore:
             return None
 
     def save(self, user_id: int, source_id: str, key: str, value: str) -> None:
-        """Encrypt *value* and store it."""
         encrypted = self._encryptor.encrypt(value)
         with self._save_lock, self._sqlite_db.connection() as conn:
             save_credential(conn, user_id, source_id, key, encrypted)
 
     def get_for_source(self, user_id: int, source_id: str) -> dict[str, str]:
-        """Return every decrypted credential for a source, keyed by field name.
-
-        An undecryptable row is logged and left out, on :meth:`get`'s reasoning.
-        """
+        """An undecryptable row is logged and left out, on :meth:`get`'s reasoning."""
         with self._sqlite_db.connection() as conn:
             encrypted_map = get_credentials_for_source(conn, user_id, source_id)
         from cryptography.fernet import InvalidToken
@@ -108,19 +96,15 @@ class CredentialStore:
         return result
 
     def exists(self, user_id: int, source_id: str, key: str) -> bool:
-        """Report whether a row is stored, without decrypting it."""
         with self._sqlite_db.connection() as conn:
             return credential_row_exists(conn, user_id, source_id, key)
 
     def delete(self, user_id: int, source_id: str, key: str) -> bool:
-        """Delete one credential row, reporting whether there was one."""
         with self._sqlite_db.connection() as conn:
             return delete_credential(conn, user_id, source_id, key)
 
     def delete_for_source(self, user_id: int, source_id: str) -> int:
-        """Delete every stored credential for a source, returning the count.
-
-        Keyed by source, not by a plugin's current schema: an unregistered
+        """Keyed by source, not by a plugin's current schema: an unregistered
         plugin or a no-longer-sensitive field must not leave a row behind.
         """
         with self._sqlite_db.connection() as conn:

@@ -1,29 +1,5 @@
-"""Assemble the effective global/system config from const, YAML, and DB layers.
-
-The in-scope global-config sections resolve with precedence
-**const default < YAML < database**:
-
-1. Start from the registry const defaults (:func:`src.settings.metadata.default_config`).
-2. Deep-merge the loaded YAML config's in-scope sections on top (YAML overrides
-   consts).
-3. Overlay the database ``settings`` leaves on top (the DB is authoritative).
-
-**Key scheme: dotted leaf paths.** Each stored leaf lives under a namespaced
-key ``"<section>.<path>.<to>.<leaf>"`` (e.g. ``"recommendations.default_count"`` or
-``"recommendations.scorer_weights.genre_match"``). A stored leaf wins at its
-own path; unknown/legacy DB leaves still overlay.
-
-Nothing is written to the database here — the ``settings`` table holds only the
-leaves a user explicitly set later (via the settings UI/CLI). On a fresh
-install the table is empty and the app runs purely on the const defaults plus
-whatever the operator kept in ``config.yaml``.
-
-Sensitive leaves (see :data:`SENSITIVE_LEAF_KEYS`, e.g. provider ``api_key``)
-are never persisted in the plaintext ``settings`` table. This module leaves
-them untouched in the assembled config; a companion pass
-(:func:`src.storage.global_secrets.migrate_config_secrets`) then sweeps them
-into the encrypted ``credentials`` table and strips them from the in-memory
-config so no plaintext secret lingers.
+"""Nothing is written to the database here — the ``settings`` table holds only the
+leaves a user explicitly set later (via the settings UI/CLI).
 """
 
 from __future__ import annotations
@@ -49,12 +25,7 @@ IN_SCOPE_SECTIONS: tuple[str, ...] = (
     "logging",
 )
 
-# Leaf key names that may hold a secret. These are NEVER written to the
-# plaintext ``settings`` table. Both global settings secrets and per-source
-# credentials are relocated into the encrypted ``credentials`` table —
-# ``global_secrets.migrate_config_secrets`` handles the global settings surface
-# (today only ``enrichment.providers.*.api_key`` matches) and
-# ``credential_migration`` handles sensitive *source* credentials.
+# These are NEVER written to the plaintext ``settings`` table.
 SENSITIVE_LEAF_KEYS: frozenset[str] = frozenset(
     {
         "api_key",
@@ -74,9 +45,7 @@ _PRE_MOVE_LOG_DIR = "logs/"
 
 
 def _relocate_pre_move_log_file(section: dict[str, Any]) -> None:
-    """Carry a ``logs/x.log`` an upgrade left behind under ``data/``.
-
-    Nothing rewrites the row or the YAML holding it, so otherwise containment
+    """Nothing rewrites the row or the YAML holding it, so otherwise containment
     discards that file name for the default on every boot while the Settings
     page still shows the old path.
     """
@@ -89,27 +58,9 @@ def migrate_config_settings(
     config: dict[str, Any],
     storage: StorageManager,
 ) -> None:
-    """Assemble the effective in-scope config from const, YAML, and DB layers.
-
-    For each in-scope section (see :data:`IN_SCOPE_SECTIONS`) the effective
-    value is the registry const default deep-merged with the YAML section
-    (YAML wins), then overlaid with the database leaves for that section (the
-    DB wins). A section absent from the YAML still resolves fully from the const
-    defaults, so a user may trim ``config.yaml`` to bootstrap-only.
-
-    Nothing is written to the database — the ``settings`` table is read-only
-    here and stays empty until a user explicitly sets a leaf via the settings
-    UI/CLI. This is safe to call on every startup and on config hot-reload.
-
-    The const defaults are merged in here even though ``load_config`` already
-    layered them under the YAML. That re-merge is intentional and idempotent: it
-    keeps this function independently callable on a bare ``{}`` or a partial
-    config (the test suite and hot-reload paths rely on that) without first
-    routing through ``load_config``.
-
-    **Mutates *config* in place:** each in-scope section is replaced with the
+    """**Mutates *config* in place:** each in-scope section is replaced with the
     assembled result so existing ``config[section][key]`` read sites resolve the
-    layered value. Out-of-scope sections (``storage``, ``inputs``) are untouched.
+    layered value.
     """
     # Deferred import: the metadata registry imports IN_SCOPE_SECTIONS /
     # SENSITIVE_LEAF_KEYS from this module, so importing it at module top would

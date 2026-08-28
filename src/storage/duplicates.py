@@ -1,6 +1,4 @@
-"""The copies of one work already in the library, offered rather than merged.
-
-Suggestions are computed on demand; only a decline is stored, pair by pair
+"""Suggestions are computed on demand; only a decline is stored, pair by pair
 however many copies a block holds."""
 
 from __future__ import annotations
@@ -69,9 +67,7 @@ class DeclinedPair:
 
 @dataclass(frozen=True)
 class DuplicateSuggestion:
-    """Live rows that look like one work, and what says so.
-
-    *survivor_id* is a proposal — the oldest copy, as the save door resolves a
+    """*survivor_id* is a proposal — the oldest copy, as the save door resolves a
     title collision — and any copy may be kept instead."""
 
     content_type: str
@@ -97,7 +93,6 @@ def find_duplicate_suggestions(
     content_type: str | None = None,
     limit: int | None = None,
 ) -> SuggestionPage:
-    """Undecided blocks of live rows that look like one work, and how many."""
     declined = _declined_pairs(cursor, user_id)
     groups: dict[tuple[str, str], list[MatchRow]] = {}
     for row in read_live_match_rows(cursor, user_id):
@@ -127,9 +122,7 @@ def find_duplicate_suggestions(
 def decline_duplicate(
     cursor: sqlite3.Cursor, user_id: int, one_id: int, other_ids: Sequence[int]
 ) -> list[DeclinedPair]:
-    """Set *one_id* apart from every one of *other_ids*, or from none of them.
-
-    One pair per refusal, so the copies it did not name still pair with each
+    """One pair per refusal, so the copies it did not name still pair with each
     other, and a re-sync lands on the rows the refusal already named."""
     pairs: list[DeclinedPair] = []
     for other_id in dict.fromkeys(other_ids):
@@ -255,9 +248,7 @@ def _declined_pairs(cursor: sqlite3.Cursor, user_id: int) -> set[tuple[int, int]
 def _blocks(
     members: list[MatchRow], declined: set[tuple[int, int]], key: str
 ) -> list[list[MatchRow]] | None:
-    """The largest sets that all still pair, lowest ids first, overlapping
-    where a veto or a refusal splits the group; None where skipped. A pass
-    seeded per copy would lose a set that copy is not in, so Bron-Kerbosch."""
+    """A pass seeded per copy would lose a set that copy is not in, so Bron-Kerbosch."""
     if len(members) > GROUP_MEMBER_MAX:
         logger.warning(
             "Skipping the %d copies matching %r: a group over %d copies is not"

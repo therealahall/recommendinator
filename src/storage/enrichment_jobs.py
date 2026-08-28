@@ -1,6 +1,4 @@
-"""The live enrichment job, which the CLI and the server both read here.
-
-A manager instance is per-process, so a job the server started was invisible
+"""A manager instance is per-process, so a job the server started was invisible
 to the CLI and could not be stopped from it.
 """
 
@@ -36,8 +34,6 @@ def _parse(value: str | None) -> datetime | None:
 
 @dataclass
 class EnrichmentJobRecord:
-    """What the row says, with the derived fields both interfaces render."""
-
     running: bool = False
     completed: bool = False
     cancelled: bool = False
@@ -94,7 +90,7 @@ class EnrichmentJobStore:
         self._sqlite_db = sqlite_db
 
     def read(self) -> EnrichmentJobRecord:
-        """The job as it stands. A never-run install reads as an idle job."""
+        """A never-run install reads as an idle job."""
         now = datetime.now(UTC)
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()
@@ -109,10 +105,7 @@ class EnrichmentJobStore:
         return heartbeat is not None and now - heartbeat <= STALE_AFTER
 
     def claim(self, content_type: str | None) -> bool:
-        """Take the job, unless a live one already holds it.
-
-        One statement, so two processes racing cannot both win it.
-        """
+        """One statement, so two processes racing cannot both win it."""
         now = datetime.now(UTC)
         cutoff = _stamp(now - STALE_AFTER)
         with self._sqlite_db.connection() as conn:
@@ -171,7 +164,7 @@ class EnrichmentJobStore:
     def finish(
         self, *, completed: bool, cancelled: bool, errors: Sequence[str]
     ) -> None:
-        """Release the claim. Neither flag set means it stopped on an error."""
+        """Neither flag set means it stopped on an error."""
         now = _stamp(datetime.now(UTC))
         with self._sqlite_db.connection() as conn:
             conn.execute(
@@ -189,7 +182,7 @@ class EnrichmentJobStore:
             conn.commit()
 
     def request_stop(self) -> bool:
-        """Ask the running job to stop. False when there is nothing to stop."""
+        """False when there is nothing to stop."""
         cutoff = _stamp(datetime.now(UTC) - STALE_AFTER)
         with self._sqlite_db.connection() as conn:
             cursor = conn.cursor()

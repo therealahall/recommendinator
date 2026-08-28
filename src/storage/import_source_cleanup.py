@@ -1,5 +1,3 @@
-"""Delete configured sources whose plugin became an upload format."""
-
 from __future__ import annotations
 
 import logging
@@ -20,11 +18,7 @@ _REPLACED_BY_UPLOAD = frozenset(importer.name for importer in IMPORTERS)
 
 
 def drop_sources_replaced_by_upload(storage: StorageManager, user_id: int = 1) -> None:
-    """Remove ``source_configs`` rows for the file-import plugins that are gone.
-
-    Safe on every startup. The items those sources imported live in
-    ``content_items`` and are untouched.
-    """
+    """The items those sources imported live in ``content_items`` and are untouched."""
     for source in storage.sources.list(user_id):
         if source["plugin"] not in _REPLACED_BY_UPLOAD:
             continue

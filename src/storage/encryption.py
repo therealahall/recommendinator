@@ -1,5 +1,3 @@
-"""Fernet-based credential encryption for at-rest protection."""
-
 import logging
 import os
 import stat
@@ -9,14 +7,11 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-# Permissions that are acceptable on the key file: owner read/write only.
 _SECURE_PERMISSIONS = stat.S_IRUSR | stat.S_IWUSR  # 0o600
 
 
 class CredentialEncryptor:
-    """Encrypt and decrypt credential values using Fernet symmetric encryption.
-
-    The key file is generated on first use and must stay owner-only (0600); a
+    """The key file is generated on first use and must stay owner-only (0600); a
     wider mode is refused rather than repaired.
     """
 
@@ -25,7 +20,6 @@ class CredentialEncryptor:
         self._fernet: Fernet | None = None
 
     def _ensure_key(self) -> Fernet:
-        """Load or generate the Fernet key, lazily."""
         if self._fernet is not None:
             return self._fernet
 
@@ -52,11 +46,6 @@ class CredentialEncryptor:
         return self._fernet
 
     def _verify_key_permissions(self) -> None:
-        """Verify the key file has secure permissions (0600).
-
-        Raises:
-            PermissionError: If the key file is group- or world-readable.
-        """
         mode = self._key_path.stat().st_mode
         if mode & (stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH):
             raise PermissionError(
@@ -66,11 +55,9 @@ class CredentialEncryptor:
             )
 
     def encrypt(self, plaintext: str) -> str:
-        """Encrypt a plaintext string, returning a base64-encoded ciphertext."""
         fernet = self._ensure_key()
         return fernet.encrypt(plaintext.encode()).decode()
 
     def decrypt(self, ciphertext: str) -> str:
-        """Decrypt a Fernet-encrypted, base64-encoded ciphertext."""
         fernet = self._ensure_key()
         return fernet.decrypt(ciphertext.encode()).decode()

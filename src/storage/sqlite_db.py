@@ -1,79 +1,6 @@
-"""SQLite database manager for content items.
-
-Rating, review, status, ``date_completed`` and ``ignored`` are user-owned, and
-every write to them goes through one of six doors — one sync door, one
-enrichment door, three explicit-user-action doors and the merge door. The sync
-door's rules are not uniform across the five fields, so read the field you care
-about rather than a summary of the door:
-
-- :meth:`SQLiteDB.save_content_item` is the ingestion/sync door. ``rating``
-  and ``review`` are fill-only, written only while the stored value is empty,
-  so a re-import can never erase either. A blank incoming ``review`` does not
-  count as a value to fill from — stored, it would be indistinguishable from
-  one the user wrote and would refuse every later value. The rest are weaker.
-  ``status`` is forward-only — :func:`resolve_status_forward` never resolves
-  backward — but "a sync cannot revert a completion" holds only of that
-  resolution: after the upsert, :meth:`_handle_tv_season_change` regresses a
-  completed TV show to currently_consuming when the sync raises its season
-  count above the seasons the user has checked off, because new seasons mean
-  the show is not finished.
-  ``date_completed`` is later-date-wins. ``ignored`` counts only a stated
-  value, where a real ``True`` or ``False`` wins in either direction, so an
-  exported, edited, re-imported library round-trips, while ``None`` — what a
-  source sends when the file says nothing about the flag — leaves the stored
-  value alone. That last decision is the door's, taken from the value it is
-  handed, so a plugin that says nothing cannot clear the user's ignore list by
-  accident. It also means the round trip is wholesale rather than selective:
-  ``src/utils/export.py`` writes a concrete ``true``/``false`` on every row it
-  exports, so re-importing an export states the flag for every item and
-  replaces the ignore list with the state it had at export time. The
-  blank-cell rule protects a hand-maintained file; it protects nothing about
-  this project's own exports.
-- :meth:`SQLiteDB.save_enrichment_metadata` is the enrichment door. A
-  provider's metadata reaches the detail table and the derived columns; of the
-  user-owned fields it writes only ``status``, and only through the same
-  :meth:`_handle_tv_season_change` pass, over the season count the provider
-  filled in.
-- The explicit-user-action doors write exactly the fields the caller supplied
-  and may overwrite them freely: :meth:`SQLiteDB.update_item_from_ui` for an
-  edit (web UI, CLI), :meth:`SQLiteDB.complete_content_item` for a
-  completion, which creates the item first when the library does not have it
-  yet, and :meth:`SQLiteDB.set_item_ignored`, which writes ``ignored`` alone,
-  in either direction. What "not supplied" looks like is not uniform either:
-  :meth:`SQLiteDB.update_item_from_ui` spells it three ways — ``status`` is
-  required, ``rating`` and ``review`` use :data:`UNSET` because ``None`` has
-  to mean "clear it", and the remaining fields use ``None``. Read that
-  method's docstring for the argument you are passing.
-- :meth:`SQLiteDB.merge_content_items` is the merge door, and the only one
-  that can be undone. It writes the survivor under the sync door's own rules,
-  reading them off the absorbed row rather than off a source; the absorbed row
-  itself is hidden behind ``merged_into`` and never written — no other door
-  reaches a hidden row either — which is what lets
-  :meth:`SQLiteDB.unmerge_content_items` return both rows as they were, in the
-  reverse of the order they were merged.
-
-No door stores a blank ``review``, whichever one it arrives at, because a
+"""No door stores a blank ``review``, whichever one it arrives at, because a
 stored ``""`` is indistinguishable from one the user wrote and would refuse
-every later import for that column. What each door does with one differs, and
-follows from what that door is for: the sync door declines to fill from it,
-:meth:`SQLiteDB._write_completion` drops it and leaves the stored review
-alone — a completion has nothing to clear — and
-:meth:`SQLiteDB.update_item_from_ui` clears the column, because that door
-exists to overwrite and an emptied review box is a clear.
-
-``date_completed`` is the field no door replaces *silently*: the sync door
-takes an incoming date only when it is later than the stored one, and a user
-action replaces a stored date only when the caller names one. A completion
-carrying no date fills an empty column with today in the host's zone and
-leaves a date the item already carries as it is — "I finished this" is not "I
-finished this today". A named date is written as given — a correction pointing
-backwards is still a correction — provided it is a day that has happened; see
-:data:`MAX_COMPLETION_DATE_SKEW`.
-
-**That skew guard is the completion door's alone.** :meth:`SQLiteDB._upsert_content_item`
-writes whatever date the source gave it, so an import carrying 2099 lands. It
-is a mirror of somebody else's library and one bad row must not fail the sync,
-which is what raising from inside a sync would do.
+every later import for that column.
 """
 
 import json
@@ -154,9 +81,7 @@ from src.utils.text import escape_lone_surrogates
 
 
 class Unset(Enum):
-    """Type of the :data:`UNSET` sentinel.
-
-    A single-member enum rather than a bare object so that ``mypy`` narrows
+    """A single-member enum rather than a bare object so that ``mypy`` narrows
     ``value is not UNSET`` to the argument's real type.
     """
 
@@ -178,9 +103,7 @@ MAX_COMPLETION_DATE_SKEW = timedelta(days=1)
 
 
 class FutureCompletionDateError(ValueError):
-    """A completion dated past :data:`MAX_COMPLETION_DATE_SKEW`.
-
-    Distinct from a bare ``ValueError`` so a caller naming a date can tell
+    """Distinct from a bare ``ValueError`` so a caller naming a date can tell
     this refusal from a malformed one and say which it hit.
     """
 
@@ -194,9 +117,7 @@ class UncorrectableFieldError(ValueError):
 
 
 class SaveOutcome(Enum):
-    """What an ingestion write did to the row it landed on.
-
-    ``UNCHANGED`` means every column already held the value the write carried,
+    """``UNCHANGED`` means every column already held the value the write carried,
     not merely that the row existed.
     """
 
@@ -207,21 +128,12 @@ class SaveOutcome(Enum):
 
 @dataclass(frozen=True)
 class SavedItem:
-    """The row an ingestion write landed on, and what it did to it."""
-
     db_id: int
     outcome: SaveOutcome
 
 
 @dataclass
 class SaveCounts:
-    """A run of writes, split by what each one did.
-
-    One definition because a sync and an import both report these three numbers,
-    and two tallies of the same enum would eventually disagree about which
-    outcome is which.
-    """
-
     added: int = 0
     updated: int = 0
     unchanged: int = 0
@@ -239,22 +151,14 @@ _T = TypeVar("_T")
 
 
 def unset_if_none(value: _T | None) -> _T | Unset:
-    """Translate a caller's "not supplied" ``None`` into :data:`UNSET`.
-
-    For surfaces whose absence *is* ``None`` and which therefore cannot ask
-    for a clear this way — a Click option nobody passed. A surface that can
-    tell absent from null (the web, which
-    reads ``model_fields_set``) passes its ``None`` through untranslated, so
-    an explicit null still clears the field.
+    """For surfaces whose absence *is* ``None`` and which therefore cannot ask
+    for a clear this way — a Click option nobody passed.
     """
     return UNSET if value is None else value
 
 
 def _without_surrogates(value: Any) -> Any:
-    """Copy *value*, escaping the lone surrogates in every string in it.
-
-    Recurses because ``metadata`` is free-form and reaches a text column whole.
-    """
+    """Recurses because ``metadata`` is free-form and reaches a text column whole."""
     if isinstance(value, str):
         return escape_lone_surrogates(value)
     if isinstance(value, dict):
@@ -268,11 +172,8 @@ def _without_surrogates(value: Any) -> Any:
 
 
 def _surrogate_free(item: ContentItem) -> ContentItem:
-    """Return *item* with every lone surrogate spelled out instead.
-
-    SQLite refuses to bind the surrogate ``surrogateescape`` returns for an
-    undecodable byte. Whole-item, not per column: nobody guards the column
-    added next week.
+    """SQLite refuses to bind the surrogate ``surrogateescape`` returns for an
+    undecodable byte.
     """
     return item.model_copy(update=_without_surrogates(item.model_dump()))
 
@@ -305,14 +206,12 @@ _ENRICHMENT_SELECT_TERMS = (
 
 
 def _select_term(table_alias: str, column: str, alias: str) -> str:
-    """One aliased column of a detail join."""
     if alias == column:
         return f"{table_alias}.{column}"
     return f"{table_alias}.{column} as {alias}"
 
 
 def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
-    """Aliased columns one detail table contributes to the joined SELECT."""
     assert_known_detail_table(spec)
 
     terms = []
@@ -328,10 +227,7 @@ def _detail_select_terms(spec: ContentTypeFields) -> list[str]:
 
 
 def _build_content_item_from() -> str:
-    """Build the FROM clause of the content-item read.
-
-    One five-way join covering every detail table plus the enrichment status.
-    Shared by the full read and by the search-candidate projection so a WHERE
+    """Shared by the full read and by the search-candidate projection so a WHERE
     clause built once stays valid against both.
     """
     joins = [detail_join(spec) for spec in DETAIL_FIELDS.values()]
@@ -394,7 +290,6 @@ def _incoming_creator(item: ContentItem, content_type_value: str) -> str | None:
 
 
 def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignals:
-    """What the item being saved states, read as the row it lands on is read."""
     field = RELEASE_YEAR_FIELDS.get(content_type_value)
     stated = field.value_from(item.metadata or {}) if field is not None else None
     return MatchSignals(
@@ -405,7 +300,6 @@ def _incoming_signals(item: ContentItem, content_type_value: str) -> MatchSignal
 
 
 def _spelling(title: str | None) -> str:
-    """A title as written, for telling apart two rows one key names."""
     return " ".join((title or "").split()).casefold()
 
 
@@ -416,11 +310,8 @@ def _title_match(
     normalized_title: str,
     item: ContentItem,
 ) -> int | None:
-    """The row of this key the creator, year and region allow.
-
-    Each candidate is weighed against what it states, so a spelling it rules
-    out is not answered to. Where two rows remain, only one spelled the same
-    is taken.
+    """Each candidate is weighed against what it states, so a spelling it rules
+    out is not answered to.
     """
     cursor.execute(
         f"{_TITLE_MATCH_CANDIDATES} ORDER BY ci.id",
@@ -443,11 +334,7 @@ def _title_match(
 
 
 def _build_content_item_select() -> str:
-    """Build the content-item read query from the field declaration.
-
-    Used by get_content_item, _items_by_db_ids and _fetch_page. Callers append
-    their own WHERE clause.
-    """
+    """Callers append their own WHERE clause."""
     terms = ["ci.*", _EXTERNAL_IDS_TERM]
     for spec in DETAIL_FIELDS.values():
         terms.extend(_detail_select_terms(spec))
@@ -475,10 +362,7 @@ _ENRICHED_PREDICATE = (
 
 
 class SQLiteDB:
-    """SQLite database manager for content items."""
-
     def __init__(self, db_path: Path) -> None:
-        """Initialize SQLite database manager."""
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         init_conn = sqlite3.connect(self.db_path)
@@ -489,7 +373,6 @@ class SQLiteDB:
         self._ensure_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -501,7 +384,6 @@ class SQLiteDB:
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Yield a database connection, closing it after use."""
         conn = self._get_connection()
         try:
             yield conn
@@ -509,30 +391,15 @@ class SQLiteDB:
             conn.close()
 
     def _ensure_schema(self) -> None:
-        """Ensure database schema is created."""
         with self.connection() as conn:
             create_schema(conn)
 
     def save_content_item(self, item: ContentItem, user_id: int | None = None) -> int:
-        """Save or update a content item (the ingestion/sync door).
-
-        Each user-owned field has its own rule, as described in the module
-        docstring: ``rating`` and ``review`` are fill-only, so a re-sync can
-        never overwrite either; ``status`` is forward-only, bar the TV-season
-        regression the module docstring describes;
-        ``date_completed`` is later-date-wins; and ``ignored`` follows only a
-        stated incoming value.
-        """
         return self.save_content_item_outcome(item, user_id=user_id).db_id
 
     def save_content_item_outcome(
         self, item: ContentItem, user_id: int | None = None
     ) -> SavedItem:
-        """Save *item*, reporting whether the write changed anything.
-
-        What :meth:`save_content_item` does, for the caller that has to tell a
-        first import from a second run of it.
-        """
         with self.connection() as conn:
             cursor = conn.cursor()
             saved = self._upsert_content_item(cursor, item, user_id)
@@ -540,11 +407,7 @@ class SQLiteDB:
             return saved
 
     def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
-        """Merge *item*'s metadata into the detail row of *db_id*.
-
-        Keyed by row id: a migrated row has no source id, so the sync door's
-        title path lands on the oldest namesake. The UI door overwrites what
-        this fills. A row absorbed since the batch read it is refused rather
+        """A row absorbed since the batch read it is refused rather
         than redirected: the survivor is enriched on its own turn.
         """
         with self.connection() as conn:
@@ -570,27 +433,8 @@ class SQLiteDB:
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None
     ) -> int:
-        """Record an explicit completion, adding the item if it is new.
-
-        The entry point behind every completion — the ``complete`` CLI
-        command and ``POST /api/complete``: it finds or creates the row and
-        applies the user's own values in a single
-        transaction, so no interruption can leave an item completed carrying
-        the rating it had before.
-
-        Completing something is an explicit user action, so a rating, review
-        or completion date supplied here wins over what is stored — a date
-        included, even one earlier than the stored date, which is how a user
-        corrects a completion an import dated too late. A blank review is not
-        a supplied one and leaves a stored review alone; see
-        :meth:`_write_completion`. A completion carrying no date is the case
-        the module docstring describes: an empty column is stamped with today
-        in the host's zone, an existing date is kept.
-
-        Raises:
-            FutureCompletionDateError: ``item.date_completed`` is further
-                ahead than :data:`MAX_COMPLETION_DATE_SKEW`. The transaction
-                rolls back, so nothing is written.
+        """A blank review is not a supplied one and leaves a stored review
+        alone; see :meth:`_write_completion`.
         """
         # Taken before the upsert takes it again: _write_completion binds this
         # item's own values, so the upsert's escaped copy never reaches it.
@@ -617,34 +461,8 @@ class SQLiteDB:
         review: str | None,
         date_completed: date | Unset,
     ) -> None:
-        """Apply the user-owned half of an explicit completion.
-
-        Runs on the caller's cursor so that creating the row and recording
+        """Runs on the caller's cursor so that creating the row and recording
         what the user said about it are one transaction.
-
-        The status is written here rather than left to the sync rules the
-        upsert applies: a TV show whose season count has grown is regressed to
-        currently_consuming by that pass, and someone who has just said "I
-        finished this" outranks the season count. A named date is written here
-        for the same reason — the upsert's later-date-wins rule is a sync rule,
-        and leaving the date to it would drop a correction pointing backwards.
-
-        A blank *review* counts as none. This door overwrites, so writing
-        ``""`` would replace a stored review with a value that reads as one
-        the user wrote and stops a later import from filling the field. The
-        check is repeated here because it protects a different write from the
-        callers' own: the web and CLI surfaces refuse a blank outright, and
-        :meth:`_upsert_content_item` — which runs first, so this guard never
-        sees what it writes — separately declines to fill from one.
-
-        An UNSET *date_completed* fills an empty column with today in the
-        host's zone and leaves a stored date alone; a supplied one is written
-        as given.
-
-        Raises:
-            FutureCompletionDateError: *date_completed* is a day nobody has
-                lived yet. Checked here rather than at each surface, so no
-                caller can write one.
         """
         if (
             date_completed is not UNSET
@@ -675,11 +493,8 @@ class SQLiteDB:
     def _upsert_content_item(
         self, cursor: sqlite3.Cursor, item: ContentItem, user_id: int | None
     ) -> SavedItem:
-        """Insert or update *item*'s row and detail row under the sync rules.
-
-        Shared by :meth:`save_content_item` and :meth:`complete_content_item`:
-        upsert by (source, external id), then by normalized title. Runs on the
-        caller's cursor and does not commit, so a caller can add writes to it.
+        """Runs on the caller's cursor and does not commit, so a caller can add
+        writes to it.
         """
         # The one door every plugin's items pass, so the SQLite text guarantee
         # is taken here rather than in each of them.
@@ -693,10 +508,9 @@ class SQLiteDB:
 
         content_type_value = get_enum_value(item.content_type)
 
-        # A blank review is not a review. This leg fills the column only while
-        # it is empty, and a stored blank is indistinguishable from something
-        # the user wrote, so filling with one would refuse every later value
-        # and block the field for good.
+        # This leg fills the column only while it is empty, and a stored blank
+        # is indistinguishable from something the user wrote, so filling with
+        # one would refuse every later value and block the field for good.
         incoming_review = item.review if item.review and item.review.strip() else None
 
         existing_id: int | None = None
@@ -851,8 +665,7 @@ class SQLiteDB:
         item: ContentItem,
         content_type: str,
     ) -> bool:
-        """Hold *item*'s id under its source; OR IGNORE, so a re-sync is no
-        change. The lookup above reads that key, so no other row holds it."""
+        """Hold *item*'s id under its source; OR IGNORE, so a re-sync is no change."""
         if not (item.id and item.source):
             return False
         cursor.execute(
@@ -866,20 +679,10 @@ class SQLiteDB:
     def _save_detail_table(
         self, cursor: sqlite3.Cursor, db_id: int, item: ContentItem, content_type: str
     ) -> bool:
-        """Save item to appropriate type-specific detail table.
-
-        For existing rows, enrichment is the source of truth: genres and tags
+        """For existing rows, enrichment is the source of truth: genres and tags
         merge additively, every other column is fill-only, and the leftover
         metadata blob merges with existing keys winning — bar
         ``seasons_watched_dates``, which keeps the later date per season.
-
-        For new rows, all data from ingestion is used as-is. Reports whether
-        the write moved any column of the detail row.
-
-        Raises:
-            KeyError: For a content type with no field declaration, like
-                :meth:`_write_manual_metadata` — every type has one, and a
-                skipped write would lose the item's detail row in silence.
         """
         spec = DETAIL_FIELDS[content_type]
 
@@ -1011,18 +814,10 @@ class SQLiteDB:
         return True
 
     def _handle_tv_season_change(self, cursor: sqlite3.Cursor, db_id: int) -> bool:
-        """Regress TV show status when new seasons arrive during sync.
-
-        When a sync updates the total season count for a TV show and the
+        """When a sync updates the total season count for a TV show and the
         user had previously watched all seasons (completed via the UI
         season checklist), the status should regress to currently_consuming
         — unless the item is ignored.
-
-        If ignored, the season count still updates (handled by the monotonic
-        column logic in _save_detail_table) but status stays as-is.
-
-        This only fires when ``seasons_watched`` metadata exists (i.e. the
-        user has used the edit modal's season checklist at least once).
         """
         cursor.execute(
             "SELECT ci.status, ci.ignored, td.seasons, td.metadata"
@@ -1074,7 +869,6 @@ class SQLiteDB:
     def get_content_item(
         self, db_id: int, user_id: int | None = None
     ) -> ContentItem | None:
-        """Get a content item by database ID."""
         with self.connection() as conn:
             cursor = conn.cursor()
             query = _CONTENT_ITEM_SELECT + " WHERE ci.id = ? AND ci.merged_into IS NULL"
@@ -1091,9 +885,7 @@ class SQLiteDB:
             return None
 
     def get_content_items_by_db_ids(self, db_ids: list[int]) -> list[ContentItem]:
-        """Get multiple content items by their database IDs in a single query.
-
-        Ids come back in the order asked for; one naming no row is skipped,
+        """Ids come back in the order asked for; one naming no row is skipped,
         and a repeated one returns once per occurrence.
         """
         if not db_ids:
@@ -1105,9 +897,7 @@ class SQLiteDB:
     def _items_by_db_ids(
         self, cursor: sqlite3.Cursor, db_ids: list[int]
     ) -> list[ContentItem]:
-        """Load the named items, in the order named, over an open cursor.
-
-        Chunked so the IN clause stays within SQLite's variable limit, and
+        """Chunked so the IN clause stays within SQLite's variable limit, and
         re-ordered afterwards because the chunks come back in whatever order
         each query chose.
         """
@@ -1139,20 +929,8 @@ class SQLiteDB:
         enrichment: EnrichmentFilter | None = None,
         search: str | None = None,
     ) -> list[ContentItem]:
-        """Get content items with optional filters.
-
-        A falsy *limit* is no limit, and *offset* is independent of it: an
-        offset with no limit skips and returns the rest. A *search* term that
-        is empty after stripping filters nothing; otherwise it ANDs with the
-        other filters and applies before limit/offset, so pagination pages
-        over the full matched set.
-
-        Note:
-            A request builds a ContentItem for the rows it returns and no
-            others. A sort with no search term orders and pages entirely in
-            SQL; a search matches the stored ``search_text`` of each ordered
-            candidate in Python, because the fuzzy tier is not expressible in
-            SQL, and loads only the page that survives limit/offset.
+        """A falsy *limit* is no limit, and *offset* is independent of it: an
+        offset with no limit skips and returns the rest.
         """
         # An empty status list matches nothing by definition.
         if isinstance(status, list) and not status:
@@ -1193,11 +971,6 @@ class SQLiteDB:
         include_ignored: bool,
         enrichment: EnrichmentFilter | None,
     ) -> tuple[str, list[Any]]:
-        """Build the WHERE clause the list filters come to, and its parameters.
-
-        Returned apart from the SELECT so the full read and the
-        search-candidate projection page over the same filtered set.
-        """
         where = " WHERE ci.user_id = ? AND ci.merged_into IS NULL"
         params: list[Any] = [user_id]
 
@@ -1233,11 +1006,8 @@ class SQLiteDB:
 
     @staticmethod
     def _page_clause(limit: int | None, offset: int) -> tuple[str, list[Any]]:
-        """Build the LIMIT/OFFSET clause for a page, and its parameters.
-
-        SQLite accepts OFFSET only as a suffix of LIMIT, so an offset with no
-        limit uses -1, SQLite's "unbounded" limit. A falsy limit means no
-        limit, and a non-positive offset skips nothing.
+        """SQLite accepts OFFSET only as a suffix of LIMIT, so an offset with no
+        limit uses -1, SQLite's "unbounded" limit.
         """
         if not limit and offset <= 0:
             return "", []
@@ -1257,7 +1027,6 @@ class SQLiteDB:
         limit: int | None,
         offset: int,
     ) -> list[ContentItem]:
-        """Load one ordered page of the filtered set."""
         page_clause, page_params = self._page_clause(limit, offset)
         cursor.execute(
             f"{_CONTENT_ITEM_SELECT}{where} ORDER BY {order_by}{page_clause}",
@@ -1275,17 +1044,10 @@ class SQLiteDB:
         offset: int,
         search_term: str,
     ) -> list[ContentItem]:
-        """Load one page of the items matching *search_term*.
-
-        A search has one matched set, whichever tier of
+        """A search has one matched set, whichever tier of
         :func:`~src.utils.sorting.search_text_matches` an item answers on, so
         the offset means one thing throughout and the pages of a search
-        concatenate into the unpaged answer. SQL orders the candidates and
-        hands each over as an id and a stored search text — no detail blob to
-        parse — so a candidate that misses, and a match outside the page,
-        never costs a ContentItem. The scan stops as soon as the page is
-        filled, because no caller asks how many matches lie beyond it; a falsy
-        limit asks for the rest of the set, so it scans every candidate.
+        concatenate into the unpaged answer.
         """
         needle = normalize_for_search(search_term)
         # A term of pure punctuation normalizes away, and an empty needle
@@ -1317,7 +1079,6 @@ class SQLiteDB:
         limit: int | None = None,
         include_ignored: bool = True,
     ) -> list[ContentItem]:
-        """Get unconsumed items (status = UNREAD or CURRENTLY_CONSUMING)."""
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
@@ -1334,7 +1095,6 @@ class SQLiteDB:
         limit: int | None = None,
         include_ignored: bool = True,
     ) -> list[ContentItem]:
-        """Get completed items (status = COMPLETED or CURRENTLY_CONSUMING)."""
         return self.get_content_items(
             user_id=user_id,
             content_type=content_type,
@@ -1345,19 +1105,9 @@ class SQLiteDB:
         )
 
     def _row_to_content_item(self, row: sqlite3.Row) -> ContentItem:
-        """Convert a database row to ContentItem.
-
-        *row* comes from _CONTENT_ITEM_SELECT, carrying every detail and
-        enrichment column that query aliases. A column it does not carry
-        raises rather than reading as absent data: the aliases are generated
-        from DETAIL_FIELDS, so a name that misses is a bug in the declaration
-        and not a value the row lacks.
-
-        Raises:
-            KeyError: For a content type with no field declaration, like
-                :meth:`_save_detail_table` — every type has one, and reading
-                the row without it would report a stored item as carrying no
-                detail at all.
+        """A column it does not carry raises rather than reading as absent
+        data: the aliases are generated from DETAIL_FIELDS, so a name that
+        misses is a bug in the declaration and not a value the row lacks.
         """
         content_type = ContentType(row["content_type"])
         metadata: dict[str, Any] = {}
@@ -1376,12 +1126,7 @@ class SQLiteDB:
             if value:
                 metadata[detail_field.metadata_key] = value
 
-        # The blob last, so a key it repeats wins over the column that claims
-        # it. Storage keeps a column's keys out of the blob it writes, but a
-        # row written before a key belonged to a column still carries one —
-        # the shape ``_migrate_stranded_detail_shapes`` repairs on open.
-        # A blob that is not an object carries no keys, and reaches the
-        # reader because the migration leaves such a row alone as well.
+        # The blob last, so a key it repeats wins over the column that claims it.
         if blob := row[spec.metadata_alias]:
             try:
                 leftover = json.loads(blob)
@@ -1435,13 +1180,8 @@ class SQLiteDB:
 
     @staticmethod
     def _row_is_enriched(row: sqlite3.Row) -> bool:
-        """Derive the enriched flag from the joined enrichment_status columns.
-
-        Mirrors ``_ENRICHED_PREDICATE`` so the per-row flag and the list
-        filter agree: a clean row (real provider, no error, not pending). Like
-        :meth:`_row_to_content_item`, it reads a row from
-        ``_CONTENT_ITEM_SELECT`` and raises on a column that query does not
-        carry, rather than reporting every item as not enriched.
+        """Mirrors ``_ENRICHED_PREDICATE`` so the per-row flag and the list
+        filter agree: a clean row (real provider, no error, not pending).
         """
         if row["enrichment_item_id"] is None:
             return False
@@ -1468,72 +1208,9 @@ class SQLiteDB:
         creator: str | None = None,
         user_id: int | None = None,
     ) -> bool:
-        """Update a content item from an explicit user action (unrestricted).
-
-        This is the explicit-user-action door described in the module
-        docstring: unlike save_content_item, which fills user-owned fields
-        only while they are empty, an edit made here may freely overwrite
-        status, rating and review, and status may go backward.
-
-        Only the fields the caller actually supplied are written, but the
-        arguments say "not supplied" in two different ways, so read the one
-        you are passing:
-
-        - ``status`` uses :data:`UNSET` for "leave it alone", because for a TV
-          show a supplied status is an instruction about the season list too
-          (see below) and an unsupplied one must not read as a fresh one.
-        - ``rating`` and ``review`` use :data:`UNSET` for "leave it alone",
-          because they are nullable and ``None`` therefore has to mean
-          "clear it". A blank ``review`` clears it as well: a stored ``""``
-          reads as a review the user wrote and refuses every later import.
-        - ``seasons_watched``, ``genres``, ``tags`` and ``description`` use
-          ``None`` for "leave it alone", so sending an explicit null for one
-          of them is a no-op, not a clear. The *empty* value is the clear:
-          ``[]`` for the three lists and ``""`` for the description are
-          supplied values, and they are written as given. That is the ordinary
-          path rather than a corner — the web edit dialog sends ``genres`` and
-          ``tags`` on every save, so removing the last one there clears the
-          stored list.
-        - ``release_year`` and ``creator`` set a value and clear none. A veto
-          reads each, so an emptied one widens every later match rather than
-          correcting one, and both surfaces refuse a blank rather than send one.
-
-        For a TV show, status and the season list are two views of one fact, so
-        whichever the caller supplied fills in the one it did not. A supplied
-        ``seasons_watched`` with no status derives the status (0 watched =
-        unread, all watched = completed, partial = currently_consuming).
-
-        A supplied status writes a season list it was not given only where it
-        adds one: ``completed`` ticks every season, unless the show's total is
-        unknown, in which case the stored list stands. No status empties the
-        list — the dialog hides the checklist for a show whose total never
-        synced, so its status-only save must not erase seasons only a Trakt
-        sync can write back. A caller supplying both is taken at its word.
-
-        Also stamps ``seasons_watched_dates`` (season -> ISO timestamp) in the
-        detail-table metadata: a season newly checked off in this edit (not
-        present in the previous ``seasons_watched``) gets the current time; a
-        season that already has a date keeps it; a season that was already
-        watched but has no date is left undated rather than inventing one; a
-        season no longer in the incoming list is dropped. This is the
-        recency signal the variety ladder uses to date an ongoing show's
-        finished-season completion event.
-
-        Manual genres/tags/description overwrite the detail-table values
-        (rather than the additive merge used by sync/enrichment) and mark the
-        item enriched via the ``manual`` provider so it drops out of the
-        not-enriched filter and is never re-queued for automatic enrichment.
-
-        When the edit moves the status *into* ``completed`` and the row has no
-        ``date_completed`` yet, today's date in the host's zone is stamped so
-        an in-app completion carries a date for the variety ladder — the same
-        calendar an imported date is narrowed to. An item that was
-        already completed is left as it is: an import that carried no date
-        stays undated rather than being dated today by an unrelated genre or
-        review edit, the same rule the season dates above follow. A status
-        moving away from completed leaves the stored date alone — it records
-        that a completion happened, and dropping it would be the same silent
-        loss this door exists to avoid.
+        """No status empties the list — the dialog hides the checklist for a
+        show whose total never synced, so its status-only save must not erase
+        seasons only a Trakt sync can write back.
         """
         with self.connection() as conn:
             cursor = conn.cursor()
@@ -1693,7 +1370,6 @@ class SQLiteDB:
         content_type: str,
         updates: dict[str, Any],
     ) -> None:
-        """Write *updates* to the detail row, creating one if it has none."""
         spec = DETAIL_FIELDS.get(content_type)
         if spec is None:
             raise ValueError(f"Unknown content_type: {content_type!r}")
@@ -1725,10 +1401,6 @@ class SQLiteDB:
         evidence_detail: str | None = None,
         user_id: int | None = None,
     ) -> MergeRecord:
-        """Merge one item into another (the merge door).
-
-        Raises :class:`~src.storage.item_merges.MergeError` for a refused pair.
-        """
         with self.connection() as conn:
             cursor = conn.cursor()
             record = absorb_item(
@@ -1745,11 +1417,6 @@ class SQLiteDB:
     def unmerge_content_items(
         self, merge_id: int, user_id: int | None = None
     ) -> MergeRecord | None:
-        """Undo one merge, returning it, or ``None`` when there is no such merge.
-
-        Raises :class:`~src.storage.item_merges.MergeError` unless it is the
-        newest merge into its survivor.
-        """
         with self.connection() as conn:
             cursor = conn.cursor()
             record = unmerge_item(cursor, merge_id, user_id=user_id)
@@ -1757,7 +1424,6 @@ class SQLiteDB:
             return record
 
     def list_content_item_merges(self, user_id: int | None = None) -> list[MergeRecord]:
-        """Every merge in force, naming what absorbed what and on what evidence."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             return list_merges(conn.cursor(), effective_user_id)
@@ -1768,7 +1434,6 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         limit: int | None = None,
     ) -> SuggestionPage:
-        """Undecided blocks of live rows that look like one work, and how many."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             return find_duplicate_suggestions(
@@ -1783,7 +1448,6 @@ class SQLiteDB:
     def decline_duplicate_suggestion(
         self, one_id: int, other_ids: Sequence[int], user_id: int | None = None
     ) -> list[DeclinedPair]:
-        """Set one copy apart from the rest of its block, one pair per refusal."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             declined = decline_duplicate(
@@ -1795,7 +1459,6 @@ class SQLiteDB:
     def list_declined_duplicates(
         self, user_id: int | None = None
     ) -> list[DeclinedPair]:
-        """Every refusal in force, lowest id first."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             return list_declines(conn.cursor(), effective_user_id)
@@ -1803,7 +1466,6 @@ class SQLiteDB:
     def undecline_duplicate_suggestion(
         self, one_id: int, other_id: int, user_id: int | None = None
     ) -> DeclinedPair | None:
-        """Lift a refusal, returning the pair, or ``None`` when none was in force."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
         with self.connection() as conn:
             lifted = undecline_duplicate(
@@ -1815,7 +1477,6 @@ class SQLiteDB:
     def set_item_ignored(
         self, db_id: int, ignored: bool, user_id: int | None = None
     ) -> bool:
-        """Set the ignored status of a content item, reporting whether there was one."""
         with self.connection() as conn:
             cursor = conn.cursor()
             if user_id is not None:
@@ -1841,7 +1502,6 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         status: ConsumptionStatus | None = None,
     ) -> int:
-        """Count content items with optional filters."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
         with self.connection() as conn:
@@ -1873,13 +1533,7 @@ class SQLiteDB:
         limit: int = 100,
         after_db_id: int | None = None,
     ) -> list[tuple[int, ContentItem]]:
-        """Get content items that need enrichment.
-
-        Returns items where:
-        1. No enrichment_status record exists (new items), OR
-        2. needs_enrichment = TRUE
-
-        Results are ordered by ID, so a caller walking the queue passes the
+        """Results are ordered by ID, so a caller walking the queue passes the
         last ID it saw as *after_db_id* to page past the items it already
         handled — including any it left queued on purpose.
         """
@@ -1910,12 +1564,8 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> int:
-        """Count content items that need enrichment.
-
-        Uses the same filter as :meth:`get_items_needing_enrichment` so the
-        enrichment manager can report a total upfront instead of incrementing
-        per batch. Items previously marked as ``not_found`` are tracked
-        separately by the manager and are intentionally excluded here to avoid
+        """Items previously marked as ``not_found`` are tracked separately by
+        the manager and are intentionally excluded here to avoid
         double-counting.
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
@@ -1937,9 +1587,7 @@ class SQLiteDB:
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> list[int]:
-        """Return the db_ids of items whose enrichment settled as ``not_found``.
-
-        An item with no ``enrichment_status`` row has never been attempted, so
+        """An item with no ``enrichment_status`` row has never been attempted, so
         it is not a retry candidate and this query does not return it.
         """
         effective_user_id = user_id if user_id is not None else get_default_user_id()
@@ -1963,11 +1611,8 @@ class SQLiteDB:
         count_only: bool,
         after_db_id: int | None = None,
     ) -> tuple[str, list[Any]]:
-        """Build the shared SELECT for items needing enrichment.
-
-        Callers append ORDER BY / LIMIT clauses as needed. The SELECT clause
-        is hardcoded based on ``count_only`` rather than accepting an open
-        string, so this helper cannot be misused to inject SQL.
+        """The SELECT clause is hardcoded based on ``count_only`` rather than
+        accepting an open string, so this helper cannot be misused to inject SQL.
         """
         select_clause = "SELECT COUNT(*)" if count_only else "SELECT ci.id"
 
