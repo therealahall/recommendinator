@@ -1,10 +1,3 @@
-"""Refuse a state change another origin drove.
-
-``SameSite=Strict`` computes the site from scheme and registrable domain and
-ignores the port, so any other server on localhost — the Vite dev server
-included — is same-site and gets the session cookie.
-"""
-
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
@@ -20,13 +13,8 @@ _OWN_ORIGIN = frozenset({"same-origin", "none"})
 
 
 def refuse_cross_origin(request: Request) -> None:
-    """Answer 403 unless the browser reports this state change as our own.
-
-    A missing header reads as same-origin: only a browser sets it, and the
+    """A missing header reads as same-origin: only a browser sets it, and the
     health check is not one.
-
-    Raises:
-        HTTPException: 403, naming no route.
     """
     if request.method in _READ_ONLY_METHODS:
         return

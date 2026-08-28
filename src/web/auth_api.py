@@ -1,7 +1,6 @@
-"""Sign-in endpoints: the four routes a signed-out browser may reach.
-
-Their own router, because the session dependency every other ``/api`` route
-carries would make signing in impossible.
+"""Sign-in endpoints: the four routes a signed-out browser may reach. Their own
+router, because the session dependency every other ``/api`` route carries would
+make signing in impossible.
 """
 
 from __future__ import annotations
@@ -43,12 +42,8 @@ _ALREADY_CLAIMED = "This instance already has an account. Sign in instead."
 
 
 class SetupRequest(BaseModel):
-    """First-run account creation.
-
-    No ``min_length`` on the password: a Pydantic 422 renders ``detail`` as a
+    """No ``min_length`` on the password: a Pydantic 422 renders ``detail`` as a
     list, which the SPA cannot show, on the one screen nobody can skip.
-    :mod:`src.storage.accounts` holds the floor, and this route renders its
-    refusal as a 400.
     """
 
     username: AccountUsername
@@ -57,8 +52,6 @@ class SetupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Credentials for an existing account."""
-
     username: AccountUsername
     password: str = Field(..., max_length=1000)
 
@@ -75,11 +68,6 @@ class SessionResponse(BaseModel):
 
 @router.get("/session", response_model=SessionResponse)
 def read_session(request: Request, storage: RequiredStorage) -> SessionResponse:
-    """Report whether this instance is claimed, and who is signed in.
-
-    One call, because the three answers decide one thing between them: which
-    screen the SPA opens on.
-    """
     user = signed_in_user(request)
     return SessionResponse(
         claimed=storage.accounts.is_claimed(),
@@ -92,13 +80,6 @@ def read_session(request: Request, storage: RequiredStorage) -> SessionResponse:
 def claim_instance(
     body: SetupRequest, response: Response, storage: RequiredStorage
 ) -> UserResponse:
-    """Claim an unclaimed instance, and sign the claimant in.
-
-    Raises:
-        HTTPException: 409 once the account exists — the claim itself refuses a
-            second one too, so a request that raced past the check writes
-            nothing either — and 400 for a password under the floor.
-    """
     if storage.accounts.is_claimed():
         raise HTTPException(status_code=409, detail=_ALREADY_CLAIMED)
     try:
@@ -119,11 +100,6 @@ def claim_instance(
 def sign_in(
     body: LoginRequest, response: Response, storage: RequiredStorage
 ) -> UserResponse:
-    """Exchange a username and password for a session cookie.
-
-    Raises:
-        HTTPException: 401, naming neither half as the wrong one.
-    """
     user = storage.accounts.verify_password(body.username, body.password)
     if user is None:
         raise HTTPException(status_code=401, detail=_SIGN_IN_REFUSED)
@@ -134,9 +110,7 @@ def sign_in(
 
 @router.post("/logout", status_code=204)
 def sign_out(request: Request, response: Response, storage: RequiredStorage) -> None:
-    """End the session this request carries, in the database and the browser.
-
-    Open to a signed-out caller: with the cookie already expired there is
+    """Open to a signed-out caller: with the cookie already expired there is
     nothing to revoke, and a 401 would leave the browser holding it.
     """
     token = request.cookies.get(SESSION_COOKIE)

@@ -1,11 +1,3 @@
-"""Background sync job manager for data source synchronization.
-
-Manages sync jobs that run in background threads. Multiple jobs can run
-concurrently as long as each is keyed by a distinct ``source`` label;
-the manager rejects a duplicate start request for a source whose job is
-still running.
-"""
-
 import logging
 import threading
 from collections.abc import Callable
@@ -21,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class SyncStatus(str, Enum):
-    """Status of a sync job."""
-
     IDLE = "idle"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -37,8 +27,6 @@ class SyncError:
 
 @dataclass
 class _SourceProgress:
-    """Per-source progress slot for a multi-source sync job."""
-
     items_processed: int = 0
     total_items: int | None = None
     current_item: str | None = None
@@ -50,8 +38,6 @@ class _SourceProgress:
 
 @dataclass
 class SyncJob:
-    """Represents a sync job with its status and progress."""
-
     source: str
     status: SyncStatus = SyncStatus.IDLE
     started_at: datetime | None = None
@@ -59,7 +45,7 @@ class SyncJob:
     items_processed: int = 0
     total_items: int | None = None
     current_item: str | None = None
-    current_source: str | None = None  # Currently syncing source (for multi-source)
+    current_source: str | None = None
     error_message: str | None = None
     errors: list[SyncError] = field(default_factory=list)
     # Keyed by humanised source name so the UI can render one row per source.
@@ -114,13 +100,9 @@ class SyncJob:
 
 
 class SyncManager:
-    """Manages background sync jobs for data sources.
-
-    Multiple jobs can run at the same time as long as each is keyed by a
+    """Multiple jobs can run at the same time as long as each is keyed by a
     distinct ``source`` label. ``start_sync`` rejects a duplicate start
-    request for a source whose job is still in ``RUNNING`` state. Newer
-    completed/failed entries replace older ones for the same source so
-    ``get_status`` always reflects the latest result per source.
+    request for a source whose job is still in ``RUNNING`` state.
     """
 
     # Cap on retained completed/failed jobs. Running jobs are never
@@ -134,12 +116,6 @@ class SyncManager:
         self._jobs: dict[str, SyncJob] = {}
 
     def is_running(self, source: str | None = None) -> bool:
-        """Check whether a sync job is running.
-
-        Args:
-            source: When provided, check only the job for this source label.
-                When omitted, return ``True`` if any job is currently running.
-        """
         with self._lock:
             if source is not None:
                 job = self._jobs.get(source)
@@ -147,13 +123,10 @@ class SyncManager:
             return any(job.status == SyncStatus.RUNNING for job in self._jobs.values())
 
     def get_status(self) -> dict[str, Any]:
-        """Get the aggregate sync status across every tracked job."""
         # Compute the running flag inside the lock so a concurrent
         # ``_run_sync`` cannot transition a job between this snapshot and
         # the status decision and make the response say "idle" while a
-        # job is still RUNNING. ``to_dict`` runs outside the lock — it
-        # reads but does not mutate, and the brief drift between snapshot
-        # and serialisation is acceptable for a polling endpoint.
+        # job is still RUNNING.
         with self._lock:
             jobs = list(self._jobs.values())
             any_running = any(job.status == SyncStatus.RUNNING for job in jobs)
@@ -181,12 +154,9 @@ class SyncManager:
                 status=SyncStatus.RUNNING,
                 started_at=datetime.now(),
             )
-            # Eviction runs AFTER the new RUNNING job is inserted. The
-            # eviction filter excludes RUNNING jobs by status, so the
-            # freshly inserted entry cannot be the one removed even at
-            # cap. This ordering is load-bearing — moving the eviction
-            # call earlier or relaxing the RUNNING filter would risk
-            # evicting the job whose thread is about to read it.
+            # Eviction runs AFTER the new RUNNING job is inserted. The eviction
+            # filter excludes RUNNING jobs by status, so the freshly inserted entry
+            # cannot be the one removed even at cap.
             self._evict_history_locked()
 
         thread = threading.Thread(
@@ -199,10 +169,7 @@ class SyncManager:
         return None
 
     def _evict_history_locked(self) -> None:
-        """Drop the oldest non-running jobs once history exceeds the cap.
-
-        Caller must already hold ``self._lock``.
-        """
+        """Caller must already hold ``self._lock``."""
         terminal = [
             (label, job)
             for label, job in self._jobs.items()
@@ -223,7 +190,6 @@ class SyncManager:
         sync_function: Callable[[SyncJob], int],
         on_complete: Callable[[], None] | None = None,
     ) -> None:
-        """Run the sync function in a background thread for ``source``."""
         with self._lock:
             job = self._jobs.get(source)
         if job is None:
@@ -284,23 +250,6 @@ class SyncManager:
         current_item: str | None = None,
         current_source: str | None = None,
     ) -> None:
-        """Update progress on the job keyed by ``source``.
-
-        When ``current_source`` is provided, the per-source slot in the
-        job's ``source_progress`` map is updated and the top-level
-        ``items_processed`` / ``total_items`` are recomputed as the sum
-        across that job's sources. When ``current_source`` is not provided,
-        the top-level fields are written directly (legacy single-source
-        path).
-
-        Args:
-            source: The job key (matches the ``source`` passed to
-                ``start_sync``).
-            items_processed: Number of items processed so far.
-            total_items: Total number of items to process.
-            current_item: Name of the item currently being processed.
-            current_source: Name of the per-source slot within this job.
-        """
         with self._lock:
             job = self._jobs.get(source)
             if job is None:
@@ -351,9 +300,7 @@ class SyncManager:
         items_unchanged: int,
         omitted_errors: int,
     ) -> None:
-        """Record what one finished source did, on the job keyed by ``source``.
-
-        ``synced_source`` names the per-source slot, the same key
+        """``synced_source`` names the per-source slot, the same key
         ``update_progress`` writes progress into.
         """
         with self._lock:
@@ -367,9 +314,7 @@ class SyncManager:
             slot.omitted_errors = omitted_errors
 
     def add_error(self, source: str, failed_source: str, error: str) -> None:
-        """Append an error to the job keyed by ``source``.
-
-        ``failed_source`` names the source the message came from, which the UI
+        """``failed_source`` names the source the message came from, which the UI
         matches against its own rows to show it on the right one.
         """
         with self._lock:
@@ -378,23 +323,14 @@ class SyncManager:
                 job.errors.append(SyncError(source=failed_source, message=error))
 
 
-# Global sync manager instance
 _sync_manager: SyncManager | None = None
 
 # The lazy build below is a check-then-set, and both callers of it are plain
-# ``def`` handlers running in threadpool workers. Unserialised, two requests on
-# a cold process each build a manager of their own, and a job started through
-# one is invisible to ``GET /api/sync/status`` served off the other — sync
-# progress that never moves.
+# ``def`` handlers running in threadpool workers.
 _sync_manager_lock = threading.Lock()
 
 
 def get_sync_manager() -> SyncManager:
-    """Get the global sync manager instance.
-
-    Returns:
-        The global SyncManager instance.
-    """
     global _sync_manager
     with _sync_manager_lock:
         if _sync_manager is None:
@@ -403,9 +339,5 @@ def get_sync_manager() -> SyncManager:
 
 
 def reset_sync_manager() -> None:
-    """Reset the global sync manager instance.
-
-    This is primarily used for testing to ensure a clean state between tests.
-    """
     global _sync_manager
     _sync_manager = None

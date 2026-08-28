@@ -1,9 +1,3 @@
-"""Session-cookie authentication for the ``/api`` surface.
-
-Attached to the routers themselves rather than at ``include_router``, so a
-route is authenticated by being registered — a bare mount included.
-"""
-
 from __future__ import annotations
 
 from typing import Annotated, Any
@@ -32,7 +26,6 @@ _COOKIE_ATTRIBUTES: dict[str, Any] = {
 
 
 def set_session_cookie(response: Response, token: str) -> None:
-    """Put *token* in the browser's session cookie."""
     response.set_cookie(
         SESSION_COOKIE,
         token,
@@ -42,16 +35,13 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 
 def clear_session_cookie(response: Response) -> None:
-    """Drop the browser's session cookie.
-
-    The same attributes as the set: a clear differing in path or SameSite
+    """The same attributes as the set: a clear differing in path or SameSite
     leaves the original cookie in place, so signing out would appear to work.
     """
     response.delete_cookie(SESSION_COOKIE, **_COOKIE_ATTRIBUTES)
 
 
 def signed_in_user(request: Request) -> UserDict | None:
-    """Return the user *request*'s cookie names, or None for anyone else."""
     token = request.cookies.get(SESSION_COOKIE)
     storage = get_storage()
     if not token or storage is None:
@@ -60,9 +50,7 @@ def signed_in_user(request: Request) -> UserDict | None:
 
 
 def require_session(request: Request) -> UserDict:
-    """Answer 401 unless the request carries a live session cookie.
-
-    Storage is reached through ``src.web.state`` rather than declared as a
+    """Storage is reached through ``src.web.state`` rather than declared as a
     dependency, so a cookieless request is refused before any component
     resolves: an anonymous caller learns nothing about what is up.
     """

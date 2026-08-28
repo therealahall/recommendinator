@@ -1,5 +1,3 @@
-"""FastAPI application for web interface."""
-
 import logging
 import os
 import sys
@@ -59,11 +57,7 @@ def _quotable(value: float) -> float | str:
 async def _validation_refusal_json_can_carry(
     _request: Request, exc: Exception
 ) -> JSONResponse:
-    """Quote the rejected input back in a body ``json.dumps`` can write.
-
-    Only the non-finite float needs quoting: ``json.dumps`` has no
-    representation for it, while the response class encodes a lone surrogate.
-    """
+    """Quote the rejected input back in a body ``json.dumps`` can write."""
     # Starlette types every handler against bare Exception and dispatches this
     # one on the registered class alone.
     errors = cast(RequestValidationError, exc).errors()
@@ -74,9 +68,7 @@ async def _validation_refusal_json_can_carry(
 
 
 async def _raised_refusal_json_can_carry(_request: Request, exc: Exception) -> Response:
-    """Render the refusals an endpoint raises for itself.
-
-    FastAPI renders ``HTTPException`` on a stock ``JSONResponse``, which
+    """FastAPI renders ``HTTPException`` on a stock ``JSONResponse``, which
     ``default_response_class`` never reaches — so a detail quoting a rejected
     key back answered 500 when the key held a lone surrogate.
     """
@@ -103,7 +95,6 @@ class PrivateThemeFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage application lifecycle — config file watcher and sync scheduler."""
     if app_state.config_path:
         await app_state.config_watcher.start(Path(app_state.config_path))
     else:
@@ -118,14 +109,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(config_path: Path | None = None) -> FastAPI:
-    """Create and configure FastAPI application.
-
-    Args:
-        config_path: Optional path to configuration file
-
-    Returns:
-        Configured FastAPI application
-    """
     try:
         config = load_config(config_path)
     except FileNotFoundError as error:
@@ -135,12 +118,8 @@ def create_app(config_path: Path | None = None) -> FastAPI:
     # Resolved from raw YAML BEFORE the database overlay, so a legacy `web.debug`
     # row in the settings table cannot open /docs here while src/web/main.py
     # (which calls the same resolver) believes it is closed.
-    # warn=False: src/web/main.py resolves the same config a moment earlier and
-    # already logged anything unusable. Warning again here would print every
-    # bind diagnostic twice per launch, reading like two separate faults.
     debug_mode = resolve_bootstrap_web(config, warn=False).debug
 
-    # Initialize components
     try:
         # Storage must come first: the effective global settings (incl. logging
         # and CORS origins) are assembled from const/YAML/DB layers before
@@ -204,7 +183,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
         drop_sources_replaced_by_upload(storage)
 
-        # Store in app state
         app_state.config = config
         app_state.config_path = str(actual_config_path.resolve())
         app_state.storage = storage
@@ -213,15 +191,11 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         logger.error("Failed to initialize components: %s", exception_for_log(error))
         raise
 
-    # Configure web settings. Guarded independently of migrate_config_settings:
-    # a `web:` header with no children parses to None, and dict.get's default
-    # only fires on an ABSENT key. The overlay does heal a non-dict section, but
-    # relying on that is an undocumented cross-file ordering dependency, and this
-    # read sits outside the try/except.
+    # Guarded independently of migrate_config_settings: a `web:` header with no
+    # children parses to None, and dict.get's default only fires on an ABSENT key.
     raw_web_config = config.get("web")
     web_config = raw_web_config if isinstance(raw_web_config, dict) else {}
 
-    # Create FastAPI app (debug_mode was resolved pre-overlay, above)
     app = FastAPI(
         title="Recommendinator API",
         description="API for personalized content recommendations",
@@ -239,14 +213,13 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         default_response_class=SurrogateSafeJSONResponse,
     )
 
-    # Configure CORS (default to localhost only).
     # Type-guarded because config.yaml is unvalidated: a blank `allowed_origins:`
     # yields None and `"*" not in None` raises outside the try/except, killing
-    # boot with a bare traceback. Worse, a scalar string is passed straight to
-    # Starlette, whose check is `origin in self.allow_origins` — a SUBSTRING test
-    # on a string, so "https://app.example.co" would match a configured
-    # "https://app.example.com". The DB path is already list-validated.
+    # boot with a bare traceback.
     raw_origins = web_config.get("allowed_origins")
+    # A scalar string is passed straight to Starlette, whose check is `origin in
+    # self.allow_origins` — a SUBSTRING test on a string, so "https://app.example.co"
+    # would match a configured "https://app.example.com".
     if isinstance(raw_origins, list) and all(
         isinstance(origin, str) for origin in raw_origins
     ):
@@ -272,7 +245,6 @@ def create_app(config_path: Path | None = None) -> FastAPI:
         allow_headers=["Content-Type", "Accept"],
     )
 
-    # Security headers middleware
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(
             self, request: Request, call_next: RequestResponseEndpoint
@@ -323,8 +295,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     # The session dependency rides on the routers themselves (see
     # src/web/auth.py). Nothing under /api is exempt but the four /api/auth
-    # routes — including /api/status, whose component report is a free
-    # fingerprint.
+    # routes — including /api/status, whose component report is a free fingerprint.
     app.include_router(api_router)
     app.include_router(auth_router)
 
@@ -343,10 +314,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> HTMLResponse:
-        """Serve the Vue SPA, with the stored theme already linked in it.
-
-        Vite content-hashes its filenames, so no manual cache-busting is needed.
-        """
+        """Vite content-hashes its filenames, so no manual cache-busting is needed."""
         if dist_index.exists():
             # Vite writes UTF-8 and the response declares it; reading it in the
             # locale's encoding answered 500 on the first accented byte.
@@ -371,13 +339,6 @@ def get_app() -> FastAPI:
 
 
 def __getattr__(name: str) -> FastAPI:
-    """Lazy module-level attribute for uvicorn import string support.
-
-    Defers ``get_app()`` until ``app`` is actually accessed (e.g. by
-    ``uvicorn src.web.app:app``) rather than running it at import time.
-    This prevents test-collection imports from triggering production
-    logging and full app initialisation as a side effect.
-    """
     if name == "app":
         return get_app()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,5 +1,3 @@
-"""REST API endpoints."""
-
 import logging
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -201,7 +199,7 @@ router = APIRouter(
 
 def _blank_rejector(field: str) -> Callable[[str], str]:
     """The lower bound refuses ``""``; spaces are the same claim, unsayable in
-    a schema. The CLI splits it the same way, around the same ``is_blank``."""
+    a schema."""
 
     def reject(value: str) -> str:
         if is_blank(value):
@@ -231,9 +229,7 @@ CorrectedCreator = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 def _account_name_validator(required: bool) -> Callable[[str], str]:
-    """Build one account-name field's check, over the storage door's own rule.
-
-    No ``Field(max_length=...)`` beside it: Pydantic runs that before any
+    """No ``Field(max_length=...)`` beside it: Pydantic runs that before any
     ``AfterValidator``, so it measured the padding the trim removes and the
     web refused a name ``account set-name`` stored.
     """
@@ -255,11 +251,8 @@ AccountDisplayName = Annotated[str, AfterValidator(_account_name_validator(False
 
 
 def _member_validator(noun: str, allowed: Iterable[str]) -> Callable[[str], str]:
-    """Build the membership check for one closed set of preference keys.
-
-    The CLI spells each as a Click choice. A name outside the set weights
-    nothing and sits in ``users.settings`` for every later read to parse.
-    """
+    """A name outside the set weights nothing and sits in ``users.settings`` for
+    every later read to parse."""
     permitted = sorted(allowed)
 
     def reject(value: str) -> str:
@@ -312,9 +305,7 @@ _WRONG_CURRENT_PASSWORD = "Your current password is not correct."
 
 
 def _refuse_another_account(user_id: int, user: UserDict) -> None:
-    """Answer 403 when *user_id* is not the signed-in account.
-
-    A 404 would say which ids exist, and this is the shape a Users page needs
+    """A 404 would say which ids exist, and this is the shape a Users page needs
     anyway: an admin distinction is a change here, not a new route.
     """
     if user_id != user["id"]:
@@ -323,10 +314,7 @@ def _refuse_another_account(user_id: int, user: UserDict) -> None:
         )
 
 
-# Request/Response models
 class CompletionRequest(BaseModel):
-    """Request model for marking content as completed."""
-
     content_type: str = Field(
         ..., description="Content type (book, movie, tv_show, video_game)"
     )
@@ -346,8 +334,6 @@ class CompletionResponse(BaseModel):
 
 
 class UpdateRequest(BaseModel):
-    """Request model for updating data."""
-
     source: str = Field(
         ...,
         description=(
@@ -367,29 +353,20 @@ class UpdateRequest(BaseModel):
 
 
 class PluginImportErrorResponse(BaseModel):
-    """A plugin module that did not load, and the exception that lost it."""
-
     module: str
     reason: str
 
 
 class PluginNotLoadedResponse(BaseModel):
-    """The plugin a source asks for, and every module that failed to import.
-
-    ``failures`` is the whole pass: none of them can be tied to ``plugin``.
-    """
+    """``failures`` is the whole pass: none of them can be tied to ``plugin``."""
 
     plugin: str
     failures: list[PluginImportErrorResponse]
 
 
 class SyncSourceResponse(BaseModel):
-    """Response model for a sync source.
-
-    ``plugin_not_loaded`` is set when the source's plugin is missing; it is
-    listed anyway, and still cannot sync. ``sync_interval`` is resolved, so a
-    client never has to know the plugin's default to render the cadence.
-    """
+    """``sync_interval`` is resolved, so a client never has to know the plugin's
+    default to render the cadence."""
 
     id: str
     display_name: str
@@ -403,8 +380,6 @@ class SyncSourceResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Response model for user listing."""
-
     id: int
     username: str
     display_name: str | None
@@ -414,9 +389,7 @@ class UserResponse(BaseModel):
 
 
 def as_user_response(storage: StorageManager, user: UserDict) -> UserResponse:
-    """Render *user* as the account both interfaces report.
-
-    The stamp is fetched rather than read off *user*: no other reader of a
+    """The stamp is fetched rather than read off *user*: no other reader of a
     ``users`` row wants a credential column beside it.
     """
     account = storage.accounts.describe(user["id"])
@@ -429,16 +402,12 @@ def as_user_response(storage: StorageManager, user: UserDict) -> UserResponse:
 
 
 class UserUpdateRequest(BaseModel):
-    """Rename request for an account."""
-
     username: AccountUsername
     display_name: AccountDisplayName = ""
 
 
 class PasswordChangeRequest(BaseModel):
-    """A password change, which costs the current password.
-
-    The session alone must not be enough, or a borrowed unlocked browser is a
+    """The session alone must not be enough, or a borrowed unlocked browser is a
     permanent takeover.
     """
 
@@ -449,8 +418,6 @@ class PasswordChangeRequest(BaseModel):
 
 
 class ContentItemResponse(BaseModel):
-    """Response model for content item listing."""
-
     # Which source contributed which id, one entry per source that named it.
     external_ids: list[ExternalId] = Field(default_factory=list)
     db_id: int | None = None  # Database ID for actions like ignore
@@ -476,13 +443,6 @@ class ContentItemResponse(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
-    """Response model for recommendations.
-
-    The fields are declared in the order
-    :class:`src.recommendations.record.RecommendationPayload` builds them, and
-    every one of them is validated from that mapping.
-    """
-
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None
@@ -497,8 +457,6 @@ class RecommendationResponse(BaseModel):
 
 
 class ProfileResponse(BaseModel):
-    """Response model for a user's preference profile."""
-
     user_id: int
     genre_affinities: dict[str, float]
     theme_preferences: list[str]
@@ -508,18 +466,13 @@ class ProfileResponse(BaseModel):
 
 
 class RecommendationsConfig(BaseModel):
-    """Recommendations configuration exposed to the frontend.
-
-    Defaults mirror config/example.yaml recommendations section.
-    """
+    """Defaults mirror config/example.yaml recommendations section."""
 
     max_count: int = 20
     default_count: int = 5
 
 
 class StatusResponse(BaseModel):
-    """Response model for system status."""
-
     status: str
     version: str
     components: dict[str, bool]
@@ -530,9 +483,7 @@ class StatusResponse(BaseModel):
 
 
 class UserPreferenceResponse(BaseModel):
-    """Response model for user preferences.
-
-    ``scorer_weights`` needs no bound of its own: ``from_dict`` drops the
+    """``scorer_weights`` needs no bound of its own: ``from_dict`` drops the
     non-finite ones on read, and a second refusal here would answer a bare
     ``ValidationError`` rather than anything an operator can act on.
     """
@@ -547,8 +498,6 @@ class UserPreferenceResponse(BaseModel):
 
 
 class SyncSourceProgressResponse(BaseModel):
-    """Per-source progress slot for a multi-source sync job."""
-
     source: str
     items_processed: int
     total_items: int | None
@@ -568,8 +517,6 @@ class SyncErrorResponse(BaseModel):
 
 
 class SyncJobResponse(BaseModel):
-    """Response model for sync job status."""
-
     source: str
     status: str
     started_at: str | None
@@ -588,15 +535,11 @@ class SyncJobResponse(BaseModel):
 
 
 class SyncStatusResponse(BaseModel):
-    """Response model for the aggregate sync status across every job."""
-
     status: str
     jobs: list[SyncJobResponse] = []
 
 
 class SyncRunResponse(BaseModel):
-    """One finished sync run, as the history endpoint reports it."""
-
     source_id: str
     started_at: str
     finished_at: str
@@ -610,12 +553,7 @@ class SyncRunResponse(BaseModel):
 
 
 class UserPreferenceUpdateRequest(BaseModel):
-    """Request model for updating user preferences (partial merge).
-
-    The merge is additive, so the key set is what bounds the stored blob.
-    Both dicts are keyed on a closed one; ``custom_rules`` is free text and
-    carries a count.
-    """
+    """The merge is additive, so the key set is what bounds the stored blob."""
 
     scorer_weights: dict[ScorerName, PreferenceWeight] | None = None
     series_in_order: bool | None = None
@@ -631,8 +569,6 @@ class UserPreferenceUpdateRequest(BaseModel):
 
 
 class IgnoreItemRequest(BaseModel):
-    """Request model for setting item ignored status."""
-
     ignored: bool = Field(..., description="Whether to ignore the item")
 
 
@@ -644,15 +580,9 @@ class IgnoreItemResponse(BaseModel):
 
 
 class ItemEditRequest(BaseModel):
-    """Request model for editing a content item from the UI.
-
-    Every field distinguishes omitted from supplied: an absent one leaves the
+    """Every field distinguishes omitted from supplied: an absent one leaves the
     stored value alone, and a null clears ``rating`` or ``review``. A null
-    ``status`` is refused instead. See ``edit_item``.
-
-    The fields the edit dialog can overrun — review, creator, release year —
-    carry no bound here: ``edit_item`` refuses them with a sentence the dialog
-    can show, where a constraint would answer an unreadable 422.
+    ``status`` is refused instead.
     """
 
     status: str | None = Field(None, description="Status value")
@@ -687,8 +617,6 @@ class ItemEditRequest(BaseModel):
 
 
 class EnrichmentStartRequest(BaseModel):
-    """Request model for starting enrichment."""
-
     content_type: str | None = Field(
         None, description="Content type filter (book, movie, tv_show, video_game)"
     )
@@ -699,8 +627,6 @@ class EnrichmentStartRequest(BaseModel):
 
 
 class EnrichmentResetRequest(BaseModel):
-    """Request model for resetting enrichment status."""
-
     provider: str | None = Field(
         None,
         description="Reset items enriched by this provider (tmdb, openlibrary, rawg)",
@@ -715,8 +641,6 @@ class EnrichmentResetRequest(BaseModel):
 
 
 class GogExchangeRequest(BaseModel):
-    """Request model for GOG token exchange."""
-
     code_or_url: str = Field(
         ...,
         max_length=2000,
@@ -725,8 +649,6 @@ class GogExchangeRequest(BaseModel):
 
 
 class EpicExchangeRequest(BaseModel):
-    """Request model for Epic Games token exchange."""
-
     code_or_json: str = Field(
         ...,
         max_length=4000,
@@ -735,8 +657,6 @@ class EpicExchangeRequest(BaseModel):
 
 
 class TraktPollRequest(BaseModel):
-    """Request model for one Trakt device-approval poll."""
-
     device_code: str = Field(
         ...,
         min_length=10,
@@ -746,8 +666,6 @@ class TraktPollRequest(BaseModel):
 
 
 class EnrichmentJobStatusResponse(BaseModel):
-    """Response model for enrichment job status."""
-
     running: bool = False
     completed: bool = False
     cancelled: bool = False
@@ -764,8 +682,6 @@ class EnrichmentJobStatusResponse(BaseModel):
 
 
 class EnrichmentStatsResponse(BaseModel):
-    """Response model for enrichment statistics."""
-
     enabled: bool = False
     total: int = 0
     resettable: int = 0
@@ -784,14 +700,10 @@ class ThemePreferenceResponse(BaseModel):
 
 
 class ThemePreferenceRequest(BaseModel):
-    """Request model for picking a user's theme."""
-
     theme: ThemeId
 
 
 class SourceFieldSchema(BaseModel):
-    """One field in a source plugin's config schema."""
-
     name: str
     field_type: str
     required: bool
@@ -801,15 +713,11 @@ class SourceFieldSchema(BaseModel):
 
 
 class SyncIntervalOption(BaseModel):
-    """One cadence preset the client offers, key and its label."""
-
     key: str
     label: str
 
 
 class SourceSchemaResponse(BaseModel):
-    """Plugin config schema for a single source (drives autogen UI/CLI)."""
-
     source_id: str
     plugin: str
     plugin_display_name: str
@@ -832,32 +740,22 @@ class SourceConfigResponse(BaseModel):
 
 
 class SourceConfigUpdateRequest(BaseModel):
-    """Bulk update of non-sensitive fields for a migrated source."""
-
     values: dict[str, Any]
 
 
 class SourceSecretUpdateRequest(BaseModel):
-    """Set or rotate a single sensitive field."""
-
     value: str
 
 
 class SourceEnabledUpdateRequest(BaseModel):
-    """Toggle the enabled flag for a migrated source."""
-
     enabled: bool
 
 
 class SourceScheduleUpdateRequest(BaseModel):
-    """Set the sync cadence for a migrated source."""
-
     interval: str
 
 
 class SourceMigrationResponse(BaseModel):
-    """Result of migrating a YAML source entry into the database."""
-
     source_id: str
     migrated_at: str
     fields_migrated: list[str] = Field(
@@ -873,8 +771,6 @@ class SourceMigrationResponse(BaseModel):
 
 
 class PluginInfoResponse(BaseModel):
-    """One installed source plugin's metadata for the Add-Source picker."""
-
     name: str
     display_name: str
     description: str
@@ -885,15 +781,11 @@ class PluginInfoResponse(BaseModel):
 
 
 class PluginListResponse(BaseModel):
-    """Every installed plugin, and every module that failed to become one."""
-
     plugins: list[PluginInfoResponse]
     import_errors: list[PluginImportErrorResponse]
 
 
 class SourceCreateRequest(BaseModel):
-    """Body for ``POST /api/sync/sources`` — create a new DB-backed source."""
-
     id: str = Field(..., max_length=64)
     plugin: str = Field(..., max_length=128)
     values: dict[str, Any] = Field(default_factory=dict)
@@ -901,10 +793,7 @@ class SourceCreateRequest(BaseModel):
 
 
 class ImporterResponse(BaseModel):
-    """One import format, for the upload panel's picker.
-
-    ``import-formats`` emits this key set field for field.
-    """
+    """``import-formats`` emits this key set field for field."""
 
     name: str
     display_name: str
@@ -914,10 +803,7 @@ class ImporterResponse(BaseModel):
 
 
 class ImportTemplateResponse(BaseModel):
-    """One blank file the operator can fill in and upload back.
-
-    ``import-template`` emits this key set field for field.
-    """
+    """``import-template`` emits this key set field for field."""
 
     importer: str
     content_type: str
@@ -925,10 +811,7 @@ class ImportTemplateResponse(BaseModel):
 
 
 class ImportResponse(BaseModel):
-    """What one upload did: five counts, capped per-row misses with a tally,
-    and file-level notes.
-
-    The ``import`` command's ``--format json`` emits this key set field for
+    """The ``import`` command's ``--format json`` emits this key set field for
     field, so neither interface may add, drop or rename one alone.
     """
 
@@ -946,8 +829,6 @@ class ImportResponse(BaseModel):
 
 
 class SettingValidationView(BaseModel):
-    """Validation constraints for a setting (any field may be null)."""
-
     min: float | None = None
     max: float | None = None
     max_length: int | None = None
@@ -955,9 +836,7 @@ class SettingValidationView(BaseModel):
 
 
 class SettingView(BaseModel):
-    """One global setting's metadata plus its value/secret state.
-
-    ``value`` and ``db_overridden`` are present only for non-sensitive
+    """``value`` and ``db_overridden`` are present only for non-sensitive
     settings; ``has_secret`` is present only for sensitive ones. The omitted
     fields are dropped from the response via ``response_model_exclude_unset``.
     """
@@ -979,27 +858,19 @@ class SettingView(BaseModel):
 
 
 class SettingsSection(BaseModel):
-    """A group of settings sharing a top-level section."""
-
     section: str
     settings: list[SettingView]
 
 
 class SettingsResponse(BaseModel):
-    """Every in-scope setting grouped by section."""
-
     sections: list[SettingsSection]
 
 
 class SettingsUpdateRequest(BaseModel):
-    """Bulk update of non-sensitive settings (validated all-or-nothing)."""
-
     updates: dict[str, Any]
 
 
 class SettingSecretRequest(BaseModel):
-    """Set or rotate a single sensitive setting's value."""
-
     key: str
     value: str
 
@@ -1063,10 +934,6 @@ class DeclineDuplicateRequest(BaseModel):
 
 
 def _get_recommendations_config(config: dict[str, Any] | None) -> RecommendationsConfig:
-    """Extract recommendations config from the loaded config dict.
-
-    Falls back to model defaults when the config or section is absent.
-    """
     rec_section = config.get("recommendations", {}) if config else {}
     return RecommendationsConfig(
         **{
@@ -1086,20 +953,9 @@ def get_recommendations(
     count: int = Query(5, ge=1, description="Number of recommendations"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
 ) -> list[RecommendationResponse]:
-    """Get personalized recommendations.
-
-    Args:
-        type: Content type
-        count: Number of recommendations
-        user_id: User ID for loading per-user preferences
-
-    Returns:
-        List of recommendations
-    """
     storage = get_storage()
     config = get_config()
 
-    # Validate count against config-driven max_count (may be tighter than hard limit)
     max_count = _get_recommendations_config(config).max_count
     if count > max_count:
         raise HTTPException(
@@ -1116,7 +972,6 @@ def get_recommendations(
         ) from None
 
     try:
-        # Load user preferences if storage is available
         user_preference_config: UserPreferenceConfig | None = None
         if storage:
             user_preference_config = storage.get_user_preference_config(user_id)
@@ -1142,11 +997,6 @@ def get_recommendations(
 
 @router.get("/users", response_model=list[UserResponse])
 def list_users(storage: RequiredStorage) -> list[UserResponse]:
-    """List all users.
-
-    Returns:
-        List of users.
-    """
     return [as_user_response(storage, user) for user in storage.get_all_users()]
 
 
@@ -1157,14 +1007,6 @@ def rename_account(
     storage: RequiredStorage,
     user: CurrentUser,
 ) -> UserResponse:
-    """Change an account's username and display name.
-
-    Returns:
-        The renamed account.
-
-    Raises:
-        HTTPException: 403 for anybody else's account, 404 when it is gone.
-    """
     _refuse_another_account(user_id, user)
     try:
         renamed = storage.update_user_identity(
@@ -1183,12 +1025,7 @@ def change_password(
     storage: RequiredStorage,
     user: CurrentUser,
 ) -> None:
-    """Replace an account's password, signing every other browser out.
-
-    Raises:
-        HTTPException: 403 for anybody else's account, 401 when the current
-            password is wrong, 400 when the new one is under the floor.
-    """
+    """Replace an account's password, signing every other browser out."""
     _refuse_another_account(user_id, user)
     if (
         storage.accounts.verify_password(user["username"], request.current_password)
@@ -1208,7 +1045,6 @@ def change_password(
 
 
 def _item_to_response(item: "ContentItem") -> ContentItemResponse:
-    """Convert a ContentItem to a ContentItemResponse via the shared dict."""
     return ContentItemResponse.model_validate(item_to_dict(item))
 
 
@@ -1269,24 +1105,6 @@ def list_items(
         description="Only return completed items that have no rating yet",
     ),
 ) -> list[ContentItemResponse]:
-    """List content items with optional filters.
-
-    Args:
-        type: Optional content type filter.
-        status: Optional consumption status filter.
-        user_id: User ID to filter by.
-        limit: Maximum number of results per page.
-        offset: Number of items to skip (for pagination).
-        sort_by: Sort order (default: title, which ignores leading articles).
-        include_ignored: Whether to include ignored items (default: False).
-        enrichment: Optional enrichment-state filter (enriched/not_enriched).
-        search: Optional search term matched against title, creator and series.
-        needs_rating: When True, return only completed items with no rating.
-            Forces status to completed (overriding any status param).
-
-    Returns:
-        List of content items.
-    """
     content_type = None
     if type is not None:
         try:
@@ -1307,7 +1125,6 @@ def list_items(
                 detail="Invalid status. Valid options: unread, currently_consuming, completed",
             ) from None
 
-    # Validate sort_by parameter
     if sort_by.lower() not in VALID_SORT_OPTIONS:
         raise HTTPException(
             status_code=400,
@@ -1344,16 +1161,6 @@ def export_items(
     format: str = Query("csv", description="Export format: csv or json"),
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> Response:
-    """Export library items as CSV or JSON file download.
-
-    Args:
-        type: Content type to export, or None for the whole library
-        format: Export format (csv or json)
-        user_id: User ID for filtering items
-
-    Returns:
-        File download response
-    """
     content_type: ContentType | None = None
     if type is not None:
         try:
@@ -1435,10 +1242,7 @@ def download_import_template(
         ..., description="Content type (book, movie, tv_show, video_game)"
     ),
 ) -> Response:
-    """Serve one template as a download, byte for byte as it ships.
-
-    Both parameters are looked up as dictionary keys, never joined onto a path.
-    """
+    """Both parameters are looked up as dictionary keys, never joined onto a path."""
     try:
         template = find_template(importer, content_type)
     except TemplatesUnavailable as error:
@@ -1469,9 +1273,7 @@ def import_upload(
     importer: Annotated[str, Form(description="Import format name")],
     content_type: Annotated[str | None, Form()] = None,
 ) -> ImportResponse:
-    """Import an uploaded export in one shot.
-
-    No source, no cadence, no sync run, and no importer opens a path. Starlette
+    """No source, no cadence, no sync run, and no importer opens a path. Starlette
     spools a part over ``spool_max_size`` into the temp directory, unnamed and
     gone when the form closes.
     """
@@ -1533,19 +1335,7 @@ def set_item_ignored(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> IgnoreItemResponse:
-    """Set the ignored status of a content item.
-
-    Ignored items are excluded from recommendations.
-
-    Args:
-        db_id: Database ID of the item
-        request: Request with ignored status
-        user_id: User ID for authorization
-
-    Returns:
-        Updated item info
-    """
-    # Verify item exists and belongs to user
+    """Ignored items are excluded from recommendations."""
     item = storage.get_content_item(db_id, user_id=user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1565,15 +1355,6 @@ def get_single_item(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
-    """Get a single content item by database ID.
-
-    Args:
-        db_id: Database ID of the item.
-        user_id: User ID for authorization.
-
-    Returns:
-        Content item details.
-    """
     item = storage.get_content_item(db_id, user_id=user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1610,12 +1391,6 @@ def edit_item(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for authorization"),
 ) -> ContentItemResponse:
-    """Edit a content item from the UI.
-
-    Only the fields the body carries are written: omitting ``rating`` or
-    ``review`` leaves it alone, a null clears it, and an emptied
-    ``description``, ``genres`` or ``tags`` clears that.
-    """
     supplied = request.model_fields_set
     status: str | Unset = UNSET
     if "status" in supplied:
@@ -1649,7 +1424,6 @@ def edit_item(
     if not success:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    # Fetch and return the updated item
     updated_item = storage.get_content_item(db_id, user_id=user_id)
     if not updated_item:
         raise HTTPException(status_code=404, detail="Item not found after update")
@@ -1669,7 +1443,6 @@ def list_duplicates(
         description="Maximum works to offer",
     ),
 ) -> DuplicateSuggestionPageResponse:
-    """List each work's suspected copies, with the evidence that grouped them."""
     page = storage.list_duplicate_suggestions(
         user_id=user_id, content_type=_duplicate_type(type), limit=limit
     )
@@ -1694,7 +1467,6 @@ def decline_duplicate_pair(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> list[DeclinedPairResponse]:
-    """Keep one copy off the list for good, against every copy named."""
     pairs = storage.decline_duplicate_suggestion(
         request.one_id, request.other_ids, user_id=user_id
     )
@@ -1715,7 +1487,6 @@ def undecline_duplicate_pair(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> DeclinedPairResponse:
-    """Offer a refused pair again."""
     try:
         pair = storage.undecline_duplicate_suggestion(one_id, other_id, user_id=user_id)
     except MergeError as error:
@@ -1746,7 +1517,6 @@ def merge_items(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> MergeResponse:
-    """Merge one item into another, keeping ``survivor_id``."""
     try:
         record = storage.merge_content_items(
             request.survivor_id,
@@ -1765,7 +1535,6 @@ def unmerge_items(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID"),
 ) -> MergeResponse:
-    """Undo one merge, putting the absorbed item back."""
     try:
         record = storage.unmerge_content_items(merge_id, user_id=user_id)
     except MergeError as error:
@@ -1779,14 +1548,6 @@ def unmerge_items(
 def get_user_preferences(
     user_id: UserIdPath, storage: RequiredStorage
 ) -> UserPreferenceResponse:
-    """Get user preference configuration.
-
-    Args:
-        user_id: User ID.
-
-    Returns:
-        User preference configuration.
-    """
     preference_config = storage.get_user_preference_config(user_id)
     return UserPreferenceResponse(**preference_config.to_dict())
 
@@ -1797,19 +1558,6 @@ def update_user_preferences(
     request: UserPreferenceUpdateRequest,
     storage: RequiredStorage,
 ) -> UserPreferenceResponse:
-    """Update user preference configuration (partial merge).
-
-    Only fields present in the request body are updated; omitted fields
-    retain their current values.
-
-    Args:
-        user_id: User ID.
-        request: Partial preference update.
-
-    Returns:
-        Updated user preference configuration.
-    """
-
     # Storage does the read, this merge and the write as one locked operation:
     # two of these requests otherwise both read the old ``users.settings`` blob
     # and the later write discards the earlier one.
@@ -1842,14 +1590,6 @@ def update_user_preferences(
 def reset_user_preferences(
     user_id: UserIdPath, storage: RequiredStorage
 ) -> UserPreferenceResponse:
-    """Reset every preference to its default, as ``preferences reset`` does.
-
-    Returns:
-        The defaults now stored, so the caller need not read them back.
-
-    Raises:
-        HTTPException: 404 when nobody carries *user_id*.
-    """
     defaults = UserPreferenceConfig()
     try:
         storage.save_user_preference_config(user_id, defaults)
@@ -1862,20 +1602,6 @@ def reset_user_preferences(
 def mark_complete(
     request: CompletionRequest, storage: RequiredStorage
 ) -> CompletionResponse:
-    """Mark content as completed.
-
-    A blank ``review`` is rejected rather than stored, as it is on the edit
-    endpoint and on ``complete --review``: this is an overwriting door, so a
-    blank accepted here would replace a review the user wrote. Unlike the edit
-    endpoint, a null cannot clear one: it is indistinguishable from omitting
-    the field, and either way the stored review is left alone.
-
-    Args:
-        request: Completion request
-
-    Returns:
-        Success message
-    """
     try:
         content_type = ContentType.from_string(request.content_type)
     except ValueError:
@@ -1910,17 +1636,8 @@ def mark_complete(
 def update_data(
     request: UpdateRequest, storage: RequiredStorage, config: RequiredConfig
 ) -> dict[str, Any]:
-    """Start a background sync job for the specified data source.
-
-    The sync runs in the background. Use GET /sync/status to monitor progress.
-    Different sources can sync concurrently; a duplicate of a running label,
+    """Different sources can sync concurrently; a duplicate of a running label,
     or anything overlapping the all-sources run, is rejected with 409.
-
-    Args:
-        request: Update request specifying the source to sync.
-
-    Returns:
-        Message indicating sync was started or error if already running.
     """
     sync_manager = get_sync_manager()
     source = request.source
@@ -1930,10 +1647,10 @@ def update_data(
     # Two POSTs racing on the same label both pass any pre-check here, so that
     # duplicate is left to ``start_sync``'s atomic check-and-set below.
 
-    # Resolve which sources to sync. ``resolve_inputs`` is the single source
-    # of truth: it merges YAML ``inputs`` with DB-backed ``source_configs``,
-    # injects ``_source_id``, and layers decrypted credentials — so it covers
-    # sources created via the Add-source modal that live only in the database.
+    # ``resolve_inputs`` is the single source of truth: it merges YAML ``inputs`` with
+    # DB-backed ``source_configs``, injects ``_source_id``, and layers decrypted
+    # credentials — so it covers sources created via the Add-source modal that live
+    # only in the database.
     if source == "all":
         # Overlapping whatever single run is already going would fetch and save
         # that source twice.
@@ -1943,7 +1660,6 @@ def update_data(
     else:
         if sync_manager.is_running(ALL_SOURCES_KEY):
             raise HTTPException(status_code=409, detail="A sync is already in progress")
-        # Single source: select the enabled, resolved entry matching ``source``.
         # Filtering the resolved list (not the YAML ``inputs`` map) is what lets
         # a DB-only source sync — and a disabled/unknown source yields no entry.
         resolved = [
@@ -2039,11 +1755,6 @@ def update_data(
 
 @router.get("/status", response_model=StatusResponse)
 def get_status() -> StatusResponse:
-    """Get system status.
-
-    Returns:
-        System status information
-    """
     engine = get_engine()
     storage = get_storage()
     config = get_config()
@@ -2066,13 +1777,6 @@ def get_status() -> StatusResponse:
 
 @router.post("/config/reload")
 def reload_config_endpoint() -> dict[str, Any]:
-    """Reload configuration from disk.
-
-    Useful for picking up config changes without restarting the server.
-
-    Returns:
-        Success status.
-    """
     success = reload_config()
     if success:
         return {"success": True, "message": "Configuration reloaded successfully"}
@@ -2084,13 +1788,8 @@ def reload_config_endpoint() -> dict[str, Any]:
 def get_sync_sources(
     config: RequiredConfig, storage: RequiredStorage
 ) -> list[SyncSourceResponse]:
-    """Get list of available sync sources from config and the database.
-
-    Both components are guarded because the answer is assembled from both, and
-    a missing half read as a wrong library rather than an outage: without
-    config this returned 200 and an empty list, and without storage a list that
-    drops DB-only sources and reports every migrated one off its stale YAML
-    row rather than the authoritative DB values.
+    """Both components are guarded because the answer is assembled from both, and
+    a missing half read as a wrong library rather than an outage.
     """
     sources = get_available_sync_sources(config, storage=storage)
     return [
@@ -2139,7 +1838,6 @@ def get_sync_runs(
 
 @router.get("/plugins", response_model=PluginListResponse)
 def list_plugins() -> PluginListResponse:
-    """List every registered source plugin (for the Add-Source picker)."""
     return PluginListResponse(**build_plugins_view())
 
 
@@ -2153,17 +1851,9 @@ def create_source_endpoint(
     storage: RequiredStorage,
     config: RequiredConfig,
 ) -> SourceConfigResponse:
-    """Create a new DB-backed source.
-
-    Sensitive fields must be set via ``PUT /secret/{key}`` *after* this
+    """Sensitive fields must be set via ``PUT /secret/{key}`` *after* this
     call returns; the create path rejects them in the body to keep the
     sensitive-write surface narrow.
-
-    Config is guarded because the answer is assembled from both halves, as it
-    is on every other route that reads them: the id is refused when YAML
-    already holds it. Unguarded, config being unreadable was indistinguishable
-    from there being no YAML entry, so an outage turned a 409 into a DB source
-    shadowing the YAML one — a write, and one the caller cannot see is wrong.
     """
     try:
         view = create_source(
@@ -2183,9 +1873,7 @@ def create_source_endpoint(
 def delete_source_endpoint(
     source_id: str, storage: RequiredStorage, config: RequiredConfig
 ) -> Response:
-    """Drop a DB-backed source and clear its credentials.
-
-    Config is guarded because clearing a credential stranded under the plugin
+    """Config is guarded because clearing a credential stranded under the plugin
     name reads both halves of the source list: unread, a YAML source still on
     that plugin is indistinguishable from none.
     """
@@ -2236,11 +1924,7 @@ def require_plugin(
     """Resolve a source id to its plugin, or 404 if no source carries that id.
 
     Both halves are guarded before the lookup because either one missing runs
-    the resolution off the other alone: with storage down a source that exists
-    only in the database (created through POST /sync/sources, which rejects ids
-    YAML already holds) reads as "not found", and with config down a source
-    that exists only in YAML does — while every write on those same sources
-    answers 503. One server state, one answer.
+    the resolution off the other alone.
     """
     plugin = resolve_source_plugin(source_id, config, storage)
     if plugin is None:
@@ -2278,7 +1962,6 @@ def _config_error_to_http(error: SourceConfigError) -> HTTPException:
 
 @router.get("/sync/sources/{source_id}/schema", response_model=SourceSchemaResponse)
 def get_source_schema(source_id: str, plugin: ResolvedPlugin) -> SourceSchemaResponse:
-    """Return the plugin config schema for a source (drives autogen forms)."""
     return SourceSchemaResponse(**build_schema_view(source_id, plugin))
 
 
@@ -2314,7 +1997,6 @@ def update_source_config_endpoint(
     config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
-    """Update non-sensitive fields on a migrated source."""
     try:
         update_source_config_values(source_id, plugin, storage, payload.values)
     except SourceConfigError as error:
@@ -2330,7 +2012,6 @@ def set_source_secret_endpoint(
     plugin: ResolvedPlugin,
     storage: RequiredStorage,
 ) -> Response:
-    """Encrypt and store a sensitive field for a source."""
     try:
         set_source_secret_value(source_id, plugin, storage, key, payload.value)
     except SourceConfigError as error:
@@ -2345,7 +2026,6 @@ def clear_source_secret_endpoint(
     plugin: ResolvedPlugin,
     storage: RequiredStorage,
 ) -> Response:
-    """Delete a sensitive field's stored value for a source."""
     try:
         clear_source_secret_value(source_id, plugin, storage, key)
     except SourceConfigError as error:
@@ -2361,7 +2041,6 @@ def set_source_enabled_endpoint(
     config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
-    """Toggle the enabled flag on a migrated source."""
     try:
         set_source_enabled_state(source_id, storage, payload.enabled)
     except SourceConfigError as error:
@@ -2377,7 +2056,6 @@ def set_source_schedule_endpoint(
     config: RequiredConfig,
     storage: RequiredStorage,
 ) -> SourceConfigResponse:
-    """Set the sync cadence on a migrated source."""
     if payload.interval not in SYNC_INTERVAL_KEYS:
         raise HTTPException(
             status_code=400,
@@ -2414,19 +2092,9 @@ def get_settings(config: RequiredConfig, storage: RequiredStorage) -> SettingsRe
 def update_settings(
     request: SettingsUpdateRequest, storage: RequiredStorage
 ) -> SettingsResponse:
-    """Validate and apply a batch of non-sensitive setting updates.
-
-    Validation is all-or-nothing: an invalid key or value returns 422 (with the
-    offending key + reason) and nothing is written. Non-restart settings are
-    live-applied to the running config; restart-required settings persist and
-    apply on next boot.
-
-    The config arrives through ``writable_config`` rather than as a
+    """The config arrives through ``writable_config`` rather than as a
     ``RequiredConfig`` parameter because the live-apply is a read-copy-store of
-    the running config and has to be serialised against the other writers of
-    it. The view is built inside the same block, so the response describes the
-    config the save landed in rather than one a concurrent reload has since
-    replaced.
+    the running config and has to be serialised against the other writers of it.
     """
     try:
         with writable_config() as config:
@@ -2447,15 +2115,6 @@ def update_settings(
     dependencies=[Depends(require_config)],
 )
 def reset_setting_endpoint(key: str, storage: RequiredStorage) -> SettingsResponse:
-    """Reset a setting to its default by dropping the DB override.
-
-    Returns 404 for a key that is not in the settings registry, and 422 (with
-    the offending key + reason) when the key is registered but cannot be reset
-    this way — e.g. a sensitive leaf, which must go through the secret endpoint.
-
-    Takes the config lock for the reason spelled out on ``update_settings``: it
-    writes the running config the same way.
-    """
     if get_entry(key) is None:
         logger.info("Settings reset miss for key=%s", sanitize_for_log(key))
         raise HTTPException(status_code=404, detail="Unknown setting.")
@@ -2475,7 +2134,6 @@ def reset_setting_endpoint(key: str, storage: RequiredStorage) -> SettingsRespon
 def set_setting_secret(
     request: SettingSecretRequest, storage: RequiredStorage
 ) -> Response:
-    """Store a sensitive setting's value in the encrypted secret store."""
     try:
         set_secret(storage, request.key, request.value)
     except SettingsValidationError as error:
@@ -2487,7 +2145,6 @@ def set_setting_secret(
 
 @router.delete("/settings/secret/{key}", status_code=204)
 def clear_setting_secret(key: str, storage: RequiredStorage) -> Response:
-    """Delete a sensitive setting's stored secret."""
     try:
         clear_secret(storage, key)
     except SettingsValidationError as error:
@@ -2499,13 +2156,6 @@ def clear_setting_secret(key: str, storage: RequiredStorage) -> Response:
 
 @router.get("/sync/status", response_model=SyncStatusResponse)
 def get_sync_status() -> SyncStatusResponse:
-    """Get the current status of every tracked sync job.
-
-    Returns:
-        Aggregate sync status with one entry per job in the
-        ``jobs`` list. ``status`` is ``"running"`` when at least one job
-        is still running, otherwise ``"idle"``.
-    """
     sync_manager = get_sync_manager()
     status_dict = sync_manager.get_status()
 
@@ -2515,28 +2165,12 @@ def get_sync_status() -> SyncStatusResponse:
     )
 
 
-# ---------------------------------------------------------------------------
-# Enrichment endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.post("/enrichment/start")
 def start_enrichment(
     request: EnrichmentStartRequest,
     storage: RequiredStorage,
     config: RequiredConfig,
 ) -> dict[str, Any]:
-    """Start background metadata enrichment.
-
-    Enriches content items with genres, tags, and descriptions from
-    external APIs (TMDB, OpenLibrary, RAWG).
-
-    Args:
-        request: Enrichment start request with optional filters
-
-    Returns:
-        Message indicating enrichment was started or error
-    """
     enrichment_config = config.get("enrichment", {})
     if not enrichment_config.get("enabled", False):
         raise HTTPException(
@@ -2547,7 +2181,6 @@ def start_enrichment(
             ),
         )
 
-    # Map content type if provided
     content_type = None
     if request.content_type:
         try:
@@ -2613,14 +2246,6 @@ def get_enrichment_stats(
     storage: RequiredStorage,
     user_id: int = Query(1, ge=1, description="User ID for filtering stats"),
 ) -> EnrichmentStatsResponse:
-    """Get enrichment statistics.
-
-    Args:
-        user_id: User ID for filtering stats
-
-    Returns:
-        Enrichment statistics
-    """
     enrichment_config = config.get("enrichment", {})
     enrichment_enabled = enrichment_config.get("enabled", False)
 
@@ -2644,7 +2269,6 @@ def reset_enrichment(
     request: EnrichmentResetRequest,
     storage: RequiredStorage,
 ) -> dict[str, Any]:
-    """Re-queue items for enrichment, by provider, content type or one item."""
     content_type = None
     if request.content_type:
         try:
@@ -2678,7 +2302,6 @@ def reset_enrichment(
 def get_profile(
     storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
-    """Get a user's preference profile summary."""
     return ProfileResponse.model_validate(
         profile_payload(user_id, storage.profiles.get(user_id))
     )
@@ -2688,7 +2311,6 @@ def get_profile(
 def regenerate_profile(
     storage: RequiredStorage, user_id: int = Query(default=1, ge=1)
 ) -> ProfileResponse:
-    """Force regeneration of a user's preference profile."""
     profile = ProfileGenerator(storage).regenerate_and_save(user_id)
 
     return ProfileResponse(
@@ -2701,28 +2323,14 @@ def regenerate_profile(
     )
 
 
-# ---------------------------------------------------------------------------
-# Theme endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.get("/themes", response_model=list[ThemeResponse])
 def list_themes() -> list[ThemeResponse]:
-    """List the UI themes this install ships and the ones in private/themes/.
-
-    Returns:
-        Theme metadata sorted by id, each naming where its stylesheet is served.
-    """
+    """List the UI themes this install ships and the ones in private/themes/."""
     return installed_themes()
 
 
 @router.get("/themes/default")
 def get_default_theme() -> dict[str, str]:
-    """Get the theme a user who has picked none is painted.
-
-    Returns:
-        Dictionary with the default theme ID.
-    """
     return {"theme": DEFAULT_THEME_ID}
 
 
@@ -2730,11 +2338,7 @@ def get_default_theme() -> dict[str, str]:
 def get_user_theme(
     user_id: UserIdPath, storage: RequiredStorage
 ) -> ThemePreferenceResponse:
-    """Get the theme this user's interface paints, empty when none is stored.
-
-    Returns:
-        The stored theme id.
-    """
+    """Get the theme this user's interface paints, empty when none is stored."""
     return ThemePreferenceResponse(theme=storage.ui_settings.get_theme(user_id))
 
 
@@ -2742,15 +2346,6 @@ def get_user_theme(
 def set_user_theme(
     user_id: UserIdPath, request: ThemePreferenceRequest, storage: RequiredStorage
 ) -> ThemePreferenceResponse:
-    """Set the theme this user's interface paints, as ``theme set`` does.
-
-    Returns:
-        The stored theme id.
-
-    Raises:
-        HTTPException: 400 for a theme this install does not have, 404 when
-            nobody carries *user_id*.
-    """
     if request.theme not in installed_theme_ids():
         raise HTTPException(status_code=400, detail="Theme not installed.")
     try:
@@ -2760,14 +2355,8 @@ def set_user_theme(
     return ThemePreferenceResponse(theme=request.theme)
 
 
-# ---------------------------------------------------------------------------
-# GOG OAuth endpoints
-# ---------------------------------------------------------------------------
-
-
 def _source_id_query(default: str) -> Any:
     """The id of the source being connected, which owns the stored token.
-
     Defaulted to the plugin's own name so a client written before the
     parameter existed still addresses the source it used to.
     """
@@ -2782,9 +2371,7 @@ def _disconnect_source(
     user_id: int,
     detail: str,
 ) -> None:
-    """Delete *source_id*'s refresh token, or 404 with *detail*.
-
-    An id this route may not act on gets the same refusal as one holding no
+    """An id this route may not act on gets the same refusal as one holding no
     token: telling them apart names sources the caller did not ask about.
     """
     if not may_revoke(plugin_name, source_id, config, storage, user_id):
@@ -2805,11 +2392,6 @@ def get_gog_status(
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
 ) -> dict[str, Any]:
-    """Get GOG integration status.
-
-    Returns:
-        Status of GOG integration (enabled, connected, auth_url).
-    """
     enabled = is_gog_enabled(config, storage=storage, source_id=source_id)
     connected = has_gog_token(config, storage=storage, source_id=source_id)
 
@@ -2827,14 +2409,6 @@ def exchange_gog_token(
     storage: RequiredStorage,
     source_id: str = _source_id_query(GOG_SOURCE_ID),
 ) -> dict[str, Any]:
-    """Exchange GOG authorization code for tokens.
-
-    Accepts either the raw authorization code or the full redirect URL.
-    Saves the refresh token under *source_id*.
-
-    Returns:
-        Success message. The token is never included in the HTTP response.
-    """
     if not is_gog_enabled(config, storage=storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
@@ -2842,14 +2416,9 @@ def exchange_gog_token(
         )
 
     try:
-        # Extract code from input (handles both URL and raw code)
         code = extract_gog_code(request.code_or_url)
-
-        # Exchange code for tokens
         tokens = exchange_gog_tokens(code)
         refresh_token = tokens["refresh_token"]
-
-        # Save token to encrypted database storage
         save_gog_token(storage, refresh_token, source_id=source_id)
         logger.info("Connected GOG account for %s", sanitize_for_log(source_id))
 
@@ -2879,10 +2448,6 @@ def disconnect_gog(
     source_id: str = _source_id_query(GOG_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Disconnect GOG by deleting the stored refresh token.
-
-    Mirrors the CLI `auth disconnect --source gog` command.
-    """
     _disconnect_source(
         source_id,
         GOG_PLUGIN,
@@ -2897,22 +2462,12 @@ def disconnect_gog(
     return {"success": True, "message": "GOG disconnected."}
 
 
-# ---------------------------------------------------------------------------
-# Epic Games OAuth endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.get("/epic/status")
 def get_epic_status(
     config: RequiredConfig,
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
 ) -> dict[str, Any]:
-    """Get Epic Games integration status.
-
-    Returns:
-        Status of Epic Games integration (enabled, connected, auth_url).
-    """
     enabled = is_epic_enabled(config, storage=storage, source_id=source_id)
     connected = has_epic_token(config, storage=storage, source_id=source_id)
 
@@ -2939,14 +2494,6 @@ def exchange_epic_token(
     storage: RequiredStorage,
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
 ) -> dict[str, Any]:
-    """Exchange Epic Games authorization code for tokens.
-
-    Accepts either the raw authorization code or JSON containing it.
-    Saves the refresh token under *source_id*.
-
-    Returns:
-        Success message. The token is never included in the HTTP response.
-    """
     if not is_epic_enabled(config, storage=storage, source_id=source_id):
         raise HTTPException(
             status_code=400,
@@ -2954,14 +2501,9 @@ def exchange_epic_token(
         )
 
     try:
-        # Extract code from input (handles both JSON and raw code)
         code = extract_epic_code(request.code_or_json)
-
-        # Exchange code for tokens via EPCAPI
         tokens = exchange_epic_tokens(code)
         refresh_token = tokens["refresh_token"]
-
-        # Save token to encrypted database storage
         save_epic_token(storage, refresh_token, source_id=source_id)
         logger.info("Connected Epic Games account for %s", sanitize_for_log(source_id))
 
@@ -2993,10 +2535,6 @@ def disconnect_epic(
     source_id: str = _source_id_query(EPIC_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Disconnect Epic Games by deleting the stored refresh token.
-
-    Mirrors the CLI `auth disconnect --source epic` command.
-    """
     _disconnect_source(
         source_id,
         EPIC_PLUGIN,
@@ -3013,10 +2551,6 @@ def disconnect_epic(
     return {"success": True, "message": "Epic Games disconnected."}
 
 
-# ---------------------------------------------------------------------------
-# Trakt OAuth device-code endpoints
-# ---------------------------------------------------------------------------
-
 _TRAKT_POLL_MESSAGES: dict[DevicePollStatus, str] = {
     DevicePollStatus.PENDING: "Waiting for you to approve the request on Trakt.",
     DevicePollStatus.SLOW_DOWN: "Polling too quickly — slowing down.",
@@ -3032,9 +2566,7 @@ def get_trakt_status(
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Get Trakt integration status.
-
-    ``enabled`` means an enabled Trakt source with client credentials saved,
+    """``enabled`` means an enabled Trakt source with client credentials saved,
     so the device flow can run. ``connected`` means a refresh token is stored
     under an id this route owns.
     """
@@ -3061,17 +2593,11 @@ def start_trakt_device_flow(
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Begin the Trakt device-code flow.
-
-    Resolves the saved client_id/client_secret server-side and returns the
-    user code plus verification URL for the user to enter. The client_id and
-    client_secret are never returned.
+    """The client_id and client_secret are never returned.
 
     Returning ``device_code`` to the web client is inherent to the OAuth
     device-code flow (the browser drives the polling loop), and is a conscious,
-    reviewed decision for this localhost single-user deployment: exposure is
-    bounded by the short device-code expiry and a server-side session mapping
-    is intentionally not used here.
+    reviewed decision for this localhost single-user deployment.
     """
     try:
         client_id, _ = resolve_trakt_client_credentials(
@@ -3101,13 +2627,7 @@ def poll_trakt_device_approval(
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Poll Trakt once for device approval.
-
-    The frontend calls this repeatedly at the cadence Trakt returned. On
-    approval the refresh token is saved and ``connected: true`` is returned;
-    otherwise the current poll ``status`` is returned. This handler performs a
-    single poll and never blocks on a server-side loop.
-    """
+    """The frontend calls this repeatedly at the cadence Trakt returned."""
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
             config, storage, source_id=source_id, user_id=user_id
@@ -3166,10 +2686,6 @@ def disconnect_trakt(
     source_id: str = _source_id_query(TRAKT_SOURCE_ID),
     user_id: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    """Disconnect Trakt by deleting the stored refresh token.
-
-    Mirrors the CLI `auth disconnect --source trakt` command.
-    """
     _disconnect_source(
         source_id,
         TRAKT_PLUGIN,

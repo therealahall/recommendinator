@@ -1,5 +1,3 @@
-"""The installed UI themes, read by the web API and by the ``theme`` CLI group."""
-
 from __future__ import annotations
 
 import json
@@ -40,7 +38,6 @@ class ThemeResponse(BaseModel):
 
 
 def discover_themes(themes_dir: Path, url_prefix: str) -> list[ThemeResponse]:
-    """Every subdirectory of *themes_dir* holding a theme.json this app can paint."""
     themes: list[ThemeResponse] = []
 
     if not themes_dir.is_dir():
@@ -79,7 +76,6 @@ def discover_themes(themes_dir: Path, url_prefix: str) -> list[ThemeResponse]:
 
 
 def installed_theme_ids() -> list[str]:
-    """The ids both doors accept."""
     return [theme.id for theme in installed_themes()]
 
 
