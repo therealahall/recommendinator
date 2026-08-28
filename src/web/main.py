@@ -1,5 +1,3 @@
-"""Recommendinator web server entry point."""
-
 import argparse
 import logging
 import os
@@ -20,16 +18,9 @@ _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::"})
 
 
 def get_local_ip_addresses() -> list[str]:
-    """Get list of local IP addresses (excluding Docker networks and IPv6).
-
-    Returns:
-        List of IP address strings
-    """
     addresses = []
     try:
-        # Get hostname
         hostname = socket.gethostname()
-        # Get all IP addresses
         ip_list = socket.gethostbyname_ex(hostname)[2]
         # Filter out Docker networks and localhost
         for ip in ip_list:
@@ -53,7 +44,6 @@ def get_local_ip_addresses() -> list[str]:
 
 
 def main() -> None:
-    """Main entry point for web server."""
     parser = argparse.ArgumentParser(description="Start Recommendinator web server")
     parser.add_argument(
         "--config",
@@ -81,11 +71,8 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Load config to get default host/port
-    # Let load_config() handle defaults (config.yaml -> example.yaml)
     config_path = args.config
 
-    # Load config first to get web settings
     try:
         config = load_config(config_path)
     except FileNotFoundError:
@@ -101,7 +88,6 @@ def main() -> None:
 
     app = create_app(config_path)
 
-    # Log accessible addresses
     logger.info("Starting Recommendinator web server...")
     logger.info("Server will be accessible at:")
     if host in _WILDCARD_HOSTS:

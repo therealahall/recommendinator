@@ -1,8 +1,7 @@
-"""The one encode every response body passes through.
-
-Any JSON blob column can hold an unpaired ``\\ud800``: ``json.loads`` accepts
-the escape and ``json.dumps`` stores it as ASCII. Encoding such a body strictly
-answered 500 on every later read, forever.
+"""The one encode every response body passes through. Any JSON blob column can
+hold an unpaired ``\\ud800``: ``json.loads`` accepts the escape and
+``json.dumps`` stores it as ASCII. Encoding such a body strictly answered 500 on
+every later read, forever.
 """
 
 from __future__ import annotations

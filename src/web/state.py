@@ -1,5 +1,3 @@
-"""Application state management."""
-
 from __future__ import annotations
 
 import asyncio
@@ -26,23 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigWatcher:
-    """Watches the config file for changes and triggers hot-reload."""
-
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
 
     async def start(self, config_path: Path) -> None:
-        """Start watching the config file for changes.
-
-        Args:
-            config_path: Path to the config file to watch.
-        """
         if self.running:
             return
         self._task = asyncio.create_task(self._watch(config_path))
 
     async def stop(self) -> None:
-        """Stop watching for config changes."""
         if self._task is None:
             return
         if not self._task.done():
@@ -55,21 +45,16 @@ class ConfigWatcher:
 
     @property
     def running(self) -> bool:
-        """Whether the watcher is currently running."""
         return self._task is not None and not self._task.done()
 
     async def _watch(self, config_path: Path) -> None:
-        """Watch loop that detects config file changes."""
         logger.info("Config watcher started for %s", config_path)
         try:
             async for _changes in watchfiles.awatch(config_path):
                 logger.info("Config file change detected, reloading...")
-                # Off the loop. ``reload_config`` waits on the config lock,
-                # which a settings save holds across a whole registry sweep,
-                # and then does a file read, five migrations and a run of
-                # Fernet decrypts. Called straight from this task, a config
-                # file touched mid-save parks the server: no request accepted
-                # for as long as the save runs.
+                # ``reload_config`` waits on the config lock, which a settings save
+                # holds across a whole registry sweep, and then does a file read, five
+                # migrations and a run of Fernet decrypts.
                 success = await asyncio.to_thread(reload_config)
                 if success:
                     logger.info("Config hot-reloaded successfully")
@@ -87,8 +72,6 @@ class ConfigWatcher:
 
 @dataclass
 class AppState:
-    """Typed application state container."""
-
     config: dict[str, Any] | None = None
     config_path: str | None = None
     storage: StorageManager | None = None
@@ -96,64 +79,37 @@ class AppState:
     config_watcher: ConfigWatcher = field(default_factory=ConfigWatcher)
 
 
-# Global app state
 app_state = AppState()
 
 # The one serialiser for every read-copy-store of the running config. Four
 # paths write it: ``PUT /api/settings``, ``DELETE /api/settings/{key}``,
 # ``POST /api/config/reload`` and the config watcher, all of them in threadpool
-# workers, so no single thread keeps them apart. Unserialised, a reload
-# rebinding ``app_state.config`` while a save is mid-request leaves the save
-# publishing into the dict nobody reads any more: the database keeps the new
-# value, the server runs the old one, and nothing reports an error.
+# workers, so no single thread keeps them apart.
 _config_lock = threading.Lock()
 
 
 @contextmanager
 def locked_running_config() -> Iterator[dict[str, Any] | None]:
-    """Yield the running config with the config lock held for the whole block.
-
-    The binding is resolved inside the lock, which is the point of the helper:
-    a caller that resolved it first — a ``Depends`` guard, say — would be
-    holding a dict :func:`reload_config` can replace before the caller stores
-    into it, and a lock that does not cover the read cannot stop that.
-    """
     with _config_lock:
         yield app_state.config
 
 
 def get_engine() -> RecommendationEngine | None:
-    """Get recommendation engine from app state."""
     return app_state.engine
 
 
 def get_storage() -> StorageManager | None:
-    """Get storage manager from app state."""
     return app_state.storage
 
 
 def get_config() -> dict[str, Any] | None:
-    """Get configuration from app state."""
     return app_state.config
 
 
 def reload_config() -> bool:
-    """Reload configuration from disk.
-
-    Re-reads the config file and updates app_state.
-    Useful for picking up config changes without restarting.
-
-    The assembled config is bound in one statement, and the dict it replaces is
-    never touched. Readers resolve the running config through ``get_config``
-    from a threadpool worker, so anything short of a single rebind would hand
-    one of them a config part-way through being rewritten.
-
-    The whole assembly runs under the config lock. Taking it only for the
+    """The whole assembly runs under the config lock. Taking it only for the
     rebind would still let a settings save resolve the outgoing dict and
     publish into it after this replaced it.
-
-    Returns:
-        True if config was reloaded successfully, False otherwise.
     """
     config_path = app_state.config_path
     if not config_path:

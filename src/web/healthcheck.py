@@ -1,9 +1,4 @@
-"""Container liveness probe, run by the image's ``HEALTHCHECK``.
-
-Every ``/api`` route but the four sign-in ones requires a session cookie, so a
-healthy server answers an unauthenticated ``GET /api/status`` with 401. Holding
-credentials here would make a password change look like an outage.
-"""
+"""Container liveness probe, run by the image's ``HEALTHCHECK``."""
 
 from __future__ import annotations
 
@@ -21,7 +16,6 @@ _TIMEOUT_SECONDS = 5
 
 
 def probe(url: str = STATUS_URL) -> int:
-    """Return the exit code for *url*: 0 only when it answers 401."""
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_SECONDS) as answer:
             code: int = answer.status
