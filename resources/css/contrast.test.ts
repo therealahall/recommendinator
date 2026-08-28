@@ -511,6 +511,7 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a hovered score breakdown', BASE, '.score-details summary:hover', '--bg-card'],
   ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
   ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
+  ['a Trakt connect failure', TRAKT_FLOW, '.trakt-flow-status--error', '--bg-card'],
 ]
 
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {

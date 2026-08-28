@@ -95,6 +95,16 @@ class TestSchemaEndpoint:
         assert {option["key"] for option in options} == set(SYNC_INTERVAL_KEYS)
         assert all(option["label"] for option in options)
 
+    def test_a_sensitive_fields_default_is_never_serialised(
+        self, client: TestClient
+    ) -> None:
+        response = client.get("/api/sync/sources/my_games/schema")
+        fields = {f["name"]: f for f in response.json()["fields"]}
+
+        assert fields["api_key"]["sensitive"] is True
+        assert fields["api_key"]["default"] is None
+        assert "placeholder-key" not in response.text
+
     def test_returns_404_for_unknown_source(self, client: TestClient) -> None:
         response = client.get("/api/sync/sources/missing/schema")
         assert response.status_code == 404
