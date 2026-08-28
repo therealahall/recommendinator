@@ -1,5 +1,3 @@
-"""The ``source`` group, mirroring the /api/sync/sources endpoints."""
-
 from __future__ import annotations
 
 import json
@@ -507,9 +505,7 @@ def source_apply(
     """Apply a JSON dict of non-sensitive fields atomically (bulk update).
 
     The web ``PUT /api/sync/sources/<id>/config`` endpoint accepts an
-    arbitrary ``values`` dict and updates every key in a single
-    transaction. This command mirrors that path so scripts can perform
-    multi-field updates without N round-trip CLI invocations.
+    arbitrary ``values`` dict and updates every key in a single transaction.
     """
     plugin = _resolve_cli_plugin(ctx, source_id)
     storage = require_storage(ctx)

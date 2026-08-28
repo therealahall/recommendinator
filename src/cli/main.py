@@ -1,5 +1,3 @@
-"""Main CLI entry point."""
-
 import logging
 import sys
 from pathlib import Path
@@ -41,8 +39,7 @@ from src.utils.text import exception_for_log, strip_lone_surrogates
 
 class SurrogateFreeGroup(click.Group):
     """``surrogateescape`` turns an undecodable byte into a lone surrogate,
-    which ``click.echo`` and a SQLite bind both raise on. Guarded here rather
-    than per option, so the next option added is not the next crash.
+    which ``click.echo`` and a SQLite bind both raise on.
     """
 
     def make_context(
@@ -86,7 +83,6 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
         click.echo(f"Error: {exception_for_log(error)}", err=True)
         sys.exit(1)
 
-    # Initialize components
     try:
         ctx.obj["storage"] = create_storage_manager(ctx.obj["config"])
         # Assemble the effective global config (const default < YAML < DB) so
@@ -141,7 +137,6 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
         sys.exit(1)
 
 
-# Register commands
 cli.add_command(account)
 cli.add_command(auth)
 cli.add_command(status)

@@ -1,5 +1,3 @@
-"""Preference analysis from consumed content."""
-
 import logging
 from collections.abc import Sequence
 
@@ -10,8 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class UserPreferences:
-    """User preferences extracted from consumption history."""
-
     def __init__(
         self,
         preferred_authors: dict[str, float],
@@ -21,16 +17,6 @@ class UserPreferences:
         disliked_authors: dict[str, float] | None = None,
         disliked_genres: dict[str, float] | None = None,
     ) -> None:
-        """Initialize user preferences.
-
-        Args:
-            preferred_authors: Author names to preference scores (positive)
-            preferred_genres: Genre names to preference scores (positive)
-            average_rating: Average rating across all consumed items
-            total_items: Total number of consumed items
-            disliked_authors: Author names to negative preference scores
-            disliked_genres: Genre names to negative preference scores
-        """
         self.preferred_authors = preferred_authors
         self.preferred_genres = preferred_genres
         self.average_rating = average_rating
@@ -39,68 +25,33 @@ class UserPreferences:
         self.disliked_genres = disliked_genres or {}
 
     def get_author_score(self, author: str | None) -> float:
-        """Get preference score for an author.
-
-        Args:
-            author: Author name
-
-        Returns:
-            Preference score (-1.0 to 1.0, where negative means disliked)
-        """
         if not author:
             return 0.0
         author_lower = author.lower()
-        # Positive preference minus negative preference
         positive = self.preferred_authors.get(author_lower, 0.0)
         negative = self.disliked_authors.get(author_lower, 0.0)
         return positive - negative
 
     def get_genre_score(self, genre: str | None) -> float:
-        """Get preference score for a genre.
-
-        Args:
-            genre: Genre name
-
-        Returns:
-            Preference score (-1.0 to 1.0, where negative means disliked)
-        """
         if not genre:
             return 0.0
         genre_lower = genre.lower()
-        # Positive preference minus negative preference
         positive = self.preferred_genres.get(genre_lower, 0.0)
         negative = self.disliked_genres.get(genre_lower, 0.0)
         return positive - negative
 
 
 class PreferenceAnalyzer:
-    """Analyze user preferences from consumed content."""
-
     def __init__(self, min_rating: int = 4) -> None:
-        """Initialize preference analyzer.
-
-        Args:
-            min_rating: Minimum rating to consider for preferences (default: 4)
-        """
         self.min_rating = min_rating
 
     def analyze(self, consumed_items: list[ContentItem]) -> UserPreferences:
-        """Analyze consumed items to extract user preferences.
-
-        Args:
-            consumed_items: List of consumed ContentItems
-
-        Returns:
-            UserPreferences object
-        """
         if not consumed_items:
             return UserPreferences({}, {}, 0.0, 0)
 
-        # Calculate average rating
         ratings = [item.rating for item in consumed_items if item.rating is not None]
         avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
-        # Extract author preferences
         author_ratings = [
             (item.author.lower(), item.rating)
             for item in consumed_items
@@ -108,7 +59,6 @@ class PreferenceAnalyzer:
         ]
         author_scores, disliked_authors = self._score_attributes(author_ratings)
 
-        # Extract genre preferences
         genre_ratings: list[tuple[str, float]] = []
         for item in consumed_items:
             if item.metadata and item.rating is not None:
@@ -129,20 +79,6 @@ class PreferenceAnalyzer:
     def _score_attributes(
         self, attribute_ratings: Sequence[tuple[str, int | float]]
     ) -> tuple[dict[str, float], dict[str, float]]:
-        """Accumulate and normalize attribute scores based on ratings.
-
-        A preferred weight (rating >= min_rating) is the rating's distance above
-        the threshold, so the threshold rating itself weighs 1 and each step
-        above it one more. A disliked weight (rating < min_rating) is the
-        distance below the neutral rating of 3: maps 3->0.0, 2->0.5, 1->1.0.
-
-        Args:
-            attribute_ratings: List of (attribute_value, rating) pairs.
-
-        Returns:
-            Tuple of (preferred, disliked) score dicts, each normalized into
-            0.0..1.0 against its own maximum.
-        """
         preferred: dict[str, float] = {}
         disliked: dict[str, float] = {}
 

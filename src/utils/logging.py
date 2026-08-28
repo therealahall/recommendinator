@@ -1,7 +1,6 @@
-"""Root-logger wiring, shared by both interfaces.
-
-The module name shadows the standard library's inside ``src.utils`` alone —
-under absolute imports the ``import logging`` below is still the stdlib one.
+"""Root-logger wiring, shared by both interfaces. The module name shadows the
+standard library's inside ``src.utils`` alone — under absolute imports the
+``import logging`` below is still the stdlib one.
 """
 
 from __future__ import annotations
@@ -21,10 +20,8 @@ logger = logging.getLogger(__name__)
 # base is refused before a FileHandler opens it (see ``_safe_log_path``).
 _LOG_BASE_DIR = Path("data/logs")
 
-# The authoritative name -> level map, minus NOTSET. ``logging.NOTSET`` is a
-# real name in that mapping but not a usable threshold: the root logger has no
-# parent to inherit from, so level 0 enables every record — a DEBUG firehose
-# written to disk from a value that reads like "off".
+# The root logger has no parent to inherit from, so level 0 enables every record
+# — a DEBUG firehose written to disk from a value that reads like "off".
 _LOG_LEVELS = {
     name: level
     for name, level in logging.getLevelNamesMapping().items()
@@ -33,9 +30,7 @@ _LOG_LEVELS = {
 
 
 class _MessageOnlyFormatter(logging.Formatter):
-    """Render the message alone, without traceback or stack text.
-
-    ``Formatter.format`` appends ``exc_text`` whatever the format string says,
+    """``Formatter.format`` appends ``exc_text`` whatever the format string says,
     and the file handler formats first and caches it on the shared record — so
     dropping it takes an override.
     """
@@ -56,11 +51,8 @@ class _OneLineFormatter(logging.Formatter):
 
 
 def _safe_log_path(log_file: str) -> tuple[Path, str | None]:
-    """Resolve *log_file*, refusing any path escaping ``data/logs/``.
-
-    The backstop behind the registry pattern, for what it cannot see: an
-    unvalidated ``config.yaml``, a row predating the ``..`` lookahead, a
-    symlink. An escaper takes the default's name inside the base.
+    """The backstop behind the registry pattern, for what it cannot see: an
+    unvalidated ``config.yaml``, a row predating the ``..`` lookahead, a symlink.
     """
     base = _LOG_BASE_DIR.resolve()
     resolved = Path(log_file).resolve()
@@ -78,11 +70,6 @@ def _safe_log_path(log_file: str) -> tuple[Path, str | None]:
 
 
 def _logging_section(config: dict[str, Any]) -> dict[str, Any]:
-    """Return the ``logging`` section, type-guarded like every other YAML leaf.
-
-    An unguarded `logging: 3` aborts boot inside create_app's try, and a bare
-    `logging:` header parses to None rather than {}.
-    """
     raw_section = config.get("logging")
     return raw_section if isinstance(raw_section, dict) else {}
 
@@ -122,9 +109,7 @@ def _resolve_path(section: dict[str, Any]) -> tuple[Path, list[str]]:
 
 
 class _EscapingStreamHandler(logging.StreamHandler[TextIO]):
-    """Escape what the stream's codec cannot encode.
-
-    ``StreamHandler`` takes no ``errors=``, so a lone surrogate (``os.scandir``
+    """``StreamHandler`` takes no ``errors=``, so a lone surrogate (``os.scandir``
     yields them for non-UTF-8 filenames) raised against strict ``sys.stdout``
     inside ``emit``, and ``handleError`` swallowed the record with it.
     """
@@ -153,11 +138,6 @@ def _console_handler(
 
 
 def _install(handlers: list[logging.Handler], level: int, fallbacks: list[str]) -> None:
-    """Swap *handlers* onto the root logger, then report the held-back fallbacks.
-
-    Called once every handler is built: a destination that refuses to open must
-    leave the root logger as it was, not stripped of what it had.
-    """
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
@@ -190,12 +170,7 @@ def configure_logging(
     console_tracebacks: bool,
     console_floor: int,
 ) -> None:
-    """Configure logging from application config.
-
-    ``console_stream`` is required because the wrong answer is silent: the
-    CLI's stdout is its data channel. An unopenable log file raises OSError
-    with the root logger untouched.
-    """
+    """An unopenable log file raises OSError with the root logger untouched."""
     section = _logging_section(config)
     log_level, level_fallbacks = _resolve_level(section)
     log_path, path_fallbacks = _resolve_path(section)
@@ -242,11 +217,7 @@ def configure_console_only(
     console_tracebacks: bool,
     console_floor: int,
 ) -> None:
-    """Wire the console alone, for a caller whose log file could not be opened.
-
-    With no handler at all, records fall to ``logging.lastResort``, whose
-    default formatter appends the tracebacks the CLI withholds.
-    """
+    """Wire the console alone, for a caller whose log file could not be opened."""
     log_level, fallbacks = _resolve_level(_logging_section(config))
     _install(
         [

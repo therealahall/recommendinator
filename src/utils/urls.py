@@ -1,6 +1,4 @@
-"""Shape checks for the URLs config exposes over the network.
-
-``web.allowed_origins`` is settable by one request and must be a bare origin,
+"""``web.allowed_origins`` is settable by one request and must be a bare origin,
 so it reads that grammar from here.
 """
 
@@ -26,11 +24,7 @@ def normalize_origin(value: str) -> str:
 
 
 def is_bare_origin(value: str) -> bool:
-    """Return True when *value* is exactly ``scheme://host[:port]``.
-
-    A path, query, credentials or an unparseable port never reach an Origin
-    header.
-    """
+    """Return True when *value* is exactly ``scheme://host[:port]``."""
     try:
         # urlsplit itself raises on a malformed bracketed netloc and on one
         # whose NFKC normalisation introduces a delimiter, so it belongs

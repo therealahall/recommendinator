@@ -1,6 +1,4 @@
-"""The CLI's command groups, one module each, re-exported for ``src.cli.main``.
-
-Each module is underscore-prefixed because the name it exports would shadow
+"""Each module is underscore-prefixed because the name it exports would shadow
 it here: ``commands.auth`` has to be the group, not the module holding it.
 """
 

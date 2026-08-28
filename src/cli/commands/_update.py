@@ -1,5 +1,3 @@
-"""The ``update`` command."""
-
 from __future__ import annotations
 
 import json
@@ -69,11 +67,7 @@ def _status_view(
     started_at: datetime,
     completed_at: datetime,
 ) -> dict[str, Any]:
-    """The finished run, shaped as ``GET /api/sync/status`` answers.
-
-    A synchronous run is one job that is already over, so the aggregate
-    status is idle and the job's own is terminal.
-    """
+    """The finished run, shaped as ``GET /api/sync/status`` answers."""
     items_processed = sum(result.items_synced for result in results)
     total_items = sum(result.total_items for result in results)
     errors = [
@@ -118,11 +112,7 @@ def _counts(view: dict[str, Any]) -> str:
 
 
 def _refusal(entry: ResolvedInput, errors: list[str]) -> str:
-    """Name the settings, as the sync endpoint does; log the plugin's reason.
-
-    A plugin quotes the path it looked for, which is filesystem layout the
-    terminal has no business printing.
-    """
+    """Name the settings, as the sync endpoint does; log the plugin's reason."""
     logger.warning(
         "Sync config validation failed for %s: %s",
         sanitize_for_log(entry.source_id),
@@ -165,13 +155,11 @@ def update(
     config = ctx.obj["config"]
 
     def report_nothing_ran(message: str = "") -> None:
-        """Answer a run that had no source to sync, in the asked-for format."""
         if output_format == "json":
             click.echo(json.dumps({"status": "idle", "jobs": []}, indent=2))
         elif message:
             click.echo(message)
 
-    # Handle 'list' to show available sources (read-only — no migration needed).
     # Use the DB-aware helper so sources that live only in the database (created
     # via ``source create`` or the web Add-source modal, never in config.yaml)
     # are discoverable — otherwise a user can't find the id to pass to --source.
@@ -200,7 +188,6 @@ def update(
 
     auto_enrich = auto_enrich_enabled(config)
 
-    # Determine which sources to sync
     valid: list[ResolvedInput] = []
     if source == "all":
         resolved = resolve_inputs(config, storage=storage)
@@ -228,8 +215,7 @@ def update(
     else:
         # Resolve a single source through the DB-aware path (mirrors the web
         # /update endpoint) so a source that lives only in the database — with
-        # no config.yaml entry — is synced, not rejected as "unknown". The
-        # filter also drops disabled sources (resolve_inputs excludes them).
+        # no config.yaml entry — is synced, not rejected as "unknown".
         resolved = [
             resolved_entry
             for resolved_entry in resolve_inputs(config, storage=storage)

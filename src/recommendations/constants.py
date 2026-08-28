@@ -1,5 +1,3 @@
-"""Shared constants for the recommendation system."""
-
 # Items whose relevance scores differ by at most this amount are shuffled
 # together for variety across runs.
 SCORE_PROXIMITY_THRESHOLD = 0.05

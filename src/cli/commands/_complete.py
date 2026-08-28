@@ -1,5 +1,3 @@
-"""The ``complete`` command."""
-
 from __future__ import annotations
 
 import click
@@ -64,7 +62,6 @@ def complete(
 
     storage = ctx.obj["storage"]
 
-    # Validate rating
     if rating is not None and (rating < 1 or rating > 5):
         click.echo("Error: Rating must be between 1 and 5", err=True)
         raise click.Abort()
@@ -99,7 +96,7 @@ def complete(
         raise click.Abort()
 
     item = ContentItem(
-        id=None,  # Will be generated
+        id=None,
         title=title,
         author=author,
         content_type=content_type,

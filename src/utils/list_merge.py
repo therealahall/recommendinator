@@ -1,19 +1,5 @@
-"""Utilities for merging string lists with case-insensitive deduplication."""
-
-
 def merge_string_lists(existing: list[str], new: list[str]) -> list[str]:
-    """Merge two string lists, deduplicating case-insensitively.
-
-    Preserves the original casing of the first occurrence.  Items from
-    *existing* appear before items from *new*.
-
-    Args:
-        existing: Current list of strings (these take priority for casing).
-        new: Incoming list of strings to merge.
-
-    Returns:
-        Merged list with duplicates removed (case-insensitive comparison).
-    """
+    """Preserves the original casing of the first occurrence."""
     seen_lower: set[str] = set()
     result: list[str] = []
 

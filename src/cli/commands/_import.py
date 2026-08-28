@@ -1,5 +1,3 @@
-"""The ``import`` command and its templates, mirroring the upload endpoints."""
-
 from __future__ import annotations
 
 import json

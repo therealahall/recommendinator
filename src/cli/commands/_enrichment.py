@@ -1,5 +1,3 @@
-"""The ``enrichment`` group."""
-
 from __future__ import annotations
 
 import json
@@ -39,9 +37,7 @@ def run_enrichment(
     include_not_found: bool = False,
     err: bool = False,
 ) -> bool:
-    """Enrich to completion here; False when a run already holds the claim.
-
-    Never backgrounded: the worker is a daemon thread, so a CLI that exited
+    """Never backgrounded: the worker is a daemon thread, so a CLI that exited
     first would strand the claim until it went stale.
     """
     manager = EnrichmentManager(storage, config)
@@ -151,7 +147,6 @@ def enrichment_start(
             "settings set enrichment.enabled true"
         )
 
-    # Map string to ContentType enum if provided
     content_type = (
         ContentType.from_string(content_type_str) if content_type_str else None
     )

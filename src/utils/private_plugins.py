@@ -1,5 +1,3 @@
-"""The out-of-tree plugin directory, shared by both registries that scan it."""
-
 from __future__ import annotations
 
 import logging
@@ -13,10 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def private_plugin_module_names(project_root: Path, scanning_for: str) -> list[str]:
-    """Every importable ``private.plugins`` submodule: a package or a file.
-
-    Both registries import all of them, so ``scanning_for`` names the caller.
-    """
+    """Both registries import all of them, so ``scanning_for`` names the caller."""
     private_path = project_root / "private" / "plugins"
 
     if not private_path.is_dir():

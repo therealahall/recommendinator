@@ -1,15 +1,8 @@
-"""Genre and tag normalization for cross-content-type matching.
-
-Normalizes genres and tags from different providers (TMDB, OpenLibrary, RAWG)
-to a common vocabulary, filtering out noise and platform-specific terms.
-"""
-
 import json
 import re
 from types import MappingProxyType
 from typing import Any
 
-# Pre-compiled patterns to strip from the beginning of terms
 PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^fiction,\s*", re.IGNORECASE),
     re.compile(r"^genre:\s*", re.IGNORECASE),
@@ -17,7 +10,6 @@ PREFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^subject:\s*", re.IGNORECASE),
 )
 
-# Pre-compiled patterns to strip from the end of terms
 SUFFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r",\s*fiction$", re.IGNORECASE),
     re.compile(r",\s*general$", re.IGNORECASE),
@@ -26,7 +18,6 @@ SUFFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s*\(imaginary\).*$", re.IGNORECASE),
 )
 
-# Terms to completely exclude (noise)
 EXCLUDED_TERMS: frozenset[str] = frozenset(
     {
         # Steam/game platform noise
@@ -121,7 +112,6 @@ COMPOUND_SPLITS: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
     }
 )
 
-# Normalization mappings (maps variations to canonical form)
 NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
     {
         # Science Fiction variations
@@ -214,9 +204,7 @@ NORMALIZATIONS: MappingProxyType[str, str] = MappingProxyType(
 # This is permissive but filters out truly useless terms
 ALLOWED_TERMS: frozenset[str] = frozenset(
     {
-        # -----------------------------------------------------------------------
         # Core genres
-        # -----------------------------------------------------------------------
         "action",
         "adventure",
         "animation",
@@ -239,9 +227,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "thriller",
         "war",
         "western",
-        # -----------------------------------------------------------------------
         # Science fiction subgenres
-        # -----------------------------------------------------------------------
         "hard science fiction",
         "soft science fiction",
         "military science fiction",
@@ -294,9 +280,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "alien planet",
         "mars",
         "moon",
-        # -----------------------------------------------------------------------
         # Fantasy subgenres
-        # -----------------------------------------------------------------------
         "high fantasy",
         "epic fantasy",
         "low fantasy",
@@ -363,9 +347,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "blood magic",
         "divine magic",
         "court intrigue",
-        # -----------------------------------------------------------------------
         # Horror subgenres
-        # -----------------------------------------------------------------------
         "cosmic horror",
         "eldritch",
         "body horror",
@@ -401,9 +383,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "extraterrestrial",
         "haunted house",
         "survival horror",
-        # -----------------------------------------------------------------------
         # Mystery / thriller subgenres
-        # -----------------------------------------------------------------------
         "cozy mystery",
         "police procedural",
         "amateur sleuth",
@@ -426,9 +406,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "noir",
         "neo-noir",
         "psychological",
-        # -----------------------------------------------------------------------
         # Romance subgenres
-        # -----------------------------------------------------------------------
         "contemporary romance",
         "historical romance",
         "regency romance",
@@ -447,9 +425,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "found family",
         "star-crossed",
         "arranged marriage",
-        # -----------------------------------------------------------------------
         # Drama / literary subgenres
-        # -----------------------------------------------------------------------
         "literary fiction",
         "family saga",
         "social commentary",
@@ -464,9 +440,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "ensemble",
         "biographical fiction",
         "unreliable narrator",
-        # -----------------------------------------------------------------------
         # Western subgenres
-        # -----------------------------------------------------------------------
         "spaghetti western",
         "neo-western",
         "weird western",
@@ -474,9 +448,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "gunslinger",
         "frontier",
         "marshal",
-        # -----------------------------------------------------------------------
         # Nonfiction genres
-        # -----------------------------------------------------------------------
         "memoir",
         "autobiography",
         "true crime",
@@ -488,9 +460,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "biopic",
         "docudrama",
         "mockumentary",
-        # -----------------------------------------------------------------------
         # Apocalyptic / dystopian
-        # -----------------------------------------------------------------------
         "apocalyptic",
         "post-apocalyptic",
         "dystopian",
@@ -500,9 +470,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "disaster",
         "invasion",
         "survival",
-        # -----------------------------------------------------------------------
         # Themes — narrative / thematic elements
-        # -----------------------------------------------------------------------
         # Power and society
         "sacrifice",
         "power",
@@ -588,9 +556,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "inheritance",
         "curse",
         "plague",
-        # -----------------------------------------------------------------------
         # Narrative tropes / plot patterns
-        # -----------------------------------------------------------------------
         "time loop",
         "hidden identity",
         "secret society",
@@ -605,9 +571,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "rescue mission",
         "fall from grace",
         "descent into madness",
-        # -----------------------------------------------------------------------
         # Tone / mood / atmosphere
-        # -----------------------------------------------------------------------
         "dark",
         "gritty",
         "atmospheric",
@@ -679,9 +643,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "moody",
         "romantic",
         "passionate",
-        # -----------------------------------------------------------------------
         # Settings / locations
-        # -----------------------------------------------------------------------
         "new york city",
         "los angeles",
         "london",
@@ -750,9 +712,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "cyberspace",
         "dream world",
         "afterlife",
-        # -----------------------------------------------------------------------
         # Time periods / eras
-        # -----------------------------------------------------------------------
         "historical",
         "period piece",
         "prehistoric",
@@ -790,9 +750,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "world war ii",
         "cold war",
         "vietnam war",
-        # -----------------------------------------------------------------------
         # Character archetypes
-        # -----------------------------------------------------------------------
         "superhero",
         "supervillain",
         "antihero",
@@ -842,9 +800,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "monster hunter",
         "smuggler",
         "refugee",
-        # -----------------------------------------------------------------------
         # Action / violence
-        # -----------------------------------------------------------------------
         "violence",
         "violent",
         "gore",
@@ -867,9 +823,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "combat",
         "duel",
         "swashbuckler",
-        # -----------------------------------------------------------------------
         # Game genres
-        # -----------------------------------------------------------------------
         "rpg",
         "action rpg",
         "jrpg",
@@ -958,9 +912,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "challenging",
         "casual",
         "relaxing",
-        # -----------------------------------------------------------------------
         # Media types / formats
-        # -----------------------------------------------------------------------
         "anime",
         "manga",
         "cartoon",
@@ -985,9 +937,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "josei",
         "slice of life",
         "magical girl",
-        # -----------------------------------------------------------------------
         # Adaptations
-        # -----------------------------------------------------------------------
         "based on novel",
         "based on book",
         "based on novel or book",
@@ -1002,9 +952,7 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "prequel",
         "spinoff",
         "adaptation",
-        # -----------------------------------------------------------------------
         # Age / audience
-        # -----------------------------------------------------------------------
         "children",
         "kids",
         "family friendly",
@@ -1013,16 +961,12 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
         "adult",
         "mature",
         "r-rated",
-        # -----------------------------------------------------------------------
         # Awards / recognition
-        # -----------------------------------------------------------------------
         "classic",
         "cult classic",
         "award winning",
         "critically acclaimed",
-        # -----------------------------------------------------------------------
         # Miscellaneous useful
-        # -----------------------------------------------------------------------
         "christmas",
         "holiday",
         "halloween",
@@ -1092,48 +1036,29 @@ ALLOWED_TERMS: frozenset[str] = frozenset(
 
 
 def normalize_term(term: str) -> str | None:
-    """Normalize a genre/tag term.
-
-    Cleans prefixes/suffixes, applies normalization mappings,
-    and filters out noise terms.
-
-    Args:
-        term: Raw genre or tag string
-
-    Returns:
-        Normalized term, or None if it should be filtered out
-    """
     if not term:
         return None
 
-    # Lowercase and strip
     normalized = term.lower().strip()
 
-    # Check for excluded patterns first
     for pattern in EXCLUDED_PATTERNS:
         if pattern in normalized:
             return None
 
-    # Strip prefixes
     for prefix_re in PREFIX_PATTERNS:
         normalized = prefix_re.sub("", normalized)
 
-    # Strip suffixes
     for suffix_re in SUFFIX_PATTERNS:
         normalized = suffix_re.sub("", normalized)
 
-    # Strip again after pattern removal
     normalized = normalized.strip()
 
-    # Check if in excluded terms
     if normalized in EXCLUDED_TERMS:
         return None
 
-    # Apply normalizations
     if normalized in NORMALIZATIONS:
         normalized = NORMALIZATIONS[normalized]
 
-    # Check if allowed
     if normalized in ALLOWED_TERMS:
         return normalized
 
@@ -1141,19 +1066,6 @@ def normalize_term(term: str) -> str | None:
 
 
 def normalize_terms(terms: list[str]) -> list[str]:
-    """Normalize a list of genre/tag terms.
-
-    Compound genres (e.g. ``"Sci-Fi & Fantasy"``) are split into their
-    constituent terms before individual normalization, so both components
-    are preserved.
-
-    Args:
-        terms: List of raw genre or tag strings
-
-    Returns:
-        List of normalized, deduplicated terms
-    """
-    # Expand compound terms first
     expanded: list[str] = []
     for term in terms:
         lower = term.lower().strip()
@@ -1175,7 +1087,6 @@ def normalize_terms(terms: list[str]) -> list[str]:
 
 
 def _terms_from_text(raw: str) -> list[str]:
-    """Read a metadata string as terms: a JSON array, else comma-separated."""
     if raw.startswith("["):
         try:
             return list(json.loads(raw))
@@ -1187,7 +1098,6 @@ def _terms_from_text(raw: str) -> list[str]:
 
 
 def extract_and_normalize_genres(metadata: dict[str, Any] | None) -> list[str]:
-    """Normalize every genre and tag term an item's metadata names."""
     if not metadata:
         return []
 

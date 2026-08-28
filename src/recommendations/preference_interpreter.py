@@ -1,14 +1,3 @@
-"""Pattern-based natural language preference interpreter.
-
-Parses common natural language rules into structured scoring adjustments.
-
-Example rules:
-- "avoid horror" -> genre penalty for horror
-- "prefer sci-fi" -> genre boost for sci-fi
-- "only books" -> content type filter
-- "short movies" -> length preference for movies
-"""
-
 from __future__ import annotations
 
 import logging
@@ -44,8 +33,6 @@ class _LengthMatch(TypedDict):
 
 
 class PatternConfidence(str, Enum):
-    """Confidence level of pattern matching."""
-
     HIGH = "high"  # Exact pattern match
     MEDIUM = "medium"  # Partial or fuzzy match
     LOW = "low"  # Guessed interpretation
@@ -105,7 +92,6 @@ GENRE_ALIASES: dict[str, list[str]] = {
     "superhero": ["superheroes", "comic book movie"],
 }
 
-# Content type aliases
 CONTENT_TYPE_ALIASES: dict[str, list[str]] = {
     "book": ["books", "novel", "novels", "reading"],
     "movie": ["movies", "film", "films", "cinema"],
@@ -128,7 +114,6 @@ CONTENT_TYPE_ALIASES: dict[str, list[str]] = {
     ],
 }
 
-# Length preference aliases
 LENGTH_ALIASES: dict[str, list[str]] = {
     "short": ["quick", "brief", "fast", "small"],
     "medium": ["moderate", "mid-length", "mid length", "average"],
@@ -137,45 +122,24 @@ LENGTH_ALIASES: dict[str, list[str]] = {
 
 
 def _normalize_genre(genre: str) -> str:
-    """Normalize a genre string to its canonical form.
-
-    Args:
-        genre: Raw genre string from user input.
-
-    Returns:
-        Canonical genre name (lowercased).
-    """
     genre_lower = genre.lower().strip()
 
-    # Check if it's already canonical
     if genre_lower in GENRE_ALIASES:
         return genre_lower
 
-    # Check aliases
     for canonical, aliases in GENRE_ALIASES.items():
         if genre_lower in aliases:
             return canonical
 
-    # Return as-is if no alias found
     return genre_lower
 
 
 def _normalize_content_type(content_type: str) -> str | None:
-    """Normalize a content type string to its canonical form.
-
-    Args:
-        content_type: Raw content type string from user input.
-
-    Returns:
-        Canonical content type name, or None if not recognized.
-    """
     content_type_lower = content_type.lower().strip()
 
-    # Check if it's already canonical
     if content_type_lower in CONTENT_TYPE_ALIASES:
         return content_type_lower
 
-    # Check aliases
     for canonical, aliases in CONTENT_TYPE_ALIASES.items():
         if content_type_lower in aliases:
             return canonical
@@ -184,14 +148,6 @@ def _normalize_content_type(content_type: str) -> str | None:
 
 
 def _normalize_length(length: str) -> str | None:
-    """Normalize a length preference string.
-
-    Args:
-        length: Raw length string from user input.
-
-    Returns:
-        Canonical length preference, or None if not recognized.
-    """
     length_lower = length.lower().strip()
 
     if length_lower in LENGTH_ALIASES:
@@ -206,19 +162,6 @@ def _normalize_length(length: str) -> str | None:
 
 @dataclass
 class InterpretedPreference:
-    """Result of interpreting a natural language preference rule.
-
-    Attributes:
-        genre_boosts: Genres to boost (canonical name -> boost factor 0.0-1.0).
-        genre_penalties: Genres to penalize (canonical name -> penalty factor 0.0-1.0).
-        content_type_filters: Content types to include (if non-empty, only these types).
-        content_type_exclusions: Content types to exclude.
-        length_preferences: Content type -> preferred length (short/medium/long).
-        confidence: How confident the interpreter is in the result.
-        original_rule: The original rule text that was interpreted.
-        interpretation_notes: Human-readable notes about how the rule was interpreted.
-    """
-
     genre_boosts: dict[str, float] = field(default_factory=dict)
     genre_penalties: dict[str, float] = field(default_factory=dict)
     content_type_filters: set[str] = field(default_factory=set)
@@ -229,7 +172,6 @@ class InterpretedPreference:
     interpretation_notes: str = ""
 
     def is_empty(self) -> bool:
-        """Check if no preferences were extracted."""
         return (
             not self.genre_boosts
             and not self.genre_penalties
@@ -239,16 +181,7 @@ class InterpretedPreference:
         )
 
     def merge_with(self, other: InterpretedPreference) -> InterpretedPreference:
-        """Merge another interpreted preference into this one.
-
-        Later rules (from other) take precedence for conflicting keys.
-
-        Args:
-            other: Another interpreted preference to merge in.
-
-        Returns:
-            New merged InterpretedPreference.
-        """
+        """Later rules (from other) take precedence for conflicting keys."""
         merged_boosts = {**self.genre_boosts, **other.genre_boosts}
         merged_penalties = {**self.genre_penalties, **other.genre_penalties}
         merged_type_filters = self.content_type_filters | other.content_type_filters
@@ -257,7 +190,6 @@ class InterpretedPreference:
         )
         merged_length = {**self.length_preferences, **other.length_preferences}
 
-        # Combine notes
         notes_parts = []
         if self.interpretation_notes:
             notes_parts.append(self.interpretation_notes)
@@ -288,12 +220,6 @@ class InterpretedPreference:
 
 
 class PatternBasedInterpreter:
-    """Interprets natural language preference rules using regex patterns.
-
-    Fast and predictable for well-formed rules.
-    """
-
-    # Patterns for genre preferences (avoid, no, prefer, more, love, hate, etc.)
     AVOID_PATTERNS = [
         r"(?:avoid|no|skip|exclude|ban|block|hide|remove|filter out|without)\s+(.+)",
         r"(?:don't|do not|dont)\s+(?:want|like|show|recommend|include)\s+(.+)",
@@ -314,7 +240,6 @@ class PatternBasedInterpreter:
         r"(?<!not )interested in\s+(.+)",
     ]
 
-    # Patterns for content type filters
     ONLY_TYPE_PATTERNS = [
         r"only\s+(.+)",
         r"just\s+(.+)",
@@ -328,15 +253,12 @@ class PatternBasedInterpreter:
         r"hide\s+(.+)",
     ]
 
-    # Patterns for length preferences
     LENGTH_PATTERNS = [
         r"(short|quick|brief|long|lengthy|epic|medium|moderate)\s+(.+)",
         r"(.+)\s+(?:that are|that's|which are)\s+(short|quick|brief|long|lengthy|epic|medium|moderate)",
     ]
 
     def __init__(self) -> None:
-        """Initialize the pattern-based interpreter."""
-        # Compile all patterns for efficiency
         self._avoid_patterns = [
             re.compile(p, re.IGNORECASE) for p in self.AVOID_PATTERNS
         ]
@@ -354,17 +276,6 @@ class PatternBasedInterpreter:
         ]
 
     def interpret(self, rule: str) -> InterpretedPreference:
-        """Interpret a single natural language rule.
-
-        Sanitized first: the keys below are cut from this string, and a
-        surrogate breaks whoever encodes it.
-
-        Args:
-            rule: The rule text to interpret.
-
-        Returns:
-            InterpretedPreference with extracted preferences.
-        """
         rule = sanitize_rule_text(rule)
         if not rule:
             return InterpretedPreference(
@@ -382,16 +293,13 @@ class PatternBasedInterpreter:
             result.length_preferences = length_result["preferences"]
             notes.append(length_result["note"])
 
-        # Try content type "only" patterns
         only_result = self._try_only_type_patterns(rule)
         if only_result:
             result.content_type_filters = only_result["filters"]
             notes.append(only_result["note"])
 
-        # Try avoid patterns (genre penalties)
         avoid_result = self._try_avoid_patterns(rule)
         if avoid_result:
-            # Check if it's a content type exclusion
             for genre in list(avoid_result["genres"]):
                 content_type = _normalize_content_type(genre)
                 if content_type:
@@ -403,10 +311,8 @@ class PatternBasedInterpreter:
                 result.genre_penalties = avoid_result["genres"]
                 notes.append(avoid_result["note"])
 
-        # Try prefer patterns (genre boosts)
         prefer_result = self._try_prefer_patterns(rule)
         if prefer_result:
-            # Check if it's a content type filter
             for genre in list(prefer_result["genres"]):
                 content_type = _normalize_content_type(genre)
                 if content_type:
@@ -418,13 +324,11 @@ class PatternBasedInterpreter:
                 result.genre_boosts = prefer_result["genres"]
                 notes.append(prefer_result["note"])
 
-        # Determine confidence
         if result.is_empty():
             result.confidence = PatternConfidence.NONE
             result.interpretation_notes = "Could not interpret rule"
         elif notes:
             result.interpretation_notes = "; ".join(notes)
-            # High confidence if we matched a clear pattern
             if any(
                 word in rule.lower()
                 for word in ["avoid", "prefer", "only", "no ", "hate", "love"]
@@ -436,14 +340,6 @@ class PatternBasedInterpreter:
         return result
 
     def interpret_all(self, rules: list[str]) -> InterpretedPreference:
-        """Interpret multiple rules and merge the results.
-
-        Args:
-            rules: List of rule strings to interpret.
-
-        Returns:
-            Merged InterpretedPreference from all rules.
-        """
         if not rules:
             return InterpretedPreference(
                 confidence=PatternConfidence.NONE,
@@ -458,19 +354,10 @@ class PatternBasedInterpreter:
         return result
 
     def _try_avoid_patterns(self, rule: str) -> _GenreMatch | None:
-        """Try to match avoid/penalty patterns.
-
-        Args:
-            rule: Rule text to match.
-
-        Returns:
-            Dict with genres and note, or None if no match.
-        """
         for pattern in self._avoid_patterns:
             match = pattern.search(rule)
             if match:
                 raw_genre = match.group(1).strip()
-                # Remove trailing punctuation
                 raw_genre = re.sub(r"[.,!?]+$", "", raw_genre)
                 normalized = _normalize_genre(raw_genre)
                 return {
@@ -480,14 +367,6 @@ class PatternBasedInterpreter:
         return None
 
     def _try_prefer_patterns(self, rule: str) -> _GenreMatch | None:
-        """Try to match prefer/boost patterns.
-
-        Args:
-            rule: Rule text to match.
-
-        Returns:
-            Dict with genres and note, or None if no match.
-        """
         for pattern in self._prefer_patterns:
             match = pattern.search(rule)
             if match:
@@ -501,14 +380,6 @@ class PatternBasedInterpreter:
         return None
 
     def _try_only_type_patterns(self, rule: str) -> _TypeFilterMatch | None:
-        """Try to match content type filter patterns.
-
-        Args:
-            rule: Rule text to match.
-
-        Returns:
-            Dict with filters and note, or None if no match.
-        """
         for pattern in self._only_type_patterns:
             match = pattern.search(rule)
             if match:
@@ -523,21 +394,11 @@ class PatternBasedInterpreter:
         return None
 
     def _try_length_patterns(self, rule: str) -> _LengthMatch | None:
-        """Try to match length preference patterns.
-
-        Args:
-            rule: Rule text to match.
-
-        Returns:
-            Dict with preferences and note, or None if no match.
-        """
         for pattern in self._length_patterns:
             match = pattern.search(rule)
             if match:
                 groups = match.groups()
-                # Determine which group is length and which is content type
                 if len(groups) == 2:
-                    # Try both orderings
                     length1 = _normalize_length(groups[0])
                     type1 = _normalize_content_type(groups[1])
 
@@ -547,7 +408,6 @@ class PatternBasedInterpreter:
                             "note": f"Length preference: {length1} {type1}",
                         }
 
-                    # Try reverse
                     length2 = _normalize_length(groups[1])
                     type2 = _normalize_content_type(groups[0])
 

@@ -1,5 +1,3 @@
-"""Selective progress logging for long-running operations."""
-
 import logging
 
 from src.utils.text import sanitize_for_log
@@ -12,21 +10,7 @@ def should_log_progress(
     initial_count: int = 5,
     interval: int = 10,
 ) -> bool:
-    """Decide whether to emit a progress log for the given index.
-
-    Logs the first *initial_count* items, every *interval*-th item after
-    that, and always the last item.  This keeps output informative without
-    flooding the log on large collections.
-
-    Args:
-        current: 1-based index of the item being processed.
-        total: Total number of items.
-        initial_count: How many items at the start to log unconditionally.
-        interval: Log every N-th item after the initial batch.
-
-    Returns:
-        True if a progress message should be emitted.
-    """
+    """This keeps output informative without flooding the log on large collections."""
     if current <= initial_count:
         return True
     if current == total:
@@ -45,20 +29,6 @@ def log_progress(
     initial_count: int = 5,
     interval: int = 10,
 ) -> None:
-    """Log a progress message if the current index warrants it.
-
-    Emits messages like ``Processing game details: 10/150 (6%)``.
-
-    Args:
-        logger: Logger instance to write to.
-        label: Human-readable description of the operation
-               (e.g. ``"game details"``). Escaped here, because a caller
-               naming the item it is processing puts a title in it.
-        current: 1-based index of the item being processed.
-        total: Total number of items.
-        initial_count: How many items at the start to log unconditionally.
-        interval: Log every N-th item after the initial batch.
-    """
     if should_log_progress(
         current, total, initial_count=initial_count, interval=interval
     ):

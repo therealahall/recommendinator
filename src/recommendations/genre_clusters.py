@@ -1,18 +1,6 @@
-"""Semantic genre clusters for cross-content-type matching.
-
-Groups normalized genre/tag terms into thematic clusters so that items
-sharing a theme (e.g. a book tagged "space warfare" and a TV show tagged
-"war") can be connected even when they share no raw terms.
-
-Terms intentionally appear in multiple clusters (e.g. "quest" in both
-*fantasy* and *adventure_exploration*) to create richer thematic links.
-"""
+"""Semantic genre clusters for cross-content-type matching."""
 
 from __future__ import annotations
-
-# ---------------------------------------------------------------------------
-# Cluster definitions
-# ---------------------------------------------------------------------------
 
 CLUSTERS: dict[str, set[str]] = {
     "science_fiction": {
@@ -485,9 +473,6 @@ CLUSTERS: dict[str, set[str]] = {
         "arranged marriage",
         "passionate",
     },
-    # -------------------------------------------------------------------
-    # New clusters for thematic areas not previously covered
-    # -------------------------------------------------------------------
     "supernatural_paranormal": {
         "supernatural",
         "supernatural horror",
@@ -627,10 +612,6 @@ CLUSTERS: dict[str, set[str]] = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Pre-computed reverse index
-# ---------------------------------------------------------------------------
-
 _TERM_TO_CLUSTERS: dict[str, set[str]] = {}
 
 for _cluster_name, _terms in CLUSTERS.items():
@@ -638,20 +619,7 @@ for _cluster_name, _terms in CLUSTERS.items():
         _TERM_TO_CLUSTERS.setdefault(_term, set()).add(_cluster_name)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def get_clusters_for_terms(terms: list[str]) -> set[str]:
-    """Return all cluster names that any of *terms* belongs to.
-
-    Args:
-        terms: Normalized genre/tag strings.
-
-    Returns:
-        Set of cluster name strings.
-    """
     clusters: set[str] = set()
     for term in terms:
         matching = _TERM_TO_CLUSTERS.get(term)
@@ -663,20 +631,6 @@ def get_clusters_for_terms(terms: list[str]) -> set[str]:
 def cluster_similarity(
     clusters_a: frozenset[str] | set[str], clusters_b: frozenset[str] | set[str]
 ) -> float:
-    """Jaccard similarity of two cluster memberships.
-
-    Takes memberships rather than terms so a caller comparing one item against
-    many derives each item's clusters once instead of once per comparison.
-
-    Args:
-        clusters_a: First cluster membership, from
-            :func:`get_clusters_for_terms`.
-        clusters_b: Second cluster membership.
-
-    Returns:
-        Jaccard similarity in ``[0.0, 1.0]``, and ``0.0`` when either
-        membership is empty.
-    """
     if not clusters_a or not clusters_b:
         return 0.0
 
@@ -684,15 +638,6 @@ def cluster_similarity(
 
 
 def cluster_overlap(terms_a: list[str], terms_b: list[str]) -> float:
-    """Jaccard similarity of the cluster memberships of two term lists.
-
-    Args:
-        terms_a: First set of normalized genre/tag strings.
-        terms_b: Second set of normalized genre/tag strings.
-
-    Returns:
-        Jaccard similarity in ``[0.0, 1.0]``.
-    """
     return cluster_similarity(
         get_clusters_for_terms(terms_a), get_clusters_for_terms(terms_b)
     )

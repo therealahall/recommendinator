@@ -1,8 +1,6 @@
-"""The ``settings`` group.
-
-Mirrors the /api/settings endpoints. All business logic lives in
-``src.settings.service`` (shared with the web API) so the two interfaces stay
-in lockstep; the commands below only parse input and render output.
+"""All business logic lives in ``src.settings.service`` (shared with the web
+API) so the two interfaces stay in lockstep; the commands below only parse
+input and render output.
 """
 
 from __future__ import annotations
@@ -46,7 +44,6 @@ RESTART_ADVISORY = "Takes effect after a restart"
 
 
 def _format_value(value: Any) -> str:
-    """Render a setting value for human output."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list):
@@ -74,7 +71,6 @@ def _echo_restart_advisory(keys: Iterable[str], output_format: str) -> None:
 
 
 def _setting_flags(view: dict[str, Any]) -> str:
-    """Render the ``overridden``/``restart``/``advanced`` markers for a setting."""
     flags = []
     if view.get("db_overridden"):
         flags.append("overridden")
@@ -112,8 +108,7 @@ def settings_list(
 
     Secrets show presence only (never their value). Advanced infra/security
     settings are hidden from the human listing unless --advanced is given or a
-    specific --section is requested. --format json always emits the complete
-    view.
+    specific --section is requested. --format json always emits the complete view.
     """
     config = ctx.obj["config"]
     storage = require_storage(ctx)
@@ -260,9 +255,7 @@ def settings_apply(ctx: click.Context, from_json: str, output_format: str) -> No
 
     Mirrors the web ``PUT /api/settings`` endpoint: every update is validated
     up front through a single ``apply_settings`` call, so one bad key leaves
-    nothing written (all-or-nothing). Sensitive keys are rejected — store them
-    with ``settings set-secret``. Non-restart settings take effect immediately;
-    restart-required settings apply on the next boot.
+    nothing written (all-or-nothing).
     """
     config = ctx.obj["config"]
     storage = require_storage(ctx)
@@ -316,8 +309,7 @@ def settings_set_secret(ctx: click.Context, key: str) -> None:
 
     Reads from the ``RECOMMENDINATOR_SECRET_VALUE`` environment variable for
     non-interactive use (env vars are not exposed in shell history or in the
-    process list to other users); otherwise prompts with hidden input. Rejects
-    non-sensitive keys.
+    process list to other users); otherwise prompts with hidden input.
     """
     storage = require_storage(ctx)
     entry = get_entry(key)
