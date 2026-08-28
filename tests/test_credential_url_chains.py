@@ -1,8 +1,5 @@
-"""Guard: no credential-in-URL request error survives where a caller renders it.
-
-``scrub_request_error`` fixes only the message. ``from error`` leaves the query
-string on ``__cause__``, which callers print with ``exc_info=True``.
-"""
+"""``scrub_request_error`` fixes only the message. ``from error`` leaves the query
+string on ``__cause__``, which callers print with ``exc_info=True``."""
 
 import ast
 from pathlib import Path
@@ -92,7 +89,6 @@ _REQUEST_ERROR_NAMES = frozenset(
 
 
 def _bare_name(node: ast.expr) -> str:
-    """Return an expression's trailing name, dropping any module or object prefix."""
     if isinstance(node, ast.Attribute):
         return node.attr
     if isinstance(node, ast.Name):
@@ -101,7 +97,6 @@ def _bare_name(node: ast.expr) -> str:
 
 
 def _catches_a_request_error(handler: ast.ExceptHandler) -> bool:
-    """Report whether the request exception can land in ``handler``."""
     if handler.type is None:
         return True
     return any(
@@ -119,7 +114,6 @@ def _attaches_a_traceback(keyword: ast.keyword) -> bool:
 
 
 def _renders_a_traceback(handler: ast.ExceptHandler) -> bool:
-    """Report whether ``handler`` renders a traceback of what it caught."""
     for child in ast.walk(handler):
         if not isinstance(child, ast.Call):
             continue
@@ -131,12 +125,7 @@ def _renders_a_traceback(handler: ast.ExceptHandler) -> bool:
 
 
 def _interpolates_a_value(node: ast.expr) -> bool:
-    """The five spellings that render a value into a log line.
-
-    ``%s`` renders the bare name, and ``str``, an f-string, ``%`` and
-    ``.format`` get there first. Reading every ``Call`` as scrubbed waved
-    three of them through.
-    """
+    """Reading every ``Call`` as scrubbed waved three of them through."""
     if isinstance(node, (ast.Name, ast.JoinedStr)):
         return True
     if isinstance(node, ast.BinOp):
@@ -149,11 +138,8 @@ def _interpolates_a_value(node: ast.expr) -> bool:
 
 
 def _scrubbed_nodes(argument: ast.expr) -> set[int]:
-    """Every node under a scrubber call, by identity.
-
-    ``f"failed: {scrub_request_error(error)}"`` is the fixed shape inside an
-    f-string, so the name under it is not the one carrying the URL.
-    """
+    """``f"failed: {scrub_request_error(error)}"`` is the fixed shape inside an
+    f-string, so the name under it is not the one carrying the URL."""
     return {
         id(node)
         for call in ast.walk(argument)
@@ -163,7 +149,6 @@ def _scrubbed_nodes(argument: ast.expr) -> set[int]:
 
 
 def _names_the_error(argument: ast.expr, bound: str | None) -> bool:
-    """Report whether ``argument`` is the caught exception itself, unscrubbed."""
     if not _interpolates_a_value(argument):
         return False
     scrubbed = _scrubbed_nodes(argument)
@@ -174,7 +159,6 @@ def _names_the_error(argument: ast.expr, bound: str | None) -> bool:
 
 
 def _logs_the_raw_error(handler: ast.ExceptHandler) -> bool:
-    """Report whether ``handler`` hands its unscrubbed exception to a log call."""
     return any(
         _bare_name(child.func) in _LOG_METHODS
         and any(_names_the_error(argument, handler.name) for argument in child.args)
@@ -184,12 +168,10 @@ def _logs_the_raw_error(handler: ast.ExceptHandler) -> bool:
 
 
 def _keeps_the_cause(raised: ast.Raise) -> bool:
-    """Report whether ``raised`` leaves the handled exception in the chain."""
     return not (isinstance(raised.cause, ast.Constant) and raised.cause.value is None)
 
 
 def _leaky_renderings(module_path: Path, function_name: str) -> list[str]:
-    """Describe every way ``function_name`` lets a request exception be rendered."""
     tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     functions = [
         node
@@ -224,12 +206,9 @@ def _leaky_renderings(module_path: Path, function_name: str) -> list[str]:
 
 
 def _keys_written(function: ast.AST) -> set[str]:
-    """Every string this function spells as a key.
-
-    Three spellings reach a query string identically: a dict literal, an item
+    """Three spellings reach a query string identically: a dict literal, an item
     assignment onto one, and ``dict(api_key=…)``. Reading only the literal was
-    the hole.
-    """
+    the hole."""
     keys: set[str] = set()
     for node in ast.walk(function):
         if isinstance(node, ast.Dict):
@@ -247,12 +226,10 @@ def _keys_written(function: ast.AST) -> set[str]:
 
 
 def _names_a_credential(function: ast.AST) -> bool:
-    """Report whether ``function`` keys anything by a secret's name."""
     return bool(_keys_written(function) & _CREDENTIAL_PARAM_NAMES)
 
 
 def _sends_query_params(function: ast.AST) -> bool:
-    """Report whether ``function`` puts anything in a request query string."""
     return any(
         keyword.arg == "params"
         for node in ast.walk(function)
@@ -262,12 +239,8 @@ def _sends_query_params(function: ast.AST) -> bool:
 
 
 def _credential_url_functions(root: Path, *subtrees: Path) -> set[tuple[str, str]]:
-    """Find every function under *subtrees* sending a credential as a param.
-
-    Over-approximate on purpose: the name and the ``params=`` need only share
-    a function, not a dict. A needless registration costs a line, a missing
-    one costs the key.
-    """
+    """Over-approximate on purpose: the name and the ``params=`` need only share a
+    function, not a dict."""
     found: set[tuple[str, str]] = set()
     for subtree in subtrees:
         for module_path in sorted((root / subtree).rglob("*.py")):
@@ -288,17 +261,10 @@ def _credential_url_functions(root: Path, *subtrees: Path) -> set[tuple[str, str
 
 
 class TestCredentialUrlHandlersStayOutOfTracebacks:
-    """One rule for every call that puts a secret in a query string.
-
-    None may render a traceback, log its exception unscrubbed, or keep it as a
-    ``__cause__``, because callers print all three.
-    """
-
     @pytest.mark.parametrize(("module", "function"), _CREDENTIAL_URL_FUNCTIONS)
     def test_no_request_error_survives_the_handler(
         self, module: str, function: str
     ) -> None:
-        """The credential-bearing calls neither log nor chain their request error."""
         leaks = _leaky_renderings(_REPO_ROOT / module, function)
 
         assert not leaks, (
@@ -308,7 +274,6 @@ class TestCredentialUrlHandlersStayOutOfTracebacks:
         )
 
     def test_every_caller_sending_a_credential_param_is_registered(self) -> None:
-        """A new integration joins the list above, rather than being remembered in."""
         scanned = {
             (module, function)
             for module, function in _CREDENTIAL_URL_FUNCTIONS

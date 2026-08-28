@@ -1,9 +1,3 @@
-"""The ``import`` command: the CLI half of the upload door POST /api/import.
-
-The JSON it emits must stay field for field identical to ``ImportResponse``,
-so the two interfaces cannot drift.
-"""
-
 from __future__ import annotations
 
 import json
@@ -24,8 +18,6 @@ from src.web.api import (
 )
 from tests.cli.conftest import _invoke_with_mocks
 
-#: One row that imports and one with no title, byte for byte what the web's
-#: upload test posts, so the two interfaces' counts can be compared literally.
 _BOOKS_CSV = "title,author,status,rating\nDune,Frank Herbert,read,5\n,Nobody,read,3\n"
 
 
@@ -47,7 +39,6 @@ def _import(
     *args: str,
     config: dict[str, Any] | None = None,
 ) -> Any:
-    """Run ``import`` over ``path`` as a book CSV."""
     return _invoke_with_mocks(
         CliRunner(),
         ["import", str(path), "--importer", "csv_import", "--content-type", "book"]
@@ -58,7 +49,6 @@ def _import(
 
 
 def _formats(storage: StorageManager, *args: str) -> Any:
-    """Run ``import-formats``."""
     return _invoke_with_mocks(
         CliRunner(),
         ["import-formats", *args],
@@ -69,7 +59,6 @@ def _formats(storage: StorageManager, *args: str) -> Any:
 def _template(
     storage: StorageManager, *args: str, input_text: str | None = None
 ) -> Any:
-    """Run ``import-template``."""
     return _invoke_with_mocks(
         CliRunner(),
         ["import-template", *args],
@@ -81,7 +70,6 @@ def _template(
 def test_a_file_at_a_path_imports_and_names_the_line_it_skipped_on_stdout(
     storage: StorageManager, books_csv: Path
 ) -> None:
-    """On stderr, as they were, ``--format table`` printed nothing at all."""
     result = _import(storage, books_csv)
 
     assert result.exit_code == 0
@@ -96,7 +84,6 @@ def test_a_file_at_a_path_imports_and_names_the_line_it_skipped_on_stdout(
 def test_the_json_carries_the_import_endpoint_key_set_and_no_other(
     storage: StorageManager, books_csv: Path
 ) -> None:
-    """A key added to ``ImportResponse`` alone is drift the web would hide."""
     payload = json.loads(_import(storage, books_csv, "--format", "json").stdout)
 
     assert set(payload) == set(ImportResponse.model_fields)
@@ -118,18 +105,15 @@ def test_the_json_carries_the_import_endpoint_key_set_and_no_other(
 def test_json_mode_leaves_the_count_line_off_the_data_channel(
     storage: StorageManager, books_csv: Path
 ) -> None:
-    """A count line ahead of the JSON breaks every piped caller."""
     result = _import(storage, books_csv, "--format", "json")
 
     assert "rows read" not in result.stdout
-    # Round-tripped: stdout is that one document and not a byte more.
     assert result.stdout == json.dumps(json.loads(result.stdout), indent=2) + "\n"
 
 
 def test_a_clean_file_still_carries_an_empty_errors_list(
     storage: StorageManager, tmp_path: Path
 ) -> None:
-    """``errors`` is never absent and never prose: a caller may not check first."""
     path = tmp_path / "clean.csv"
     path.write_text("title,author\nDune,Frank Herbert\n", encoding="utf-8")
 
@@ -142,9 +126,6 @@ def test_a_clean_file_still_carries_an_empty_errors_list(
 def test_the_config_gate_decides_whether_imported_items_are_queued(
     storage: StorageManager, books_csv: Path, auto_enrich: bool
 ) -> None:
-    """``enrichment.auto_enrich_on_sync``, read as the CLI's sync sibling reads
-    it: an import ignoring it leaves every imported item unenriched.
-    """
     config = {"enrichment": {"enabled": True, "auto_enrich_on_sync": auto_enrich}}
 
     assert _import(storage, books_csv, config=config).exit_code == 0
@@ -157,8 +138,6 @@ def test_the_config_gate_decides_whether_imported_items_are_queued(
 def test_a_queue_fault_is_reported_as_a_note_rather_than_a_refused_row(
     storage: StorageManager, books_csv: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Listed with the misses, and every count above them covers rows."""
-
     def refuse(db_id: int) -> None:
         raise RuntimeError("database is locked")
 
@@ -181,8 +160,6 @@ def test_a_queue_fault_is_reported_as_a_note_rather_than_a_refused_row(
 
 
 class TestARefusedImport:
-    """Every refusal names what to fix, and none of them exits 0."""
-
     def test_a_path_that_is_not_there_is_refused_before_storage_is_touched(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
@@ -203,9 +180,6 @@ class TestARefusedImport:
     def test_a_file_the_operator_cannot_read_is_refused_before_it_is_parsed(
         self, storage: StorageManager, books_csv: Path
     ) -> None:
-        """Without ``readable=True`` the permission fault surfaces as a
-        traceback out of ``read_bytes`` instead of a refusal.
-        """
         books_csv.chmod(0o000)
 
         result = _import(storage, books_csv)
@@ -239,7 +213,6 @@ class TestARefusedImport:
     def test_a_format_name_that_is_not_ours_lists_the_ones_that_are(
         self, storage: StorageManager, books_csv: Path
     ) -> None:
-        """The choices come off the registry, so a new importer needs no edit."""
         result = _import(storage, books_csv, "--importer", "goodreads_rss")
 
         assert result.exit_code == 2
@@ -247,14 +220,9 @@ class TestARefusedImport:
 
 
 class TestTheTemplateAnOperatorFillsIn:
-    """In Docker ``templates/`` is inside the image, with no shell to copy from."""
-
     def test_a_named_template_goes_to_stdout_byte_for_byte(
         self, storage: StorageManager
     ) -> None:
-        """It is piped into the file that gets filled in and uploaded back, so a
-        byte added on the way out is a template that no longer parses.
-        """
         result = _template(
             storage, "--importer", "csv_import", "--content-type", "book"
         )
@@ -287,7 +255,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_the_listing_carries_the_endpoint_key_set_and_no_other(
         self, storage: StorageManager
     ) -> None:
-        """A key added to ``ImportTemplateResponse`` alone is drift the web hides."""
         payload = json.loads(_template(storage, "--format", "json").stdout)
 
         assert {frozenset(entry) for entry in payload} == {
@@ -302,7 +269,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_the_table_listing_names_each_template_on_stdout(
         self, storage: StorageManager
     ) -> None:
-        """The listing is this command's data, so an empty stdout is the whole bug."""
         result = _template(storage)
 
         assert "books.csv" in result.stdout
@@ -319,7 +285,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_a_missing_templates_directory_says_where_it_looked(
         self, storage: StorageManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An empty listing would read as an install that ships no templates."""
         absent = tmp_path / "absent"
         monkeypatch.setattr("src.ingestion.import_templates.TEMPLATES_DIR", absent)
 
@@ -331,9 +296,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_an_output_path_with_neither_half_named_is_refused_not_ignored(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
-        """Reported: ``--output`` alone prints the listing and exits 0, writing
-        no file, so a script's next step opens one that was never created.
-        """
         destination = tmp_path / "books.csv"
 
         result = _template(storage, "--output", str(destination))
@@ -344,9 +306,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_a_listing_format_named_beside_a_template_is_refused_not_ignored(
         self, storage: StorageManager
     ) -> None:
-        """The same defect on the other option: ``--format json`` was dropped and
-        the raw template written to the stdout a caller was about to parse.
-        """
         result = _template(
             storage,
             "--importer",
@@ -364,7 +323,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_an_existing_output_file_is_kept_until_the_overwrite_is_confirmed(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
-        """It was clobbered silently, taking the filled-in template with it."""
         destination = tmp_path / "books.csv"
         destination.write_text("title\nmy own work\n", encoding="utf-8")
 
@@ -393,14 +351,9 @@ class TestTheTemplateAnOperatorFillsIn:
 
 
 class TestTheFormatsOnOffer:
-    """The web picker is built from GET /api/importers; a shell has only this."""
-
     def test_the_json_is_the_importers_endpoint_answer_field_for_field(
         self, storage: StorageManager
     ) -> None:
-        """An importer added, renamed or re-described reaches the picker for
-        free and the CLI only through this, so the two are compared whole.
-        """
         payload = json.loads(_formats(storage, "--format", "json").stdout)
 
         assert {frozenset(entry) for entry in payload} == {
@@ -411,9 +364,6 @@ class TestTheFormatsOnOffer:
     def test_the_table_listing_names_every_format_and_which_needs_a_type(
         self, storage: StorageManager
     ) -> None:
-        """The listing is this command's data, so an empty stdout is the whole
-        bug, and a format's content type is what the next command needs.
-        """
         result = _formats(storage)
 
         assert result.exit_code == 0

@@ -1,9 +1,3 @@
-"""The ``account`` group, the break-glass path to a lost web password.
-
-The CLI reaches storage directly rather than over HTTP, so it is the only
-surface that can reset the one account with no server and no session.
-"""
-
 from __future__ import annotations
 
 import json
@@ -26,7 +20,6 @@ from tests.cli.conftest import _invoke_with_mocks
 _NEW_PASSWORD = "a longer passphrase"
 _OLD_PASSWORD = "correct horse"
 
-#: What an operator types at the prompt and its confirmation.
 _TYPED_TWICE = f"{_NEW_PASSWORD}\n{_NEW_PASSWORD}\n"
 
 _SET_PASSWORD = ["account", "set-password"]
@@ -34,13 +27,11 @@ _SET_PASSWORD = ["account", "set-password"]
 
 @pytest.fixture
 def storage(tmp_path: Path) -> StorageManager:
-    """A manager on its own database, with nobody claiming the instance."""
     return StorageManager(sqlite_path=tmp_path / "account.db")
 
 
 @pytest.fixture
 def claimed(storage: StorageManager) -> StorageManager:
-    """That instance, claimed by ``owner`` with ``correct horse``."""
     storage.accounts.claim("owner", "The Owner", _OLD_PASSWORD)
     return storage
 
@@ -62,8 +53,6 @@ def _stored_password(storage: StorageManager) -> Any:
 
 
 class TestResettingThePasswordWithNoServerRunning:
-    """The acceptance path: the stored hash verifies afterwards."""
-
     def test_the_new_password_verifies_and_the_old_one_stops(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
@@ -77,7 +66,6 @@ class TestResettingThePasswordWithNoServerRunning:
     def test_every_session_is_revoked(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """A browser someone else left signed in dies with the old password."""
         tokens = [claimed.accounts.create_session(1) for _ in range(2)]
         assert [claimed.accounts.lookup_session(token) for token in tokens] != [
             None,
@@ -94,14 +82,6 @@ class TestResettingThePasswordWithNoServerRunning:
 
 
 class TestTheFloorTheWebFormAlsoKeeps:
-    """Regression test: the CLI set a password the web would reject.
-
-    Bug reported: docs/SECURITY.md says the minimum holds wherever one is set,
-    naming ``account set-password``.
-    Root cause: the group called ``set_password`` unchecked.
-    Fix: apply ``MIN_PASSWORD_LENGTH`` here too.
-    """
-
     def test_a_short_password_is_refused_and_the_hash_is_untouched_regression(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
@@ -119,7 +99,6 @@ class TestTheFloorTheWebFormAlsoKeeps:
     def test_a_password_at_the_floor_is_accepted(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """Anchors the refusal: the boundary is ``<``, not ``<=``."""
         at_the_floor = "x" * MIN_PASSWORD_LENGTH
 
         result = _run(
@@ -131,12 +110,9 @@ class TestTheFloorTheWebFormAlsoKeeps:
 
 
 class TestThePasswordIsNeverAnArgvValue:
-    """An argv password lands in the shell history and in the process table."""
-
     def test_the_prompt_stays_off_the_data_channel(
         self, claimed: StorageManager
     ) -> None:
-        """``--format json`` is pipeable, so the prompt goes to stderr."""
         result = _run(
             CliRunner(),
             claimed,
@@ -150,8 +126,6 @@ class TestThePasswordIsNeverAnArgvValue:
 
 
 class TestAnUnclaimedInstanceIsRefused:
-    """Claiming happens in the browser; a reset must not half-create an account."""
-
     def test_set_password_refuses_and_writes_nothing(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -194,7 +168,6 @@ class TestRenamingTheAccount:
     def test_only_the_name_that_was_passed_is_written(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """A username-only rename must not erase the display name."""
         result = _run(
             cli_runner, claimed, ["account", "set-name", "--username", "keeper"]
         )
@@ -208,7 +181,6 @@ class TestRenamingTheAccount:
     def test_the_renamed_account_still_logs_in(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """The username is the login, so the password has to follow it."""
         _run(cli_runner, claimed, ["account", "set-name", "--username", "keeper"])
 
         assert claimed.accounts.verify_password("keeper", _OLD_PASSWORD) is not None
@@ -217,10 +189,6 @@ class TestRenamingTheAccount:
     def test_a_blank_username_is_refused_and_writes_nothing(
         self, cli_runner: CliRunner, claimed: StorageManager
     ) -> None:
-        """The storage door's own refusal, named after the option that broke it.
-
-        The web renders the same sentence for the same value.
-        """
         before = claimed.accounts.describe(1)
 
         result = _run(cli_runner, claimed, ["account", "set-name", "--username", "  "])
@@ -233,11 +201,6 @@ class TestRenamingTheAccount:
     def test_a_name_past_the_column_is_refused_as_the_web_refuses_it(
         self, cli_runner: CliRunner, claimed: StorageManager, option: str
     ) -> None:
-        """``UserUpdateRequest`` caps both at the same width, and 422s past it.
-
-        Regression: the group carried its own copy of the cap and its own
-        sentence, so the two interfaces could refuse different widths.
-        """
         before = claimed.accounts.describe(1)
 
         result = _run(
@@ -263,12 +226,6 @@ class TestRenamingTheAccount:
 
 
 class TestTheJsonViewIsTheRecordStorageHolds:
-    """Every command emits what ``describe_account`` returns, unshaped.
-
-    Compared against storage rather than a literal, so a field the record
-    grows cannot reach one command's document and miss another's.
-    """
-
     @pytest.mark.parametrize(
         ("args", "input_text"),
         [

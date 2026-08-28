@@ -1,5 +1,3 @@
-"""The root conftest's refusal to let a test dial a real host."""
-
 from __future__ import annotations
 
 import socket
@@ -16,10 +14,7 @@ def test_a_connection_to_a_real_host_is_refused() -> None:
 
 
 def test_loopback_still_connects() -> None:
-    """TestClient and the local database clients need it.
-
-    Refusing loopback would make the guard the thing everyone disables.
-    """
+    """Refusing loopback would make the guard the thing everyone disables."""
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)

@@ -1,5 +1,3 @@
-"""What ``create_app`` writes to the log when the boot itself fails."""
-
 from __future__ import annotations
 
 import logging
@@ -14,12 +12,6 @@ from src.web.app import create_app
 
 
 class TestAnUnopenableLogAbortsTheBoot:
-    """The web takes the opposite branch from the CLI, on purpose.
-
-    A server has no console to degrade onto, so it fails loudly rather than
-    serve unlogged for weeks.
-    """
-
     def test_a_log_the_server_cannot_open_stops_create_app(
         self,
         tmp_path: Path,
@@ -39,26 +31,16 @@ class TestAnUnopenableLogAbortsTheBoot:
             with pytest.raises(OSError) as raised:
                 create_app()
 
-        # Tied to the log destination: a bare OSError is satisfied by any
-        # unmocked component inside this boot failing for its own reason.
         assert Path(str(raised.value.filename)).name == "logs"
 
 
 class TestBootFailureLoggingRegression:
-    """Regression: both boot handlers interpolated the caught exception raw.
-
-    Bug: ``%s`` on it let a line break in the message forge an entry, and a
-    message-less exception logged a bare trailing colon.
-    Fix: both render it through ``exception_for_log``.
-    """
-
     _FORGED = "config/nope.yaml\nERROR    | forged | line"
     _RENDERED = "FileNotFoundError: config/nope.yaml\\nERROR    | forged | line"
 
     def test_a_missing_config_file_cannot_forge_a_second_entry(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The loader's message is the path it was handed."""
         fault = FileNotFoundError(self._FORGED)
         with patch("src.web.app.load_config", side_effect=fault):
             with caplog.at_level(logging.ERROR, logger="src.web.app"):
@@ -73,7 +55,6 @@ class TestBootFailureLoggingRegression:
     def test_a_message_less_boot_fault_still_names_its_class(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """``%s`` on a bare ``RuntimeError()`` logged the colon and nothing else."""
         config: dict[str, Any] = {"web": {}}
         with (
             patch("src.web.app.load_config", return_value=config),

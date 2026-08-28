@@ -66,7 +66,6 @@ def test_a_recorded_run_reads_back_whole(storage: StorageManager) -> None:
     )
     assert run["total_items"] == 12
     assert run["errors"] == ["timed out", "429 from Steam"]
-    # The capped list cannot be totalled by counting it.
     assert run["omitted_errors"] == 48
 
 
@@ -74,12 +73,9 @@ _OMITTED_COLUMN = "omitted_errors"
 
 
 def _legacy_sync_runs_db(path: Path) -> None:
-    """A database whose ``sync_runs`` predates the omitted-error column."""
     legacy_table = "\n".join(
         line for line in _SYNC_RUNS_TABLE.splitlines() if _OMITTED_COLUMN not in line
     )
-    # The schema version did not move for this column, so an ALTER is all that
-    # tells an operator's existing database from a fresh one.
     assert legacy_table != _SYNC_RUNS_TABLE
     conn = sqlite3.connect(path)
     try:
@@ -99,8 +95,6 @@ def _legacy_sync_runs_db(path: Path) -> None:
 def test_a_database_written_before_the_count_still_serves_its_history(
     tmp_path: Path,
 ) -> None:
-    """Every run read names the column, so an upgrade that did not add it takes
-    run history down on the databases that already had runs in them."""
     db_path = tmp_path / "legacy.db"
     _legacy_sync_runs_db(db_path)
 
@@ -134,7 +128,6 @@ def test_consecutive_failures_counts_only_the_run_since_the_last_success(
 
     _record(storage, minute=10, status="failed")
     _record(storage, minute=15, status="failed")
-    # A dropped source_id filter would back every source off because one broke.
     _record(storage, "trakt", minute=12, status="failed")
     _record(storage, "trakt", minute=17, status="failed")
 
@@ -185,7 +178,6 @@ def test_a_claim_a_killed_run_left_open_is_taken_over_once_it_goes_stale(
 def test_a_run_releases_its_own_claim_and_not_the_one_that_replaced_it(
     storage: StorageManager,
 ) -> None:
-    """Released by source id, a finished run's exit dropped the next run's claim."""
     first = storage.sync_runs.claim(1, "steam")
     assert first is not None
     _record(storage)
@@ -273,7 +265,6 @@ def test_the_runs_a_version_seventeen_library_holds_survive_the_rebuild(
 def test_recording_prunes_to_the_newest_fifty_runs_of_a_source(
     storage: StorageManager,
 ) -> None:
-    """The trakt row is asserted because a widened DELETE would take it too."""
     _record(storage, "trakt", minute=0, status="failed")
     for minute in range(60):
         _record(storage, "steam", minute=minute, status="failed")

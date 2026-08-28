@@ -1,6 +1,3 @@
-"""Tests for the per-source configuration API endpoints behind the web UI's
-data-source accordions."""
-
 from __future__ import annotations
 
 import logging
@@ -38,7 +35,6 @@ def storage(tmp_path: Path) -> StorageManager:
 
 @pytest.fixture()
 def base_config() -> dict[str, Any]:
-    """A minimal config with two YAML-defined sources."""
     return {
         "storage": {"database_path": "data/test.db"},
         "inputs": {
@@ -67,12 +63,6 @@ def client(
     storage: StorageManager,
     base_config: dict[str, Any],
 ) -> Iterator[TestClient]:
-    """TestClient with a real StorageManager and an in-memory test config.
-
-    ``booted_web_app`` patches the boot's I/O boundaries so the suite never
-    touches the real config file — only ``app_state.config`` drives behaviour,
-    and tests may mutate it (e.g. to assert the YAML purge after a migrate).
-    """
     engine = Mock(spec=RecommendationEngine)
     engine.storage = storage
 
@@ -156,13 +146,6 @@ class TestConfigEndpoint:
     def test_yaml_secret_status_unset_for_non_string_value(
         self, client: TestClient, base_config: dict[str, Any]
     ) -> None:
-        """A YAML secret value of False/None/0 must not be reported as set.
-
-        Regression guard for ``is_nonempty_secret_value``: a naive
-        ``str(value).strip()`` truthiness check would mis-classify
-        ``False`` (becomes ``"False"``) as a stored secret.
-        """
-        # Override yaml to put False in api_key (a non-string value).
         base_config["inputs"]["my_games"]["api_key"] = False
         response = client.get("/api/sync/sources/my_games/config")
         body = response.json()
@@ -176,11 +159,6 @@ class TestMigrateEndpoint:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """``migrate_source``'s own work: the boot migration is stubbed here.
-
-        The shipped ordering — startup encrypts the secret first — is the
-        class below.
-        """
         response = client.post("/api/sync/sources/my_games/migrate")
         assert response.status_code == 200
         body = response.json()
@@ -204,9 +182,6 @@ class TestMigrateEndpoint:
         decrypted = storage.credentials.get(1, "my_games", "api_key")
         assert decrypted == "yaml_api_key"
 
-        # YAML entry remains in the in-memory config (mutating shared state
-        # in a request handler would race with concurrent reads).
-        # ``resolve_inputs`` prefers the DB row regardless.
         assert "my_games" in base_config["inputs"]
 
     def test_a_secret_no_key_can_decrypt_is_still_reported(
@@ -215,13 +190,6 @@ class TestMigrateEndpoint:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """Storage, not readability — the answer ``secret_status`` also gives.
-
-        The migration keeps a row an encryption-key change made unreadable, so
-        omitting it here would offer the operator a migration that never comes.
-        """
-        # Nothing left in the file to re-encrypt from, so the stale row is the
-        # only thing the answer can be built out of.
         del base_config["inputs"]["my_games"]["api_key"]
         with storage.connection() as conn:
             conn.execute(
@@ -244,18 +212,11 @@ class TestMigrateEndpoint:
         second = client.post("/api/sync/sources/my_books/migrate")
         assert first.status_code == 200
         assert second.status_code == 200
-        # Only one row exists
         rows = storage.sources.list(1)
         assert len([r for r in rows if r["source_id"] == "my_books"]) == 1
 
 
 class TestMigrateNamesASecretTheBootPassEncryptedRegression:
-    """Reported: ``source migrate`` printed no ``Secrets:`` line.
-
-    Cause: the answer counted what the call itself moved, and the startup
-    migration had already emptied the YAML entry. Fix: it counts the rows.
-    """
-
     def test_a_real_boot_still_reports_the_secret(
         self,
         registry_with_source_fakes: None,
@@ -264,7 +225,6 @@ class TestMigrateNamesASecretTheBootPassEncryptedRegression:
     ) -> None:
         with booted_web_app(storage, base_config, migrate_credentials=True) as app:
             client = authenticated_client(app)
-            # Anchored: startup, not this request, is what encrypted it.
             assert storage.credentials.get(1, "my_games", "api_key") == "yaml_api_key"
             response = client.post("/api/sync/sources/my_games/migrate")
 
@@ -291,8 +251,6 @@ class TestUpdateConfigEndpoint:
         )
         assert response.status_code == 200
         body = response.json()
-        # Response body reflects the freshly-saved values — guards against a
-        # regression where the endpoint returns stale data after the write.
         assert body["source_id"] == "my_games"
         assert body["field_values"]["user_id"] == "new_user"
         assert body["field_values"]["min_minutes"] == 60
@@ -350,14 +308,12 @@ class TestSecretEndpoints:
     def test_put_secret_404_for_unknown_field_name(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """A field not declared in the plugin schema returns 404."""
         client.post("/api/sync/sources/my_games/migrate")
         response = client.put(
             "/api/sync/sources/my_games/secret/no_such_field",
             json={"value": "x"},
         )
         assert response.status_code == 404
-        # Guard fired before any DB write — no credential row created.
         assert storage.credentials.get(1, "my_games", "no_such_field") is None
 
     def test_put_secret_400_for_non_sensitive_field(
@@ -389,11 +345,8 @@ class TestEnabledEndpoint:
         )
         assert response.status_code == 200
         body = response.json()
-        # Response body reflects the freshly-toggled state, not stale data.
         assert body["enabled"] is False
         assert body["source_id"] == "my_books"
-        # migrated_at survives the toggle (a regression that returned None
-        # would still satisfy the boolean assertion above).
         assert body["migrated_at"] is not None
         row = storage.sources.get(1, "my_books")
         assert row is not None
@@ -571,11 +524,6 @@ class TestSyncRunsEndpoint:
 
 class TestPluginsEndpoint:
     def test_lists_registered_plugins_with_schemas(self, client: TestClient) -> None:
-        """Exact-match assertions on the PluginInfoResponse shape.
-
-        Fixture pins the registry to two fakes; assert the full set so any
-        spurious extra plugin appearing in the response is caught.
-        """
         response = client.get("/api/plugins")
         assert response.status_code == 200
         body = response.json()
@@ -584,7 +532,6 @@ class TestPluginsEndpoint:
         assert body["import_errors"] == []
 
         fake_api = next(p for p in body["plugins"] if p["name"] == "fake_api")
-        # Top-level fields cover the entire PluginInfoResponse shape.
         assert set(fake_api.keys()) == {
             "name",
             "display_name",
@@ -595,12 +542,11 @@ class TestPluginsEndpoint:
             "fields",
         }
         assert fake_api["display_name"] == "Fake API"
-        assert fake_api["description"]  # non-empty string
+        assert fake_api["description"]
         assert fake_api["content_types"] == ["video_game"]
         assert fake_api["requires_api_key"] is True
         assert fake_api["requires_network"] is True
 
-        # Per-field shape: every field must include the SourceFieldSchema keys.
         for field in fake_api["fields"]:
             assert set(field.keys()) == {
                 "name",
@@ -612,7 +558,6 @@ class TestPluginsEndpoint:
             }
         sensitive_map = {f["name"]: f["sensitive"] for f in fake_api["fields"]}
         assert sensitive_map["api_key"] is True
-        # Sensitive field defaults are masked to None on the wire.
         api_key_field = next(f for f in fake_api["fields"] if f["name"] == "api_key")
         assert api_key_field["default"] is None
 
@@ -623,7 +568,6 @@ def broken_plugin_client(
     storage: StorageManager,
     base_config: dict[str, Any],
 ) -> Iterator[TestClient]:
-    """A client configured against a plugin whose module never imported."""
     base_config["inputs"]["my_books"] = {
         "plugin": UNLOADED_PLUGIN,
         "enabled": True,
@@ -636,16 +580,9 @@ def broken_plugin_client(
 
 
 class TestFailedPluginImportIsReportedRegression:
-    """Symptom: goodreads_rss needs defusedxml, the container lacked it, and
-    the plugin was simply absent from the Data page and the Add-Source picker.
-
-    Cause: the registry dropped the module silently. Fix: report it on both.
-    """
-
     def test_the_source_listing_names_the_module_and_the_reason(
         self, broken_plugin_client: TestClient
     ) -> None:
-        """The Data page renders this entry instead of losing the source."""
         response = broken_plugin_client.get("/api/sync/sources")
 
         assert response.status_code == 200
@@ -661,7 +598,6 @@ class TestFailedPluginImportIsReportedRegression:
     def test_the_picker_says_why_a_plugin_is_missing_from_it(
         self, broken_plugin_client: TestClient
     ) -> None:
-        """Add Source can only explain a gap the endpoint reports."""
         body = broken_plugin_client.get("/api/plugins").json()
 
         assert UNLOADED_PLUGIN not in {p["name"] for p in body["plugins"]}
@@ -672,7 +608,6 @@ class TestFailedPluginImportIsReportedRegression:
     def test_reading_the_source_says_why_it_cannot_be_used_not_that_it_is_gone(
         self, broken_plugin_client: TestClient
     ) -> None:
-        """A 404 contradicted the listing the user was looking at."""
         response = broken_plugin_client.get("/api/sync/sources/my_books/config")
 
         assert response.status_code == 400
@@ -681,7 +616,6 @@ class TestFailedPluginImportIsReportedRegression:
     def test_syncing_it_is_refused_with_the_import_failure(
         self, broken_plugin_client: TestClient
     ) -> None:
-        """Mirrors the CLI abort; the source still cannot run."""
         response = broken_plugin_client.post("/api/update", json={"source": "my_books"})
 
         assert response.status_code == 400
@@ -689,11 +623,6 @@ class TestFailedPluginImportIsReportedRegression:
 
 
 class TestPrivateModuleImportFailureReachesThePicker:
-    """``private/plugins/`` holds source plugins and enrichment providers alike,
-    and one scan reports for both. A module that dies is otherwise a module the
-    operator cannot tell from one never installed.
-    """
-
     def test_the_picker_names_the_private_module_and_why_it_died(
         self,
         registry_with_a_broken_private_module: None,
@@ -742,7 +671,6 @@ class TestCreateSourceEndpoint:
         assert row["config"]["path"] == "/data/new.csv"
 
     def test_rejects_existing_yaml_source(self, client: TestClient) -> None:
-        """Creating a source whose id is already in YAML returns 409."""
         response = client.post(
             "/api/sync/sources",
             json={"id": "my_books", "plugin": "fake_file", "values": {}},
@@ -752,12 +680,6 @@ class TestCreateSourceEndpoint:
     def test_accepts_hyphenated_id(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """A hyphenated id like ``calibre-web`` is a valid source id.
-
-        Hyphens are allowed so the Add-source modal can prefill plugin names
-        (e.g. ``calibre-web``) and users can type ids matching upstream
-        service names without hitting a silently-disabled Create button.
-        """
         response = client.post(
             "/api/sync/sources",
             json={
@@ -802,15 +724,8 @@ class TestCreateSourceEndpoint:
 
 
 class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
-    """Reported: the reason quoted the plugin, which says if a path exists.
-
-    The write door now blames a *field*; the plugin's sentence goes to the
-    log. Containment still answers, reading no disk.
-    """
-
     @pytest.fixture()
     def client(self, storage: StorageManager) -> Iterator[TestClient]:
-        """Against the real plugin registry: the fakes validate nothing."""
         config: dict[str, Any] = {
             "storage": {"database_path": "data/test.db"},
             "inputs": {},
@@ -821,11 +736,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_a_missing_directory_is_refused_without_saying_it_is_missing(
         self, client: TestClient, storage: StorageManager, tmp_path: Path
     ) -> None:
-        """The oracle left open after the sync door closed.
-
-        Inside the allowed roots, only a stat separates this path from a real
-        one, so the plugin's "not found" makes the endpoint a disk probe.
-        """
         missing = tmp_path / "no-such-library"
 
         response = client.post(
@@ -848,7 +758,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_the_refused_field_is_named_rather_than_the_plugins_reason(
         self, client: TestClient
     ) -> None:
-        """``source_url_error`` was reachable from sync alone until now."""
         response = client.post(
             "/api/sync/sources",
             json={
@@ -866,7 +775,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_only_the_field_the_write_broke_is_named(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """An edit resends every field, so blaming all of them says nothing."""
         created = client.post(
             "/api/sync/sources",
             json={
@@ -890,9 +798,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_two_bad_values_name_both_fields_rather_than_neither(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """Reverting either one alone still leaves the write refused, so the
-        answer has to carry both names or the operator fixes half of it.
-        """
         created = client.post(
             "/api/sync/sources",
             json={
@@ -923,12 +828,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_a_path_field_holding_a_list_is_contained_entry_by_entry(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """``roms`` declares ``paths``, so containment reads a list here.
-
-        A guard that only understood a string field would wave this through
-        to the plugin, and the caller would get a field name instead of the
-        setting to widen.
-        """
         response = client.post(
             "/api/sync/sources",
             json={"id": "roms", "plugin": "roms", "values": {"paths": ["/etc"]}},
@@ -941,7 +840,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_the_operator_reads_the_plugins_reason_in_the_log(
         self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Refusing with the reason nowhere at all would be unusable."""
         missing = tmp_path / "no-such-library"
 
         with caplog.at_level(logging.WARNING, logger="src.sources.service"):
@@ -959,11 +857,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_an_unparseable_url_answers_400_rather_than_500(
         self, client: TestClient
     ) -> None:
-        """``urlsplit`` raises on this netloc, and nothing above catches it.
-
-        Uncaught it leaves ``validate_config`` raising instead of returning
-        errors, which the API answers 500 with a traceback.
-        """
         response = client.post(
             "/api/sync/sources",
             json={
@@ -979,11 +872,6 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
     def test_a_source_whose_secret_is_not_entered_yet_stays_editable(
         self, client: TestClient
     ) -> None:
-        """Only what the write breaks is refused.
-
-        The secret endpoint runs after create, so a network source is briefly
-        missing its api_key — refusing edits then would deadlock it.
-        """
         created = client.post(
             "/api/sync/sources",
             json={
@@ -1003,14 +891,8 @@ class TestTheWriteBoundaryRefusesWhatTheSyncWouldReject:
 
 
 class TestSyncLogsTheReasonItRefused:
-    """Reported: the 400 quoted the plugin, which names the path it looked
-    for — a file-existence oracle, one probe per request. The operator reads
-    the reason in the log now; the wire gets a fixed string.
-    """
-
     @pytest.fixture()
     def client(self, storage: StorageManager) -> Iterator[TestClient]:
-        """Against the real plugin registry: the fakes validate nothing."""
         config: dict[str, Any] = {
             "storage": {"database_path": "data/test.db"},
             "inputs": {},
@@ -1021,11 +903,6 @@ class TestSyncLogsTheReasonItRefused:
     def test_a_missing_path_is_named_in_the_log_and_not_on_the_wire(
         self, client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The write was valid, so no edit will ever refuse this one.
-
-        Containment runs before existence, so a surviving "not found" names a
-        path inside the allowed roots.
-        """
         readable = tmp_path / "games"
         readable.mkdir()
         created = client.post(
@@ -1050,7 +927,6 @@ class TestSyncLogsTheReasonItRefused:
         assert f"Scan path not found: {readable}" in caplog.text
 
     def _steam_source_with_a_stored_key(self, client: TestClient) -> None:
-        """A steam source whose api_key exists only in the credential store."""
         created = client.post(
             "/api/sync/sources",
             json={
@@ -1068,11 +944,6 @@ class TestSyncLogsTheReasonItRefused:
     def test_a_plugin_quoting_a_credential_has_it_redacted_in_the_log(
         self, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The sync door validates the config with the secret layered on.
-
-        The write door strips credentials before validating instead, which
-        steam cannot survive: it reads ``api_key`` from the config alone.
-        """
         self._steam_source_with_a_stored_key(client)
 
         with (
@@ -1091,11 +962,6 @@ class TestSyncLogsTheReasonItRefused:
     def test_a_source_whose_secret_is_only_stored_still_syncs(
         self, client: TestClient
     ) -> None:
-        """Validating without credentials would refuse this one outright.
-
-        ``steam.validate_config`` never consults storage, so the sync door
-        has to judge the config the sync would really run.
-        """
         self._steam_source_with_a_stored_key(client)
 
         done = threading.Event()
@@ -1114,7 +980,6 @@ class TestSyncLogsTheReasonItRefused:
     def test_a_newline_the_plugin_wrote_cannot_forge_a_log_line(
         self, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A path is a plugin's to quote, and a path may hold a newline."""
         self._steam_source_with_a_stored_key(client)
 
         with (
@@ -1150,7 +1015,6 @@ class TestDeleteSourceEndpoint:
         assert response.status_code == 404
 
     def test_returns_400_for_invalid_source_id(self, client: TestClient) -> None:
-        """Malformed path id is rejected before any DB lookup."""
         response = client.delete("/api/sync/sources/Bad-ID")
         assert response.status_code == 400
 
@@ -1160,7 +1024,6 @@ class TestDeleteSourceEndpoint:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """Drop the config the route hands down and the sweep never runs."""
         base_config["inputs"].pop("my_games")
         storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
@@ -1173,7 +1036,6 @@ class TestDeleteSourceEndpoint:
     def test_a_yaml_sibling_on_the_plugin_keeps_the_stranded_row(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """``my_games`` stays in the config, and it alone may read that row."""
         storage.sources.upsert(1, "work_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "fake_api", "api_key", "stranded-by-an-upgrade")
 
@@ -1186,31 +1048,7 @@ class TestDeleteSourceEndpoint:
 
 
 class TestUpdateEndpointDbOnlySourcesRegression:
-    """Per-source sync (POST /api/update) must resolve DB-only sources.
-
-    Bug: a source created via ``create_source`` / the web Add-source modal
-    lives only in the ``source_configs`` table (plus its secret in
-    ``credentials``) with no YAML ``inputs`` entry. Clicking Sync errored
-    "disabled or not configured" and — because the endpoint answered HTTP 200
-    with a message body — the web UI's Sync button stuck spinning (no SyncJob
-    is created to end the frontend polling).
-
-    Root cause: the single-source ``/update`` branch gated on the YAML
-    ``inputs`` map only (``config.get("inputs", {}).get(source)``), so a DB-only
-    source was invisible to it.
-
-    Fix: the branch resolves through ``resolve_inputs`` (which merges DB
-    sources, injects ``_source_id`` and decrypts credentials) filtered by
-    ``source_id``, and answers 400 when no enabled source matches.
-    """
-
     def _capture_sync(self) -> tuple[dict[str, Any], threading.Event]:
-        """Patchable stand-in for execute_multi_source_sync.
-
-        Records the ``sources`` list it was called with (so the resolved
-        config can be asserted) and signals an Event so the test can wait for
-        the background sync thread deterministically.
-        """
         captured: dict[str, Any] = {}
         done = threading.Event()
 
@@ -1225,15 +1063,6 @@ class TestUpdateEndpointDbOnlySourcesRegression:
     def test_enabled_db_only_source_syncs_regression(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """An enabled DB-only source starts a sync instead of erroring.
-
-        Asserts end to end (not just the returned status): the plugin the sync
-        boundary receives carries the injected ``_source_id`` and the decrypted
-        ``api_key`` credential plus the DB config, proving the single-source
-        path actually resolves and runs the DB source — not merely passes the
-        pre-check.
-        """
-        # Create a DB-only source (no YAML inputs entry) with its secret set.
         create = client.post(
             "/api/sync/sources",
             json={
@@ -1254,14 +1083,10 @@ class TestUpdateEndpointDbOnlySourcesRegression:
             response = client.post("/api/update", json={"source": "calibre-web"})
             assert response.status_code == 200
             body = response.json()
-            # Not the old 200 "disabled or not configured" dead-end.
             assert "disabled or not configured" not in body.get("message", "")
             assert body["sources"] == ["calibre-web"]
             assert done.wait(timeout=5)
 
-        # End-to-end: the plugin received the fully-resolved config — the
-        # injected _source_id and the decrypted secret, proving the single
-        # source path runs, not just passes the pre-check.
         sources = captured["sources"]
         assert len(sources) == 1
         _plugin, resolved_config = sources[0]
@@ -1272,7 +1097,6 @@ class TestUpdateEndpointDbOnlySourcesRegression:
     def test_disabled_db_only_source_returns_400_regression(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """A disabled DB-only source answers 4xx, not a 200 dead-end."""
         storage.sources.upsert(
             1, "calibre-web", "fake_api", {"user_id": "reader"}, enabled=False
         )
@@ -1281,23 +1105,14 @@ class TestUpdateEndpointDbOnlySourcesRegression:
         assert "disabled or not configured" in response.json()["detail"]
 
     def test_unknown_source_returns_400_regression(self, client: TestClient) -> None:
-        """A source id that matches nothing answers 4xx, not a 200 dead-end."""
         response = client.post("/api/update", json={"source": "no_such_source"})
         assert response.status_code == 400
         assert "disabled or not configured" in response.json()["detail"]
 
 
 class TestSourceCredentialMoveRegression:
-    """Regression: an https edit wiped the source's password.
-
-    Any change to a ``credential_bound`` field cleared the secret, so the next
-    sync blamed 'password'. Fix: only a change of host does, and that is
-    refused rather than applied.
-    """
-
     @pytest.fixture()
     def real_plugin_client(self, storage: StorageManager) -> Iterator[TestClient]:
-        """A booted app over the real plugin registry, so calibre_web resolves."""
         engine = Mock(spec=RecommendationEngine)
         engine.storage = storage
         config: dict[str, Any] = {
@@ -1315,7 +1130,6 @@ class TestSourceCredentialMoveRegression:
         values: dict[str, Any],
         secret: tuple[str, str],
     ) -> None:
-        """The state before the edit: migrated, enabled, credential entered."""
         create = client.post(
             "/api/sync/sources",
             json={
@@ -1335,7 +1149,6 @@ class TestSourceCredentialMoveRegression:
     def test_the_reported_https_edit_keeps_the_password_and_the_sync(
         self, real_plugin_client: TestClient, storage: StorageManager
     ) -> None:
-        """The reported sequence: same host over https, and no 400 after it."""
         client = real_plugin_client
         self._source_with_a_secret(
             client,
@@ -1369,7 +1182,6 @@ class TestSourceCredentialMoveRegression:
     def test_toggling_verify_ssl_keeps_the_password(
         self, real_plugin_client: TestClient, storage: StorageManager
     ) -> None:
-        """The flag exists for self-signed certs — using it cost a password."""
         client = real_plugin_client
         self._source_with_a_secret(
             client,
@@ -1390,7 +1202,6 @@ class TestSourceCredentialMoveRegression:
     def test_repointing_at_another_host_is_refused_with_the_secret_intact(
         self, real_plugin_client: TestClient, storage: StorageManager
     ) -> None:
-        """The original exfiltration, now closed without destroying anything."""
         client = real_plugin_client
         self._source_with_a_secret(
             client,
@@ -1418,7 +1229,6 @@ class TestSourceCredentialMoveRegression:
     def test_clearing_the_secret_first_lets_the_move_through(
         self, real_plugin_client: TestClient, storage: StorageManager
     ) -> None:
-        """The remedy the refusal names has to actually work."""
         client = real_plugin_client
         self._source_with_a_secret(
             client,

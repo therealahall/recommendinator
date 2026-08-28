@@ -1,5 +1,3 @@
-"""Tests for SQLite database manager."""
-
 import json
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
@@ -35,7 +33,6 @@ FROZEN_TODAY = date(2026, 3, 15)
 
 @pytest.fixture
 def temp_db(tmp_path: Path) -> SQLiteDB:
-    """Create a temporary database for testing."""
     db_path = tmp_path / "test.db"
     return SQLiteDB(db_path)
 
@@ -53,13 +50,8 @@ def _insert_raw_item(
     status: str = "completed",
     ignored: bool = False,
 ) -> int:
-    """Insert a video-game content_items row, bypassing save_content_item.
-
-    Lets a test build the exact pair of duplicate rows a merge has to
-    reconcile, including states save_content_item would never write.
-
-    Returns the database ID of the inserted row.
-    """
+    """Lets a test build the exact pair of duplicate rows a merge has to reconcile,
+    including states save_content_item would never write."""
     with temp_db.connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -97,7 +89,6 @@ def _record_raw_external_id(
 
 
 def _external_ids(temp_db: SQLiteDB, db_id: int) -> list[tuple[str, str]]:
-    """The (source, external id) pairs one row holds, by source."""
     with temp_db.connection() as conn:
         rows = conn.execute(
             "SELECT source, external_id FROM content_item_external_ids"
@@ -115,11 +106,8 @@ def _merged(temp_db: SQLiteDB, survivor_id: int, absorbed_id: int) -> None:
 def _insert_raw_book(
     temp_db: SQLiteDB, source: str, external_id: str, author: str | None
 ) -> None:
-    """Insert one row of a duplicate pair a save would have merged on the way in.
-
-    Built behind ``save_content_item``'s back, and carrying neither derived
-    column, which is what a row written before those columns existed looks like.
-    """
+    """Built behind ``save_content_item``'s back, and carrying neither derived
+    column, which is what a row written before those columns existed looks like."""
     with temp_db.connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -139,7 +127,6 @@ def _insert_raw_book(
 
 
 def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
-    """Test saving and retrieving a content item."""
     item = ContentItem(
         id="123",
         title="Test Book",
@@ -166,12 +153,9 @@ def test_save_and_get_content_item(temp_db: SQLiteDB) -> None:
 
 
 def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
-    """Test that items from different sources merge based on normalized title.
-
-    This ensures we have a single source of truth - if Steam imports "Crysis Remastered"
-    and later the personal blog imports "Crysis: Remastered", they should be the same item.
-    """
-    # First source imports a game
+    """This ensures we have a single source of truth - if Steam imports "Crysis
+    Remastered" and later the personal blog imports "Crysis: Remastered", they
+    should be the same item."""
     steam_item = ContentItem(
         id="steam_12345",
         title="Crysis Remastered",
@@ -181,10 +165,9 @@ def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
     )
     db_id_1 = temp_db.save_content_item(steam_item)
 
-    # Second source imports the same game with slightly different title
     blog_item = ContentItem(
-        id="crysis",  # Different external ID
-        title="Crysis: Remastered",  # Slightly different title
+        id="crysis",
+        title="Crysis: Remastered",
         content_type=ContentType.VIDEO_GAME,
         status=ConsumptionStatus.COMPLETED,
         rating=4,
@@ -192,17 +175,14 @@ def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
     )
     db_id_2 = temp_db.save_content_item(blog_item)
 
-    # Should be the same database entry
     assert db_id_1 == db_id_2
 
-    # The item should be updated with the new data
     retrieved = temp_db.get_content_item(db_id_1)
     assert retrieved is not None
     assert retrieved.status == ConsumptionStatus.COMPLETED
     assert retrieved.rating == 4
     assert retrieved.source == "steam"  # Names what first stored the row
 
-    # One item, holding the id each source knows it by
     all_games = temp_db.get_content_items(content_type=ContentType.VIDEO_GAME)
     assert len(all_games) == 1
     assert _external_ids(temp_db, db_id_1) == [
@@ -212,8 +192,6 @@ def test_merge_items_from_different_sources_by_title(temp_db: SQLiteDB) -> None:
 
 
 def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
-    """Test getting content items with filters."""
-    # Create test items
     items = [
         ContentItem(
             id=f"book_{i}",
@@ -256,7 +234,6 @@ def test_get_content_items_with_filters(temp_db: SQLiteDB) -> None:
 
 
 def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
-    """unrated_only should return only items with rating IS NULL."""
     items = [
         ContentItem(
             id="completed_rated",
@@ -286,17 +263,14 @@ def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
     for item in items:
         temp_db.save_content_item(item)
 
-    # rating IS NULL across all statuses when status is not constrained
     unrated = temp_db.get_content_items(unrated_only=True)
     assert {item.id for item in unrated} == {"completed_unrated", "unread_unrated"}
 
-    # Composes with status: only completed + unrated
     completed_unrated = temp_db.get_content_items(
         status=ConsumptionStatus.COMPLETED, unrated_only=True
     )
     assert {item.id for item in completed_unrated} == {"completed_unrated"}
 
-    # Composes with content_type
     movie_unrated = temp_db.get_content_items(
         content_type=ContentType.MOVIE, unrated_only=True
     )
@@ -304,13 +278,6 @@ def test_get_content_items_unrated_only(temp_db: SQLiteDB) -> None:
 
 
 def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> None:
-    """unrated_only must still honor the ignored filter, not bypass it.
-
-    The web/CLI needs-rating path passes include_ignored=False by default, so an
-    ignored completed+unrated item must not leak into that set; it only surfaces
-    when ignored items are explicitly requested. unrated_only composes with the
-    ignored filter rather than overriding it.
-    """
     visible = ContentItem(
         id="visible_unrated",
         title="Visible Unrated",
@@ -332,13 +299,11 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
     temp_db.save_content_item(visible)
     temp_db.save_content_item(hidden)
 
-    # include_ignored=False (what the web/CLI default to): ignored item excluded.
     visible_only = temp_db.get_content_items(
         status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=False
     )
     assert {item.id for item in visible_only} == {"visible_unrated"}
 
-    # include_ignored=True: ignored item is surfaced alongside the visible one.
     with_ignored = temp_db.get_content_items(
         status=ConsumptionStatus.COMPLETED, unrated_only=True, include_ignored=True
     )
@@ -349,7 +314,6 @@ def test_get_content_items_unrated_only_respects_ignored(temp_db: SQLiteDB) -> N
 
 
 def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
-    """Test getting unconsumed items (UNREAD + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
             id="item_0",
@@ -395,7 +359,6 @@ def test_get_unconsumed_items(temp_db: SQLiteDB) -> None:
 
 
 def test_get_completed_items(temp_db: SQLiteDB) -> None:
-    """Test getting completed items (COMPLETED + CURRENTLY_CONSUMING)."""
     items = [
         ContentItem(
             id="item_0",
@@ -436,18 +399,15 @@ def test_get_completed_items(temp_db: SQLiteDB) -> None:
     for item in items:
         temp_db.save_content_item(item)
 
-    # All completed + currently consuming
     all_completed = temp_db.get_completed_items()
     assert len(all_completed) == 4
 
-    # With min_rating filter
     completed = temp_db.get_completed_items(min_rating=4)
     assert len(completed) == 3
     assert all(item.rating >= 4 for item in completed)
 
 
 def test_count_items(temp_db: SQLiteDB) -> None:
-    """Test counting items."""
     items = [
         ContentItem(
             id=f"item_{i}",
@@ -468,13 +428,7 @@ def test_count_items(temp_db: SQLiteDB) -> None:
     assert temp_db.count_items(status=ConsumptionStatus.COMPLETED) == 3
 
 
-# ---------------------------------------------------------------------------
-# Ignore Item Tests
-# ---------------------------------------------------------------------------
-
-
 def test_set_item_ignored(temp_db: SQLiteDB) -> None:
-    """Test setting item ignored status."""
     item = ContentItem(
         id="123",
         title="Test Book",
@@ -484,32 +438,26 @@ def test_set_item_ignored(temp_db: SQLiteDB) -> None:
 
     db_id = temp_db.save_content_item(item)
 
-    # Verify item is not ignored initially
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is False
 
-    # Set ignored to True
     success = temp_db.set_item_ignored(db_id, True)
     assert success is True
 
-    # Verify item is now ignored
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is True
 
-    # Set ignored back to False
     success = temp_db.set_item_ignored(db_id, False)
     assert success is True
 
-    # Verify item is no longer ignored
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is False
 
 
 def test_set_item_ignored_with_user_id(temp_db: SQLiteDB) -> None:
-    """Test setting ignored status with user_id filter."""
     item = ContentItem(
         id="123",
         title="Test Book",
@@ -520,35 +468,23 @@ def test_set_item_ignored_with_user_id(temp_db: SQLiteDB) -> None:
 
     db_id = temp_db.save_content_item(item)
 
-    # Try to ignore with wrong user_id (should fail)
     success = temp_db.set_item_ignored(db_id, True, user_id=2)
     assert success is False
 
-    # Verify item is still not ignored
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is False
 
-    # Ignore with correct user_id
     success = temp_db.set_item_ignored(db_id, True, user_id=1)
     assert success is True
 
-    # Verify item is now ignored
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is True
 
 
-# ---------------------------------------------------------------------------
-# Batch ID Lookup Tests
-# ---------------------------------------------------------------------------
-
-
 class TestGetContentItemsByDbIds:
-    """Tests for SQLiteDB.get_content_items_by_db_ids batch lookup."""
-
     def test_silently_skips_missing_ids(self, temp_db: SQLiteDB) -> None:
-        """Returns only found items; missing IDs are silently skipped."""
         item = ContentItem(
             id="game-1",
             title="Portal",
@@ -564,14 +500,9 @@ class TestGetContentItemsByDbIds:
     def test_the_items_come_back_in_the_order_asked_for(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The caller's order survives, including across the chunk boundary.
-
-        A library search orders its matches in SQL, keeps the ids and loads
-        them through here, so this ordering is what a searched page is sorted
-        by. The chunk boundary is where it would be lost: each chunk is its
-        own query and returns in whatever order that query chose, so more than
-        500 matches is the case that has to be built rather than assumed.
-        """
+        """The chunk boundary is where it would be lost: each chunk is its own query
+        and returns in whatever order that query chose, so more than 500 matches is
+        the case that has to be built rather than assumed."""
         db_ids: list[int] = []
         with temp_db.connection() as conn:
             cursor = conn.cursor()
@@ -636,22 +567,10 @@ def test_one_source_may_know_a_movie_and_a_show_by_the_same_id(
     } == {("Heat", ContentType.MOVIE), ("Andor", ContentType.TV_SHOW)}
 
 
-# ---------------------------------------------------------------------------
-# Title Normalization Tests
-# ---------------------------------------------------------------------------
-
-
 class TestNormalizeTitleForMatching:
-    """Tests for the normalize_title_for_matching function."""
-
     def test_trademark_symbols_removed(self) -> None:
-        """Regression test: Trademark symbols should be removed for matching.
-
-        Bug reported: "The Last of Us™ Part I" was not matching
-        "The Last of Us Part I" from another source.
-
-        Fix: Remove trademark (™), registered (®), and copyright (©) symbols.
-        """
+        """Bug reported: "The Last of Us™ Part I" was not matching
+        "The Last of Us Part I" from another source."""
         assert (
             normalize_title_for_matching("The Last of Us™ Part I")
             == "last of us part 1"
@@ -660,13 +579,8 @@ class TestNormalizeTitleForMatching:
         assert normalize_title_for_matching("Copyright© Test") == "copyright test"
 
     def test_hyphen_to_space_conversion(self) -> None:
-        """Regression test: Hyphens should be converted to spaces.
-
-        Bug reported: "State of Decay: Year-One" was not matching
-        "State of Decay: Year One" from another source.
-
-        Fix: Convert hyphens to spaces before removing punctuation.
-        """
+        """Bug reported: "State of Decay: Year-One" was not matching
+        "State of Decay: Year One" from another source."""
         assert normalize_title_for_matching("Year-One") == "year one"
         # "Survival Edition" is part of the game name, not removed
         assert normalize_title_for_matching(
@@ -674,13 +588,8 @@ class TestNormalizeTitleForMatching:
         ) == ("state of decay year one survival edition")
 
     def test_roman_numeral_conversion(self) -> None:
-        """Regression test: Roman numerals should convert to Arabic.
-
-        Bug reported: "The Last of Us Part I" was not matching
-        "The Last of Us Part 1" from another source.
-
-        Fix: Convert Roman numerals (I, II, III, etc.) to Arabic (1, 2, 3, etc.).
-        """
+        """Bug reported: "The Last of Us Part I" was not matching
+        "The Last of Us Part 1" from another source."""
         assert normalize_title_for_matching("Part I") == "part 1"
         assert normalize_title_for_matching("Part II") == "part 2"
         assert normalize_title_for_matching("Part III") == "part 3"
@@ -693,10 +602,7 @@ class TestNormalizeTitleForMatching:
         assert normalize_title_for_matching("Part X") == "part 10"
 
     def test_roman_numerals_only_at_word_boundaries(self) -> None:
-        """Test that Roman numerals are only converted at word boundaries.
-
-        This prevents false conversions like "Civil" -> "C1v1l".
-        """
+        """This prevents false conversions like "Civil" -> "C1v1l"."""
         assert normalize_title_for_matching("Civil War") == "civil war"
 
     def test_a_standalone_i_is_a_numeral_at_the_end_and_a_pronoun_before(
@@ -718,7 +624,6 @@ class TestWhichTrailingParentheticalsAreDropped:
         )
 
     def test_an_edition_of_one_work_leaves_the_key(self) -> None:
-        """A translation and an audiobook are the book, as two printings are."""
         assert normalize_title_for_matching("Brave New World (Indonesian Edition)") == (
             normalize_title_for_matching("Brave New World")
         )
@@ -895,8 +800,8 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_the_developer_a_game_states_in_metadata_vetoes_the_match(
         self, temp_db: SQLiteDB
     ) -> None:
-        """DEFECT: the incoming creator was read off ``author`` alone, which no
-        game plugin sets, so GOG's Tomb Raider landed on Steam's and took its id."""
+        """DEFECT: the incoming creator was read off ``author`` alone, which no game
+        plugin sets, so GOG's Tomb Raider landed on Steam's and took its id."""
         steam = temp_db.save_content_item(self._game("steam", "203160", "Tomb Raider"))
         temp_db.save_enrichment_metadata(
             steam,
@@ -972,9 +877,6 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_a_region_only_one_source_appends_lands_on_the_row_stating_none(
         self, temp_db: SQLiteDB, shelved: str, incoming: str
     ) -> None:
-        """GH #93: one source qualifies the show the other names bare, and it is
-        one show whichever of the two syncs first — the veto takes an unstated
-        region for agreement on the shelved side as on the incoming one."""
         shelf = temp_db.save_content_item(self._show("trakt", "trakt:1", shelved))
 
         landed = temp_db.save_content_item(self._show("sonarr", "tvdb:2", incoming))
@@ -984,8 +886,7 @@ class TestWhatTheSaveDoorMatchesOnTitle:
     def test_two_films_of_one_name_are_told_apart_by_the_years_they_state(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Neither title spells a year, so only the stored column can refuse. No
-        sync source states one, so both sides are the importer that does."""
+        """Neither title spells a year, so only the stored column can refuse."""
         watched = temp_db.save_content_item(
             self._dated(ContentType.MOVIE, "csv_import", "csv-841", "Dune", 1984)
         )
@@ -1092,16 +993,8 @@ class TestWhatTheSaveDoorMatchesOnTitle:
         assert stored.author is None
 
 
-# ---------------------------------------------------------------------------
-# Normalized Title Indexed Lookup Tests
-# ---------------------------------------------------------------------------
-
-
 class TestNormalizedTitleLookup:
-    """Tests for the indexed normalized_title column used during save."""
-
     def test_update_syncs_normalized_title(self, temp_db: SQLiteDB) -> None:
-        """Test that UPDATE keeps normalized_title in sync with title."""
         item = ContentItem(
             id="nt_2",
             title="Old Title",
@@ -1111,7 +1004,6 @@ class TestNormalizedTitleLookup:
         )
         db_id = temp_db.save_content_item(item)
 
-        # Re-save with a new title
         updated = ContentItem(
             id="nt_2",
             title="New Title: Remastered",
@@ -1133,7 +1025,6 @@ class TestNormalizedTitleLookup:
         )
 
     def test_edition_variants_merge(self, temp_db: SQLiteDB) -> None:
-        """Test that edition variants merge via normalized_title."""
         item_original = ContentItem(
             title="Skyrim",
             content_type=ContentType.VIDEO_GAME,
@@ -1151,18 +1042,9 @@ class TestNormalizedTitleLookup:
         assert db_id_1 == db_id_2
 
 
-# ---------------------------------------------------------------------------
-# Ignored on Insert Tests
-# ---------------------------------------------------------------------------
-
-
 def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
-    """Test that UPDATE path updates the ignored field.
-
-    When re-syncing, the ignored field should be updated like any other
-    field so that import files with ignored: true take effect on existing items.
-    """
-    # First insert with ignored=False
+    """When re-syncing, the ignored field should be updated like any other field
+    so that import files with ignored: true take effect on existing items."""
     item = ContentItem(
         id="sync_1",
         title="A Book",
@@ -1176,7 +1058,6 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
     assert retrieved is not None
     assert retrieved.ignored is False
 
-    # Re-sync the same item with ignored=True
     updated_item = ContentItem(
         id="sync_1",
         title="A Book",
@@ -1186,9 +1067,8 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
         ignored=True,
     )
     db_id_2 = temp_db.save_content_item(updated_item)
-    assert db_id == db_id_2  # Same item
+    assert db_id == db_id_2
 
-    # ignored should now be True
     retrieved = temp_db.get_content_item(db_id)
     assert retrieved is not None
     assert retrieved.ignored is True
@@ -1197,7 +1077,6 @@ def test_save_content_item_update_syncs_ignored(temp_db: SQLiteDB) -> None:
 
 
 def test_get_content_items_include_ignored_false(temp_db: SQLiteDB) -> None:
-    """Test that get_content_items excludes ignored items when include_ignored=False."""
     items = [
         ContentItem(
             id="normal_1",
@@ -1222,11 +1101,8 @@ def test_get_content_items_include_ignored_false(temp_db: SQLiteDB) -> None:
 
 
 class TestGetContentItemsSearch:
-    """Tests for the search capability of get_content_items."""
-
     @staticmethod
     def _seed_movies(temp_db: SQLiteDB) -> None:
-        """Seed a small movie library used by title-matching tests."""
         movies = [
             ContentItem(
                 id="movie_die_hard",
@@ -1251,25 +1127,21 @@ class TestGetContentItemsSearch:
             temp_db.save_content_item(movie)
 
     def test_search_empty_string_is_noop(self, temp_db: SQLiteDB) -> None:
-        """An empty or whitespace search term does not filter."""
         self._seed_movies(temp_db)
         assert len(temp_db.get_content_items(search="")) == 3
         assert len(temp_db.get_content_items(search="   ")) == 3
 
     def test_search_partial_match(self, temp_db: SQLiteDB) -> None:
-        """A substring term matches the longer title."""
         self._seed_movies(temp_db)
         results = temp_db.get_content_items(search="Die Hard")
         assert [item.title for item in results] == ["Die Hard (1988)"]
 
     def test_search_fuzzy_match(self, temp_db: SQLiteDB) -> None:
-        """A typo'd term still matches via fuzzy matching."""
         self._seed_movies(temp_db)
         results = temp_db.get_content_items(search="Die Heard")
         assert [item.title for item in results] == ["Die Hard (1988)"]
 
     def test_search_matches_book_author(self, temp_db: SQLiteDB) -> None:
-        """Search matches a book's creator (author)."""
         temp_db.save_content_item(
             ContentItem(
                 id="book_1",
@@ -1320,13 +1192,9 @@ class TestGetContentItemsSearch:
         assert [item.title for item in results] == ["Avatar"]
 
     def test_search_pagination_pages_over_filtered_set(self, temp_db: SQLiteDB) -> None:
-        """limit/offset page over the full searched+sorted set, not one DB page.
-
-        Twelve "Hero" movies match the search alongside non-matching noise.
-        Paging with limit=5 must walk the matching set in title order, so
-        offset=5 returns the next five matches (not five raw rows from the
-        unfiltered query that happen to follow).
-        """
+        """Paging with limit=5 must walk the matching set in title order, so
+        offset=5 returns the next five matches (not five raw rows from the unfiltered
+        query that happen to follow)."""
         for i in range(12):
             temp_db.save_content_item(
                 ContentItem(
@@ -1363,12 +1231,9 @@ class TestGetContentItemsSearch:
     def test_search_book_without_author_does_not_match_creator(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A book with author=None must not raise or spuriously creator-match.
-
-        ``build_search_text`` stores an empty creator half for such a book, and
+        """``build_search_text`` stores an empty creator half for such a book, and
         ``_matches_normalized`` bails on an empty haystack, so a creator-style
-        search neither errors nor returns the authorless book.
-        """
+        search neither errors nor returns the authorless book."""
         temp_db.save_content_item(
             ContentItem(
                 id="book_no_author",
@@ -1378,18 +1243,13 @@ class TestGetContentItemsSearch:
                 status=ConsumptionStatus.COMPLETED,
             )
         )
-        # Searching for an author name does not match the authorless book.
         assert temp_db.get_content_items(search="Tolkien") == []
-        # The same book still matches on its title.
         title_results = temp_db.get_content_items(search="Untitled Manuscript")
         assert [item.title for item in title_results] == ["Untitled Manuscript"]
 
     def test_search_case_and_punctuation_insensitive(self, temp_db: SQLiteDB) -> None:
-        """Mixed case and punctuation differences still match.
-
-        Edge probed by QA: a loud, punctuation-heavy query must match a title
-        whose only difference is case and surrounding punctuation.
-        """
+        """Edge probed by QA: a loud, punctuation-heavy query must match a title
+        whose only difference is case and surrounding punctuation."""
         temp_db.save_content_item(
             ContentItem(
                 id="spiderman",
@@ -1402,12 +1262,9 @@ class TestGetContentItemsSearch:
         assert [item.title for item in results] == ["Spider-Man: Homecoming"]
 
     def test_search_ands_with_the_enrichment_filter(self, temp_db: SQLiteDB) -> None:
-        """Search combines with the enrichment filter (AND).
-
-        The filter is a predicate over the enrichment join, and the search
-        reads its candidates through a projection of its own; that projection
-        carries the join precisely so the predicate stays valid against it.
-        """
+        """The filter is a predicate over the enrichment join, and the search reads
+        its candidates through a projection of its own; that projection carries the
+        join precisely so the predicate stays valid against it."""
         db_ids = {
             external_id: temp_db.save_content_item(
                 ContentItem(
@@ -1440,13 +1297,8 @@ class TestGetContentItemsSearch:
     def test_a_term_cannot_match_across_the_title_and_the_creator(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The stored title and creator are matched separately, never as one string.
-
-        They share a column, joined by a character search normalization can
-        never produce. Asserted through the read rather than over the stored
-        text alone, because it is the read that decides which halves a term is
-        offered and would otherwise be free to run the match over the join.
-        """
+        """They share a column, joined by a character search normalization can never
+        produce."""
         temp_db.save_content_item(
             ContentItem(
                 id="alpha_omega",
@@ -1464,13 +1316,10 @@ class TestGetContentItemsSearch:
     def test_typo_only_matches_are_ordered_and_paged_like_any_other(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Matches reached only by the fuzzy tier still honour sort and page.
-
-        No title here contains the term, so every match comes from the window
-        scan — the tier a caller's ``sort_by`` and ``limit``/``offset`` would
-        be easiest to lose, since the matching runs in Python rather than in
-        the ORDER BY.
-        """
+        """No title here contains the term, so every match comes from the
+        window scan — the tier a caller's ``sort_by`` and ``limit``/``offset`` would
+        be easiest to lose, since the matching runs in Python rather than in the
+        ORDER BY."""
         for external_id, title, rating in (
             ("alienz", "Alienz", 5),
             ("alians", "Alians", 3),
@@ -1501,37 +1350,14 @@ class TestGetContentItemsSearch:
 
 
 def test_get_content_items_refuses_an_unknown_sort(temp_db: SQLiteDB) -> None:
-    """A sort nobody declared is refused rather than silently ignored.
-
-    The surfaces validate their own input, so this is the backstop for a
-    caller that reaches storage directly — a plugin, or a surface that gains a
-    sort option without a matching ORDER BY.
-    """
+    """The surfaces validate their own input, so this is the backstop for a caller
+    that reaches storage directly — a plugin, or a surface that gains a sort
+    option without a matching ORDER BY."""
     with pytest.raises(ValueError, match="Invalid sort_by"):
         temp_db.get_content_items(sort_by="bogus")
 
 
 class TestPaginationWithoutLimit:
-    """Regression tests for an offset requested without a limit.
-
-    Bug reported: ``get_content_items(sort_by="updated_at", limit=None,
-    offset=10)`` raised ``sqlite3.OperationalError: near "OFFSET": syntax
-    error``, while the same call under the default title sort succeeded, so
-    the failure depended on an unrelated parameter.
-
-    Root cause: on the SQL-slicing path the LIMIT clause was appended only for
-    a truthy limit while the OFFSET clause was appended independently, and
-    SQLite's grammar accepts OFFSET only as a suffix of LIMIT.
-
-    Fix: OFFSET is emitted only alongside LIMIT, using SQLite's unbounded
-    ``LIMIT -1`` when an offset is requested with no limit. A falsy limit
-    still means "no limit".
-
-    Every sort now slices in SQL, so the parameter the crash depended on no
-    longer selects between two implementations — which is why these cases,
-    written to cover both, are what proves the one path handles them all.
-    """
-
     # external_id -> (title, updated_at, created_at, rating). Every column is
     # deliberately out of step with the others so each sort returns a
     # genuinely different ordering and a wrong ORDER BY cannot pass by luck.
@@ -1549,12 +1375,9 @@ class TestPaginationWithoutLimit:
 
     @classmethod
     def _seed(cls, temp_db: SQLiteDB) -> None:
-        """Seed five books, each sort column distinct and distinctly ordered.
-
-        The timestamps are set explicitly because the schema defaults them to
-        CURRENT_TIMESTAMP, which has only second granularity and would tie
-        across all five rows, leaving the non-title sorts undetermined.
-        """
+        """The timestamps are set explicitly because the schema defaults them to
+        CURRENT_TIMESTAMP, which has only second granularity and would tie across
+        all five rows, leaving the non-title sorts undetermined."""
         for external_id, (title, _, _, rating) in cls._ROWS.items():
             temp_db.save_content_item(
                 ContentItem(
@@ -1580,7 +1403,6 @@ class TestPaginationWithoutLimit:
     def test_offset_without_limit_on_non_title_sort_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """An offset with no limit skips rows instead of raising a syntax error."""
         self._seed(temp_db)
 
         results = temp_db.get_content_items(sort_by="updated_at", limit=None, offset=2)
@@ -1590,14 +1412,8 @@ class TestPaginationWithoutLimit:
     def test_search_with_offset_and_no_limit_returns_the_tail_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A search term pages the same way, on its own branch of the read.
-
-        A search never reaches the page clause: it slices its matched ids in
-        Python and emits no LIMIT or OFFSET at all. So the branch a caller
-        lands on the moment they pass a search term has its own copy of the
-        offset-without-limit rule, and proves it here rather than inheriting
-        it from the sorts above.
-        """
+        """A search never reaches the page clause: it slices its matched ids in
+        Python and emits no LIMIT or OFFSET at all."""
         self._seed(temp_db)
 
         matched = temp_db.get_content_items(
@@ -1612,30 +1428,15 @@ class TestPaginationWithoutLimit:
 
 
 class TestAPageCostsOnlyThePage:
-    """A request builds a ContentItem per row it returns, and none per row it skips.
-
-    Bug reported: the default title sort and every search skipped SQL's
-    LIMIT/OFFSET entirely, built a ContentItem for every row the filters left
-    — JSON-parsing each detail-table blob on the way — and sliced the list in
-    Python afterwards. A 500-item library therefore paid 500 constructions to
-    show a 10-item page, on the first load and on every scroll after it.
-
-    Root cause: the title sort key came from ``get_sort_title`` and the search
-    haystack from the loaded item's title and creator, so both needed every
-    candidate in memory before either could order or filter.
-
-    Fix: both are stored columns. Every sort orders and pages in SQL, and a
-    search reads its candidates as an id and a stored search text apiece — no
-    detail blob to parse — so neither a candidate that misses nor a match
-    outside the page costs a ContentItem. The scan that finds those rows is
-    bounded the same way, stopping at the end of the page it was asked for.
-    """
+    """Bug reported: the default title sort and every search skipped SQL's
+    LIMIT/OFFSET entirely, built a ContentItem for every row the filters left —
+    JSON-parsing each detail-table blob on the way — and sliced the list in
+    Python afterwards."""
 
     _LIBRARY_SIZE = 500
 
     @classmethod
     def _seed(cls, temp_db: SQLiteDB) -> None:
-        """Seed a library far larger than any page asked of it below."""
         for index in range(cls._LIBRARY_SIZE):
             temp_db.save_content_item(
                 ContentItem(
@@ -1648,12 +1449,6 @@ class TestAPageCostsOnlyThePage:
 
     @staticmethod
     def _items_built(temp_db: SQLiteDB, **query: object) -> tuple[list[str], int]:
-        """Run a query, returning its titles and how many items it built.
-
-        Counting the constructions is the measurement: the returned page says
-        what the caller sees, and says nothing about what was loaded to
-        produce it — which is the whole of the defect.
-        """
         with patch.object(
             SQLiteDB,
             "_row_to_content_item",
@@ -1677,13 +1472,7 @@ class TestAPageCostsOnlyThePage:
     def test_a_term_of_pure_punctuation_matches_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A term that normalizes away is no term, not a term matching everything.
-
-        An empty needle is a substring of every stored search text, so it has
-        to be caught before the match rather than after it — the failure would
-        be a search box that returns the whole library the moment someone
-        types a stray bracket.
-        """
+        """A term that normalizes away is no term, not a term matching everything."""
         self._seed(temp_db)
 
         titles, built = self._items_built(temp_db, search="(((")
@@ -1702,20 +1491,14 @@ class TestAPageCostsOnlyThePage:
 
 
 class TestTheDerivedSearchColumns:
-    """The stored sort key and search haystack follow their sources.
-
-    Both are derived from the title and the creator, and both are read instead
-    of those sources, so a column left behind by an edit is a library that
-    sorts and searches on values the user replaced.
-    """
+    """Both are derived from the title and the creator, and both are read instead
+    of those sources, so a column left behind by an edit is a library that sorts
+    and searches on values the user replaced."""
 
     def test_a_retitled_item_sorts_under_its_new_title(self, temp_db: SQLiteDB) -> None:
-        """Re-syncing a title moves the item, rather than leaving it in place.
-
-        "The Matrix" sorts between the two neighbours and "Zeppelin" after
-        both, so a stale sort key puts the item in the wrong one of two
-        positions rather than merely spelling it oddly.
-        """
+        """ "The Matrix" sorts between the two neighbours and "Zeppelin" after both,
+        so a stale sort key puts the item in the wrong one of two positions rather
+        than merely spelling it oddly."""
         for external_id, title in (
             ("neighbour_low", "Aardvark"),
             ("neighbour_high", "Zebra"),
@@ -1774,13 +1557,9 @@ class TestTheDerivedSearchColumns:
     def test_a_stranded_detail_row_does_not_lend_its_creator(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The creator is chosen by content type, not by whichever table has a row.
-
-        A COALESCE over the four detail tables would read the director off a
-        movie_details row left behind on a book, and the book would then sort
-        and search under a name it has nothing to do with. The re-save is what
-        recomputes the columns once the stray row exists.
-        """
+        """A COALESCE over the four detail tables would read the director off a
+        movie_details row left behind on a book, and the book would then sort and
+        search under a name it has nothing to do with."""
         book = ContentItem(
             id="stranded",
             title="Neuromancer",
@@ -1806,21 +1585,14 @@ class TestTheDerivedSearchColumns:
         assert temp_db.get_content_items(search="Ridley Scott") == []
 
 
-# Pages a walk over a paginated read may take before the walk is the bug. Every
-# library any test here seeds is a dozen rows at most, so a walk still going
-# after this many pages is not paging, whatever it is returning.
+# Every library any test here seeds is a dozen rows at most, so a walk still
+# going after this many pages is not paging, whatever it is returning.
 _MAX_PAGES_WALKED = 20
 
 
 def _walk_pages(temp_db: SQLiteDB, page_size: int, **query: object) -> list[str]:
-    """Collect the ids a caller sees walking every page of one query.
-
-    Pages the way the library view does: ask for the next page at the offset
-    the rows already seen put it at, and stop on the first short page. That
-    loop is what makes a page boundary a user-visible thing rather than an
-    argument, so a test about boundaries has to take it rather than assert
-    about one offset it picked.
-    """
+    """Pages the way the library view does: ask for the next page at the offset
+    the rows already seen put it at, and stop on the first short page."""
     seen: list[str] = []
     offset = 0
     for _ in range(_MAX_PAGES_WALKED):
@@ -1835,19 +1607,12 @@ def _walk_pages(temp_db: SQLiteDB, page_size: int, **query: object) -> list[str]
 
 
 class TestSearchPagesPartitionTheMatchedSet:
-    """Walking the pages of one search shows every match once and no match twice.
-
-    The property every other read in this file already holds:
-    ``TestPaginationWithoutLimit`` states it as each (limit, offset) selecting
-    the same window of that query's own full ordering. A search is a query
-    like any other, so the pages of one have to concatenate back into the
-    unpaged answer — that is the whole meaning of an offset.
-    """
+    """A search is a query like any other, so the pages of one have to concatenate
+    back into the unpaged answer — that is the whole meaning of an offset."""
 
     # Two books whose author's name is spelled correctly and one imported with
     # the surname's middle letters transposed, which is the ordinary way a
-    # library ends up holding both spellings. Searching the correct spelling
-    # reaches the first two by substring and the third only by the fuzzy tier.
+    # library ends up holding both spellings.
     _LIBRARY = (
         ("caves", "The Caves of Steel", "Isaac Asmiov"),
         ("foundation", "Foundation", "Isaac Asimov"),
@@ -1856,7 +1621,6 @@ class TestSearchPagesPartitionTheMatchedSet:
 
     @staticmethod
     def _seed(temp_db: SQLiteDB, rows: tuple[tuple[str, str, str], ...]) -> None:
-        """Save the named books through the ordinary sync door."""
         for external_id, title, author in rows:
             temp_db.save_content_item(
                 ContentItem(
@@ -1870,15 +1634,7 @@ class TestSearchPagesPartitionTheMatchedSet:
             )
 
     def test_the_two_spellings_are_one_matched_set(self, temp_db: SQLiteDB) -> None:
-        """The premise: one spelling holds the term and the other only matches it.
-
-        Stated first because every assertion below is about a page boundary
-        between matches of different tiers, and a library whose rows all
-        matched the same way would prove nothing about that boundary. It also
-        states what the merged design gives back: the typo'd copy is returned
-        beside the two that spell the name, rather than only when they are
-        missing.
-        """
+        """The premise: one spelling holds the term and the other only matches it."""
         self._seed(temp_db, self._LIBRARY)
         assert "asimov" not in build_search_text("The Caves of Steel", "Isaac Asmiov")
 
@@ -1892,15 +1648,8 @@ class TestSearchPagesPartitionTheMatchedSet:
     def test_a_search_pages_one_set_when_the_tiers_disagree(
         self, temp_db: SQLiteDB, page_size: int
     ) -> None:
-        """A page boundary between tiers still partitions the matched set.
-
-        The case the test above controls for: two of these books hold the term
-        and the third only matches it, so a design serving typo matches out of
-        a set of their own would apply the offset to a superset of the one the
-        earlier pages came from — repeating a row already shown and never
-        reaching The Caves of Steel. One matched set is what makes an offset
-        past the substring matches mean anything.
-        """
+        """One matched set is what makes an offset past the substring matches mean
+        anything."""
         self._seed(temp_db, self._LIBRARY)
         whole = temp_db.get_content_items(search="Asimov")
 
@@ -1910,16 +1659,7 @@ class TestSearchPagesPartitionTheMatchedSet:
 
 
 class TestPagesPartitionALibraryOfTies:
-    """Every sort keeps one order across its pages when its column ties.
-
-    A bulk import is the case: it arrives in one second, so ``created_at`` and
-    ``updated_at`` tie across the whole library, and a library holding the
-    same title in several content types ties the title sort and the ``ci.title``
-    tiebreak of the rating sort as well. SQL's ORDER BY is free to return tied
-    rows in any order it likes, and free to choose differently per statement,
-    so a page boundary falling inside a tie is where a row gets shown twice
-    while another is never shown at all.
-    """
+    """Every sort keeps one order across its pages when its column ties."""
 
     _TITLES = ("Dune", "Solaris", "Contact")
 
@@ -1929,12 +1669,9 @@ class TestPagesPartitionALibraryOfTies:
 
     @classmethod
     def _seed(cls, temp_db: SQLiteDB) -> None:
-        """Import the same three titles in all four content types.
-
-        The timestamps are then flattened by hand: CURRENT_TIMESTAMP has
-        second granularity and *usually* ties across twelve quick saves, and a
-        test about ties cannot be left to usually.
-        """
+        """The timestamps are then flattened by hand: CURRENT_TIMESTAMP has second
+        granularity and *usually* ties across twelve quick saves, and a test about
+        ties cannot be left to usually."""
         for title in cls._TITLES:
             for content_type in ContentType:
                 temp_db.save_content_item(
@@ -1971,16 +1708,9 @@ class TestPagesPartitionALibraryOfTies:
 
 
 class TestTheTitleSortAgreesWithThePythonKey:
-    """SQLite's ordering of the stored sort key matches Python's own.
-
-    The title sort moved from ``sorted(key=get_sort_title)`` to an ORDER BY
-    over a column holding that function's output. Python compares strings by
-    code point and SQLite's default collation compares the UTF-8 bytes, so the
-    two agree — but nothing in the code says so, and the whole library's order
-    rests on it. These are the inputs where a collation difference would show:
-    non-ASCII letters, an empty key, a key that is only an article, and keys
-    differing only in case.
-    """
+    """Python compares strings by code point and SQLite's default collation
+    compares the UTF-8 bytes, so the two agree — but nothing in the code says so,
+    and the whole library's order rests on it."""
 
     # Titles chosen so that no two share a sort key, since equal keys would
     # leave the expected order to the id tiebreak and prove nothing about the
@@ -2003,7 +1733,6 @@ class TestTheTitleSortAgreesWithThePythonKey:
     def test_the_stored_order_is_the_order_the_python_key_gives(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The read returns exactly what sorting the titles in Python returns."""
         for index, title in enumerate(self._TITLES):
             temp_db.save_content_item(
                 ContentItem(
@@ -2022,20 +1751,9 @@ class TestTheTitleSortAgreesWithThePythonKey:
 
 
 class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
-    """No door into ``content_items`` leaves the derived columns behind it.
-
-    ``sort_title`` and ``search_text`` are read *instead of* the title and the
-    creator, so a door that writes the row without recomputing them makes the
-    library order and search on values that are no longer there. Two of those
-    doors — the sync upsert and the title dedup — are covered a case at a time
-    above; this walks every one of them and states the invariant itself, so a
-    door added later is measured against the rule rather than against whichever
-    examples happened to be written down.
-
-    A row that never had the columns written carries NULL, which sorts ahead of
-    every real title and matches no search. Asserting the recomputed value
-    catches that as well as a stale one.
-    """
+    """``sort_title`` and ``search_text`` are read *instead of* the title and
+    the creator, so a door that writes the row without recomputing them makes the
+    library order and search on values that are no longer there."""
 
     # One creator per content type, each stored in that type's own column.
     _CREATOR_OF_TYPE = (
@@ -2047,13 +1765,7 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
 
     @staticmethod
     def _assert_columns_describe_the_library(temp_db: SQLiteDB) -> None:
-        """Every row's stored columns are what its title and creator derive to.
-
-        Read back through the ordinary read rather than recomputed from what a
-        test handed in: the creator column is fill-only and the title is
-        rewritten by merges, so what a caller offered is not always what the
-        row ends up holding.
-        """
+        """Every row's stored columns are what its title and creator derive to."""
         items = {
             item.db_id: item for item in temp_db.get_content_items(include_ignored=True)
         }
@@ -2074,7 +1786,6 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
 
     @staticmethod
     def _book(external_id: str, title: str, author: str | None = None) -> ContentItem:
-        """Build a book the doors below can be pointed at."""
         return ContentItem(
             id=external_id,
             title=title,
@@ -2098,8 +1809,8 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
         self._assert_columns_describe_the_library(temp_db)
 
     def test_the_dedup_door(self, temp_db: SQLiteDB) -> None:
-        """The row landed on carries NULL in both columns, which is what one
-        written before they existed looks like: dedup fills, not just refreshes."""
+        """The row landed on carries NULL in both columns, which is what one written
+        before they existed looks like: dedup fills, not just refreshes."""
         _insert_raw_book(temp_db, "openlibrary", "hobbit_b", "J.R.R. Tolkien")
 
         temp_db.save_content_item(self._book("hobbit_a", "The Hobbit"))
@@ -2109,19 +1820,9 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
     def test_every_content_type_derives_from_its_own_creator_column(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The creator lives in a different column per type, and all four count.
-
-        The derived columns pick the creator by content type, the way the read
-        does, so a type left out of that expression would store a search text
-        with an empty creator half and hide the name. Searching each name back
-        is what catches a type missing from *both* expressions: the sweep
-        compares the stored text against the creator the read reports, and the
-        read picks it with a CASE of its own, so a type neither one names
-        agrees with itself on None.
-
-        Each search returns that type's item and only that one, so a match on
-        the wrong item — or on every item — fails here too.
-        """
+        """The derived columns pick the creator by content type, the way the read
+        does, so a type left out of that expression would store a search text with
+        an empty creator half and hide the name."""
         for content_type, creator in self._CREATOR_OF_TYPE:
             temp_db.save_content_item(
                 ContentItem(
@@ -2140,17 +1841,11 @@ class TestEveryWriteDoorLeavesTheDerivedColumnsCurrent:
 
 
 class TestTheUpgradeThatFillsTheDerivedColumns:
-    """A row reaching an open without the derived columns leaves it with them.
-
-    The columns are the only inputs the library orders and searches by, so a
-    row that misses them is invisible to search and sorts ahead of everything
-    else. Both cases here are about *when* the fill runs, which no assertion
-    over a single save can reach: they open a database twice.
-    """
+    """Both cases here are about *when* the fill runs, which no assertion over a
+    single save can reach: they open a database twice."""
 
     @staticmethod
     def _derived_columns(db: SQLiteDB, title: str) -> tuple[str | None, ...]:
-        """The stored sort key and search text of one row."""
         with db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -2163,14 +1858,9 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
     def test_a_row_written_without_the_columns_is_repaired_on_the_next_open(
         self, tmp_path: Path
     ) -> None:
-        """The fill is not spent by a version stamp this database already carries.
-
-        Reachable by downgrade-then-upgrade: this build stamps the current
+        """Reachable by downgrade-then-upgrade: this build stamps the current
         version, an older one writes rows without the columns it does not know
-        about, and re-opening on this build reads the stamp. Nothing here
-        rewinds the version, so a fill guarded on it would never run and the
-        row would stay unsearchable for the life of the database.
-        """
+        about, and re-opening on this build reads the stamp."""
         db_path = tmp_path / "downgraded.db"
         db = SQLiteDB(db_path)
         with db.connection() as conn:
@@ -2197,20 +1887,10 @@ class TestTheUpgradeThatFillsTheDerivedColumns:
 
 
 class TestAdditiveGenreSaves:
-    """Tests for additive genre/tag saving in detail tables.
-
-    Bug reported: Re-importing items from a source would overwrite genres
-    and tags that had been added by enrichment, destroying richer data.
-
-    Root cause: ``INSERT OR REPLACE`` replaced the entire row, including
-    genres and tags, instead of merging new values with existing ones.
-
-    Fix: ``_save_detail_table()`` now queries for an existing row and
-    merges genres/tags using ``merge_string_lists()`` before writing.
-    """
+    """Bug reported: Re-importing items from a source would overwrite genres and
+    tags that had been added by enrichment, destroying richer data."""
 
     def test_reimport_merges_genres(self, temp_db: SQLiteDB) -> None:
-        """Re-saving an item should merge genres, not replace them."""
         item_v1 = ContentItem(
             id="tv_1",
             title="Firefly",
@@ -2220,7 +1900,6 @@ class TestAdditiveGenreSaves:
         )
         db_id = temp_db.save_content_item(item_v1)
 
-        # Simulate enrichment adding more genres
         item_v2 = ContentItem(
             id="tv_1",
             title="Firefly",
@@ -2234,7 +1913,6 @@ class TestAdditiveGenreSaves:
         assert retrieved is not None
         assert retrieved.metadata is not None
         genres = retrieved.metadata.get("genres", [])
-        # All three genres should be present
         assert "Drama" in genres
         assert "Comedy" in genres
         assert "Action" in genres
@@ -2268,18 +1946,10 @@ class TestAdditiveGenreSaves:
 
 
 class TestRatingSetOnce:
-    """Tests that rating is set once and never overwritten.
-
-    Bug reported: Re-syncing from a source without ratings would overwrite
-    existing ratings with None. Even syncing a different rating would
-    clobber user-curated data.
-
-    Fix: Rating is only written when the existing rating is None and the
-    incoming rating is not None.
-    """
+    """Bug reported: Re-syncing from a source without ratings would overwrite
+    existing ratings with None."""
 
     def test_resync_does_not_overwrite_existing_rating(self, temp_db: SQLiteDB) -> None:
-        """Re-syncing with a different rating should not overwrite the original."""
         item_v1 = ContentItem(
             id="book_2",
             title="Foundation",
@@ -2300,10 +1970,9 @@ class TestRatingSetOnce:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.rating == 5  # Original rating preserved
+        assert retrieved.rating == 5
 
     def test_resync_with_none_does_not_clear_rating(self, temp_db: SQLiteDB) -> None:
-        """Re-syncing with None rating should not clear existing rating."""
         item_v1 = ContentItem(
             id="book_3",
             title="Neuromancer",
@@ -2324,7 +1993,7 @@ class TestRatingSetOnce:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        assert retrieved.rating == 4  # Original rating preserved
+        assert retrieved.rating == 4
 
 
 class TestBlankReviewNeverFillsTheColumn:
@@ -2378,14 +2047,8 @@ class TestBlankReviewNeverFillsTheColumn:
 
 
 class TestStatusForwardOnly:
-    """Integration tests that status only advances forward in save_content_item.
-
-    Bug reported: Re-syncing from a source that reports "unread" would
-    revert a "completed" item back to "unread", losing completion history.
-
-    Fix: Status uses forward-only progression: unread → currently_consuming
-    → completed. A re-sync with an earlier status does not revert.
-    """
+    """Bug reported: Re-syncing from a source that reports "unread" would revert
+    a "completed" item back to "unread", losing completion history."""
 
     def test_status_does_not_regress_completed_to_unread(
         self, temp_db: SQLiteDB
@@ -2412,11 +2075,8 @@ class TestStatusForwardOnly:
 
 
 class TestDateCompletedProtection:
-    """Tests that date_completed only advances forward.
-
-    Rule: date_completed is only updated when the incoming value is not None
-    AND it is later than the existing value.
-    """
+    """Rule: date_completed is only updated when the incoming value is not None
+    AND it is later than the existing value."""
 
     def test_earlier_date_does_not_replace_later(self, temp_db: SQLiteDB) -> None:
         item_v1 = ContentItem(
@@ -2466,15 +2126,9 @@ class TestDateCompletedProtection:
 
 
 class TestDetailTableFillOnly:
-    """Tests that detail table scalar fields are fill-only.
-
-    Enrichment is the source of truth for detail fields. Once a value
-    is set (by ingestion or enrichment), subsequent syncs should not
-    overwrite it. Only empty (None) fields get filled.
-    """
+    """Enrichment is the source of truth for detail fields."""
 
     def test_description_not_overwritten(self, temp_db: SQLiteDB) -> None:
-        """Existing description should not be replaced by new sync."""
         item_v1 = ContentItem(
             id="detail_1",
             title="Dune",
@@ -2503,13 +2157,8 @@ class TestDetailTableFillOnly:
     def test_an_empty_text_value_leaves_the_column_open(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A blank value stores as NULL, so a later sync still fills it.
-
-        The fill-only rule tests ``is not None``, so a column holding ``""``
-        would refuse every value after it, with nothing in the app to clear
-        it. ``to_text`` answering an empty value with None is the whole of
-        what keeps the column open, and this is the pair it is claimed for.
-        """
+        """The fill-only rule tests ``is not None``, so a column holding ``""``
+        would refuse every value after it, with nothing in the app to clear it."""
         blank = ContentItem(
             id="detail_blank_isbn",
             title="Dune",
@@ -2569,17 +2218,12 @@ class TestDetailTableFillOnly:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.metadata is not None
-        # Existing key should be preserved
         assert retrieved.metadata.get("custom_key_1") == "original_value"
-        # New key should be filled
         assert retrieved.metadata.get("custom_key_2") == "new_value"
 
 
 class TestUpdateItemFromUi:
-    """Tests for update_item_from_ui (unrestricted UI editing)."""
-
     def test_update_status_backward(self, temp_db: SQLiteDB) -> None:
-        """Status can go backward (completed -> unread) via UI edit."""
         item = ContentItem(
             id="ui_1",
             title="Completed Book",
@@ -2597,7 +2241,6 @@ class TestUpdateItemFromUi:
         assert retrieved.status == ConsumptionStatus.UNREAD
 
     def test_update_rating_clear(self, temp_db: SQLiteDB) -> None:
-        """Setting rating to None clears it via UI edit."""
         item = ContentItem(
             id="ui_3",
             title="Rated Movie",
@@ -2616,7 +2259,6 @@ class TestUpdateItemFromUi:
     def test_update_seasons_watched_preserves_and_drops_dates(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Existing stamps survive re-saves; unchecked seasons lose their stamp."""
         item = ContentItem(
             id="ui_5b",
             title="Test Show",
@@ -2662,7 +2304,6 @@ class TestUpdateItemFromUi:
         assert retrieved.metadata["seasons_watched_dates"] == {}
 
     def test_update_auto_derive_status_all_watched(self, temp_db: SQLiteDB) -> None:
-        """All seasons watched, with no status supplied, derives completed."""
         item = ContentItem(
             id="ui_6",
             title="Short Show",
@@ -2679,7 +2320,6 @@ class TestUpdateItemFromUi:
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
     def test_update_wrong_user(self, temp_db: SQLiteDB) -> None:
-        """Updating with wrong user_id returns False."""
         item = ContentItem(
             id="ui_9",
             title="User 1 Book",
@@ -2693,18 +2333,12 @@ class TestUpdateItemFromUi:
         )
         assert result is False
 
-        # Verify item unchanged
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.UNREAD
 
     def test_sync_still_forward_only_after_ui_update(self, temp_db: SQLiteDB) -> None:
-        """save_content_item still enforces forward-only after UI edit.
-
-        UI sets status backward to unread, then sync tries to set completed.
-        Sync should advance forward. Separately, sync should not overwrite
-        the rating that was set via UI and then cleared by another UI edit.
-        """
+        """UI sets status backward to unread, then sync tries to set completed."""
         item = ContentItem(
             id="ui_10",
             title="Sync Test Book",
@@ -2714,7 +2348,6 @@ class TestUpdateItemFromUi:
         )
         db_id = temp_db.save_content_item(item)
 
-        # UI edit: go backward to unread, clear rating
         temp_db.update_item_from_ui(db_id=db_id, status="unread", rating=None)
 
         retrieved = temp_db.get_content_item(db_id)
@@ -2722,7 +2355,6 @@ class TestUpdateItemFromUi:
         assert retrieved.status == ConsumptionStatus.UNREAD
         assert retrieved.rating is None
 
-        # Re-sync with completed status — should advance forward
         resync_item = ContentItem(
             id="ui_10",
             title="Sync Test Book",
@@ -2737,30 +2369,11 @@ class TestUpdateItemFromUi:
 
 
 class TestEditDoorNeverStoresABlankReview:
-    """Regression tests for a blank review reaching the edit door's write.
-
-    Bug: ``update_item_from_ui`` wrote whatever string it was handed, so a
-    blank ``review`` landed in the column as ``""``. No user hit it — every
-    caller today refuses a blank (``PATCH /api/items/{id}`` and
-    ``library edit``), and the edit dialog sends null once the box is
-    empty. The defect is that the door depends on that and says nothing about
-    it: the next caller — a bulk-edit endpoint, a new subcommand, a private
-    plugin — inherits the poison with no test failing, and a stored blank
-    reads as a review the user wrote and refuses every later import for that
-    column, permanently.
-    Root cause: the guards added to the other two write legs
-    (``_upsert_content_item``'s fill and insert legs, ``_write_completion``)
-    left this third one relying on its callers, where nothing states the
-    requirement and nothing checks it.
-    Fix: the door normalises a blank to NULL itself. It clears rather than
-    ignores because that is what the surfaces in front already decide — an
-    emptied review box is a clear, the instruction ``library edit`` spells
-    ``--clear-review``.
-    """
+    """Bug: ``update_item_from_ui`` wrote whatever string it was handed, so a
+    blank ``review`` landed in the column as ``""``."""
 
     @staticmethod
     def _reviewed(temp_db: SQLiteDB) -> int:
-        """One completed book carrying a review the user wrote."""
         return temp_db.save_content_item(
             ContentItem(
                 id="ui_blank_review",
@@ -2774,7 +2387,6 @@ class TestEditDoorNeverStoresABlankReview:
     def test_a_review_cleared_this_way_can_still_be_filled_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The harm the NULL prevents: a later import can still fill it."""
         db_id = self._reviewed(temp_db)
         temp_db.update_item_from_ui(db_id=db_id, status="completed", review="   ")
 
@@ -2794,26 +2406,12 @@ class TestEditDoorNeverStoresABlankReview:
 
 
 class TestUpdateItemFromUiRegression:
-    """Regression tests for update_item_from_ui bugs."""
-
     def test_update_seasons_watched_stamps_only_newly_checked_season_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Only a season newly ticked in this edit is stamped with `now`.
-
-        Bug reported: checking one more season on a show that already had
-        undated watched seasons stamped every undated-but-watched season
-        with the current time, inventing dates for seasons watched long
-        before dates were tracked.
-        Root cause: the dates map was rebuilt as
-        ``{season: existing_dates.get(season, now) for season in
-        seasons_watched}``, which defaults to `now` for *any* undated
-        season in the incoming list — not just ones newly added in this
-        edit.
-        Fix: capture the previous ``seasons_watched`` before overwriting it,
-        and only stamp `now` for a season that is both new to the incoming
-        list and not already dated.
-        """
+        """Bug reported: checking one more season on a show that already had undated
+        watched seasons stamped every undated-but-watched season with the current
+        time."""
         item = ContentItem(
             id="ui_5c",
             title="Test Show",
@@ -2848,8 +2446,7 @@ class TestUpdateItemFromUiRegression:
             )
             conn.commit()
 
-        # User checks off season 2, leaving season 3 as it was: watched but
-        # undated.
+        # User checks off season 2, leaving season 3 as it was: watched but undated.
         temp_db.update_item_from_ui(
             db_id=db_id, status="currently_consuming", seasons_watched=[1, 2, 3]
         )
@@ -2864,24 +2461,13 @@ class TestUpdateItemFromUiRegression:
 
 
 class TestPartialEditPreservesUnsentFields:
-    """Regression tests for partial edits erasing fields they never mentioned.
-
-    Bug reported: editing an item without passing a rating or review — a
+    """Bug reported: editing an item without passing a rating or review — a
     status-only edit from the library UI, or ``library edit --genre X`` —
-    silently nulled both. The rating is the taste signal, so the item also
-    stopped contributing to preference analysis, and the value was
-    unrecoverable.
-    Root cause: ``update_item_from_ui`` always wrote ``rating = ?, review = ?``
-    with whatever the parameters held, and both defaulted to None, so "not
-    supplied" and "clear it" were the same value.
-    Fix: the parameters default to the UNSET sentinel and the SET clause is
-    built from the fields actually supplied. None still means "clear it".
-    """
+    silently nulled both."""
 
     def test_status_only_edit_preserves_rating_and_review_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A status-only edit leaves the stored rating and review alone."""
         item = ContentItem(
             id="partial_1",
             title="Rated Book",
@@ -2902,7 +2488,6 @@ class TestPartialEditPreservesUnsentFields:
     def test_unread_status_alone_keeps_watched_seasons_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A status-only unread leaves a show's watched seasons and dates alone."""
         dates = {"1": "2026-06-01T00:00:00+00:00"}
         db_id = temp_db.save_content_item(
             ContentItem(
@@ -2948,22 +2533,6 @@ class TestPartialEditPreservesUnsentFields:
 
 
 class TestCompletionDateStamping:
-    """Regression tests for in-app completions not recording a date.
-
-    Bug reported: every in-app "mark complete" path set status=completed but
-    left ``date_completed`` NULL, so the variety ladder — which orders
-    completion events by that date — sank a just-finished item to its weakest
-    rung and demoted the wrong genre.
-    Root cause: ``update_item_from_ui`` never touched ``date_completed``, and
-    the CLI/web completion paths built a ContentItem without one.
-    Fix: an edit that moves an item into completed stamps today's date in the
-    host's zone when the row has none, leaving an existing date (from an
-    import, say) untouched.
-
-    *Which* calendar day the stamp lands on is ``TestCompletionDateTimezone``'s
-    subject, below; these tests only establish that a date is stamped at all.
-    """
-
     def test_ui_completion_stamps_date_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
@@ -2985,23 +2554,10 @@ class TestCompletionDateStamping:
     def test_unrelated_edit_does_not_invent_a_completion_date_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Editing a genre on an already-completed, undated item invents a date.
-
-        Bug reported: an import that carries no completion date (a hand-made
-        CSV, most Goodreads exports) leaves completed items undated. Editing
-        one of them — a genre fix, a tag, a review — stamps today's date, so
-        the app now believes the user finished a years-old book today. The
-        variety ladder is ordered by that date, so a metadata edit silently
-        moves that item to the top rung and demotes its genre hardest.
-        Root cause: ``update_item_from_ui`` stamps whenever the *resolved*
-        status is completed, rather than when the status actually transitions
-        to completed, and it never reads the row's existing status to tell the
-        two apart.
-        Fix: stamp only on a real transition into completed. This is the rule
-        the same method already applies to season dates — "a season that was
-        already watched but has no date is left undated rather than inventing
-        one" — applied to the item's own completion date.
-        """
+        """``update_item_from_ui`` stamps whenever the *resolved*
+        status is completed, rather than when the status actually transitions to
+        completed, and it never reads the row's existing status to tell the two
+        apart."""
         item = ContentItem(
             id="stamp_5",
             title="Undated Import",
@@ -3023,24 +2579,8 @@ class TestCompletionDateStamping:
 
 
 class TestCompletionDateTimezone:
-    """Regression tests for in-app completions dated by the UTC calendar day.
-
-    Bug reported: a user in America/Los_Angeles marking something complete at
-    21:00 got tomorrow's date. Every in-app stamping site read
-    ``datetime.now(UTC).date()``, so west of UTC an evening completion was
-    dated a day ahead — while an imported timestamp was narrowed to the host's
-    zone. Two calendars fed the same variety-ladder ordering, and the ``TZ`` a
-    Docker operator sets was honoured for one and ignored for the other.
-    Root cause: the UTC instant was narrowed to a date without converting it
-    to the host's zone first.
-    Fix: every site stamps ``local_today()``, the counterpart of the helper
-    that narrows imported timestamps.
-
-    The clock is frozen at an instant whose UTC day differs from the host's,
-    which is the only way to tell the implementations apart — under the
-    suite's default UTC they agree — and which also stops these assertions
-    disagreeing with a live clock across UTC midnight.
-    """
+    """Bug reported: a user in America/Los_Angeles marking something complete at
+    21:00 got tomorrow's date."""
 
     LOCAL_EVENING = datetime(2026, 3, 15, 4, 0, tzinfo=UTC)  # 21:00 on the 14th in LA
 
@@ -3067,23 +2607,6 @@ class TestCompletionDateTimezone:
 
 
 class TestCompleteContentItem:
-    """Regression tests for the explicit-completion door.
-
-    Bug reported: `recommendinator complete` (and POST /api/complete) on an
-    item imported with ``date_completed = 2020-01-01`` rewrote the date to
-    today, silently losing a date the user owned — inside the change whose
-    whole thesis is that user-owned state is never silently lost. That date
-    feeds the variety ladder's ordering.
-    Root cause: both interfaces built the item with today's date and persisted
-    through ``save_content_item``, whose later-date-wins rule takes today over
-    any past date; they then issued a second write through the edit door to
-    apply the rating, so the two writes were separate transactions and the
-    same block was duplicated across the CLI/web boundary.
-    Fix: one storage entry point does find-or-create plus the user-owned write
-    in a single transaction, and a completion carrying no date fills an empty
-    one rather than replacing a stored one.
-    """
-
     def _seeded(
         self,
         temp_db: SQLiteDB,
@@ -3199,14 +2722,6 @@ class TestCompleteContentItem:
     def test_completion_and_creation_are_one_transaction_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A failed user write takes the row creation down with it.
-
-        The two-write shape this replaced committed the row first, so an
-        interruption before the second write left the item completed carrying
-        the rating it had before — a smaller version of the loss this door
-        exists to prevent. The stubbed failure stands in for that
-        interruption; nothing may be committed when it happens.
-        """
         with patch.object(
             SQLiteDB, "_write_completion", side_effect=RuntimeError("interrupted")
         ):
@@ -3224,12 +2739,9 @@ class TestCompleteContentItem:
         assert temp_db.get_content_items(content_type=ContentType.BOOK) == []
 
     def test_completion_outranks_the_new_season(self, temp_db: SQLiteDB) -> None:
-        """Saying "I finished this" beats the sync rule about new seasons.
-
-        A show whose season count has grown past what the user ticked off is
+        """A show whose season count has grown past what the user ticked off is
         regressed to currently_consuming by the sync pass the completion runs
-        through. Someone who has just said they finished it means it.
-        """
+        through."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="tv-1",
@@ -3267,31 +2779,10 @@ class TestCompleteContentItem:
 
 
 class TestCompletionDoorExplicitDate:
-    """Regression tests for a completion date the user named being discarded.
-
-    Bug reported: completing Dune with an explicit "last Tuesday" left an item
-    that an import had dated later still carrying the import's date. The
-    correction was accepted, reported back as done, and never written — the
-    silent loss of user-owned state this door exists to prevent, running
-    backwards.
-    Root cause: the date rode in on the ContentItem, so it met
-    ``_upsert_content_item``'s later-date-wins sync rule on the way through,
-    and ``_write_completion``'s COALESCE then preserved whatever survived it.
-    A date earlier than the stored one never reached the column.
-    Fix: the door reads the caller's date off the item and hands it to
-    ``_write_completion`` as an argument of its own, which writes it as given.
-    Only a caller supplying no date takes the fill-when-empty path.
-
-    No interface names a date today; ``complete`` and
-    ``POST /api/complete`` accept none. The no-date path they share is pinned
-    by ``TestCompleteContentItem`` above — fill-when-empty by
-    ``test_missing_completion_date_is_filled``, preserve-when-present by
-    ``test_existing_completion_date_is_preserved_regression`` — and this fix
-    must leave both as they are.
-    """
+    """Bug reported: completing Dune with an explicit "last Tuesday" left an item
+    that an import had dated later still carrying the import's date."""
 
     def _seeded(self, temp_db: SQLiteDB, stored: date | None) -> int:
-        """Store one completed book carrying *stored* as its date."""
         return temp_db.save_content_item(
             ContentItem(
                 id="book-1",
@@ -3303,7 +2794,6 @@ class TestCompletionDoorExplicitDate:
         )
 
     def _complete_on(self, temp_db: SQLiteDB, supplied: date) -> None:
-        """Complete that book again, naming *supplied* as the date."""
         temp_db.complete_content_item(
             ContentItem(
                 id="book-1",
@@ -3328,13 +2818,10 @@ class TestCompletionDoorExplicitDate:
 
 
 class TestCompletionDoorFutureDate:
-    """Reported: a caller names a completion date and nothing bounded the
-    value, so ``date.fromisoformat`` let 9999-12-31 through. Fixed at the door,
-    which ``complete`` and ``POST /api/complete`` share, not at one surface.
-    """
+    """Reported: a caller names a completion date and nothing bounded the value,
+    so ``date.fromisoformat`` let 9999-12-31 through."""
 
     def _complete_on(self, temp_db: SQLiteDB, supplied: date) -> None:
-        """Complete one book, naming *supplied* as the date."""
         with patch("src.utils.dates.utc_now", return_value=FROZEN_NOW):
             temp_db.complete_content_item(
                 ContentItem(
@@ -3375,20 +2862,7 @@ class TestCompletionDoorFutureDate:
 
 
 class TestIgnoredSyncDoor:
-    """Tests for what a synced ``ignored`` value is allowed to do.
-
-    The ignore flag is user-owned, and the rule is that only a stated value
-    counts: True and False both win — that is how exporting a library, editing
-    it and re-importing un-ignores something on purpose — while None means the
-    source said nothing and the stored flag stands. These pin that rule at the
-    door, where it is decided, rather than at the importers that feed it: a
-    source emitting a concrete False because its author defaulted the field is
-    the failure mode that cost users their ignore list, and the door is the
-    only place every source passes through.
-    """
-
     def _ignored_item(self, temp_db: SQLiteDB) -> int:
-        """Store one book and ignore it, as the user would in the app."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="ignore-1",
@@ -3401,7 +2875,6 @@ class TestIgnoredSyncDoor:
         return db_id
 
     def _resync(self, temp_db: SQLiteDB, ignored: bool | None) -> None:
-        """Re-import the same book with the flag the file states (or does not)."""
         temp_db.save_content_item(
             ContentItem(
                 id="ignore-1",
@@ -3413,7 +2886,6 @@ class TestIgnoredSyncDoor:
         )
 
     def test_unstated_flag_leaves_the_ignore_alone(self, temp_db: SQLiteDB) -> None:
-        """A file that says nothing about the flag cannot clear it."""
         db_id = self._ignored_item(temp_db)
 
         self._resync(temp_db, ignored=None)
@@ -3423,7 +2895,6 @@ class TestIgnoredSyncDoor:
         assert retrieved.ignored is True
 
     def test_stated_false_un_ignores_the_item(self, temp_db: SQLiteDB) -> None:
-        """A file stating false clears the flag, so the round trip still works."""
         db_id = self._ignored_item(temp_db)
 
         self._resync(temp_db, ignored=False)
@@ -3434,17 +2905,10 @@ class TestIgnoredSyncDoor:
 
 
 class TestTvSeasonSyncRegression:
-    """Tests for TV show status regression when new seasons arrive via sync."""
-
     def test_sync_new_season_regresses_completed_to_consuming(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Completed TV show regresses to consuming when new season synced.
-
-        Bug scenario: User watches all 50 seasons of Survivor, marks
-        completed. Sonarr syncs season 51. Status should go back to
-        currently_consuming since there's unwatched content.
-        """
+        """Bug scenario: User watches all 50 seasons of Survivor, marks completed."""
         item = ContentItem(
             id="tv_sync_1",
             title="Survivor",
@@ -3454,19 +2918,16 @@ class TestTvSeasonSyncRegression:
         )
         db_id = temp_db.save_content_item(item)
 
-        # User marks all 50 seasons watched via UI
         temp_db.update_item_from_ui(
             db_id=db_id,
             status="completed",
             seasons_watched=list(range(1, 51)),
         )
 
-        # Verify completed
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.COMPLETED
 
-        # Sonarr syncs with season 51
         resync_item = ContentItem(
             id="tv_sync_1",
             title="Survivor",
@@ -3479,18 +2940,13 @@ class TestTvSeasonSyncRegression:
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
         assert retrieved.status == ConsumptionStatus.CURRENTLY_CONSUMING
-        # Total seasons should have increased
         assert retrieved.metadata is not None
         assert str(retrieved.metadata.get("seasons")) == "51"
 
     def test_sync_new_season_does_not_regress_when_ignored(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Ignored TV show stays completed when new season arrives.
-
-        User completed and ignored the show — new season shouldn't
-        change status.
-        """
+        """User completed and ignored the show — new season shouldn't change status."""
         item = ContentItem(
             id="tv_sync_2",
             title="Ignored Show",
@@ -3500,7 +2956,6 @@ class TestTvSeasonSyncRegression:
         )
         db_id = temp_db.save_content_item(item)
 
-        # User marks all seasons watched and ignores
         temp_db.update_item_from_ui(
             db_id=db_id,
             status="completed",
@@ -3508,7 +2963,6 @@ class TestTvSeasonSyncRegression:
         )
         temp_db.set_item_ignored(db_id, ignored=True)
 
-        # Sync with new season
         resync_item = ContentItem(
             id="tv_sync_2",
             title="Ignored Show",
@@ -3520,21 +2974,14 @@ class TestTvSeasonSyncRegression:
 
         retrieved = temp_db.get_content_item(db_id)
         assert retrieved is not None
-        # Status stays completed because item is ignored
         assert retrieved.status == ConsumptionStatus.COMPLETED
-        # Season count still updated
         assert retrieved.metadata is not None
         assert str(retrieved.metadata.get("seasons")) == "6"
 
     def test_zero_stored_season_count_keeps_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A stored season count of 0 must not un-complete a show.
-
-        Reported: import flipped it to currently_consuming on every run.
-        Cause: the guard now asks ``all_seasons_watched``, False for an
-        unknown total. Fix: a falsy total is nothing to compare against.
-        """
+        """Reported: import flipped it to currently_consuming on every run."""
         item = ContentItem(
             id="tv_zero_seasons",
             title="Zero Season Show",
@@ -3559,22 +3006,6 @@ class TestTvSeasonSyncRegression:
     def test_sync_keeps_later_existing_date_over_earlier_incoming_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Regression test: a sync must not clobber a later date with an earlier one.
-
-        Bug reported: after a Trakt re-sync, a season's watch date could
-        regress to an earlier value, and the whole ``seasons_watched_dates``
-        map could also be frozen at its first written value (dropping a
-        newly-watched season's date entirely).
-        Root cause: ``_save_detail_table``'s remaining-metadata merge treated
-        ``seasons_watched_dates`` either as ordinary existing-wins metadata
-        (freezing the whole dict, so a new season's date never appears) or,
-        in a later revision, as plain incoming-wins (letting a stale sync
-        date overwrite a later known one) — neither compared the two
-        timestamps.
-        Fix: per-season merge via ``later_iso_timestamp`` — the later of the
-        existing and incoming date wins, and a season present on only one
-        side is carried over.
-        """
         first = ContentItem(
             id="trakt:show1",
             title="Regression Show",
@@ -3616,16 +3047,6 @@ class TestTvSeasonSyncRegression:
     def test_sync_gap_fills_dates_onto_pre_feature_row_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A sync gap-fills seasons_watched_dates onto a row that predates the feature.
-
-        Bug scenario: rows created before ``seasons_watched_dates`` existed
-        (or ingested by a source that never sends it) used to rely on a
-        one-time schema backfill (``_seed_season_watched_dates``) to
-        acquire a date on upgrade. That backfill has been removed, so the
-        ordinary per-season merge in ``_save_detail_table`` must be able to
-        gap-fill dates onto such a row the first time a sync actually sends
-        them — not just onto rows that already carry the key.
-        """
         item = ContentItem(
             id="trakt:show3",
             title="Pre-Feature Show",
@@ -3663,15 +3084,10 @@ class TestTvSeasonSyncRegression:
 
 
 class TestSeasonsWatchedSyncUnionRegression:
-    """A sync could not finish a season (#107).
-
-    Symptom: Trakt never completed a watched season. Cause: existing-wins on
-    key presence froze the empty list the first sync wrote. Fix: a union.
-    """
+    """A sync could not finish a season (#107)."""
 
     @staticmethod
     def _sync(temp_db: SQLiteDB, seasons_watched: list[int]) -> int:
-        """Save the show as a Trakt sync does, reporting *seasons_watched*."""
         return temp_db.save_content_item(
             ContentItem(
                 id="trakt:union",
@@ -3686,7 +3102,6 @@ class TestSeasonsWatchedSyncUnionRegression:
     def test_sync_promotes_a_season_finished_since_the_last_sync_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A season Trakt now reports complete joins the stored list."""
         db_id = self._sync(temp_db, [])
         self._sync(temp_db, [1])
         self._sync(temp_db, [1, 2])
@@ -3698,11 +3113,8 @@ class TestSeasonsWatchedSyncUnionRegression:
     def test_sync_never_unticks_a_manual_check_off_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A season the sync omits survives it.
-
-        The promotion test above passes just as well if the union regressed to
-        a replace, so this is the half guarding the watch history.
-        """
+        """The promotion test above passes just as well if the union regressed to a
+        replace, so this is the half guarding the watch history."""
         db_id = self._sync(temp_db, [1])
         temp_db.update_item_from_ui(db_id, seasons_watched=[1, 5])
         self._sync(temp_db, [1, 2])
@@ -3713,9 +3125,8 @@ class TestSeasonsWatchedSyncUnionRegression:
 
 
 class TestTvSeasonCountFromTraktMetadata:
-    """``total_seasons`` used to land in the metadata blob, leaving the
-    ``seasons`` column NULL, so a fully watched show never completed.
-    """
+    """``total_seasons`` used to land in the metadata blob, leaving the ``seasons``
+    column NULL, so a fully watched show never completed."""
 
     @staticmethod
     def _save_trakt_show(temp_db: SQLiteDB) -> int:
@@ -3734,7 +3145,6 @@ class TestTvSeasonCountFromTraktMetadata:
     def test_total_seasons_metadata_populates_seasons_column_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """``total_seasons`` reaches the seasons column and the shared dict."""
         db_id = self._save_trakt_show(temp_db)
 
         retrieved = temp_db.get_content_item(db_id)
@@ -3745,31 +3155,11 @@ class TestTvSeasonCountFromTraktMetadata:
 
 
 class TestYearAndRuntimeFromImport:
-    """Release year and runtime written under the names the sources use.
-
-    Bug reported: a Radarr movie or a Sonarr/Trakt show synced into an empty
-    library showed no year, and the movie no runtime, until an enrichment
-    provider happened to fill them in. Exporting the library left the ``year``
-    and ``runtime_minutes`` columns blank for the same items.
-
-    Root cause: those plugins write ``year`` and ``runtime_minutes``, but the
-    detail-table config only knew the canonical ``release_year`` and
-    ``runtime``, so both values fell into the free-form metadata blob and the
-    columns stayed NULL. Only the enrichment providers write the canonical
-    spellings, so exactly the unenriched items were affected.
-
-    Fix: the ``release_year`` and ``runtime`` columns accept ``year`` and
-    ``runtime_minutes`` as aliases, the same way ``seasons`` accepts
-    ``total_seasons``, and each alias is a known key so it stops being
-    duplicated into the blob.
-
-    The fixtures come from the plugins' own metadata extractors: a
-    hand-written dict is how the mismatch survived a green suite.
-    """
+    """The fixtures come from the plugins' own metadata extractors: a hand-written
+    dict is how the mismatch survived a green suite."""
 
     @staticmethod
     def _save_radarr_movie(temp_db: SQLiteDB) -> int:
-        """Save the movie Radarr produces for a representative API payload."""
         return temp_db.save_content_item(
             ContentItem(
                 id="tmdb:27205",
@@ -3792,7 +3182,6 @@ class TestYearAndRuntimeFromImport:
     def test_movie_year_and_runtime_populate_their_columns_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Radarr's ``year`` and ``runtime_minutes`` reach the movie columns."""
         db_id = self._save_radarr_movie(temp_db)
 
         retrieved = temp_db.get_content_item(db_id)
@@ -3829,20 +3218,10 @@ class TestYearAndRuntimeFromImport:
 
 
 class TestCreatorReadsBackAsAuthor:
-    """The creator a provider writes reads back on every content type.
-
-    Bug reported: a movie, TV show or video game always read back with
+    """Bug reported: a movie, TV show or video game always read back with
     ``author`` as None, so the library export wrote a blank
-    director/creator/developer cell even for a TMDB-enriched item whose
-    column the provider had filled.
-
-    Root cause: only ``book.author`` was declared as the creator, so the read
-    path left the other three types' creator columns in the metadata dict and
-    never set ``ContentItem.author`` from them.
-
-    Fix: every content type declares one ``FieldKind.CREATOR`` column, which
-    the read path lifts onto ``author`` and out of the metadata dict.
-    """
+    director/creator/developer cell even for a TMDB-enriched item whose column
+    the provider had filled."""
 
     @pytest.mark.parametrize(
         ("content_type", "metadata_key", "creator"),
@@ -3861,7 +3240,6 @@ class TestCreatorReadsBackAsAuthor:
         metadata_key: str,
         creator: str,
     ) -> None:
-        """The key an enrichment provider writes reads back as the author."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id=f"creator-{content_type.value}",
@@ -3881,12 +3259,9 @@ class TestCreatorReadsBackAsAuthor:
     def test_tv_creator_alias_reaches_the_creators_column_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The singular ``creator`` a template row carries stores as ``creators``.
-
-        The tv_show template column is ``creator`` and storage stores
-        ``creators``, so the declared key and the stored one used to disagree
-        and the value fell into the free-form blob.
-        """
+        """The tv_show template column is ``creator`` and storage stores ``creators``,
+        so the declared key and the stored one used to disagree and the value fell
+        into the free-form blob."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="tv-creator-alias",
@@ -3914,13 +3289,9 @@ class TestCreatorReadsBackAsAuthor:
     def test_item_author_fills_the_creator_column_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """An importer's ``author`` reaches the column for every type.
-
-        The import path puts the template's creator cell on
-        ``ContentItem.author`` rather than in metadata, and the write path
-        used to consult it for books alone — so an imported director was
-        written nowhere.
-        """
+        """The import path puts the template's creator cell on ``ContentItem.author``
+        rather than in metadata, and the write path used to consult it for books alone
+        — so an imported director was written nowhere."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="movie-author",
@@ -3941,15 +3312,11 @@ class TestCreatorReadsBackAsAuthor:
 
 
 class TestCreatorColumnEdges:
-    """The boundaries of the creator column, once every type has one.
-
-    The creator now crosses a codec (a plural key may arrive as a list) and
-    a fill-only write rule, so the shapes below are the ones a plugin, an
-    enrichment provider or a re-sync can actually produce.
-    """
+    """The creator now crosses a codec (a plural key may arrive as a list) and a
+    fill-only write rule, so the shapes below are the ones a plugin, an
+    enrichment provider or a re-sync can actually produce."""
 
     def test_a_list_creator_joins_into_the_one_column(self, temp_db: SQLiteDB) -> None:
-        """Several developers become one comma-joined name, like TMDB's."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="game-two-devs",
@@ -4034,8 +3401,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_re_syncing_either_source_after_a_merge_changes_nothing(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The id was recorded only on the INSERT, so the loser of the dedup
-        race took the title path, and reported an update, on every sync."""
+        """The id was recorded only on the INSERT, so the loser of the dedup race
+        took the title path, and reported an update, on every sync."""
         temp_db.save_content_item(self._game("gog", "tf2", "Team Fortress 2"))
         temp_db.save_content_item(self._game("steam", "440", "Team Fortress 2"))
 
@@ -4064,8 +3431,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_an_item_matched_by_its_own_id_deletes_no_other_row(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Steam's retitle found its own row, then absorbed every same-titled
-        row beside it — taking ids only GOG held down with them."""
+        """Steam's retitle found its own row, then absorbed every same-titled row
+        beside it — taking ids only GOG held down with them."""
         gog_1993 = temp_db.save_content_item(self._game("gog", "doom-1993", "Doom"))
         gog_2016 = temp_db.save_content_item(self._game("gog", "doom-2016", "Doom"))
         steam = temp_db.save_content_item(self._game("steam", "379720", "DOOM (2016)"))
@@ -4085,8 +3452,8 @@ class TestEachSourceHoldsItsOwnExternalId:
         self, temp_db: SQLiteDB
     ) -> None:
         """The guard read one row while the SELECT answered as its survivor, so a
-        source's second item resolved onto a group already holding its first and
-        was dropped by the INSERT OR IGNORE that followed."""
+        source's second item resolved onto a group already holding its first and was
+        dropped by the INSERT OR IGNORE that followed."""
         calibre = _insert_raw_item(temp_db, "dune", "Dune", "dune", source="calibre")
         goodreads = _insert_raw_item(
             temp_db, "234225", "Dune", "dune", source="goodreads"
@@ -4101,8 +3468,8 @@ class TestEachSourceHoldsItsOwnExternalId:
         assert _external_ids(temp_db, second_edition) == [("goodreads", "44767458")]
 
     def test_a_title_collision_lands_on_the_oldest_row(self, temp_db: SQLiteDB) -> None:
-        """Which duplicate a new source attaches to decides whose history it
-        joins, and an unordered fetch made that a coin toss."""
+        """Which duplicate a new source attaches to decides whose history it joins,
+        and an unordered fetch made that a coin toss."""
         oldest = _insert_raw_item(temp_db, "old", "Doom", "doom")
         _insert_raw_item(temp_db, "new", "Doom", "doom")
 
@@ -4114,8 +3481,8 @@ class TestEachSourceHoldsItsOwnExternalId:
         self, temp_db: SQLiteDB
     ) -> None:
         """A source emitting no id leaves its row unnamed in the id table, and
-        reading a later source's id beside that source name fabricated a pair,
-        which both interfaces then showed as the row's own."""
+        reading a later source's id beside that source name fabricated a pair, which
+        both interfaces then showed as the row's own."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 title="Doom",
@@ -4138,8 +3505,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_an_item_no_source_named_reads_back_with_an_empty_list(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The read parses the id list unconditionally, so an aggregate over no
-        rows must be ``[]``."""
+        """The read parses the id list unconditionally, so an aggregate over no rows
+        must be ``[]``."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 title="Doom",
@@ -4158,8 +3525,8 @@ class TestEachSourceHoldsItsOwnExternalId:
     def test_an_id_carrying_json_punctuation_survives_the_round_trip(
         self, temp_db: SQLiteDB
     ) -> None:
-        """An imported id is whatever the file's column held, so a delimited
-        string would split one pair into garbage."""
+        """An imported id is whatever the file's column held, so a delimited string
+        would split one pair into garbage."""
         awkward = 'a"b\\c,d\ne'
         db_id = temp_db.save_content_item(self._game("generic_csv", awkward, "Doom"))
 
@@ -4214,9 +3581,8 @@ class TestTheIdTableIsSeekedNotScanned:
     def test_the_title_path_seeks_the_ids_of_the_group_it_weighs(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Flattening the OR into a join hides the indexed column, as a COALESCE
-        did above. A first sync into an existing library takes this path per
-        item, so a scan costs the product of two."""
+        """Flattening the OR into a join hides the indexed column, as a COALESCE did
+        above."""
         with temp_db.connection() as conn:
             plan = [
                 row["detail"]
@@ -4236,8 +3602,8 @@ class TestCrossSourceDuplicateDetectionRegression:
     def test_merge_unions_seasons_watched_dates_with_later_date_winning_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A keep-wins blob merge dropped a season only the absorbed row dated,
-        and froze a shared season at the survivor's staler date."""
+        """A keep-wins blob merge dropped a season only the absorbed row dated, and
+        froze a shared season at the survivor's staler date."""
         keep = ContentItem(
             id="trakt-show",
             title="Regression Show",
@@ -4302,7 +3668,6 @@ class TestCrossSourceDuplicateDetectionRegression:
     def test_merge_keeps_later_date_completed_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """The merge keeps the later date_completed of the two rows."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-hades",
@@ -4329,8 +3694,8 @@ class TestCrossSourceDuplicateDetectionRegression:
     def test_the_survivor_carries_what_only_the_absorbed_row_held(
         self, temp_db: SQLiteDB
     ) -> None:
-        """A rating the survivor lacks, its detail row when the survivor has
-        none, and the id the absorbed row's own source re-attaches by."""
+        """A rating the survivor lacks, its detail row when the survivor has none,
+        and the id the absorbed row's own source re-attaches by."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-hollow",
@@ -4367,14 +3732,9 @@ class TestCrossSourceDuplicateDetectionRegression:
         ]
 
     def test_empty_title_skips_cross_source_dedup(self, temp_db: SQLiteDB) -> None:
-        """Items with empty title skip cross-source dedup without crashing.
-
-        Bug scenario: A ContentItem with title="" from a malformed ingestion
-        source should be saved without triggering the cross-source dedup
-        check (which requires a non-empty normalized title).
-        Verified by inserting two items with the same external_id prefix
-        but empty titles — both must survive (no dedup attempted).
-        """
+        """Bug scenario: A ContentItem with title="" from a malformed ingestion
+        source should be saved without triggering the cross-source dedup check
+        (which requires a non-empty normalized title)."""
         item1 = ContentItem(
             id="empty-title-1",
             title="",
@@ -4391,20 +3751,14 @@ class TestCrossSourceDuplicateDetectionRegression:
         db_id2 = temp_db.save_content_item(item2)
         assert db_id1 > 0
         assert db_id2 > 0
-        assert db_id1 != db_id2  # Both rows saved separately — no dedup
+        assert db_id1 != db_id2
 
     def test_merge_monotonic_columns_keeps_higher_value(
         self, temp_db: SQLiteDB
     ) -> None:
-        """merge_detail_tables keeps the higher value for monotonic columns.
-
-        TV show seasons/episodes use monotonic merge: the higher value wins.
-        Tests both directions: kept < dup (seasons: 2 vs 4, dup wins) and
-        kept > dup (episodes: 20 vs 15, kept preserved).
-        """
+        """TV show seasons/episodes use monotonic merge: the higher value wins."""
         with temp_db.connection() as conn:
             cursor = conn.cursor()
-            # Insert kept row: seasons=2, episodes=20
             cursor.execute(
                 """INSERT INTO content_items
                    (user_id, title, normalized_title, content_type,
@@ -4421,7 +3775,6 @@ class TestCrossSourceDuplicateDetectionRegression:
                    VALUES (?, 2, 20)""",
                 (keep_id,),
             )
-            # Insert duplicate row: seasons=4, episodes=15
             cursor.execute(
                 """INSERT INTO content_items
                    (user_id, title, normalized_title, content_type,
@@ -4453,9 +3806,7 @@ class TestCrossSourceDuplicateDetectionRegression:
     def test_a_merge_carries_the_detail_tables_onto_the_survivor(
         self, tmp_path: Path
     ) -> None:
-        """Genres, tags and metadata the absorbed row held reach the survivor.
-
-        That row leaves every read, so anything the detail merge drops here is
+        """That row leaves every read, so anything the detail merge drops here is
         what the library stops showing."""
         db_path = tmp_path / "migration_detail_test.db"
         db = SQLiteDB(db_path)
@@ -4465,7 +3816,6 @@ class TestCrossSourceDuplicateDetectionRegression:
 
         cursor = conn.cursor()
 
-        # Insert kept row with some detail data
         cursor.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type,
                 status, rating, source)
@@ -4482,7 +3832,6 @@ class TestCrossSourceDuplicateDetectionRegression:
             (keep_id, json.dumps({"playtime_hours": 40})),
         )
 
-        # Insert duplicate row with complementary detail data
         cursor.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type,
                 status, review, source)
@@ -4501,17 +3850,14 @@ class TestCrossSourceDuplicateDetectionRegression:
         )
         conn.commit()
 
-        # Verify two rows exist
         cursor.execute("SELECT COUNT(*) FROM content_items")
         assert cursor.fetchone()[0] == 2
 
         _merged(db, keep_id, dup_id)
 
-        # Should now show one row, the other hidden behind it
         cursor.execute("SELECT COUNT(*) FROM content_items WHERE merged_into IS NULL")
         assert cursor.fetchone()[0] == 1
 
-        # Verify scalar merge: kept row's rating preserved, review from dup
         cursor.execute(
             "SELECT rating, review FROM content_items WHERE id = ?",
             (keep_id,),
@@ -4521,7 +3867,6 @@ class TestCrossSourceDuplicateDetectionRegression:
         assert row["rating"] == 5
         assert row["review"] == "Masterpiece of level design"
 
-        # Verify detail table merge
         cursor.execute(
             "SELECT * FROM video_game_details WHERE content_item_id = ?",
             (keep_id,),
@@ -4534,23 +3879,19 @@ class TestCrossSourceDuplicateDetectionRegression:
         # Publisher: kept was NULL, filled from dup
         assert detail["publisher"] == "Bethesda"
 
-        # Genres: additive merge
         genres = json.loads(detail["genres"])
         assert "Stealth" in genres
         assert "Action" in genres
         assert "RPG" in genres
 
-        # Tags: additive merge
         tags = json.loads(detail["tags"])
         assert "immersive-sim" in tags
         assert "steampunk" in tags
 
-        # Metadata: existing keys take precedence
         meta = json.loads(detail["metadata"])
         assert meta["playtime_hours"] == 40  # kept's value wins
         assert meta["award"] == "GOTY"  # dup's unique key added
 
-        # The dup's row is hidden behind the survivor, not deleted
         cursor.execute(
             "SELECT merged_into FROM content_items WHERE id = ?",
             (dup_id,),
@@ -4566,12 +3907,7 @@ class TestCrossSourceDuplicateDetectionRegression:
 
 
 class TestDuplicateMergePreservesState:
-    """A merge carried only rating, review and date_completed, so a completed
-    duplicate reverted the kept row to unread and an ignored one un-ignored it,
-    putting the item back among the recommendation candidates."""
-
     def test_merge_keeps_completed_status_regression(self, temp_db: SQLiteDB) -> None:
-        """A completed duplicate does not revert the kept row to unread."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="steam-portal2",
@@ -4600,8 +3936,8 @@ class TestDuplicateMergePreservesState:
     def test_completed_and_ignored_item_survives_dedupe_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """Each row held only its own state, so whichever the merge overwrote
-        was the one the library stopped showing."""
+        """Each row held only its own state, so whichever the merge overwrote was
+        the one the library stopped showing."""
         keep_id = _insert_raw_item(
             temp_db,
             external_id="early-sync",
@@ -4630,29 +3966,16 @@ class TestDuplicateMergePreservesState:
 
 
 class TestIgnoredSignalFetchRegression:
-    """Ignored items must be excludable from recommendation-signal fetches.
-
-    Bug (issue #99): ``get_completed_items`` / ``get_unconsumed_items`` had no
-    way to exclude ignored items, so ignored content leaked into the
-    recommendation signal (preferences, scoring, similarity, explanations).
-
-    Root cause: both wrappers always delegated to ``get_content_items`` with
-    the default ``include_ignored=True``.
-
-    Fix: both wrappers accept ``include_ignored`` and thread it through, so the
-    engine can fetch a clean signal set while library views keep seeing
-    ignored items.
-    """
+    """Bug (issue #99): ``get_completed_items`` / ``get_unconsumed_items`` had no
+    way to exclude ignored items, so ignored content leaked into the recommendation
+    signal (preferences, scoring, similarity, explanations)."""
 
     @pytest.mark.parametrize("ignored_rating", [5, None])
     def test_get_completed_items_excludes_ignored_when_flag_false_regression(
         self, temp_db: SQLiteDB, ignored_rating: int | None
     ) -> None:
-        """include_ignored=False drops ignored completed items regardless of rating.
-
-        The ``None`` case covers an item that is both ignored *and* unrated —
-        it must still be excluded via the ignored flag.
-        """
+        """The ``None`` case covers an item that is both ignored *and* unrated — it
+        must still be excluded via the ignored flag."""
         kept = ContentItem(
             id="kept",
             title="Kept Book",
@@ -4680,7 +4003,6 @@ class TestIgnoredSignalFetchRegression:
     def test_get_unconsumed_items_excludes_ignored_when_flag_false_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """include_ignored=False drops ignored unconsumed items."""
         kept = ContentItem(
             id="kept",
             title="Kept Game",
@@ -4705,12 +4027,8 @@ class TestIgnoredSignalFetchRegression:
 
 
 class TestMissingColumnRaisesRegression:
-    """A NULL joined column reads as absent data, not as a missing column.
-
-    ``_get_row_value`` swallowed KeyError, making a column absent from the
-    SELECT indistinguishable from one holding NULL. The read path subscripts
-    ``sqlite3.Row`` directly.
-    """
+    """``_get_row_value`` swallowed KeyError, making a column absent from the
+    SELECT indistinguishable from one holding NULL."""
 
     def test_null_joined_columns_still_read_as_absent_data(
         self, temp_db: SQLiteDB
@@ -4730,30 +4048,13 @@ class TestMissingColumnRaisesRegression:
 
 
 class TestUnreadableMetadataBlobRegression:
-    """A detail row whose metadata blob is not an object still reads back.
-
-    Bug: the read path merged the parsed blob with ``dict.update`` under a
-    ``try`` catching ``JSONDecodeError`` and ``TypeError`` alone. A blob
-    holding a JSON array parses cleanly and makes ``update`` raise
-    ``ValueError``, so every read that touched the row failed — the library
-    list included, since one bad row is enough to break the whole query.
-
-    Root cause: the read path assumed a blob that parses is an object.
-
-    Fix: keys are taken from the blob only when it parses to a dict, the guard
-    ``_move_stranded_total_seasons`` already applies. The migration
-    deliberately leaves such a row alone, so the rows it spares are exactly the
-    ones that reach here.
-    """
+    """The read path assumed a blob that parses is an object."""
 
     @staticmethod
     def _show_with_raw_blob(temp_db: SQLiteDB, blob: str) -> int:
-        """Save a show, then overwrite its detail blob with *blob*.
-
-        Written afterwards because the write path cannot produce it, and the
-        ``seasons`` column is filled so the read is asserted on real data
-        rather than on an empty item.
-        """
+        """Written afterwards because the write path cannot produce it, and the
+        ``seasons`` column is filled so the read is asserted on real data rather
+        than on an empty item."""
         db_id = temp_db.save_content_item(
             ContentItem(
                 id="unreadable-blob",
@@ -4774,12 +4075,9 @@ class TestUnreadableMetadataBlobRegression:
     def test_an_unreadable_blob_leaves_the_library_listable_regression(
         self, temp_db: SQLiteDB
     ) -> None:
-        """One bad row used to take every other row down with it.
-
-        The single-item read is not where this was felt: ``get_content_items``
-        converts every matched row, so one unreadable blob anywhere in the
-        library raised before the caller saw any of it.
-        """
+        """The single-item read is not where this was felt: ``get_content_items``
+        converts every matched row, so one unreadable blob anywhere in the library
+        raised before the caller saw any of it."""
         unreadable_id = self._show_with_raw_blob(
             temp_db, json.dumps(["total_seasons", 5])
         )

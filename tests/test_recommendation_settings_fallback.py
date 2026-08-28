@@ -1,29 +1,3 @@
-"""Regression tests: global recommendation settings are the new-user fallback.
-
-The global ``recommendations.*`` settings (``scorer_weights.*``,
-``min_rating_for_preference``, ``default_count``, ``max_count``) are DB-backed
-and edited on the Settings page. They are the admin-configurable defaults a user
-falls back to when they have **not** set their own per-user preference (a fresh
-install / new user with no override).
-
-This module locks the fallback chain end to end. On boot,
-``migrate_config_settings`` assembles the effective config with precedence
-
-    registry const default < config.yaml < database settings
-
-and mutates ``config["recommendations"]`` in place. ``create_recommendation_engine``
-then reads that merged section to build the engine's pipeline scorer weights and
-``min_rating``, and the API's ``_get_recommendations_config`` reads it for the
-counts. A per-user ``UserPreferenceConfig.scorer_weights`` override wins per-key
-(applied by ``build_scorers_with_overrides``); an unset key keeps the global
-default. There is no per-user field for ``min_rating`` or the counts — those
-resolve purely from the assembled global.
-
-``TestLiveSettingsApply`` locks the other half of the promise: those same leaves
-carry no ``restart_required``, so a change made after boot must reach the
-already-running engine.
-"""
-
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import fields
@@ -59,14 +33,12 @@ _ADAPTATION_WEIGHT_KEY = "recommendations.scorer_weights.adaptation"
 
 
 def _const_default(key: str) -> Any:
-    """Return a registry leaf's hardcoded const default (the ultimate fallback)."""
     entry = get_entry(key)
     assert entry is not None, f"{key!r} is not a registered setting"
     return entry.default
 
 
 def _weight_of(scorers: list[Scorer], scorer_type: type[Scorer]) -> float:
-    """Return the weight of the single ``scorer_type`` instance in ``scorers``."""
     matches = [s.weight for s in scorers if type(s) is scorer_type]
     assert len(matches) == 1, f"expected exactly one {scorer_type.__name__}"
     return matches[0]
@@ -74,7 +46,6 @@ def _weight_of(scorers: list[Scorer], scorer_type: type[Scorer]) -> float:
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """A StorageManager backed by a temp SQLite DB (empty settings table)."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
@@ -86,13 +57,9 @@ def _build_engine(config: dict[str, Any], storage: StorageManager) -> Any:
 
 @pytest.fixture()
 def booted_app(tmp_path: Path) -> Iterator[TestClient]:
-    """Boot a real app on a tmp_path database and yield its test client.
-
-    Goes through ``create_app`` rather than ``_build_engine`` so the engine
+    """Goes through ``create_app`` rather than ``_build_engine`` so the engine
     under test is the one ``get_engine()`` hands the API, wired to the running
-    config dict the settings service mutates. The module-level ``app_state``
-    is restored afterwards so nothing leaks into other tests.
-    """
+    config dict the settings service mutates."""
     saved = {field.name: getattr(app_state, field.name) for field in fields(app_state)}
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -112,14 +79,12 @@ def booted_app(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _running_engine() -> Any:
-    """Return the engine the API would use for the next request."""
     engine = get_engine()
     assert engine is not None, "no engine in app_state"
     return engine
 
 
 def _apply_running(updates: dict[str, Any]) -> None:
-    """Apply *updates* through the settings service against the running app."""
     config = get_config()
     storage = get_storage()
     assert config is not None and storage is not None, "app_state is not booted"
@@ -127,13 +92,7 @@ def _apply_running(updates: dict[str, Any]) -> None:
 
 
 def _seed_split_taste_library(storage: StorageManager) -> None:
-    """Two rated books and two candidates that swap genre for creator.
-
-    The liked genre and the liked author are deliberately split across the two
-    candidates, so ``genre_match`` alone decides the order: at its default
-    weight the sci-fi book by the disliked author leads ("Neon Divide"), and at
-    weight 0 the poetry book by the liked author takes over ("Quiet Harvest").
-    """
+    """Two rated books and two candidates that swap genre for creator."""
     completed = ConsumptionStatus.COMPLETED
     unread = ConsumptionStatus.UNREAD
     for item_id, title, author, genre, status, rating in (
@@ -161,12 +120,8 @@ class TestScorerWeightFallback:
     def test_db_scorer_weight_is_effective_without_user_override(
         self, storage: StorageManager
     ) -> None:
-        """A DB-set global scorer weight becomes the engine's effective weight.
-
-        With an empty per-user config the engine uses ``pipeline.scorers``
-        directly, so the pipeline weight *is* the effective weight for a new
-        user. It must equal the DB value, not the class/const default.
-        """
+        """With an empty per-user config the engine uses ``pipeline.scorers``
+        directly, so the pipeline weight *is* the effective weight for a new user."""
         storage.settings.set("recommendations.scorer_weights.genre_match", 7.0)
 
         engine = _build_engine({}, storage)
@@ -176,11 +131,8 @@ class TestScorerWeightFallback:
     def test_user_override_wins_per_key_over_global(
         self, storage: StorageManager
     ) -> None:
-        """A user's sparse override wins for its key; unset keys keep the global.
-
-        This exercises the exact engine code path for a user *with* overrides:
-        ``build_scorers_with_overrides`` clones only the overridden scorers.
-        """
+        """This exercises the exact engine code path for a user *with* overrides:
+        ``build_scorers_with_overrides`` clones only the overridden scorers."""
         storage.settings.set("recommendations.scorer_weights.genre_match", 7.0)
         storage.settings.set("recommendations.scorer_weights.creator_match", 6.0)
 
@@ -198,7 +150,6 @@ class TestScorerWeightFallback:
     def test_yaml_scorer_weight_used_when_db_absent(
         self, storage: StorageManager
     ) -> None:
-        """With no DB row, the YAML value (over the const default) is effective."""
         config: dict[str, Any] = {
             "recommendations": {"scorer_weights": {"genre_match": 4.0}}
         }
@@ -210,10 +161,7 @@ class TestScorerWeightFallback:
 
 
 class TestMinRatingFallback:
-    """``min_rating_for_preference`` resolves from the assembled global."""
-
     def test_db_min_rating_is_effective(self, storage: StorageManager) -> None:
-        """A DB-set global min rating flows into the engine's analyzer."""
         storage.settings.set("recommendations.min_rating_for_preference", 2)
 
         engine = _build_engine({}, storage)
@@ -222,10 +170,7 @@ class TestMinRatingFallback:
 
 
 class TestCountFallback:
-    """``default_count`` / ``max_count`` resolve from the assembled global."""
-
     def test_db_counts_are_effective(self, storage: StorageManager) -> None:
-        """DB-set counts flow through the merged config to the API reader."""
         storage.settings.set("recommendations.default_count", 8)
         storage.settings.set("recommendations.max_count", 30)
         config: dict[str, Any] = {}
@@ -238,25 +183,14 @@ class TestCountFallback:
 
 
 class TestCustomPreferenceWeightRegression:
-    """Bug reported: the custom-rule scorer ignored both of its weight knobs.
-
-    Bug reported: setting ``recommendations.scorer_weights.custom_preference``
-    to 0 left horror candidates penalised, and a per-user override of the same
-    key did nothing either.
-    Root cause: the engine appended ``CustomPreferenceScorer`` at its class
-    default weight *after* the per-user override pass had already run, so
-    neither the global setting nor the override could reach it.
-    Fix: the scorer is built at the configured weight and joins the list before
-    the override pass, so it resolves through the same chain as every other
-    scorer. A weight of 0 therefore disables it, which is what the docs
-    promise.
-    """
+    """Bug reported: setting ``recommendations.scorer_weights.custom_preference`` to
+    0 left horror candidates penalised, and a per-user override of the same key
+    did nothing either."""
 
     _RULES = ["avoid horror"]
 
     @staticmethod
     def _seed_library(storage: StorageManager) -> None:
-        """A liked thriller, plus a horror and a thriller candidate."""
         for item_id, title, status, rating, genre in (
             ("liked", "Gone Girl", ConsumptionStatus.COMPLETED, 5, "Thriller"),
             ("horror", "Blood Chapel", ConsumptionStatus.UNREAD, None, "Horror"),
@@ -281,7 +215,6 @@ class TestCustomPreferenceWeightRegression:
 
     @staticmethod
     def _scores(engine: Any, config: UserPreferenceConfig) -> dict[str, float]:
-        """Title -> emitted score for a book run under *config*."""
         return {
             rec.item.title: rec.score
             for rec in engine.generate_recommendations(
@@ -294,7 +227,6 @@ class TestCustomPreferenceWeightRegression:
     def test_global_custom_preference_weight_is_effective_regression(
         self, storage: StorageManager
     ) -> None:
-        """A global weight of 0 makes the rule inert, matching no rules at all."""
         self._seed_library(storage)
         storage.settings.set("recommendations.scorer_weights.custom_preference", 0.0)
         engine = _build_engine({}, storage)
@@ -307,7 +239,6 @@ class TestCustomPreferenceWeightRegression:
     def test_per_user_custom_preference_override_is_effective_regression(
         self, storage: StorageManager
     ) -> None:
-        """A per-user 0 disables it too, with the global left at its default."""
         self._seed_library(storage)
         engine = _build_engine({}, storage)
 
@@ -324,11 +255,8 @@ class TestCustomPreferenceWeightRegression:
     def test_the_rule_still_bites_at_its_default_weight(
         self, storage: StorageManager
     ) -> None:
-        """Positive control: at the default weight the rule demotes horror.
-
-        Without this, both zero-weight assertions above would pass on a scorer
-        that never did anything.
-        """
+        """Without this, both zero-weight assertions above would pass on a scorer
+        that never did anything."""
         self._seed_library(storage)
         engine = _build_engine({}, storage)
 
@@ -339,12 +267,9 @@ class TestCustomPreferenceWeightRegression:
 
 
 class TestConstDefaultFallback:
-    """With neither DB nor YAML supplying a knob, the const default is used."""
-
     def test_registry_const_defaults_used_without_db_or_yaml(
         self, storage: StorageManager
     ) -> None:
-        """A fresh install (empty DB, empty YAML) resolves to registry consts."""
         config: dict[str, Any] = {}
 
         engine = _build_engine(config, storage)
@@ -365,23 +290,12 @@ class TestConstDefaultFallback:
 
 
 class TestLiveSettingsApply:
-    """Bug reported: Settings-page recommendation changes needed a restart.
-
-    Bug reported: a scorer weight (or the minimum liked rating) saved on the
-    Settings page persisted, echoed the new value back and badged no restart,
-    but regenerating returned identical recommendations until the process was
-    restarted.
-    Root cause: ``create_recommendation_engine`` read ``scorer_weights`` and
-    ``min_rating_for_preference`` once at boot and froze them into the scorer
-    instances and the ``PreferenceAnalyzer``, while ``apply_settings`` wrote the
-    DB row and live-applied only into the running config dict.
-    Fix: the engine resolves the running config on every read, so the next
-    ``generate_recommendations`` call sees the change.
-    """
+    """Bug reported: a scorer weight (or the minimum liked rating) saved on the
+    Settings page persisted, echoed the new value back and badged no restart, but
+    regenerating returned identical recommendations until the process was restarted."""
 
     @staticmethod
     def _recommendations(client: TestClient) -> list[dict[str, Any]]:
-        """Return the book recommendations the API serves right now."""
         response = client.get(
             "/api/recommendations",
             params={"type": "book", "count": 5},
@@ -392,7 +306,6 @@ class TestLiveSettingsApply:
     def test_scorer_weight_change_reaches_running_engine_regression(
         self, booted_app: TestClient
     ) -> None:
-        """Zeroing the genre weight after boot reaches the running pipeline."""
         before = _weight_of(_running_engine().pipeline.scorers, GenreMatchScorer)
         assert before == _const_default(_GENRE_WEIGHT_KEY)
 
@@ -403,7 +316,6 @@ class TestLiveSettingsApply:
     def test_min_rating_change_reaches_running_analyzer_regression(
         self, booted_app: TestClient
     ) -> None:
-        """Lowering the minimum liked rating reaches the running analyzer."""
         key = "recommendations.min_rating_for_preference"
         assert _running_engine().preference_analyzer.min_rating == _const_default(key)
 
@@ -414,11 +326,8 @@ class TestLiveSettingsApply:
     def test_settings_write_changes_the_next_api_response_regression(
         self, booted_app: TestClient
     ) -> None:
-        """Two GETs straddling a weight-zeroing PUT return different scoring.
-
-        The end-to-end shape of the report: the user moves a slider, saves, and
-        regenerates. Before the fix both GETs returned the boot-time scoring.
-        """
+        """The end-to-end shape of the report: the user moves a slider, saves, and
+        regenerates."""
         storage = get_storage()
         assert storage is not None, "app_state is not booted"
         _seed_split_taste_library(storage)
@@ -446,16 +355,12 @@ class TestLiveSettingsApply:
 
 
 class TestUnusableRunningConfig:
-    """What the engine does with a ``recommendations`` section it cannot use.
-
-    Each of these is a hand-edited ``config.yaml`` away, and each is guarded in
+    """Each of these is a hand-edited ``config.yaml`` away, and each is guarded in
     the engine because ``dict.get``'s default does not catch it: the key is
-    present, its value is simply not what the resolver can read.
-    """
+    present, its value is simply not what the resolver can read."""
 
     @staticmethod
     def _engine_reading(config: dict[str, Any]) -> Any:
-        """An engine whose running config is *config* and nothing else."""
         return RecommendationEngine(
             storage_manager=make_storage_mock(),
             min_rating=4,
@@ -470,13 +375,9 @@ class TestUnusableRunningConfig:
 
 
 class _WeightsWatchedMidIteration(dict[str, float]):
-    """A ``scorer_weights`` mapping that runs *interrupt* mid-iteration.
-
-    ``RecommendationEngine._configured_weights`` iterates this mapping to
-    resolve the running weights. Handing control to *interrupt* after the first
-    entry puts a settings write inside that iteration every run, rather than
-    once in however many thousand requests land there by luck.
-    """
+    """Handing control to *interrupt* after the first entry puts a settings write
+    inside that iteration every run, rather than once in however many thousand
+    requests land there by luck."""
 
     def __init__(
         self, weights: dict[str, float], interrupt: Callable[[], None]
@@ -486,7 +387,6 @@ class _WeightsWatchedMidIteration(dict[str, float]):
         self._interrupted = False
 
     def items(self) -> Iterator[tuple[str, float]]:
-        """Yield the entries, interrupting once after the first."""
         for index, entry in enumerate(super().items()):
             if index == 0 and not self._interrupted:
                 self._interrupted = True
@@ -497,7 +397,6 @@ class _WeightsWatchedMidIteration(dict[str, float]):
 def _apply_on_another_thread(
     config: dict[str, Any], storage: StorageManager, updates: dict[str, Any]
 ) -> None:
-    """Run one settings write to completion on a worker thread."""
     raised: list[Exception] = []
 
     def write() -> None:
@@ -516,34 +415,11 @@ def _apply_on_another_thread(
 
 
 class TestSettingsWriteDuringScoringRegression:
-    """Bug: a request scoring while a setting was saved used a broken config.
-
-    Bug: the Settings page wrote into the same ``recommendations`` mapping the
-    engine was reading. Scoring does not run on the event loop — the streaming
-    endpoint hands Starlette a synchronous generator, which it runs in a
-    threadpool worker — so the write and the read genuinely overlap. Moving the
-    adaptation slider on a config predating it inserts a key, and inserting
-    into a dict another thread is iterating raises ``RuntimeError: dictionary
-    changed size during iteration``, surfacing as a 500. Moving any other
-    slider replaced a value mid-iteration instead, and the request quietly
-    returned a list ranked by a configuration nobody ever saved.
-    Root cause: ``_apply_live`` wrote through ``set_leaf``, which mutates the
-    nested mapping in place, and the engine held the config dict by reference.
-    Two narrower windows survived that first fix: the engine still read the
-    config two or three times per request, and ``apply_settings`` still
-    published one key at a time, so a save of several keys was several swaps.
-    Fix: ``_apply_live`` publishes a whole save through
-    ``set_leaves_atomically``, one store per section, and the engine resolves
-    every configured knob from a single read taken at the start of the request.
-    A reader therefore always finishes on the configuration it started with.
-    The tests here cover the windows a run can actually observe. That the
-    publish is one store per section is pinned in
-    ``tests/utils/test_dotted_path.py``, which watches the stores themselves.
-    """
+    """Bug: the Settings page wrote into the same ``recommendations`` mapping the
+    engine was reading."""
 
     @staticmethod
     def _ranked_titles(engine: Any) -> list[str]:
-        """The book titles the engine ranks right now, best first."""
         return [
             rec.item.title
             for rec in engine.generate_recommendations(
@@ -555,11 +431,8 @@ class TestSettingsWriteDuringScoringRegression:
     def _config_written_mid_read(
         interrupt: Callable[[], None],
     ) -> dict[str, Any]:
-        """A running config whose weights run *interrupt* while being read.
-
-        ``creator_match`` is declared first so that ``genre_match`` — the
-        weight the writes below move — is still unread when the write lands.
-        """
+        """``creator_match`` is declared first so that ``genre_match`` — the weight
+        the writes below move — is still unread when the write lands."""
         return {
             "recommendations": {
                 "scorer_weights": _WeightsWatchedMidIteration(
@@ -575,7 +448,6 @@ class TestSettingsWriteDuringScoringRegression:
     def test_a_weight_inserted_mid_read_does_not_break_the_run_regression(
         self, storage: StorageManager
     ) -> None:
-        """A weight the config has never carried can be added under a reader."""
         _seed_split_taste_library(storage)
         config: dict[str, Any] = {}
 
@@ -594,7 +466,6 @@ class TestSettingsWriteDuringScoringRegression:
     def test_a_weight_changed_mid_read_does_not_score_a_mixture_regression(
         self, storage: StorageManager
     ) -> None:
-        """The run finishes on its own weights, and the next one sees the new."""
         _seed_split_taste_library(storage)
         config: dict[str, Any] = {}
 

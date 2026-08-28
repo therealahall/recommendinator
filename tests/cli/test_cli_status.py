@@ -1,5 +1,3 @@
-"""Tests for CLI status command."""
-
 import json
 import logging
 from unittest.mock import MagicMock, patch
@@ -26,7 +24,6 @@ def _status_invoke(
     config: dict | None = None,
     args: list[str] | None = None,
 ) -> object:
-    """Invoke the status command against mocked components."""
     p_config, p_storage, p_engine = _cli_patches()
     mock_storage = make_storage_mock()
     back_mock_settings_store(mock_storage)
@@ -42,7 +39,6 @@ def _status_invoke(
 
 
 def _web_status() -> dict:
-    """Return the body GET /api/status serves for this tree."""
     storage = make_storage_mock()
     with booted_web_app(
         storage, {}, engine=MagicMock(spec=RecommendationEngine)
@@ -51,10 +47,7 @@ def _web_status() -> dict:
 
 
 class TestStatusTable:
-    """Tests for status command with table output."""
-
     def test_status_table_shows_version(self, cli_runner: CliRunner) -> None:
-        """Test that status command displays version."""
         result = _status_invoke(
             cli_runner,
             config={"recommendations": {"max_count": 20}},
@@ -64,10 +57,7 @@ class TestStatusTable:
 
 
 class TestStatusJson:
-    """Tests for status command with JSON output."""
-
     def test_status_json_output(self, cli_runner: CliRunner) -> None:
-        """Test that status command JSON matches web API StatusResponse shape."""
         result = _status_invoke(
             cli_runner,
             config={"recommendations": {"max_count": 10, "default_count": 3}},
@@ -75,7 +65,6 @@ class TestStatusJson:
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
-        # Top-level keys match StatusResponse
         assert set(data.keys()) == {
             "status",
             "version",
@@ -87,7 +76,6 @@ class TestStatusJson:
         assert set(data["components"].keys()) == {"engine", "storage"}
         assert data["components"]["engine"] is True
         assert data["components"]["storage"] is True
-        # Recommendations config includes both max_count and default_count
         assert data["recommendations_config"]["max_count"] == 10
         assert data["recommendations_config"]["default_count"] == 3
 

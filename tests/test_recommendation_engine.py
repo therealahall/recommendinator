@@ -1,5 +1,3 @@
-"""Tests for recommendation engine cross-content-type recommendations."""
-
 import random
 from datetime import date
 from unittest.mock import Mock
@@ -40,21 +38,14 @@ from tests.factories import make_item, make_storage_mock
 
 @pytest.fixture
 def mock_storage():
-    """Create a mock storage manager.
-
-    ``get_signal_items`` (completed, rated, not ignored) and
+    """``get_signal_items`` (completed, rated, not ignored) and
     ``get_consumption_items`` (not ignored, rating irrelevant) both mirror the
-    real accessors by filtering whatever ``get_completed_items`` a test sets up, so
-    existing tests only need to stub ``get_completed_items``. The real
-    accessors' own filtering is covered in ``tests/test_storage_manager.py``.
-    """
+    real accessors by filtering whatever ``get_completed_items`` a test sets up."""
     storage = make_storage_mock()
 
     # Each fake narrows get_completed_items itself, the way the real accessors
     # do, so a call recorded on one is a call the engine made and not one its
-    # sibling fake made on its behalf. Ignored items are dropped in Python
-    # rather than by ``include_ignored``, which a stubbed return value cannot
-    # honour.
+    # sibling fake made on its behalf.
     def consumption(user_id=None, content_type=None, limit=None, **kwargs):
         return [
             item
@@ -80,34 +71,22 @@ def mock_storage():
 
 @pytest.fixture
 def engine(mock_storage):
-    """Create a recommendation engine with mocked dependencies."""
     return RecommendationEngine(storage_manager=mock_storage, min_rating=4)
 
 
 @pytest.fixture
 def real_storage(tmp_path):
-    """Create a real StorageManager backed by a temporary SQLite database."""
     return StorageManager(tmp_path / "engine_signal.db")
 
 
 @pytest.fixture
 def real_engine(real_storage):
-    """Create a RecommendationEngine over real storage."""
     return RecommendationEngine(storage_manager=real_storage, min_rating=4)
 
 
 def _engine_for_helpers(rng: random.Random | None = None) -> RecommendationEngine:
-    """Build an engine for exercising its pure helper methods.
-
-    ``__init__`` wants a storage manager these helpers never touch, so it is
-    skipped and only the attributes they read are set.
-
-    Args:
-        rng: Shuffle source for reference ordering. Defaults to an unseeded one.
-
-    Returns:
-        An engine carrying nothing but what the helpers use.
-    """
+    """``__init__`` wants a storage manager these helpers never touch, so it is
+    skipped and only the attributes they read are set."""
     engine = RecommendationEngine.__new__(RecommendationEngine)
     engine.rng = rng if rng is not None else random.Random()
     return engine
@@ -125,7 +104,6 @@ def _save_book(
     date_completed=None,
     metadata=None,
 ):
-    """Persist a book, optionally marking it ignored; return its db_id."""
     db_id = storage.save_content_item(
         ContentItem(
             id=item_id,
@@ -142,26 +120,13 @@ def _save_book(
     return db_id
 
 
-# ---------------------------------------------------------------------------
 class TestSingleWeightingStageRegression:
-    """Bug reported: a slider did not control the whole of its own signal.
-
-    Bug reported: turning genre or creator matching down left the signal
-    partly on, and a preferred director never lifted a film the way a
-    preferred author lifted a book.
-    Root cause: RecommendationRanker re-derived genre and author preference
-    from the same ``UserPreferences`` methods the scorers use and added it at
-    a hardcoded weight the user could not reach, and that copy of creator
-    matching was gated on ``content_type == BOOK``.
-    Fix: the ranker's combination stage is deleted. The pipeline aggregate is
-    the emitted score, so each scorer owns the whole of its contribution, and
-    ``CreatorMatchScorer`` is the single generic creator path for all four
-    content types.
-    """
+    """Bug reported: turning genre or creator matching down left the signal partly
+    on, and a preferred director never lifted a film the way a preferred author
+    lifted a book."""
 
     @staticmethod
     def _scores(engine, config):
-        """Title -> emitted score for a movie run under *config*."""
         return {
             rec.item.title: rec.score
             for rec in engine.generate_recommendations(
@@ -171,7 +136,6 @@ class TestSingleWeightingStageRegression:
 
     @staticmethod
     def _only(scorer_name):
-        """A per-user override zeroing every scorer except *scorer_name*."""
         return UserPreferenceConfig(
             scorer_weights={key: 0.0 for key in SCORER_NAME_MAP if key != scorer_name}
         )
@@ -179,11 +143,8 @@ class TestSingleWeightingStageRegression:
     def test_one_enabled_scorer_is_the_whole_score_regression(
         self, engine, mock_storage
     ):
-        """With only genre_match enabled, the score IS the genre_match row.
-
-        Any residual term from a second weighting stage would show up as a
-        difference between the two, whatever its sign.
-        """
+        """Any residual term from a second weighting stage would show up as a
+        difference between the two, whatever its sign."""
         loved = ContentItem(
             id="loved",
             title="Arrival",
@@ -216,11 +177,8 @@ class TestSingleWeightingStageRegression:
     def test_a_preferred_director_scores_on_a_movie_regression(
         self, engine, mock_storage
     ):
-        """A director the user rated well lifts a film, as an author does a book.
-
-        The two candidates share their genre and differ only in their creator,
-        and creator matching is the only scorer left enabled.
-        """
+        """The two candidates share their genre and differ only in their creator,
+        and creator matching is the only scorer left enabled."""
         loved = ContentItem(
             id="loved",
             title="Arrival",
@@ -259,10 +217,7 @@ class TestSingleWeightingStageRegression:
 
 
 class TestScoringPipeline:
-    """Tests for the recommendation engine's scoring pipeline."""
-
     def test_cold_start_returns_empty(self, engine, mock_storage):
-        """The engine handles cold start gracefully."""
         mock_storage.get_completed_items = Mock(return_value=[])
 
         recommendations = engine.generate_recommendations(
@@ -272,7 +227,6 @@ class TestScoringPipeline:
         assert recommendations == []
 
     def test_end_to_end_scoring_and_sorting(self, engine, mock_storage):
-        """End-to-end: consumed items with genres -> unconsumed -> scored + sorted."""
         consumed_items = [
             ContentItem(
                 id="c1",
@@ -330,24 +284,14 @@ class TestScoringPipeline:
         )
 
         assert len(recommendations) == 3
-        # Sci-fi should be first since all consumed items are sci-fi
         assert recommendations[0].item.title == "Left Hand of Darkness"
-        # All recs should have scores
         for rec in recommendations:
             assert rec.score > 0.0
             assert rec.reasoning
 
 
-# ---------------------------------------------------------------------------
-# Custom rules integration tests (Phase 7)
-# ---------------------------------------------------------------------------
-
-
 class TestCustomRulesIntegration:
-    """Tests for custom rules integration in the recommendation engine."""
-
     def test_multiple_custom_rules(self, engine, mock_storage):
-        """Multiple custom rules are all applied."""
         consumed = ContentItem(
             id="1",
             title="Consumed",
@@ -394,7 +338,6 @@ class TestCustomRulesIntegration:
             user_preference_config=user_config,
         )
         titles = [rec.item.title for rec in recommendations]
-        # Sci-fi should be boosted (first), horror should be penalized (last)
         assert titles[0] == "Sci-Fi Book"
         assert titles[-1] == "Horror Book"
 
@@ -448,18 +391,10 @@ class TestTwinnedSeriesEntryRegression:
         ] == [1.0]
 
 
-# ---------------------------------------------------------------------------
-# Ignored Items Tests (Phase 9)
-# ---------------------------------------------------------------------------
-
-
 class TestIgnoredItems:
-    """Tests for ignored items filtering in recommendations (real storage)."""
-
     def test_ignored_items_filtered_from_recommendations(
         self, real_engine, real_storage
     ):
-        """Ignored unconsumed items should not appear in recommendations."""
         _save_book(
             real_storage,
             item_id="1",
@@ -488,31 +423,17 @@ class TestIgnoredItems:
 
         recommended_titles = [rec.item.title for rec in recommendations]
 
-        # Normal item should be recommended
         assert "Normal Book" in recommended_titles
 
-        # Ignored item should NOT be recommended
         assert "Ignored Book" not in recommended_titles
 
 
 class TestTvRecommendationCarriesDbIdRegression:
-    """Regression test: TV recommendations must keep the show's db_id.
-
-    Bug reported: TV show recommendations rendered without the "Mark complete"
-    and "Ignore" buttons.  The card only shows those actions when the rec has a
-    non-null ``db_id``.
-
-    Root cause: TV shows are expanded into season-level candidates by
-    ``expand_tv_shows_to_seasons``, which built each season ``ContentItem``
-    without ``db_id``, so the recommendation payload serialized ``db_id: null``.
-
-    Fix: season items now inherit the parent show's ``db_id`` (the library
-    tracks TV at show level), so the recommendation stays actionable.
-    """
+    """Bug reported: TV show recommendations rendered without the "Mark complete"
+    and "Ignore" buttons."""
 
     @pytest.fixture
     def breaking_bad_consumed(self) -> ContentItem:
-        """Completed TV show used as shared taste context across these scenarios."""
         return ContentItem(
             id="1",
             db_id=1,
@@ -525,7 +446,6 @@ class TestTvRecommendationCarriesDbIdRegression:
 
     @pytest.fixture
     def expanse_show(self) -> ContentItem:
-        """Unconsumed three-season Expanse show shared across these scenarios."""
         return ContentItem(
             id="tvdb:280619",
             db_id=42,
@@ -538,7 +458,6 @@ class TestTvRecommendationCarriesDbIdRegression:
     def test_tv_show_recommendation_has_non_null_db_id_regression(
         self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
-        """An expanded TV-show recommendation keeps the parent show's db_id."""
         mock_storage.get_completed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
         )
@@ -557,13 +476,8 @@ class TestTvRecommendationCarriesDbIdRegression:
     def test_next_unwatched_season_carries_parent_db_id_regression(
         self, engine, mock_storage, breaking_bad_consumed
     ) -> None:
-        """A partially-watched show surfaces its next season with the show db_id.
-
-        Edge case: when ``seasons_watched`` already contains season 1, the
-        engine should surface season 2 as the next actionable card, and that
-        card must still carry the parent show's ``db_id`` (the library tracks
-        TV at show level) so "Mark complete" / "Ignore" resolve correctly.
-        """
+        """Edge case: when ``seasons_watched`` already contains season 1, the engine
+        should surface season 2 as the next actionable card."""
         unconsumed_show = ContentItem(
             id="tvdb:280619",
             db_id=42,
@@ -595,16 +509,8 @@ class TestTvRecommendationCarriesDbIdRegression:
     def test_series_in_order_false_collapses_seasons_to_one_card_regression(
         self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
-        """With series order off, a multi-season show yields exactly one card.
-
-        When the user sets ``series_in_order=False`` the engine skips series
-        filtering, so a multi-season show would otherwise surface several
-        season-level candidates that all carry the same parent ``db_id`` (their
-        ``item.id`` differs but the library db_id is shared).  The frontend keys
-        cards and targets Mark-complete / Ignore actions by ``db_id``, so those
-        co-occurring cards would collide.  The engine collapses them down to the
-        single highest-ranked season, keeping each show to one db_id.
-        """
+        """The frontend keys cards and targets Mark-complete / Ignore actions by
+        ``db_id``, so those co-occurring cards would collide."""
         mock_storage.get_completed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [breaking_bad_consumed]
         )
@@ -624,20 +530,15 @@ class TestTvRecommendationCarriesDbIdRegression:
         # The survivor's id is asserted with ``in {season ids}`` rather than a
         # specific season because the three seasons score identically and pass
         # through ``_shuffle_close_scores``, so which one survives is
-        # non-deterministic at this integration level.  The deterministic
-        # "first/highest-ranked entry survives" contract is pinned by the
-        # ``TestCollapseDuplicateDbIds`` unit test.
+        # non-deterministic at this integration level.
         assert rec_item.id in {"tvdb:280619:s1", "tvdb:280619:s2", "tvdb:280619:s3"}
 
     def test_series_in_order_false_keeps_distinct_shows_and_backfills_regression(
         self, engine, mock_storage, breaking_bad_consumed, expanse_show
     ) -> None:
-        """Collapsing duplicate db_ids never drops distinct shows.
-
-        With series order off, two multi-season shows each collapse to one card
-        (so different shows still appear), and the freed slots are backfilled by
-        the other show rather than left empty.
-        """
+        """With series order off, two multi-season shows each collapse to one card
+        (so different shows still appear), and the freed slots are backfilled by the
+        other show rather than left empty."""
         foundation = ContentItem(
             id="tvdb:355567",
             db_id=99,
@@ -666,12 +567,8 @@ class TestTvRecommendationCarriesDbIdRegression:
         assert db_ids == [42, 99]
 
     def test_fallback_collapses_entries_sharing_db_id_regression(self, engine) -> None:
-        """The fallback path emits at most one card per parent show db_id.
-
-        For TV the fallback builds recs directly from the expanded season items,
-        which share their parent show's ``db_id``.  The fallback must collapse
-        those to one card per show just like the scored path does.
-        """
+        """For TV the fallback builds recs directly from the expanded season items,
+        which share their parent show's ``db_id``."""
         season_one = ContentItem(
             id="tvdb:280619:s1",
             db_id=42,
@@ -711,18 +608,10 @@ class TestTvRecommendationCarriesDbIdRegression:
 
 
 class TestCollapseDuplicateDbIds:
-    """Unit tests for the ``_collapse_duplicate_db_ids`` contract.
-
-    The engine relies on this helper to (a) keep the *first* entry among
-    duplicate non-null db_ids and (b) never merge None-db_id entries together.
-    The engine calls it on the already-ranked (descending) list, so "first"
-    means "highest-ranked".  These tests pin that contract directly rather than
-    inferring it through the scored path, where same-show seasons score
-    identically and cannot force a deterministic survivor.
-    """
+    """The engine calls it on the already-ranked (descending) list, so "first" means
+    "highest-ranked"."""
 
     def test_keeps_first_occurrence_among_duplicates_preserving_order(self) -> None:
-        """The earliest (highest-ranked) entry per db_id survives, in order."""
         entries = [
             (42, "expanse-s2"),  # highest-ranked season of show 42
             (99, "foundation-s1"),
@@ -741,11 +630,8 @@ class TestCollapseDuplicateDbIds:
         ]
 
     def test_none_db_ids_are_never_collapsed_together(self) -> None:
-        """Entries with db_id None are each kept — None is not a shared identity.
-
-        A missing db_id must not act as a collapse key, otherwise distinct
-        recommendations that happen to lack a db_id would silently drop to one.
-        """
+        """A missing db_id must not act as a collapse key, otherwise distinct
+        recommendations that happen to lack a db_id would silently drop to one."""
         entries = [
             (None, "no-id-a"),
             (None, "no-id-b"),
@@ -760,25 +646,12 @@ class TestCollapseDuplicateDbIds:
 
 
 class TestContributingReferenceItemsRegression:
-    """Regression tests for contributing reference item selection."""
-
     def test_references_include_all_types_and_same_type_first_regression(
         self,
     ) -> None:
-        """Regression test: references should include all types, same type first.
-
-        Bug reported: All TV show recommendations said "Recommended because
-        you liked 'Firewatch'" (a video game) because it had the highest
-        genre overlap and dominated every reference list.
-
-        Root cause: _find_contributing_reference_items() returned items
-        sorted purely by overlap score, so one content type could fill
-        all slots.
-
-        Fix: Return up to 5 same-type items first, then up to 3 per other
-        type.  Reasoning groups items by type with the candidate's type
-        listed first.
-        """
+        """Bug reported: All TV show recommendations said "Recommended because you
+        liked 'Firewatch'" (a video game) because it had the highest genre overlap
+        and dominated every reference list."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -818,38 +691,21 @@ class TestContributingReferenceItemsRegression:
             [consumed_game, consumed_tv, consumed_book]
         ).references_for(candidate, engine.rng)
 
-        # All three content types should be represented
         result_types = {get_enum_value(item.content_type) for item in result}
         assert "tv_show" in result_types
         assert "video_game" in result_types
         assert "book" in result_types
 
-        # Same type (TV show) should come first
         assert get_enum_value(result[0].content_type) == "tv_show"
 
 
 class TestCrossTypeClusterOverlapRegression:
-    """Regression tests for cross-type reference selection using cluster overlap.
-
-    Bug reported: "1923" (a TV show with only "Drama" as its genre) appeared
-    as a cross-type reference for nearly every recommendation, because raw
-    Jaccard on ["drama"] gave ~0.2 overlap with almost anything.
-
-    Root cause: Cross-type matching used raw genre Jaccard, which is too
-    coarse for broad terms — "drama" alone would weakly match any item
-    that includes "drama" among its genres.
-
-    Fix: Cross-type matching now uses cluster_overlap() instead of raw
-    Jaccard, which groups terms by thematic clusters and produces more
-    discriminating scores.
-    """
+    """Bug reported: "1923" (a TV show with only "Drama" as its genre) appeared as
+    a cross-type reference for nearly every recommendation, because raw Jaccard
+    on ["drama"] gave ~0.2 overlap with almost anything."""
 
     def test_1923_different_shows_get_different_references_regression(self) -> None:
-        """A sci-fi show and a historical drama should NOT both cite
-        the same broadly-matching 'drama-only' item as a reference.
-
-        Bug: "1923" (genre: ["Drama"]) was cited for every recommendation.
-        """
+        """Bug: "1923" (genre: ["Drama"]) was cited for every recommendation."""
         engine = _engine_for_helpers()
 
         # "1923" has only Drama — should not match sci-fi thematically
@@ -886,21 +742,14 @@ class TestCrossTypeClusterOverlapRegression:
         )
 
         reference_titles = [ref.title for ref in references]
-        # The Expanse should be a reference (sci-fi cluster overlap)
         assert "The Expanse" in reference_titles
-        # 1923 should NOT be a reference (only drama, no sci-fi cluster)
         assert "1923" not in reference_titles
 
     def test_cross_type_uses_thematic_matching_regression(self) -> None:
-        """A war-themed book should reference Band of Brothers (war TV),
-        not just any Drama show.
-
-        Bug: Cross-type matching used raw Jaccard, making any "Drama"
-        show a valid reference for any candidate with "Drama" in its genres.
-        """
+        """Bug: Cross-type matching used raw Jaccard, making any "Drama" show a
+        valid reference for any candidate with "Drama" in its genres."""
         engine = _engine_for_helpers()
 
-        # War-themed candidate book
         candidate = ContentItem(
             id="war_book",
             title="Band of Brothers: The Book",
@@ -909,7 +758,6 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["War", "Historical"]},
         )
 
-        # War-themed TV show — should be a good cross-type match
         war_tv = ContentItem(
             id="bob_tv",
             title="Band of Brothers",
@@ -919,7 +767,6 @@ class TestCrossTypeClusterOverlapRegression:
             metadata={"genres": ["War", "Drama"]},
         )
 
-        # Pure drama TV show — should NOT match a war book thematically
         drama_tv = ContentItem(
             id="crown",
             title="The Crown",
@@ -934,9 +781,7 @@ class TestCrossTypeClusterOverlapRegression:
         )
 
         reference_titles = [ref.title for ref in references]
-        # Band of Brothers (war cluster) should be referenced
         assert "Band of Brothers" in reference_titles
-        # The Crown (drama only) should not match war + historical
         assert "The Crown" not in reference_titles
 
 
@@ -944,11 +789,9 @@ class TestReasoningFormatting:
     """Every reference the engine credited is named in the reasoning."""
 
     def _make_engine(self) -> RecommendationEngine:
-        """Create an engine instance for testing reasoning generation."""
         return _engine_for_helpers()
 
     def _make_empty_preferences(self) -> UserPreferences:
-        """Create empty user preferences for testing."""
         return PreferenceAnalyzer(min_rating=4).analyze([])
 
     def test_a_lone_reference_is_named(self) -> None:
@@ -980,7 +823,6 @@ class TestReasoningFormatting:
         assert "\n" not in reasoning
 
     def test_multiple_items_still_use_grouped_format(self) -> None:
-        """Both references are named, in one string rather than one each."""
         engine = self._make_engine()
         preferences = self._make_empty_preferences()
 
@@ -1017,25 +859,12 @@ class TestReasoningFormatting:
 
 
 class TestContributingReferenceRatingFloorRegression:
-    """Regression tests for rating floor in contributing reference items.
-
-    Bug reported: 'The Crown' rated 1 appeared as 'you liked' in
-    recommendation reasoning.
-
-    Root cause: _find_contributing_reference_items had no rating floor,
-    so items the user actively disliked showed up in 'Recommended because
-    you liked the following:'.
-
-    Fix: Skip items with rating < 3 in the contributing items loop.
-    """
+    """Bug reported: 'The Crown' rated 1 appeared as 'you liked' in recommendation
+    reasoning."""
 
     def test_low_rated_items_excluded_from_contributing_references_regression(
         self,
     ) -> None:
-        """Regression test: Item rated 1 with matching genres must NOT appear.
-
-        Bug reported: 'The Crown' rated 1 appeared in 'you liked' references.
-        """
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -1075,7 +904,6 @@ class TestContributingReferenceRatingFloorRegression:
         assert "The Wire" in result_titles
 
     def test_unrated_items_included_in_contributing_references(self) -> None:
-        """Unrated items (rating=None) should still be included as references."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -1104,15 +932,9 @@ class TestContributingReferenceRatingFloorRegression:
 
 
 class TestSameTypeLimitRegression:
-    """Regression test for same-type reference limit.
-
-    Bug: Up to 5 same-type items were shown as references; user wants max 3.
-
-    Fix: Changed same_type_limit from 5 to 3.
-    """
+    """Bug: Up to 5 same-type items were shown as references; user wants max 3."""
 
     def test_same_type_limit_capped_at_3(self) -> None:
-        """6 same-type consumed items should produce max 3 references."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -1146,10 +968,7 @@ class TestSameTypeLimitRegression:
 
 
 class TestShuffleCloseScores:
-    """Tests for _shuffle_close_scores reference ordering."""
-
     def test_mixed_groups_high_items_always_first(self) -> None:
-        """A clearly higher-scored item always comes before a lower group."""
         top = ContentItem(
             id="top",
             title="Top",
@@ -1184,33 +1003,14 @@ class TestShuffleCloseScores:
 
 
 class TestSeededReferenceOrderRegression:
-    """Identical requests explained a recommendation in different orders.
-
-    Symptom: two identical recommendation runs listed the contributing
-    reference items in different orders, so a user asking "why does it say
-    this" got an answer nobody could reproduce.
-    Root cause: ``_shuffle_close_scores`` shuffled equally relevant references
-    through the module-global ``random``, which a caller could only steer by
-    seeding global state shared with every other test and component.
-    Fix: the engine takes an injectable ``random.Random`` and shuffles through
-    it, so a seeded engine repeats its reference order exactly.
-    """
+    """Symptom: two identical recommendation runs listed the contributing reference
+    items in different orders, so a user asking "why does it say this" got an
+    answer nobody could reproduce."""
 
     @staticmethod
     def _reference_ids(storage, seed: int | None = None) -> list[str]:
-        """Return the reference ids an engine seeded with *seed* produces.
-
-        The three consumed books share the candidate's only genre and their
-        rating, so they score identically and land in one shuffle group.
-
-        Args:
-            storage: Storage manager the engine is built over.
-            seed: Seed for the engine's shuffle source. ``None`` builds the
-                engine without one, exercising the module default.
-
-        Returns:
-            The reference item ids, in the order the engine emits them.
-        """
+        """The three consumed books share the candidate's only genre and their
+        rating, so they score identically and land in one shuffle group."""
         engine = RecommendationEngine(
             storage_manager=storage,
             min_rating=4,
@@ -1238,20 +1038,14 @@ class TestSeededReferenceOrderRegression:
         return [item.id for item in references]
 
     def test_seeded_engine_repeats_a_pinned_reference_order(self, mock_storage) -> None:
-        """Two engines on the same seed produce the same pinned order."""
         expected = ["book_c", "book_a", "book_b"]
 
         assert self._reference_ids(mock_storage, seed=7) == expected
         assert self._reference_ids(mock_storage, seed=7) == expected
 
     def test_reference_order_follows_the_seed(self, mock_storage) -> None:
-        """The seed decides the order, so the rng is really being consulted.
-
-        A fix that dropped the shuffle instead of injecting the rng would
-        satisfy the pinned order above, because one fixed order repeats too.
-        Twenty seeds over the same three references must produce more than
-        one order.
-        """
+        """A fix that dropped the shuffle instead of injecting the rng would satisfy
+        the pinned order above, because one fixed order repeats too."""
         orders = {
             tuple(self._reference_ids(mock_storage, seed=seed)) for seed in range(20)
         }
@@ -1259,12 +1053,9 @@ class TestSeededReferenceOrderRegression:
         assert len(orders) > 1
 
     def test_seeded_engines_repeat_the_whole_explanation(self, mock_storage) -> None:
-        """A full run repeats its references and its reasoning sentence.
-
-        The shuffle is only reproducible if it is reproducible where users
-        read it, so this drives ``generate_recommendations`` end to end rather
-        than the reference helper alone.
-        """
+        """The shuffle is only reproducible if it is reproducible where users read
+        it, so this drives ``generate_recommendations`` end to end rather than the
+        reference helper alone."""
         candidate = ContentItem(
             id="candidate",
             title="Foundation",
@@ -1309,7 +1100,6 @@ class TestSeededReferenceOrderRegression:
 
 
 def _variety_score_for(recs: list[Recommendation], item_id: str) -> float:
-    """Return the score of the recommendation with *item_id* (0.0 if absent)."""
     for rec in recs:
         if rec.item.id == item_id:
             return rec.score
@@ -1317,7 +1107,6 @@ def _variety_score_for(recs: list[Recommendation], item_id: str) -> float:
 
 
 def _variety_rank_of(recs: list[Recommendation], item_id: str) -> int:
-    """Return the index of *item_id* in *recs* (len(recs) if absent)."""
     for index, rec in enumerate(recs):
         if rec.item.id == item_id:
             return index
@@ -1325,20 +1114,12 @@ def _variety_rank_of(recs: list[Recommendation], item_id: str) -> int:
 
 
 class TestVarietyAfterCompletion:
-    """Behavioural tests for the variety_penalty genre-fatigue penalty.
-
-    The ``variety_penalty`` preference (0.0-5.0) drives a stepped penalty that
-    demotes candidates whose genre cluster the user recently finished. The
-    engine divides it by ``MAX_VARIETY_PENALTY`` to get the ladder's top penalty
-    fraction, so a preference of 4.0 yields the legacy 0.8 top fraction. The
-    issue #74 bug regression lives in
-    :class:`TestVarietyAfterCompletionRegression`.
-    """
+    """The engine divides it by ``MAX_VARIETY_PENALTY`` to get the ladder's top
+    penalty fraction, so a preference of 4.0 yields the legacy 0.8 top fraction."""
 
     def test_variety_penalty_demotes_recently_finished_genre(
         self, engine, mock_storage
     ) -> None:
-        """A 4.0 variety_penalty lowers a just-finished genre's candidate score."""
         consumed = ContentItem(
             id="consumed_1",
             title="Dune",
@@ -1381,13 +1162,9 @@ class TestVarietyAfterCompletion:
         assert recs_off[0].variety_penalty == 0.0
 
     def test_variety_penalty_steps_by_recency(self, engine, mock_storage) -> None:
-        """The most recently finished genre is penalised more than an older one.
-
-        With variety_penalty 4.0 (a 0.8 top fraction), finishing fantasy then
+        """With variety_penalty 4.0 (a 0.8 top fraction), finishing fantasy then
         sci-fi puts sci-fi on the top rung (0.8) and fantasy on the next rung
-        (0.64), so a fantasy candidate outranks a sci-fi candidate even though
-        sci-fi was also recently finished.
-        """
+        (0.64)."""
         finished_fantasy = ContentItem(
             id="finished_fantasy",
             title="The Hobbit",
@@ -1456,11 +1233,8 @@ class TestVarietyAfterCompletion:
         )
 
     def test_variety_penalty_is_per_content_type(self, engine, mock_storage) -> None:
-        """Finishing a fantasy book must not penalise a fantasy game.
-
-        The penalty ladder is scoped to completed items of the content type
-        being recommended, so genres vary independently per type.
-        """
+        """The penalty ladder is scoped to completed items of the content type being
+        recommended, so genres vary independently per type."""
         finished_book = ContentItem(
             id="finished_book",
             title="The Hobbit",
@@ -1501,11 +1275,8 @@ class TestVarietyAfterCompletion:
     def test_full_throttle_variety_zeroes_finished_genre(
         self, engine, mock_storage
     ) -> None:
-        """variety_penalty=5.0 applies a 1.0 fraction, zeroing a finished genre.
-
-        Removing the old 0.8 cap means the maximum preference fully suppresses a
-        just-finished genre's same-type candidate — there is no score floor.
-        """
+        """Removing the old 0.8 cap means the maximum preference fully suppresses a
+        just-finished genre's same-type candidate — there is no score floor."""
         consumed = ContentItem(
             id="consumed_1",
             title="Dune",
@@ -1541,15 +1312,8 @@ class TestVarietyAfterCompletion:
     def test_strength_above_the_slider_zeroes_rather_than_negates(
         self, engine, mock_storage
     ) -> None:
-        """A strength past the maximum still bottoms out at a zero score.
-
-        Both interfaces bound what a user may set and ``from_dict`` clamps
-        what it loads, so this exercises the engine's own boundary: it
-        converts the strength through ``top_penalty_for_preference``, whose
-        fraction cannot exceed 1.0. Dividing the raw strength instead gave a
-        fraction of 10.0 here, and ``score * (1 - penalty)`` emitted a
-        negative score.
-        """
+        """Dividing the raw strength instead gave a fraction of 10.0 here, and
+        ``score * (1 - penalty)`` emitted a negative score."""
         consumed = ContentItem(
             id="consumed_1",
             title="Dune",
@@ -1586,14 +1350,7 @@ class TestVarietyAfterCompletion:
 
 @pytest.fixture
 def variety_crossover_library(mock_storage):
-    """Wire *mock_storage* for the issue #74 series continuation scenario.
-
-    Three items: a 5 star fantasy series opener the user just finished, its
-    unread next entry, and an unread mystery the library carries no signal
-    about. The regression test and the crossover characterisation below share
-    it, so the pinned numbers describe the scenario the regression asserts on
-    rather than a lookalike of it.
-    """
+    """Wire *mock_storage* for the issue #74 series continuation scenario."""
     consumed = ContentItem(
         id="dragonlance_1",
         title="Dragonlance: Dragons of Autumn Twilight",
@@ -1641,23 +1398,8 @@ class TestVarietyAfterCompletionRegression:
     def test_next_in_series_demoted_when_variety_enabled_regression(
         self, engine, variety_crossover_library
     ) -> None:
-        """The next book in a just-finished series must not be #1 with variety on.
-
-        Reported: 'Finished a book, setting turned on, new number 1
-        recommendation is the next book in the series.'
-
-        Root cause: the variety penalty only nudged the legacy ranker's
-        weak additive diversity bonus, which could not overcome the strong
-        SeriesOrderScorer (next-in-series scores 1.0).
-
-        Fix: variety now multiplicatively penalises recently finished genre
-        clusters, demoting the next-in-series fantasy book below a
-        different-genre candidate.
-
-        Asserted at ``LEGACY_VARIETY_ON``, the strength the reported boolean
-        setting maps to, so the case under test is the case reported.
-        """
-        # Without variety: the next-in-series fantasy book tops the list (bug).
+        """Reported: 'Finished a book, setting turned on, new number 1
+        recommendation is the next book in the series.'"""
         recs_off = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
@@ -1665,7 +1407,6 @@ class TestVarietyAfterCompletionRegression:
         )
         assert recs_off[0].item.id == "dragonlance_2"
 
-        # With variety: the fantasy continuation is demoted below the mystery.
         recs_on = engine.generate_recommendations(
             content_type=ContentType.BOOK,
             count=2,
@@ -1681,22 +1422,9 @@ class TestVarietyAfterCompletionRegression:
     def test_decimal_novella_below_next_book_with_variety_regression(
         self, engine, mock_storage
     ) -> None:
-        """The unread next book outranks half-numbered novellas end-to-end.
-
-        Reported: a 200-book run with variety enabled put Expanse novellas
-        "Drive (#2.7)" and "Gods of Risk (#2.5)" at ranks 45-48 while the
-        actual next book "Caliban's War (#2)" sank to 123 under a 48% variety
-        penalty — the user had read only book #1.
-
-        Root cause (two compounding bugs): decimal novella positions parsed as
-        non-series so they dodged the too-far-ahead suppression, and the
-        variety penalty hit the legit next book at full strength.
-
-        Fix: decimal-aware ordering substitutes the novellas with the earliest
-        recommendable entry (book #2), and the variety penalty is softened for
-        that active series continuation. This test wires both layers together
-        through ``generate_recommendations``.
-        """
+        """Decimal novella positions parsed as non-series so they dodged the
+        too-far-ahead suppression, and the variety penalty hit the legit next
+        book at full strength."""
         book_one = ContentItem(
             id="exp1",
             title="Leviathan Wakes (The Expanse, #1)",
@@ -1752,9 +1480,7 @@ class TestVarietyAfterCompletionRegression:
 
         # The variety layer fired too: Caliban's War shares the just-finished
         # sci-fi cluster, but as an active series continuation its penalty is
-        # softened, not applied at full strength. The legacy-on
-        # strength gives a 0.8 top fraction, so the softened penalty is
-        # 0.8 * the factor.
+        # softened, not applied at full strength.
         top_fraction = (
             UserPreferenceConfig.LEGACY_VARIETY_ON
             / UserPreferenceConfig.MAX_VARIETY_PENALTY
@@ -1767,28 +1493,14 @@ class TestVarietyAfterCompletionRegression:
 
 
 class TestEngineSeriesSubstitutionRegression:
-    """Regression tests for series substitution in the recommendation engine.
-
-    Bug reported: Final Fantasy XII (#12) was recommended as #1 but FFX (#10)
+    """Bug reported: Final Fantasy XII (#12) was recommended as #1 but FFX (#10)
     was #4; Kingdom Hearts III is #5 but KH 2.8 is #7; Dragon Age Inquisition
-    recommended without playing Dragon Age 2.
-
-    Root cause: The engine filtered out later series entries entirely, rather
-    than substituting them with the earliest playable entry.
-
-    Fix: When a candidate fails should_recommend_item(), the engine now finds
-    the earliest recommendable entry in the same series and substitutes it,
-    using the substitute's own pipeline score.
-    """
+    recommended without playing Dragon Age 2."""
 
     def test_later_entry_substituted_with_earliest_regression(
         self, engine, mock_storage
     ) -> None:
-        """FF XII should be substituted with earliest unplayed FF entry.
-
-        Bug: FF XII appeared as recommendation #1, FF X was #4.
-        Fix: FF XII is substituted with the earliest recommendable FF entry.
-        """
+        """Bug: FF XII appeared as recommendation #1, FF X was #4."""
         consumed = ContentItem(
             id="consumed",
             title="Chrono Trigger",
@@ -1839,17 +1551,14 @@ class TestEngineSeriesSubstitutionRegression:
         )
 
         recommended_ids = [rec.item.id for rec in recommendations]
-        # FF X should appear (earliest recommendable FF entry)
         assert (
             "ff10" in recommended_ids
         ), f"FF X should be substituted in; got {recommended_ids}"
-        # FF XII should NOT appear (it fails series rules)
         assert (
             "ff12" not in recommended_ids
         ), f"FF XII should be filtered out; got {recommended_ids}"
 
     def test_series_in_order_false_skips_filtering(self, engine, mock_storage) -> None:
-        """series_in_order=False should skip all series filtering/substitution."""
         consumed = ContentItem(
             id="consumed",
             title="Chrono Trigger",
@@ -1884,18 +1593,13 @@ class TestEngineSeriesSubstitutionRegression:
         )
 
         recommended_ids = [rec.item.id for rec in recommendations]
-        # FF XII should appear (no filtering)
         assert "ff12" in recommended_ids
 
     def test_duplicate_substitutions_prevented_regression(
         self, engine, mock_storage
     ) -> None:
-        """Two FF entries in top candidates produce only one substitution.
-
-        Bug: Both FF XII and FF XV failing series rules could cause FF X
-        to appear twice in recommendations.
-        Fix: substituted_series set prevents duplicate substitutions.
-        """
+        """Bug: Both FF XII and FF XV failing series rules could cause FF X to
+        appear twice in recommendations."""
         consumed = ContentItem(
             id="consumed",
             title="Chrono Trigger",
@@ -1950,15 +1654,9 @@ class TestEngineSeriesSubstitutionRegression:
         )
 
         recommended_ids = [rec.item.id for rec in recommendations]
-        # FF X should appear exactly once
         assert (
             recommended_ids.count("ff10") == 1
         ), f"FF X should appear exactly once; got {recommended_ids}"
-
-
-# ---------------------------------------------------------------------------
-# ContinuationScorer exclusion tests
-# ---------------------------------------------------------------------------
 
 
 class TestContinuationScorerExclusion:
@@ -1967,8 +1665,8 @@ class TestContinuationScorerExclusion:
     def test_no_active_items_excludes_continuation_from_breakdown(
         self, engine, mock_storage
     ):
-        """When no candidates have CURRENTLY_CONSUMING status, 'continuation'
-        must not appear in score_breakdown (it would be all zeros)."""
+        """When no candidates have CURRENTLY_CONSUMING status, 'continuation' must
+        not appear in score_breakdown (it would be all zeros)."""
         consumed = ContentItem(
             id="c1",
             title="Dune",
@@ -1998,8 +1696,8 @@ class TestContinuationScorerExclusion:
         assert "continuation" not in recommendations[0].score_breakdown
 
     def test_active_item_retains_continuation_in_breakdown(self, engine, mock_storage):
-        """When a candidate has CURRENTLY_CONSUMING status, 'continuation'
-        must appear in score_breakdown and the active item must score 1.0."""
+        """When a candidate has CURRENTLY_CONSUMING status, 'continuation' must
+        appear in score_breakdown and the active item must score 1.0."""
         consumed = ContentItem(
             id="c1",
             title="Dune",
@@ -2040,28 +1738,11 @@ class TestContinuationScorerExclusion:
 
 
 class TestSameSeriesReferenceExclusionRegression:
-    """Regression tests for same-series exclusion in contributing references.
-
-    Bug reported: "The Expanse (Season 2)" recommendation showed reasoning
-    "Recommended because you liked The Expanse", which is circular
-    self-referencing within a series.
-
-    Root cause: _find_contributing_reference_items() did not check whether
-    a consumed item belonged to the same series as the candidate, so earlier
-    entries in a series could appear as the "why" for recommending a later
-    entry.
-
-    Fix: get_series_name() is called on the candidate and on each consumed
-    item; items sharing the candidate's series name are skipped.
-
-    Extended fix: when get_series_name() returns None for a consumed item
-    (show-level items with no season marker), fall back to comparing the
-    consumed item's title and metadata series_name directly against the
-    candidate's series name via get_series_name_from_metadata().
-    """
+    """Bug reported: "The Expanse (Season 2)" recommendation showed reasoning
+    "Recommended because you liked The Expanse", which is circular self-referencing
+    within a series."""
 
     def test_same_series_consumed_item_excluded_regression(self) -> None:
-        """Regression: Series S1 must NOT appear as a reference for S2."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -2101,22 +1782,11 @@ class TestSameSeriesReferenceExclusionRegression:
         assert "Battlestar Galactica" in result_titles
 
     def test_show_level_item_excluded_from_season_references_regression(self) -> None:
-        """Regression: show-level "The Expanse" must not be a reference for Season 2.
-
-        Bug reported: "The Expanse (Season 2)" recommendation showed reasoning
-        "Recommended because you liked The Expanse", which is circular.
-
-        Root cause: get_series_name() returns None for show-level items (no
-        season marker in title, no season number in metadata), so the existing
-        same-series check was bypassed.  The consumed item's title IS the
-        series name — we must compare it directly.
-
-        Fix: after the get_series_name comparison, fall back to comparing the
-        consumed item's title against the candidate's series name.
-        """
+        """get_series_name() returns None for show-level items
+        (no season marker in title, no season number in metadata), so the existing
+        same-series check was bypassed."""
         engine = _engine_for_helpers()
 
-        # Candidate: expanded season with series metadata
         candidate = ContentItem(
             id="expanse_s2",
             title="The Expanse (Season 2)",
@@ -2129,7 +1799,6 @@ class TestSameSeriesReferenceExclusionRegression:
             },
         )
 
-        # Consumed: show-level item — no season marker in title
         show_level_consumed = ContentItem(
             id="expanse_show",
             title="The Expanse",
@@ -2160,20 +1829,9 @@ class TestSameSeriesReferenceExclusionRegression:
         assert "Firefly" in result_titles
 
     def test_show_level_metadata_series_name_excluded_regression(self) -> None:
-        """Regression: metadata series_name triggers exclusion when title does not match.
-
-        Bug reported: consumed item with series_name metadata but a
-        non-matching title appeared as a contributing reference for its own
-        series (e.g. "My Expanse Review" cited for "The Expanse (Season 3)").
-
-        Root cause: get_series_name() requires both a series name AND a
-        numeric position — without a season key it returns None, bypassing
-        the primary same-series check.
-
-        Fix: after the title comparison, fall back to
-        get_series_name_from_metadata() to check metadata series_name/series/
-        series_title/franchise fields.
-        """
+        """Bug reported: consumed item with series_name metadata but a non-matching
+        title appeared as a contributing reference for its own series (e.g. "My
+        Expanse Review" cited for "The Expanse (Season 3)")."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -2188,7 +1846,6 @@ class TestSameSeriesReferenceExclusionRegression:
             },
         )
 
-        # Consumed item has series_name metadata but no season number
         consumed_with_meta = ContentItem(
             id="expanse_show",
             title="My Expanse Review",
@@ -2223,25 +1880,10 @@ class TestSameSeriesReferenceExclusionRegression:
 
 
 class TestInProgressItemsExcludedFromBasisRegression:
-    """Regression tests for in-progress items appearing in recommendation basis.
-
-    Bug reported: items with status CURRENTLY_CONSUMING were showing up in
-    the "based on" / contributing items list displayed alongside each
-    recommendation, even though only completed items should influence the
-    displayed reasoning.
-
-    Root cause: `get_completed_items()` correctly includes CURRENTLY_CONSUMING
-    so in-progress media still informs preference scoring, but the display
-    helpers (now SignalIndex.references_for and SignalIndex.adaptations_of)
-    had no secondary status filter, so the in-progress items leaked into the
-    user-visible reasoning.
-
-    Fix: the signal index leaves CURRENTLY_CONSUMING items out entirely, so the
-    "recommended because you liked X" surface only cites completed media.
-    """
+    """Bug reported: items with status CURRENTLY_CONSUMING were showing up in the
+    "based on" / contributing items list displayed alongside each recommendation."""
 
     def test_contributing_excludes_currently_consuming(self) -> None:
-        """In-progress items must not appear as contributing references."""
         engine = _engine_for_helpers()
 
         candidate = ContentItem(
@@ -2280,7 +1922,6 @@ class TestInProgressItemsExcludedFromBasisRegression:
         )
 
     def test_adaptations_exclude_currently_consuming(self) -> None:
-        """In-progress items must not appear as cross-type adaptations."""
         candidate = ContentItem(
             id="lotr_movie",
             title="The Fellowship of the Ring",
@@ -2318,25 +1959,11 @@ class TestInProgressItemsExcludedFromBasisRegression:
 
 
 class TestIgnoredAndUnratedSignalRegression:
-    """Bug reported: ignored and completed-but-unrated items shaped recs.
-
-    Bug reported: ignored items were only filtered at the final candidate
-    stage, so they still fed preference analysis, scoring, similarity seeds,
-    and "since you enjoyed X" explanation references; completed-but-unrated
-    items leaked the same way because the signal was fetched with
-    min_rating=None.
-    Root cause: the engine fetched its signal set with the default
-    include_ignored=True and min_rating=None, never narrowing to rated items.
-    Fix: the engine draws its signal set from StorageManager.get_signal_items
-    (completed, rated, not ignored) and its candidate pool with
-    include_ignored=False. Verified end-to-end against real storage so the
-    assertions exercise the actual filtering, not mock wiring.
-    """
+    """Bug reported: ignored and completed-but-unrated items shaped recs."""
 
     def test_ignored_and_unrated_excluded_from_signal_regression(
         self, real_engine, real_storage
     ):
-        """Ignored/unrated completed items never seed candidates or references."""
         _save_book(
             real_storage,
             item_id="dune",
@@ -2393,20 +2020,9 @@ class TestIgnoredAndUnratedSignalRegression:
 
 
 class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
-    """Bug reported: ignored/unrated same-type completed items reordered recs.
-
-    Bug reported: the same-type completed set was fetched unfiltered and fed
-    to taste-shaped ranking, so an ignored or completed-but-unrated book's
-    genre demoted an otherwise-top candidate sharing that genre.
-    Root cause: the full completed set was reused for ranking, not just for
-    series ordering.
-    Fix: everything that shapes taste draws from the signal set (rated, not
-    ignored), while series ordering keeps the full completed set. The bonus
-    that carried the leak when this was reported has since been deleted with
-    the ranker, but the same leak reaches the ranking through the scoring
-    context and the preference analysis, both of which read the signal set —
-    so this still guards a live path. Run against real storage.
-    """
+    """Bug reported: the same-type completed set was fetched unfiltered and fed to
+    taste-shaped ranking, so an ignored or completed-but-unrated book's genre
+    demoted an otherwise-top candidate sharing that genre."""
 
     @staticmethod
     def _order(engine):
@@ -2441,7 +2057,6 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
     def test_ignored_completed_item_does_not_reorder_regression(
         self, real_engine, real_storage
     ):
-        """An ignored completed book must not reorder recommendations."""
         self._seed_baseline(real_storage)
         baseline = self._order(real_engine)
 
@@ -2464,7 +2079,6 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
     def test_unrated_completed_item_does_not_reorder_regression(
         self, real_engine, real_storage
     ):
-        """A completed-but-unrated book must not reorder recommendations."""
         self._seed_baseline(real_storage)
         baseline = self._order(real_engine)
 
@@ -2486,13 +2100,8 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
     def test_rated_completion_reorders_positive_control(
         self, real_engine, real_storage
     ):
-        """Positive control: a rated, non-ignored completion DOES change order.
-
-        Proves the seed set genuinely drives ranking, so the "order unchanged"
-        assertions above are meaningful rather than vacuous. Two rated
-        completions matching the trailing candidate's genre push it up the
-        ranking via the (strongly weighted) preference signal.
-        """
+        """Proves the seed set genuinely drives ranking, so the "order unchanged"
+        assertions above are meaningful rather than vacuous."""
         self._seed_baseline(real_storage)
         baseline = self._order(real_engine)
 
@@ -2519,26 +2128,7 @@ class TestIgnoredAndUnratedItemsDoNotShapeRankingRegression:
 
 
 class TestVarietyLadderConsumptionRegression:
-    """Bug reported: unrated completions caused no genre fatigue at all.
-
-    Bug reported: a user who rates the occasional book, but tore through six
-    fantasy novels without rating any of them, saw no fantasy fatigue — the
-    variety slider moved and the fantasy shelf kept topping the list. With the
-    ranker's diversity bonus gone the ladder is the only genre-spreading
-    mechanism left, so the unrated majority of a library spread nothing.
-    Root cause: ``_apply_variety_penalty`` was fed ``get_signal_items``, the
-    taste-learning set, which is completed AND rated AND not ignored.
-    Fix: the ladder is fed ``get_consumption_items`` (not ignored, rating
-    irrelevant). Rating is what the user thought of it; finishing it is what
-    causes fatigue. Ignoring stays disqualifying: it says the user wants less
-    of that, so letting it claim a rung would invert the intent. Exercised
-    end-to-end against real storage with a ``variety_penalty`` config.
-
-    A user who rates *nothing* is deliberately still helped by none of this:
-    the engine returns [] on an empty taste signal long before the ladder is
-    built, which ``test_a_library_with_no_rating_at_all_still_returns_nothing``
-    pins. Every other test here seeds one rated completion to clear that guard.
-    """
+    """Bug reported: unrated completions caused no genre fatigue at all."""
 
     # variety_penalty == MAX gives a top-rung penalty fraction of 1.0, which
     # fully zeroes a just-finished genre — the strongest, most observable rung.
@@ -2553,9 +2143,7 @@ class TestVarietyLadderConsumptionRegression:
     def _seed_baseline(cls, storage):
         # A rated, non-ignored Mystery signal item makes recommendations exist
         # and seeds the ladder with Mystery (a cluster none of the candidates
-        # share, so baseline candidate penalties are zero). It is dated, so
-        # every Fantasy completion below outranks it on the ladder unless it
-        # carries no date of its own.
+        # share, so baseline candidate penalties are zero).
         _save_book(
             storage,
             item_id="sig",
@@ -2586,12 +2174,9 @@ class TestVarietyLadderConsumptionRegression:
 
     @classmethod
     def _seed_tv_baseline(cls, storage):
-        """A dated rated Mystery show, plus one candidate show of each genre.
-
-        The Mystery completion clears the empty-signal guard and holds a rung
-        of its own, so an ignored show's zero can be measured against a ladder
-        the same request proves is live.
-        """
+        """The Mystery completion clears the empty-signal guard and holds a rung of
+        its own, so an ignored show's zero can be measured against a ladder the same
+        request proves is live."""
         storage.save_content_item(
             ContentItem(
                 id="tv-seed",
@@ -2616,7 +2201,6 @@ class TestVarietyLadderConsumptionRegression:
 
     @classmethod
     def _save_ongoing_fantasy_show(cls, storage, *, ignored):
-        """An unrated show mid-run, dated only by its watched season."""
         db_id = storage.save_content_item(
             ContentItem(
                 id="tv-ongoing",
@@ -2647,18 +2231,14 @@ class TestVarietyLadderConsumptionRegression:
         return self._penalty_for(engine, "Fantasy Candidate")
 
     def test_baseline_fantasy_candidate_unpenalised(self, real_engine, real_storage):
-        """With only a Mystery completion, the Fantasy candidate has no penalty."""
         self._seed_baseline(real_storage)
         assert self._fantasy_penalty(real_engine) == 0.0
 
     def test_rated_completed_fantasy_penalises_positive_control(
         self, real_engine, real_storage
     ):
-        """Positive control: a rated, non-ignored Fantasy completion penalises it.
-
-        Proves the ladder recognises the Fantasy cluster and applies its top
-        rung, so the assertions below measure against a live ladder.
-        """
+        """Proves the ladder recognises the Fantasy cluster and applies its top
+        rung, so the assertions below measure against a live ladder."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2674,7 +2254,6 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_completed_fantasy_penalises_regression(
         self, real_engine, real_storage
     ):
-        """Fantasy books finished without a rating must fatigue the genre."""
         self._seed_baseline(real_storage)
         for index in range(3):
             _save_book(
@@ -2695,16 +2274,9 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_first_book_softens_the_penalty_on_book_two_regression(
         self, real_engine, real_storage
     ):
-        """Finishing #1 unrated fatigues the genre but does not bury #2.
-
-        The reported library — six fantasy novels torn through unrated — is
-        likely a series, and the widening makes that pair reachable: an unrated
-        #1 used to put nothing on the ladder, so #2 took no penalty at all.
-        Series tracking still reads the full completed set, so #1 marks the
-        series started and #2 takes the softened continuation penalty. The
-        unrelated Fantasy candidate in the same request takes the full top rung,
-        which at the maximum slider zeroes it.
-        """
+        """The reported library — six fantasy novels torn through unrated — is
+        likely a series, and the widening makes that pair reachable: an unrated #1
+        used to put nothing on the ladder, so #2 took no penalty at all."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2736,14 +2308,9 @@ class TestVarietyLadderConsumptionRegression:
     def test_undated_unrated_completion_sorts_behind_every_dated_completion_regression(
         self, real_engine, real_storage
     ):
-        """An unrated completion with no completion date still claims a rung.
-
-        Unrated completions frequently arrive without a ``date_completed``, so
-        the ladder must place them behind *everything* dated rather than drop
-        them. Two dated completions straddle the ladder, because with only one
-        an ordering that interleaved undated items among dated ones would land
-        on the same rung and pass.
-        """
+        """Two dated completions straddle the ladder, because with only one an
+        ordering that interleaved undated items among dated ones would land on the
+        same rung and pass."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2771,7 +2338,6 @@ class TestVarietyLadderConsumptionRegression:
     def test_ignored_completed_fantasy_does_not_penalise_regression(
         self, real_engine, real_storage
     ):
-        """An ignored Fantasy completion must not enter the variety ladder."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2791,13 +2357,8 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_completions_take_rungs_by_recency_not_after_rated_ones(
         self, real_engine, real_storage
     ):
-        """Rung order is pure recency once rating stops gating entry.
-
-        The newest completion is unrated Science Fiction, the next is unrated
-        Fantasy and the oldest is the rated Mystery seed, so the three rungs
-        run 100%, 80%, 60% in that order. Appending unrated completions below
-        the rated ones instead would hand Fantasy the top rung.
-        """
+        """Appending unrated completions below the rated ones instead would hand
+        Fantasy the top rung."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2826,12 +2387,9 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_completion_moves_only_the_penalty_not_the_scores(
         self, real_engine, real_storage
     ):
-        """An unrated completion feeds the ladder and nothing else.
-
-        The widened set is the ladder's alone: every scorer and the "because
-        you enjoyed" references still read the rated signal set, so the only
-        number an unrated completion may move is the variety penalty.
-        """
+        """The widened set is the ladder's alone: every scorer and the "because you
+        enjoyed" references still read the rated signal set, so the only number an
+        unrated completion may move is the variety penalty."""
         self._seed_baseline(real_storage)
         recs = real_engine.generate_recommendations(
             content_type=ContentType.BOOK, count=5, user_preference_config=self._CONFIG
@@ -2867,13 +2425,8 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_completion_without_a_genre_claims_no_rung(
         self, real_engine, real_storage
     ):
-        """A completion carrying no genre must not consume the top rung.
-
-        Unrated completions are exactly the ones likely to arrive with no
-        metadata at all. Such an item reaches the ladder now, and a rung
-        counter that advanced for it would push the Fantasy completion behind
-        it and weaken every rung below.
-        """
+        """Such an item reaches the ladder now, and a rung counter that advanced for
+        it would push the Fantasy completion behind it and weaken every rung below."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2899,15 +2452,7 @@ class TestVarietyLadderConsumptionRegression:
     def test_an_in_progress_unrated_book_claims_no_rung(
         self, real_engine, real_storage
     ):
-        """Starting a fantasy novel is not finishing one.
-
-        In-progress items ride into the ladder's feed from
-        ``get_completed_items``, and before the widening one needed a rating to
-        get that far — so the ladder's own completion-event filter is newly
-        load-bearing at engine level. The Mystery candidate takes the seed's
-        top rung in the same request, so the Fantasy zero is measured against a
-        live ladder rather than an empty one.
-        """
+        """Starting a fantasy novel is not finishing one."""
         self._seed_baseline(real_storage)
         _save_book(
             real_storage,
@@ -2934,15 +2479,9 @@ class TestVarietyLadderConsumptionRegression:
     def test_unrated_ongoing_show_with_a_watched_season_penalises_regression(
         self, real_engine, real_storage
     ):
-        """A season finished on an unrated show fatigues that show's genre.
-
-        The one genuinely new code path: ``_completion_recency`` dates a
-        mid-run show by ``latest_season_watched_date``, and an unrated show
-        never reached it through the engine before. Exercised end-to-end so the
-        season-tracking injection and season expansion that run in the same
-        request are in the path too. The watched season is
-        newer than the Mystery completion, so Fantasy takes the top rung.
-        """
+        """The one genuinely new code path: ``_completion_recency`` dates a mid-run
+        show by ``latest_season_watched_date``, and an unrated show never reached it
+        through the engine before."""
         self._seed_tv_baseline(real_storage)
         self._save_ongoing_fantasy_show(real_storage, ignored=False)
 
@@ -2956,13 +2495,8 @@ class TestVarietyLadderConsumptionRegression:
     def test_a_library_with_no_rating_at_all_still_returns_nothing(
         self, real_engine, real_storage
     ):
-        """The residual boundary the widening deliberately does not move.
-
-        The engine returns [] on an empty taste signal, before a ladder is ever
-        built, so a user who rates *nothing* has no recommendations to spread.
-        That is why every test above seeds one rated completion. What the fix
-        buys is the user who rates some of what they finish and not the rest.
-        """
+        """The engine returns [] on an empty taste signal, before a ladder is ever
+        built, so a user who rates *nothing* has no recommendations to spread."""
         _save_book(
             real_storage,
             item_id="unrated",
@@ -2991,19 +2525,7 @@ class TestVarietyLadderConsumptionRegression:
 
 
 class TestSeriesTrackingFullSetRegression:
-    """Series ordering must use the FULL completed set, not the signal set.
-
-    Bug guarded: issue #99 narrows taste-shaped inputs to the signal set
-    (completed, rated, not ignored). Series ordering must NOT be narrowed the
-    same way — whether the user has *consumed* an earlier entry is a fact
-    independent of rating or ignore state. If series tracking used the signal
-    set, an ignored or completed-but-unrated middle entry would vanish from
-    the consumed positions and strand the series: the next entry would be held
-    behind an entry the user has actually finished (and which can never
-    reappear as a candidate). The engine deliberately builds series tracking
-    from the full ``consumed_items_of_type``; these tests lock that in against
-    real storage.
-    """
+    """Series ordering must use the FULL completed set, not the signal set."""
 
     @staticmethod
     def _titles(engine):
@@ -3013,7 +2535,6 @@ class TestSeriesTrackingFullSetRegression:
     def test_completed_rated_first_entry_unlocks_second(
         self, real_engine, real_storage
     ):
-        """Completing (and rating) #1 recommends #2 and holds #3."""
         _save_book(
             real_storage,
             item_id="s1",
@@ -3046,12 +2567,9 @@ class TestSeriesTrackingFullSetRegression:
     def test_ignored_middle_entry_does_not_strand_series_regression(
         self, real_engine, real_storage
     ):
-        """An ignored completed #2 still counts, so #3 is recommended (not stranded).
-
-        If series tracking used the signal set, ignored #2 would drop out of the
+        """If series tracking used the signal set, ignored #2 would drop out of the
         consumed positions, #3 would be held behind an entry the user already
-        finished, and the series would strand.
-        """
+        finished, and the series would strand."""
         _save_book(
             real_storage,
             item_id="s1",
@@ -3092,22 +2610,9 @@ class TestSeriesTrackingFullSetRegression:
 
 
 class TestHalfNumberedEntryScoringRegression:
-    """Regression: an up-next novella was scored as already consumed.
-
-    Reported: with The Expanse #1 and #2 read and rated 5, the recommendation
-    for "Gods of Risk (The Expanse, #2.5)" carried a ``series_order`` of 0.2,
-    the already-consumed bucket and lower than the 0.3 an entry too far ahead
-    gets, so the novella series filtering had just unblocked ranked beneath
-    unrelated books.
-
-    Root cause: SeriesOrderScorer recognised succession as
-    ``item_number == max_consumed + 1``, which no fractional position
-    satisfies, so #2.5 fell through to the terminal already-consumed branch.
-
-    Fix: the scorer orders entries through ``is_next_after_consumed`` in
-    src/utils/series.py, the fractional ordering ``should_recommend_item``
-    already applied, so #2.5 takes the rating-boosted next-in-sequence score.
-    """
+    """SeriesOrderScorer recognised succession as
+    ``item_number == max_consumed + 1``, which no fractional position satisfies,
+    so #2.5 fell through to the terminal already-consumed branch."""
 
     @staticmethod
     def _stock_library(storage):
@@ -3157,7 +2662,6 @@ class TestHalfNumberedEntryScoringRegression:
 
 
 def _save_movie(storage, *, title, genre, rating):
-    """Persist a completed, rated movie; return its db_id."""
     return storage.save_content_item(
         ContentItem(
             id=None,
@@ -3171,23 +2675,11 @@ def _save_movie(storage, *, title, genre, rating):
 
 
 class TestIdlessCandidateIdentityRegression:
-    """Bug reported: items added without an external id showed each other's reasons.
-
-    Bug reported: recommendations for CSV-imported and manually added items
-    carried another item's score breakdown and another item's "recommended
-    because you liked" references, and some of them disappeared from the list
-    entirely.
-    Root cause: the engine keyed its breakdown, metadata and series-dedup maps
-    on ``ContentItem.id``, the nullable external id, so every id-less candidate
-    collapsed onto a single ``None`` key.
-    Fix: those maps key on the candidate's database identity, which every
-    stored item has.
-    """
+    """Bug reported: items added without an external id showed each other's reasons."""
 
     def test_each_id_less_candidate_keeps_its_own_reasoning_regression(
         self, real_engine, real_storage
     ):
-        """Two id-less candidates keep separate breakdowns and references."""
         _save_movie(
             real_storage, title="Blade Runner", genre="Science Fiction", rating=5
         )
@@ -3226,22 +2718,12 @@ class TestIdlessCandidateIdentityRegression:
 
 
 class TestSeasonCandidateIdentityRegression:
-    """Bug reported: a season card showed a sibling season's score breakdown.
-
-    Bug reported: for a show added without an external id, the recommended
-    season's Score Details belonged to a different season of the same show.
-    Root cause: seasons expanded from one library row share that row's
-    ``db_id`` and, for an id-less show, share a ``None`` external id too, so
-    the engine's per-candidate maps collapsed the siblings together and the
-    last one written won.
-    Fix: a season-level candidate's key carries its season number, so siblings
-    stay distinct in every map.
-    """
+    """Bug reported: for a show added without an external id, the recommended
+    season's Score Details belonged to a different season of the same show."""
 
     def test_season_card_keeps_its_own_breakdown_regression(
         self, real_engine, real_storage
     ):
-        """The recommended season shows its own series_order, not a sibling's."""
         real_storage.save_content_item(
             ContentItem(
                 id=None,
@@ -3273,16 +2755,12 @@ class TestSeasonCandidateIdentityRegression:
 
 
 class TestSeasonSiblingsStayDistinctInEveryMap:
-    """Season candidates of one show must not overwrite each other.
-
-    They share the parent show's ``db_id``, and for a show added without an
+    """They share the parent show's ``db_id``, and for a show added without an
     external id they share a ``None`` id too, so they are the pair most likely
-    to collapse in any per-candidate map.
-    """
+    to collapse in any per-candidate map."""
 
     @staticmethod
     def _seasons():
-        """Two season candidates expanded from one id-less show row."""
         return expand_tv_shows_to_seasons(
             [
                 ContentItem(
@@ -3297,7 +2775,6 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
         )
 
     def test_each_season_keeps_its_own_breakdown_and_adaptations(self):
-        """Both per-candidate maps hold both siblings, not one."""
         first, second = self._seasons()
         engine = _engine_for_helpers()
         knives_out = make_item(
@@ -3324,12 +2801,9 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
         ] == [[], ["Knives Out"]]
 
     def test_series_filtering_keeps_a_season_from_each_id_less_show(self):
-        """Two id-less shows' first seasons are not deduplicated into one.
-
-        Season 2 of a show is legitimately filtered out behind season 1, so
-        the pair that proves the dedup set is not collapsing on a shared
-        ``None`` id is one season from each of two different shows.
-        """
+        """Season 2 of a show is legitimately filtered out behind season 1, so the
+        pair that proves the dedup set is not collapsing on a shared ``None`` id is
+        one season from each of two different shows."""
 
         def season_one_of(db_id, title):
             (season,) = expand_tv_shows_to_seasons(
@@ -3363,12 +2837,8 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
 
 
 class TestContentTypeExclusions:
-    """Custom rules that resolve to a content-type exclusion filter candidates.
-
-    ``tests/test_preference_interpreter.py`` covers the interpreter producing
-    ``content_type_exclusions``. These cover the engine consuming them, which
-    is the wiring between the two halves.
-    """
+    """``tests/test_preference_interpreter.py`` covers the interpreter producing
+    ``content_type_exclusions``."""
 
     @staticmethod
     def _consumed():
@@ -3402,7 +2872,6 @@ class TestContentTypeExclusions:
         )
 
     def _recommend(self, engine, mock_storage, candidates, rules):
-        """Recommend books over *candidates* with *rules* in force."""
         mock_storage.get_completed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: [self._consumed()]
         )
@@ -3417,7 +2886,6 @@ class TestContentTypeExclusions:
     def test_an_excluded_type_is_dropped_and_the_rest_survive(
         self, engine, mock_storage
     ):
-        """A rule reading "avoid movies" removes the film and keeps the book."""
         recommendations = self._recommend(
             engine, mock_storage, [self._book(), self._movie()], ["avoid movies"]
         )
@@ -3427,7 +2895,6 @@ class TestContentTypeExclusions:
     def test_a_rule_with_no_exclusion_leaves_every_candidate(
         self, engine, mock_storage
     ):
-        """A genre rule interprets to no exclusions, so nothing is filtered."""
         recommendations = self._recommend(
             engine, mock_storage, [self._book(), self._movie()], ["avoid horror"]
         )

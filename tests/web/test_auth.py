@@ -1,9 +1,3 @@
-"""The sign-in surface: setup, login, logout, session, and the account routes.
-
-Every case runs against a real ``StorageManager``, because what is under test
-is a credential check and a session row rather than a call being made.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -42,14 +36,12 @@ def config() -> dict[str, Any]:
 
 @pytest.fixture()
 def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClient]:
-    """A signed-out client against a booted app on an unclaimed instance."""
     with booted_web_app(storage, config) as app:
         yield TestClient(app)
 
 
 @pytest.fixture()
 def claimed(storage: StorageManager, client: TestClient) -> TestClient:
-    """The same client, signed in as the account that claimed the instance."""
     storage.accounts.claim(_USERNAME, "The Owner", _PASSWORD)
     response = client.post(
         "/api/auth/login", json={"username": _USERNAME, "password": _PASSWORD}
@@ -65,19 +57,15 @@ def _set_cookie(response: Any) -> SimpleCookie:
 
 
 def _account(storage: StorageManager, **names: Any) -> dict[str, Any]:
-    """The account body a route returns, with the stamp storage holds."""
     record = storage.accounts.describe(1)
     assert record is not None
     return {"id": 1, **names, "password_updated_at": record["password_updated_at"]}
 
 
 class TestFirstRunSetup:
-    """The one moment anybody may claim this instance."""
-
     def test_setup_claims_the_account_and_signs_the_claimant_in(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """The claimant does not then have to type the password again."""
         response = client.post(
             "/api/auth/setup",
             json={
@@ -97,7 +85,6 @@ class TestFirstRunSetup:
     def test_a_blank_display_name_falls_back_to_the_username(
         self, client: TestClient
     ) -> None:
-        """The form sends "" for the optional field, which is not a name."""
         response = client.post(
             "/api/auth/setup",
             json={"username": _USERNAME, "display_name": "  ", "password": _PASSWORD},
@@ -109,7 +96,6 @@ class TestFirstRunSetup:
     def test_a_second_setup_is_refused_and_writes_nothing(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """Otherwise the library goes to whoever asks for it second."""
         response = claimed.post(
             "/api/auth/setup",
             json={
@@ -126,12 +112,6 @@ class TestFirstRunSetup:
     def test_a_short_password_is_refused_in_words_the_form_can_show(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """Regression: the floor was a Pydantic ``min_length``.
-
-        A 422 renders ``detail`` as a list, ``stringDetail`` returns undefined
-        for one, and the setup screen — which nobody can skip — showed "check
-        the details and try again" instead of the rule.
-        """
         response = client.post(
             "/api/auth/setup",
             json={
@@ -147,8 +127,6 @@ class TestFirstRunSetup:
 
 
 class TestLogin:
-    """What a password buys, and what a wrong one does not."""
-
     def test_the_right_password_opens_a_session(self, claimed: TestClient) -> None:
         body = claimed.get("/api/auth/session").json()
 
@@ -165,7 +143,6 @@ class TestLogin:
     def test_a_refusal_names_neither_half(
         self, claimed: TestClient, username: str, password: str
     ) -> None:
-        """A message naming the username tells a guesser which one exists."""
         response = claimed.post(
             "/api/auth/login", json={"username": username, "password": password}
         )
@@ -178,7 +155,6 @@ class TestLogin:
     def test_a_typo_costs_the_operator_nothing_but_the_retry(
         self, claimed: TestClient
     ) -> None:
-        """A failure counter locked the one account out of its own instance."""
         wrong = {"username": _USERNAME, "password": "not the password"}
         refusals = [
             claimed.post("/api/auth/login", json=wrong).status_code for _ in range(10)
@@ -193,10 +169,7 @@ class TestLogin:
 
 
 class TestTheSessionCookie:
-    """The attributes are the whole of what protects it in a browser."""
-
     def test_it_is_httponly_strict_and_site_wide(self, client: TestClient) -> None:
-        """No ``Secure``: this app serves no TLS, so the flag would silence it."""
         client.post(
             "/api/auth/setup",
             json={"username": _USERNAME, "display_name": "", "password": _PASSWORD},
@@ -214,11 +187,6 @@ class TestTheSessionCookie:
     def test_every_authenticated_request_re_issues_it(
         self, claimed: TestClient
     ) -> None:
-        """Regression: the row rolled forward and the browser's copy did not.
-
-        ``Max-Age`` was fixed at sign-in, so a daily user was signed out on day
-        30 of a session that was still live.
-        """
         later = claimed.get("/api/users")
 
         assert later.status_code == 200
@@ -229,12 +197,6 @@ class TestTheSessionCookie:
     def test_a_route_returning_a_response_re_issues_it_too_regression(
         self, claimed: TestClient
     ) -> None:
-        """Regression: the re-issue rode on the dependency's ``Response``.
-
-        Bug reported: nine routes never rolled the browser's copy forward.
-        Root cause: FastAPI merges those headers only on the serialised path.
-        Fix: a middleware, which sees every route shape.
-        """
         export = claimed.get("/api/items/export?type=book&format=json")
 
         assert export.status_code == 200
@@ -245,10 +207,6 @@ class TestTheSessionCookie:
     def test_a_lapsed_session_is_not_handed_its_cookie_back(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """The boundary the re-issue must not cross: a browser still holding a
-        cookie whose row has aged out. Re-issued, it would roll a dead session
-        forward for ever and the day-30 expiry would never arrive.
-        """
         _lapse_every_session(storage)
 
         response = claimed.get("/api/users")
@@ -258,12 +216,9 @@ class TestTheSessionCookie:
 
 
 class TestLogout:
-    """Signing out has to reach the server, not just the browser."""
-
     def test_the_revoked_cookie_no_longer_authenticates(
         self, claimed: TestClient
     ) -> None:
-        """Replayed by anyone who copied it, the old cookie must be dead."""
         stolen = claimed.cookies[SESSION_COOKIE]
 
         assert claimed.post("/api/auth/logout").status_code == 204
@@ -275,19 +230,15 @@ class TestLogout:
         assert replay.json()["detail"] == UNAUTHORIZED_DETAIL
 
     def test_it_clears_the_browser_copy_too(self, claimed: TestClient) -> None:
-        """A cleared cookie is what stops the next page load 401ing."""
         response = claimed.post("/api/auth/logout")
 
         assert _set_cookie(response)[SESSION_COOKIE].value == ""
 
     def test_a_signed_out_caller_may_call_it(self, client: TestClient) -> None:
-        """A 401 here would leave a stale cookie nobody can get rid of."""
         assert client.post("/api/auth/logout").status_code == 204
 
 
 class TestTheSessionReport:
-    """One call on boot decides between setup, login and the app itself."""
-
     def test_an_unclaimed_instance_reports_neither(self, client: TestClient) -> None:
         response = client.get("/api/auth/session")
 
@@ -302,7 +253,6 @@ class TestTheSessionReport:
     def test_a_claimed_instance_signed_out_reports_the_claim_only(
         self, client: TestClient, storage: StorageManager
     ) -> None:
-        """The SPA opens on the login form rather than offering setup again."""
         storage.accounts.claim(_USERNAME, "The Owner", _PASSWORD)
 
         body = client.get("/api/auth/session").json()
@@ -314,7 +264,6 @@ class TestTheSessionReport:
     def test_a_signed_in_caller_gets_the_account(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """The web counterpart of ``account show``: who this browser is."""
         body = claimed.get("/api/auth/session").json()
 
         assert body == {
@@ -326,12 +275,9 @@ class TestTheSessionReport:
 
 
 class TestTheAccountRoutes:
-    """Shaped so a Users page is a new view rather than new plumbing."""
-
     def test_a_rename_survives_the_next_request(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """The rename is not a session change, so the cookie keeps working."""
         response = claimed.patch(
             "/api/users/1", json={"username": "renamed", "display_name": "Renamed"}
         )
@@ -351,11 +297,6 @@ class TestTheAccountRoutes:
     def test_a_username_no_sign_in_form_could_send_is_refused(
         self, claimed: TestClient, storage: StorageManager, username: str
     ) -> None:
-        """Regression: ``min_length=1`` with no strip stored "  " as a username.
-
-        The sign-in form trims, so that account could never be authenticated
-        again and this instance has no reset link.
-        """
         response = claimed.patch(
             "/api/users/1", json={"username": username, "display_name": ""}
         )
@@ -366,7 +307,6 @@ class TestTheAccountRoutes:
     def test_a_padded_username_is_stored_trimmed(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """Anchors the refusals above: padding alone is not what is rejected."""
         response = claimed.patch(
             "/api/users/1", json={"username": "  keeper  ", "display_name": "  Kee  "}
         )
@@ -377,7 +317,6 @@ class TestTheAccountRoutes:
         )
 
     def test_a_rename_of_somebody_else_is_refused(self, claimed: TestClient) -> None:
-        """A 404 would say which ids exist; nobody may edit another account."""
         response = claimed.patch(
             "/api/users/2", json={"username": "someone", "display_name": ""}
         )
@@ -387,7 +326,6 @@ class TestTheAccountRoutes:
     def test_a_password_change_costs_the_current_password(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """A borrowed unlocked browser must not be a permanent takeover."""
         response = claimed.put(
             "/api/users/1/password",
             json={"current_password": "not it", "new_password": "a new password"},
@@ -399,7 +337,6 @@ class TestTheAccountRoutes:
     def test_a_password_change_signs_the_other_browsers_out(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """The point of changing it: whoever else is signed in stops being."""
         elsewhere = storage.accounts.create_session(1)
 
         response = claimed.put(
@@ -409,7 +346,6 @@ class TestTheAccountRoutes:
 
         assert response.status_code == 204
         assert storage.accounts.lookup_session(elsewhere) is None
-        # The browser that made the change keeps working, on the same cookie.
         assert claimed.get("/api/users").status_code == 200
         assert storage.accounts.verify_password(_USERNAME, "a new password") is not None
 
@@ -426,7 +362,6 @@ class TestTheAccountRoutes:
     def test_a_short_new_password_is_refused_in_words_the_form_can_show(
         self, claimed: TestClient, storage: StorageManager
     ) -> None:
-        """The same floor as setup, and reported the same way — see setup's case."""
         response = claimed.put(
             "/api/users/1/password",
             json={
@@ -450,11 +385,6 @@ class TestTheAccountRoutes:
     def test_a_username_blank_in_any_alphabet_is_refused(
         self, claimed: TestClient, storage: StorageManager, username: str
     ) -> None:
-        """The blank check is ``str.strip``, which is not ASCII-space only.
-
-        A name a form's own trim would empty must not become the one this
-        instance signs in with, whichever space character it is built from.
-        """
         response = claimed.patch(
             "/api/users/1", json={"username": username, "display_name": ""}
         )
@@ -464,7 +394,6 @@ class TestTheAccountRoutes:
 
 
 def _lapse_every_session(storage: StorageManager) -> None:
-    """Age every session row out. Only its digest is stored, not its token."""
     with storage.sqlite_db.connection() as conn:
         conn.execute("UPDATE sessions SET expires_at = '2000-01-01T00:00:00'")
         conn.commit()
@@ -476,8 +405,6 @@ def _session_rows(storage: StorageManager) -> int:
 
 
 class TestLapsedSessionsAreSweptAtStartup:
-    """Nothing else deleted one, so the table grew for the database's life."""
-
     def test_boot_drops_them_and_leaves_the_live_session_alone(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
@@ -495,22 +422,12 @@ class TestLapsedSessionsAreSweptAtStartup:
 
 
 class TestABareMountedRouterStillAuthenticates:
-    """Regression: two test modules mounted the routers on a plain ``FastAPI``.
-
-    Bug: the dependency was applied at ``include_router`` in ``create_app``, so
-    every test in ``test_chat_api.py`` and ``test_themes.py`` ran signed out
-    and nothing said so.
-    Fix: the routers carry it themselves.
-    """
-
     def test_the_api_router_refuses_an_anonymous_request(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
         bare = FastAPI()
         bare.include_router(api_router)
 
-        # Booted only for the app state the routes read; the request goes to
-        # the bare mount above.
         with booted_web_app(storage, config):
             response = TestClient(bare).get("/api/status")
 
@@ -519,7 +436,6 @@ class TestABareMountedRouterStillAuthenticates:
     def test_the_sign_in_router_is_still_reachable_bare(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        """The exemption travels with the router too, or setup is unreachable."""
         bare = FastAPI()
         bare.include_router(auth_router)
 

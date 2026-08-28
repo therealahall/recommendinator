@@ -1,12 +1,9 @@
-"""Tests for the identity keys the recommendation engine maps candidates by."""
-
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.identity import candidate_key, library_key
 from src.utils.series import expand_tv_shows_to_seasons
 
 
 def _book(db_id: int | None, item_id: str | None = None) -> ContentItem:
-    """Build an unread book candidate."""
     return ContentItem(
         id=item_id,
         db_id=db_id,
@@ -17,7 +14,6 @@ def _book(db_id: int | None, item_id: str | None = None) -> ContentItem:
 
 
 def _seasons_of_one_show(db_id: int) -> list[ContentItem]:
-    """Expand one two-season show into its season-level candidates."""
     return expand_tv_shows_to_seasons(
         [
             ContentItem(
@@ -33,8 +29,6 @@ def _seasons_of_one_show(db_id: int) -> list[ContentItem]:
 
 
 class TestLibraryKey:
-    """The identity of the stored row an item came from."""
-
     def test_keys_on_the_database_row(self) -> None:
         assert library_key(_book(db_id=7)) == "db_7"
 
@@ -44,8 +38,6 @@ class TestLibraryKey:
 
 
 class TestCandidateKey:
-    """The identity of a single scoring candidate."""
-
     def test_matches_the_library_key_for_an_ordinary_candidate(self) -> None:
         item = _book(db_id=7)
         assert candidate_key(item) == library_key(item)
@@ -56,53 +48,30 @@ class TestCandidateKey:
         assert candidate_key(second) == "db_7#s2"
 
     def test_a_season_stored_as_text_keys_as_that_season(self) -> None:
-        """``"1"`` from a metadata blob is season 1, not a whole show.
-
-        Metadata round-trips through JSON, and a season that comes back as a
-        string used to fall through to the bare show key — putting the
-        candidate back in the collision class the season suffix exists to
-        break, alongside every sibling season of the same show.
-        """
         show_row = _book(db_id=7)
         show_row.metadata["season"] = "1"
 
         assert candidate_key(show_row) == "db_7#s1"
 
     def test_a_digit_that_int_refuses_keys_as_the_show_regression(self) -> None:
-        """Bug: one poisoned season value failed every request for its type.
-
-        Symptom: a metadata blob carrying ``"²"`` as its season made every
-        recommendation request for that content type return a 500, until the
-        row was edited by hand.
-        Root cause: the key gated on ``str.isdigit()``, which is true for a
-        strictly larger set than ``int()`` accepts, superscripts included, and
-        ``candidate_key`` runs on every candidate.
-        Fix: convert and fall through to the show key when the conversion
-        fails, the way ``extract_series_info`` already treats season metadata.
-        """
+        """Bug: one poisoned season value failed every request for its type."""
         show_row = _book(db_id=7)
         show_row.metadata["season"] = "²"
 
         assert candidate_key(show_row) == "db_7"
 
     def test_a_season_past_the_digit_limit_keys_as_the_show_regression(self) -> None:
-        """The same crash, from an all-ASCII value ``isdecimal`` accepts.
-
-        CPython caps ``int()`` on a string at 4300 digits, so tightening the
-        gate to ``str.isdecimal()`` leaves this one raising: only attempting
-        the conversion closes it.
-        """
+        """CPython caps ``int()`` on a string at 4300 digits, so tightening the gate
+        to ``str.isdecimal()`` leaves this one raising: only attempting the
+        conversion closes it."""
         show_row = _book(db_id=7)
         show_row.metadata["season"] = "1" * 5000
 
         assert candidate_key(show_row) == "db_7"
 
     def test_items_with_no_database_row_do_not_collide(self) -> None:
-        """Unsaved items are each their own identity, never a shared one.
-
-        Both items are held in locals for the whole assertion: the keys are
-        distinct because the objects coexist, not by luck of the allocator.
-        """
+        """Both items are held in locals for the whole assertion: the keys are
+        distinct because the objects coexist, not by luck of the allocator."""
         first = _book(db_id=None)
         second = _book(db_id=None)
 

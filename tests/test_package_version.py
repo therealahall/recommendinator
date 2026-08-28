@@ -25,9 +25,7 @@ class TestPackageVersion:
 
 
 class TestStaleEditableInstallRegression:
-    """Issue #68: the web UI showed 0.7.0 after pulling 0.35.1. ``importlib``
-    metadata is baked in at install time and an editable install never refreshes
-    it, so an adjacent pyproject.toml wins."""
+    """Issue #68: the web UI showed 0.7.0 after pulling 0.35.1."""
 
     def test_pyproject_version_overrides_stale_metadata(self) -> None:
         with (

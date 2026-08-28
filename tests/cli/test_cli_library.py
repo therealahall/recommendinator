@@ -1,5 +1,3 @@
-"""Tests for CLI library commands."""
-
 import csv
 import io
 import json
@@ -56,7 +54,6 @@ def _make_item(
     review: str | None = None,
     ignored: bool | None = False,
 ) -> ContentItem:
-    """Create a ContentItem for testing."""
     item = ContentItem(
         id=f"ext-{db_id}",
         external_ids=[ExternalId(source="goodreads_csv", external_id=f"ext-{db_id}")],
@@ -73,12 +70,9 @@ def _make_item(
 
 
 class TestLibraryList:
-    """Tests for library list command."""
-
     def test_list_table_states_each_rows_title_series_and_creator(
         self, cli_runner: CliRunner
     ) -> None:
-        """The series the title no longer carries is a column of its own."""
         items = [
             _make_item(db_id=1, title="Book One", author="Author A", rating=5),
             _make_item(db_id=2, title="Book Two", author="Author B", rating=3),
@@ -96,7 +90,6 @@ class TestLibraryList:
         assert "The Expanse #2" in result.output
 
     def test_list_json_output(self, cli_runner: CliRunner) -> None:
-        """Test listing items with JSON output matches web ContentItemResponse shape."""
         items = [
             _make_item(db_id=1, title="Book One", rating=5, review="Loved it"),
         ]
@@ -145,7 +138,6 @@ class TestLibraryList:
         assert item["total_seasons"] is None
 
     def test_list_empty_results(self, cli_runner: CliRunner) -> None:
-        """Test listing when no items match."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
@@ -155,7 +147,6 @@ class TestLibraryList:
         assert "No items found" in result.output
 
     def test_list_search_filters_results(self, cli_runner: CliRunner) -> None:
-        """Test that --search forwards the query and shows matching items."""
         items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
@@ -170,13 +161,6 @@ class TestLibraryList:
         assert call_kwargs["search"] == "Dune"
 
     def test_list_rejects_an_over_long_search_term(self, cli_runner: CliRunner) -> None:
-        """--search is bounded at the same length the web API accepts.
-
-        Fuzzy matching slides a window over every candidate title with no SQL
-        LIMIT to stop it, so the term's length multiplies the cost of the
-        whole scan. The web rejects a longer term with a 422; the CLI has to
-        agree or the two interfaces disagree about what a valid search is.
-        """
         mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
@@ -190,7 +174,6 @@ class TestLibraryList:
         mock_storage.get_content_items.assert_not_called()
 
     def test_list_forwards_sort_limit_offset(self, cli_runner: CliRunner) -> None:
-        """Test that --sort, --limit, --offset, --show-ignored reach storage."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
@@ -220,7 +203,6 @@ class TestLibraryList:
     def test_list_needs_rating_forces_completed_unrated(
         self, cli_runner: CliRunner
     ) -> None:
-        """--needs-rating lists completed items with no rating."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
@@ -235,19 +217,9 @@ class TestLibraryList:
 
 
 class TestLibraryListCreatorColumnRegression:
-    """`library list` headed the creator column "Author" for every type.
-
-    Bug reported: a movie printed its director under a column headed
-    "Author". Root cause: the header was hardcoded, which only looked right
-    while non-book items read back with no author at all and the column said
-    "N/A". Fix: one listing mixes the types, so the header is the name they
-    share.
-    """
-
     def test_a_mixed_listing_heads_its_creator_column_creator_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """A book's author and a movie's director sit under one honest header."""
         items = [
             _make_item(db_id=1, title="The Name of the Wind", author="Rothfuss"),
             _make_item(
@@ -270,8 +242,6 @@ class TestLibraryListCreatorColumnRegression:
 
 
 class TestLibraryShow:
-    """Tests for library show command."""
-
     def test_show_item(self, cli_runner: CliRunner) -> None:
         item = _make_item(
             db_id=42,
@@ -295,7 +265,6 @@ class TestLibraryShow:
     def test_show_names_the_manual_state_enrichment_reset_undoes(
         self, cli_runner: CliRunner
     ) -> None:
-        """The dialog says it on the web; nothing said it on the terminal."""
         item = _make_item(db_id=42)
         item.enriched = True
         item.manually_enriched = True
@@ -310,7 +279,6 @@ class TestLibraryShow:
         assert "Yes (manual)" in result.output
 
     def test_show_item_not_found(self, cli_runner: CliRunner) -> None:
-        """Test showing a non-existent item."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
@@ -322,7 +290,6 @@ class TestLibraryShow:
         assert "Error: Item 999 not found." in result.output
 
     def test_show_json_output(self, cli_runner: CliRunner) -> None:
-        """Test showing item with JSON output matches web ContentItemResponse shape."""
         item = _make_item(
             db_id=42, title="The Great Book", rating=5, review="Masterpiece"
         )
@@ -376,8 +343,6 @@ class TestLibraryShow:
     def test_show_table_names_the_source_behind_each_id(
         self, cli_runner: CliRunner
     ) -> None:
-        """An item holds one id per source, so the table has to say which
-        source contributed which — the web response names both."""
         item = _make_item(db_id=42)
         item.external_ids.append(ExternalId(source="steam", external_id="440"))
         mock_storage = make_storage_mock()
@@ -394,8 +359,6 @@ class TestLibraryShow:
     def test_show_table_states_the_year_a_correction_would_replace(
         self, cli_runner: CliRunner
     ) -> None:
-        """Reading what --release-year is about to overwrite must not cost a
-        second run in --format json."""
         item = _make_item(db_id=42, content_type=ContentType.VIDEO_GAME)
         item.metadata = {"release_year": 2016}
         mock_storage = make_storage_mock()
@@ -411,7 +374,6 @@ class TestLibraryShow:
         assert "2016" in rows[0]
 
     def test_show_json_tv_show_with_seasons(self, cli_runner: CliRunner) -> None:
-        """Test that TV show metadata populates seasons_watched and total_seasons."""
         item = _make_item(
             db_id=1, title="Breaking Bad", content_type=ContentType.TV_SHOW
         )
@@ -449,24 +411,10 @@ class TestLibraryShow:
 
 
 def _labelled_rows(output: str, label: str) -> list[str]:
-    """The rendered table rows whose first cell is ``label``."""
     return [line for line in output.splitlines() if line.startswith(f"| {label} ")]
 
 
 class TestLibraryShowCreatorLabelRegression:
-    """`library show` labelled every type's creator "Author".
-
-    Symptom: a movie rendered "Author | Denis Villeneuve" and a game
-    "Author | Larian Studios". Root cause: the detail row was hardcoded to
-    "Author", which only looked right because non-book items used to read back
-    with no author at all, so the row said "N/A". Fix: take the label from the
-    type's declared creator column in ``DETAIL_FIELDS``.
-    """
-
-    # The label each type's creator row carries, which is that type's
-    # ``creator_column`` in title case. Parametrizing over ``ContentType``
-    # rather than these keys means a type added without an entry fails here
-    # instead of raising KeyError out of ``library show``.
     labels = {
         ContentType.BOOK: "Author",
         ContentType.MOVIE: "Director",
@@ -480,7 +428,6 @@ class TestLibraryShowCreatorLabelRegression:
         cli_runner: CliRunner,
         content_type: ContentType,
     ) -> None:
-        """Each type names its creator the way a reader of that type would."""
         label = self.labels[content_type]
         item = _make_item(
             db_id=7, title="Fixture", author="Ada Lovelace", content_type=content_type
@@ -502,11 +449,6 @@ class TestLibraryShowCreatorLabelRegression:
     def test_creator_row_keeps_its_label_with_no_creator_stored(
         self, cli_runner: CliRunner
     ) -> None:
-        """An unknown director is still a director, not an author.
-
-        The label comes from the content type, so it does not fall back to
-        "Author" for the empty row that hid this bug in the first place.
-        """
         item = _make_item(
             db_id=7, title="Fixture", author=None, content_type=ContentType.MOVIE
         )
@@ -524,10 +466,7 @@ class TestLibraryShowCreatorLabelRegression:
 
 
 class TestLibraryEdit:
-    """Tests for library edit command."""
-
     def test_edit_rating(self, cli_runner: CliRunner) -> None:
-        """Test editing an item's rating."""
         item = _make_item(db_id=1, title="Book One")
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
@@ -546,7 +485,6 @@ class TestLibraryEdit:
         assert call_kwargs["rating"] == 5
 
     def test_edit_item_not_found(self, cli_runner: CliRunner) -> None:
-        """Test editing a non-existent item."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
@@ -560,7 +498,6 @@ class TestLibraryEdit:
         assert "Error: Item 999 not found." in result.output
 
     def test_edit_no_fields(self, cli_runner: CliRunner) -> None:
-        """Test that edit aborts when no fields are provided (before storage call)."""
         mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
@@ -569,12 +506,10 @@ class TestLibraryEdit:
 
         assert result.exit_code != 0
         assert "Provide at least one of" in result.output
-        # Guard fires before any storage access.
         mock_storage.get_content_item.assert_not_called()
         mock_storage.update_item_from_ui.assert_not_called()
 
     def test_edit_invalid_seasons_watched(self, cli_runner: CliRunner) -> None:
-        """Test that non-integer seasons-watched input is rejected."""
         mock_storage = make_storage_mock()
 
         result = _invoke_with_mocks(
@@ -599,7 +534,6 @@ class TestLibraryEdit:
     def test_edit_sends_the_seasons_its_flags_name(
         self, cli_runner: CliRunner, flags: list[str], sent: list[int] | None
     ) -> None:
-        """A status says nothing about seasons; only --clear-seasons empties them."""
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
@@ -614,7 +548,6 @@ class TestLibraryEdit:
         assert call_kwargs["seasons_watched"] == sent
 
     def test_edit_genres_tags_description(self, cli_runner: CliRunner) -> None:
-        """Test setting manual enrichment metadata forwards lists/text to storage."""
         item = _make_item(db_id=1, title="Book One")
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
@@ -681,10 +614,7 @@ class TestLibraryEdit:
 
 
 class TestLibraryEditRegression:
-    """Regression tests for the library edit command's input validation."""
-
     def _tv_storage(self) -> MagicMock:
-        """A storage mock returning a TV show item from get_content_item."""
         item = _make_item(db_id=1, title="Show", content_type=ContentType.TV_SHOW)
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
@@ -694,13 +624,6 @@ class TestLibraryEditRegression:
     def test_edit_rejects_season_above_cap_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """A season number above the cap is rejected, matching the web bound.
-
-        Bug reported: the web ItemEditRequest rejects seasons outside
-        1..MAX_SEASONS with a 422, but the CLI stored them silently.
-        Root cause: the CLI parsed --seasons-watched ints with no range check.
-        Fix: the CLI now rejects out-of-range seasons before touching storage.
-        """
         mock_storage = self._tv_storage()
         result = _invoke_with_mocks(
             cli_runner,
@@ -721,7 +644,6 @@ class TestLibraryEditRegression:
     def test_edit_rejects_season_below_one_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """A season number below 1 is rejected, matching the web ge=1 bound."""
         mock_storage = self._tv_storage()
         result = _invoke_with_mocks(
             cli_runner,
@@ -735,7 +657,6 @@ class TestLibraryEditRegression:
     def test_edit_rejects_too_many_seasons_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """A list longer than the cap is rejected, matching web max_length."""
         mock_storage = self._tv_storage()
         too_many = ",".join(str(n) for n in range(1, MAX_SEASONS + 2))
         result = _invoke_with_mocks(
@@ -750,13 +671,6 @@ class TestLibraryEditRegression:
     def test_edit_rejects_over_long_review_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """An over-long review is rejected, matching the web bound.
-
-        Bug reported: the web ItemEditRequest rejects reviews over
-        MAX_REVIEW_LENGTH with a 422, but the CLI stored them silently.
-        Root cause: --review had no length check before reaching storage.
-        Fix: the CLI now rejects over-long reviews before touching storage.
-        """
         item = _make_item(db_id=1, title="Book One")
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = item
@@ -775,16 +689,6 @@ class TestLibraryEditRegression:
     def test_edit_rejects_manual_metadata_over_caps_regression(
         self, cli_runner: CliRunner
     ) -> None:
-        """Over-cap manual genres/tags/description are rejected by the CLI.
-
-        Bug reported: the web ItemEditRequest caps manual metadata (at most
-        MAX_GENRES genres, MAX_TAGS tags, MAX_GENRE_TAG_LENGTH chars per
-        value, MAX_DESCRIPTION_LENGTH for the description) and 422s past those
-        bounds, but the CLI accepted any size and wrote it straight through.
-        Root cause: --genre/--tag/--description had no length checks before
-        reaching storage. Fix: the CLI now validates each bound and aborts
-        before any storage write, matching the web 422.
-        """
         item = _make_item(db_id=1, title="Book One")
 
         cases: list[list[str]] = [
@@ -811,21 +715,7 @@ class TestLibraryEditRegression:
 
 
 class TestLibraryEditPartialUpdate:
-    """Regression tests for `library edit` erasing fields it was not given.
-
-    Bug reported: ``library edit --id N --genre X`` (or any edit that did not
-    repeat the rating) nulled the item's rating and review. The rating is the
-    taste signal, so the item silently dropped out of preference analysis, and
-    the value could not be recovered.
-    Root cause: unset ``--rating`` / ``--review`` are None, and storage wrote
-    both columns unconditionally — "not supplied" and "clear it" were the same
-    value.
-    Fix: the CLI forwards UNSET for a flag the user did not pass, and storage
-    only writes the fields it was actually given.
-    """
-
     def _seeded_storage(self, tmp_path: Path) -> tuple[StorageManager, int]:
-        """A real temp-DB storage holding one rated, reviewed book."""
         storage = StorageManager(sqlite_path=tmp_path / "library.db")
         db_id = storage.save_content_item(
             ContentItem(
@@ -844,7 +734,6 @@ class TestLibraryEditPartialUpdate:
     def test_genre_only_edit_preserves_rating_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A genre-only edit leaves the stored rating and review in place."""
         storage, db_id = self._seeded_storage(tmp_path)
 
         edited = _invoke_with_mocks(
@@ -868,7 +757,6 @@ class TestLibraryEditPartialUpdate:
     def test_status_only_edit_preserves_rating_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A status-only edit leaves the stored rating and review in place."""
         storage, db_id = self._seeded_storage(tmp_path)
 
         edited = _invoke_with_mocks(
@@ -887,7 +775,6 @@ class TestLibraryEditPartialUpdate:
     def test_rating_edit_overwrites_the_existing_rating(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """An explicit --rating still replaces the stored value."""
         storage, db_id = self._seeded_storage(tmp_path)
 
         edited = _invoke_with_mocks(
@@ -904,16 +791,11 @@ class TestLibraryEditPartialUpdate:
 
 
 class TestLibraryEditCompletesEverySeasonRegression:
-    """`library edit --status completed` left the checklist partial (#123).
-
-    Cause: the CLI sent the stored status when --status was absent, so storage
-    could not tell a stated status from a filled-in one. Fix: absent is UNSET.
-    """
+    """`library edit --status completed` left the checklist partial (#123)."""
 
     def test_completed_status_ticks_every_season_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """`--status completed` marks every season of the show watched."""
         storage = StorageManager(sqlite_path=tmp_path / "library.db")
         db_id = storage.save_content_item(
             ContentItem(
@@ -941,26 +823,7 @@ class TestLibraryEditCompletesEverySeasonRegression:
 
 
 class TestLibraryEditClearing:
-    """Regression tests for clearing a rating or review from the CLI.
-
-    Bug reported: a mis-rated item could not be put back to unrated from the
-    command line, so it stayed out of ``library list --needs-rating`` forever
-    and kept feeding preference analysis a score the user disowned. The web
-    edit dialog clears both fields by sending an explicit null.
-    Root cause: making an omitted flag mean "leave it alone" — which it had to,
-    so that a genre-only edit stopped erasing the rating — left the CLI with no
-    way to say "clear it" at all. Before that, ``--status completed`` nulled
-    the rating implicitly, so the capability existed by accident and then went
-    away. An empty ``--review ""`` was worse than nothing: it stored the empty
-    string, which is not the NULL the web stores and which reads to the sync
-    door as a review the user wrote, so no later import could ever fill one in.
-    Fix: explicit ``--clear-rating`` / ``--clear-review`` flags that send the
-    same None the web sends, and an empty ``--review`` is refused rather than
-    stored.
-    """
-
     def _seeded_storage(self, tmp_path: Path) -> tuple[StorageManager, int]:
-        """A real temp-DB storage holding one rated, reviewed book."""
         storage = StorageManager(sqlite_path=tmp_path / "clear.db")
         db_id = storage.save_content_item(
             ContentItem(
@@ -978,7 +841,6 @@ class TestLibraryEditClearing:
     def test_clear_rating_stores_null_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--clear-rating puts the item back among the unrated."""
         storage, db_id = self._seeded_storage(tmp_path)
 
         result = _invoke_with_mocks(
@@ -997,7 +859,6 @@ class TestLibraryEditClearing:
     def test_clear_review_stores_null_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--clear-review stores NULL, not the empty string the web never sends."""
         storage, db_id = self._seeded_storage(tmp_path)
 
         result = _invoke_with_mocks(
@@ -1016,12 +877,6 @@ class TestLibraryEditClearing:
     def test_empty_review_is_refused_regression(
         self, cli_runner: CliRunner, tmp_path: Path, review: str
     ) -> None:
-        """An empty --review is refused rather than stored as an empty string.
-
-        ``--review ""`` is the form the bug was reported against; whitespace is
-        the same emptiness spelled differently, and the guard strips before
-        testing so both must be refused alike.
-        """
         storage, db_id = self._seeded_storage(tmp_path)
 
         result = _invoke_with_mocks(
@@ -1070,7 +925,6 @@ class TestLibraryEditClearing:
     def test_clear_genres_and_tags_empty_only_the_list_named(
         self, cli_runner: CliRunner, tmp_path: Path, flag: str, cleared: str, kept: str
     ) -> None:
-        """No --genre and "clear the genres" were the same None."""
         storage = StorageManager(sqlite_path=tmp_path / "clear.db")
         db_id = storage.save_content_item(
             ContentItem(
@@ -1121,10 +975,7 @@ class TestLibraryEditClearing:
 
 
 class TestLibraryIgnore:
-    """Tests for library ignore command."""
-
     def test_ignore_item(self, cli_runner: CliRunner) -> None:
-        """Test ignoring an item."""
         mock_storage = make_storage_mock()
         mock_storage.set_item_ignored.return_value = True
 
@@ -1139,7 +990,6 @@ class TestLibraryIgnore:
         )
 
     def test_ignore_item_not_found(self, cli_runner: CliRunner) -> None:
-        """Test ignoring a non-existent item."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_item.return_value = None
 
@@ -1209,10 +1059,7 @@ class TestLibraryIgnore:
 
 
 class TestLibraryExport:
-    """Tests for library export command."""
-
     def test_export_to_file(self, cli_runner: CliRunner, tmp_path: Path) -> None:
-        """Test exporting to a file (--output)."""
         items = [_make_item(db_id=1, title="Book One")]
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = items
@@ -1245,7 +1092,6 @@ class TestLibraryExport:
     def test_export_without_a_type_covers_every_content_type(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """No --type exports the whole library, as the web Export button does."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [
             _make_item(db_id=1, title="Book One"),
@@ -1271,11 +1117,6 @@ class TestLibraryExport:
     def test_export_guards_a_formula_title_regression(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """The CLI writes the same neutralised cell the web export does.
-
-        Every other test here mocks the exporter out, so nothing else proves
-        the CLI reaches the guarded writer.
-        """
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [
             _make_item(db_id=1, title='=HYPERLINK("http://evil","x")')
@@ -1297,7 +1138,6 @@ class TestLibraryExport:
     def test_an_output_path_that_cannot_be_written_is_named_not_raised(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """It reached ``write_text`` bare and surfaced a traceback."""
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
         destination = tmp_path / "absent" / "library.csv"
@@ -1310,17 +1150,12 @@ class TestLibraryExport:
 
         assert result.exit_code != 0
         assert str(destination) in result.output
-        # An unhandled fault never reaches the runner's output; only this says.
         assert isinstance(result.exception, SystemExit)
 
     @pytest.mark.parametrize("refusal", ["n\n", "\n"])
     def test_an_existing_output_file_is_replaced_only_when_the_operator_said_so(
         self, cli_runner: CliRunner, tmp_path: Path, refusal: str
     ) -> None:
-        """It was clobbered silently, taking whatever was there with it.
-
-        A bare Enter is the operator not deciding, so it is the second refusal.
-        """
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = [_make_item(db_id=1)]
         destination = tmp_path / "library.csv"
@@ -1352,7 +1187,6 @@ class TestLibraryExport:
 
 
 def _duplicate_library(tmp_path: Path) -> tuple[StorageManager, list[int]]:
-    """Two live pairs: one the exact key matches, one only the looser key does."""
     storage = StorageManager(sqlite_path=tmp_path / "duplicates.db")
     rows = [
         ("goodreads_csv", "1", "The Gate of the Feral Gods", None),
@@ -1431,8 +1265,6 @@ def _json(cli_runner: CliRunner, storage: StorageManager, args: list[str]) -> An
 
 
 class TestLibraryDuplicates:
-    """Suspected duplicates are offered with enough to judge them by."""
-
     def test_each_block_shows_every_copy_and_the_looser_key_reads_as_looser(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -1454,7 +1286,6 @@ class TestLibraryDuplicates:
     def test_a_declined_pair_is_listed_and_undeclining_it_offers_it_again(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Without both verbs a decline is unlistable and irreversible."""
         storage, db_ids = _duplicate_library(tmp_path)
         pair = ["--one", str(db_ids[0]), "--other", str(db_ids[1])]
         declined = _invoke_with_mocks(
@@ -1538,7 +1369,6 @@ class TestLibraryDuplicates:
     def test_one_copy_named_twice_is_refused_once_and_a_dead_id_refuses_none(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--other repeated refuses a block, so an id typed twice is one pair."""
         storage, db_ids = _duplicate_library(tmp_path)
         third = _save_book(
             storage, "storygraph_csv", "5", "Deadhouse Gates (Malazan, Book Two)"
@@ -1568,7 +1398,6 @@ class TestLibraryDuplicates:
     def test_a_decline_naming_more_copies_than_a_block_holds_is_refused(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A block holds 40, so the largest list a listing offers has to be taken."""
         storage, db_ids = _duplicate_library(tmp_path)
 
         def decline(count: int) -> Any:
@@ -1592,7 +1421,6 @@ class TestLibraryDuplicates:
     def test_a_copy_two_blocks_both_offer_says_so_in_each_of_them(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Overlap is the exception now, so a repeat reads as a second work."""
         storage, db_ids = _duplicate_library(tmp_path)
         third = _save_book(
             storage, "storygraph_csv", "5", "Deadhouse Gates (Malazan, Book Two)"
@@ -1619,7 +1447,6 @@ class TestLibraryDuplicates:
     def test_a_type_filter_and_a_limit_cut_the_offer_without_hiding_the_count(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A first run offers hundreds, so the count is what says what is left."""
         storage, _ = _duplicate_library(tmp_path)
 
         books = _json(cli_runner, storage, ["library", "duplicates", "--type", "book"])
@@ -1641,7 +1468,6 @@ class TestLibraryDuplicates:
     def test_a_work_left_unsearched_is_reported_rather_than_counted_as_none(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A shelf of volumes collapses to one key, so this is reachable."""
         storage = StorageManager(sqlite_path=tmp_path / "shelf.db")
         for index in range(GROUP_MEMBER_MAX + 1):
             _save_book(storage, "calibre", str(index), f"The Wandering Inn ({index})")
@@ -1665,8 +1491,6 @@ class TestLibraryDuplicates:
 
 
 class TestLibraryMerge:
-    """A merge names what absorbed what, and comes back off."""
-
     def test_a_merge_is_listed_and_unmerge_puts_the_absorbed_row_back(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -1716,8 +1540,6 @@ class TestLibraryMerge:
 
 
 class TestDuplicateJsonIsTheSharedSerializer:
-    """Nothing else runs a verb and checks the serializer built its json."""
-
     def test_every_suggestion_and_refusal_verb_emits_what_it_makes(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -1758,12 +1580,9 @@ class TestDuplicateJsonIsTheSharedSerializer:
 
 
 class TestDuplicatesWrongIds:
-    """Every mutating verb takes raw integers, so every wrong one must refuse."""
-
     def test_a_merge_refuses_each_wrong_id_in_the_storage_layer_s_own_words(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Each refusal passes through whole, and none of them records a merge."""
         storage, db_ids = _duplicate_library(tmp_path)
         survivor, absorbed = db_ids[0], db_ids[1]
         first = _merge(cli_runner, storage, survivor, absorbed)
@@ -1791,7 +1610,6 @@ class TestDuplicatesWrongIds:
     def test_declining_takes_only_two_live_rows_of_this_user(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """One id twice, a row a merge hid and another user's all refuse first."""
         storage, db_ids = _duplicate_library(tmp_path)
         survivor, absorbed = db_ids[0], db_ids[1]
         assert _merge(cli_runner, storage, survivor, absorbed).exit_code == 0
@@ -1813,7 +1631,6 @@ class TestDuplicatesWrongIds:
     def test_an_undo_addressed_to_another_user_finds_nothing_to_undo(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--user scopes these too: neither reaches a record it does not own."""
         storage, db_ids = _duplicate_library(tmp_path)
         merge_id = json.loads(
             _merge(cli_runner, storage, db_ids[0], db_ids[1], fmt="json").output
@@ -1841,13 +1658,9 @@ class TestDuplicatesWrongIds:
 
 
 class TestDuplicatesOperatorPath:
-    """The states a real library reaches the review surface in."""
-
     def test_merging_a_pair_the_list_offered_keeps_the_survivor_in_the_library(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Reported: merging a suggested pair took the survivor out of `library
-        list`, and an ignore on the absorbed row moved onto the survivor."""
         storage, db_ids = _duplicate_library(tmp_path)
         survivor, absorbed = db_ids[0], db_ids[1]
         ignored = _invoke_with_mocks(
@@ -1856,8 +1669,6 @@ class TestDuplicatesOperatorPath:
         assert ignored.exit_code == 0, ignored.output
 
         offered = _json(cli_runner, storage, ["library", "duplicates"])["suggestions"]
-        # Both blocks, so a pass that withheld the ignored one fails here rather
-        # than passing an emptier version of the merge below.
         assert [[copy["db_id"] for copy in block["copies"]] for block in offered] == [
             [survivor, absorbed],
             [db_ids[2], db_ids[3]],
@@ -1875,7 +1686,6 @@ class TestDuplicatesOperatorPath:
     def test_lifting_a_refusal_a_merge_hides_says_which_merge_to_undo_first(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """The lift used to go through, leaving the pair in neither list."""
         storage, db_ids = _duplicate_library(tmp_path)
         one, other = db_ids[0], db_ids[1]
         assert _decline(cli_runner, storage, one, other).exit_code == 0
@@ -1897,11 +1707,8 @@ class TestDuplicatesOperatorPath:
     def test_a_library_of_distinct_titles_offers_only_its_real_duplicates(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A key that collapses distinct titles floods the only cleanup tool."""
         storage = StorageManager(sqlite_path=tmp_path / "big.db")
         titles = [f"Chapter {number} of the Long Road" for number in range(300)]
-        # The second copy of each of five carries the series parenthetical one
-        # source appends: a separate row, which only the looser key pairs back.
         twins = [
             f"{title} (The Long Road, Book {index})"
             for index, title in enumerate(titles[:5])
@@ -1928,8 +1735,6 @@ class TestDuplicatesOperatorPath:
     def test_no_library_verb_deletes_an_item(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Deleting a hidden middle row orphans what it absorbed with no record
-        and no undo, and these verbs print exactly the ids a merge hides."""
         storage, db_ids = _duplicate_library(tmp_path)
 
         gone = _invoke_with_mocks(
@@ -1992,9 +1797,6 @@ class TestLibraryEditCorrections:
     def test_edit_refuses_a_correction_outside_the_web_bounds(
         self, cli_runner: CliRunner
     ) -> None:
-        """Both bounds are the CLI's own: the year through Click's range and the
-        creator length by hand, so dropping either lets the CLI store what the
-        edit dialog refuses."""
         mock_storage = self._game_storage()
 
         for extra_args in (
@@ -2014,8 +1816,6 @@ class TestLibraryEditCorrections:
     def test_edit_reports_a_type_that_states_no_release_year(
         self, cli_runner: CliRunner
     ) -> None:
-        """Storage refuses a year on a book, and only this door turns that into
-        a message instead of a traceback."""
         mock_storage = self._game_storage()
         mock_storage.update_item_from_ui.side_effect = UncorrectableFieldError(
             "A book has no release year to correct."

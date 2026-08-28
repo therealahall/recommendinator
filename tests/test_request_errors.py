@@ -1,5 +1,3 @@
-"""Tests for the request-error scrubbing utility."""
-
 from unittest.mock import Mock
 
 import requests
@@ -8,10 +6,7 @@ from src.utils.request_errors import scrub_request_error
 
 
 class TestScrubRequestError:
-    """Tests for scrub_request_error()."""
-
     def test_http_error_with_response_returns_status_only(self) -> None:
-        """An HTTPError with a response surfaces only the status code."""
         response = Mock(spec=requests.Response)
         response.status_code = 401
         error = requests.HTTPError("401 Client Error", response=response)
@@ -19,13 +14,11 @@ class TestScrubRequestError:
         assert scrub_request_error(error) == "HTTP 401"
 
     def test_connection_error_returns_class_name(self) -> None:
-        """Transport errors surface only the exception class name."""
         error = requests.ConnectionError("connection refused")
 
         assert scrub_request_error(error) == "ConnectionError"
 
     def test_never_leaks_secret_from_http_error_message(self) -> None:
-        """A secret embedded in the HTTPError's URL never reaches the output."""
         response = Mock(spec=requests.Response)
         response.status_code = 403
         error = requests.HTTPError(

@@ -44,14 +44,6 @@ def _unused_url() -> str:
 
 
 class TestTheProbeSurvivesTheAuthRequirement:
-    """Regression test: both shipped images reported unhealthy forever.
-
-    Bug reported: containers never left `unhealthy`.
-    Root cause: the probe read any `urlopen` raise as death; auth made 401,
-    which raises, the only answer.
-    Fix: it reads the status code.
-    """
-
     def test_a_401_is_healthy(self, answering) -> None:
         assert HEALTHY_STATUS == 401
         assert probe(answering(HEALTHY_STATUS)) == 0

@@ -1,5 +1,3 @@
-"""The web OAuth connect flow keys every credential on the source id."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -26,11 +24,6 @@ def storage(tmp_path: Path) -> StorageManager:
 
 @pytest.fixture()
 def config() -> dict[str, Any]:
-    """Three OAuth sources, none named after its plugin.
-
-    ``is_gog_enabled`` and ``is_epic_enabled`` read the YAML ``inputs`` block,
-    so each source is declared there as well as in the database.
-    """
     return {
         "storage": {"database_path": "data/test.db"},
         "inputs": {
@@ -47,7 +40,6 @@ def booted_client(
     config: dict[str, Any],
     migrate_credentials: bool = False,
 ) -> Iterator[TestClient]:
-    """A booted app over *storage*."""
     with booted_web_app(
         storage, config, migrate_credentials=migrate_credentials
     ) as app:
@@ -56,7 +48,6 @@ def booted_client(
 
 @pytest.fixture()
 def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClient]:
-    """A booted app over a real credential database, sources already migrated."""
     for source_id, entry in config["inputs"].items():
         fields = {k: v for k, v in entry.items() if k not in ("plugin", "enabled")}
         storage.sources.upsert(
@@ -67,9 +58,6 @@ def client(storage: StorageManager, config: dict[str, Any]) -> Iterator[TestClie
         yield test_client
 
 
-# Every route that turns a client-supplied id into a credential key, with a
-# body it would otherwise accept and the outward call it makes once past its
-# gate. A refusal that still reached the provider is not a refusal.
 WRITE_ROUTES: list[tuple[str, dict[str, str] | None, str]] = [
     (
         "/api/gog/exchange",
@@ -106,7 +94,6 @@ READ_ROUTES = [
 def resolved_config(
     config: dict[str, Any], storage: StorageManager, source_id: str
 ) -> dict[str, Any]:
-    """The config the next sync of *source_id* would run with."""
     for resolved in resolve_inputs(config, storage=storage, user_id=USER_ID):
         if resolved.source_id == source_id:
             return resolved.config
@@ -114,13 +101,6 @@ def resolved_config(
 
 
 class TestOAuthConnectSourceBindingRegression:
-    """Regression: the connect routes saved the token under the plugin name.
-
-    Bug reported: a source named ``gog_work`` never read its own token back.
-    Root cause: the routes carried no source id.
-    Fix: every OAuth route takes one.
-    """
-
     def test_gog_round_trip_regression(
         self, client: TestClient, storage: StorageManager, config: dict[str, Any]
     ) -> None:
@@ -151,8 +131,6 @@ class TestOAuthConnectSourceBindingRegression:
     def test_trakt_round_trip_regression(
         self, client: TestClient, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        # The device flow resolves this source's own client credentials, so the
-        # secret has to sit under the id the poll is asked about.
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
         with patch(
@@ -180,11 +158,6 @@ class TestOAuthConnectSourceBindingRegression:
 
 @pytest.fixture()
 def db_only_config() -> dict[str, Any]:
-    """No ``inputs`` block at all — what the Data tab produces.
-
-    ``create_source`` writes a ``source_configs`` row and never touches
-    config.yaml.
-    """
     return {
         "storage": {"database_path": "data/test.db"},
         "inputs": {},
@@ -195,7 +168,6 @@ def db_only_config() -> dict[str, Any]:
 def db_only_client(
     storage: StorageManager, db_only_config: dict[str, Any]
 ) -> Iterator[TestClient]:
-    """A booted app whose three OAuth sources exist only in the database."""
     storage.sources.upsert(USER_ID, "gog_db", "gog", {}, enabled=True)
     storage.sources.upsert(USER_ID, "epic_db", "epic_games", {}, enabled=True)
     storage.sources.upsert(
@@ -208,21 +180,9 @@ def db_only_client(
 
 
 class TestDatabaseBackedSourceCanConnectRegression:
-    """Regression: a source added from the Data tab could not be connected.
-
-    Reported: in-app ``gog_work`` answered ``enabled: false`` and 400.
-    Cause: the GOG and Epic enablement checks read config.yaml ``inputs``
-    alone. Fix: resolve the source the way sync does.
-    """
-
     def test_trakt_db_only_source_connects(
         self, db_only_client: TestClient, storage: StorageManager
     ) -> None:
-        """The anchor: Trakt already resolves through ``resolve_inputs``.
-
-        Without it the two failures below read as "no OAuth source may be
-        DB-only" — a design limit rather than a defect in two of three modules.
-        """
         assert db_only_client.get("/api/trakt/status?source_id=trakt_db").json() == {
             "enabled": True,
             "connected": False,
@@ -299,7 +259,6 @@ YAML_HELD_SOURCES = [
 
 
 def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
-    """A source whose refresh token is still written in config.yaml."""
     return {
         "storage": {"database_path": "data/test.db"},
         "inputs": {
@@ -313,14 +272,6 @@ def yaml_held_token_config(source_id: str, plugin: str) -> dict[str, Any]:
 
 
 class TestAFileHeldTokenReachesBothWebVerbsRegression:
-    """Regression: a file-held token was stranded under the plugin's name.
-
-    Bug reported: ``gog_work`` could not revoke its token.
-    Root cause: the migrated row is keyed on the source id, the verbs read
-    the plugin's.
-    Fix: both read that row.
-    """
-
     @pytest.mark.parametrize(("provider", "source_id", "plugin"), YAML_HELD_SOURCES)
     def test_status_reads_connected_and_disconnect_deletes_it(
         self,
@@ -355,18 +306,11 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
         source_id: str,
         plugin: str,
     ) -> None:
-        """The database row is the only authority, so the file copy is dropped.
-
-        Nothing reads it and no verb can delete it — which is what the
-        disconnect 404 below reports.
-        """
         storage.sources.upsert(USER_ID, source_id, plugin, {}, enabled=True)
         config = yaml_held_token_config(source_id, plugin)
         assert config["inputs"][source_id]["refresh_token"] == "from-yaml"
 
         with booted_client(storage, config, migrate_credentials=True) as client:
-            # Only the real pass empties the entry. Every other assertion here
-            # also holds when the migration never ran at all.
             assert "refresh_token" not in config["inputs"][source_id]
             assert storage.credentials.get(USER_ID, source_id, "refresh_token") is None
             assert not client.get(
@@ -381,12 +325,6 @@ class TestAFileHeldTokenReachesBothWebVerbsRegression:
 
 
 class TestRouteRefusesASourceRunningAnotherPlugin:
-    """The id is client-supplied, so the route has to own who it may write to.
-
-    A GOG token written under a Trakt source's id is a credential the Trakt
-    plugin will hand to api.trakt.tv on the next sync.
-    """
-
     @pytest.mark.parametrize(
         ("endpoint", "extract", "exchange", "body"),
         [
@@ -461,20 +399,12 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
 
 
 class TestDisconnectingAnIdNoSourceClaimsRegression:
-    """Reported: deleting ``inputs.gog`` left its refresh token undeletable.
-
-    Cause: the gate read "no source claims this id" as "another plugin does".
-    Fix: only another plugin's source puts an id out of reach.
-    """
-
     @pytest.mark.parametrize("provider", ["gog", "epic", "trakt"])
     def test_a_stranded_token_can_still_be_revoked(
         self, client: TestClient, storage: StorageManager, provider: str
     ) -> None:
         storage.credentials.save(USER_ID, "leftover", "refresh_token", "stranded")
 
-        # Status is what the operator has to notice it by, so it answers for
-        # the row this verb can reach rather than for a source there is none of.
         body = client.get(f"/api/{provider}/status?source_id=leftover").json()
         assert body["enabled"] is False
         assert body["connected"] is True
@@ -488,19 +418,12 @@ class TestDisconnectingAnIdNoSourceClaimsRegression:
     def test_an_id_holding_nothing_is_still_a_404(
         self, client: TestClient, storage: StorageManager, provider: str
     ) -> None:
-        """The permitted id and the empty one are told apart by the row alone."""
         response = client.delete(f"/api/{provider}/token?source_id=leftover")
 
         assert response.status_code == 404, response.text
 
 
 class TestADisabledSourceCanStillBeDisconnectedRegression:
-    """Reported: disabling a connected source strands its refresh token.
-
-    Cause: the routes resolved through a helper that drops disabled sources.
-    Fix: bind on the source's plugin, not its enabled flag.
-    """
-
     @pytest.fixture()
     def disabled(
         self, client: TestClient, storage: StorageManager, source_id: str
@@ -545,12 +468,6 @@ CONNECT_EXCHANGES = [
 
 
 class TestConnectingADisabledSourceIsRefused:
-    """Deliberate: a disabled source takes on no new credential.
-
-    A refused connect costs one toggle and a retry; a refused disconnect
-    strands the token. The enabled leg of each case is the anchor.
-    """
-
     @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.parametrize(
         ("endpoint", "source_id", "extract", "exchange", "body"), CONNECT_EXCHANGES
@@ -601,8 +518,6 @@ class TestConnectingADisabledSourceIsRefused:
         )
 
 
-# Trakt reports connected only while its client credentials resolve, and the
-# secret half of the pair lives in the credential store.
 STATUS_SOURCES = [
     ("gog", "gog_work", {}),
     ("epic", "epic_work", {}),
@@ -611,20 +526,12 @@ STATUS_SOURCES = [
 
 
 class TestClearingTheTraktClientSecretLeavesTheTokenVisibleRegression:
-    """Reported: clearing the Trakt client secret hid the Disconnect control.
-
-    Cause: ``connected`` was computed by resolving the client credentials,
-    which raises when either half is missing. Fix: it asks who owns the id.
-    """
-
     def test_connected_survives_a_cleared_client_secret(
         self, client: TestClient, storage: StorageManager
     ) -> None:
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
         storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "still-live")
 
-        # Anchor: with the secret in place both answers are true, so the clear
-        # below is the only thing that moves either.
         assert client.get("/api/trakt/status?source_id=trakt_work").json() == {
             "enabled": True,
             "connected": True,
@@ -639,12 +546,6 @@ class TestClearingTheTraktClientSecretLeavesTheTokenVisibleRegression:
 
 
 class TestStatusSeparatesEnabledFromConnected:
-    """``enabled`` is about the source, ``connected`` about its token.
-
-    The Data tab hangs its disconnect control off ``connected``, so folding
-    the enabled flag into it hides the only control that revokes the token.
-    """
-
     @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.parametrize(("provider", "source_id", "secrets"), STATUS_SOURCES)
     def test_a_stored_token_reads_connected_whatever_the_enabled_flag(
@@ -668,8 +569,6 @@ class TestStatusSeparatesEnabledFromConnected:
 
 
 class TestEveryOAuthRouteValidatesTheSourceId:
-    """The parameter is a credential key on ten routes, not six."""
-
     @pytest.mark.parametrize(("endpoint", "body", "outward"), WRITE_ROUTES)
     @pytest.mark.parametrize("bad_id", MALFORMED_IDS)
     def test_write_route_rejects_a_malformed_id(

@@ -1,5 +1,3 @@
-"""Tests for the shared CLI/web ContentItem serialization helpers."""
-
 import pytest
 
 from src.storage.duplicates import (
@@ -54,11 +52,8 @@ _A_DECLINE = DeclinedPair(one_id=3, one_title="One", other_id=4, other_title="Ot
 
 
 def test_unknown_enriched_serializes_as_false() -> None:
-    """A default ContentItem (enriched=None) serializes enriched as False.
-
-    The wire type is a non-nullable bool, so an unknown enrichment state
-    (an item not read back from storage) intentionally collapses to False.
-    """
+    """The wire type is a non-nullable bool, so an unknown enrichment state (an item
+    not read back from storage) intentionally collapses to False."""
     item = make_item()
     assert item.enriched is None
 
@@ -86,9 +81,8 @@ def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
 
 
 def test_the_cli_json_and_the_web_response_carry_the_same_keys() -> None:
-    """``--format json`` emits this dict as it stands while the web validates
-    it into ContentItemResponse, which drops a key the model does not declare.
-    """
+    """``--format json`` emits this dict as it stands while the web validates it into
+    ContentItemResponse, which drops a key the model does not declare."""
     assert set(item_to_dict(make_item())) == set(ContentItemResponse.model_fields)
 
 

@@ -1,5 +1,3 @@
-"""Tests for CLI enrichment commands."""
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -21,7 +19,6 @@ def _invoke_with_enrichment_manager(
     mock_manager: MagicMock,
     config: dict | None = None,
 ) -> object:
-    """Invoke CLI with the standard mocks plus a mocked EnrichmentManager."""
     with patch(
         "src.cli.commands._enrichment.EnrichmentManager", return_value=mock_manager
     ):
@@ -33,7 +30,6 @@ def _make_status(
     items_processed: int = 10,
     items_enriched: int = 8,
 ) -> MagicMock:
-    """Build an EnrichmentJobStatus mock with sensible defaults."""
     mock_status = MagicMock(spec=EnrichmentJobStatus)
     mock_status.running = False
     mock_status.completed = completed
@@ -49,12 +45,9 @@ def _make_status(
 
 
 class TestEnrichmentStart:
-    """Tests for enrichment start command."""
-
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, cli_runner: CliRunner
     ) -> None:
-        """It used to send the user to a config.yaml key the app no longer reads."""
         mock_storage = make_storage_mock()
         result = _invoke_with_mocks(
             cli_runner,
@@ -69,7 +62,6 @@ class TestEnrichmentStart:
         assert "settings set enrichment.enabled true" in result.output
 
     def test_enrichment_start_success(self, cli_runner: CliRunner) -> None:
-        """Test successful enrichment start forwards correct args to the manager."""
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
@@ -91,13 +83,6 @@ class TestEnrichmentStart:
         )
 
     def test_enrichment_start_retry_not_found(self, cli_runner: CliRunner) -> None:
-        """--retry-not-found forwards include_not_found=True to the manager.
-
-        Bug: earlier revisions silently dropped the flag because the CLI did
-        not forward it through to EnrichmentManager.start_enrichment. The web
-        API's /api/enrichment/start accepts retry_not_found, so parity
-        requires the CLI to do the same.
-        """
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
@@ -119,9 +104,6 @@ class TestEnrichmentStart:
     def test_start_does_not_call_a_run_that_gave_up_completed(
         self, cli_runner: CliRunner
     ) -> None:
-        """A revoked key abandons the run's only provider, and the summary the
-        operator is watching has to say so rather than claim the library is done.
-        """
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = True
@@ -142,7 +124,6 @@ class TestEnrichmentStart:
         assert "tmdb" in result.output
 
     def test_enrichment_already_running(self, cli_runner: CliRunner) -> None:
-        """Test error when enrichment is already running."""
         mock_storage = make_storage_mock()
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.return_value = False
@@ -160,8 +141,6 @@ class TestEnrichmentStart:
 
 
 class TestEnrichmentJobControl:
-    """The CLI could not see or stop a job the web UI started."""
-
     @staticmethod
     def _running(tmp_path: Path) -> StorageManager:
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
@@ -192,7 +171,6 @@ class TestEnrichmentJobControl:
     def test_job_json_carries_the_web_response_field_set(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Parity: the key set must match EnrichmentJobStatusResponse exactly."""
         result = _invoke_with_mocks(
             cli_runner,
             ["enrichment", "job", "--format", "json"],
@@ -248,8 +226,6 @@ class TestEnrichmentJobControl:
     def test_ctrl_c_releases_the_claim_rather_than_stranding_it(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """The worker is a daemon thread, so the process can exit before it sees
-        the stop; the claim would then block both Start doors until it staled."""
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.side_effect = (
@@ -273,8 +249,6 @@ class TestEnrichmentJobControl:
     def test_a_second_ctrl_c_during_the_wait_still_releases_the_claim(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Escaping the join leaves the claim held, which is what the first
-        Ctrl-C handler was added to prevent."""
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
         mock_manager.start_enrichment.side_effect = (
@@ -297,7 +271,6 @@ class TestEnrichmentJobControl:
     def test_the_interrupt_keeps_the_failures_the_run_had_already_published(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """They are usually why the operator interrupted."""
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
 
@@ -334,7 +307,6 @@ class TestEnrichmentJobControl:
     def test_a_run_that_released_itself_is_left_alone_by_the_interrupt(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Finishing unconditionally would record a completed run as cancelled."""
         storage = StorageManager(sqlite_path=tmp_path / "job.db")
         mock_manager = MagicMock(spec=EnrichmentManager)
 
@@ -372,7 +344,6 @@ class TestEnrichmentJobControl:
 
 class TestEnrichmentStatus:
     def test_enrichment_status_json(self, cli_runner: CliRunner) -> None:
-        """Parity: the JSON is web EnrichmentStatsResponse, key for key."""
         mock_storage = make_storage_mock()
         stats = {
             "total": 100,
@@ -398,7 +369,6 @@ class TestEnrichmentReset:
     def test_reset_prompt_states_the_count_each_filter_leaves(
         self, cli_runner: CliRunner
     ) -> None:
-        """The library total under --provider or --type overstates the damage."""
         mock_storage = make_storage_mock()
         mock_storage.enrichment.stats.return_value = {
             "resettable": 1488,
@@ -423,7 +393,6 @@ class TestEnrichmentReset:
         mock_storage.enrichment.reset.assert_not_called()
 
     def test_enrichment_reset_all(self, cli_runner: CliRunner) -> None:
-        """--yes skips the prompt and leaves every filter unset."""
         mock_storage = make_storage_mock()
         mock_storage.enrichment.reset.return_value = 50
 
@@ -440,7 +409,6 @@ class TestEnrichmentReset:
     def test_enrichment_reset_hands_one_item_back_to_automatic_enrichment(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A dialog edit stamps the item manual, and nothing undid that."""
         storage = StorageManager(sqlite_path=tmp_path / "reset.db")
         db_id = storage.save_content_item(
             ContentItem(

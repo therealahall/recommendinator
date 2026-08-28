@@ -1,5 +1,3 @@
-"""Tests for CLI __main__ entry point."""
-
 import os
 from pathlib import Path
 from typing import Any
@@ -21,12 +19,6 @@ from tests.factories import make_storage_mock
 def test_a_source_named_goodreads_keeps_its_items_across_boots(
     tmp_path: Path,
 ) -> None:
-    """Regression: a source named ``goodreads`` lost its label on every boot.
-
-    A startup pass rewrote ``content_items.source`` to ``goodreads_csv``, and
-    nothing reserves that id, so the library landed under a source that does
-    not exist.
-    """
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
     storage.sources.upsert(
         1, "goodreads", "goodreads_csv", {"path": "inputs/library.csv"}, enabled=True
@@ -58,39 +50,10 @@ def test_a_source_named_goodreads_keeps_its_items_across_boots(
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateDbOnlySourceRegression:
-    """``update`` must sync sources that live only in the database.
-
-    Bug: the CLI ``update`` single-source branch gated on the YAML
-    ``inputs`` map (``config.get("inputs", {}).get(source)``) and aborted
-    "Unknown source" before reaching ``resolve_inputs``. A source created via
-    ``source create`` or the web Add-source modal lives only in the
-    ``source_configs`` table (with its secret in ``credentials``) and has no
-    YAML entry, so it could not be synced from the CLI even though the web
-    ``/update`` endpoint had just been fixed to sync it — a CLI/web parity gap.
-    ``update --source list`` had the same YAML-only blind spot, so the id was
-    not even discoverable.
-
-    Root cause: the single-source branch (and ``--source list``) read the YAML
-    ``inputs`` map directly instead of the DB-aware ``resolve_inputs`` /
-    ``get_available_sync_sources`` helpers.
-
-    Fix: resolve the single source through ``resolve_inputs(config,
-    storage=storage)`` filtered by ``source_id`` (mirroring the web branch and
-    the ``--source all`` path), and list via ``get_available_sync_sources``.
-    """
-
     def _db_only_config(self) -> dict[str, Any]:
-        """Config with an empty ``inputs`` map — the source is DB-only."""
         return {"inputs": {}, "recommendations": {"min_rating_for_preference": 4}}
 
     def _seed_db_source(self, storage: StorageManager, enabled: bool = True) -> None:
-        """Create a DB-only ``calibre-web`` source with its secret.
-
-        Uses the ``fake_api`` fake plugin (sensitive ``api_key``) so the
-        resolved config carries the injected ``_source_id`` — mirroring the web
-        regression test. It has no config.yaml entry: the row and its secret
-        live only in the database.
-        """
         storage.sources.upsert(
             1,
             "calibre-web",
@@ -124,13 +87,6 @@ class TestUpdateDbOnlySourceRegression:
     def test_enabled_db_only_source_syncs_end_to_end_regression(
         self, tmp_path: Path
     ) -> None:
-        """An enabled DB-only source syncs, resolving config + secret + id.
-
-        Asserts end to end (not just that the gate passes): the plugin the sync
-        boundary receives carries the injected ``_source_id`` and the decrypted
-        ``password`` credential plus the DB config, proving the single-source
-        path actually resolves and runs the DB source.
-        """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         self._seed_db_source(storage, enabled=True)
 
@@ -160,7 +116,6 @@ class TestUpdateDbOnlySourceRegression:
         assert resolved_config["user_id"] == "reader"
 
     def test_disabled_db_only_source_aborts_regression(self, tmp_path: Path) -> None:
-        """A disabled DB-only source aborts with a nonzero exit."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         self._seed_db_source(storage, enabled=False)
 
@@ -178,7 +133,6 @@ class TestUpdateDbOnlySourceRegression:
         assert "Unknown or disabled source 'calibre-web'" in result.output
 
     def test_unknown_source_aborts_regression(self, tmp_path: Path) -> None:
-        """A source id that matches nothing aborts with a nonzero exit."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
         def _never(**_: Any) -> list[SyncResult]:
@@ -197,11 +151,6 @@ class TestUpdateDbOnlySourceRegression:
     def test_source_list_surfaces_db_only_source_regression(
         self, tmp_path: Path
     ) -> None:
-        """``update --source list`` shows a DB-only source id.
-
-        Without the DB-aware ``get_available_sync_sources`` the id never
-        appears, so the user cannot discover the value to pass to ``--source``.
-        """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         self._seed_db_source(storage, enabled=True)
 
@@ -218,22 +167,14 @@ class TestUpdateDbOnlySourceRegression:
         assert result.exit_code == 0, result.output
         assert "calibre-web" in result.output
         assert "enabled" in result.output
-        # The listing line carries the cadence too, as ``source list`` does.
         assert "cadence=daily" in result.output
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateResolvesEachSourceOnceRegression:
-    """Reported: ``update`` resolved the whole listing once per source.
-
-    Each re-resolve Fernet-decrypted every source's credentials, so an
-    N-source sync cost O(N**2) decrypts.
-    """
-
     _SOURCE_IDS = ("games", "movies")
 
     def _seeded_storage(self, tmp_path: Path) -> StorageManager:
-        """Two DB-only sources, each with a stored secret to decrypt."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         for source_id in self._SOURCE_IDS:
             storage.sources.upsert(
@@ -254,8 +195,6 @@ class TestUpdateResolvesEachSourceOnceRegression:
     ) -> None:
         storage = self._seeded_storage(tmp_path)
         synced: list[str] = []
-        # One spy bound under both names: the command holds its own reference,
-        # so patching the service alone would miss the call that starts a sync.
         resolve_spy = MagicMock(wraps=resolve_inputs)
 
         def _fake_sync(**kwargs: Any) -> list[SyncResult]:
@@ -290,22 +229,12 @@ class TestUpdateResolvesEachSourceOnceRegression:
         assert synced == synced_ids
         assert resolve_spy.call_count == 1
         decrypted_for = [call.args[1] for call in credential_spy.call_args_list]
-        # Both parametrisations resolve the whole listing before filtering, so
-        # every seeded source is decrypted, and each of them exactly once.
         assert sorted(decrypted_for) == sorted(self._SOURCE_IDS)
 
 
 class TestUndecodableRomNameDoesNotAbortUpdateRegression:
-    """Reported: one ROM named in invalid UTF-8 lost the whole sync.
-
-    Symptom: UnicodeEncodeError, nothing stored. Cause: a strict encode of the
-    lone surrogate ``iterdir`` returns. Fix: ``backslashreplace`` in the id
-    hash, one escape at the storage door.
-    """
-
     @staticmethod
     def _run(storage: StorageManager, root: Path) -> Any:
-        """``update --source roms`` over *root*, against real storage."""
         config: dict[str, Any] = {
             "inputs": {
                 "roms": {"plugin": "roms", "enabled": True, "paths": [str(root)]}
@@ -322,11 +251,6 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
             return CliRunner().invoke(cli, ["update", "--source", "roms"])
 
     def test_the_odd_rom_and_its_neighbours_all_land(self, tmp_path: Path) -> None:
-        """Catches a revert of either half.
-
-        A strict encode in ``_entry_id`` kills the scan; a missing escape at
-        the door kills the save.
-        """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         root = tmp_path / "roms"
         root.mkdir()
@@ -355,17 +279,9 @@ class TestUndecodableRomNameDoesNotAbortUpdateRegression:
 
 
 def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
-    """CLI boot assembles the effective config against an isolated DB.
-
-    Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
-    StorageManager (no stub): a stored DB leaf must win over the YAML value,
-    and boot must not write anything else to the settings table.
-    """
     runner = CliRunner()
     config: dict[str, Any] = {"recommendations": {"default_count": 11}}
     storage = StorageManager(sqlite_path=tmp_path / "test.db")
-    # A DB leaf the operator set must win over the YAML value on boot. All three
-    # layers differ (const 5 < YAML 11 < DB 9), so 9 can only come from the DB.
     storage.settings.set("recommendations.default_count", 9)
 
     with (
@@ -376,27 +292,17 @@ def test_cli_boot_overlays_db_settings_without_seeding(tmp_path: Path) -> None:
         result = runner.invoke(cli, ["status"])
 
     assert result.exit_code == 0
-    # Real hook overlaid the DB leaf onto the in-memory config (DB wins).
     assert config["recommendations"]["default_count"] == 9
-    # Boot seeded nothing: only the pre-existing leaf remains in the DB.
     assert storage.settings.list() == {"recommendations.default_count": 9}
 
 
-#: Both boot exits, and the prefix each one prints.
 _CONFIG_EXIT = "Error: "
 _COMPONENT_EXIT = "Error initializing components: "
 
 
 class TestCliBootstrapFailures:
-    """The first-run experience: no log exists to point the operator at.
-
-    ``configure_logging`` runs after the storage these guards build, so both
-    name the fault — sanitized, since one can quote a URL holding a token.
-    """
-
     @staticmethod
     def _boot_failing_at(patched: str, error: Exception) -> Any:
-        """Boot ``status`` with one component raising, everything else healthy."""
         with (
             patch("src.cli.main.load_config", return_value={}),
             patch("src.cli.main.create_storage_manager", return_value=MagicMock()),
@@ -420,11 +326,6 @@ class TestCliBootstrapFailures:
         assert result.stdout == ""
 
     def test_a_url_borne_token_does_not_reach_the_terminal(self) -> None:
-        """A ``requests`` fault quotes the URL it failed on, query string too.
-
-        ``exception_for_log`` routes one through ``scrub_request_error``, which
-        keeps the class name and drops the URL.
-        """
         token = "sk-live-9f3c2a"
 
         result = self._boot_failing_at(
@@ -436,18 +337,10 @@ class TestCliBootstrapFailures:
 
         assert result.exit_code == 1
         assert result.stderr == f"{_COMPONENT_EXIT}ConnectionError\n"
-        # Both streams: stderr is pinned above, so only stdout can still leak.
         assert token not in result.output
 
 
 class TestAMalformedInputsBlockDoesNotAbortTheBoot:
-    """A list-shaped ``inputs:`` is truthy and has no ``.items()``.
-
-    The credential sweep runs on the callback, so letting it raise takes down
-    every verb. ``source list`` reads ``inputs`` itself and still faults; this
-    covers the verbs that do not.
-    """
-
     def test_a_read_only_command_still_runs(self, cli_runner: CliRunner) -> None:
         storage = make_storage_mock()
         config: dict[str, Any] = {"inputs": [{"plugin": "gog", "enabled": True}]}
@@ -455,5 +348,4 @@ class TestAMalformedInputsBlockDoesNotAbortTheBoot:
         result = _invoke_with_mocks(cli_runner, ["status"], storage, config=config)
 
         assert result.exit_code == 0, result.output
-        # Anchored: the command reached its own body, rather than a quiet exit.
         assert "Components:" in result.output

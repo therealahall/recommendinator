@@ -1,10 +1,7 @@
-"""Autouse isolation for every test in every tree — off the developer's real data.
+"""Autouse isolation for every test in every tree.
 
 This file is at the repository root rather than in ``tests/`` because a conftest
-only applies to its own subtree, and tests are collected from three trees:
-``tests/``, the plugin-local ``test_<plugin>.py`` files under ``src/`` (both are
-in ``testpaths``), and the private plugins under ``private/`` when they are run
-explicitly. Fixtures defined here are the only ones all three get.
+only applies to its own subtree, and tests are collected from three trees.
 """
 
 import logging
@@ -23,9 +20,7 @@ from src.utils.dependencies import dependency_drift
 
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", ""}
 
-#: Captured at import, before any fixture can wrap them. The escape hatch
-#: needs the real ones, and reading them back off the module would return
-#: whatever the guard installed.
+#: Captured at import, before any fixture can wrap them.
 _REAL_SOCKET_CALLS: tuple[tuple[Any, str, Any], ...] = (
     (socket.socket, "connect", socket.socket.connect),
     (socket.socket, "connect_ex", socket.socket.connect_ex),
@@ -88,13 +83,11 @@ def _no_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let one test dial a real host, against the refusal above."""
     for target, name, real in _REAL_SOCKET_CALLS:
         monkeypatch.setattr(target, name, real)
 
 
 def _remove_production_log_handlers() -> None:
-    """Remove FileHandlers targeting ``recommendations.log`` from the root logger."""
     root = logging.getLogger()
     for handler in root.handlers[:]:
         if isinstance(handler, logging.FileHandler) and handler.baseFilename.endswith(
@@ -109,8 +102,7 @@ def _isolate_production_log_handlers() -> Iterator[None]:
     """Prevent tests from writing to the production log file.
 
     Patched at its one definition, the file-opening entry point both interfaces
-    reach, so neither imports the name. ``configure_console_only`` opens no
-    file; a test on either interface's degrade path takes ``restore_root_logging``.
+    reach, so neither imports the name.
     """
     _remove_production_log_handlers()
     with patch("src.utils.logging.configure_logging"):
@@ -126,19 +118,7 @@ def _clear_dependency_drift_cache() -> None:
 
 @pytest.fixture(autouse=True)
 def host_timezone() -> Iterator[Callable[[str], None]]:
-    """Pin the process timezone to UTC and let a test choose another zone.
-
-    ``src.utils.dates.local_date_from_iso_timestamp`` narrows a UTC instant to
-    the calendar day of the *host's* zone, so any assertion on a narrowed date
-    would otherwise depend on where the suite runs. Every test gets UTC; a test
-    exercising the conversion requests this fixture and calls it with the zone
-    it wants, which is restored afterwards either way.
-
-    This lives at the repository root rather than in ``tests/`` for the same
-    reason as the fixtures around it, and for one of its own: the Trakt plugin's
-    tests are plugin-local under ``src/``, and they are the tests that most need
-    the zone pinned.
-    """
+    """Pin the process timezone to UTC and let a test choose another zone."""
     previous = os.environ.get("TZ")
 
     def use(zone: str) -> None:
@@ -156,12 +136,7 @@ def host_timezone() -> Iterator[Callable[[str], None]]:
 
 @pytest.fixture(autouse=True)
 def allowed_source_roots(tmp_path: Path) -> Iterator[Callable[[Path], None]]:
-    """Contain file-based source plugins to this test's ``tmp_path``.
-
-    ``security.allowed_source_roots`` is process-global, so a test that
-    widened it would leak into the next. A test reading a repository
-    directory requests this fixture and adds that root.
-    """
+    """Contain file-based source plugins to this test's ``tmp_path``."""
     saved = get_allowed_source_roots()
     roots = [str(tmp_path)]
     set_allowed_source_roots(roots)
@@ -176,11 +151,7 @@ def allowed_source_roots(tmp_path: Path) -> Iterator[Callable[[Path], None]]:
 
 @pytest.fixture(autouse=True)
 def _isolate_credential_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate credential encryption key to a temp dir for each test.
-
-    Overrides RECOMMENDINATOR_KEY_PATH so no test reads from or writes to
-    the real key file alongside the database (default: ``data/.credential_key``).
-    """
+    """Isolate credential encryption key to a temp dir for each test."""
     monkeypatch.setenv(
         "RECOMMENDINATOR_KEY_PATH",
         str(tmp_path / ".credential_key"),

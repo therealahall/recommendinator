@@ -1,9 +1,3 @@
-"""Duplicates already in a library are offered, and a refusal is durable.
-
-Through ``StorageManager``, the seam both interfaces call. Every library here
-is saved item by item, so a pair exists only if the save door leaves one.
-"""
-
 import logging
 import signal
 from collections.abc import Iterator
@@ -28,8 +22,6 @@ from src.utils.duplicate_serialization import skipped_works_note
 
 @contextmanager
 def _within(seconds: int) -> Iterator[None]:
-    """Fail rather than hang: the defect guarded here is a pass that never ends."""
-
     def ring(signum: int, frame: FrameType | None) -> None:
         raise TimeoutError(f"still offering duplicates after {seconds}s")
 
@@ -89,7 +81,6 @@ def _shelf(manager: StorageManager, count: int) -> list[int]:
 def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
     manager: StorageManager,
 ) -> None:
-    """The door skips a candidate holding another id of the incoming source."""
     first = _save(manager, "goodreads_csv", "1", "The Gate of the Feral Gods")
     second = _save(manager, "goodreads_csv", "2", "The Gate of The Feral Gods")
     assert first != second
@@ -105,7 +96,6 @@ def test_one_source_listing_a_book_twice_leaves_a_pair_the_pass_offers(
 def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
     manager: StorageManager,
 ) -> None:
-    """ "(Malazan Book 2)" is no series marker, so only the bare key joins these."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(
         manager,
@@ -128,7 +118,6 @@ def test_a_parenthetical_the_matching_key_keeps_still_offers_the_pair(
 def test_a_pair_the_save_door_would_refuse_is_never_offered(
     manager: StorageManager,
 ) -> None:
-    """Both vetoes are the door's own, and the merge door refuses a cross type."""
     _save(manager, "gog", "1", "Doom", content_type=ContentType.VIDEO_GAME)
     _save(manager, "steam", "2", "DOOM (2016)", content_type=ContentType.VIDEO_GAME)
     _save(manager, "calibre", "3", "Dune", author="Frank Herbert")
@@ -142,8 +131,6 @@ def test_a_pair_the_save_door_would_refuse_is_never_offered(
 def test_two_regions_are_never_offered_though_each_pairs_with_the_bare_row(
     manager: StorageManager,
 ) -> None:
-    """The bare key gathers all three, so the operator's US and AU rows meet
-    here, and the row qualifying neither is all either may be offered against."""
     us = _save(
         manager, "sonarr", "1", "The Traitors (US)", content_type=ContentType.TV_SHOW
     )
@@ -160,7 +147,6 @@ def test_two_regions_are_never_offered_though_each_pairs_with_the_bare_row(
 def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
     manager: StorageManager,
 ) -> None:
-    """A re-sync lands on the rows it has, so a refused pair cannot come back."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
 
@@ -179,7 +165,6 @@ def test_a_declined_pair_stays_declined_when_both_its_sources_sync_again(
 def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
     manager: StorageManager,
 ) -> None:
-    """A stale id would insert against a foreign key; one row twice refuses none."""
     calibre = _save(manager, "calibre", "1", "Deadhouse Gates")
     goodreads = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     manager.merge_content_items(calibre, goodreads, MergeEvidence.MANUAL)
@@ -192,9 +177,6 @@ def test_declining_what_is_not_a_live_pair_reports_it_instead_of_raising(
 def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
     manager: StorageManager,
 ) -> None:
-    """Reported: lifting a refusal over a row a merge had hidden emptied the
-    declined list and offered nothing back, losing the decision. Checking one
-    side alone lifts one the other side's merge still hides."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
@@ -220,7 +202,6 @@ def test_a_refusal_waits_for_every_merge_holding_a_side_not_only_the_first(
 def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
     manager: StorageManager,
 ) -> None:
-    """A group resolved out of order offers a pair that has absorbed its own."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
@@ -237,8 +218,6 @@ def test_every_pair_the_pass_offers_can_be_merged_the_way_it_is_offered(
 def test_a_group_of_four_settles_from_one_listing_without_a_fresh_offer(
     manager: StorageManager,
 ) -> None:
-    """Every pair of a block stays mergeable as its copies are folded in, so a
-    bulk pass never has to re-read the offer between them."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
@@ -306,9 +285,6 @@ def test_a_copy_declined_out_of_a_block_leaves_the_others_pairing(
 def test_a_decline_naming_one_dead_id_stores_none_of_the_pairs_it_named(
     manager: StorageManager,
 ) -> None:
-    """Stored pair by pair, so a refusal reported as refused must leave nothing
-    behind: a half-written one takes a pairing off the block with no row in the
-    declined list to lift it back."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")
@@ -322,7 +298,6 @@ def test_a_decline_naming_one_dead_id_stores_none_of_the_pairs_it_named(
 def test_a_shelf_where_every_copy_pairs_with_every_other_is_offered_at_once(
     manager: StorageManager,
 ) -> None:
-    """A clique of 30 costs a search without a pivot 2^30 calls for one block."""
     shelf = _shelf(manager, 30)
 
     with _within(seconds=10):
@@ -334,7 +309,6 @@ def test_a_shelf_where_every_copy_pairs_with_every_other_is_offered_at_once(
 def test_a_group_past_the_cap_is_skipped_with_a_line_in_the_log_saying_so(
     manager: StorageManager, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Skipped, not dropped: nothing else would say the group is even there."""
     _shelf(manager, GROUP_MEMBER_MAX + 1)
 
     with caplog.at_level(logging.WARNING), _within(seconds=10):
@@ -349,8 +323,6 @@ def test_a_group_past_the_cap_is_skipped_with_a_line_in_the_log_saying_so(
 def test_a_group_split_every_which_way_is_skipped_without_blaming_its_copies(
     manager: StorageManager, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """d disjoint refusals make 2^d blocks. This shelf sits at the copy cap
-    rather than over it, so the note's old "too many copies" was a lie."""
     shelf = _shelf(manager, GROUP_MEMBER_MAX)
     for one, other in zip(shelf[::2], shelf[1::2], strict=True):
         assert manager.decline_duplicate_suggestion(one, [other]) != []
@@ -369,8 +341,6 @@ def test_a_group_split_every_which_way_is_skipped_without_blaming_its_copies(
 def test_two_works_left_unsearched_read_as_the_plural_they_are_counted_in(
     manager: StorageManager,
 ) -> None:
-    """Both shelves are over the copy cap, so the note counts two: catches the
-    subject and the possessive drifting apart, "2 works are ... its copies"."""
     for title in ("The Wandering Inn", "The Odyssey"):
         for index in range(GROUP_MEMBER_MAX + 1):
             _save(manager, "calibre", f"{title} {index}", f"{title} ({index})")
@@ -386,8 +356,6 @@ def test_two_works_left_unsearched_read_as_the_plural_they_are_counted_in(
 def test_one_refusal_inside_a_group_of_four_leaves_both_blocks_it_splits_into(
     manager: StorageManager,
 ) -> None:
-    """The refused two each still pair with the other two, so the group is two
-    overlapping blocks; a pass keeping one block per copy drops the second."""
     first = _save(manager, "calibre", "1", "Deadhouse Gates")
     second = _save(manager, "goodreads_csv", "2", "Deadhouse Gates (Malazan Book 2)")
     third = _save(manager, "storygraph_csv", "3", "Deadhouse Gates (Malazan, Book Two)")

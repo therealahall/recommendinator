@@ -1,9 +1,6 @@
-"""Static checks on this repository's workflows.
-
-A workflow only runs on GitHub, so wiring is read from parsed YAML. Every step
-that decides something is instead executed under `bash -e`, the shell a `run:`
-step gets.
-"""
+"""A workflow only runs on GitHub, so wiring is read from parsed YAML. Every step
+that decides something is instead executed under `bash -e`, the shell a
+`run:` step gets."""
 
 from __future__ import annotations
 
@@ -83,7 +80,6 @@ GIT_ISOLATION = {
 
 
 def _semantic_release_config() -> dict[str, Any]:
-    """The `[tool.semantic_release]` table the release job runs under."""
     configured: dict[str, Any] = tomllib.loads(
         (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["tool"]["semantic_release"]
@@ -109,7 +105,6 @@ def _uses(job: dict[str, Any]) -> list[str]:
 
 
 def _called_transitively(entry: Path) -> set[Path]:
-    """*entry* and every local reusable workflow its jobs reach from there."""
     reached = {entry}
     for job in _workflow_jobs(entry).values():
         called = str(job.get("uses", ""))
@@ -174,25 +169,20 @@ def _git(repository: Path, *arguments: str) -> str:
 
 
 def _commit(repository: Path, message: str) -> str:
-    """Add a commit and return its SHA."""
     (repository / "CHANGELOG.md").write_text(f"# {message}\n", encoding="utf-8")
     _git(repository, "commit", "--quiet", "--all", "-m", message)
     return _git(repository, "rev-parse", "HEAD")
 
 
 def _land(repository: Path, message: str) -> str:
-    """Add a commit to `main` and push it, so `origin/main` reaches it."""
     sha = _commit(repository, message)
     _git(repository, "push", "--quiet", "origin", "main")
     return sha
 
 
 def _release(repository: Path, tag: str, *, annotated: bool = False) -> str:
-    """Land a commit on `main` and tag it, the way a release reaches the guard.
-
-    python-semantic-release creates annotated tags, so `annotated` is the shape
-    production actually pushes; lightweight is the cheaper default here.
-    """
+    """python-semantic-release creates annotated tags, so `annotated` is the shape
+    production actually pushes; lightweight is the cheaper default here."""
     sha = _land(repository, f"work for {tag}")
     if annotated:
         _git(repository, "tag", "--annotate", "--message", f"Release {tag}", tag)
@@ -203,7 +193,6 @@ def _release(repository: Path, tag: str, *, annotated: bool = False) -> str:
 
 @pytest.fixture
 def repository(tmp_path: Path) -> Path:
-    """A one-commit git repository on `main`, carrying no tags."""
     repository = tmp_path / "repository"
     repository.mkdir()
     _git(repository, "init", "--quiet", "--initial-branch=main")
@@ -215,11 +204,8 @@ def repository(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def published_repository(repository: Path, tmp_path: Path) -> Path:
-    """`repository` with an `origin` its `main` has been pushed to.
-
-    Both guards fetch `origin/main` and compare against it, so a remote is what
-    exercises them rather than their shape.
-    """
+    """Both guards fetch `origin/main` and compare against it, so a remote is what
+    exercises them rather than their shape."""
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", "--quiet", "--initial-branch=main", str(origin))
     _git(repository, "remote", "add", "origin", str(origin))
@@ -236,11 +222,8 @@ def _run_step(
     tmp_path: Path,
     environment: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    """Run a step's script, returning its code, its output and its step outputs.
-
-    `bash -e` is the shell an unqualified `run:` gets, and a step's `env:` block
-    holds GitHub expressions the caller has to stand in for.
-    """
+    """`bash -e` is the shell an unqualified `run:` gets, and a step's `env:` block
+    holds GitHub expressions the caller has to stand in for."""
     script = tmp_path / f"{name.replace(' ', '-')}.sh"
     script.write_text(_step_named(workflow, job, name)["run"], encoding="utf-8")
     step_output = tmp_path / f"{script.stem}.github_output"
@@ -271,7 +254,6 @@ def _run_release_step(
 
 
 def _decide_aliases(repository: Path, tmp_path: Path, tag: str) -> dict[str, str]:
-    """Run the guard's alias decision for `tag` and return the outputs it wrote."""
     code, output, step_output = _run_step(
         DOCKER,
         "guard",
@@ -291,8 +273,6 @@ def _decide_aliases(repository: Path, tmp_path: Path, tag: str) -> dict[str, str
 
 
 class _StubbedGh(NamedTuple):
-    """A stub `gh` on PATH, the calls it recorded, and the notes it was given."""
-
     environment: dict[str, str]
     log: Path
     notes: Path
@@ -306,11 +286,6 @@ class _StubbedGh(NamedTuple):
 def _stub_gh(
     tmp_path: Path, *, release_exists: bool, assets: tuple[str, ...] = ()
 ) -> _StubbedGh:
-    """Put a recording `gh` on PATH, ahead of any real one.
-
-    Every `release view` answers the asset names the step's `--jq` shapes them
-    into. A `--notes-file` is copied where a test can read it.
-    """
     view_response = (
         "".join(f"  echo {name}\n" for name in assets) + "  exit 0\n"
         if release_exists
@@ -346,24 +321,18 @@ def _stub_gh(
 
 
 def _sole_call(stub: _StubbedGh, prefix: str) -> str:
-    """The one recorded `gh` invocation beginning with *prefix*."""
     (call,) = [line for line in stub.calls() if line.startswith(prefix)]
     return call
 
 
 class _ChangelogSection(NamedTuple):
-    """A release's heading tag and the first bullet written under it."""
-
     tag: str
     bullet: str
 
 
 def _changelog_sections() -> list[_ChangelogSection]:
-    """This repository's own release notes, newest first.
-
-    python-semantic-release writes the file the step parses, so a fabricated
-    fixture would hold the extraction against a format nobody produces.
-    """
+    """python-semantic-release writes the file the step parses, so a fabricated
+    fixture would hold the extraction against a format nobody produces."""
     source = CHANGELOG.read_text(encoding="utf-8")
     headings = list(_VERSION_HEADING.finditer(source))
     assert len(headings) >= 2, "fewer than two releases to tell apart"
@@ -377,22 +346,14 @@ def _changelog_sections() -> list[_ChangelogSection]:
 
 
 def _give_the_repository_its_changelog(repository: Path) -> None:
-    """Put this repository's CHANGELOG.md where the release step reads one."""
     shutil.copy(CHANGELOG, repository / "CHANGELOG.md")
 
 
 class TestReleaseTagDetectionRegression:
-    """Regression tests for the release step that failed when nothing was releasable."""
-
     def test_no_semver_tag_at_head_is_not_a_failure_regression(
         self, repository: Path, tmp_path: Path
     ) -> None:
-        """Regression test: a release run with nothing to tag.
-
-        Bug reported: the step exited 1 silently.
-        Root cause: `grep -c .` exits 1 on no matches, fatal under `bash -e`.
-        Fix: detection is its own step; publishing keys on it.
-        """
+        """`grep -c .` exits 1 on no matches, fatal under `bash -e`."""
         code, stdout, step_output = _run_release_step(
             TAG_DETECTION_STEP, repository, tmp_path
         )
@@ -403,7 +364,6 @@ class TestReleaseTagDetectionRegression:
     def test_a_semver_tag_at_head_is_reported(
         self, repository: Path, tmp_path: Path
     ) -> None:
-        """The output every publishing step keys on."""
         _git(repository, "tag", "v1.2.3")
         code, _, step_output = _run_release_step(
             TAG_DETECTION_STEP, repository, tmp_path
@@ -415,8 +375,8 @@ class TestReleaseTagDetectionRegression:
         self, repository: Path, tmp_path: Path
     ) -> None:
         """Several tags on one commit is a rerun or a hand-cut tag. These three
-        separate every order that could be used: refname order answers v0.1.0,
-        text order v0.9.0, and only version order the unreleased v0.10.0."""
+        separate every order that could be used: refname order answers v0.1.0, text
+        order v0.9.0, and only version order the unreleased v0.10.0."""
         released = "v0.10.0"
         others = ("v0.1.0", "v0.9.0")
         for name in (*others, released):
@@ -435,8 +395,6 @@ class TestReleaseTagDetectionRegression:
 
 
 class TestReleaseIsCutFromTheValidatedCommit:
-    """The release guard, executed rather than read."""
-
     def test_the_validated_commit_is_released_from_a_branch_named_main(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
@@ -461,12 +419,7 @@ class TestReleaseIsCutFromTheValidatedCommit:
     def test_a_commit_that_has_been_overtaken_is_not_released(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """Regression test: a merge race failed the release workflow.
-
-        Bug reported: a red workflow with nothing wrong.
-        Root cause: the overtaken run exited 1, though the newer one releases both.
-        Fix: it reports the skip as a step output.
-        """
+        """The overtaken run exited 1, though the newer one releases both."""
         superseded = _git(published_repository, "rev-parse", "HEAD")
         overtaking = _commit(published_repository, "landed while CI ran")
         _git(published_repository, "push", "--quiet", "origin", "main")
@@ -487,18 +440,10 @@ class TestReleaseIsCutFromTheValidatedCommit:
 
 
 class TestTheVersionCommitReachesTheReleaseJobAgain:
-    """The tag points at the version commit, so a skip marker there skipped the
-    tag push too: 58 releases shipped no image. The cost is one CI run per
-    release, whose own release job must no-op.
-    """
+    """The tag points at the version commit, so a skip marker there skipped the tag
+    push too: 58 releases shipped no image."""
 
     def test_the_version_commit_message_carries_no_ci_skip_marker(self) -> None:
-        """Regression test: 58 tags shipped no image.
-
-        Bug reported: an anonymous GHCR pull answers NAME_UNKNOWN.
-        Root cause: `[skip ci]` in the version commit GitHub sees the tag push at.
-        Fix: no marker; every spelling GitHub honours is refused here.
-        """
         message = _semantic_release_config().get("commit_message", "")
 
         assert message, "nothing configures the message this reads"
@@ -509,8 +454,7 @@ class TestTheVersionCommitReachesTheReleaseJobAgain:
         self, published_repository: Path, tmp_path: Path
     ) -> None:
         """The re-entry finds the tag already at HEAD and on origin, so this step
-        pushes what is already there. Git answers "up to date"; anything else
-        would end every release on a red job."""
+        pushes what is already there."""
         tag = "v1.2.3"
         _release(published_repository, tag)
         _git(published_repository, "push", "--quiet", "origin", f"refs/tags/{tag}")
@@ -528,12 +472,9 @@ class TestTheVersionCommitReachesTheReleaseJobAgain:
 
 
 class TestTheGitHubReleaseCarriesItsAsset:
-    """The publishing step, executed against a stubbed `gh`.
-
-    Releases here are immutable, so an asset cannot be attached afterwards: the
+    """Releases here are immutable, so an asset cannot be attached afterwards: the
     notes and docker-compose.yml are right in the one `gh release create` this
-    makes, or the release ships without them.
-    """
+    makes, or the release ships without them."""
 
     def _create_release(
         self, repository: Path, tmp_path: Path, stub: _StubbedGh, tag: str
@@ -552,8 +493,7 @@ class TestTheGitHubReleaseCarriesItsAsset:
     def test_the_changelog_section_for_the_version_becomes_the_notes(
         self, repository: Path, tmp_path: Path
     ) -> None:
-        """Unbounded, the extraction hands every past release's notes to this
-        one. The heading it stops at is the next version's, not any `##`."""
+        """Unbounded, the extraction hands every past release's notes to this one."""
         newest, previous = _changelog_sections()[:2]
         assert newest.bullet != previous.bullet, "the two sections read alike"
         _give_the_repository_its_changelog(repository)
@@ -575,9 +515,9 @@ class TestTheGitHubReleaseCarriesItsAsset:
     def test_a_release_a_partial_run_left_behind_is_recreated(
         self, repository: Path, tmp_path: Path
     ) -> None:
-        """A rerun after the push landed and the creation failed. The asset can
-        only go on at creation, so the existing release is deleted first — and
-        its tag is kept, since the push that made it public already happened."""
+        """The asset can only go on at creation, so the existing release is deleted
+        first — and its tag is kept, since the push that made it public already
+        happened."""
         newest, *_ = _changelog_sections()
         _give_the_repository_its_changelog(repository)
         stub = _stub_gh(tmp_path, release_exists=True)
@@ -594,10 +534,8 @@ class TestTheGitHubReleaseCarriesItsAsset:
     def test_a_release_that_already_carries_its_asset_is_left_alone(
         self, repository: Path, tmp_path: Path
     ) -> None:
-        """The version commit's own CI run reaches this step a second time, by
-        which point the release is whole. Recreating it notifies every watcher
-        twice and reissues the asset's id, for a release identical to the one
-        deleted."""
+        """The version commit's own CI run reaches this step a second time, by which
+        point the release is whole."""
         newest, *_ = _changelog_sections()
         _give_the_repository_its_changelog(repository)
         stub = _stub_gh(tmp_path, release_exists=True, assets=("docker-compose.yml",))
@@ -618,7 +556,6 @@ class TestOnlyMainCanBePublished:
 
     @pytest.mark.parametrize("tag", ["v1.2.3", "v10.0.0"])
     def test_a_release_tag_is_accepted(self, tag: str, tmp_path: Path) -> None:
-        """The shape every later step reads as vMAJOR.MINOR.PATCH."""
         code, output, _ = _run_step(
             DOCKER,
             "guard",
@@ -646,7 +583,6 @@ class TestOnlyMainCanBePublished:
     def test_a_tag_on_main_is_allowed_through(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """The ordinary semantic-release tag must still publish."""
         code, output, _ = _run_step(
             DOCKER,
             "guard",
@@ -678,11 +614,8 @@ class TestOnlyMainCanBePublished:
 
 
 class TestFloatingTagsOnlyMoveForward:
-    """The alias decision, executed against real tag sets on real history.
-
-    Tagging one commit repeatedly satisfies every descendancy check trivially,
-    so a case about ordering gives each release a commit of its own.
-    """
+    """Tagging one commit repeatedly satisfies every descendancy check trivially,
+    so a case about ordering gives each release a commit of its own."""
 
     @pytest.mark.parametrize(
         "annotated", [False, True], ids=["lightweight", "annotated"]
@@ -690,12 +623,9 @@ class TestFloatingTagsOnlyMoveForward:
     def test_the_newest_release_moves_every_alias(
         self, published_repository: Path, tmp_path: Path, annotated: bool
     ) -> None:
-        """The ordinary release: latest, 0 and 0.29 all follow it.
-
-        Annotated too, the shape python-semantic-release pushes. That pins
-        `git tag --list --merged` peeling tag objects: without it RELEASES
-        loses every annotated tag and no alias moves.
-        """
+        """Annotated too, the shape python-semantic-release pushes. That pins `git
+        tag --list --merged` peeling tag objects: without it RELEASES loses every
+        annotated tag and no alias moves."""
         for name in ("v0.22.0", "v0.22.1", "v0.29.0"):
             _release(published_repository, name, annotated=annotated)
         assert _decide_aliases(published_repository, tmp_path, "v0.29.0") == {
@@ -707,11 +637,8 @@ class TestFloatingTagsOnlyMoveForward:
     def test_a_backport_moves_only_the_line_it_belongs_to(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """`0.22` follows the backport; `latest` and `0` stay on 0.29.
-
-        The backport is tagged on the main commit between the two releases,
-        which is the only shape the on-main guard admits.
-        """
+        """The backport is tagged on the main commit between the two releases, which
+        is the only shape the on-main guard admits."""
         _release(published_repository, "v0.22.0")
         backported = _land(published_repository, "the fix worth backporting")
         _release(published_repository, "v0.29.0")
@@ -727,8 +654,7 @@ class TestFloatingTagsOnlyMoveForward:
         self, published_repository: Path, tmp_path: Path
     ) -> None:
         """v0.9.1 is released after v0.10.0 and descends from it, so only the
-        ordering refuses it `latest`. Sorted as text it tops its own scope and
-        every descendancy check passes, dragging `latest` back off 0.10.0."""
+        ordering refuses it `latest`."""
         for name in ("v0.9.0", "v0.10.0", "v0.9.1"):
             _release(published_repository, name)
         assert _decide_aliases(published_repository, tmp_path, "v0.9.1") == {
@@ -755,12 +681,7 @@ class TestFloatingTagsOnlyMoveForward:
     def test_an_alias_never_moves_to_a_commit_its_holder_never_reached(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """Regression test: a tag on an old commit could take `latest`.
-
-        Bug reported: found by audit, not exploited.
-        Root cause: the guard ordered releases by tag name alone.
-        Fix: the release must also descend from the alias's current holder.
-        """
+        """The guard ordered releases by tag name alone."""
         stale = _git(published_repository, "rev-parse", "HEAD")
         _release(published_repository, "v0.29.0")
         _git(published_repository, "tag", "v9.0.0", stale)
@@ -776,13 +697,8 @@ class TestFloatingTagsOnlyMoveForward:
     def test_a_tag_that_never_reached_main_holds_no_alias(
         self, published_repository: Path, tmp_path: Path
     ) -> None:
-        """Regression test: an unpublished tag could freeze `latest` forever.
-
-        Bug reported: found by audit, not exploited.
-        Root cause: every semver tag counted, including one pushed onto a
-        feature branch that published nothing.
-        Fix: only tags reachable from `origin/main` count.
-        """
+        """Every semver tag counted, including one pushed onto a feature branch
+        that published nothing."""
         _release(published_repository, "v0.29.0")
         _git(published_repository, "checkout", "--quiet", "-b", "side")
         _git(
@@ -809,7 +725,7 @@ class TestFloatingTagsOnlyMoveForward:
             if field.strip()
         }
         assert "latest=false" in fields, (
-            "qs5i.9.8: metadata-action applies `latest` to every semver tag "
+            "metadata-action applies `latest` to every semver tag "
             "unless the flavor forbids it, so a backport moved GHCR's `:latest` "
             f"backwards and the next `docker compose pull` downgraded: {fields}"
         )
@@ -818,8 +734,8 @@ class TestFloatingTagsOnlyMoveForward:
         self, repository: Path, tmp_path: Path
     ) -> None:
         """Fail closed, and nothing held it. `git tag --list --merged` exits 128
-        with no `origin/main`, `|| true` swallows that, and the tag being
-        published is then absent from its own scope — so nothing moves."""
+        with no `origin/main`, `|| true` swallows that, and the tag being published
+        is then absent from its own scope — so nothing moves."""
         _git(repository, "tag", "v0.29.0")
 
         assert _decide_aliases(repository, tmp_path, "v0.29.0") == {
@@ -889,8 +805,7 @@ class TestEveryClaimedInterpreterIsOneCiRuns:
 class TestEveryActionRunsCodeThatCannotBeSwappedOut:
     def test_third_party_actions_are_pinned_to_a_sha_naming_its_version(self) -> None:
         """A mutable tag lets its owner run new code in a job holding
-        `packages: write`, and the trailing version is what makes a sha
-        reviewable."""
+        `packages: write`, and the trailing version is what makes a sha reviewable."""
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             read = _ACTION_REFERENCE.findall(workflow.read_text(encoding="utf-8"))
             declared = [

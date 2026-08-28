@@ -1,5 +1,3 @@
-"""Regression tests for recommendations empty-state messaging."""
-
 from unittest.mock import MagicMock
 
 from src.recommendations.engine import RecommendationEngine
@@ -8,15 +6,7 @@ from tests.factories import authenticated_client, booted_web_app, make_storage_m
 
 
 class TestEmptyRecommendationsRegression:
-    """Regression tests for the recommendations endpoint empty-results path."""
-
     def test_empty_recommendations_returns_empty_list_regression(self) -> None:
-        """GET /api/recommendations returns HTTP 200 + [] when pipeline empty.
-
-        Bug: the frontend rendered a misleading empty-state message when the
-        API returned no results. This test pins the API contract (200 + [])
-        that triggers the frontend empty-state rendering path.
-        """
         mock_engine = MagicMock(spec=RecommendationEngine)
         mock_engine.generate_recommendations.return_value = []
         mock_storage = make_storage_mock()

@@ -1,11 +1,3 @@
-"""Unit tests for the framework-agnostic settings service layer.
-
-These exercise :mod:`src.settings.service` directly against a real temp-DB
-:class:`StorageManager` (no FastAPI): the grouped view shape, effective value
-vs. ``db_overridden``, secret masking, per-type coercion/validation, all-or-
-nothing writes with live-apply, reset-to-default, and secret gating.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,8 +24,6 @@ from src.settings.service import (
 from src.storage.manager import StorageManager
 from src.utils.urls import is_bare_origin
 
-# A representative sensitive leaf and a non-sensitive numeric leaf reused across
-# tests. Kept as module constants so a registry rename fails loudly in one place.
 _SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _INT_KEY = "recommendations.default_count"
 _ORIGINS_KEY = "web.allowed_origins"
@@ -46,12 +36,6 @@ def storage(tmp_path: Path) -> StorageManager:
 
 @pytest.fixture()
 def config() -> dict[str, Any]:
-    """A partial running config; missing leaves fall back to registry defaults.
-
-    ``logging`` is populated so the restart-required test can prove a stored
-    value is left ALONE, rather than only proving an absent section is not
-    created — a much weaker claim that a live-apply regression would pass.
-    """
     return {
         "recommendations": {"default_count": 5, "max_count": 20},
         "logging": {"level": "INFO", "file": "data/logs/recommendations.log"},
@@ -130,14 +114,9 @@ class TestCoerceAndValidate:
         with pytest.raises(SettingsValidationError):
             coerce_and_validate(entry, "3")
         with pytest.raises(SettingsValidationError):
-            coerce_and_validate(entry, 0)  # violates min=1
+            coerce_and_validate(entry, 0)
 
     def test_float_rejects_bool_which_would_otherwise_coerce_to_one(self) -> None:
-        """The load-bearing half: bool subclasses int, so float(True) is 1.0.
-
-        Delete the ``isinstance(value, bool)`` guard and every scorer weight
-        silently accepts ``true`` as 1.0, with the rest of the suite green.
-        """
         for entry_key in (
             "recommendations.scorer_weights.genre_match",
             "recommendations.scorer_weights.tag_overlap",
@@ -148,39 +127,19 @@ class TestCoerceAndValidate:
 
     @pytest.mark.parametrize("bad", [5, 5.0, True, None, ["a"], {"a": 1}])
     def test_string_rejects_non_strings(self, bad: Any) -> None:
-        """The string branch's type guard had no coverage either.
-
-        ``{"updates": {"logging.file": 5}}`` reaches this from the network.
-        """
         with pytest.raises(SettingsValidationError) as exc_info:
             coerce_and_validate(_entry("logging.file"), bad)
         assert exc_info.value.reason == "expected a string"
 
     def test_numeric_bounds_are_inclusive_at_min_and_max(self) -> None:
-        """The exact min and max values are accepted (bounds are inclusive).
-
-        Locks the inclusivity of ``coerce_and_validate``'s ``<``/``>`` checks so
-        a future slip to ``<=``/``>=`` (which would reject the boundary) fails
-        here. Covers an int leaf bounded at both ends and a float leaf bounded
-        below.
-        """
-        rating = _entry("recommendations.min_rating_for_preference")  # int, 1-5
+        rating = _entry("recommendations.min_rating_for_preference")
         assert coerce_and_validate(rating, 1) == 1
         assert coerce_and_validate(rating, 5) == 5
 
-        weight = _entry("recommendations.scorer_weights.genre_match")  # float, >= 0
+        weight = _entry("recommendations.scorer_weights.genre_match")
         assert coerce_and_validate(weight, 0.0) == 0.0
 
     def test_tmdb_language_pattern_accepts_locales_rejects_junk(self) -> None:
-        """The TMDB language pattern accepts ISO 639-1 with an optional region.
-
-        The value is passed straight through to the TMDB query, and the pattern
-        is the only guard on a network-settable string. It must accept a bare
-        code (``en``) as well as a region-qualified one — TMDB honours both, and
-        rejecting ``en`` in the UI while config.yaml accepted it would be an
-        arbitrary asymmetry. ``re.fullmatch`` anchoring is what stops a trailing
-        payload; this pins that too.
-        """
         entry = _entry("enrichment.providers.tmdb.language")
 
         for good in ("en", "en-US", "pt-BR", "de-DE"):
@@ -227,12 +186,6 @@ class TestCoerceAndValidate:
             coerce_and_validate(entry, "http://localhost:18473")
 
     def test_list_accepts_strings_rejects_non_string_items(self) -> None:
-        """A list must contain only strings — a mixed/non-string item is rejected.
-
-        Covers the network-settable list leaf ``web.allowed_origins`` so an
-        injected number/dict can't slip into a config the CORS layer later
-        treats as a string.
-        """
         entry = _entry(_ORIGINS_KEY)
 
         assert coerce_and_validate(entry, ["http://localhost:18473"]) == [
@@ -256,20 +209,9 @@ class TestCoerceAndValidate:
     def test_allowed_origins_accepts_wildcard_and_well_formed_origins(
         self, origins: list[str]
     ) -> None:
-        """A bare ``scheme://host[:port]`` — and the ``"*"`` escape hatch — pass.
-
-        ``"*"`` is the documented allow-all value, so tightening this leaf must
-        not break it.
-        """
         assert coerce_and_validate(_entry(_ORIGINS_KEY), origins) == origins
 
     def test_allowed_origins_rejects_null(self) -> None:
-        """``"null"`` must never reach the CORS allowlist.
-
-        Starlette compares with ``origin in self.allow_origins``, and a
-        sandboxed iframe or a ``data:``/``file:`` document sends
-        ``Origin: null``. It names no site, so it is an entry nobody intended.
-        """
         for spelling in ("null", "NULL", "Null", "  null  "):
             with pytest.raises(SettingsValidationError) as exc_info:
                 coerce_and_validate(_entry(_ORIGINS_KEY), [spelling])
@@ -277,7 +219,6 @@ class TestCoerceAndValidate:
             assert '"null"' in exc_info.value.reason
 
     def test_allowed_origins_rejects_empty_entry(self) -> None:
-        """An empty entry is rejected rather than persisted as a dead allowance."""
         with pytest.raises(SettingsValidationError) as exc_info:
             coerce_and_validate(_entry(_ORIGINS_KEY), ["http://localhost:18473", "  "])
 
@@ -302,13 +243,6 @@ class TestCoerceAndValidate:
     def test_allowed_origins_rejects_entries_a_browser_never_sends(
         self, origin: str
     ) -> None:
-        """Origins that can never match are refused instead of silently inert.
-
-        Starlette's check is exact-match against the ``Origin`` header, so a
-        trailing path, a wildcard subdomain, embedded credentials or an
-        unparseable port sits in the allowlist doing nothing while the operator
-        believes the origin is allowed.
-        """
         with pytest.raises(SettingsValidationError) as exc_info:
             coerce_and_validate(_entry(_ORIGINS_KEY), [origin])
 
@@ -325,11 +259,6 @@ class TestCoerceAndValidate:
         ],
     )
     def test_allowed_origins_persists_the_normalized_value(self, raw: str) -> None:
-        """Validating one spelling and persisting another stores a dead entry.
-
-        ``str.strip`` caught the first of these only. A trailing slash is
-        dropped rather than refused: no ``Origin`` header carries one.
-        """
         assert coerce_and_validate(_entry(_ORIGINS_KEY), [raw]) == [
             "http://localhost:18473"
         ]
@@ -337,15 +266,6 @@ class TestCoerceAndValidate:
     def test_logging_file_pattern_rejects_absolute_traversal_and_non_logs_paths(
         self,
     ) -> None:
-        """logging.file only accepts a contained ``data/logs/*.log`` path.
-
-        Traversal is rejected HERE now, by a negative lookahead. It previously
-        validated and was caught later by ``src.utils.logging._safe_log_path``, which
-        left the value persisted and displayed as the effective log file while
-        the app wrote somewhere else. ``_safe_log_path`` remains the containment
-        backstop (see TestSafeLogPath in tests/utils/test_logging.py) — this is the
-        boundary check that stops the divergence.
-        """
         entry = _entry("logging.file")
 
         for good in ("data/logs/app.log", "data/logs/sub/app.log"):
@@ -377,8 +297,6 @@ class TestApplySettings:
         apply_settings(config, storage, {"logging.level": "DEBUG"})
 
         assert storage.settings.get("logging.level") == "DEBUG"
-        # logging.level is restart_required — the value is persisted for the
-        # next boot but the RUNNING value is left as it was.
         assert config["logging"]["level"] == "INFO"
 
     def test_sensitive_key_rejected(
@@ -392,7 +310,6 @@ class TestApplySettings:
     def test_all_or_nothing_no_partial_write(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        # First key valid, second invalid (below min) → nothing is written.
         with pytest.raises(SettingsValidationError):
             apply_settings(
                 config,
@@ -413,26 +330,17 @@ class TestResetSetting:
         reset_setting(config, storage, _INT_KEY)
 
         assert storage.settings.get(_INT_KEY) is None
-        # Non-restart leaf is live-applied back to the const default.
         assert config["recommendations"]["default_count"] == 5
 
     def test_reset_restart_required_drops_row_without_live_apply(
         self, storage: StorageManager, config: dict[str, Any]
     ) -> None:
-        """Resetting a restart-required leaf must not rewrite the running value.
-
-        The running value is deliberately set apart from the const default here:
-        with both at "INFO" the assertion would pass whether or not the
-        restart_required branch exists, proving nothing.
-        """
         config["logging"]["level"] = "WARNING"
         storage.settings.set("logging.level", "DEBUG")
 
         reset_setting(config, storage, "logging.level")
 
         assert storage.settings.get("logging.level") is None
-        # Not live-applied: the running value is left as it was, NOT reset to
-        # the const default of INFO.
         assert config["logging"]["level"] == "WARNING"
 
     def test_reset_sensitive_key_raises(
@@ -449,11 +357,6 @@ class TestOriginGrammar:
     def test_a_netloc_urlsplit_cannot_parse_is_refused_not_raised(
         self, value: str
     ) -> None:
-        """``urlsplit`` raises ``ValueError`` on these, outside the old guard.
-
-        ``update_settings`` catches ``SettingsValidationError`` alone, so it
-        escaped as a 500 carrying a traceback.
-        """
         assert is_bare_origin(value) is False
 
         with pytest.raises(SettingsValidationError) as exc_info:
@@ -464,9 +367,6 @@ class TestOriginGrammar:
     def test_the_stored_origin_is_the_one_a_browser_will_be_matched_against(
         self,
     ) -> None:
-        """What was validated is what gets compared, or the check judged another
-        string: ``urlsplit`` drops tab, CR and LF before the host is read.
-        """
         stored = coerce_and_validate(_entry(_ORIGINS_KEY), ["http://local\thost:18473"])
 
         assert httpx.URL(stored[0]).host == "localhost"
@@ -479,7 +379,6 @@ class TestSecretGating:
         set_secret(storage, _SECRET_KEY, "tmdb-key")
 
         assert storage.secrets.has(_SECRET_KEY) is True
-        # The secret never lands in the plaintext settings table.
         assert storage.settings.list() == {}
 
     def test_clear_secret_removes_it(self, storage: StorageManager) -> None:

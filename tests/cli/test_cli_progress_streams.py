@@ -1,5 +1,3 @@
-"""``docs/CLI.md`` promises progress lines on stderr, CLI-wide."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -17,8 +15,6 @@ from .conftest import _invoke_with_mocks
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestUpdateProgressIsOffTheDataChannel:
-    """Both of its progress lines: the header and the per-source counter."""
-
     _CONFIG = {
         "inputs": {"books": {"plugin": "fake_file", "enabled": True, "path": "b.csv"}}
     }
@@ -54,7 +50,6 @@ class TestUpdateProgressIsOffTheDataChannel:
         assert "Processed 10/100" not in result.stdout
 
     def test_a_plain_run_still_shows_what_it_is_doing(self) -> None:
-        """Anchors the test above, which an empty stderr also satisfies."""
         result = self._run()
 
         assert "Updating data from books (workers=4)..." in result.stderr

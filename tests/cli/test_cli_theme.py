@@ -1,5 +1,3 @@
-"""Tests for the ``theme`` group, the CLI door to the per-user UI theme."""
-
 from __future__ import annotations
 
 import json
@@ -18,7 +16,6 @@ from tests.factories import authenticated_client, booted_web_app
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """A real store: what is pinned here is what a later read gets."""
     return StorageManager(sqlite_path=tmp_path / "theme.db")
 
 
@@ -34,7 +31,6 @@ class TestTheme:
     def test_a_set_theme_reads_back_in_the_shape_the_api_answers(
         self, storage: StorageManager
     ) -> None:
-        """``theme show --format json`` mirrors GET /api/users/{id}/theme."""
         assert _run(storage, ["theme", "set", "snowstorm"]).exit_code == 0
 
         shown = _run(storage, ["theme", "show", "--format", "json"])
@@ -49,7 +45,6 @@ class TestTheme:
         assert json.loads(shown.output) == {"theme": ""}
 
     def test_every_id_it_lists_is_one_it_accepts(self, storage: StorageManager) -> None:
-        """A listing naming ids ``theme set`` refuses is one nobody can use."""
         listed = json.loads(_run(storage, ["theme", "list", "--format", "json"]).output)
 
         assert listed
@@ -59,7 +54,6 @@ class TestTheme:
     def test_a_theme_this_install_does_not_have_is_refused(
         self, storage: StorageManager
     ) -> None:
-        """Stored, it would name a stylesheet no request can fetch."""
         result = _run(storage, ["theme", "set", "../evil"])
 
         assert result.exit_code != 0
@@ -68,7 +62,6 @@ class TestTheme:
     def test_re_picking_the_stored_theme_is_not_reported_as_a_failure(
         self, storage: StorageManager
     ) -> None:
-        """The write counts rows to spot an unknown user; a re-pick changes none."""
         _run(storage, ["theme", "set", "snowstorm"])
 
         assert _run(storage, ["theme", "set", "snowstorm"]).exit_code == 0
@@ -85,7 +78,6 @@ class TestTheme:
 
 class TestTheThemeGroupCostsTheCliNoWebServer:
     def test_reading_the_installed_themes_loads_no_asgi_stack(self) -> None:
-        """Every invocation pays this module's imports, ``--help`` included."""
         child = subprocess.run(
             [
                 sys.executable,
@@ -104,8 +96,6 @@ class TestTheThemeGroupCostsTheCliNoWebServer:
 
 
 class TestBothDoorsOnOneStore:
-    """One store behind two doors: a pick made at either reaches the other."""
-
     def test_a_pick_made_at_either_door_reads_back_the_same_at_both(
         self, storage: StorageManager
     ) -> None:

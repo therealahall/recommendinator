@@ -1,8 +1,5 @@
-"""Configuration for the cross-cutting tests under ``tests/``.
-
-Session-wide isolation fixtures live in the repository-root ``conftest.py`` so
-that the plugin-local tests under ``src/`` get them too.
-"""
+"""Session-wide isolation fixtures live in the repository-root ``conftest.py`` so
+that the plugin-local tests under ``src/`` get them too."""
 
 import logging
 from collections.abc import Iterator
@@ -16,11 +13,8 @@ pytest_plugins = ["tests.fakes.source_plugins"]
 
 @pytest.fixture()
 def restore_root_logging() -> Iterator[None]:
-    """Snapshot and restore the root logger so tests don't leak handlers.
-
-    Shared, because ``configure_logging`` detaches every root handler —
-    pytest's own included — and two trees now call it.
-    """
+    """Shared, because ``configure_logging`` detaches every root handler —
+    pytest's own included — and two trees now call it."""
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level

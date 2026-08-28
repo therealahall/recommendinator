@@ -1,5 +1,3 @@
-"""Tests for CLI profile commands."""
-
 import json
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +11,6 @@ from .conftest import _invoke_with_mocks
 
 
 def _stored_profile() -> dict:
-    """A ``profiles.get`` record carrying one entry in every profile field."""
     return {
         "id": 1,
         "user_id": 1,
@@ -28,10 +25,7 @@ def _stored_profile() -> dict:
 
 
 class TestProfileShow:
-    """Tests for profile show command."""
-
     def test_show_profile_json(self, cli_runner: CliRunner) -> None:
-        """Test showing profile in JSON format."""
         profile_record = _stored_profile()
         mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = profile_record
@@ -64,7 +58,6 @@ class TestProfileShow:
         assert "2026-01-01T00:00:00" in result.output
 
     def test_show_profile_no_profile_json(self, cli_runner: CliRunner) -> None:
-        """Empty profile in JSON mode emits the full ProfileResponse shape."""
         mock_storage = make_storage_mock()
         mock_storage.profiles.get.return_value = None
         result = _invoke_with_mocks(
@@ -83,14 +76,7 @@ class TestProfileShow:
 
 
 class TestProfileRegenerate:
-    """Tests for profile regenerate command."""
-
     def test_regenerate_profile(self) -> None:
-        """The result lands on stdout and the progress line on stderr.
-
-        Chatter shares the channel `recommend` uses for it, so a run whose
-        result is piped is not interleaved with what it was doing.
-        """
         mock_storage = make_storage_mock()
         with patch("src.cli.commands._profile.ProfileGenerator") as mock_pg_cls:
             mock_pg = MagicMock(spec=ProfileGenerator)

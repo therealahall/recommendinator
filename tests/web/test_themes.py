@@ -1,5 +1,3 @@
-"""Tests for theme discovery and API endpoints."""
-
 from __future__ import annotations
 
 import json
@@ -67,12 +65,6 @@ def _dist_holding(tmp_path: Path) -> Path:
 
 
 def _mounted_bare() -> FastAPI:
-    """The router on a plain app, which is what these tests are mounting.
-
-    The session dependency rides on the router itself, so this is as
-    authenticated as the routes ``create_app`` serves — the arrangement
-    ``tests/web/test_auth.py`` pins.
-    """
     app = FastAPI()
     app.include_router(router)
     return app
@@ -80,7 +72,6 @@ def _mounted_bare() -> FastAPI:
 
 @pytest.fixture
 def test_client() -> Generator[TestClient, None, None]:
-    """Create a test client with minimal state for theme endpoints."""
     original_state = _save_state()
 
     app_state.config = {}
@@ -93,10 +84,7 @@ def test_client() -> Generator[TestClient, None, None]:
 
 
 class TestDiscoverThemes:
-    """Tests for the discover_themes() function."""
-
     def test_returns_themes_from_valid_directories(self, tmp_path: Path) -> None:
-        """Valid theme directories with theme.json are returned."""
         theme_dir = tmp_path / "alpine"
         theme_dir.mkdir()
         theme_json = {
@@ -120,7 +108,6 @@ class TestDiscoverThemes:
         assert result[0].css_url == f"{THEMES_URL}/alpine/colors.css"
 
     def test_skips_directories_with_invalid_json(self, tmp_path: Path) -> None:
-        """Directories with malformed theme.json are skipped."""
         theme_dir = tmp_path / "broken"
         theme_dir.mkdir()
         (theme_dir / "theme.json").write_text("not valid json {{{")
@@ -265,7 +252,6 @@ class TestShellRoute:
     def test_a_private_stylesheet_404s_without_the_app_writing_to_its_mount(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A stock install mounts ./private read-only and ships no theme in it."""
         absent = tmp_path / "absent"
         monkeypatch.setattr("src.web.app.PRIVATE_THEMES_DIR", absent)
         storage = StorageManager(sqlite_path=tmp_path / "theme.db")
@@ -295,7 +281,6 @@ class TestShellRoute:
     def test_a_foreign_working_directory_never_swaps_the_shell_for_the_api_stub(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A CWD-relative dist path would lose the whole UI, and log nothing."""
         monkeypatch.setattr("src.web.app.STATIC_DIR", _dist_holding(tmp_path))
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
@@ -305,8 +290,6 @@ class TestShellRoute:
         with booted_web_app(storage, {}) as app:
             served = TestClient(app).get("/")
 
-        # Empty, so no relative resolution could succeed here — chdir into the
-        # directory holding the dist and the regression passes vacuously.
         assert not any(Path.cwd().iterdir())
         assert served.status_code == 200
         assert served.headers["content-type"].startswith("text/html")
@@ -327,8 +310,6 @@ class TestShellRoute:
 
 
 class TestThePrivateMountServesNothingAboveItself:
-    """PrivateThemeFiles waives StaticFiles' directory check, not its path one."""
-
     @staticmethod
     def _mounted_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         private = tmp_path / "themes"
@@ -340,9 +321,6 @@ class TestThePrivateMountServesNothingAboveItself:
     def test_a_url_climbing_out_of_the_mount_reaches_no_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The climb has to be percent-encoded: httpx normalises a literal `../`
-        # out of the path before sending, which is how this test once passed
-        # against a request that never reached the mount.
         self._mounted_on(tmp_path, monkeypatch)
         storage = StorageManager(sqlite_path=tmp_path / "theme.db")
 
@@ -368,7 +346,6 @@ class TestThePrivateMountServesNothingAboveItself:
     def test_the_mount_hands_back_no_file_from_the_installation_around_it(
         self, tmp_path: Path
     ) -> None:
-        """The stock mount, whose parent holds the config the app boots from."""
         config = PRIVATE_THEMES_DIR.parents[1] / "config" / "example.yaml"
         storage = StorageManager(sqlite_path=tmp_path / "theme.db")
 
@@ -382,12 +359,9 @@ class TestThePrivateMountServesNothingAboveItself:
 
 
 class TestThemeEndpoints:
-    """Tests for theme API endpoints."""
-
     def test_the_default_is_a_theme_this_install_ships(
         self, test_client: TestClient
     ) -> None:
-        """Naming one it does not leaves a new user's first paint on a 404."""
         default = test_client.get("/api/themes/default").json()["theme"]
 
         assert default in [

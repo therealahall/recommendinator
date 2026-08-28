@@ -1,5 +1,3 @@
-"""Tests for background sync job manager."""
-
 import asyncio
 import logging
 import threading
@@ -32,17 +30,12 @@ from tests.factories import make_storage_mock
 
 
 def _planted(manager: SyncManager, source: str = "steam") -> SyncJob:
-    """Create a job entry directly so tests can drive update_progress
-    without spawning the daemon thread that ``start_sync`` would launch.
-    """
     job = SyncJob(source=source, status=SyncStatus.RUNNING, started_at=datetime.now())
     manager._jobs[source] = job
     return job
 
 
 class TestSyncJobToDict:
-    """Tests for SyncJob.to_dict() serialization."""
-
     def test_to_dict_with_all_fields_populated(self) -> None:
         started = datetime(2026, 2, 21, 10, 0, 0)
         completed = datetime(2026, 2, 21, 10, 5, 0)
@@ -84,15 +77,11 @@ class TestSyncJobToDict:
         assert job.to_dict()["progress_percent"] is None
 
     def test_the_umbrella_job_is_served_under_its_label_not_its_key(self) -> None:
-        # The SPA matches the umbrella job by label; served the sentinel key it
-        # matches nothing and a Sync All run renders no progress at all.
         job = SyncJob(source=ALL_SOURCES_KEY)
         assert job.to_dict()["source"] == ALL_SOURCES_LABEL
 
 
 class TestSyncManagerStateMachine:
-    """State transitions for a single tracked job."""
-
     @patch("src.web.sync_manager.threading.Thread")
     def test_start_sync_marks_source_running(self, mock_thread: MagicMock) -> None:
         mock_thread.return_value = MagicMock()
@@ -127,8 +116,6 @@ class TestSyncManagerStateMachine:
     def test_zero_items_no_errors_is_completed_not_failed(
         self, mock_thread: MagicMock
     ) -> None:
-        """An empty source returning 0 items with no errors completes
-        cleanly; only zero-items-WITH-errors transitions to FAILED."""
         mock_thread.return_value = MagicMock()
         manager = SyncManager()
         sync_function = MagicMock(return_value=0)
@@ -160,8 +147,6 @@ class TestSyncManagerStateMachine:
 
 
 class TestSyncManagerConcurrentJobs:
-    """Multiple jobs can run concurrently when keyed by distinct sources."""
-
     @patch("src.web.sync_manager.threading.Thread")
     def test_duplicate_source_rejected_while_running(
         self, mock_thread: MagicMock
@@ -193,8 +178,6 @@ class TestSyncManagerConcurrentJobs:
 
 
 class TestSyncManagerGetStatus:
-    """get_status() shape and contents."""
-
     def test_idle_when_no_jobs(self) -> None:
         manager = SyncManager()
         status = manager.get_status()
@@ -214,8 +197,6 @@ class TestSyncManagerGetStatus:
 
 
 class TestSyncManagerUpdateProgress:
-    """update_progress writes to the job keyed by ``source``."""
-
     def test_update_multiple_fields_at_once(self) -> None:
         manager = SyncManager()
         _planted(manager, "all")
@@ -305,7 +286,6 @@ class TestSyncManagerPerSourceProgress:
         assert manager.get_status()["jobs"][0]["progress_percent"] == 50
 
     def test_concurrent_per_source_updates_no_loss(self) -> None:
-        """Concurrent updates from many threads all land in the slot map."""
         manager = SyncManager()
         _planted(manager, "all")
 
@@ -324,9 +304,6 @@ class TestSyncManagerPerSourceProgress:
                     current_source=source_name,
                 )
 
-        # ThreadPoolExecutor's threads bypass any patches to threading.Thread,
-        # which would otherwise replace pool threads with MagicMocks and
-        # deadlock the barrier.
         with ThreadPoolExecutor(max_workers=source_count) as pool:
             futures = [pool.submit(worker, f"source_{i}") for i in range(source_count)]
             for future in futures:
@@ -343,7 +320,6 @@ class TestSyncManagerPerSourceProgress:
             assert by_source[source_name]["current_item"] == expected
 
     def test_legacy_update_without_current_source_writes_top_level(self) -> None:
-        """Updates with no ``current_source`` set top-level fields directly."""
         manager = SyncManager()
         _planted(manager, "steam")
 
@@ -356,8 +332,6 @@ class TestSyncManagerPerSourceProgress:
 
 
 class TestSyncManagerAddError:
-    """add_error appends to the job keyed by ``source``."""
-
     def test_add_single_error(self) -> None:
         manager = SyncManager()
         _planted(manager, "steam")
@@ -375,7 +349,6 @@ class TestSyncManagerAddError:
         assert manager.get_status()["jobs"] == []
 
     def test_one_job_keeps_each_source_apart(self) -> None:
-        """A run of every source reports into one job, keyed by the label."""
         manager = SyncManager()
         _planted(manager, "All Sources")
 
@@ -390,8 +363,6 @@ class TestSyncManagerAddError:
 
 
 class TestSyncManagerOnCompleteCallback:
-    """on_complete fires only on successful syncs."""
-
     @patch("src.web.sync_manager.threading.Thread")
     def test_on_complete_called_on_success(self, mock_thread: MagicMock) -> None:
         mock_thread.return_value = MagicMock()
@@ -438,8 +409,6 @@ class TestSyncManagerOnCompleteCallback:
 
 
 class TestSyncManagerRunSync:
-    """_run_sync internal behaviour."""
-
     def test_returns_early_when_no_job(self) -> None:
         manager = SyncManager()
         sync_function = MagicMock(return_value=10)
@@ -477,13 +446,6 @@ class TestSyncManagerRunSync:
 
 
 class TestSyncManagerHistoryEviction:
-    """Cap on retained terminal jobs prevents unbounded ``_jobs`` growth.
-
-    Without this, an unauthenticated /api/update caller could grow the
-    SyncManager's job dict indefinitely by triggering syncs with arbitrary
-    source labels, exhausting process memory.
-    """
-
     def _make_terminal_job(
         self,
         source: str,
@@ -500,7 +462,6 @@ class TestSyncManagerHistoryEviction:
     def test_eviction_drops_oldest_terminal_job(self) -> None:
         manager = SyncManager()
         cap = manager._MAX_TERMINAL_HISTORY
-        # cap+1 terminal jobs: oldest at minute 0, newest at minute cap.
         for index in range(cap + 1):
             manager._jobs[f"src_{index}"] = self._make_terminal_job(
                 f"src_{index}", datetime(2026, 1, 1, 0, index)
@@ -510,8 +471,6 @@ class TestSyncManagerHistoryEviction:
             manager._evict_history_locked()
 
         assert len(manager._jobs) == cap
-        # The single oldest terminal job (src_0) is gone; everything
-        # newer survives.
         assert "src_0" not in manager._jobs
         for index in range(1, cap + 1):
             assert f"src_{index}" in manager._jobs
@@ -519,8 +478,6 @@ class TestSyncManagerHistoryEviction:
     def test_eviction_only_drops_terminal_jobs(self) -> None:
         manager = SyncManager()
         cap = manager._MAX_TERMINAL_HISTORY
-        # One running job (must always be retained) plus cap+1 terminal
-        # jobs to push history over the cap.
         manager._jobs["running"] = SyncJob(
             source="running",
             status=SyncStatus.RUNNING,
@@ -534,8 +491,6 @@ class TestSyncManagerHistoryEviction:
         with manager._lock:
             manager._evict_history_locked()
 
-        # Running job preserved; one terminal job evicted to bring
-        # terminals back down to the cap.
         assert "running" in manager._jobs
         terminals = [
             label
@@ -546,13 +501,9 @@ class TestSyncManagerHistoryEviction:
 
     @patch("src.web.sync_manager.threading.Thread")
     def test_start_sync_triggers_eviction(self, mock_thread: MagicMock) -> None:
-        """``start_sync`` calls eviction so callers don't have to."""
         mock_thread.return_value = MagicMock()
         manager = SyncManager()
         cap = manager._MAX_TERMINAL_HISTORY
-        # Pre-populate with cap+1 terminals so eviction must drop one.
-        # The newly inserted RUNNING job is excluded from eviction, so
-        # without these extra terminals the cap wouldn't be breached.
         for index in range(cap + 1):
             manager._jobs[f"src_{index}"] = self._make_terminal_job(
                 f"src_{index}", datetime(2026, 1, 1, 0, index)
@@ -563,14 +514,10 @@ class TestSyncManagerHistoryEviction:
         assert "src_0" not in manager._jobs
         assert "new" in manager._jobs
         assert manager._jobs["new"].status == SyncStatus.RUNNING
-        # Exactly one terminal evicted, so the dict is at cap + the
-        # newly added running job.
         assert len(manager._jobs) == cap + 1
 
 
 class TestSyncManagerZeroItemsWithErrorsRegression:
-    """When a sync produces zero items but logged errors, mark it FAILED."""
-
     @patch("src.web.sync_manager.threading.Thread")
     def test_zero_items_with_errors_marks_failed(self, mock_thread: MagicMock) -> None:
         mock_thread.return_value = MagicMock()
@@ -606,8 +553,6 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
         job = manager.get_status()["jobs"][0]
         assert job["status"] == "completed"
         assert job["items_processed"] == 5
-        # A partial failure sets no ``error_message`` — the UI reads the text
-        # off ``errors`` instead, which is the only place it survives.
         assert job["errors"] == [
             {"source": "Steam", "message": "Item 3 failed to parse"}
         ]
@@ -637,20 +582,11 @@ class TestSyncManagerZeroItemsWithErrorsRegression:
 
 SYNC_MANAGER_LOGGER = "src.web.sync_manager"
 
-# ``source`` reaches here from POST /api/update via ``humanize_source_id``,
-# which title-cases the operator's string without dropping anything.
 FORGED_SOURCE = "Steam\nSync completed for Everything: 0 items processed"
 ESCAPED_SOURCE = "Steam\\nSync completed for Everything: 0 items processed"
 
 
 class TestSyncManagerLogInjectionRegression:
-    """Regression: the job label forged log entries.
-
-    Bug: four sinks interpolated ``source`` raw and the failure added
-    ``exc_info=True``. Cause: the escaping in ``src/web/api.py`` stopped at the
-    module boundary. Fix: escape once, render the exception instead.
-    """
-
     @staticmethod
     def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
         return [
@@ -678,7 +614,6 @@ class TestSyncManagerLogInjectionRegression:
     def test_a_failure_logs_neither_the_raw_label_nor_a_traceback(
         self, mock_thread: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The traceback is the half that carried the plugin's request URL."""
         mock_thread.return_value = MagicMock()
         manager = SyncManager()
         manager.start_sync(source=FORGED_SOURCE, sync_function=MagicMock())
@@ -703,7 +638,6 @@ class TestSyncManagerLogInjectionRegression:
 SCHEDULER_LOGGER = "src.web.scheduler"
 STEAM_LABEL = "Steam"
 
-# No source_configs row, so neither interface can switch its cadence off.
 _YAML_ONLY_STEAM = {"inputs": {"steam": {"plugin": "steam", "enabled": True}}}
 
 
@@ -737,8 +671,6 @@ def _accepting_manager() -> MagicMock:
 
 
 class TestScheduledSyncDispatch:
-    """What one scheduler tick does, driven without waiting for the clock."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -830,8 +762,6 @@ class TestScheduledSyncDispatch:
         self._tick(storage, manager)
 
         assert manager.start_sync.call_args.args[0] == STEAM_LABEL
-        # The declined tick left no row of its own, here or a moment ago: a
-        # skip that outranked the real run read as no history at all.
         assert storage.sync_runs.latest_per_source(1)["steam"]["id"] == run_id
 
     def test_a_source_another_process_holds_is_dispatched_once_it_is_released(
@@ -896,7 +826,6 @@ class TestScheduledSyncDispatch:
 
         manager.start_sync.assert_not_called()
 
-        # The umbrella's own Steam run lands while that tick is declining.
         run_id = _recorded_run(storage, timedelta(seconds=50))
         manager.is_running.return_value = False
         self._tick(storage, manager)
@@ -951,15 +880,12 @@ class TestSyncSchedulerLifecycle:
                 booted = scheduler.running
                 task = scheduler._task
             assert task is not None
-            # A cancel shutdown never awaited leaves the task pending here.
             return booted, scheduler.running, task.done()
 
         assert asyncio.run(boot_then_shut_down()) == (True, False, True)
 
 
 class TestAutoEnrichGate:
-    """``auto_enrich_on_sync`` off means a finished sync starts no job at all."""
-
     def test_a_finished_sync_starts_nothing_when_auto_enrich_is_off(self) -> None:
         dispatch = build_sync_job(
             MagicMock(spec=SyncManager),

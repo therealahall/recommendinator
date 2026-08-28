@@ -1,5 +1,3 @@
-"""Tests for the shared enrichment job record."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -24,8 +22,6 @@ def jobs(storage: StorageManager) -> EnrichmentJobStore:
 
 @pytest.fixture
 def strand(storage: StorageManager) -> Callable[[], None]:
-    """Age the stamp past the window, standing in for a process that died."""
-
     def age() -> None:
         gone = datetime.now(UTC) - STALE_AFTER - timedelta(seconds=1)
         with storage.connection() as conn:
@@ -65,7 +61,6 @@ class TestClaim:
     def test_a_run_killed_mid_flight_stops_blocking_the_next_one(
         self, jobs: EnrichmentJobStore, strand: Callable[[], None]
     ) -> None:
-        """Nothing clears `running` on the way down, so the stamp has to."""
         jobs.claim("movie")
         strand()
 
@@ -75,8 +70,6 @@ class TestClaim:
     def test_a_heartbeat_keeps_a_long_run_alive(
         self, jobs: EnrichmentJobStore, strand: Callable[[], None]
     ) -> None:
-        """Drop the stamp from heartbeat() and a run past the window reads dead,
-        Stop starts answering "nothing running", and a second claim gets in."""
         jobs.claim("movie")
         strand()
         jobs.heartbeat(

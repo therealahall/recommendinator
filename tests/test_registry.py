@@ -1,5 +1,3 @@
-"""Tests for plugin registry."""
-
 import importlib
 import logging
 import threading
@@ -21,8 +19,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class FakeBookPlugin(SourcePlugin):
-    """Fake book plugin for registry testing."""
-
     @property
     def name(self) -> str:
         return "fake_books"
@@ -61,8 +57,6 @@ class FakeBookPlugin(SourcePlugin):
 
 
 class FakeGamePlugin(SourcePlugin):
-    """Fake game plugin for registry testing."""
-
     @property
     def name(self) -> str:
         return "fake_games"
@@ -102,7 +96,6 @@ class FakeGamePlugin(SourcePlugin):
 
 @pytest.fixture()
 def clean_registry() -> PluginRegistry:
-    """Create a fresh registry for each test (not singleton)."""
     return PluginRegistry()
 
 
@@ -116,20 +109,11 @@ _BLOCKED_GRACE_SECONDS = 0.5
 
 
 class TestConcurrentDiscoveryRegression:
-    """A discovery pass must not be visible half-built.
-
-    Bug: ``discover_plugins`` cleared ``_plugins`` and refilled it in place, so
-    a concurrent reader saw the cleared middle: 404 for a source that exists.
-    Fix: fill a private map, swap it in.
-    """
+    """Bug: ``discover_plugins`` cleared ``_plugins`` and refilled it in place, so a
+    concurrent reader saw the cleared middle: 404 for a source that exists."""
 
     def test_a_rebuild_is_invisible_until_it_has_finished(self) -> None:
-        """Forced interleaving: the rebuild is parked mid-scan throughout.
-
-        Pins the half-built map. The cleared middle is closed by the publish
-        being one rebind, and a reader cannot be parked inside a publish
-        deterministically, so nothing here pins that half.
-        """
+        """Forced interleaving: the rebuild is parked mid-scan throughout."""
         registry = PluginRegistry()
         first_pass_done = threading.Event()
         parked = threading.Event()
@@ -177,20 +161,12 @@ class TestConcurrentDiscoveryRegression:
 
 
 class TestPluginConstructedOutsideTheLockRegression:
-    """A plugin that calls the registry while loading must not hang.
-
-    Bug: the lock spanned ``import_module`` and every plugin ``__init__``, so a
-    plugin calling ``get_registry()`` blocked on its caller's own lock,
-    silently.
-    Fix: only the publish is locked.
-    """
+    """Bug: the lock spanned ``import_module`` and every plugin ``__init__``, so a
+    plugin calling ``get_registry()`` blocked on its caller's own lock, silently."""
 
     def test_a_plugin_whose_init_asks_for_the_registry_still_loads(self) -> None:
-        """Bounded: a regression fails here rather than hanging the suite.
-
-        ``private/plugins/`` is a documented extension point, so a plugin's
-        ``__init__`` is code this repository does not control.
-        """
+        """``private/plugins/`` is a documented extension point, so a plugin's
+        ``__init__`` is code this repository does not control."""
 
         class ReentrantPlugin(FakeBookPlugin):
             def __init__(self) -> None:
@@ -233,20 +209,11 @@ class TestPluginConstructedOutsideTheLockRegression:
 
 
 class TestRegistrySingletonIsBuiltOnceRegression:
-    """A cold process must not hand two callers two registries.
-
-    Bug: ``get_instance`` is a check-then-set and its callers run in threadpool
-    workers, so two on a cold process each keep a registry of their own.
-    Fix: build under ``_registry_lock``.
-    """
+    """Bug: ``get_instance`` is a check-then-set and its callers run in threadpool
+    workers, so two on a cold process each keep a registry of their own."""
 
     def test_two_cold_callers_share_one_registry(self) -> None:
-        """Forced interleaving, not a race: the build cannot finish unreleased.
-
-        The constructor asserts the lock is held rather than the test asserting
-        the second caller has not finished: "not done yet" is also what a
-        descheduled thread looks like.
-        """
+        """Forced interleaving, not a race: the build cannot finish unreleased."""
         building = threading.Event()
         release = threading.Event()
         built: list[PluginRegistry] = []
@@ -284,28 +251,13 @@ class TestRegistrySingletonIsBuiltOnceRegression:
 
 
 class TestPluginRegistryAbstractClassRegression:
-    """Regression tests for abstract class handling in plugin discovery.
-
-    Reported in: https://github.com/therealahall/recommendinator/issues/7
-    """
+    """Reported in: https://github.com/therealahall/recommendinator/issues/7"""
 
     def test_skips_abstract_intermediate_class_regression(
         self, clean_registry: PluginRegistry, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Test that abstract intermediate base classes are skipped silently.
-
-        Bug: The registry tried to instantiate ArrPlugin (an abstract base class
-        for Radarr/Sonarr) because it only filtered out SourcePlugin itself.
-        This caused 'Can't instantiate abstract class ArrPlugin' warnings on
-        every module that imported or defined ArrPlugin.
-
-        Root cause: _register_plugins_from_module checked `attr is not SourcePlugin`
-        but didn't check for other abstract classes in the hierarchy.
-
-        Fix: Use inspect.isabstract() to skip any abstract class, not just SourcePlugin.
-
-        Reported in: https://github.com/therealahall/recommendinator/issues/7
-        """
+        """Bug: The registry tried to instantiate ArrPlugin (an abstract base class
+        for Radarr/Sonarr) because it only filtered out SourcePlugin itself."""
         fake_module = types.ModuleType("fake_module")
         fake_module.ArrPlugin = ArrPlugin  # type: ignore[attr-defined]
         fake_module.FakeBookPlugin = FakeBookPlugin  # type: ignore[attr-defined]
@@ -331,12 +283,8 @@ class TestPluginRegistryAbstractClassRegression:
 
 
 class TestPluginImportFailureRegression:
-    """Symptom: a broken private module, then goodreads_rss in a container
-    without defusedxml, vanished from every listing.
-
-    Cause: both scans logged and continued, keeping no record of what died.
-    Fix: retain the module and its reason.
-    """
+    """Symptom: a broken private module, then goodreads_rss in a container without
+    defusedxml, vanished from every listing."""
 
     def test_a_builtin_module_that_raises_is_reported_with_its_reason(
         self, clean_registry: PluginRegistry
@@ -365,12 +313,7 @@ class TestPluginImportFailureRegression:
 
 
 class TestPrivatePluginDiscoveryRegression:
-    """A private plugin loads in the layout every in-tree plugin uses.
-
-    The scan globbed ``*.py``, so a private folder loaded nothing, silently.
-    Each case drives the public entry point, so losing the private scan from
-    ``discover_plugins`` fails here too.
-    """
+    """The scan globbed ``*.py``, so a private folder loaded nothing, silently."""
 
     def test_a_plugin_shipped_as_a_folder_is_discovered(
         self, private_plugins: Path
@@ -437,11 +380,8 @@ class TestPrivatePluginDiscoveryRegression:
 def test_no_import_format_is_also_a_source_plugin(
     clean_registry: PluginRegistry,
 ) -> None:
-    """A one-shot export is uploaded, never configured.
-
-    Reinstating one of these as a source would give it a cadence and a path
-    on disk, which is the pair the upload path replaced.
-    """
+    """Reinstating one of these as a source would give it a cadence and a path on
+    disk, which is the pair the upload path replaced."""
     clean_registry.discover_plugins()
 
     assert (

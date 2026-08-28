@@ -1,5 +1,3 @@
-"""Tests for export functionality."""
-
 import csv
 import io
 import json
@@ -32,10 +30,7 @@ from src.utils.series import latest_season_watched_date
 
 
 class TestExportSerialization:
-    """Tests for export serialization functions."""
-
     def test_export_csv_books(self) -> None:
-        """Test CSV export for books."""
         items = [
             ContentItem(
                 id="1",
@@ -59,7 +54,6 @@ class TestExportSerialization:
         assert rows[0]["isbn"] == "978-0756404741"
 
     def test_export_csv_tv_show_with_seasons_watched(self) -> None:
-        """Test CSV export for TV shows with seasons_watched list."""
         items = [
             ContentItem(
                 id="1",
@@ -84,7 +78,6 @@ class TestExportSerialization:
         assert rows[0]["total_seasons"] == "6"
 
     def test_export_json_books(self) -> None:
-        """Test JSON export for books."""
         items = [
             ContentItem(
                 id="1",
@@ -107,7 +100,6 @@ class TestExportSerialization:
         assert entries[0]["isbn"] == "978-0756404741"
 
     def test_export_json_item_with_no_rating(self) -> None:
-        """Test JSON export handles None rating correctly."""
         items = [
             ContentItem(
                 id="1",
@@ -128,7 +120,6 @@ class TestExportSerialization:
 def _reimport(
     importer: Importer, text: str, content_type: ContentType
 ) -> list[ContentItem]:
-    """Read *text* back the way an upload does, skipped lines dropped."""
     return [
         row.item
         for row in importer.parse(text, content_type)
@@ -137,12 +128,6 @@ def _reimport(
 
 
 def _store_and_read_back(tmp_path: Path, item: ContentItem) -> ContentItem:
-    """Save an item through a real database and read it back.
-
-    The returned item carries the metadata keys storage exposes, which is
-    what the exporter sees in production and what a hand-built metadata dict
-    in a test does not.
-    """
     database = SQLiteDB(tmp_path / "export.db")
     db_id = database.save_content_item(item)
     stored = database.get_content_item(db_id)
@@ -151,11 +136,6 @@ def _store_and_read_back(tmp_path: Path, item: ContentItem) -> ContentItem:
 
 
 def _arr_item(plugin: ArrPlugin, payload: dict[str, Any]) -> ContentItem:
-    """Build the item an *arr plugin yields for *payload*, minus the HTTP call.
-
-    The metadata comes from the plugin's own extractor, so this fixture
-    cannot claim a key Radarr or Sonarr does not write.
-    """
     return ContentItem(
         id=plugin.build_external_id(payload),
         title=payload["title"],
@@ -167,7 +147,6 @@ def _arr_item(plugin: ArrPlugin, payload: dict[str, Any]) -> ContentItem:
 
 
 def _gog_game(product: dict[str, Any]) -> ContentItem:
-    """Fetch the item the GOG plugin yields for *product*, minus the network."""
     with (
         patch(
             "src.ingestion.sources.gog.gog.refresh_access_token",
@@ -181,7 +160,6 @@ def _gog_game(product: dict[str, Any]) -> ContentItem:
 
 
 def _gog_wishlist_game(product_id: int, details: dict[str, Any]) -> ContentItem:
-    """Fetch the item GOG's wishlist path yields, minus the network."""
     with (
         patch(
             "src.ingestion.sources.gog.gog.refresh_access_token",
@@ -203,36 +181,9 @@ def _gog_wishlist_game(product_id: int, details: dict[str, Any]) -> ContentItem:
 
 
 class TestExportOfStoredItems:
-    """Export of items the shipped sources actually produce.
-
-    Bug reported: the year, runtime, total_seasons and platform columns came
-    out blank for every library item that did not originate from a generic
-    CSV/JSON import — a Radarr movie, a Sonarr show, a GOG game — so the
-    documented export/edit/re-import round trip silently dropped them.
-
-    Root cause: two mismatched vocabularies. The exporter looked each
-    type-specific value up in ``item.metadata`` under the *template* column
-    name (``year``, ``runtime_minutes``, ``total_seasons``, ``platform``),
-    while an item read back from storage carries the detail-table keys
-    (``release_year``, ``runtime``, ``seasons``, ``platforms``) — and the
-    detail tables in turn only recognised the canonical key, so the values
-    the *arr and Trakt plugins write (``year``, ``runtime_minutes``) never
-    reached their columns, which stayed NULL.
-
-    Fix: ``CONTENT_TYPE_COLUMNS`` names the metadata key each template column
-    carries and the exporter reads that key, and the detail-table config
-    accepts each plugin spelling as an alias of its column.
-
-    Every fixture below is produced by the named plugin rather than written
-    by hand, because a hand-written dict is what let both halves of this bug
-    pass their tests: they asserted keys the sources they were labelled with
-    never emit.
-    """
-
     def test_movie_export_includes_year_and_runtime_regression(
         self, tmp_path: Path
     ) -> None:
-        """A stored Radarr movie exports its release year and runtime."""
         stored = _store_and_read_back(
             tmp_path,
             _arr_item(
@@ -258,7 +209,6 @@ class TestExportOfStoredItems:
         assert rows[0]["genre"] == "Action"
 
     def test_tv_export_includes_total_seasons_regression(self, tmp_path: Path) -> None:
-        """A stored Sonarr show exports its season count and year."""
         stored = _store_and_read_back(
             tmp_path,
             _arr_item(
@@ -283,7 +233,6 @@ class TestExportOfStoredItems:
         assert rows[0]["year"] == "2008"
 
     def test_game_export_includes_platform_regression(self, tmp_path: Path) -> None:
-        """A stored GOG game exports a platform name, not a flag dict."""
         stored = _store_and_read_back(
             tmp_path,
             _gog_game(
@@ -309,12 +258,6 @@ class TestExportOfStoredItems:
     def test_a_stored_object_platform_exports_its_name_regression(
         self, tmp_path: Path
     ) -> None:
-        """A row stored before the codec refused an object exports its name.
-
-        ``generic_json`` wrapped a non-list ``platform`` in a list, so
-        ``{"name": "PC"}`` reached the column, and no repair rewrites it: the
-        export wrote its repr.
-        """
         database = SQLiteDB(tmp_path / "object-platform.db")
         db_id = database.save_content_item(
             ContentItem(
@@ -343,28 +286,6 @@ class TestExportOfStoredItems:
 
 
 class TestCreatorSurvivesStorage:
-    """The creator column round-trips for every content type, not just books.
-
-    Bug reported: a movie, TV show or video game exported a blank
-    director/creator/developer cell, and a row imported from the documented
-    template lost the value outright. Books were unaffected.
-
-    Root cause: the creator was a special case rather than an ordinary
-    column. The write path only took ``item.author`` for a book, so an
-    imported director never reached ``movie_details.director``; the read path
-    only produced ``ContentItem.author`` for a book, so the exporter — which
-    writes the creator cell from ``item.author`` — had nothing to write even
-    for the TMDB-enriched items whose column was filled. On top of that the
-    tv_show template column ``creator`` was declared against a metadata key
-    of the same name, while storage stores ``creators``.
-
-    Fix: every content type declares one ``FieldKind.CREATOR`` column, and
-    the tv_show template column maps to the stored ``creators`` key.
-
-    Every fixture below goes through storage, because an item built by hand
-    with ``author`` already set is what let this bug pass a green suite.
-    """
-
     @pytest.mark.parametrize(
         ("content_type", "creator_column", "creator"),
         [
@@ -382,7 +303,6 @@ class TestCreatorSurvivesStorage:
         creator_column: str,
         creator: str,
     ) -> None:
-        """A template row's creator survives import, storage and export."""
         imported = _reimport(
             CsvImporter(),
             f"title,{creator_column},status\nRound Trip,{creator},unread\n",
@@ -428,8 +348,6 @@ class TestCreatorSurvivesStorage:
 
 
 class TestSeriesSurvivesAnExport:
-    """An export is a snapshot, and the series no longer rides on the title."""
-
     @pytest.mark.parametrize(
         ("importer", "export"),
         [(CsvImporter(), export_items_csv), (JsonImporter(), export_items_json)],
@@ -459,12 +377,6 @@ class TestSeriesSurvivesAnExport:
 
 
 class TestCreatorExportEdges:
-    """The creator cell at its boundaries, for every content type.
-
-    Each case stores the item first, because the exporter reads the creator
-    off ``ContentItem.author`` and only storage puts it there.
-    """
-
     @pytest.mark.parametrize(
         ("content_type", "creator_column"),
         [
@@ -476,7 +388,6 @@ class TestCreatorExportEdges:
     def test_an_item_with_no_creator_exports_a_blank_cell(
         self, tmp_path: Path, content_type: ContentType, creator_column: str
     ) -> None:
-        """A missing creator is an empty cell, never the string "None"."""
         stored = _store_and_read_back(
             tmp_path,
             ContentItem(
@@ -499,12 +410,6 @@ class TestCreatorExportEdges:
     def test_a_creator_holding_a_comma_survives_the_csv_round_trip(
         self, tmp_path: Path
     ) -> None:
-        """A joined multi-director name re-imports as one name, not two columns.
-
-        ``to_text`` joins several directors with a comma, which is also the
-        CSV delimiter, so the export/edit/re-import loop is the case that
-        would shear the value in half if the writer stopped quoting it.
-        """
         stored = _store_and_read_back(
             tmp_path,
             ContentItem(
@@ -528,7 +433,6 @@ class TestCreatorExportEdges:
     def test_a_non_latin_creator_exports_and_re_imports_unchanged(
         self, tmp_path: Path
     ) -> None:
-        """A creator outside ASCII survives storage, export and re-import."""
         stored = _store_and_read_back(
             tmp_path,
             ContentItem(
@@ -554,11 +458,6 @@ class TestCreatorExportEdges:
     def test_a_json_template_row_keeps_its_creator_through_storage(
         self, tmp_path: Path
     ) -> None:
-        """The JSON importer's creator field reaches the column too.
-
-        The JSON door reads the same declaration as the CSV one, so a type
-        whose creator only worked on one of them would be half-fixed.
-        """
         imported = _reimport(
             JsonImporter(),
             json.dumps(
@@ -581,8 +480,6 @@ class TestCreatorExportEdges:
 
 
 class TestWholeLibraryExport:
-    """No content type means every type, for both interfaces' export."""
-
     @staticmethod
     def _library() -> list[ContentItem]:
         return [
@@ -605,7 +502,6 @@ class TestWholeLibraryExport:
     def test_each_row_fills_its_own_type_columns_behind_the_formula_guard(
         self,
     ) -> None:
-        """A mixed CSV keeps the guarded write path and one shared header."""
         rows = list(
             csv.DictReader(io.StringIO(export_items_csv(self._library(), None)))
         )
@@ -617,7 +513,6 @@ class TestWholeLibraryExport:
         assert rows[1]["author"] == ""
 
     def test_each_row_names_its_content_type(self) -> None:
-        """Otherwise the types are told apart only by which columns are blank."""
         rows = list(
             csv.DictReader(io.StringIO(export_items_csv(self._library(), None)))
         )
@@ -625,7 +520,6 @@ class TestWholeLibraryExport:
         assert [row["content_type"] for row in rows] == ["book", "movie"]
 
     def test_the_header_carries_every_type_s_columns(self) -> None:
-        """A column left out of the shared header is data silently dropped."""
         header = set(
             csv.DictReader(io.StringIO(export_items_csv([], None))).fieldnames or []
         )
@@ -634,7 +528,6 @@ class TestWholeLibraryExport:
             assert set(_exported_header(content_type)) <= header
 
     def test_each_json_entry_uses_its_own_type_s_creator_field(self) -> None:
-        """JSON entries are ragged rather than padded, so each keeps its key."""
         entries = json.loads(export_items_json(self._library(), None))
 
         assert entries[0]["author"] == "Patrick Rothfuss"
@@ -643,32 +536,15 @@ class TestWholeLibraryExport:
 
 
 def _exported_header(content_type: ContentType) -> list[str]:
-    """The header row a CSV export of *content_type* writes."""
     reader = csv.DictReader(io.StringIO(export_items_csv([], content_type)))
     return list(reader.fieldnames or [])
 
 
 class TestExportColumnConsistency:
-    """The export writes exactly the columns the importer accepts.
-
-    ``_item_to_export_dict`` builds the common half by hand, then walks the
-    type's declared columns skipping any creator column and any name the
-    common half already used. Either skip can drop a column from every
-    exported file with nothing raised, so the set of columns is pinned
-    against the declaration here. Only the set: both sides key by name, so
-    order is not part of the contract.
-    """
-
     @pytest.mark.parametrize("content_type", list(ContentType))
     def test_the_export_writes_every_column_the_importer_accepts(
         self, content_type: ContentType
     ) -> None:
-        """Each header is the common columns, the creator, and the rest.
-
-        ``COMMON_COLUMNS`` is read by the importer and by nothing in the
-        export, so a column added to it is accepted on import for every
-        content type and never written back out.
-        """
         columns = CONTENT_TYPE_COLUMNS[content_type.value]
         expected = (
             COMMON_COLUMNS
@@ -680,17 +556,6 @@ class TestExportColumnConsistency:
 
 
 class TestShippedTemplatesCarryTheExportColumns:
-    """The four template files carry the columns the export writes.
-
-    They are hand-written, while the export header is derived from the field
-    declaration, so renaming a ``template_column`` updates one and not the
-    other. The user who then imports the shipped template gets an
-    unknown-column warning and loses that value silently.
-
-    Which columns, not what order: both the importer and the exporter key by
-    name, so column order carries no meaning on either side.
-    """
-
     @pytest.mark.parametrize(
         ("content_type", "template"),
         [
@@ -702,7 +567,6 @@ class TestShippedTemplatesCarryTheExportColumns:
     def test_template_header_carries_the_export_columns(
         self, content_type: ContentType, template: str
     ) -> None:
-        """Each shipped template names that type's export columns."""
         shipped = (Path("templates") / template).read_text(encoding="utf-8")
 
         header = list(csv.reader(io.StringIO(shipped)))[0]
@@ -711,11 +575,6 @@ class TestShippedTemplatesCarryTheExportColumns:
 
 
 class TestCsvFormulaGuard:
-    """Bug: the CSV writer emitted every cell verbatim, so a title from TMDB
-    or RAWG opened in a spreadsheet as a live formula. Fix: an apostrophe
-    guards a leading formula character, and the CSV import strips it.
-    """
-
     @pytest.mark.parametrize(
         "payload",
         ['=HYPERLINK("http://evil","x")', "+1+1", "\tA1"],
@@ -724,7 +583,6 @@ class TestCsvFormulaGuard:
     def test_a_formula_title_is_written_behind_an_apostrophe_regression(
         self, payload: str
     ) -> None:
-        """Every character a spreadsheet reads as "formula follows"."""
         item = ContentItem(
             id="formula",
             title=payload,
@@ -739,11 +597,6 @@ class TestCsvFormulaGuard:
         assert rows[0]["title"] == f"'{payload}"
 
     def test_every_text_column_is_guarded_not_just_the_title_regression(self) -> None:
-        """The guard sits at the write site, so no column can be missed.
-
-        The creator column is the one PR-1b widened: a game's ``developer``
-        cell was blank before it and could carry nothing.
-        """
         item = ContentItem(
             id="formula-columns",
             title="=1+1",
@@ -772,7 +625,6 @@ class TestCsvFormulaGuard:
         assert rows[0]["platform"] == "'@PC"
 
     def test_a_hand_written_csv_keeps_its_leading_formula_character(self) -> None:
-        """The strip undoes a guard; it never invents one."""
         reimported = _reimport(
             CsvImporter(), "title,status\n=1+1,unread\n", ContentType.BOOK
         )[0]
@@ -785,11 +637,6 @@ class TestCsvFormulaGuard:
     def test_each_content_type_round_trips_a_formula_in_every_text_column_regression(
         self, content_type: ContentType
     ) -> None:
-        """The creator column is the one that differs per type.
-
-        A guard applied to a hardcoded column list would neutralise three
-        types and miss the fourth.
-        """
         creator_column = CREATOR_FIELD[content_type.value]
         item = ContentItem(
             id=f"formula-{content_type.value}",
@@ -817,9 +664,6 @@ class TestCsvFormulaGuard:
         assert reimported.metadata["genres"] == ["=Action"]
 
     def test_a_second_export_of_a_re_imported_row_is_byte_identical(self) -> None:
-        """A strip that missed a case would leave the second file carrying
-        ``''=1+1``, and every later cycle would add another apostrophe.
-        """
         item = ContentItem(
             id="formula-stable",
             title="=1+1",
@@ -845,9 +689,6 @@ class TestCsvFormulaGuard:
     def test_a_value_the_guard_does_not_own_is_written_and_read_verbatim(
         self, title: str
     ) -> None:
-        """A curly apostrophe is the near miss: a spreadsheet evaluates
-        nothing behind it, so widening the check would rewrite ordinary text.
-        """
         item = ContentItem(
             id="not-a-guard",
             title=title,
@@ -864,10 +705,7 @@ class TestCsvFormulaGuard:
 
 
 class TestExportRoundtrip:
-    """Tests that exported data can be re-imported identically."""
-
     def test_csv_roundtrip_book(self) -> None:
-        """Export a book to CSV, re-import it, verify fields match."""
         original = ContentItem(
             id="rt1",
             title="Roundtrip Book",
@@ -890,7 +728,6 @@ class TestExportRoundtrip:
         assert reimported[0].ignored is True
 
     def test_json_roundtrip_tv_show_with_seasons(self) -> None:
-        """Export a TV show with seasons_watched to JSON, re-import, verify."""
         original = ContentItem(
             id="rt2",
             title="Roundtrip Show",
@@ -918,9 +755,6 @@ class TestExportRoundtrip:
         assert reimported[0].ignored is False
 
     def test_csv_roundtrip_tv_show_keeps_its_watch_dates_readable(self) -> None:
-        """One CSV cell holds the whole date map, and writing the dict itself
-        exports a Python repr that re-imports as no dates at all.
-        """
         original = ContentItem(
             id="rt3",
             title="Roundtrip Show",
@@ -944,12 +778,6 @@ class TestExportRoundtrip:
     def test_csv_roundtrip_movie_through_storage_regression(
         self, tmp_path: Path
     ) -> None:
-        """A stored movie survives export, re-import and a second save.
-
-        This is the harm the blank export columns caused: the exported file
-        carried no year or runtime, so re-importing it dropped both and
-        content-length scoring fell back to its no-metadata default.
-        """
         stored = _store_and_read_back(
             tmp_path,
             _arr_item(

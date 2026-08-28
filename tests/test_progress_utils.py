@@ -1,5 +1,3 @@
-"""Tests for the selective progress logging utility."""
-
 import logging
 
 import pytest
@@ -9,16 +7,12 @@ from src.utils.text import LINE_BREAKS
 
 
 class TestShouldLogProgress:
-    """Tests for should_log_progress()."""
-
     def test_interval_items_logged(self) -> None:
-        """Every interval-th item is logged."""
         assert should_log_progress(10, 100) is True
         assert should_log_progress(20, 100) is True
         assert should_log_progress(50, 100) is True
 
     def test_non_interval_items_skipped(self) -> None:
-        """Items not matching initial/interval/last are skipped."""
         assert should_log_progress(6, 100) is False
         assert should_log_progress(7, 100) is False
         assert should_log_progress(11, 100) is False
@@ -30,10 +24,7 @@ class TestShouldLogProgress:
 
 
 class TestLogProgress:
-    """Tests for log_progress()."""
-
     def test_emits_message_at_interval(self, caplog: pytest.LogCaptureFixture) -> None:
-        """log_progress emits a formatted message when should_log_progress is True."""
         test_logger = logging.getLogger("test.progress")
         with caplog.at_level(logging.INFO, logger="test.progress"):
             log_progress(test_logger, "game details", 10, 100)
@@ -43,7 +34,6 @@ class TestLogProgress:
         assert "10/100" in caplog.records[0].message
 
     def test_skips_non_interval(self, caplog: pytest.LogCaptureFixture) -> None:
-        """log_progress emits nothing when should_log_progress is False."""
         test_logger = logging.getLogger("test.progress")
         with caplog.at_level(logging.INFO, logger="test.progress"):
             log_progress(test_logger, "game details", 7, 100)
@@ -52,11 +42,7 @@ class TestLogProgress:
 
 
 class TestTheLabelCannotForgeAnEntry:
-    """The label is a caller's f-string, so an item title reaches it.
-
-    Escaping at the call sites leaves the next caller to remember; the entry
-    is written here, so the escape belongs here.
-    """
+    """The label is a caller's f-string, so an item title reaches it."""
 
     @pytest.mark.parametrize("breaker", [LINE_BREAKS[0], "\0"])
     def test_no_line_break_survives_the_label(
