@@ -1,7 +1,5 @@
 # Contributing Guidelines
 
-## Getting started
-
 ```bash
 uv sync --locked --extra dev
 make test
@@ -63,8 +61,7 @@ It runs Black, Ruff, MyPy, pytest, the same four over `private/` when you have
 one, then `vue-tsc` and Vitest. Both dependency sets are installed first when
 they are missing, so a fresh clone or worktree needs no separate `uv sync` or
 `pnpm install`, and the Python tools run against exactly what `uv.lock` pins
-rather than whatever is on your `PATH`. Run one of them on its own with
-`uv run --locked --extra dev python -m …`, which resolves the same way.
+rather than whatever is on your `PATH`.
 
 CI runs the same command and reports it as one status, `check / check`.
 
@@ -151,7 +148,6 @@ def test_blank_review_no_longer_erases_a_written_one(self):
    still approves the exact tree being committed. Two safeguards keep this from
    eroding: every **cut is stated explicitly with its reason**, and every
    **deferral gets a tracker issue naming the stream it lands in**.
-   A deferral with no tracker entry is a cut pretending otherwise.
 6. Plan the atomic commit split before staging anything.
 7. Run `command make check`.
 8. Commit to the plan. If staging triggers a formatter or any other edit, restart

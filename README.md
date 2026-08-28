@@ -132,13 +132,13 @@ precedence.
 
 ### Your ratings are yours
 
-A sync fills in around what you have said, it does not talk over you. Ratings and
-reviews are only ever written into an empty field, completion dates give way only
-to later ones, and status moves forward, never back. The single exception is a
-completed TV show whose season checklist you have filled in, which returns to
-in-progress when a sync brings new seasons.
-Your own edits win outright, and any field you do not mention is left alone. The
-[full rules](ARCHITECTURE.md#user-owned-fields) cover every case.
+A sync fills in around what you said, it does not talk over you. Ratings and
+reviews are only written into an empty field, completion dates give way only to
+later ones, and status moves forward, never back. The single exception is a
+completed TV show whose season checklist you filled in, which returns to
+in-progress when a sync brings new seasons, unless it is ignored.
+[Your own edits](ARCHITECTURE.md#user-owned-fields) win outright, and any field
+you do not mention is untouched.
 
 **An export is a snapshot, not a patch.** Every row it writes states whether that
 item is ignored, so re-importing one replaces your whole ignore list with the one

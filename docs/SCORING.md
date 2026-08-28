@@ -97,12 +97,10 @@ the genre you just finished. `0.0` turns it off. The value is divided by its
 genre's same-type candidates outright. There is **no score floor**.
 
 Your five most recently finished genre clusters sit on a ladder that decays by
-recency. Every completion counts, rated or not — finishing six fantasy novels
-tires you of fantasy whether or not you scored them. Ignored items do not, since
-ignoring something asks for less of it. At `5.0` the rungs are 100%, 80%, 60%,
-40%, 20%, then nothing, and a lower setting scales the whole ladder down: `2.0`
-gives 40%, 32%, 24%, 16%, 8%. A candidate takes the penalty of its freshest
-matching cluster, multiplied into its final score.
+recency. At `5.0` the rungs are 100%, 80%, 60%, 40%, 20%, then nothing, and a
+lower setting scales the whole ladder down: `2.0` gives 40%, 32%, 24%, 16%, 8%.
+A candidate takes the penalty of its freshest matching cluster, multiplied into
+its final score.
 
 The penalty is **per content type**. Finishing a fantasy *book* varies your book
 recommendations and leaves fantasy *movies* and *games* alone. Every
@@ -114,34 +112,24 @@ penalty, because finishing book #1 does not mean you are done with the genre.
 Starting a brand-new series in that genre takes the full penalty.
 
 A finished **TV season** counts as a completion even while the show is still in
-progress, dated by that season's watched date. That date comes from Trakt's
-per-season last-watched time or a manual season check-off, and it also dates a
-completed show carrying no completion date of its own. An undated finished
-season still claims a rung, the weakest one, so it is never silently dropped.
-The show's next season is a series continuation, so it takes the softened
-penalty.
+progress, dated by that season's watched date.
 
 Completions are ordered by completion date, so something you finish today
-outranks an import dated years ago. Undated completions sort below every dated
-one, and among themselves by most-recently-added first, so when a content type's
-*dated* completions span fewer than five clusters the last rungs fall to the
-order the rows were added rather than to anything you did. Which surface stamps
-which is in [ARCHITECTURE.md](../ARCHITECTURE.md#user-owned-fields).
+outranks an import dated years ago.
 
 The date is the calendar day in the host's timezone, not UTC. See
 [DOCKER.md](DOCKER.md#environment-variables) for setting `TZ` on a container.
-Setting it does not correct stored dates, because the sync rule keeps the later
-of two dates and a corrected local date is the earlier one.
+A re-sync repairs a stored date only when the new zone is east of the old one,
+never when it is west: a sync keeps the later of two dates, and setting `TZ` on
+its own rewrites nothing. Set the zone before the import that matters.
 
 ## Ignored items
 
 An ignored item stays in your library and shapes nothing you are recommended. It
 never feeds preference analysis, scoring or the "since you enjoyed X"
-references, is never offered as a candidate, and claims no variety
-rung. It still counts as consumed for series ordering, one of the two
-consumption facts spelled out at the end of this page. Ignore it from the web
-Library or Recommendations page, from `library ignore --id <id>`, or with
-`ignored: true` in a CSV or JSON import.
+references, is never offered as a candidate, and claims no variety rung. It
+still counts as consumed for series ordering, one of the two consumption facts
+spelled out at the end of this page.
 
 A re-import leaves the flag alone unless the file states it. A stated
 `ignored: false` un-ignores, which is what makes the export-edit-re-import round

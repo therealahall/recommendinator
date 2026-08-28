@@ -133,9 +133,7 @@ for the patterns it names.
   it, so a per-option `strip_lone_surrogates` is dead weight — and the option
   added next week would be the one nobody remembered to guard. Same for a
   plugin's items: `_upsert_content_item` escapes them before any bind, so a
-  per-plugin guard is dead weight for the same reason. It escapes rather than
-  strips because a name made only of undecodable bytes would otherwise store a
-  blank, unfindable title.
+  per-plugin guard is dead weight for the same reason.
 - **No outside-the-repository paths in docs, tooling, CI, compose and build
   files, `tests/` or `.claude/`.** Not in prose, comments, docstrings, report
   strings or tests. Neither a reader nor CI can verify a path they cannot see.
@@ -209,18 +207,15 @@ Rules:
 
 ### Vue
 
-- **Live regions are mounted persistently, and only their text changes.** A
-  region carrying `aria-live`, `role="status"` or `role="alert"` must be in the
-  DOM, and in the accessibility tree, before it has anything to say. Some screen
-  readers, JAWS especially, treat a region that appears already populated as page
-  content rather than a status change and skip it entirely (WCAG 4.1.3), so
-  inserting it with `v-if` when it first has content is a bug this repository has
-  hit in three components. Render it unconditionally, `sr-only` if it should not
-  be seen, and bind its text to a computed that is `''` when there is nothing to
-  announce. **`v-show` is not a substitute**: `display: none` removes the node
-  from the accessibility tree, the same problem in a different wrapper. Do not
-  double up either. A visible notice and an `sr-only` region carrying the same
-  words announce twice, so only one gets the live role.
+- **Live regions are mounted persistently, and only their text changes.** Some
+  screen readers, JAWS especially, treat a region that appears already populated
+  as page content rather than a status change and skip it entirely (WCAG 4.1.3).
+  Render it unconditionally, `sr-only` if it should not be seen, and bind its
+  text to a computed that is `''` when there is nothing to announce. **`v-if` is
+  the bug, `v-show` is not a substitute**: `display: none` removes the node from
+  the accessibility tree.
+- **Do not double up.** A visible notice and an `sr-only` region carrying
+  the same words announce twice, so only one gets the live role.
 - **`v-html` is a security boundary.** Every use routes through DOMPurify with an
   explicit allowlist. On static content it is the wrong pattern, so use inline
   template markup. Unsanitized `v-html` is CRITICAL.

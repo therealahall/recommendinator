@@ -57,8 +57,7 @@ Each source reports how many items the plugin found, how many were saved, and
 how those split into added, updated and unchanged — so a second run of the same
 sync reads as 40 unchanged rather than as another 40 items. Failed items are
 listed per source, capped at the first 200, and a source that hit the cap adds a
-line giving its error total and how many are not shown. `--format json` emits
-the document `GET /api/sync/status` serves for the same run.
+line giving its error total and how many are not shown.
 
 With `enrichment.enabled` and `enrichment.auto_enrich_on_sync` both on, each
 off by default, a sync that saved something enriches it before the command
@@ -180,8 +179,7 @@ on, so a row still holding a released merge's wrong year takes the next source
 stating the true one instead of growing the library another row. Neither marks
 the item enriched. A year runs 1800-2200 and a creator 500 characters; a book
 takes no `--release-year`, because `year_published` dates the edition rather
-than the work. Both set a value and neither clears one: pass the name or year
-you want stored.
+than the work.
 
 `--format json` emits the edited item, the body `PATCH /api/items/<id>` answers.
 
@@ -212,11 +210,10 @@ uv run python -m src.cli library undecline-duplicate --one 42 --other 77
 the copy proposed to keep — the oldest — and Other copies the ones a merge
 would fold in. Evidence heads `same title` where the save door's own key
 matched them, and `same title apart from a qualifier` where only the looser key
-did, dropping a trailing parenthetical: the ones to look twice at. It offers 25
-works at a time by default, saying how many are left. Two copies a creator,
-year or region veto separates are never in one block. A copy in two blocks says
-so under its title in both, a veto or a dismissal having split the group. A
-work carrying more than 40 copies, or whose copies split more ways than a page
+did, dropping a trailing parenthetical: the ones to look twice at.
+
+It offers 25 works at a time by default, saying how many are left. A work
+carrying more than 40 copies, or whose copies split more ways than a page
 holds, is not offered at all, and the count line says how many are in that
 state.
 
@@ -226,6 +223,7 @@ row back — newest merge first, refusing any other order. `decline-duplicate`
 sets `--one` apart from every `--other` named, for the life of the library, and
 leaves the copies it did not name still offered together; it takes at most 39
 of them, one short of the largest block offered.
+
 `undecline-duplicate` lifts one of those refusals, and refuses while a merge
 holds either row, naming the merge to undo first: a refusal is only liftable
 back onto a pair the list can offer.
@@ -241,6 +239,11 @@ Without `--type` the file covers the whole library. A CSV header then carries
 all four types' columns plus a `content_type` column naming each row's type, so
 each row leaves the columns its own type does not have blank.
 Ignored items are exported either way, as the web Export button does.
+
+No importer reads the `content_type` column, and whole-library JSON has no type
+field at all.
+Re-importing either file stamps every row with the one type you pass to
+`--content-type`.
 
 ## Source management
 

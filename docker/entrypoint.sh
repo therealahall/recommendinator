@@ -1,12 +1,5 @@
 #!/bin/sh
-# Recommendinator container entrypoint.
-#
-# On first run, copies the bundled example.yaml to config.yaml inside the
-# mounted /app/config volume, 0600. Idempotent — does not overwrite an
-# existing config.yaml.
-#
-# This is a temporary affordance: once configuration moves into the application
-# itself, this script (and the example.yaml it copies) goes away.
+# Once configuration moves into the application itself, this script goes away.
 
 set -eu
 

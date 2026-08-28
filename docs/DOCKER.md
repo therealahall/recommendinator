@@ -111,9 +111,9 @@ session cookie on the network in cleartext: prefer a
 The service carries no memory ceiling on purpose: a limit guessed for a sync
 turns a long but healthy one into an OOM kill.
 
-**Setting `TZ` does not correct dates already stored, and a re-sync will not
-either.** The corrected local date is the earlier one, and a sync keeps the later
-of two dates. Only new completions get the right day.
+**A re-sync repairs a stored date only when the new zone is east of the old one,
+never when it is west.** A sync keeps the later of two dates, and setting `TZ` on
+its own rewrites nothing. Set the zone before the import that matters.
 
 ## First run
 
