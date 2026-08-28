@@ -216,8 +216,7 @@ async function submit(): Promise<void> {
 
           <!-- Beside the picker, not in the result: a Docker operator has no
                shell on the container, so this link is the only way to reach the
-               file they are meant to fill in — and they need it before the
-               upload, not after. -->
+               file they are meant to fill in. -->
           <p v-if="templateUrl" class="import-template">
             <a
               class="btn btn-secondary btn-small"
@@ -256,8 +255,7 @@ async function submit(): Promise<void> {
 
     <!-- Outside the accordion, not inside it: collapsing sets `hidden` on the
          panel, which takes everything under it out of the accessibility tree —
-         and a live region that leaves the tree stops announcing (WCAG 4.1.3).
-         Out here it is mounted and silent from first render either way. -->
+         and a live region that leaves the tree stops announcing (WCAG 4.1.3). -->
     <p
       class="sr-only"
       data-testid="import-status"

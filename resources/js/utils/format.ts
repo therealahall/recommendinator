@@ -1,4 +1,3 @@
-/** Human-readable content type labels */
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   book: 'Book',
   movie: 'Movie',
@@ -6,7 +5,6 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   video_game: 'Video Game',
 }
 
-/** Human-readable status labels */
 const STATUS_LABELS: Record<string, string> = {
   completed: 'Completed',
   in_progress: 'In Progress',
@@ -40,7 +38,6 @@ const RELATIVE_UNITS: ReadonlyArray<[Intl.RelativeTimeFormatUnit, number]> = [
   ['minute', 60],
 ]
 
-/** "2 hours ago", "in 4 hours" — for a timestamp the API sends as ISO 8601. */
 export function formatRelativeTime(iso: string, now: Date = new Date()): string {
   const seconds = (new Date(iso).getTime() - now.getTime()) / 1000
   // Pinned to 'en' like every other string in this UI, so the line does not
@@ -61,7 +58,6 @@ export function formatElapsed(seconds: number): string {
   return `${minutes}m ${secs}s`
 }
 
-/** Content-type-aware status label (e.g., "Unplayed" for video games) */
 export function formatStatusForContentType(status: string, contentType: string): string {
   if (status === 'currently_consuming') return 'In Progress'
   if (status === 'completed') return 'Completed'
@@ -84,12 +80,10 @@ export function formatSeries(
   return { shown: `${name} #${index}`, spoken: `Series: ${name}, number ${index}` }
 }
 
-/** Title-case a scorer key (e.g., "genre_match" -> "Genre Match") */
 export function formatScorerName(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** Acronyms that stay fully uppercase in humanized section headings. */
 const SECTION_ACRONYMS: Record<string, string> = {
   api: 'API',
   url: 'URL',
@@ -97,7 +91,6 @@ const SECTION_ACRONYMS: Record<string, string> = {
   db: 'DB',
 }
 
-/** Humanize a settings section key (e.g. "web" -> "Web", "api" -> "API"). */
 export function humanizeSection(section: string): string {
   return section
     .replace(/[_-]+/g, ' ')
@@ -107,7 +100,6 @@ export function humanizeSection(section: string): string {
     .join(' ')
 }
 
-/** Capitalize first letter */
 export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
@@ -136,7 +128,6 @@ export function boundSyncErrors(
   return { shown, total, hidden: total - shown.length }
 }
 
-/** Truncate a string to a max length, appending ellipsis if needed */
 export function truncate(str: string, maxLen: number): string {
   return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'
 }

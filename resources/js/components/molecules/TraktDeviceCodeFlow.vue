@@ -107,20 +107,22 @@ async function poll(): Promise<void> {
   if (result.connected) {
     // Read before the state change hides the code panel: in a browser that
     // blurs its occupant to <body>, and rescuing THAT focus is the only reason
-    // to move any. poll() fires from a timer, so a user who tabbed into the
-    // settings while waiting must keep the field they are typing in (2.4.3).
+    // to move any.
     const rescuingFocus =
       codePanel.value?.contains(document.activeElement) ?? false
     state.value = 'connected'
     // The confirmation belongs to the panel's region, since the status flip
-    // unmounts this component. That re-read is best-effort though, and when it
-    // fails the parent keeps this mounted — so the panel focus lands on says
-    // so itself, leaving the store's confirmation the only region speaking.
+    // unmounts this component.
     message.value = ''
+    // That re-read is best-effort though, and when it fails the parent keeps
+    // this mounted — so the panel focus lands on says so itself, leaving the
+    // store's confirmation the only region speaking.
     if (!data.oauthStatusFor(props.sourceId).connected) {
       resultText.value =
         'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
       await nextTick()
+      // poll() fires from a timer, so a user who tabbed into the settings while
+      // waiting must keep the field they are typing in (2.4.3).
       if (rescuingFocus) resultPanel.value?.focus()
     }
     return
@@ -230,14 +232,12 @@ onBeforeUnmount(clearPoll)
       >Try Again</button>
     </div>
 
-    <!--
-      A SINGLE live region, mounted unconditionally and empty. v-show is no
-      better than v-if here: display:none takes it out of the accessibility
-      tree, so it would still arrive already carrying "Requesting a device
-      code…" and JAWS would read that as page content, not a status change
-      (WCAG 4.1.3). The prefix is conditional so the region stays :empty until
-      it has something to say, and aria-atomic reads it with the message.
-    -->
+    <!-- v-show is no better than v-if here: display:none takes it out of the
+         accessibility tree, so it would still arrive already carrying
+         "Requesting a device code…" and JAWS would read that as page content,
+         not a status change (WCAG 4.1.3). -->
+    <!-- The prefix is conditional so the region stays :empty until it has
+         something to say, and aria-atomic reads it with the message. -->
     <p
       class="trakt-flow-status"
       :class="{ 'trakt-flow-status--error': state === 'error' }"
@@ -301,11 +301,9 @@ onBeforeUnmount(clearPoll)
   margin-top: 0;
 }
 
-/* Error state: keep the readable text in --text-primary and convey "error"
-   via an error-tinted background + border (mirrors .sync-status-error in
-   base.css, but with --text-primary text so it clears WCAG 1.4.3 4.5:1 —
-   --color-error text on the card background only reaches ~2.5:1). The
-   message text already states the error, so colour is not the sole signal. */
+/* --color-error on this card reaches only ~2.5:1, so the readable text stays
+   --text-primary (WCAG 1.4.3) and the tint carries "error"; the message already
+   states it, so colour is not the sole signal. */
 .trakt-flow-status--error {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 12%, transparent);

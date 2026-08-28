@@ -6,7 +6,6 @@ import type { SyncRunResponse } from '@/types/api'
 const props = defineProps<{
   sourceId: string
   sourceName: string
-  /** The cadence in the words the API gave it. */
   intervalLabel: string
   lastRunAt: string | null
   lastRunStatus: string | null

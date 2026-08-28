@@ -32,8 +32,7 @@ describe('SearchInput', () => {
 
   describe('character limit', () => {
     // Regression: the input carried no bound, so a term longer than the one the
-    // API accepts came back 422 — a bare status line over an emptied list where
-    // the user used to get the ordinary "no items match" empty state.
+    // API accepts came back 422 — a bare status line over an emptied list.
     it('bounds the input and stays quiet below the limit', () => {
       const wrapper = mount(SearchInput, { props: { modelValue: 'abcd', maxlength: 5 } })
       expect(wrapper.find('input').attributes('maxlength')).toBe('5')

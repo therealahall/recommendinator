@@ -53,10 +53,8 @@ const DISCONNECTED: OAuthStatus = Object.freeze({
 export const useDataStore = defineStore('data', () => {
   const api = useApi()
 
-  // Sync state — multi-job after issue #45.
   const syncSources = ref<SyncSourceResponse[]>([])
   const syncJobs = ref<SyncJobResponse[]>([])
-  // Aggregate banner status: 'running' if any job running, else last terminal.
   const syncStatus = ref<'idle' | 'running' | 'completed' | 'failed'>('idle')
   const syncMessage = ref('')
   const syncLoading = ref(false)
@@ -70,7 +68,6 @@ export const useDataStore = defineStore('data', () => {
   // slot and nothing else would know it is spoken for.
   const umbrellaSourceIds = ref<Set<string>>(new Set())
 
-  // Map of currently RUNNING jobs by source label, derived from /sync/status.
   const jobsByLabel = computed<Record<string, SyncJobResponse>>(() => {
     const map: Record<string, SyncJobResponse> = {}
     for (const job of syncJobs.value) map[job.source] = job
@@ -151,17 +148,14 @@ export const useDataStore = defineStore('data', () => {
     return oauthStatus.value[sourceId] ?? DISCONNECTED
   }
 
-  // Enrichment state
   const enrichmentStats = ref<EnrichmentStatsResponse | null>(null)
   const enrichmentStatsError = ref('')
   const enrichmentJob = ref<EnrichmentJobStatusResponse | null>(null)
   const enrichmentEnabled = ref(false)
 
-  // Polling timers
   let syncPollTimer: ReturnType<typeof setInterval> | null = null
   let enrichPollTimer: ReturnType<typeof setInterval> | null = null
 
-  // Sync actions
   async function loadSyncSources() {
     syncLoading.value = true
     syncSourcesError.value = ''
@@ -264,9 +258,7 @@ export const useDataStore = defineStore('data', () => {
         stopSyncPolling()
         // A completed sync may have auto-triggered enrichment server-side
         // (enrichment.auto_enrich_on_sync). checkEnrichmentStatus refreshes
-        // the stats AND starts polling when a job is running, so the data
-        // view live-updates enrichment progress without a manual reload —
-        // a one-shot loadEnrichmentStats would miss the running job.
+        // the stats AND starts polling when a job is running.
         checkEnrichmentStatus()
       } else {
         syncStatus.value = 'idle'
@@ -481,7 +473,6 @@ export const useDataStore = defineStore('data', () => {
     return disconnectOAuth(sourceId, 'epic_games', 'Disconnecting Epic Games...')
   }
 
-  // Trakt device-code auth
   async function startTraktFlow(sourceId: string): Promise<TraktDeviceFlowResponse> {
     return api.post<TraktDeviceFlowResponse>('/trakt/start-device-flow', undefined, {
       source_id: sourceId,
@@ -621,8 +612,6 @@ export const useDataStore = defineStore('data', () => {
     stopEnrichmentPolling()
   }
 
-  // Per-source config flows.
-
   const sourceSchemas = ref<Record<string, SourceSchemaResponse>>({})
   const sourceConfigs = ref<Record<string, SourceConfigResponse>>({})
   const sourceRuns = ref<Record<string, SyncRunResponse[]>>({})
@@ -692,9 +681,6 @@ export const useDataStore = defineStore('data', () => {
       { enabled },
     )
     sourceConfigs.value = { ...sourceConfigs.value, [sourceId]: updated }
-    // Mirror the enabled flag onto the listing entry so the accordion's
-    // collapsed-state UI (Disabled badge, Sync button) updates immediately
-    // without waiting for a syncSources reload.
     syncSources.value = syncSources.value.map((source) =>
       source.id === sourceId ? { ...source, enabled } : source,
     )
@@ -807,14 +793,12 @@ export const useDataStore = defineStore('data', () => {
   }
 
   return {
-    // State
     syncSources,
     syncStatus,
     syncJobs,
     syncMessage,
     syncLoading,
     syncSourcesError,
-    // Helpers
     anySyncRunning,
     isSourceIdSyncing,
     jobForSourceId,
@@ -832,7 +816,6 @@ export const useDataStore = defineStore('data', () => {
     pluginImportErrors,
     importers,
     importTemplates,
-    // Actions
     loadSyncSources,
     triggerSync,
     checkSyncStatus,

@@ -32,11 +32,12 @@ onMounted(() => {
 
 // Answering unmounts the panel under the focus it took, so the keyboard goes
 // back to what opened it (WCAG 2.4.3) — every caller needed this, and two of
-// four had it. Skipped when the caller has already placed focus itself, and
-// when the answer took the opener away with it.
+// four had it.
 onBeforeUnmount(() => {
   const back = opener
   void nextTick(() => {
+    // Skipped when the caller has already placed focus itself, and when the
+    // answer took the opener away with it.
     const settled = document.activeElement
     if (settled !== null && settled !== document.body) return
     if (back?.isConnected) back.focus()

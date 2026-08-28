@@ -55,17 +55,19 @@ function remove(index: number) {
 
 // The × button the user activated unmounts with its chip, so focus would fall
 // to <body> and their next Tab would restart at the top of the document — once
-// per chip while pruning a list (WCAG 2.4.3). Land on whichever chip slid into
-// that position, or the draft input once the last one is gone. Driven off the
-// prop rather than the click so focus only moves if the removal actually took;
-// a parent that rejects the change leaves focus where the user put it.
+// per chip while pruning a list (WCAG 2.4.3).
 watch(
+  // Driven off the prop rather than the click so focus only moves if the
+  // removal actually took; a parent that rejects the change leaves focus where
+  // the user put it.
   () => props.modelValue,
   async () => {
     if (pendingFocusIndex.value === null) return
     const index = pendingFocusIndex.value
     pendingFocusIndex.value = null
     await nextTick()
+    // Land on whichever chip slid into that position, or the draft input once
+    // the last one is gone.
     const buttons = chipList.value?.querySelectorAll<HTMLElement>('.tag-input-remove')
     const next = buttons?.length
       ? buttons[Math.min(index, buttons.length - 1)]

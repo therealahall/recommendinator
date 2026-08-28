@@ -97,10 +97,10 @@ watch(
       // again, so a poll left running talks to the sign-in screen forever.
       app.stopPolling()
       // The shell disappearing without a word reads as a crash, and every route
-      // out of it — a revoked session or a deliberate sign-out — ended one. Said
-      // one tick late, because a live region that first enters the tree already
-      // populated is read as page content and skipped.
+      // out of it — a revoked session or a deliberate sign-out — ended one.
       if (!wasAuthenticated) return
+      // Said one tick late, because a live region that first enters the tree already
+      // populated is read as page content and skipped.
       notice.value = ''
       await nextTick()
       notice.value = SESSION_ENDED
@@ -116,10 +116,6 @@ watch(
 </script>
 
 <template>
-  <!-- Three screens off one answer, and a fourth screen before it lands:
-       guessing which of the three would flash a sign-in form at someone already
-       signed in, but rendering nothing leaves a phone on a slow connection with
-       an empty document and no way to tell it apart from a broken one. -->
   <SetupForm
     v-if="auth.needsSetup"
     :error="gate.error"
@@ -166,6 +162,8 @@ watch(
     </div>
   </template>
 
+  <!-- Rendering nothing leaves a phone on a slow connection with an empty
+       document and no way to tell it apart from a broken one. -->
   <main v-else class="auth-screen" aria-busy="true">
     <!-- No live region: this is the document a screen reader arrives at, and one
          that enters the tree already populated is skipped as page content. -->
@@ -179,7 +177,6 @@ watch(
 </template>
 
 <style>
-/* Mobile sidebar state driven by Vue */
 @media (max-width: 768px) {
   .sidebar-open .sidebar {
     left: 0;

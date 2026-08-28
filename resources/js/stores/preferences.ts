@@ -60,7 +60,6 @@ function errorMessage(error: unknown): string {
 export const usePreferencesStore = defineStore('preferences', () => {
   const api = useApi()
 
-  // State
   const scorerWeights = ref<Record<string, number>>({})
   const seriesInOrder = ref(true)
   const varietyPenalty = ref(0)
@@ -111,7 +110,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
     }, 2000)
   }
 
-  // Actions
   async function load() {
     const app = useAppStore()
     loading.value = true

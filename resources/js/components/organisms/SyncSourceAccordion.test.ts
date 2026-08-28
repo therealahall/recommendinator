@@ -249,7 +249,6 @@ describe('SyncSourceAccordion', () => {
     await wrapper.find('button.accordion-trigger').trigger('click')
     await flushPromises()
 
-    // Type into the path field, then click Save.
     await wrapper.find('input[name="vanity_url"]').setValue('updated')
     await wrapper.find('[data-testid="form-save"]').trigger('click')
     await flushPromises()

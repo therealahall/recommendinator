@@ -1,6 +1,5 @@
 import { nextTick, ref, type Ref } from 'vue'
 
-/** Ask before a backdrop click or Escape throws away unsaved work. */
 export function useDiscardGuard(
   dirty: Ref<boolean>,
   close: () => void,

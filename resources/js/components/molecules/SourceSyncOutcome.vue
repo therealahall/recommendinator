@@ -49,8 +49,6 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
     Plain content, not a live region: it renders on the poll that ends the
     sync, and a region arriving already populated is read as page content
     rather than a status change. The page-level sync banner announces (4.1.3).
-    Outside the accordion header, whose slot is the trigger button's content:
-    this would otherwise run into the source name in its accessible name.
   -->
   <p v-if="resultLabel" class="source-outcome-result" data-testid="source-sync-result">
     {{ resultLabel }}

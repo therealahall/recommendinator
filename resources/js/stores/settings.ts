@@ -36,7 +36,6 @@ export const useSettingsStore = defineStore('settings', () => {
   // Keyed by setting key; populated from a 422 validation failure.
   const fieldErrors = reactive<Record<string, string>>({})
 
-  /** Drop every recorded field error belonging to *section*. */
   function clearSectionFieldErrors(section: string): void {
     const sectionSettings =
       sections.value.find((s) => s.section === section)?.settings ?? []
@@ -72,9 +71,7 @@ export const useSettingsStore = defineStore('settings', () => {
   ): Promise<boolean> {
     // Clear the whole section, not just the keys being sent. A field that
     // errored and was then reverted drops out of `updates`, so a key-scoped
-    // clear would strand its error — and the banner picks the *first* keyed
-    // field as "the offending one", so a stale entry mislabels the next
-    // failure as belonging to a field the user already fixed.
+    // clear would strand its error.
     clearSectionFieldErrors(section)
     saving[section] = true
     saveStatus[section] = 'saving'

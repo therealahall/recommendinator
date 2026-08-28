@@ -64,9 +64,7 @@ const unusableSources = computed(() =>
   data.syncSources.filter((source) => source.plugin_not_loaded !== null),
 )
 
-// Enabled sources first, disabled sources collapsed at the bottom in a
-// muted state. Within each group preserve the API ordering (already
-// alphabetical by source id).
+// Within each group preserve the API ordering (already alphabetical by source id).
 const orderedSources = computed(() => {
   return data.syncSources
     .filter((source) => source.plugin_not_loaded === null)

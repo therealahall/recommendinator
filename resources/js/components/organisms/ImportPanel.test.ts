@@ -429,8 +429,8 @@ describe('ImportPanel', () => {
     wrapper.unmount()
   })
 
-  /** qs5i.2.34's class: natively disabling the focused button drops the
-   *  keyboard user to <body> (WCAG 2.4.3). */
+  /** Natively disabling the focused button drops the keyboard user to <body>
+   *  (WCAG 2.4.3). */
   it('keeps the Import button focused while the upload is in flight', async () => {
     const wrapper = await openPanel()
     let settle: (value: ImportResponse) => void = () => {}

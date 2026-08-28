@@ -78,9 +78,7 @@ async function onRetry(): Promise<void> {
   >
     <!-- aria-busy sits on this wrapper because it is the only node present in
          every outcome: assistive tech tracking the state has to hear the flag
-         flip to false, and on the common path (preferences arrive) the card
-         below is replaced by the form, so a flag there would vanish instead of
-         clearing (4.1.3). Mirrors SettingsPage. -->
+         flip to false. -->
     <div class="page-header">
       <h2 id="preferences-heading">Preferences</h2>
       <p class="page-description">Customize how recommendations are generated.</p>

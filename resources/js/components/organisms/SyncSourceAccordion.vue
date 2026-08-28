@@ -186,6 +186,9 @@ const intervalLabel = computed(
         @open="onOpenRunHistory"
       />
       <SourceSyncProgress :source-name="source.display_name" :job="job" />
+      <!-- Outside the accordion header, whose slot is the trigger button's
+           content: this would otherwise run into the source name in its
+           accessible name. -->
       <SourceSyncOutcome
         :source-id="source.id"
         :source-name="source.display_name"
@@ -201,8 +204,7 @@ const intervalLabel = computed(
     <!--
       Plain content, not role="alert": it can only appear as the body first
       renders, where an alert arrives already populated and is read as page
-      content. The retry outcome goes to the region below it, which is mounted
-      and silent before it has anything to say.
+      content.
     -->
     <div v-else-if="detailsError" class="source-accordion-details-error">
       <p :data-testid="`details-error-${source.id}`">

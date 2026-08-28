@@ -11,7 +11,6 @@ const NOTHING_TO_SAVE = 'Nothing to save yet. Edit a field first.'
 const props = withDefaults(
   defineProps<{
     user: UserResponse
-    /** Whatever the parent's update request came back with. */
     error?: string
     pending?: boolean
     saved?: boolean
@@ -44,7 +43,6 @@ const changed = computed(
 )
 const submittable = computed(() => username.value.trim() !== '' && changed.value)
 
-/** A complaint about the press this form can make on its own. */
 const complaint = ref('')
 
 // Editing either field is the retry, so drop the complaint on the keystroke.

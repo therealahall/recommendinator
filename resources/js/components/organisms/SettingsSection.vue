@@ -1,9 +1,7 @@
 <script lang="ts">
 // Module scope, not <script setup>: setup runs per component instance, and the
 // Settings page renders one section card per registry section, so a constant map
-// declared there would be rebuilt for each. The caution note is per section
-// because a single shared string ended up warning about CORS origins in the
-// Logging panel, which contains no CORS control.
+// declared there would be rebuilt for each.
 const CAUTION_BY_SECTION: Record<string, string> = {
   web: 'this setting controls who can reach this instance. Widening the allowed CORS origins lets other sites in your browser read and modify your data.',
   logging: 'these settings control how much this instance records and where it writes it. Verbose levels can capture sensitive request detail on disk.',
@@ -68,7 +66,6 @@ const cautionText = computed(
     'these settings change how this instance runs.',
 )
 
-// Local edit buffer + a snapshot of the server value for change detection.
 // Server truth lives in the store; the buffer is this section's working copy.
 const buffer = reactive<Record<string, BufferValue>>({})
 const original = reactive<Record<string, BufferValue>>({})
@@ -120,9 +117,10 @@ function clearSaveTimer(): void {
 
 // A persistent role="status" region only fires the screen reader when its text
 // actually changes, so a repeated identical action (e.g. two resets in a row)
-// would be dropped. Blank the region first, then set the message, forcing a
-// mutation the AT re-announces every time.
+// would be dropped.
 async function announce(message: string): Promise<void> {
+  // Blank the region first, then set the message, forcing a mutation the AT
+  // re-announces every time.
   actionMessage.value = ''
   await nextTick()
   actionMessage.value = message
@@ -140,11 +138,9 @@ function changedUpdates(): Record<string, unknown> {
 }
 
 async function onSave(): Promise<void> {
-  // `saving` flips true before the await, and the Save button is disabled on it
-  // — disabling the element the user just activated blurs it, dropping focus to
-  // <body>. Guard re-entry here so the button can stay focusable (aria-disabled
-  // does not block activation), which keeps focus where the user left it on the
-  // success path (WCAG 2.4.3). The failure path moves focus deliberately below.
+  // Guard re-entry here so the button can stay focusable (aria-disabled does not
+  // block activation), which keeps focus where the user left it on the success
+  // path (WCAG 2.4.3).
   if (saving.value) return
   clearSaveTimer()
   const updates = changedUpdates()
@@ -171,11 +167,6 @@ async function onSave(): Promise<void> {
   }
 }
 
-// The store re-throws whatever useApi.request raised (it only catches on the
-// save path), so without these catches a 503, a 400 or a dropped connection
-// produced: the button flipped busy and back, the announce() after the await
-// never ran, the live region stayed empty, and the rejection escaped as an
-// unhandled promise rejection. The user saw a no-op and was told nothing.
 function failureText(error: unknown, fallback: string): string {
   return error instanceof Error ? `${fallback} ${error.message}` : fallback
 }
@@ -282,9 +273,7 @@ onBeforeUnmount(clearSaveTimer)
       <!-- Deliberately NOT a live region. role="status"/role="alert" on the
            spans below are already implicit live regions; wrapping them in
            another one nests live regions, and aria-atomic on the wrapper drags
-           the button's own label into every announcement — so toggling Save →
-           Saving… re-reads the whole group, and a save result gets announced
-           twice. Each span owns its announcement. -->
+           the button's own label into every announcement. -->
       <div class="settings-section-save-group">
         <span
           v-if="saveStatus === 'saved'"

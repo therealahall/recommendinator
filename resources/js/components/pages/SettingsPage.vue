@@ -31,9 +31,7 @@ function changePassword(change: PasswordChangeRequest) {
   <div :aria-busy="store.loading || undefined">
     <!-- aria-busy sits on this wrapper because it is the only node present in
          every outcome: assistive tech tracking the state has to hear the flag
-         flip to false, and on the common path (settings arrive) the card below
-         is replaced by the section list, so a flag there would vanish instead
-         of clearing (4.1.3). Mirrors PreferencesPage. -->
+         flip to false. -->
     <div class="page-header">
       <h2>Settings</h2>
       <p class="page-description">Application configuration for this instance.</p>

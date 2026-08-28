@@ -510,8 +510,6 @@ function isSecretSet(name: string): boolean {
 </template>
 
 <style scoped>
-/* .source-form-field/-label/-help, .source-form-secrets (+ its legend), and
-   .secret-status-row/.secret-edit-row are shared primitives in base.css. */
 .source-form {
   display: flex;
   flex-direction: column;

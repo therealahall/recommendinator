@@ -12,7 +12,6 @@ import type { SetupRequest } from '@/types/api'
 
 const props = withDefaults(
   defineProps<{
-    /** Whatever the parent's account-creation request came back with. */
     error?: string
     pending?: boolean
     /** The server's floor, which the session call carries. */
@@ -34,8 +33,6 @@ const complete = computed(
   () => username.value.trim() !== '' && password.value !== '' && confirmation.value !== '',
 )
 
-/** A complaint about the username or the password pair this screen can make on
- *  its own. */
 const complaint = ref('')
 
 /** Which fields the local complaint is about, so only those are marked and

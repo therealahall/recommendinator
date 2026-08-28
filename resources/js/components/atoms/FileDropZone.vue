@@ -7,8 +7,8 @@ const props = defineProps<{
   file: File | null
 }>()
 
-// The second argument says the file arrived by drop. A drop is the one path
-// with nothing to announce it: the native input keeps the name it was given.
+// A drop is the one path with nothing to announce it: the native input keeps
+// the name it was given.
 const emit = defineEmits<{
   'update:file': [file: File | null, dropped: boolean]
 }>()
@@ -42,7 +42,7 @@ function onChange(event: Event): void {
 
 // The drop never reaches the native input — assigning a FileList to it is not
 // portable — so this line, not the input's own value, is what names a dropped
-// file. It describes the input so both paths read the same way.
+// file.
 const selection = computed(() =>
   props.file ? `Selected file: ${props.file.name}` : 'No file selected yet.',
 )

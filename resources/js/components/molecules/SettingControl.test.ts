@@ -3,10 +3,7 @@ import { mount } from '@vue/test-utils'
 import SettingControl from './SettingControl.vue'
 import type { SettingViewValue } from '@/types/api'
 
-// Fixtures name real registry leaves. The web bind settings used to be the
-// fixtures here, but they are bootstrap-only now and absent from the registry —
-// a fixture keyed on a deleted leaf reads as documentation of a surface that no
-// longer exists.
+// Fixtures name real registry leaves.
 function value(overrides: Partial<SettingViewValue> = {}): SettingViewValue {
   return {
     key: 'enrichment.batch_size',
@@ -44,9 +41,6 @@ function lastEmit(wrapper: ReturnType<typeof mountControl>, event: string): unkn
 describe('SettingControl widget mapping', () => {
   it('passes through an absent max so the stepper renders unbounded', () => {
     // Regression: this binding is the seam the max-100 bug came through.
-    // NumberStepper used to default `max` to 100, so `validation.max: null`
-    // arriving here as `undefined` silently capped every min-only setting.
-    // The atom's own tests cannot catch a regression in this wiring.
     const setting = value({
       type: 'int',
       widget: 'number',
