@@ -1,5 +1,3 @@
-"""Tests for series detection and filtering utilities."""
-
 from datetime import date
 
 import pytest
@@ -27,46 +25,34 @@ from src.utils.series import (
 
 
 def test_extract_series_info():
-    """Test series information extraction from titles."""
-    # Pattern 1: (Series Name, #N) - works for all types
     assert extract_series_info("Book Title (The Witcher, #4)") == ("The Witcher", 4)
 
-    # Pattern 2: (Series Name #N)
     assert extract_series_info("Book (Series #2)") == ("Series", 2)
 
-    # Pattern 3: (Series Name, Book N) - books
     assert extract_series_info("Book (Series, Book 3)") == ("Series", 3)
 
-    # Pattern 4: (Series Name, Season N) - TV shows
     assert extract_series_info("Show (The Expanse, Season 1)") == ("The Expanse", 1)
 
-    # Pattern 5: (Series Name, S1) - TV shows shorthand
     assert extract_series_info("Show (The Expanse, S1)") == ("The Expanse", 1)
 
-    # Pattern 6: (Series Name, Part N) - movies/games
     assert extract_series_info("Movie (Lord of the Rings, Part 1)") == (
         "Lord of the Rings",
         1,
     )
 
-    # Pattern 7: (Series Name, Episode N) - movies/TV
     assert extract_series_info("Movie (Star Wars, Episode 4)") == ("Star Wars", 4)
 
-    # No series
     assert extract_series_info("Standalone Book") is None
     assert extract_series_info("Book (Not a Series)") is None
 
 
 def test_extract_series_info_from_metadata():
-    """Test series information extraction from metadata."""
-    # TV show with season in metadata
     metadata_tv = {"series": "The Expanse", "season": 2}
     assert extract_series_info("The Expanse", metadata_tv, ContentType.TV_SHOW) == (
         "The Expanse",
         2,
     )
 
-    # Game with part in metadata
     metadata_game = {"series_title": "Mass Effect", "part_number": 2}
     assert extract_series_info("ME2", metadata_game, ContentType.VIDEO_GAME) == (
         "Mass Effect",
@@ -75,7 +61,6 @@ def test_extract_series_info_from_metadata():
 
 
 def test_expand_tv_shows_to_seasons():
-    """Test expanding TV shows into season-level items for recommendations."""
     show_with_seasons = ContentItem(
         id="tvdb:280619",
         db_id=42,
@@ -106,23 +91,19 @@ def test_expand_tv_shows_to_seasons():
     assert expanded[5].parent_id == "tvdb:280619"
     assert expanded[6].title == "Unknown Show"
     assert expanded[6].id == "tvdb:999"
-    assert expanded[6].parent_id is None  # passthrough items have no parent
+    assert expanded[6].parent_id is None
 
     # Every season item carries the parent show's db_id so recommendation
     # actions (mark complete / ignore) resolve to the show-level library row.
     for season_item in expanded[:6]:
         assert season_item.db_id == 42
-    # Passthrough items keep their own db_id.
     assert expanded[6].db_id == 99
 
 
 def test_get_series_name():
-    """Test getting series name from title or ContentItem."""
-    # Test with title string (backward compatibility)
     assert get_series_name(title="Book (The Witcher, #4)") == "The Witcher"
     assert get_series_name(title="Standalone Book") is None
 
-    # Test with ContentItem and metadata
     item_with_metadata = ContentItem(
         id="2",
         title="Show",
@@ -134,7 +115,6 @@ def test_get_series_name():
 
 
 def test_get_series_item_number():
-    """Test getting item number from title."""
     assert get_series_item_number(title="Book (The Witcher, #4)") == 4
     assert get_series_item_number(title="Standalone Book") is None
     # Half-numbered novellas parse as floats, not truncated to an int.
@@ -143,7 +123,6 @@ def test_get_series_item_number():
 
 
 def test_build_series_tracking():
-    """Test building series tracking from consumed items."""
     items = [
         ContentItem(
             id="1",
@@ -178,7 +157,6 @@ def test_build_series_tracking():
 
 
 def test_build_series_tracking_preserves_decimal_positions():
-    """A consumed half-numbered novella is tracked as a float, not truncated."""
     items = [
         ContentItem(
             id="1",
@@ -198,13 +176,10 @@ def test_build_series_tracking_preserves_decimal_positions():
 
 
 def test_is_first_item_in_series():
-    """Test checking if item is first in series for all content types."""
-    # Test with title string (backward compatibility)
     assert is_first_item_in_series(title="Book (Series, #1)") is True
     assert is_first_item_in_series(title="Show (Series, Season 1)") is True
     assert is_first_item_in_series(title="Book (Series, #2)") is False
 
-    # Test with ContentItem
     item_first = ContentItem(
         id="1",
         title="The Expanse (The Expanse, Season 1)",
@@ -213,7 +188,6 @@ def test_is_first_item_in_series():
     )
     assert is_first_item_in_series(item=item_first) is True
 
-    # Test with ContentItem and metadata
     item_with_metadata = ContentItem(
         id="3",
         title="Movie",
@@ -225,12 +199,8 @@ def test_is_first_item_in_series():
 
 
 class TestIsNextAfterConsumed:
-    """Contract of the shared next-in-sequence helper.
-
-    ``SeriesOrderScorer`` orders entries with it, so the boundaries it draws
-    decide which candidate gets the rating-boosted score. Positions arrive as
-    floats, and the helper compares them instead of enumerating slots.
-    """
+    """``SeriesOrderScorer`` orders entries with it, so the boundaries it draws
+    decide which candidate gets the rating-boosted score."""
 
     def test_next_whole_number_when_nothing_sits_between(self) -> None:
         assert is_next_after_consumed(3.0, {1.0, 2.0}, set()) is True
@@ -253,7 +223,6 @@ class TestIsNextAfterConsumed:
 
 
 def test_should_recommend_book_not_in_series():
-    """Test recommendation for books not in a series."""
     item = ContentItem(
         id="1",
         title="Standalone Book",
@@ -265,7 +234,6 @@ def test_should_recommend_book_not_in_series():
 
 
 def test_should_recommend_first_book_unstarted_series():
-    """Test recommendation for first book in unstarted series."""
     item = ContentItem(
         id="1",
         title="Book (New Series, #1)",
@@ -277,7 +245,6 @@ def test_should_recommend_first_book_unstarted_series():
 
 
 def test_should_not_recommend_later_book_unstarted_series():
-    """Test that later books in unstarted series are not recommended."""
     item = ContentItem(
         id="1",
         title="Book (New Series, #4)",
@@ -289,7 +256,6 @@ def test_should_not_recommend_later_book_unstarted_series():
 
 
 def test_should_recommend_next_book_started_series():
-    """Test recommendation for next book in started series."""
     item = ContentItem(
         id="1",
         title="Book (Series A, #3)",
@@ -297,13 +263,11 @@ def test_should_recommend_next_book_started_series():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    # User has read books 1 and 2
     series_tracking = {"Series A": {1, 2}}
     assert should_recommend_item(item, series_tracking) is True
 
 
 def test_should_not_recommend_skipped_book_started_series():
-    """Test that skipping ahead in a series is not recommended."""
     item = ContentItem(
         id="1",
         title="Book (Series A, #5)",
@@ -311,13 +275,11 @@ def test_should_not_recommend_skipped_book_started_series():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    # User has read books 1 and 2, but not 3 or 4
     series_tracking = {"Series A": {1, 2}}
     assert should_recommend_item(item, series_tracking) is False
 
 
 def test_should_recommend_book_zero_prequel():
-    """Test recommendation when user has read book #0 (prequel)."""
     item = ContentItem(
         id="1",
         title="Book (Series A, #1)",
@@ -325,17 +287,13 @@ def test_should_recommend_book_zero_prequel():
         content_type=ContentType.BOOK,
         status=ConsumptionStatus.UNREAD,
     )
-    # User has read book #0 (prequel)
     series_tracking = {"Series A": {0}}
     assert should_recommend_item(item, series_tracking) is True
 
 
 def test_should_not_recommend_item_if_previous_exists_unconsumed():
-    """Test that items are not recommended if previous items exist unconsumed."""
-    # User has NOT completed Mass Effect 1
     series_tracking = {"Mass Effect": set()}
 
-    # Mass Effect 1 exists in unconsumed data
     unconsumed_items = [
         ContentItem(
             id="me1",
@@ -345,7 +303,6 @@ def test_should_not_recommend_item_if_previous_exists_unconsumed():
         ),
     ]
 
-    # Mass Effect 3 should NOT be recommended (ME1 exists but not completed)
     item_me3 = ContentItem(
         id="me3",
         title="Mass Effect 3 (Mass Effect, #3)",
@@ -354,7 +311,6 @@ def test_should_not_recommend_item_if_previous_exists_unconsumed():
     )
     assert should_recommend_item(item_me3, series_tracking, unconsumed_items) is False
 
-    # Mass Effect 1 SHOULD be recommended (it's the first item)
     item_me1 = ContentItem(
         id="me1",
         title="Mass Effect 1 (Mass Effect, #1)",
@@ -365,11 +321,8 @@ def test_should_not_recommend_item_if_previous_exists_unconsumed():
 
 
 def test_should_recommend_item_if_previous_not_in_data():
-    """Test that items are recommended if previous items don't exist in data."""
-    # User has NOT started the series
     series_tracking = {"Mass Effect": set()}
 
-    # Mass Effect 1 and 2 are NOT in unconsumed data (don't exist)
     unconsumed_items = [
         ContentItem(
             id="me3",
@@ -379,7 +332,6 @@ def test_should_recommend_item_if_previous_not_in_data():
         ),
     ]
 
-    # Mass Effect 3 CAN be recommended (previous items don't exist in data)
     item_me3 = ContentItem(
         id="me3",
         title="Mass Effect 3 (Mass Effect, #3)",
@@ -390,11 +342,8 @@ def test_should_recommend_item_if_previous_not_in_data():
 
 
 def test_is_active_series_continuation():
-    """`is_active_series_continuation` flags the next pick in a started series.
-
-    Drives the softened variety penalty: the next entry in a series the user
-    is mid-way through should not be demoted as if its genre were finished.
-    """
+    """Drives the softened variety penalty: the next entry in a series the user is
+    mid-way through should not be demoted as if its genre were finished."""
     started_tracking = {"The Expanse": {1.0}}
     unconsumed_items = [
         ContentItem(
@@ -413,18 +362,15 @@ def test_is_active_series_continuation():
     book_two = unconsumed_items[0]
     novella_25 = unconsumed_items[1]
 
-    # Next book in an already-started series → continuation.
     assert (
         is_active_series_continuation(book_two, started_tracking, unconsumed_items)
         is True
     )
-    # Out-of-order novella → not a continuation.
     assert (
         is_active_series_continuation(novella_25, started_tracking, unconsumed_items)
         is False
     )
 
-    # First book of an unstarted series → not a continuation (starting fresh).
     first_book = ContentItem(
         id="new1",
         title="The Way of Kings (Stormlight, #1)",
@@ -433,7 +379,6 @@ def test_is_active_series_continuation():
     )
     assert is_active_series_continuation(first_book, {}, [first_book]) is False
 
-    # Standalone item → not a continuation.
     standalone = ContentItem(
         id="solo",
         title="A Standalone Novel",
@@ -444,10 +389,7 @@ def test_is_active_series_continuation():
 
 
 class TestShouldRecommendNonSequentialSeasons:
-    """Tests for gap-finding logic with non-sequential season watching."""
-
     def test_non_sequential_seasons_5_6_recommends_season_1(self) -> None:
-        """User watched seasons 5 and 6 only -> recommend season 1 (first gap)."""
         series_tracking = {"The Show": {5, 6}}
         item_s1 = ContentItem(
             id="s1",
@@ -458,7 +400,6 @@ class TestShouldRecommendNonSequentialSeasons:
         assert should_recommend_item(item_s1, series_tracking) is True
 
     def test_non_sequential_seasons_5_6_does_not_recommend_season_7(self) -> None:
-        """User watched seasons 5 and 6 only -> don't recommend season 7."""
         series_tracking = {"The Show": {5, 6}}
         item_s7 = ContentItem(
             id="s7",
@@ -470,10 +411,7 @@ class TestShouldRecommendNonSequentialSeasons:
 
 
 class TestExpandTvShowsSkipsWatchedSeasons:
-    """Tests for expand_tv_shows_to_seasons skipping watched seasons."""
-
     def test_skips_watched_seasons(self) -> None:
-        """Seasons in seasons_watched metadata are not expanded."""
         show = ContentItem(
             id="show1",
             title="The Show",
@@ -493,10 +431,7 @@ class TestExpandTvShowsSkipsWatchedSeasons:
 
 
 class TestInjectSeasonsWatchedTracking:
-    """Tests for inject_seasons_watched_tracking."""
-
     def test_does_not_mutate_original(self) -> None:
-        """Original dict is not mutated."""
         items = [
             ContentItem(
                 id="show1",
@@ -508,11 +443,10 @@ class TestInjectSeasonsWatchedTracking:
         ]
         original = {"The Show": {1, 2}}
         result = inject_seasons_watched_tracking(items, original)
-        assert original["The Show"] == {1, 2}  # unchanged
+        assert original["The Show"] == {1, 2}
         assert result["The Show"] == {1, 2, 5, 6}
 
     def test_ignores_non_tv_items(self) -> None:
-        """Non-TV items are ignored."""
         items = [
             ContentItem(
                 id="book1",
@@ -527,39 +461,24 @@ class TestInjectSeasonsWatchedTracking:
 
 
 class TestRomanToInt:
-    """Tests for Roman numeral to integer conversion."""
-
     def test_compound_values(self) -> None:
-        """Compound Roman numerals (IV, IX, XII, XIV) convert correctly."""
         assert _roman_to_int("IV") == 4
         assert _roman_to_int("IX") == 9
         assert _roman_to_int("XII") == 12
         assert _roman_to_int("XIV") == 14
 
     def test_invalid_input(self) -> None:
-        """Invalid input returns None."""
         assert _roman_to_int("") is None
         assert _roman_to_int("ABC") is None
         assert _roman_to_int("123") is None
 
 
 class TestTitleEmbeddedSeriesDetection:
-    """Regression tests for title-embedded series detection in video games.
-
-    Bug reported: "Dungeon Siege 3" and "Final Fantasy XII" were not detected
-    as series entries because game sources don't populate series metadata and
-    the titles don't use parenthetical format.
-
-    Root cause: extract_series_info only checked parenthetical patterns like
-    "(Series Name, #N)" and metadata fields.  Games with numbers in the title
-    itself were missed.
-
-    Fix: Added _extract_series_from_title() for trailing Arabic and Roman
-    numerals, gated to ContentType.VIDEO_GAME only.
-    """
+    """Bug reported: "Dungeon Siege 3" and "Final Fantasy XII" were not detected as
+    series entries because game sources don't populate series metadata and the
+    titles don't use parenthetical format."""
 
     def test_arabic_numeral_dungeon_siege_3_regression(self) -> None:
-        """'Dungeon Siege 3' should be detected as Dungeon Siege #3."""
         result = extract_series_info(
             "Dungeon Siege 3", content_type=ContentType.VIDEO_GAME
         )
@@ -568,7 +487,6 @@ class TestTitleEmbeddedSeriesDetection:
         assert result[1] == 3
 
     def test_roman_numeral_final_fantasy_xii_regression(self) -> None:
-        """'Final Fantasy XII' should be detected as Final Fantasy #12."""
         result = extract_series_info(
             "Final Fantasy XII", content_type=ContentType.VIDEO_GAME
         )
@@ -577,13 +495,10 @@ class TestTitleEmbeddedSeriesDetection:
         assert result[1] == 12
 
     def test_not_applied_to_books(self) -> None:
-        """Title-embedded detection is NOT applied to books."""
-        # "1984" should not be detected, and "Catch 22" should not be detected
         result = extract_series_info("Catch 22", content_type=ContentType.BOOK)
         assert result is None
 
     def test_parenthetical_takes_precedence(self) -> None:
-        """Parenthetical format takes precedence over title-embedded."""
         result = extract_series_info(
             "Mass Effect 3 (Mass Effect, #3)",
             content_type=ContentType.VIDEO_GAME,
@@ -593,28 +508,15 @@ class TestTitleEmbeddedSeriesDetection:
         assert result[1] == 3
 
     def test_number_only_title_not_matched(self) -> None:
-        """Titles starting with a number (e.g. '1942') are not matched."""
         result = _extract_series_from_title("1942")
         assert result is None
 
 
 class TestSeriesPositionMetadataRegression:
-    """Regression tests for series_position metadata key.
-
-    Bug reported: TMDB movies store series position as "series_position"
-    in extra_metadata, but _extract_from_metadata() didn't check that key.
-    Similarly, RAWG franchise extraction will store series_position for
-    video games whose titles can't be parsed (e.g., "Dragon Age Inquisition").
-
-    Root cause: The "series_position" key was missing from all three
-    content-type branches of _extract_from_metadata().
-
-    Fix: Added "series_position" as the first key in each branch so it
-    takes priority over other position keys.
-    """
+    """Bug reported: TMDB movies store series position as "series_position" in
+    extra_metadata, but _extract_from_metadata() didn't check that key."""
 
     def test_movie_with_series_position_from_tmdb_regression(self) -> None:
-        """Movie with series_position from TMDB collection is detected."""
         metadata = {"series_name": "The Godfather Collection", "series_position": 2}
         result = extract_series_info(
             "The Godfather Part II", metadata, ContentType.MOVIE
@@ -622,7 +524,6 @@ class TestSeriesPositionMetadataRegression:
         assert result == ("The Godfather Collection", 2)
 
     def test_game_with_series_position_and_franchise_regression(self) -> None:
-        """Game with series_position + franchise from RAWG is detected."""
         metadata = {"franchise": "Dragon Age", "series_position": 3}
         result = extract_series_info(
             "Dragon Age Inquisition", metadata, ContentType.VIDEO_GAME
@@ -630,7 +531,6 @@ class TestSeriesPositionMetadataRegression:
         assert result == ("Dragon Age", 3)
 
     def test_series_position_takes_priority_over_other_keys(self) -> None:
-        """series_position should take priority over part_number etc."""
         metadata = {
             "series_name": "Mass Effect",
             "series_position": 2,
@@ -641,10 +541,7 @@ class TestSeriesPositionMetadataRegression:
 
 
 class TestFindEarliestRecommendable:
-    """Tests for find_earliest_recommendable series substitution."""
-
     def test_finds_earliest_item_by_series_number(self) -> None:
-        """Returns the earliest unconsumed item that passes series rules."""
         unconsumed = [
             ContentItem(
                 id="ff12",
@@ -668,7 +565,6 @@ class TestFindEarliestRecommendable:
                 metadata={"franchise": "Final Fantasy", "series_position": 7},
             ),
         ]
-        # User hasn't played any FF games
         series_tracking: dict[str, set[float]] = {}
 
         result = find_earliest_recommendable(
@@ -678,7 +574,6 @@ class TestFindEarliestRecommendable:
         assert result.id == "ff7"
 
     def test_returns_none_for_unknown_series(self) -> None:
-        """Returns None when no unconsumed items belong to the series."""
         unconsumed = [
             ContentItem(
                 id="other",
@@ -692,30 +587,7 @@ class TestFindEarliestRecommendable:
 
 
 class TestTitleRegexPatternsRegression:
-    """Regression tests for title-embedded series detection patterns.
-
-    Bug reported: Several games missing franchise/series data:
-    - "FINAL FANTASY XII THE ZODIAC AGE" — no franchise
-    - "FINAL FANTASY X/X-2 HD Remaster" — no franchise
-    - "KINGDOM HEARTS III + Re Mind (DLC)" — no franchise
-    - "LIGHTNING RETURNS: FINAL FANTASY XIII" — no franchise
-
-    Root causes:
-    1. Suffix pattern required colon/dash/em-dash after numeral; space-separated
-       subtitles like "THE ZODIAC AGE" and plus-separated DLC like "+ Re Mind"
-       were not matched.
-    2. Series name capture ``[^:—\\-]*?`` stopped at colons/dashes, so
-       "LIGHTNING RETURNS: FINAL FANTASY XIII" couldn't reach "XIII".
-    3. Roman numeral regex rejected standalone V, X, L, C (required at least
-       one I), so "FINAL FANTASY X" and "GRAND THEFT AUTO V" failed.
-
-    Fix: Widened suffix delimiters to ``[\\s:—\\-+/]``, changed series-name
-    capture to ``.*?`` (lazy), simplified Roman numeral group to
-    ``[IVXLCDM]+`` with downstream validation.
-    """
-
     def test_ff_xii_zodiac_age_regression(self) -> None:
-        """'FINAL FANTASY XII THE ZODIAC AGE' -> ('FINAL FANTASY', 12)."""
         result = extract_series_info(
             "FINAL FANTASY XII THE ZODIAC AGE",
             content_type=ContentType.VIDEO_GAME,
@@ -725,7 +597,6 @@ class TestTitleRegexPatternsRegression:
         assert result[1] == 12
 
     def test_kingdom_hearts_iii_dlc_regression(self) -> None:
-        """'KINGDOM HEARTS III + Re Mind (DLC)' -> ('KINGDOM HEARTS', 3)."""
         result = extract_series_info(
             "KINGDOM HEARTS III + Re Mind (DLC)",
             content_type=ContentType.VIDEO_GAME,
@@ -735,7 +606,6 @@ class TestTitleRegexPatternsRegression:
         assert result[1] == 3
 
     def test_ff_x_standalone_roman_numeral_regression(self) -> None:
-        """'FINAL FANTASY X' -> ('FINAL FANTASY', 10)."""
         result = extract_series_info(
             "FINAL FANTASY X", content_type=ContentType.VIDEO_GAME
         )
@@ -744,12 +614,7 @@ class TestTitleRegexPatternsRegression:
         assert result[1] == 10
 
     def test_lightning_returns_title_fallback_regression(self) -> None:
-        """'LIGHTNING RETURNS: FINAL FANTASY XIII' -> series name includes colon.
-
-        Title-level parsing captures the series name as
-        'LIGHTNING RETURNS: FINAL FANTASY' with position 13.
-        In practice RAWG franchise metadata is preferred for this title.
-        """
+        """In practice RAWG franchise metadata is preferred for this title."""
         result = extract_series_info(
             "LIGHTNING RETURNS: FINAL FANTASY XIII",
             content_type=ContentType.VIDEO_GAME,
@@ -797,8 +662,6 @@ class TestSplitSeriesFromTitle:
 
 
 class TestStripSeriesSuffixFromTitle:
-    """Tests for strip_series_suffix_from_title function."""
-
     def test_strips_hash_number_suffix(self) -> None:
         result = strip_series_suffix_from_title(
             "Words of Radiance (The Stormlight Archive, #2)"
@@ -806,7 +669,6 @@ class TestStripSeriesSuffixFromTitle:
         assert result == "Words of Radiance"
 
     def test_non_series_parens_preserved(self) -> None:
-        """Parenthetical content without series patterns should be kept."""
         assert strip_series_suffix_from_title("Portal 2 (Game)") == "Portal 2 (Game)"
 
     def test_multiple_parens_only_strips_series(self) -> None:
@@ -817,11 +679,7 @@ class TestStripSeriesSuffixFromTitle:
 
 
 class TestDecimalSeriesOrderingRegression:
-    """Regression tests for out-of-order recommendations of half-numbered
-    series entries (novellas like ``#2.5`` / ``#2.7`` / ``#5.5``)."""
-
     def _expanse(self, item_id: str, title: str) -> ContentItem:
-        """Build an UNREAD Expanse book candidate with the given title."""
         return ContentItem(
             id=item_id,
             title=title,
@@ -830,17 +688,9 @@ class TestDecimalSeriesOrderingRegression:
         )
 
     def test_decimal_position_parses_to_float_regression(self) -> None:
-        """Regression test: half-numbered novellas parse instead of dropping.
-
-        Bug reported: a 200-book run recommended Expanse novellas "Drive (The
-        Expanse, #2.7)", "Gods of Risk (The Expanse, #2.5)", and "The Vital
-        Abyss (The Expanse, #5.5)" out of series order.
-        Root cause: the title regex captured only ``\\d+`` and stopped at the
-        decimal point, so "#2.7" failed to match; the metadata path's
-        ``int()`` conversion raised on "2.7". Both paths returned ``None`` and
-        the novellas were treated as standalone items that dodged ordering.
-        Fix: capture an optional fractional part and parse with ``float()``.
-        """
+        """Bug reported: a 200-book run recommended Expanse novellas
+        "Drive (The Expanse, #2.7)", "Gods of Risk (The Expanse, #2.5)", and
+        "The Vital Abyss (The Expanse, #5.5)" out of series order."""
         assert extract_series_info("Drive (The Expanse, #2.7)") == ("The Expanse", 2.7)
         # Whole-number positions still parse, now as floats (the point of the
         # migration) — assert the type explicitly, not just equality.
@@ -855,32 +705,16 @@ class TestDecimalSeriesOrderingRegression:
         )
 
     def test_non_finite_metadata_position_rejected_regression(self) -> None:
-        """Regression test: inf/nan series positions are rejected, not stored.
-
-        Bug reported: hardening follow-up — the int->float migration changed
-        the metadata path from ``int()`` to ``float()``.
-        Root cause: unlike ``int()``, ``float()`` accepts "inf"/"nan", which
-        would enter series tracking and corrupt ordering comparisons
-        (``nan`` compares False against everything; ``inf`` breaks the virtual
-        slot ``range()``).
-        Fix: a ``math.isfinite`` guard rejects non-finite metadata positions so
-        ``extract_series_info`` returns ``None``.
-        """
+        """Unlike ``int()``, ``float()`` accepts "inf"/"nan", which would
+        enter series tracking and corrupt ordering comparisons (``nan`` compares
+        False against everything; ``inf`` breaks the virtual slot ``range()``)."""
         for bad_value in ("inf", "-inf", "nan", float("inf"), float("nan")):
             metadata = {"series_name": "The Expanse", "series_position": bad_value}
             assert extract_series_info("Drive", metadata, ContentType.BOOK) is None
 
     def test_novella_blocked_before_next_book_regression(self) -> None:
-        """Regression test: novellas wait for the preceding integer book.
-
-        Bug reported: with only Expanse book #1 read, novellas #2.5 and #2.7
-        were recommended ahead of the actual next book #2 (Caliban's War).
-        Root cause: decimal positions parsed as ``None`` so the novellas
-        dodged ordering; even once parsed, the integer ``range(1, item_num)``
-        gap logic could not express "read book 2 before its novellas".
-        Fix: parse decimals to floats and gate on the set of known series
-        numbers below the candidate.
-        """
+        """Bug reported: with only Expanse book #1 read, novellas #2.5 and #2.7 were
+        recommended ahead of the actual next book #2 (Caliban's War)."""
         series_tracking = {"The Expanse": {1.0}}
         book_two = self._expanse("exp2", "Caliban's War (The Expanse, #2)")
         novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
@@ -900,19 +734,8 @@ class TestDecimalSeriesOrderingRegression:
         assert substitute.id == "exp2"
 
     def test_novella_blocked_in_unstarted_series_regression(self) -> None:
-        """Regression test: a novella in an unstarted series waits for book 1.
-
-        Bug reported: novellas surfaced out of order even for series the user
-        had never started.
-        Root cause: with decimals dropped, a #2.5 novella looked standalone and
-        skipped the unstarted-series prerequisite check entirely.
-        Fix: the unstarted-series branch now blocks any entry that has an
-        earlier-numbered sibling present in the unconsumed pool.
-
-        Covers the ``consumed_numbers`` empty branch: when book #2 exists in
-        the unconsumed pool, a #2.5 novella must not be recommended ahead of
-        it even though nothing in the series has been read yet.
-        """
+        """Bug reported: novellas surfaced out of order even for series the user had
+        never started."""
         series_tracking: dict[str, set[float]] = {}
         book_two = self._expanse("exp2", "Caliban's War (The Expanse, #2)")
         novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
@@ -921,20 +744,8 @@ class TestDecimalSeriesOrderingRegression:
         assert should_recommend_item(novella_25, series_tracking, unconsumed) is False
 
     def test_novella_eligible_after_book_read_regression(self) -> None:
-        """Regression test: a novella opens up once its book is consumed.
-
-        Bug reported: the fix must not over-correct and permanently bury
-        novellas — once eligible, a #2.5 novella should be recommended in
-        order.
-        Root cause: decimal-aware ordering needed to place a fractional entry
-        between its neighbouring integer books, not exclude it outright.
-        Fix: the set-based gap logic surfaces #2.5 as the next entry after
-        books 1 and 2, ahead of book #3.
-
-        With books 1 and 2 read, the #2.5 novella becomes the next entry and
-        is recommended *before* book #3, which stays blocked until the novella
-        is read.
-        """
+        """Bug reported: the fix must not over-correct and permanently bury novellas
+        — once eligible, a #2.5 novella should be recommended in order."""
         series_tracking = {"The Expanse": {1.0, 2.0}}
         novella_25 = self._expanse("exp25", "Gods of Risk (The Expanse, #2.5)")
         book_three = self._expanse("exp3", "Abaddon's Gate (The Expanse, #3)")
@@ -946,23 +757,15 @@ class TestDecimalSeriesOrderingRegression:
 
 
 class TestSeasonBoundsRegression:
-    """Regression tests bounding user-supplied TV season numbers.
-
-    Season counts and numbers arrive from imports and the web edit endpoint
-    and feed ``range()`` calls, so a malformed value must not allocate an
-    unbounded amount of work.
-    """
+    """Season counts and numbers arrive from imports and the web edit endpoint and
+    feed ``range()`` calls, so a malformed value must not allocate an unbounded
+    amount of work."""
 
     def test_expand_caps_total_seasons_regression(self) -> None:
-        """Regression test: a huge total_seasons cannot explode expansion.
-
-        Bug reported: ``total_seasons`` from metadata fed
-        ``range(1, total_seasons + 1)`` in ``expand_tv_shows_to_seasons`` with
-        no upper bound, so a value like 2_000_000_000 would allocate billions
-        of season items (local CPU/memory DoS).
-        Root cause: the season count was trusted verbatim from user metadata.
-        Fix: cap the expansion at ``MAX_SEASONS``.
-        """
+        """Bug reported: ``total_seasons`` from metadata fed
+        ``range(1, total_seasons + 1)`` in ``expand_tv_shows_to_seasons`` with no
+        upper bound, so a value like 2_000_000_000 would allocate billions of season
+        items (local CPU/memory DoS)."""
         show = ContentItem(
             id="show1",
             title="Endless Show",
@@ -978,15 +781,10 @@ class TestSeasonBoundsRegression:
         assert expanded[-1].title == f"Endless Show (Season {MAX_SEASONS})"
 
     def test_inject_drops_out_of_range_seasons_regression(self) -> None:
-        """Regression test: out-of-range watched seasons are not tracked.
-
-        Bug reported: ``inject_seasons_watched_tracking`` added raw season
-        ints into series tracking with no bound, so a value like 2_000_000
-        became ``max_consumed`` and exploded the gap-ladder ``range()`` in
-        ``should_recommend_item``.
-        Root cause: only a type check guarded the injected season numbers.
-        Fix: bound each injected season to ``1..MAX_SEASONS``.
-        """
+        """Bug reported: ``inject_seasons_watched_tracking`` added raw season ints
+        into series tracking with no bound, so a value like 2_000_000 became
+        ``max_consumed`` and exploded the gap-ladder ``range()`` in
+        ``should_recommend_item``."""
         show = ContentItem(
             id="show1",
             title="The Show",
@@ -1028,31 +826,16 @@ def test_latest_season_watched_date_none_when_absent():
 
 
 class TestSeasonWatchedDateTimezone:
-    """Tests for dating a watched season by the viewer's calendar day."""
-
     def test_season_date_uses_local_calendar_day_regression(self, host_timezone):
-        """Regression test: an evening watch was dated the following day.
-
-        Bug reported: a season finished at 21:00 on 2026-03-14 in
-        America/Los_Angeles is recorded by Trakt as the instant
-        2026-03-15T04:00:00+00:00, and the variety ladder dated that completion
-        2026-03-15 — a day the user had not lived yet.
-        Root cause: ``latest_season_watched_date`` called ``.date()`` straight
-        on the parsed instant, which yields the UTC calendar day.
-        Fix: the instant is converted to the host's zone before narrowing, via
-        ``local_date_from_iso_timestamp``.
-        """
+        """``latest_season_watched_date`` called ``.date()`` straight on
+        the parsed instant, which yields the UTC calendar day."""
         host_timezone("America/Los_Angeles")
         item = _show({"1": "2026-03-15T04:00:00+00:00"})
         assert latest_season_watched_date(item) == date(2026, 3, 14)
 
     def test_latest_season_is_chosen_by_local_day(self, host_timezone):
-        """The max is taken over local days, so a UTC-tied pair still separates.
-
-        Both instants fall on 2026-03-14 in UTC, so before the fix the two
-        seasons tied. In Tokyo (UTC+9) season 1 is half an hour into the 15th
-        while season 2 is still the evening of the 14th.
-        """
+        """Both instants fall on 2026-03-14 in UTC, so before the fix the two seasons
+        tied."""
         host_timezone("Asia/Tokyo")
         item = _show(
             {

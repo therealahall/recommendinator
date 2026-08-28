@@ -1,5 +1,3 @@
-"""Tests for sync source resolution."""
-
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -27,7 +25,6 @@ from src.storage.manager import StorageManager
 def _resolve_one(
     source_id: str, config: dict[str, Any], storage: StorageManager
 ) -> ResolvedInput | None:
-    """One source resolved the way both interfaces do it: resolve, then filter."""
     return next(
         (
             entry
@@ -39,8 +36,6 @@ def _resolve_one(
 
 
 class FakeBookPlugin(SourcePlugin):
-    """Fake book plugin for resolve_inputs testing."""
-
     @property
     def name(self) -> str:
         return "fake_books"
@@ -79,8 +74,6 @@ class FakeBookPlugin(SourcePlugin):
 
 
 class FakeGamePlugin(SourcePlugin):
-    """Fake game plugin for resolve_inputs testing."""
-
     @property
     def name(self) -> str:
         return "fake_games"
@@ -127,8 +120,6 @@ class FakeGamePlugin(SourcePlugin):
 
 
 class RecordingGamePlugin(FakeGamePlugin):
-    """Keeps every config and storage it was asked to validate against."""
-
     def __init__(self) -> None:
         self.validated: list[tuple[dict[str, Any], StorageManager | None]] = []
 
@@ -144,7 +135,6 @@ class RecordingGamePlugin(FakeGamePlugin):
 
 @pytest.fixture()
 def _registry_with_fakes() -> Iterator[None]:
-    """Set up a registry with fake plugins for testing."""
     registry = PluginRegistry.get_instance()
     registry._discovered = True
     registry._plugins.clear()
@@ -157,10 +147,7 @@ def _registry_with_fakes() -> Iterator[None]:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputs:
-    """Tests for resolve_inputs function."""
-
     def test_basic_resolution(self) -> None:
-        """Test resolving a single enabled input."""
         config = {
             "inputs": {
                 "my_books": {
@@ -179,7 +166,6 @@ class TestResolveInputs:
         assert resolved[0].config["path"] == "/data/books.csv"
 
     def test_mixed_enabled_disabled(self) -> None:
-        """Test with a mix of enabled and disabled entries."""
         config = {
             "inputs": {
                 "my_books": {
@@ -209,10 +195,7 @@ class TestResolveInputs:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestSourceIdPropagation:
-    """Tests for _source_id propagation to ContentItem.source."""
-
     def test_source_id_in_fetched_items(self) -> None:
-        """Test that _source_id propagates to ContentItem.source via fetch."""
         config = {
             "inputs": {
                 "fiction_shelf": {
@@ -232,15 +215,7 @@ class TestSourceIdPropagation:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestGetAvailableSyncSources:
-    """Tests for get_available_sync_sources function.
-
-    The listing surface includes BOTH enabled and disabled sources so the
-    UI can render disabled accordions in a muted state. ``resolve_inputs``
-    is the gate that filters to enabled-only for sync execution.
-    """
-
     def test_returns_all_sources_with_enabled_flag(self) -> None:
-        """Both enabled and disabled sources are listed; enabled flag exposed."""
         config = {
             "inputs": {
                 "my_books": {
@@ -267,15 +242,11 @@ class TestGetAvailableSyncSources:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputsWithStorage:
-    """Tests for resolve_inputs with DB credential injection."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
-        """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     def test_db_credential_injected_into_config(self, storage: StorageManager) -> None:
-        """DB credentials override config-file values for sensitive fields."""
         config = {
             "inputs": {
                 "my_games": {
@@ -295,17 +266,13 @@ class TestResolveInputsWithStorage:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestResolveInputsWithDbSourceConfig:
-    """Tests for resolve_inputs DB-backed source_configs precedence."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
-        """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     def test_db_config_overrides_yaml_when_migrated(
         self, storage: StorageManager
     ) -> None:
-        """When source_configs has a row, DB values authoritative; yaml ignored."""
         config = {
             "inputs": {
                 "my_books": {
@@ -326,7 +293,6 @@ class TestResolveInputsWithDbSourceConfig:
         assert resolved[0].source_id == "my_books"
 
     def test_db_config_disabled_excludes_source(self, storage: StorageManager) -> None:
-        """A migrated source with enabled=False is excluded even when yaml is enabled."""
         config = {
             "inputs": {
                 "my_books": {
@@ -345,7 +311,6 @@ class TestResolveInputsWithDbSourceConfig:
         assert resolved == []
 
     def test_db_only_source_resolves(self, storage: StorageManager) -> None:
-        """A source that exists in DB but not yaml still resolves."""
         config: dict[str, Any] = {"inputs": {}}
         storage.sources.upsert(
             1, "books_only_in_db", "fake_books", {"path": "/db/x.csv"}, enabled=True
@@ -358,7 +323,6 @@ class TestResolveInputsWithDbSourceConfig:
         assert resolved[0].config["path"] == "/db/x.csv"
 
     def test_db_config_merges_with_credentials(self, storage: StorageManager) -> None:
-        """Sensitive creds from credentials table merge over DB config dict."""
         config: dict[str, Any] = {"inputs": {}}
         storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "secret_from_creds")
@@ -370,11 +334,6 @@ class TestResolveInputsWithDbSourceConfig:
     def test_sources_resolve_in_id_order_whatever_the_hash_seed(
         self, storage: StorageManager
     ) -> None:
-        """Regression: the resolve order came off a set, so it varied per process.
-
-        The scheduler walks this list to decide what is due, and both interfaces
-        print it, so YAML-only and DB-only ids must interleave by id.
-        """
         config = {
             "inputs": {
                 "zulu": {"plugin": "fake_books", "enabled": True, "path": "/z.csv"},
@@ -400,12 +359,6 @@ class TestResolveInputsWithDbSourceConfig:
     def test_db_config_with_unregistered_plugin_is_skipped(
         self, storage: StorageManager
     ) -> None:
-        """DB row referencing an unknown plugin is silently skipped (not crashed).
-
-        Regression scenario: a plugin gets renamed or removed after the user
-        migrated their source. The DB row still references the old plugin
-        name. ``resolve_inputs`` must log + skip rather than raise.
-        """
         config: dict[str, Any] = {"inputs": {}}
         storage.sources.upsert(
             1, "ghost_source", "this_plugin_no_longer_exists", {}, enabled=True
@@ -463,7 +416,6 @@ class TestCredentialBoundUpdates:
     def test_a_rewrite_that_keeps_the_host_keeps_the_secret(
         self, migrated: StorageManager, url: str
     ) -> None:
-        """Scheme, trailing slash and path do not decide who receives it."""
         self._update(migrated, {"url": url})
 
         assert migrated.credentials.get(1, "my_games", "api_key") == (
@@ -519,7 +471,6 @@ class TestCredentialBoundUpdates:
     def test_a_new_source_does_not_inherit_an_orphaned_secret(
         self, storage: StorageManager
     ) -> None:
-        """Delete-then-recreate must not resurrect a secret under a new url."""
         storage.credentials.save(1, "my_games", "api_key", "issued-for-localhost")
 
         create_source(
@@ -534,12 +485,6 @@ class TestCredentialBoundUpdates:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestUnreadableUrlWalksTheCredentialRegression:
-    """Regression: two accepted writes walked the api key to another host.
-
-    An unparseable port read as "addresses nobody", so neither the write onto
-    it nor the write off it was a move. Unreadable is its own answer now.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -559,8 +504,6 @@ class TestUnreadableUrlWalksTheCredentialRegression:
         with pytest.raises(SourceConfigError) as onto:
             self._update(storage, {"url": "http://attacker.example:99999"})
 
-        # A config.yaml entry reaches the same state without a write: migration
-        # copies the url in unvalidated.
         storage.sources.upsert(
             1,
             "my_games",
@@ -581,13 +524,6 @@ class TestUnreadableUrlWalksTheCredentialRegression:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestDeleteSourceOrphanedCredentialsRegression:
-    """Regression: removing a source left encrypted rows behind.
-
-    Bug: cleanup iterated the registered plugin's sensitive fields, so an
-    unregistered plugin skipped it entirely and a field that stopped being
-    sensitive was missed. Fix: delete every row keyed by source id.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -608,7 +544,6 @@ class TestDeleteSourceOrphanedCredentialsRegression:
     def test_a_field_no_longer_marked_sensitive_is_removed_too(
         self, storage: StorageManager
     ) -> None:
-        """``fake_games`` has no ``legacy_token`` field; the row exists anyway."""
         storage.sources.upsert(1, "my_games", "fake_games", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "secret")
         storage.credentials.save(1, "my_games", "legacy_token", "was-sensitive-once")
@@ -628,15 +563,9 @@ class TestDeleteSourceOrphanedCredentialsRegression:
 
 
 class TestWriteValidationNeverSeesTheDecryptedSecretRegression:
-    """Reported: the write door validated a config carrying the decrypted
-    credential, and those messages reach the wire now. A plugin quoting a
-    value it was handed would answer an HTTP body holding the secret.
-    """
-
     def test_neither_validated_config_carries_the_stored_credential(
         self, tmp_path: Path
     ) -> None:
-        """``storage`` still goes through, so a plugin can ask whether it is set."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         storage.sources.upsert(
             1, "my_games", "fake_games", {"label": "Games"}, enabled=True
@@ -656,12 +585,6 @@ ROTATED_TOKEN = "rotated-during-this-sync"
 
 
 def _rotates_on_fetch(real_plugin: SourcePlugin) -> SourcePlugin:
-    """The real plugin class with only ``fetch`` replaced.
-
-    Subclassed rather than stubbed so the config under test is built by the
-    plugin's own ``transform_fields``, the step the source id was lost in.
-    """
-
     class RotatesOnFetch(type(real_plugin)):  # type: ignore[misc,valid-type]
         def fetch(
             self, config: dict[str, Any], progress_callback: Any = None
@@ -674,7 +597,6 @@ def _rotates_on_fetch(real_plugin: SourcePlugin) -> SourcePlugin:
 
 @pytest.fixture()
 def _real_registry() -> Iterator[None]:
-    """The real plugins, whatever fakes an earlier test left registered."""
     PluginRegistry.reset_instance()
     PluginRegistry.get_instance().discover_plugins()
     yield
@@ -682,11 +604,6 @@ def _real_registry() -> Iterator[None]:
 
 
 def _discovered_plugins() -> dict[str, SourcePlugin]:
-    """Every plugin ``_real_registry`` discovered, never an empty mapping.
-
-    A sweep over an undiscovered registry iterates nothing and passes, so the
-    guard belongs here rather than in each caller that keeps forgetting it.
-    """
     plugins = PluginRegistry.get_instance().get_all_plugins()
     assert plugins, "discovery found nothing, so the sweep proves nothing"
     return plugins
@@ -694,25 +611,16 @@ def _discovered_plugins() -> dict[str, SourcePlugin]:
 
 @pytest.fixture()
 def _registry_with_rotating_doubles(_real_registry: None) -> Iterator[None]:
-    """The real token-rotating plugins, with fetching stubbed out."""
     registry = PluginRegistry.get_instance()
     for plugin_name in ROTATING_PLUGINS:
         real_plugin = registry.get_plugin(plugin_name)
         assert real_plugin is not None
-        # Swapped in place because ``register`` refuses a name already taken.
-        # ``_real_registry`` discards this registry when the test ends.
         registry._plugins[plugin_name] = _rotates_on_fetch(real_plugin)
     yield
 
 
 @pytest.mark.usefixtures("_real_registry")
 class TestCreateSourceRefusesUncontainedPaths:
-    """``roms`` scans a list of directories, and every entry must be contained.
-
-    Its multi-entry ``paths`` was checked at plugin level only, never through
-    the boundary an HTTP caller reaches it by.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -753,7 +661,6 @@ class TestCreateSourceRefusesUncontainedPaths:
     def test_a_traversal_is_refused_before_the_path_is_probed_for_existence(
         self, storage: StorageManager, tmp_path: Path
     ) -> None:
-        """The "not found" message is an oracle for anything the caller names."""
         with pytest.raises(SourceConfigError) as raised:
             create_source(
                 "traversing", "roms", {"paths": [f"{tmp_path}/../secrets"]}, storage
@@ -764,8 +671,6 @@ class TestCreateSourceRefusesUncontainedPaths:
 
 
 class TwoSecretGamePlugin(FakeGamePlugin):
-    """``fake_games`` plus a second sensitive field."""
-
     def get_config_schema(self) -> list[ConfigField]:
         return [
             *super().get_config_schema(),
@@ -776,14 +681,7 @@ class TwoSecretGamePlugin(FakeGamePlugin):
 
 
 class TestRedactCredentials:
-    """Edge cases for the redaction the sync door's 400 log line depends on.
-
-    That door validates with the secret layered on, so scrubbing the plugin's
-    message is the only thing between a stored key and the log file.
-    """
-
     def test_every_occurrence_of_every_secret_goes(self) -> None:
-        """One pass has to cover both fields and repeated mentions."""
         redacted = redact_credentials(
             "GET ?key=abc123 rejected; retry with abc123 or pw-9",
             TwoSecretGamePlugin(),
@@ -795,13 +693,11 @@ class TestRedactCredentials:
         )
 
     def test_an_empty_secret_is_not_a_match(self) -> None:
-        """``str.replace("", ...)`` would splice the marker between every char."""
         message = "'api_key' is required"
 
         assert redact_credentials(message, FakeGamePlugin(), {"api_key": ""}) == message
 
     def test_a_credential_bound_field_is_left_alone(self) -> None:
-        """``url`` is bound to the credential, not one — the log wants it."""
         redacted = redact_credentials(
             "host http://sonarr.internal:9999 refused",
             FakeGamePlugin(),
@@ -813,13 +709,6 @@ class TestRedactCredentials:
 
 @pytest.mark.usefixtures("_registry_with_rotating_doubles")
 class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
-    """Reported: a sync saved a rotated OAuth token under the plugin name.
-
-    Bug: each rotating plugin's ``transform_config`` returned a fresh dict,
-    dropping the injected ``_source_id``. The orphan survived deleting the
-    source. Fix: ``transform_config`` is framework owned and restores it.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -827,7 +716,6 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     def _sync_a_rotating_source(
         self, plugin_name: str, storage: StorageManager
     ) -> None:
-        """Sync a DB-backed source through the production resolution path."""
         storage.sources.upsert(1, "work_games", plugin_name, {}, enabled=True)
         resolved = _resolve_one("work_games", {}, storage)
         assert resolved is not None
@@ -853,7 +741,6 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     def test_the_next_sync_resolves_the_rotated_token(
         self, plugin_name: str, storage: StorageManager
     ) -> None:
-        """SECURITY.md's promise: the operator never reconnects by hand."""
         self._sync_a_rotating_source(plugin_name, storage)
 
         resolved = _resolve_one("work_games", {}, storage)
@@ -864,7 +751,6 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
     def test_a_token_an_earlier_release_orphaned_stays_where_it_is(
         self, storage: StorageManager
     ) -> None:
-        """Nothing migrates them, which is what SECURITY.md promises."""
         storage.credentials.save(1, "gog", "refresh_token", "orphaned-by-an-old-sync")
 
         self._sync_a_rotating_source("gog", storage)
@@ -876,12 +762,6 @@ class TestRotatedCredentialSurvivesTheRealConfigAssemblyRegression:
 
 @pytest.mark.usefixtures("_registry_with_fakes")
 class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
-    """Reported: a token stranded under a plugin name outlived every source.
-
-    Cause: deletion is keyed on the source id, and that row is not under one.
-    Fix: the last source on a plugin takes it; a shared plugin keeps it.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
@@ -908,7 +788,6 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
         )
 
     def test_a_yaml_sibling_keeps_the_row(self, storage: StorageManager) -> None:
-        """The database is half the source list, so a sweep reading it alone lies."""
         config = {"inputs": {"home_games": {"plugin": "fake_games", "enabled": True}}}
 
         delete_source("work_games", storage, config)
@@ -920,7 +799,6 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
     def test_a_source_named_after_the_plugin_keeps_its_own_credential(
         self, storage: StorageManager
     ) -> None:
-        """That row is not stranded at all — it is that source's, live."""
         config = {"inputs": {"fake_games": {"plugin": "fake_books", "enabled": True}}}
 
         delete_source("work_games", storage, config)
@@ -940,8 +818,6 @@ class TestRemovingASourceTakesItsStrandedTokenWithItRegression:
 
 
 class TestAPluginCannotDropAFrameworkConfigKey:
-    """The guarantee the seven rotating plugins each broke independently."""
-
     def test_overriding_transform_config_is_refused_at_class_creation(self) -> None:
         with pytest.raises(TypeError, match="transform_fields"):
 
@@ -958,8 +834,6 @@ class TestAPluginCannotDropAFrameworkConfigKey:
 
 
 class TestAPluginCannotRenameItsOwnSource:
-    """The same guarantee on the other method that answers "what is this?"."""
-
     def test_overriding_get_source_identifier_is_refused_at_class_creation(
         self,
     ) -> None:
@@ -981,13 +855,6 @@ class TestAPluginCannotRenameItsOwnSource:
 
 @pytest.mark.usefixtures("_real_registry")
 class TestARealPluginsItemsCarryTheSourceIdRegression:
-    """Reported: a renamed Steam source's items were attributed to "steam".
-
-    Bug: ``SteamPlugin.fetch`` re-transforms the config it was handed, and the
-    plugin's transform dropped the injected ``_source_id``. Fix:
-    ``transform_config`` is framework owned and restores it.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1020,8 +887,6 @@ class TestARealPluginsItemsCarryTheSourceIdRegression:
 
 @pytest.mark.usefixtures("_registry_with_rotating_doubles")
 class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
-    """Source ids from YAML skip the create-source charset check."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "test.db")
@@ -1052,7 +917,6 @@ class TestTheCredentialOwnerIsWhateverTheSourceIsCalled:
     def test_ids_differing_only_in_case_do_not_share_a_token(
         self, storage: StorageManager
     ) -> None:
-        """A NOCASE collation here would hand one source another's secret."""
         self._sync_yaml_source("Work_Games", storage)
 
         assert storage.credentials.get(1, "work_games", "refresh_token") is None

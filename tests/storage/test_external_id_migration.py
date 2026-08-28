@@ -1,5 +1,3 @@
-"""Moving the external ids off ``content_items``, which needs a table rebuild."""
-
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -12,7 +10,6 @@ from src.storage.merge import normalize_title_for_matching
 from src.storage.schema import _LEGACY_EXTERNAL_ID_SOURCE, _rebuild_content_items
 from src.storage.sqlite_db import SQLiteDB
 
-# Written out rather than derived: the point is a build this one is not.
 _CONTENT_ITEMS_AT_VERSION_SEVEN = """
     CREATE TABLE content_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,9 +31,6 @@ _CONTENT_ITEMS_AT_VERSION_SEVEN = """
     )
 """
 
-# One per content type, so every detail table rides the rebuild. Trakt's pair
-# shares an id, the last row is sourceless as a file import leaves it, and TF2
-# holds Steam's app id under the name GOG's later sync stamped.
 _LIBRARY: tuple[tuple[str, str, str, str | None, str, str, str], ...] = (
     ("Darkness", "book", "12345", "goodreads_csv", "book_details", "author", "Guin"),
     ("Heat", "movie", "1", "trakt", "movie_details", "director", "Mann"),
@@ -46,8 +40,6 @@ _LIBRARY: tuple[tuple[str, str, str, str | None, str, str, str], ...] = (
 )
 
 
-# On the first row: the rebuild is the only thing carrying these across, and
-# it drops the old table, so a column it forgets is gone for good.
 _OPERATOR_OWNED: dict[str, object] = {
     "rating": 4,
     "review": "Read it twice",
@@ -165,7 +157,6 @@ def test_a_version_seven_database_reaches_the_fresh_schema_and_stays_there(
 def test_the_rebuild_files_every_id_under_a_source_no_operator_can_configure(
     tmp_path: Path,
 ) -> None:
-    """The source column names the last syncer, not the id's owner."""
     db_path = tmp_path / "library.db"
     _stand_up_a_version_seven_library(db_path)
 
@@ -203,9 +194,6 @@ def test_the_rebuild_carries_the_columns_only_the_operator_could_have_written(
 def test_a_rebuild_whose_children_followed_the_rename_raises_before_committing(
     tmp_path: Path,
 ) -> None:
-    """Without ``legacy_alter_table`` — a pragma any open transaction silences —
-    SQLite repoints every child at the scratch table the rebuild then drops,
-    and each of them refuses every write from that moment on."""
     db_path = tmp_path / "library.db"
     _stand_up_a_version_seven_library(db_path)
 
@@ -226,7 +214,6 @@ def test_a_rebuild_whose_children_followed_the_rename_raises_before_committing(
 def test_a_sync_after_the_upgrade_lands_on_the_row_holding_the_legacy_id(
     tmp_path: Path,
 ) -> None:
-    """The row wears GOG's name over Steam's app id, and GOG syncs its own."""
     db_path = tmp_path / "library.db"
     _stand_up_a_version_seven_library(db_path)
     upgraded = SQLiteDB(db_path)

@@ -1,5 +1,3 @@
-"""The web half of the duplicates review: /api/duplicates and /api/merges."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -227,7 +225,6 @@ def test_declining_what_is_not_a_live_pair_refuses_in_the_clis_own_words(
 def test_a_decline_naming_more_copies_than_a_block_holds_is_refused(
     client: TestClient,
 ) -> None:
-    """A block holds 40, so the largest list a card sends has to be taken."""
     one = _ids(client, "Deadhouse Gates")
 
     def decline(count: int) -> int:
@@ -248,7 +245,6 @@ def test_lifting_a_refusal_nobody_made_refuses_by_id(client: TestClient) -> None
 
 
 def test_no_route_here_offers_to_delete_an_item(client: TestClient) -> None:
-    """Deleting a hidden row orphans its children, and these are those ids."""
     absorbed = _ids(client, "Deadhouse Gates (Malazan Book 2)")
 
     assert client.delete(f"/api/items/{absorbed}").status_code == 405
@@ -273,7 +269,6 @@ def test_an_empty_library_answers_an_empty_view_on_every_listing(
 def test_a_work_left_unsearched_is_reported_rather_than_counted_as_none(
     tmp_path: Path,
 ) -> None:
-    """Dropped from both numbers, it reads as a library with no duplicates."""
     shelf = StorageManager(sqlite_path=tmp_path / "shelf.db")
     for index in range(GROUP_MEMBER_MAX + 1):
         shelf.save_content_item(
@@ -297,7 +292,6 @@ def test_a_work_left_unsearched_is_reported_rather_than_counted_as_none(
 def test_a_lift_a_merge_blocks_is_refused_in_the_storage_layer_s_own_words(
     client: TestClient,
 ) -> None:
-    """Uncaught, it is a 500 saying nothing about which merge to undo."""
     one = _ids(client, "Deadhouse Gates")
     other = _ids(client, "Deadhouse Gates (Malazan Book 2)")
     client.post("/api/duplicates/declined", json={"one_id": one, "other_ids": [other]})

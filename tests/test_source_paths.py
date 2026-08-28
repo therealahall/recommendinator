@@ -1,5 +1,3 @@
-"""Tests for the file-import allowlist behind ``security.allowed_source_roots``."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,12 +29,9 @@ _ALLOWLIST_KEY = "security.allowed_source_roots"
 
 
 def _declared_path_fields(plugin: SourcePlugin) -> list[ConfigField]:
-    """Read off the declared flag, never guessed from the field's name.
-
-    A name-shaped rule shared its blind spot with the sweep it guards:
-    ``scan_folder`` matched neither, so the plugin escaped containment and
-    the guard agreed it should.
-    """
+    """A name-shaped rule shared its blind spot with the sweep it guards:
+    ``scan_folder`` matched neither, so the plugin escaped containment and the
+    guard agreed it should."""
     return [field for field in plugin.get_config_schema() if field.reads_path]
 
 
@@ -61,10 +56,7 @@ _PATH_SHAPED_NAME_TOKENS = frozenset(
 
 
 def _undeclared_path_fields(plugin: SourcePlugin) -> list[str]:
-    """Names reading as a path that no ``reads_path=True`` declares.
-
-    Whole tokens, so ``profile`` is not read as naming a file.
-    """
+    """Whole tokens, so ``profile`` is not read as naming a file."""
     return [
         field.name
         for field in plugin.get_config_schema()
@@ -76,11 +68,9 @@ def _undeclared_path_fields(plugin: SourcePlugin) -> list[str]:
 def _plugins_leaving_a_path_undeclared(
     plugins: dict[str, SourcePlugin],
 ) -> dict[str, list[str]]:
-    """Keyed on the field name, not ``requires_network``.
-
-    That key read "needs no network" as "reads off disk", excluding the shape
-    worth checking most: a plugin that talks to the network *and* reads a path.
-    """
+    """Keyed on the field name, not ``requires_network``. That key read
+    "needs no network" as "reads off disk", excluding the shape worth checking most:
+    a plugin that talks to the network *and* reads a path."""
     return {
         name: undeclared
         for name, plugin in plugins.items()
@@ -126,7 +116,6 @@ def _builtin_plugins() -> dict[str, SourcePlugin]:
 
 
 def _escaping_config(plugin: SourcePlugin, target: Path) -> dict[str, Any]:
-    """Point *plugin* at *target*, through whichever field declares the read."""
     field = _declared_path_fields(plugin)[0]
     value: Any = [str(target)] if field.field_type is list else str(target)
     return {field.name: value}
@@ -134,7 +123,6 @@ def _escaping_config(plugin: SourcePlugin, target: Path) -> dict[str, Any]:
 
 @pytest.fixture()
 def outside(tmp_path: Path) -> Path:
-    """A directory beside the only allowed root, holding a readable file."""
     directory = tmp_path.parent / f"{tmp_path.name}-outside"
     directory.mkdir()
     (directory / "secret.csv").write_text("title\nLeaked\n")
@@ -142,14 +130,11 @@ def outside(tmp_path: Path) -> Path:
 
 
 def _outside_target(plugin: SourcePlugin, outside: Path) -> Path:
-    """The out-of-bounds thing this plugin reads — a directory or a file."""
     reads_a_directory = _declared_path_fields(plugin)[0].field_type is list
     return outside if reads_a_directory else outside / "secret.csv"
 
 
 class TestConfigureAllowedSourceRoots:
-    """Reading the allowlist out of config.yaml."""
-
     def test_reads_and_strips_the_configured_list(self) -> None:
         configure_allowed_source_roots(
             {"security": {"allowed_source_roots": ["/srv/media", "  /srv/roms  "]}}
@@ -173,8 +158,6 @@ class TestConfigureAllowedSourceRoots:
 
 
 class TestResolveSourcePath:
-    """Containment, resolved on both sides."""
-
     def test_accepts_a_file_under_an_allowed_root(self, tmp_path: Path) -> None:
         target = tmp_path / "books.csv"
         target.write_text("title\n")
@@ -185,11 +168,8 @@ class TestResolveSourcePath:
             resolve_source_path("/etc/passwd")
 
     def test_refuses_a_symlink_that_escapes_its_root(self, tmp_path: Path) -> None:
-        """Resolve-then-compare, not a string prefix check.
-
-        A writable allowed root is the attacker's foothold: a link inside it
-        pointing anywhere on disk would otherwise pass containment and be read.
-        """
+        """A writable allowed root is the attacker's foothold: a link inside it
+        pointing anywhere on disk would otherwise pass containment and be read."""
         outside = tmp_path.parent / f"{tmp_path.name}-outside"
         outside.mkdir()
         secret = outside / "secret.csv"
@@ -221,22 +201,15 @@ class TestResolveSourcePath:
             resolve_source_path("config/example.yaml")
 
     def test_a_tilde_naming_no_such_user_is_refused_the_same_way(self) -> None:
-        """The tilde expansion raises ``RuntimeError``, which the guard missed.
-
-        ``path`` is HTTP-writable, so this reached ``validate_config`` as a 500
-        — the one outcome the NUL-byte branch above exists to prevent.
-        """
+        """The tilde expansion raises ``RuntimeError``, which the guard missed."""
         with pytest.raises(PathNotAllowed, match="cannot be resolved"):
             unknown_user = "~nosuchuser/books.csv"
             resolve_source_path(unknown_user)
 
 
 class TestEveryFileReadingPluginIsContained:
-    """Containment has to hold for every plugin that opens a configured path.
-
-    The attacker picks the plugin, not the user: source config is writable over
-    HTTP, so one unguarded plugin restores the whole arbitrary-read primitive.
-    """
+    """The attacker picks the plugin, not the user: source config is writable over
+    HTTP, so one unguarded plugin restores the whole arbitrary-read primitive."""
 
     def test_the_sweep_covers_every_built_in_plugin_that_reads_a_path(self) -> None:
         """The half a clone with no ``private/`` still pins: discovery finding
@@ -249,12 +222,7 @@ class TestEveryFileReadingPluginIsContained:
         assert reads_a_path == {RomScannerPlugin().name}
 
     def test_no_offline_plugin_leaves_the_path_it_reads_undeclared(self) -> None:
-        """The equality above catches a missed call, this a missed declaration.
-
-        A plugin reading a configured path while declaring none is missing from
-        both sides of it, so it holds with containment gone. No network means
-        reading off disk.
-        """
+        """The equality above catches a missed call, this a missed declaration."""
         plugins = _builtin_plugins()
         offline = {
             name for name, plugin in plugins.items() if not plugin.requires_network
@@ -268,9 +236,8 @@ class TestEveryFileReadingPluginIsContained:
         assert offline & undeclared == set()
 
     def test_no_plugin_names_a_path_it_leaves_undeclared(self) -> None:
-        """Covers what the offline sweep cannot: a plugin that reads a path
-        *and* talks to the network.
-        """
+        """Covers what the offline sweep cannot: a plugin that reads a path *and*
+        talks to the network."""
         assert _plugins_leaving_a_path_undeclared(_discovered_plugins()) == {}
 
     def test_validate_reports_a_path_outside_every_root(self, outside: Path) -> None:
@@ -335,7 +302,6 @@ class TestTheAllowlistIsNotASetting:
         assert get_entry(_ALLOWLIST_KEY) is None
 
     def test_the_cli_refuses_to_set_it(self, tmp_path: Path) -> None:
-        """The web mirror of this lives in ``tests/test_web_api.py``."""
         storage = StorageManager(sqlite_path=tmp_path / "settings.db")
         before = get_allowed_source_roots()
 

@@ -1,5 +1,3 @@
-"""Tests for the boot sweep that retires file-import sources."""
-
 from __future__ import annotations
 
 import logging
@@ -17,9 +15,6 @@ from src.storage.import_source_cleanup import drop_sources_replaced_by_upload
 from src.storage.manager import StorageManager
 from tests.factories import booted_web_app
 
-#: Typed out, not derived: the sweep's own set comes from ``IMPORTERS``, so a
-#: test reading that back would pass through a rename that stops matching the
-#: plugin names the rows on disk were written with.
 RETIRED_PLUGINS = (
     "csv_import",
     "json_import",
@@ -37,7 +32,6 @@ def storage(tmp_path: Path) -> StorageManager:
 def test_a_source_on_a_plugin_replaced_by_upload_is_dropped_and_named(
     storage: StorageManager, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Upgrade path: the plugin is gone, so the row would refuse every sync."""
     storage.sources.upsert(
         1, "books_csv", "goodreads_csv", {"path": "inputs/goodreads.csv"}, enabled=True
     )
@@ -55,7 +49,6 @@ def test_a_source_on_a_plugin_replaced_by_upload_is_dropped_and_named(
 def test_the_items_a_dropped_source_imported_stay_in_the_library(
     storage: StorageManager,
 ) -> None:
-    """Only the configuration goes: nobody re-downloads a Goodreads export."""
     storage.sources.upsert(1, "books_csv", "goodreads_csv", {"path": "books.csv"})
     with storage.connection() as conn:
         conn.execute(
@@ -73,9 +66,6 @@ def test_the_items_a_dropped_source_imported_stay_in_the_library(
 def test_a_source_on_any_other_plugin_survives(
     storage: StorageManager, plugin: str
 ) -> None:
-    """``personal_site_games`` lives in an unmounted private directory on some
-    boots, so "the registry has never heard of it" cannot mean "delete it".
-    """
     storage.sources.upsert(1, plugin, plugin, {"path": "/games"}, enabled=True)
 
     drop_sources_replaced_by_upload(storage)
@@ -87,11 +77,6 @@ def test_a_source_on_any_other_plugin_survives(
 def test_every_retired_plugin_leaves_no_row_behind(
     storage: StorageManager, plugin: str
 ) -> None:
-    """All five, not just the one the upgrade example names.
-
-    A row the sweep misses refuses every sync with "plugin not loaded" and no
-    interface can delete it, since the delete path resolves the plugin first.
-    """
     storage.sources.upsert(1, f"my_{plugin}", plugin, {"path": "inputs/x"})
 
     drop_sources_replaced_by_upload(storage)
@@ -102,9 +87,6 @@ def test_every_retired_plugin_leaves_no_row_behind(
 def test_only_the_dropped_sources_runs_and_credentials_go(
     storage: StorageManager,
 ) -> None:
-    """Keyed by source id, never by plugin name or by a bare wipe: a namesake
-    must not inherit the backoff, and the steam row is one the operator keeps.
-    """
     for source_id, plugin in (("books_csv", "goodreads_csv"), ("steam", "steam")):
         storage.sources.upsert(1, source_id, plugin, {"path": "inputs/x"})
         storage.credentials.save(1, source_id, "api_key", f"secret-{source_id}")
@@ -125,12 +107,6 @@ def test_only_the_dropped_sources_runs_and_credentials_go(
 
 
 class TestBothDoorsSweepOnBoot:
-    """The criterion is "on boot", and neither entry point has a second caller.
-
-    Dropping the call from one of them leaves that interface refusing every
-    sync of the stale row forever, with the unit tests above still green.
-    """
-
     @staticmethod
     def _stale(storage: StorageManager) -> None:
         storage.sources.upsert(

@@ -1,5 +1,3 @@
-"""Tests for the ScoringPipeline."""
-
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
@@ -35,7 +33,6 @@ def _build_context(
 
 class TestScoringPipeline:
     def test_results_sorted_descending(self) -> None:
-        """Higher-scoring candidates should appear first."""
         consumed = [
             make_item(
                 rating=5,
@@ -58,8 +55,6 @@ class TestScoringPipeline:
         assert result[0].aggregate_score >= result[1].aggregate_score
 
     def test_score_clamped_to_unit_interval(self) -> None:
-        """Even with extreme inputs, scores should remain in [0, 1]."""
-
         class AlwaysMaxScorer(Scorer):
             def score(self, candidate: ContentItem, context: ScoringContext) -> float:
                 return 1.0
@@ -71,18 +66,15 @@ class TestScoringPipeline:
         context = _build_context()
         candidate = make_item()
 
-        # All max
         pipeline = ScoringPipeline([AlwaysMaxScorer(weight=10.0)])
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 1.0
 
-        # All min
         pipeline = ScoringPipeline([AlwaysMinScorer(weight=10.0)])
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 0.0
 
     def test_zero_total_weight(self) -> None:
-        """If all scorers have weight 0, scores should be 0.0."""
         context = _build_context()
         candidate = make_item()
         pipeline = ScoringPipeline(
@@ -93,28 +85,13 @@ class TestScoringPipeline:
 
 
 class TestTiebreakerRegression:
-    """Regression tests for tiebreaker logic to prevent alphabetical ordering.
-
-    Bug reported: Recommendations appeared in alphabetical order when scores
-    were similar, because Python's stable sort preserved the original order
-    (which was alphabetical from the database query).
-
-    Fix: Added tiebreaker that prioritizes first-in-series items and uses
-    a stable hash for pseudo-random ordering among equal scores.
-    """
+    """Bug reported: Recommendations appeared in alphabetical order when scores were
+    similar, because Python's stable sort preserved the original order (which was
+    alphabetical from the database query)."""
 
     def test_first_in_series_prioritized_over_alphabetical_order_regression(
         self,
     ) -> None:
-        """Regression test: First-in-series items should rank higher than later items.
-
-        Bug: When scores were tied, items sorted alphabetically. This meant
-        "An Amazing Sequel #2" would appear before "The Zebra Adventure #1"
-        even though #1 should be recommended first.
-
-        Fix: Tiebreaker prioritizes first-in-series items.
-        """
-        # All items have same genre, so all scores will be similar
         consumed = [
             make_item(
                 rating=5,
@@ -124,7 +101,6 @@ class TestTiebreakerRegression:
         ]
         context = _build_context(consumed=consumed)
 
-        # Create items that would sort differently alphabetically vs by series
         # "An Amazing Sequel" sorts before "The Zebra Adventure" alphabetically
         # (after article stripping: "Amazing Sequel" < "Zebra Adventure")
         book_2 = make_item(
@@ -138,22 +114,17 @@ class TestTiebreakerRegression:
             item_id="1",
         )
 
-        # Feed in alphabetical order (book_2 first)
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
         results = pipeline.score_candidates_with_breakdown([book_2, book_1], context)
 
-        # Book #1 should be first due to tiebreaker prioritizing first-in-series
         assert (
             "Zebra Adventure" in results[0].item.title
         ), "First-in-series should be prioritized over alphabetical order"
         assert "Amazing Sequel" in results[1].item.title
 
     def test_tiebreaker_consistent_ordering(self) -> None:
-        """Tiebreaker should produce consistent results across multiple runs.
-
-        The tiebreaker uses a hash of the title, so ordering should be
-        deterministic (not random) but also not purely alphabetical.
-        """
+        """The tiebreaker uses a hash of the title, so ordering should be
+        deterministic (not random) but also not purely alphabetical."""
         consumed = [
             make_item(
                 rating=5,
@@ -163,10 +134,9 @@ class TestTiebreakerRegression:
         ]
         context = _build_context(consumed=consumed)
 
-        # Create multiple items with same genre (similar scores)
         items = [
             make_item(
-                title=f"Book {chr(65 + i)}",  # Book A, Book B, Book C, ...
+                title=f"Book {chr(65 + i)}",
                 metadata={"genre": "Fiction"},
                 item_id=str(i),
             )
@@ -175,7 +145,6 @@ class TestTiebreakerRegression:
 
         pipeline = ScoringPipeline(DEFAULT_SCORERS)
 
-        # Run multiple times and verify consistent ordering
         first_run = pipeline.score_candidates_with_breakdown(items, context)
         first_order = [r.item.title for r in first_run]
 

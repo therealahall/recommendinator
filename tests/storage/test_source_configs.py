@@ -1,12 +1,3 @@
-"""Tests for source_configs CRUD operations and StorageManager integration.
-
-The ``source_configs`` table stores the *non-sensitive* per-source config
-overrides that move to the database after a user clicks "Migrate to DB" in
-the web UI. Sensitive fields keep going through the existing encrypted
-``credentials`` table; this table holds the rest of the config (paths,
-content_type, plugin-specific scalars/lists).
-"""
-
 from pathlib import Path
 
 import pytest
@@ -15,15 +6,11 @@ from src.storage.manager import StorageManager
 
 
 class TestStorageManagerSourceConfigs:
-    """Tests for StorageManager source_config methods (dict serialization)."""
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
-        """Create a StorageManager with a temp DB."""
         return StorageManager(sqlite_path=tmp_path / "test.db")
 
     def test_upsert_and_get_round_trips_dict(self, storage: StorageManager) -> None:
-        """StorageManager accepts/returns dicts and handles JSON serialization."""
         storage.sources.upsert(
             user_id=1,
             source_id="steam",
@@ -43,7 +30,6 @@ class TestStorageManagerSourceConfigs:
     def test_set_enabled_toggles_without_touching_config(
         self, storage: StorageManager
     ) -> None:
-        """set_source_config_enabled flips the bool without altering config dict."""
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, enabled=True)
         storage.sources.set_enabled(1, "steam", enabled=False)
 
@@ -53,7 +39,6 @@ class TestStorageManagerSourceConfigs:
         assert result["config"] == {"a": 1}
 
     def test_delete_source_config(self, storage: StorageManager) -> None:
-        """Delete removes the migration entirely."""
         storage.sources.upsert(1, "steam", "steam", {}, True)
         storage.sources.delete(1, "steam")
 
@@ -89,7 +74,6 @@ class TestStorageManagerSourceConfigs:
         assert storage.sources.set_schedule(1, "steam", "6h") is False
 
     def test_list_source_configs_returns_dicts(self, storage: StorageManager) -> None:
-        """List returns parsed dicts for every migrated source."""
         storage.sources.upsert(1, "steam", "steam", {"a": 1}, True)
         storage.sources.upsert(1, "books", "goodreads", {"path": "x"}, False)
 

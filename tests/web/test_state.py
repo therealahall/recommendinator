@@ -1,5 +1,3 @@
-"""Tests for web application state management functions."""
-
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -35,7 +33,6 @@ _BLOCKED_SECONDS = 0.2
 
 
 def _config_yaml(tmp_path: Path, default_count: int = 5) -> str:
-    """A config file naming a tmp database and one recommendations leaf."""
     return yaml.safe_dump(
         {
             "storage": {"database_path": str(tmp_path / "recommendations.db")},
@@ -46,9 +43,7 @@ def _config_yaml(tmp_path: Path, default_count: int = 5) -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_app_state() -> Any:
-    """Save and restore app_state around each test."""
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
-    # Reset to defaults
     fresh = AppState()
     for f in fields(fresh):
         setattr(app_state, f.name, getattr(fresh, f.name))
@@ -57,36 +52,17 @@ def _clean_app_state() -> Any:
         setattr(app_state, f.name, saved[f.name])
 
 
-# ---------------------------------------------------------------------------
-# reload_config tests
-# ---------------------------------------------------------------------------
-
-
 class TestReloadConfig:
-    """Tests for reload_config() function."""
-
     def test_reload_config_no_config_path(self) -> None:
-        """reload_config returns False when no config_path is stored."""
-        # app_state is empty (no config_path)
         result = reload_config()
 
         assert result is False
 
     def test_reload_reapplies_settings_overlay(self, tmp_path: Path) -> None:
-        """Hot-reload re-runs the real settings migration/overlay against the DB.
-
-        Regression: DB-backed global config must survive a config file edit —
-        the watcher reloads YAML, so the overlay has to re-apply or the YAML
-        value would silently win until the next restart. Drives the real hook
-        against an isolated temp-DB StorageManager (no stub).
-        """
         config_file = tmp_path / "config.yaml"
         config_file.write_text("recommendations:\n  default_count: 11\n")
 
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
-        # A DB leaf the operator edited must win over the reloaded YAML value.
-        # All three layers differ (const 5 < YAML 11 < DB 9), so 9 can only
-        # reach the running config through the overlay.
         storage.settings.set("recommendations.default_count", 9)
 
         app_state.config_path = str(config_file)
@@ -98,13 +74,6 @@ class TestReloadConfig:
         assert app_state.config["recommendations"]["default_count"] == 9
 
     def test_reload_sweeps_config_secret_into_storage(self, tmp_path: Path) -> None:
-        """Hot-reload re-runs the secret sweep against the DB.
-
-        Regression: an edited YAML that reintroduces a provider api_key must be
-        swept into encrypted storage and stripped from the running config on
-        reload — otherwise a plaintext secret would linger in app_state until
-        the next restart. Drives the real hook against an isolated temp-DB.
-        """
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             "enrichment:\n  providers:\n    tmdb:\n      api_key: tmdb-secret\n"
@@ -124,16 +93,6 @@ class TestReloadConfig:
     def test_reload_swaps_the_running_config_without_touching_the_old_one(
         self, tmp_path: Path
     ) -> None:
-        """Hot-reload binds a fresh config and leaves the previous one alone.
-
-        Regression: the reload used to empty the running dict and refill it,
-        because the recommendation engine held that dict by reference. Scoring
-        runs in a threadpool worker while the reload runs on the event loop, so
-        a request landing between the two calls read an empty config and
-        silently scored on the engine's constructor baseline instead of the
-        configured weights. The engine now resolves the config through
-        ``get_config`` on every read, which is what lets this be one rebind.
-        """
         config_file = tmp_path / "config.yaml"
         config_file.write_text("recommendations:\n  min_rating_for_preference: 2\n")
 
@@ -144,14 +103,12 @@ class TestReloadConfig:
         result = reload_config()
 
         assert result is True
-        # What a reader already holding the old config keeps seeing.
         assert running == {"old": "config"}
         assert app_state.config is not running
         assert "old" not in app_state.config
         assert app_state.config["recommendations"]["min_rating_for_preference"] == 2
 
     def test_reload_config_preserves_old_config_on_failure(self) -> None:
-        """reload_config does not replace existing config when reload fails."""
         original_config = {"preserved": True}
         app_state.config = original_config
         app_state.config_path = "/some/path.yaml"
@@ -168,11 +125,6 @@ class TestReloadConfig:
 def test_a_source_named_goodreads_keeps_its_items_across_a_web_boot(
     tmp_path: Path,
 ) -> None:
-    """Regression: web startup relabelled a ``goodreads`` source's items.
-
-    Cause: it ran the same pass the CLI did, rewriting ``content_items.source``
-    to ``goodreads_csv``. Fix: no pass runs at boot.
-    """
     config_path = tmp_path / "config.yaml"
     config_path.write_text(_config_yaml(tmp_path))
     storage = StorageManager(sqlite_path=tmp_path / "recommendations.db")
@@ -193,8 +145,6 @@ def test_a_source_named_goodreads_keeps_its_items_across_a_web_boot(
 
 
 def test_a_lapsed_session_is_deleted_by_the_web_boot(tmp_path: Path) -> None:
-    """The boot sweep is the only one left: ``account set-password`` dropped its
-    own, and nothing else deletes a lapsed row."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(_config_yaml(tmp_path))
     storage = StorageManager(sqlite_path=tmp_path / "recommendations.db")
@@ -205,8 +155,6 @@ def test_a_lapsed_session_is_deleted_by_the_web_boot(tmp_path: Path) -> None:
             "INSERT INTO sessions VALUES ('lapsed-digest', 1, ?, ?, ?)",
             (lapsed, lapsed, lapsed),
         )
-        # A restart that signed the operator out would pass on the lapsed row
-        # alone.
         conn.execute(
             "INSERT INTO sessions VALUES ('live-digest', 1, ?, ?, ?)",
             (lapsed, live, lapsed),
@@ -220,25 +168,12 @@ def test_a_lapsed_session_is_deleted_by_the_web_boot(tmp_path: Path) -> None:
     assert [row["token_hash"] for row in remaining] == ["live-digest"]
 
 
-# ---------------------------------------------------------------------------
-# ConfigWatcher tests
-# ---------------------------------------------------------------------------
-
-
 _HANDLED_TIMEOUT_SECONDS = 5.0
 
 
 def _awatch_one_event(
     handled: asyncio.Event,
 ) -> Callable[[Path], AsyncIterator[set[tuple[str, str]]]]:
-    """Build an ``awatch`` stand-in that yields one change, then flags *handled*.
-
-    The watcher hands the reload to a worker thread, so "reload_config ran" and
-    "the watcher is done with the event" are two different moments. The
-    generator is resumed only at the second one, which is the one a test can
-    assert the watcher's own logging against.
-    """
-
     async def awatch(path: Path) -> AsyncIterator[set[tuple[str, str]]]:
         yield {("modified", str(path))}
         handled.set()
@@ -250,7 +185,6 @@ def _awatch_one_event(
 async def _fake_awatch_no_events(
     path: Path,
 ) -> AsyncIterator[set[tuple[str, str]]]:
-    """Block forever without yielding — simulates no file changes."""
     await asyncio.Event().wait()
     yield set()  # pragma: no cover
 
@@ -258,27 +192,14 @@ async def _fake_awatch_no_events(
 async def _fake_awatch_raising(
     path: Path,
 ) -> AsyncIterator[set[tuple[str, str]]]:
-    """Immediately raise OSError — simulates inotify limit or permission error."""
     raise OSError("inotify limit reached")
     yield set()  # pragma: no cover
 
 
 class TestConfigWatcher:
-    """Tests for ConfigWatcher — automatic config file hot-reload.
-
-    Bug: Config changes required a Docker container restart (issue #9).
-    Root cause: Config was loaded once at startup with no file watching.
-    Fix: Added ConfigWatcher that uses watchfiles to detect changes and
-    automatically calls reload_config().
-    """
+    """Bug: Config changes required a Docker container restart (issue #9)."""
 
     def test_watcher_calls_reload_on_change(self) -> None:
-        """ConfigWatcher calls reload_config when awatch yields a change.
-
-        Regression test for #9: config changes should be hot-reloaded
-        without requiring a container restart.
-        """
-
         async def _run() -> None:
             handled = asyncio.Event()
             with (
@@ -299,8 +220,6 @@ class TestConfigWatcher:
         asyncio.run(_run())
 
     def test_watcher_recovers_after_dead_task(self) -> None:
-        """start() works again after the previous task has died."""
-
         async def _run() -> None:
             with patch(
                 _AWATCH_PATCH_TARGET,
@@ -308,12 +227,10 @@ class TestConfigWatcher:
             ):
                 watcher = ConfigWatcher()
                 await watcher.start(Path("/fake/config.yaml"))
-                # Let the task crash
                 await asyncio.sleep(0)
                 await asyncio.sleep(0)
                 assert not watcher.running
 
-            # Should be able to restart with a working awatch
             with patch(
                 _AWATCH_PATCH_TARGET,
                 side_effect=_fake_awatch_no_events,
@@ -326,12 +243,7 @@ class TestConfigWatcher:
 
 
 class TestAHotReloadReachesTheRunningConfig:
-    """A reader holding the dict boot handed it would keep the old file's
-    values for the life of the process, so each resolves via ``get_config``.
-    """
-
     def test_a_reloaded_leaf_reaches_the_running_config(self, tmp_path: Path) -> None:
-        """An edited ``config.yaml`` is what the next request scores on."""
         config_path = tmp_path / "config.yaml"
         config_path.write_text(_config_yaml(tmp_path, default_count=5))
         create_app(config_path)
@@ -348,14 +260,7 @@ class TestAHotReloadReachesTheRunningConfig:
 
 
 class TestSettingsWritesStillRunUnderTheConfigLock:
-    """A save is a read-copy-store, serialised against every config writer."""
-
     def test_a_save_waits_for_the_lock_and_then_lands(self, tmp_path: Path) -> None:
-        """The uncontended save is the control.
-
-        Without it the ``TimeoutError`` below holds just as well for a save
-        that is merely slow.
-        """
         config_path = tmp_path / "config.yaml"
         config_path.write_text(_config_yaml(tmp_path))
         create_app(config_path)

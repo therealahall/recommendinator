@@ -1,5 +1,3 @@
-"""Shared test factories: model instances and app fixtures with sane defaults."""
-
 from __future__ import annotations
 
 import functools
@@ -25,7 +23,6 @@ from src.web.state import AppState, app_state
 # its own, so nothing outside this module may assume the value.
 _MOCK_SESSION_TOKEN = "test-session-000102030405060708090a0b"
 
-#: Who ``authenticated_client`` is signed in as, against mocked storage.
 SESSION_USER: UserDict = {
     "id": get_default_user_id(),
     "username": "tester",
@@ -41,12 +38,8 @@ MALFORMED_IDS = ["Not An Id", "gog\n", "1gog", "../gog", "gog work", "gög", ""]
 
 
 def sub_store_specs() -> dict[str, type]:
-    """Each ``StorageManager`` sub-store, mapped to the class it returns.
-
-    Read off the class rather than listed, because a list left the store
-    added last unspec'd — the hole this closes. Plain properties count too:
-    the convention is a property, and cached is an implementation detail.
-    """
+    """Read off the class rather than listed, because a list left the store added
+    last unspec'd — the hole this closes."""
     specs = {}
     for name, prop in vars(StorageManager).items():
         if isinstance(prop, functools.cached_property):
@@ -61,18 +54,14 @@ def sub_store_specs() -> dict[str, type]:
 
 
 def make_storage_mock() -> MagicMock:
-    """The one supported way to mock storage: sub-stores spec'd too.
-
-    ``create_autospec`` cannot do it: the sub-stores are ``cached_property``,
-    so it specs each child against the descriptor.
-    """
+    """``create_autospec`` cannot do it: the sub-stores are ``cached_property``, so
+    it specs each child against the descriptor."""
     storage = MagicMock(spec=StorageManager)
     _spec_sub_stores(storage)
     return storage
 
 
 def _spec_sub_stores(storage: Any) -> None:
-    """Spec each sub-store, leaving one a caller already stubbed alone."""
     if not isinstance(storage, NonCallableMock):
         return
     for name, store in sub_store_specs().items():
@@ -81,11 +70,8 @@ def _spec_sub_stores(storage: Any) -> None:
 
 
 def back_mock_session_store(storage: Any) -> None:
-    """Teach a mocked StorageManager the one token tests present.
-
-    Unstubbed, ``lookup_session`` returns a truthy Mock — under which every
-    cookie, and every guess, authenticates. A no-op for real storage.
-    """
+    """Unstubbed, ``lookup_session`` returns a truthy Mock — under which every
+    cookie, and every guess, authenticates."""
     if isinstance(storage, NonCallableMock):
         _spec_sub_stores(storage)
         storage.accounts.lookup_session.side_effect = lambda token: (
@@ -96,7 +82,6 @@ def back_mock_session_store(storage: Any) -> None:
 
 
 def issue_session(storage: Any) -> str:
-    """Return a session token *storage* will recognise, minting one if real."""
     back_mock_session_store(storage)
     if isinstance(storage, NonCallableMock):
         return _MOCK_SESSION_TOKEN
@@ -104,8 +89,7 @@ def issue_session(storage: Any) -> str:
 
 
 def served_api_operations(app: FastAPI) -> list[tuple[str, str, RouteContext]]:
-    """Every ``(method, path, route)`` *app* serves, anchored against an empty
-    sweep: ``app.routes`` holds an included router now, not its routes."""
+    """``app.routes`` holds an included router now, not its routes."""
     operations = [
         (method, context.path, context)
         for context in iter_route_contexts(app.routes)
@@ -119,40 +103,23 @@ def served_api_operations(app: FastAPI) -> list[tuple[str, str, RouteContext]]:
 
 
 def authenticated_client(app: FastAPI, **kwargs: Any) -> TestClient:
-    """Return a ``TestClient`` carrying a live session cookie.
-
-    The session is opened against the booted app's storage, which is what
-    ``app_state`` holds inside :func:`booted_web_app`.
-    """
+    """The session is opened against the booted app's storage, which is what
+    ``app_state`` holds inside :func:`booted_web_app`."""
     return TestClient(
         app, cookies={SESSION_COOKIE: issue_session(app_state.storage)}, **kwargs
     )
 
 
 def _default_return(method: Any, value: Any) -> None:
-    """Stand *method* up as empty storage, unless the caller stubbed it.
-
-    This runs at boot, which is after the test has configured its storage, so
-    assigning unconditionally would silently undo the stub it came to test.
-    """
+    """This runs at boot, which is after the test has configured its storage, so
+    assigning unconditionally would silently undo the stub it came to test."""
     if method.side_effect is None and method._mock_return_value is DEFAULT:
         method.return_value = value
 
 
 def back_mock_settings_store(storage: Any) -> dict[str, Any]:
-    """Make a mocked StorageManager behave like an empty settings/secret store.
-
-    Lets the real ``migrate_config_settings`` and ``migrate_config_secrets`` boot
-    hooks run against a mocked StorageManager without leaking state across
-    tests: the settings store starts empty, so the DB overlay is a no-op and
-    config resolves from const/YAML, and nothing is stored in the credentials
-    table, so a YAML secret takes the "migrate it" branch of the sweep rather
-    than the "a stored secret already wins" one. Returns the backing dict so a
-    test can pre-set leaves or assert what was written.
-
-    A real ``StorageManager`` (temp-DB) already isolates itself, so this is a
-    no-op for non-mock storage.
-    """
+    """Returns the backing dict so a test can pre-set leaves or assert what was
+    written."""
     store: dict[str, Any] = {}
     if not isinstance(storage, NonCallableMock):
         return store
@@ -176,12 +143,8 @@ def back_mock_settings_store(storage: Any) -> dict[str, Any]:
 def back_mock_preference_store(
     storage: Any, stored: UserPreferenceConfig | None = None
 ) -> Mock:
-    """Make a mocked StorageManager hold one real ``UserPreferenceConfig``.
-
-    Both interfaces hand their edit to ``merge_user_preference_config``, and a
-    bare Mock returns a Mock, proving nothing about what the edit did. Returns
-    that mock, for asserting it was not called.
-    """
+    """Both interfaces hand their edit to ``merge_user_preference_config``, and a
+    bare Mock returns a Mock, proving nothing about what the edit did."""
     existing = stored if stored is not None else UserPreferenceConfig()
 
     def merge(
@@ -202,32 +165,7 @@ def booted_web_app(
     engine: Any = None,
     migrate_credentials: bool = False,
 ) -> Iterator[FastAPI]:
-    """Boot ``create_app`` over patched I/O boundaries, with ``storage``/``config``.
-
-    The one supported way for a test to obtain the web app. An unpatched boot
-    resolves whatever config file the process finds, opens the database that
-    file names and runs the credential migration against it — re-encrypting
-    real rows under the throwaway key the root conftest installs. A
-    module-level ``src.web.app:app`` import does the same at collection time,
-    before any fixture runs at all, so no test may take one.
-
-    A real temp-DB ``StorageManager`` is as welcome as a mock:
-    ``back_mock_settings_store`` lets the settings and secret boot hooks run
-    for real against an empty store and no-ops for storage that isolates
-    itself. Anything this does not patch — ``src.utils.logging`` (already a
-    no-op via the root conftest), the source migrations — a caller wraps around
-    the call.
-
-    No ``engine`` means no recommendation engine, so ``/api/recommendations``
-    and its stream answer 503 until one is passed.
-
-    ``app_state`` is a module-level singleton, so the boot starts from
-    ``AppState()`` defaults and the caller's fields are restored afterwards.
-    Both halves matter: restoring alone preserves whatever a previous test
-    leaked into a field ``create_app`` never assigns, and a raise inside
-    ``create_app`` would otherwise leave the singleton half-populated for the
-    rest of the session.
-    """
+    """The one supported way for a test to obtain the web app."""
     saved = {f.name: getattr(app_state, f.name) for f in fields(app_state)}
     back_mock_settings_store(storage)
     back_mock_session_store(storage)
@@ -275,13 +213,6 @@ def make_item(
     genres: str | None = None,
     source: str | None = None,
 ) -> ContentItem:
-    """Create a ``ContentItem`` with minimal boilerplate.
-
-    Parameters
-    ----------
-    genres:
-        Shorthand — sets ``metadata["genre"]`` when provided.
-    """
     effective_metadata: dict[str, Any] = metadata.copy() if metadata else {}
     if genres:
         effective_metadata["genre"] = genres

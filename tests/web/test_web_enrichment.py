@@ -1,5 +1,3 @@
-"""Tests for web API enrichment endpoints."""
-
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,7 +20,6 @@ from tests.factories import authenticated_client, booted_web_app, make_storage_m
 
 @pytest.fixture
 def mock_config() -> dict:
-    """Create mock config with enrichment enabled."""
     return {
         "enrichment": {
             "enabled": True,
@@ -36,7 +33,6 @@ def mock_config() -> dict:
 
 @pytest.fixture
 def mock_config_disabled() -> dict:
-    """Create mock config with enrichment disabled."""
     return {
         "enrichment": {
             "enabled": False,
@@ -46,19 +42,11 @@ def mock_config_disabled() -> dict:
 
 @contextmanager
 def _client(storage: MagicMock, config: dict) -> Iterator[TestClient]:
-    """Serve the app with ``storage`` and ``config`` bound into ``app_state``.
-
-    Binding the state rather than patching whichever module imported
-    ``get_storage``: the endpoints reach their components through the shared
-    guards, and app_state is the one place both routers agree on.
-    """
     with booted_web_app(storage, config) as app:
         yield authenticated_client(app)
 
 
 class TestEnrichmentStart:
-    """Tests for POST /api/enrichment/start endpoint."""
-
     @pytest.mark.parametrize(
         ("body", "expected_kwargs", "expected_message"),
         [
@@ -86,7 +74,6 @@ class TestEnrichmentStart:
         expected_kwargs: dict,
         expected_message: str,
     ) -> None:
-        """A dropped kwarg would report a run the operator never asked for."""
         with (
             _client(make_storage_mock(), mock_config) as client,
             patch("src.web.api.EnrichmentManager") as mock_manager_cls,
@@ -104,7 +91,6 @@ class TestEnrichmentStart:
     def test_start_is_refused_while_a_job_is_already_claimed(
         self, mock_config: dict, tmp_path: Path
     ) -> None:
-        """The 409 the Data tab and the CLI both surface to the operator."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         assert storage.enrichment_jobs.claim(None) is True
 
@@ -117,7 +103,6 @@ class TestEnrichmentStart:
     def test_disabled_enrichment_names_the_surface_that_turns_it_on(
         self, mock_config_disabled: dict
     ) -> None:
-        """It used to send the user to a config.yaml key the app no longer reads."""
         with _client(make_storage_mock(), mock_config_disabled) as client:
             response = client.post("/api/enrichment/start", json={})
 
@@ -128,7 +113,6 @@ class TestEnrichmentStart:
         assert "settings set enrichment.enabled true" in detail
 
     def test_start_enrichment_invalid_content_type(self, mock_config: dict) -> None:
-        """Test error with invalid content type."""
         with _client(make_storage_mock(), mock_config) as client:
             response = client.post(
                 "/api/enrichment/start",
@@ -140,8 +124,6 @@ class TestEnrichmentStart:
 
 
 class TestEnrichmentStop:
-    """Tests for POST /api/enrichment/stop endpoint."""
-
     def test_stop_with_no_job_running(self, tmp_path: Path) -> None:
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
@@ -167,10 +149,7 @@ class TestEnrichmentStop:
 
 
 class TestEnrichmentStatus:
-    """Tests for GET /api/enrichment/status endpoint."""
-
     def test_get_status_no_job(self, tmp_path: Path) -> None:
-        """Test status when no job exists."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         with _client(storage, {}) as client:
             response = client.get("/api/enrichment/status")
@@ -182,11 +161,6 @@ class TestEnrichmentStatus:
     def test_a_wrapped_provider_error_reaches_the_wire_derived(
         self, tmp_path: Path
     ) -> None:
-        """The scrub in the manager reaches the body an operator reads.
-
-        The run happens outside the app, which is the point: the endpoint
-        reads the shared record, not a manager of its own.
-        """
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         save_movie(storage)
         registry = EnrichmentRegistry()
@@ -215,10 +189,7 @@ class TestEnrichmentStatus:
 
 
 class TestEnrichmentStats:
-    """Tests for GET /api/enrichment/stats endpoint."""
-
     def test_get_stats(self) -> None:
-        """Every counted field reaches the response, the CLI's shape included."""
         storage = make_storage_mock()
         stats = {
             "total": 100,
@@ -240,10 +211,7 @@ class TestEnrichmentStats:
 
 
 class TestEnrichmentReset:
-    """Tests for POST /api/enrichment/reset endpoint."""
-
     def test_reset_all(self) -> None:
-        """Test resetting all enrichment status."""
         storage = make_storage_mock()
         storage.enrichment.reset.return_value = 50
 
@@ -256,7 +224,6 @@ class TestEnrichmentReset:
         assert "50" in data["message"]
 
     def test_reset_one_item_narrows_the_reset_to_it(self) -> None:
-        """The web's half of the per-item reset, worded as the CLI words it."""
         storage = make_storage_mock()
         storage.enrichment.reset.return_value = 1
 
@@ -293,7 +260,6 @@ class TestEnrichmentReset:
         storage.enrichment.reset.assert_not_called()
 
     def test_reset_invalid_content_type(self) -> None:
-        """Test error with invalid content type."""
         with _client(make_storage_mock(), {}) as client:
             response = client.post(
                 "/api/enrichment/reset",

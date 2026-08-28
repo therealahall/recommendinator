@@ -1,5 +1,3 @@
-"""Tests for the shared sync executor."""
-
 import logging
 import sqlite3
 import threading
@@ -35,8 +33,6 @@ from tests.factories import make_item, make_storage_mock
 
 
 class TestResolveMaxWorkers:
-    """Unit tests for the shared max_workers resolution helper."""
-
     def test_override_wins_over_config(self) -> None:
         assert resolve_max_workers({"sync": {"max_workers": 9}}, override=2) == 2
 
@@ -56,10 +52,7 @@ class TestResolveMaxWorkers:
 
 
 class TestExecuteSync:
-    """Tests for execute_sync function."""
-
     def test_basic_sync(self) -> None:
-        """Items are fetched, saved, and counted."""
         items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -80,7 +73,6 @@ class TestExecuteSync:
         assert storage.save_content_item_outcome.call_count == 2
 
     def test_sync_records_save_errors(self) -> None:
-        """Errors during save are recorded but don't stop the sync."""
         items = [make_item("Good"), make_item("Bad"), make_item("Also Good")]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -132,8 +124,8 @@ class TestExecuteSync:
         assert result.items_synced == 0
 
     def test_the_enrichment_advisory_is_not_crowded_out_by_item_misses(self) -> None:
-        """It speaks for the whole run, so a full per-item list must not
-        displace it, and it is not one of the misses the tally counts."""
+        """It speaks for the whole run, so a full per-item list must not displace
+        it, and it is not one of the misses the tally counts."""
         saved = SavedItem(db_id=1, outcome=SaveOutcome.ADDED)
         misses = MAX_REPORTED_ERRORS + 5
         plugin = MagicMock(spec=SourcePlugin)
@@ -161,8 +153,8 @@ class TestExecuteSync:
         assert result.omitted_errors == 5
 
     def test_progress_callback_reports_one_based_item_number(self) -> None:
-        """Progress callback emits ``index + 1`` so the final iteration
-        shows ``items_processed == total_items`` instead of N-1/N."""
+        """Progress callback emits ``index + 1`` so the final iteration shows
+        ``items_processed == total_items`` instead of N-1/N."""
         items = [make_item(f"Item {i}") for i in range(3)]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -188,14 +180,9 @@ class TestExecuteSync:
 
 
 class TestExecuteMultiSourceSync:
-    """Tests for execute_multi_source_sync function."""
-
     def test_source_error_continues(self) -> None:
-        """A failing source doesn't block subsequent sources.
-
-        Its message is ours and names the setting to change, so it reaches the
-        operator rather than the container log alone.
-        """
+        """Its message is ours and names the setting to change, so it reaches the
+        operator rather than the container log alone."""
         remedy = "Set verify_ssl to false if the certificate is self-signed."
         plugin_a = MagicMock(spec=SourcePlugin)
         plugin_a.name = "failing"
@@ -228,11 +215,8 @@ class TestExecuteMultiSourceSync:
         ]
 
     def test_a_request_fault_quoting_a_key_is_still_swallowed(self) -> None:
-        """The substitution exists for this: ``requests`` quotes the url.
-
-        Steam's carries ``?key=``, so anything that is not our own wording
-        stays in the log.
-        """
+        """Steam's carries ``?key=``, so anything that is not our own wording stays
+        in the log."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "steam"
         plugin.display_name = "Steam"
@@ -269,7 +253,6 @@ class TestExecuteMultiSourceSync:
         assert "Traceback (most recent call last)" in caplog.text
 
     def test_max_workers_runs_sources_concurrently(self) -> None:
-        """With max_workers>1, sources fetch in parallel via a thread pool."""
         thread_count = 3
         barrier = threading.Barrier(thread_count, timeout=5.0)
 
@@ -308,7 +291,6 @@ class TestExecuteMultiSourceSync:
         assert all(result.items_synced == 1 for result in results)
 
     def test_parallel_isolates_per_source_failures(self) -> None:
-        """A failing source under parallel execution does not break others."""
         # Both fetches block on the same barrier so we know they ran
         # concurrently — neither runs until both have started.
         barrier = threading.Barrier(2, timeout=5.0)
@@ -342,7 +324,6 @@ class TestExecuteMultiSourceSync:
         )
 
         assert len(results) == 2
-        # Order preserved despite parallel execution
         assert results[0].source_name == "Failing"
         assert results[1].source_name == "Working"
         assert results[0].items_synced == 0
@@ -355,11 +336,8 @@ class TestExecuteMultiSourceSync:
 
 
 class TestAClaimOutlastsTheWaitAndTheSilence:
-    """Reported: a claim expired before the sync it was taken for started.
-
-    Only a plugin reporting progress used to beat, so a source queued behind
-    ``max_workers`` or inside a silent fetch was reaped and taken over mid-run.
-    """
+    """Only a plugin reporting progress used to beat, so a source queued behind
+    ``max_workers`` or inside a silent fetch was reaped and taken over mid-run."""
 
     _SOURCES = ("slow", "queued")
 
@@ -563,10 +541,7 @@ class TestEverySyncLeavesARun:
 
 
 class TestCredentialRotationCallback:
-    """Tests for credential rotation callback injection in execute_sync."""
-
     def test_credential_callback_calls_save_credential(self) -> None:
-        """The injected callback persists credentials via storage_manager."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
@@ -574,7 +549,6 @@ class TestCredentialRotationCallback:
         # mocked plugin has to answer that question like a real one would.
         plugin.get_source_identifier.return_value = "gog"
 
-        # Capture the callback by intercepting fetch
         captured_callback = None
 
         def capture_fetch(
@@ -605,7 +579,6 @@ class TestCredentialRotationCallback:
     def test_credential_callback_error_logged_not_raised(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Errors in the credential save are logged but don't crash sync."""
         plugin = MagicMock(spec=SourcePlugin)
         plugin.name = "gog"
         plugin.display_name = "GOG"
@@ -630,7 +603,6 @@ class TestCredentialRotationCallback:
                 storage_manager=storage,
             )
 
-        # Sync should still succeed (0 items, no crash)
         assert result.items_synced == 0
         assert any(
             "Failed to persist rotated credential" in msg and "refresh_token" in msg
@@ -642,11 +614,8 @@ _ROTATED_TOKEN = "rotated-mid-sync"
 
 
 class RotatingAttributingPlugin(SourcePlugin):
-    """Rotates a token and attributes an item off the same method.
-
-    The rotating doubles in ``tests/sources/test_service.py`` yield nothing, so
-    none of them can compare the owner against the id an item carries.
-    """
+    """The rotating doubles in ``tests/sources/test_service.py`` yield nothing,
+    so none of them can compare the owner against the id an item carries."""
 
     @property
     def name(self) -> str:
@@ -688,12 +657,7 @@ class RotatingAttributingPlugin(SourcePlugin):
 
 
 class TestTheTokenOwnerIsTheIdTheItemsCarry:
-    """Reported: a rotated token stored under an id no later lookup uses.
-
-    Cause: ``execute_sync`` re-derived the owner as ``source_id or
-    plugin.name``, so a falsy id diverged from attribution. Fix: it asks
-    ``get_source_identifier``.
-    """
+    """Reported: a rotated token stored under an id no later lookup uses."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -730,11 +694,8 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
     def test_a_config_with_no_source_id_still_owns_its_token(
         self, storage: StorageManager
     ) -> None:
-        """The surviving fallback, reached only without a ``_source_id`` key.
-
-        A caller assembling its own config gets the plugin name, and the item
-        agrees, because one method answers both.
-        """
+        """A caller assembling its own config gets the plugin name, and the item
+        agrees, because one method answers both."""
         self._sync({"refresh_token": "old"}, storage)
 
         assert storage.credentials.get(1, "rotating", "refresh_token") == _ROTATED_TOKEN
@@ -744,12 +705,7 @@ class TestTheTokenOwnerIsTheIdTheItemsCarry:
 
 
 class TestAPluginCannotRedirectARotatedTokenRegression:
-    """Reported: a plugin could write its token under another source's id.
-
-    Bug: ``execute_sync`` takes the credential owner from
-    ``get_source_identifier``, and a three-line override returning another
-    source's id redirected the write. Fix: the override is refused outright.
-    """
+    """Reported: a plugin could write its token under another source's id."""
 
     def test_the_hijacking_subclass_never_gets_as_far_as_a_sync(self) -> None:
         with pytest.raises(TypeError, match="name property"):
@@ -762,11 +718,8 @@ class TestAPluginCannotRedirectARotatedTokenRegression:
 
 
 class TestASyncLeavesAStrandedTokenWhereItIs:
-    """A wrongly-attributed refresh token fails where a reconnect works.
-
-    Sources sharing a plugin cannot be told apart, so nothing may claim a row
-    filed under the plugin's own name by a release before per-source ids.
-    """
+    """Sources sharing a plugin cannot be told apart, so nothing may claim a row
+    filed under the plugin's own name by a release before per-source ids."""
 
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
@@ -792,10 +745,7 @@ class TestASyncLeavesAStrandedTokenWhereItIs:
 
 
 class TestAutoEnrichmentHook:
-    """Tests for auto-enrichment marking during sync."""
-
     def test_mark_for_enrichment_enabled(self) -> None:
-        """Items are marked for enrichment when flag is True."""
         items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -820,7 +770,6 @@ class TestAutoEnrichmentHook:
         storage.enrichment.mark_needed.assert_any_call(2)
 
     def test_mark_for_enrichment_error_does_not_fail_sync(self) -> None:
-        """Errors from marking for enrichment don't stop the sync."""
         items = [make_item("Book 1"), make_item("Book 2")]
         plugin = MagicMock(spec=SourcePlugin)
         plugin.display_name = "TestPlugin"
@@ -843,7 +792,6 @@ class TestAutoEnrichmentHook:
             mark_for_enrichment=True,
         )
 
-        # Both items should be synced even though first enrichment marking failed
         assert result.items_synced == 2
         assert storage.enrichment.mark_needed.call_count == 2
         # The failure is reported, not just logged: nothing else shows the
@@ -899,11 +847,7 @@ _TITLE_SINKS = [
 
 
 class TestAnImportedTitleCannotForgeALogLine:
-    """Reported: every sink in the item loop interpolated a raw title.
-
-    Bug: one CSV row forged extra log entries a sync.
-    Fix: a single escaped copy per item, shared by every sink.
-    """
+    """Bug: one CSV row forged extra log entries a sync."""
 
     @pytest.mark.parametrize(("options", "wording"), _TITLE_SINKS)
     def test_the_sink_escapes_the_title_it_names(
@@ -929,11 +873,8 @@ class TestAnImportedTitleCannotForgeALogLine:
 
 
 class TestTheOtherSyncSinksEscapeTheirValuesToo:
-    """A title is not the only value this module logs from outside it.
-
-    A source id is typed into ``config.yaml`` or the web source form, a
-    plugin names itself, and a plugin picks the credential key it rotates.
-    """
+    """A source id is typed into ``config.yaml`` or the web source form, a plugin
+    names itself, and a plugin picks the credential key it rotates."""
 
     def test_a_forged_source_id_cannot_forge_a_line(
         self, caplog: pytest.LogCaptureFixture
@@ -963,11 +904,8 @@ _ANSI_ERASE_LINE = "\x1b[2K"
 
 
 class TestEveryCharacterThatEndsAnEntryIsEscapedByTheSinks:
-    """``\\n`` is what a forged title reaches for, not all that works.
-
-    A reader ends an entry at any of ``LINE_BREAKS``, stops at NUL, and obeys
-    a terminal control.
-    """
+    """A reader ends an entry at any of ``LINE_BREAKS``, stops at NUL, and obeys a
+    terminal control."""
 
     @pytest.mark.parametrize("breaker", [*LINE_BREAKS, "\0", _ANSI_ERASE_LINE])
     def test_a_title_carrying_it_still_reaches_the_sinks_as_one_entry(
@@ -994,12 +932,7 @@ _ESCAPED_SURROGATE_TITLE = "Metr\\udcffoid"
 
 
 class TestAnUndecodableTitleCannotAbortTheRunRegression:
-    """Reported: a ROM named in invalid UTF-8 killed ``update``.
-
-    Symptom: ``click.echo`` raised UnicodeEncodeError printing the warning.
-    Cause: the reported error interpolated the raw title, lone surrogate and
-    all. Fix: it escapes it, as the log sinks already did.
-    """
+    """Reported: a ROM named in invalid UTF-8 killed ``update``."""
 
     def test_the_reported_error_is_printable(self) -> None:
         result = _sync_one_forged_title(
@@ -1010,12 +943,7 @@ class TestAnUndecodableTitleCannotAbortTheRunRegression:
 
 
 class TestASyncSaysWhatItChangedRegression:
-    """Reported: two runs of ``update --source roms`` read identically.
-
-    Symptom: the second changed nothing and still said "Updated 40 items".
-    Cause: the upsert reported only a row id.
-    Fix: it compares stored values and reports added/updated/unchanged.
-    """
+    """Reported: two runs of ``update --source roms`` read identically."""
 
     def _sync(self, storage: StorageManager) -> SyncResult:
         """Forty items, identical between the two runs."""
@@ -1030,7 +958,6 @@ class TestASyncSaysWhatItChangedRegression:
     def test_running_the_same_sync_again_reports_forty_unchanged(
         self, tmp_path: Path
     ) -> None:
-        """The acceptance criterion: a second identical run changed nothing."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         self._sync(storage)
 
@@ -1046,10 +973,8 @@ class TestASyncSaysWhatItChangedRegression:
     def test_an_item_the_source_renamed_is_reported_updated(
         self, tmp_path: Path
     ) -> None:
-        """The ``updated`` leg of the tally, and the id match under it. The
-        plugin leaves ``source`` to the sync, and unstamped a rename lands as a
-        second row beside the one holding the rating.
-        """
+        """The plugin leaves ``source`` to the sync, and unstamped a rename lands as
+        a second row beside the one holding the rating."""
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
 
         def sync_titled(title: str) -> SyncResult:

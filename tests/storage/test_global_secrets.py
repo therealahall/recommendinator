@@ -1,5 +1,3 @@
-"""Tests for relocating global provider secrets into encrypted storage."""
-
 from pathlib import Path
 from typing import Any
 
@@ -18,17 +16,13 @@ _TMDB_KEY = "enrichment.providers.tmdb.api_key"
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """Create a StorageManager backed by an isolated temp DB."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
 class TestMigrateConfigSecrets:
-    """Tests for the boot-time secret sweep."""
-
     def test_sweeps_sensitive_leaf_into_encrypted_credentials(
         self, storage: StorageManager
     ) -> None:
-        """A sensitive YAML leaf is stored (encrypted, decryptable) in credentials."""
         config = {
             "enrichment": {
                 "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
@@ -80,7 +74,6 @@ class TestMigrateConfigSecrets:
     def test_existing_db_secret_not_clobbered_by_stale_yaml(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A readable DB secret wins; a stale YAML copy neither overwrites nor lingers."""
         storage.secrets.set(_TMDB_KEY, "db_key")
 
         config = {
@@ -97,7 +90,6 @@ class TestMigrateConfigSecrets:
         assert "db_key" not in caplog.text, "the decrypted secret reached the log"
 
     def test_idempotent_across_repeated_boots(self, storage: StorageManager) -> None:
-        """Re-running the sweep leaves the stored secret unchanged."""
         first = {
             "enrichment": {
                 "providers": {"tmdb": {"enabled": True, "api_key": "yaml_key"}}
@@ -105,8 +97,6 @@ class TestMigrateConfigSecrets:
         }
         migrate_config_secrets(first, storage)
 
-        # A later boot re-injects the const default (empty api_key); the sweep
-        # must keep the migrated value and strip the empty placeholder.
         second: dict[str, Any] = {
             "enrichment": {"providers": {"tmdb": {"enabled": True, "api_key": ""}}}
         }
@@ -116,7 +106,6 @@ class TestMigrateConfigSecrets:
         assert "api_key" not in second["enrichment"]["providers"]["tmdb"]
 
     def test_empty_value_is_not_migrated(self, storage: StorageManager) -> None:
-        """An empty/whitespace secret is skipped, not written to the DB."""
         config = {
             "enrichment": {"providers": {"tmdb": {"enabled": True, "api_key": "   "}}}
         }
@@ -126,7 +115,6 @@ class TestMigrateConfigSecrets:
         assert read_secret(storage, _TMDB_KEY) is None
 
     def test_stale_row_re_encrypted_from_config(self, storage: StorageManager) -> None:
-        """An undecryptable row is re-encrypted when config supplies a value."""
         source_id, credential_key = secret_ref(_TMDB_KEY)
         with storage.connection() as conn:
             conn.execute(
@@ -149,12 +137,9 @@ class TestMigrateConfigSecrets:
 
 
 class TestGlobalSecretAccessors:
-    """Tests for the write-only StorageManager global-secret surface."""
-
     def test_set_and_read_round_trip_through_encryption(
         self, storage: StorageManager
     ) -> None:
-        """A set secret is decryptable and stored as ciphertext."""
         storage.secrets.set(_TMDB_KEY, "round_trip")
 
         assert read_secret(storage, _TMDB_KEY) == "round_trip"
@@ -169,7 +154,6 @@ class TestGlobalSecretAccessors:
         assert row["credential_value"] != "round_trip"
 
     def test_clear_removes_secret(self, storage: StorageManager) -> None:
-        """Clearing removes the secret; a second clear reports nothing removed."""
         storage.secrets.set(_TMDB_KEY, "to_clear")
 
         assert storage.secrets.clear(_TMDB_KEY) is True

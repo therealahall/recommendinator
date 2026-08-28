@@ -1,11 +1,3 @@
-"""Tests that enrichment providers read secrets from encrypted credentials.
-
-After boot migration a provider's ``api_key`` lives in the encrypted
-``credentials`` table, not plaintext config. These tests use a real
-``StorageManager`` (isolated temp DB) to prove the enrichment layer sources the
-key from credentials and degrades gracefully when it is absent.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,8 +21,6 @@ _SECRET_KEY = "enrichment.providers.keyed.api_key"
 
 
 class KeyedProvider(EnrichmentProvider):
-    """Provider with a sensitive ``api_key`` field that records the config it gets."""
-
     def __init__(self, name: str = "keyed") -> None:
         self._name = name
         self.received_configs: list[dict[str, Any]] = []
@@ -83,13 +73,11 @@ class KeyedProvider(EnrichmentProvider):
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """Create a StorageManager backed by an isolated temp DB."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
 @pytest.fixture()
 def registry() -> EnrichmentRegistry:
-    """A registry pre-seeded with only the KeyedProvider (no disk discovery)."""
     reg = EnrichmentRegistry()
     reg._discovered = True
     reg.register(KeyedProvider())
@@ -97,21 +85,13 @@ def registry() -> EnrichmentRegistry:
 
 
 def _config() -> dict[str, Any]:
-    """Config with the provider enabled but no plaintext api_key."""
     return {"enrichment": {"providers": {"keyed": {"enabled": True}}}}
 
 
 class TestProviderConfigInjection:
-    """The provider config seam overlays the secret from credentials."""
-
     def test_boot_migration_then_enrichment_reads_credential(
         self, storage: StorageManager
     ) -> None:
-        """End to end: YAML key is swept away, provider still gets it from credentials.
-
-        Uses the real registry leaf ``enrichment.providers.tmdb.api_key`` so the
-        metadata-driven boot sweep actually relocates it.
-        """
         registry = EnrichmentRegistry()
         registry._discovered = True
         registry.register(KeyedProvider(name="tmdb"))
@@ -123,7 +103,6 @@ class TestProviderConfigInjection:
         }
         migrate_config_secrets(config, storage)
 
-        # The plaintext key is gone from the config the manager runs on.
         assert "api_key" not in config["enrichment"]["providers"]["tmdb"]
 
         manager = EnrichmentManager(storage, config, registry)
@@ -131,20 +110,12 @@ class TestProviderConfigInjection:
 
 
 class TestSecretResolutionCaching:
-    """A provider's secret is resolved once per run, not once per item.
-
-    Regression: ``_get_provider_config`` used to call ``read_secret`` (a SQLite
-    query + Fernet decrypt) for every sensitive field on every content item.
-    The per-manager cache resolves each secret once and reuses it for the run.
-    """
-
     def test_secret_read_once_across_items(
         self,
         storage: StorageManager,
         registry: EnrichmentRegistry,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Three items enrich, but the api_key is decrypted from storage once."""
         storage.secrets.set(_SECRET_KEY, "cred_key")
         for i in range(3):
             storage.save_content_item(
@@ -174,5 +145,4 @@ class TestSecretResolutionCaching:
         assert isinstance(provider, KeyedProvider)
         assert len(provider.received_configs) == 3
         assert all(cfg["api_key"] == "cred_key" for cfg in provider.received_configs)
-        # Read exactly once despite three processed items.
         assert reads == [_SECRET_KEY]

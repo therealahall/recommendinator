@@ -1,9 +1,3 @@
-"""The one-time move of the UI theme out of the preference blob.
-
-``preferences reset`` replaces that blob wholesale, so an operator who
-upgrades has to come out of it still on the theme they picked.
-"""
-
 from __future__ import annotations
 
 import json
@@ -15,7 +9,6 @@ from src.storage.schema import create_schema
 
 
 def _seed_pre_upgrade_db(path: Path, settings: dict) -> None:
-    """Write a database at the version before the theme had a table."""
     conn = sqlite3.connect(path)
     try:
         create_schema(conn)
@@ -43,7 +36,6 @@ def test_a_stored_theme_survives_the_upgrade(tmp_path: Path) -> None:
 
 
 def test_a_user_who_picked_no_theme_upgrades_to_none(tmp_path: Path) -> None:
-    """An empty stored theme meant "the default", and still has to."""
     db_path = tmp_path / "default.db"
     _seed_pre_upgrade_db(db_path, {"preference_config": {"theme": ""}})
 
@@ -53,7 +45,6 @@ def test_a_user_who_picked_no_theme_upgrades_to_none(tmp_path: Path) -> None:
 def test_a_settings_blob_the_step_cannot_read_does_not_block_the_upgrade(
     tmp_path: Path,
 ) -> None:
-    """The open that raises here leaves the operator with no app at all."""
     db_path = tmp_path / "junk.db"
     _seed_pre_upgrade_db(db_path, {"preference_config": "not a dict"})
 
@@ -61,7 +52,6 @@ def test_a_settings_blob_the_step_cannot_read_does_not_block_the_upgrade(
 
 
 def test_the_move_does_not_re_run_after_the_upgrade(tmp_path: Path) -> None:
-    """The stale key stays in the blob, so a second run would undo a later pick."""
     db_path = tmp_path / "once.db"
     _seed_pre_upgrade_db(db_path, {"preference_config": {"theme": "snowstorm"}})
     StorageManager(sqlite_path=db_path).ui_settings.set_theme(1, "nord")

@@ -1,5 +1,3 @@
-"""Tests for shared ISO 8601 timestamp parsing and local-date narrowing."""
-
 from datetime import UTC, date, datetime
 from unittest.mock import patch
 
@@ -63,8 +61,6 @@ def test_merge_seasons_watched_dates_gap_fills_season_present_on_one_side():
 
 
 class TestLocalDateFromIsoTimestamp:
-    """Tests for narrowing a UTC instant to the host's calendar day."""
-
     @pytest.mark.parametrize(
         ("zone", "raw", "expected"),
         [
@@ -82,18 +78,13 @@ class TestLocalDateFromIsoTimestamp:
     def test_boundary_instant_keeps_the_local_calendar_day(
         self, host_timezone, zone, raw, expected
     ):
-        """Instants either side of local midnight narrow to the local day.
-
-        Each case is a local 23:59 or 00:01 expressed as the UTC instant Trakt
-        would record, for one negative and one positive UTC offset. The host
-        zone is set explicitly so the assertions hold wherever the suite runs.
-        """
+        """The host zone is set explicitly so the assertions hold wherever the suite
+        runs."""
         host_timezone(zone)
         assert local_date_from_iso_timestamp(raw) == expected
 
     @pytest.mark.parametrize("raw", [None, "not-a-timestamp"])
     def test_returns_none_for_unparseable_input(self, raw):
-        """Missing or malformed values yield None rather than raising."""
         assert local_date_from_iso_timestamp(raw) is None
 
     @pytest.mark.parametrize(
@@ -108,30 +99,14 @@ class TestLocalDateFromIsoTimestamp:
     def test_local_midnight_itself_belongs_to_the_day_it_starts(
         self, host_timezone, zone, raw, expected
     ):
-        """The day flips at local midnight, not a microsecond either side of it.
-
-        Tighter than the 23:59/00:01 sweep: the instant that *is* local midnight
-        must be the new day, and the microsecond before it the old one. Kolkata
-        covers a half-hour offset, where an implementation that rounded to whole
-        hours would land on the wrong day for both cases.
-        """
+        """Tighter than the 23:59/00:01 sweep: the instant that *is* local midnight
+        must be the new day, and the microsecond before it the old one."""
         host_timezone(zone)
         assert local_date_from_iso_timestamp(raw) == expected
 
 
 class TestLocalToday:
-    """Tests for dating "now" by the calendar day the user is living.
-
-    Bug reported: marking something complete in the evening dated it tomorrow.
-    Every in-app completion stamped ``datetime.now(UTC).date()``, so a user in
-    America/Los_Angeles finishing a book at 21:00 got the next day's date —
-    while a date arriving from an import was narrowed to the host's zone by
-    ``local_date_from_iso_timestamp``. The two dates fed the same variety
-    ladder ordering off two different calendars, and the ``TZ`` a Docker
-    operator sets was honoured for one and ignored for the other.
-    Fix: ``local_today`` narrows the current instant the same way, and every
-    stamping site reads it.
-    """
+    """Bug reported: marking something complete in the evening dated it tomorrow."""
 
     @pytest.mark.parametrize(
         ("zone", "instant", "expected"),
@@ -150,13 +125,6 @@ class TestLocalToday:
     def test_today_is_the_host_calendar_day_regression(
         self, host_timezone, zone, instant, expected
     ):
-        """Today is the host's calendar day, not the UTC one.
-
-        The clock is frozen at an instant that falls on a different calendar
-        day in the host's zone than in UTC, which is the only way to tell the
-        two implementations apart — and, unlike a live clock, it says the same
-        thing when the suite runs across UTC midnight.
-        """
         host_timezone(zone)
         with patch("src.utils.dates.utc_now", return_value=instant):
             assert local_today() == expected

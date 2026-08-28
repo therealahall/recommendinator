@@ -1,5 +1,3 @@
-"""Tests for enrichment-related storage functionality."""
-
 from pathlib import Path
 
 import pytest
@@ -22,7 +20,6 @@ def save_unenriched(
     content_type: ContentType = ContentType.MOVIE,
     user_id: int | None = None,
 ) -> int:
-    """Store an item with no enrichment status and return its database ID."""
     return storage_manager.save_content_item(
         ContentItem(
             id=item_id,
@@ -35,17 +32,13 @@ def save_unenriched(
 
 
 class TestEnrichmentStatusMethods:
-    """Tests for enrichment status storage methods."""
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
         return StorageManager(sqlite_path=db_path)
 
     @pytest.fixture
     def sample_item(self) -> ContentItem:
-        """Create a sample content item."""
         return ContentItem(
             id="test123",
             title="Test Movie",
@@ -57,7 +50,6 @@ class TestEnrichmentStatusMethods:
     def test_mark_enrichment_complete(
         self, storage_manager: StorageManager, sample_item: ContentItem
     ) -> None:
-        """Test marking an item as successfully enriched."""
         db_id = storage_manager.save_content_item(sample_item)
 
         storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
@@ -72,12 +64,6 @@ class TestEnrichmentStatusMethods:
     def test_mark_enrichment_failed(
         self, storage_manager: StorageManager, sample_item: ContentItem
     ) -> None:
-        """A failure records the error and leaves the item queued for retry.
-
-        A failed provider never said whether it has the item, so the outcome is
-        unknown: ``needs_enrichment`` stays set and the item is still returned
-        by ``get_items_needing_enrichment``.
-        """
         db_id = storage_manager.save_content_item(sample_item)
 
         storage_manager.enrichment.mark_failed(db_id, "API rate limit exceeded")
@@ -92,8 +78,6 @@ class TestEnrichmentStatusMethods:
     def test_reset_enrichment_status_by_provider(
         self, storage_manager: StorageManager
     ) -> None:
-        """Test resetting enrichment status by provider."""
-        # Create and enrich two items with different providers
         item1 = ContentItem(
             id="movie1",
             title="Movie 1",
@@ -113,7 +97,6 @@ class TestEnrichmentStatusMethods:
         storage_manager.enrichment.mark_complete(db_id1, "tmdb", "high")
         storage_manager.enrichment.mark_complete(db_id2, "other", "high")
 
-        # Reset only tmdb items
         count = storage_manager.enrichment.reset(provider="tmdb")
 
         assert count == 1
@@ -123,7 +106,6 @@ class TestEnrichmentStatusMethods:
     def test_reset_drops_the_settled_miss_that_retry_not_found_reads(
         self, storage_manager: StorageManager, sample_item: ContentItem
     ) -> None:
-        """A re-queued item must not also be a ``--retry-not-found`` candidate."""
         db_id = storage_manager.save_content_item(sample_item)
         storage_manager.enrichment.mark_complete(db_id, "none", "not_found")
 
@@ -136,16 +118,12 @@ class TestEnrichmentStatusMethods:
 
 
 class TestGetItemsNeedingEnrichment:
-    """Tests for getting items that need enrichment."""
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
         return StorageManager(sqlite_path=db_path)
 
     def test_get_items_no_status(self, storage_manager: StorageManager) -> None:
-        """Test getting items with no enrichment status (new items)."""
         item = ContentItem(
             id="test1",
             title="Test Movie",
@@ -154,14 +132,12 @@ class TestGetItemsNeedingEnrichment:
         )
         storage_manager.save_content_item(item)
 
-        # New items should need enrichment
         items = storage_manager.enrichment.items_needing()
 
         assert len(items) == 1
         assert items[0][1].title == "Test Movie"
 
     def test_get_items_excludes_enriched(self, storage_manager: StorageManager) -> None:
-        """Test that already-enriched items are excluded."""
         item = ContentItem(
             id="test1",
             title="Test Movie",
@@ -176,7 +152,6 @@ class TestGetItemsNeedingEnrichment:
         assert len(items) == 0
 
     def test_get_items_by_content_type(self, storage_manager: StorageManager) -> None:
-        """Test filtering by content type."""
         movie = ContentItem(
             id="movie1",
             title="Test Movie",
@@ -209,12 +184,6 @@ class TestGetItemsNeedingEnrichment:
     def test_after_db_id_pages_forward_through_the_queue(
         self, storage_manager: StorageManager
     ) -> None:
-        """``after_db_id`` excludes handled items in SQL, not in the caller.
-
-        The enrichment manager leaves an item queued when its provider errored,
-        so it walks this cursor forward to reach the items behind it without
-        re-fetching — and re-hydrating — the ones it already attempted.
-        """
         db_ids = [
             storage_manager.save_content_item(
                 ContentItem(
@@ -234,25 +203,18 @@ class TestGetItemsNeedingEnrichment:
     def test_not_found_ids_holds_settled_misses_alone(
         self, storage_manager: StorageManager
     ) -> None:
-        """A retry run enriches these and nothing else.
-
-        An untracked item has never been attempted and a failed one settled
-        nothing, so neither is a miss to retry.
-        """
         db_ids = [
             save_unenriched(storage_manager, f"movie{index}") for index in range(4)
         ]
         storage_manager.enrichment.mark_complete(db_ids[0], "none", "not_found")
         storage_manager.enrichment.mark_complete(db_ids[1], "tmdb", "high")
         storage_manager.enrichment.mark_failed(db_ids[2], "tmdb: HTTP 503")
-        # db_ids[3] is untracked.
 
         assert storage_manager.enrichment.not_found_ids() == [db_ids[0]]
 
     def test_not_found_ids_holds_every_miss_past_one_queue_page(
         self, storage_manager: StorageManager
     ) -> None:
-        """The queue this feeds is read a page at a time; the retry set is not."""
         db_ids = [
             save_unenriched(storage_manager, f"movie{index}") for index in range(150)
         ]
@@ -264,7 +226,6 @@ class TestGetItemsNeedingEnrichment:
     def test_not_found_ids_filters_by_content_type_and_user(
         self, storage_manager: StorageManager
     ) -> None:
-        """A retry run is scoped the same way the queue it feeds is."""
         with storage_manager.sqlite_db.connection() as conn:
             other_user = create_user(conn, username="other")
         my_movie = save_unenriched(storage_manager, "movie1", user_id=1)
@@ -288,13 +249,6 @@ class TestGetItemsNeedingEnrichment:
 
 
 class TestCountItemsNeedingEnrichment:
-    """Tests for counting items needing enrichment.
-
-    The count and get methods share ``_build_enrichment_query`` so the same
-    WHERE clause drives both. These tests verify count parity with the get
-    path and exercise the COUNT(*) -> int cursor branch.
-    """
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
@@ -303,7 +257,6 @@ class TestCountItemsNeedingEnrichment:
     def test_count_filters_by_content_type(
         self, storage_manager: StorageManager
     ) -> None:
-        """`content_type` parameter scopes the count to a single type."""
         storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -330,7 +283,6 @@ class TestCountItemsNeedingEnrichment:
         )
 
     def test_count_matches_get_length(self, storage_manager: StorageManager) -> None:
-        """Count and get must agree — they share the same WHERE clause."""
         for index in range(3):
             db_id = storage_manager.save_content_item(
                 ContentItem(
@@ -341,7 +293,6 @@ class TestCountItemsNeedingEnrichment:
                 )
             )
             if index == 0:
-                # Enrich one item — both methods should agree it's excluded.
                 storage_manager.enrichment.mark_complete(db_id, "tmdb", "high")
 
         items = storage_manager.enrichment.items_needing(limit=100)
@@ -352,23 +303,14 @@ class TestCountItemsNeedingEnrichment:
 
 
 class TestEnrichmentStats:
-    """Tests for enrichment statistics."""
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
         return StorageManager(sqlite_path=db_path)
 
     def test_the_four_states_partition_the_library_regression(
         self, storage_manager: StorageManager
     ) -> None:
-        """Every item is counted once across enriched/pending/not_found/failed.
-
-        The four print as a flat list, so an item in two reads as two. A failed
-        item once stayed in ``pending``. A settled ``not_found`` re-queued by
-        ``reset`` kept its label.
-        """
         db_ids = [
             save_unenriched(storage_manager, f"item{index}") for index in range(6)
         ]
@@ -376,7 +318,6 @@ class TestEnrichmentStats:
         storage_manager.enrichment.mark_complete(db_ids[1], "none", "not_found")
         storage_manager.enrichment.mark_failed(db_ids[2], "tmdb: HTTP 503")
         storage_manager.enrichment.mark_needed(db_ids[3])
-        # Item 4 is untracked.
         storage_manager.enrichment.mark_complete(db_ids[5], "none", "not_found")
         storage_manager.enrichment.reset(content_item_id=db_ids[5])
 
@@ -385,7 +326,7 @@ class TestEnrichmentStats:
         assert stats["enriched"] == 1
         assert stats["not_found"] == 1
         assert stats["failed"] == 1
-        assert stats["pending"] == 3  # 1 marked + 1 untracked + 1 reset
+        assert stats["pending"] == 3
         assert (
             stats["enriched"] + stats["pending"] + stats["not_found"] + stats["failed"]
             == stats["total"]
@@ -394,13 +335,11 @@ class TestEnrichmentStats:
     def test_resettable_is_the_count_an_unfiltered_reset_re_queues(
         self, storage_manager: StorageManager
     ) -> None:
-        """Neither ``total`` nor ``total - pending`` is that count."""
         db_ids = [
             save_unenriched(storage_manager, f"item{index}") for index in range(3)
         ]
         storage_manager.enrichment.mark_complete(db_ids[0], "tmdb", "high")
         storage_manager.enrichment.mark_needed(db_ids[1])
-        # db_ids[2] has no row for a reset to touch.
 
         stats = storage_manager.enrichment.stats()
 
@@ -410,11 +349,6 @@ class TestEnrichmentStats:
     def test_stats_for_one_user_exclude_another_users_items(
         self, storage_manager: StorageManager
     ) -> None:
-        """The user-filtered stats join content_items and alias enrichment_status.
-
-        Every count and both breakdowns take a different query shape under a
-        user filter, so a mistake there is invisible to the unfiltered tests.
-        """
         with storage_manager.sqlite_db.connection() as conn:
             other_user = create_user(conn, username="other")
         mine = [
@@ -425,7 +359,6 @@ class TestEnrichmentStats:
         storage_manager.enrichment.mark_complete(mine[0], "tmdb", "high")
         storage_manager.enrichment.mark_failed(mine[1], "tmdb: HTTP 503")
         storage_manager.enrichment.mark_complete(theirs, "rawg", "medium")
-        # mine[2] is untracked.
 
         stats = storage_manager.enrichment.stats(user_id=1)
 
@@ -438,18 +371,14 @@ class TestEnrichmentStats:
 
 
 class TestTagsAndDescriptionStorage:
-    """Tests for storing and retrieving tags and description."""
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
-        """Create a storage manager with a temporary database."""
         db_path = tmp_path / "test.db"
         return StorageManager(sqlite_path=db_path)
 
     def test_save_and_load_movie_with_tags(
         self, storage_manager: StorageManager
     ) -> None:
-        """Test saving and loading a movie with tags and description."""
         item = ContentItem(
             id="movie1",
             title="Test Movie",
@@ -472,14 +401,6 @@ class TestTagsAndDescriptionStorage:
 
 
 class TestEnrichmentFilter:
-    """Tests for the enrichment-state filter on get_content_items.
-
-    The filter joins enrichment_status. An item is enriched when it has a row
-    with needs_enrichment=0, enrichment_error IS NULL, and a real provider.
-    Everything else (no row, needs_enrichment=1, not_found, failed) is not
-    enriched. ``enriched`` and ``not_enriched`` partition the library.
-    """
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
@@ -498,7 +419,6 @@ class TestEnrichmentFilter:
     def test_not_enriched_includes_all_four_subcases(
         self, storage_manager: StorageManager
     ) -> None:
-        """not_enriched returns: no row, needs_enrichment=1, not_found, failed."""
         no_row = self._save(storage_manager, "no_row")
         pending = self._save(storage_manager, "pending")
         not_found = self._save(storage_manager, "not_found")
@@ -517,7 +437,6 @@ class TestEnrichmentFilter:
         assert all(item.enriched is False for item in items)
 
     def test_enriched_returns_complement(self, storage_manager: StorageManager) -> None:
-        """enriched returns only items with a clean enrichment_status row."""
         self._save(storage_manager, "no_row")
         high = self._save(storage_manager, "high")
         medium = self._save(storage_manager, "medium")
@@ -534,12 +453,6 @@ class TestEnrichmentFilter:
     def test_not_enriched_combines_with_content_type_filter(
         self, storage_manager: StorageManager
     ) -> None:
-        """not_enriched AND a content_type filter compose correctly.
-
-        Guards SQL precedence of the AND/OR predicate composition: the
-        not_enriched fragment is parenthesized so the content_type filter
-        narrows it rather than widening via a stray OR.
-        """
         movie_pending = self._save(storage_manager, "movie_pending")
         movie_enriched = self._save(storage_manager, "movie_enriched")
         storage_manager.enrichment.mark_complete(movie_enriched, "tmdb", "high")
@@ -558,20 +471,12 @@ class TestEnrichmentFilter:
         )
         db_ids = {item.db_id for item in items}
 
-        # Only the not-enriched movie; the enriched movie and the book are out.
         assert db_ids == {movie_pending}
         assert movie_enriched not in db_ids
         assert book_pending not in db_ids
 
 
 class TestManualMetadataEdit:
-    """Tests for persisting manual genres/tags/description via update_item_from_ui.
-
-    Manual edits overwrite the detail-table values and mark the item enriched
-    with the ``manual`` provider so it drops out of the not_enriched filter and
-    is never re-queued for automatic enrichment.
-    """
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
@@ -580,7 +485,6 @@ class TestManualMetadataEdit:
     def test_manual_edit_persists_and_marks_enriched(
         self, storage_manager: StorageManager
     ) -> None:
-        """Manual fields persist and the item becomes enriched."""
         db_id = storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -612,11 +516,6 @@ class TestManualMetadataEdit:
     def test_manual_edit_overwrites_existing_values(
         self, storage_manager: StorageManager
     ) -> None:
-        """Manual genres replace prior values rather than merging additively.
-
-        Also proves a None field (description here) leaves the stored value
-        as-is: only supplied fields are overwritten.
-        """
         db_id = storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -641,13 +540,11 @@ class TestManualMetadataEdit:
         loaded = storage_manager.get_content_item(db_id)
         assert loaded.metadata.get("genres") == ["Drama"]
         assert loaded.metadata.get("tags") == ["new"]
-        # description was omitted (None) so it must be left untouched.
         assert loaded.metadata.get("description") == "Original synopsis."
 
     def test_status_only_edit_does_not_mark_enriched(
         self, storage_manager: StorageManager
     ) -> None:
-        """Editing only status/rating leaves enrichment state untouched."""
         db_id = storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -666,7 +563,6 @@ class TestManualMetadataEdit:
     def test_an_emptied_description_clears_rather_than_storing_blanks(
         self, storage_manager: StorageManager, emptied: str
     ) -> None:
-        """Stored whitespace would read as a description the user wrote."""
         db_id = storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -685,11 +581,6 @@ class TestManualMetadataEdit:
     def test_genres_empty_list_clears_while_none_leaves_as_is(
         self, storage_manager: StorageManager
     ) -> None:
-        """genres=[] clears all genres; genres=None leaves them untouched.
-
-        An empty list is a deliberate "clear" that stores an empty JSON array
-        and still marks the item enriched; None means "no change".
-        """
         db_id = storage_manager.save_content_item(
             ContentItem(
                 id="movie1",
@@ -700,14 +591,12 @@ class TestManualMetadataEdit:
             )
         )
 
-        # genres=[] clears; tags omitted (None) so they are left as-is.
         storage_manager.update_item_from_ui(db_id=db_id, status="unread", genres=[])
 
         loaded = storage_manager.get_content_item(db_id)
         assert loaded.metadata.get("genres", []) == []
         assert loaded.enriched is True
 
-        # The stored column is an empty JSON array, not NULL.
         conn = storage_manager.sqlite_db._get_connection()
         try:
             cursor = conn.cursor()
@@ -721,15 +610,6 @@ class TestManualMetadataEdit:
 
 
 class TestGameLengthAfterEnrichment:
-    """The length scorer reads what RAWG enrichment leaves in the database.
-
-    ``average_playtime_hours`` has no detail-table column, so it rides in the
-    free-form metadata blob. These tests take the whole path a real game walks
-    (Steam item, RAWG result, gap-filling merge, save, load) and score the item
-    that comes back, so a blob that dropped the key would fail here rather than
-    quietly leaving every game unclassified.
-    """
-
     @pytest.fixture
     def storage_manager(self, tmp_path: Path) -> StorageManager:
         db_path = tmp_path / "test.db"
@@ -737,7 +617,6 @@ class TestGameLengthAfterEnrichment:
 
     @staticmethod
     def _steam_game() -> ContentItem:
-        """A game Steam ingested, carrying the user's own 300 hours."""
         return ContentItem(
             id="game1",
             title="Vampire Survivors",
@@ -765,19 +644,11 @@ class TestGameLengthAfterEnrichment:
         assert loaded.metadata.get("average_playtime_hours") == 6
         assert classify_length(loaded) == LengthPreference.SHORT
         assert score_length_match(loaded, {"video_game": "short"}) == 1.0
-        # The user's own hours are stored and exported unchanged beside it
         assert loaded.metadata.get("playtime_hours") == 300.0
 
     def test_enrichment_never_fills_the_users_own_hours(
         self, storage_manager: StorageManager
     ) -> None:
-        """RAWG's average stays out of the field the export calls hours_played.
-
-        A GOG or Epic game has no own playtime, so the gap-filling merge used to
-        drop RAWG's average straight into ``playtime_hours`` and export it as
-        hours the user never played. The average now has its own key and that
-        field stays empty.
-        """
         item = ContentItem(
             id="game2",
             title="Cyberpunk 2077",

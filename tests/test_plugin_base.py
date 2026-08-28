@@ -1,5 +1,3 @@
-"""Tests for plugin base classes."""
-
 from collections.abc import Iterator
 from typing import Any
 
@@ -12,8 +10,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class MockPlugin(SourcePlugin):
-    """Mock plugin for testing."""
-
     @property
     def name(self) -> str:
         return "mock_plugin"
@@ -68,34 +64,27 @@ class MockPlugin(SourcePlugin):
 
 
 class TestNormalizeRating:
-    """Tests for rating normalization."""
-
     def test_normalize_rating_zero_is_none(self) -> None:
-        """Test that 0 rating returns None (unrated)."""
         plugin = MockPlugin()
         assert plugin.normalize_rating(0) is None
         assert plugin.normalize_rating("0") is None
 
     def test_normalize_rating_valid_string(self) -> None:
-        """Test valid string ratings are converted."""
         plugin = MockPlugin()
         assert plugin.normalize_rating("4") == 4
         assert plugin.normalize_rating("2") == 2
 
     def test_normalize_rating_clamps_high(self) -> None:
-        """Test ratings above 5 are clamped."""
         plugin = MockPlugin()
         assert plugin.normalize_rating(10) == 5
         assert plugin.normalize_rating(100) == 5
 
     def test_normalize_rating_clamps_low(self) -> None:
-        """Test ratings below 1 are clamped (except 0)."""
         plugin = MockPlugin()
         assert plugin.normalize_rating(-1) == 1
         assert plugin.normalize_rating(-5) == 1
 
     def test_normalize_rating_invalid_string(self) -> None:
-        """Test invalid string returns None."""
         plugin = MockPlugin()
         assert plugin.normalize_rating("invalid") is None
         assert plugin.normalize_rating("N/A") is None

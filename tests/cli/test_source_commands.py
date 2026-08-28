@@ -1,10 +1,3 @@
-"""Tests for the CLI ``source`` group.
-
-Mirrors the per-source web endpoints — JSON output shapes must match the
-Pydantic responses in ``src/web/api.py`` exactly so the two interfaces
-stay in lockstep.
-"""
-
 from __future__ import annotations
 
 import json
@@ -110,8 +103,6 @@ class TestSourceList:
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert isinstance(payload, list)
-        # Exact key match (not subset) so a CLI/web drift adding a key on
-        # one side without the other is caught immediately.
         assert set(payload[0].keys()) == {
             "id",
             "display_name",
@@ -195,11 +186,6 @@ class TestSourceMigrate:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """The end state after the command, whichever pass moved which half.
-
-        The boot migration encrypts the secret before ``migrate`` is reached,
-        so only the field half below is this command's own work.
-        """
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "migrate", "my_games"],
@@ -208,8 +194,6 @@ class TestSourceMigrate:
         )
         assert result.exit_code == 0
         assert "Migrated source 'my_games'" in result.output
-        # The reported symptom: counting what this call moved printed no
-        # Secrets line at all, because startup had emptied the YAML entry.
         assert "Secrets: api_key" in result.output
         row = storage.sources.get(1, "my_games")
         assert row is not None
@@ -224,7 +208,6 @@ class TestSourceMigrate:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """Calling migrate twice on the same source is a no-op the second time."""
         first = _invoke_with_mocks(
             cli_runner,
             ["source", "migrate", "my_books"],
@@ -268,7 +251,6 @@ class TestSourceEnableDisable:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """Enabling a not-yet-migrated source aborts (no DB row to flip)."""
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "enable", "my_books"],
@@ -348,10 +330,7 @@ class TestSourceHistory:
         payload = json.loads(result.output)
         assert [run["status"] for run in payload] == ["failed", "completed"]
         assert payload[0]["errors"] == list(failures)
-        # The capped list is not the run's error count, so the count travels.
         assert len(payload[0]["errors"]) + payload[0]["omitted_errors"] == 5000
-        # Exact key match against SyncRunResponse, so a key added on one side
-        # without the other is caught immediately.
         assert set(payload[0].keys()) == {
             "source_id",
             "started_at",
@@ -438,7 +417,6 @@ class TestSourceSet:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """List fields accept ``"a,b,c"`` and store ``["a", "b", "c"]``."""
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
@@ -459,7 +437,6 @@ class TestSourceSet:
         base_config: dict[str, Any],
         keyword: str,
     ) -> None:
-        """``"yes"`` / ``"on"`` / ``"true"`` all coerce to ``True``."""
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
@@ -496,7 +473,6 @@ class TestSourceSet:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """``source set`` on a YAML-only source aborts (no DB row to update)."""
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "set", "my_games", "min_minutes", "5"],
@@ -512,7 +488,6 @@ class TestSourceSet:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """A field not in the plugin schema aborts before any DB write."""
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         result = _invoke_with_mocks(
             cli_runner,
@@ -544,8 +519,6 @@ class TestSourceSet:
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestSourceApply:
-    """Bulk-update parity with web ``PUT /api/sync/sources/<id>/config``."""
-
     def test_apply_updates_multiple_fields_atomically_from_stdin(
         self,
         cli_runner: CliRunner,
@@ -580,7 +553,6 @@ class TestSourceApply:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """Apply on a YAML-only (not-yet-migrated) source aborts with non-zero exit."""
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "apply", "my_books", "--from-json", "-"],
@@ -589,7 +561,6 @@ class TestSourceApply:
             input_text=json.dumps({"path": "/x"}),
         )
         assert result.exit_code != 0
-        # Guard fired before any DB write — no source_configs row created.
         assert storage.sources.get(1, "my_books") is None
 
     def test_apply_from_file(
@@ -636,12 +607,6 @@ class TestSourceApply:
         base_config: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        """A path that does not exist aborts cleanly via ``abort_with``.
-
-        Regression guard: a stray ``FileNotFoundError`` would otherwise
-        surface as a Python traceback instead of the friendly error
-        path every other CLI failure goes through.
-        """
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         missing = tmp_path / "does_not_exist.json"
         result = _invoke_with_mocks(
@@ -680,11 +645,6 @@ class TestSourceSecrets:
         base_config: dict[str, Any],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``RECOMMENDINATOR_SECRET_VALUE`` is the supported scripting path.
-
-        It must skip the hidden prompt entirely so headless pipelines never
-        hang on stdin, and it must store exactly the env-var value.
-        """
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         monkeypatch.setenv("RECOMMENDINATOR_SECRET_VALUE", "env_secret")
         result = _invoke_with_mocks(
@@ -719,7 +679,6 @@ class TestSourceSecrets:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """It fired on one word, where the web door now asks first."""
         storage.sources.upsert(1, "my_games", "fake_api", {}, enabled=True)
         storage.credentials.save(1, "my_games", "api_key", "keep_me")
         result = _invoke_with_mocks(
@@ -758,12 +717,6 @@ class TestSourceCreate:
         storage: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """JSON output mirrors the SourceConfigResponse the web endpoint returns.
-
-        Uses ``--format json`` to confirm the CLI emits the same field set
-        as ``POST /api/sync/sources`` so a future drift on either side is
-        caught.
-        """
         result = _invoke_with_mocks(
             cli_runner,
             [
@@ -907,12 +860,6 @@ class TestSourceRemove:
 
 @pytest.mark.usefixtures("registry_with_source_fakes")
 class TestRemovingTheLastSourceSweepsThePluginRowRegression:
-    """Reported: a credential the CLI was told to delete stayed in the database.
-
-    Cause: ``source remove`` passed no config, so the sweep never ran.
-    Fix: it passes one, as ``source create`` already did.
-    """
-
     @pytest.fixture()
     def stranded(self, storage: StorageManager) -> StorageManager:
         storage.sources.upsert(1, "games_work", "fake_api", {}, enabled=True)
@@ -938,10 +885,6 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
         stranded: StorageManager,
         base_config: dict[str, Any],
     ) -> None:
-        """The anchor, and why the sweep needs the config rather than the DB.
-
-        ``my_games`` runs the same plugin from config.yaml alone.
-        """
         result = _invoke_with_mocks(
             cli_runner,
             ["source", "remove", "games_work", "--yes"],
@@ -957,13 +900,6 @@ class TestRemovingTheLastSourceSweepsThePluginRowRegression:
 
 
 class TestSourceSetGuardsBoundCredentials:
-    """The CLI repoints a source too, so it must answer the PUT's way.
-
-    Runs against the real registry: the shared fakes carry no
-    ``credential_bound`` field, and one that did would prove only that this
-    test's own schema was honoured.
-    """
-
     @pytest.fixture()
     def migrated(self, storage: StorageManager) -> StorageManager:
         storage.sources.upsert(
@@ -1011,8 +947,6 @@ class TestSourceSetGuardsBoundCredentials:
 
 @pytest.mark.usefixtures("registry_with_a_failed_import")
 class TestSourceWhosePluginNeverImported:
-    """`source list` showed it while `source show` called it unknown."""
-
     @pytest.fixture()
     def broken_config(self) -> dict[str, Any]:
         return {"inputs": {"my_books": {"plugin": UNLOADED_PLUGIN, "enabled": True}}}
@@ -1052,8 +986,6 @@ class TestSourceWhosePluginNeverImported:
 
 
 class TestPrivateModuleImportFailureIsReported:
-    """The web picker's answer, on the interface that has no picker."""
-
     def test_source_plugins_names_the_private_module_and_why_it_died(
         self,
         storage: StorageManager,

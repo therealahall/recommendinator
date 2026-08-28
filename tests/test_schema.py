@@ -1,5 +1,3 @@
-"""Tests for database schema and user management."""
-
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -21,7 +19,6 @@ from src.utils.sorting import build_search_text, get_sort_title
 
 @pytest.fixture
 def temp_db(tmp_path: Path) -> sqlite3.Connection:
-    """Create a temporary database connection for testing."""
     db_path = tmp_path / "test.db"
     conn = sqlite3.connect(db_path)
     yield conn
@@ -29,7 +26,6 @@ def temp_db(tmp_path: Path) -> sqlite3.Connection:
 
 
 def test_default_user_created(temp_db: sqlite3.Connection) -> None:
-    """Test that default user is created with schema."""
     create_schema(temp_db)
 
     user = get_user_by_id(temp_db, 1)
@@ -39,7 +35,6 @@ def test_default_user_created(temp_db: sqlite3.Connection) -> None:
 
 
 def test_create_user(temp_db: sqlite3.Connection) -> None:
-    """Test creating a new user."""
     create_schema(temp_db)
 
     user_id = create_user(
@@ -59,10 +54,8 @@ def test_create_user(temp_db: sqlite3.Connection) -> None:
 
 
 def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
-    """Test updating user settings."""
     create_schema(temp_db)
 
-    # Update default user settings
     update_user_settings(temp_db, 1, {"compact_cards": True, "theme": "dark"})
 
     user = get_user_by_id(temp_db, 1)
@@ -70,13 +63,12 @@ def test_update_user_settings(temp_db: sqlite3.Connection) -> None:
     assert user["settings"]["compact_cards"] is True
     assert user["settings"]["theme"] == "dark"
 
-    # Update again - should merge
     update_user_settings(temp_db, 1, {"language": "en"})
 
     user = get_user_by_id(temp_db, 1)
-    assert user["settings"]["compact_cards"] is True  # Preserved
-    assert user["settings"]["theme"] == "dark"  # Preserved
-    assert user["settings"]["language"] == "en"  # Added
+    assert user["settings"]["compact_cards"] is True
+    assert user["settings"]["theme"] == "dark"
+    assert user["settings"]["language"] == "en"
 
 
 class TestUpdatingAUsersIdentity:
@@ -116,13 +108,8 @@ _NO_PASS_AT_ALL = {"renormalize": 0, "detail_shapes": 0}
 
 
 def _repair_pass_calls(conn: sqlite3.Connection) -> dict[str, int]:
-    """Run ``create_schema``, counting each one-time content-repair pass.
-
-    Every pass skips rows already in the current shape, so a library that is
-    unchanged afterwards says nothing about whether the scan ran. Counting the
-    calls is what separates a pass that was skipped from one that found
-    nothing, and the scan is the cost being guarded against.
-    """
+    """Counting the calls is what separates a pass that was skipped from one that
+    found nothing, and the scan is the cost being guarded against."""
     with (
         patch.object(
             schema, "_renormalize_titles", wraps=schema._renormalize_titles
@@ -141,11 +128,9 @@ def _repair_pass_calls(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
-    """Write two rows an earlier build left, at the version it left them at.
-
-    Both carry the SQL ``lower(title)`` backfill, which the full Python
-    normalization corrects: one key then names both spellings.
-    """
+    """Two rows an earlier build left, both carrying the SQL ``lower(title)``
+    backfill the full Python normalization corrects: one key then names both
+    spellings."""
     cursor = conn.cursor()
     cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status, rating, source)
@@ -162,7 +147,6 @@ def _seed_a_library_awaiting_the_repair(conn: sqlite3.Connection) -> None:
 
 
 def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Return every live content row, oldest first."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT title, normalized_title, rating, review FROM content_items"
@@ -172,16 +156,12 @@ def _content_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 class TestTheOneTimeContentRepair:
-    """The two passes that read every content row run once per database.
-
-    Idempotence is not enough on its own: a row a pass declines to settle keeps
-    matching its prefilter, so an unguarded scan re-reads it on every open.
-    """
+    """Idempotence is not enough on its own: a row a pass declines to settle keeps
+    matching its prefilter, so an unguarded scan re-reads it on every open."""
 
     def test_a_database_written_before_the_guard_runs_each_pass_once(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The upgrade itself: one open, one run of both."""
         create_schema(temp_db)
         _seed_a_library_awaiting_the_repair(temp_db)
 
@@ -190,9 +170,8 @@ class TestTheOneTimeContentRepair:
     def test_the_upgrade_keys_both_spellings_of_one_game_the_same(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The stored key is what the save door matches on, so the pair only
-        reaches it once both rows normalize the same. Each keeps its own rating
-        and review until a sync decides them."""
+        """The stored key is what the save door matches on, so the pair only reaches
+        it once both rows normalize the same."""
         create_schema(temp_db)
         _seed_a_library_awaiting_the_repair(temp_db)
 
@@ -208,7 +187,6 @@ class TestTheOneTimeContentRepair:
     def test_a_second_open_runs_none_of_the_passes(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """The repair is spent: the open after it scans nothing."""
         create_schema(temp_db)
         _seed_a_library_awaiting_the_repair(temp_db)
         create_schema(temp_db)
@@ -217,23 +195,17 @@ class TestTheOneTimeContentRepair:
 
 
 def _rows_backfilled(conn: sqlite3.Connection) -> int:
-    """Run ``create_schema``, counting the rows the derived-column fill wrote.
-
-    The fill runs on every open, so counting the calls to it would say
-    nothing; what matters is that it writes only rows that are missing a
-    column, and a library where none is costs no write at all.
-    """
+    """The fill runs on every open, so counting the calls to it would say nothing;
+    what matters is that it writes only rows that are missing a column, and a
+    library where none is costs no write at all."""
     with patch.object(derived, "_write_row", wraps=derived._write_row) as write_row:
         create_schema(conn)
     return int(write_row.call_count)
 
 
 def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
-    """Write a row carrying a title, a creator and neither derived column.
-
-    What every row looked like until the columns were added, and what a build
-    that predates them still writes into a database that already has them.
-    """
+    """What every row looked like until the columns were added, and what a build
+    that predates them still writes into a database that already has them."""
     cursor = conn.cursor()
     cursor.execute("""INSERT INTO content_items
            (user_id, title, normalized_title, content_type, status)
@@ -247,7 +219,6 @@ def _seed_a_row_missing_the_derived_columns(conn: sqlite3.Connection) -> None:
 
 
 def _derived_columns(conn: sqlite3.Connection) -> tuple[str, str]:
-    """Return the one content row's stored sort title and search text."""
     cursor = conn.cursor()
     cursor.execute("SELECT sort_title, search_text FROM content_items")
     row = cursor.fetchone()
@@ -255,19 +226,13 @@ def _derived_columns(conn: sqlite3.Connection) -> tuple[str, str]:
 
 
 class TestTheDerivedColumnBackfill:
-    """``sort_title`` and ``search_text`` are filled for whatever row lacks them.
-
-    They are what the library list orders and searches by, so a row carrying
-    neither is invisible to search and sorts ahead of the whole library. The
-    fill is therefore selected on the columns rather than on the schema
-    version — but it must still write nothing when every row already has them,
-    since it runs on every open.
-    """
+    """``sort_title`` and ``search_text`` are what the library list orders and
+    searches by, so a row carrying neither is invisible to search and sorts ahead
+    of the whole library."""
 
     def test_the_open_after_the_fill_writes_nothing(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """A library that already has the columns costs no write."""
         create_schema(temp_db)
         _seed_a_row_missing_the_derived_columns(temp_db)
         create_schema(temp_db)
@@ -277,23 +242,7 @@ class TestTheDerivedColumnBackfill:
     def test_a_row_at_the_current_version_is_filled_all_the_same_regression(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """Defect: a row missing the columns was repaired only once per database.
-
-        Reported: the derived columns can be permanently NULL on a row in a
-        database this build has already stamped, leaving that item unfindable
-        by search and sorted ahead of every other title. Reachable by
-        downgrade-then-upgrade — this build stamps the version, a build that
-        predates the columns inserts rows without them, and re-upgrading reads
-        the stamp.
-
-        Root cause: the fill was guarded on ``stored_version < 4`` and its
-        source select read every row, so the one open that could have repaired
-        such a row was the open that had already happened.
-
-        Fix: the guard is gone and the select carries the condition instead,
-        so the fill is spent on rows rather than on databases. Nothing here
-        rewinds ``user_version``.
-        """
+        """Defect: a row missing the columns was repaired only once per database."""
         create_schema(temp_db)
         _seed_a_row_missing_the_derived_columns(temp_db)
 
@@ -315,7 +264,6 @@ class TestTheDerivedColumnBackfill:
 
     @classmethod
     def _seed_every_content_type(cls, conn: sqlite3.Connection) -> None:
-        """Write one row per content type, each missing the derived columns."""
         cursor = conn.cursor()
         for (
             title,
@@ -339,12 +287,9 @@ class TestTheDerivedColumnBackfill:
     def test_the_fill_reaches_the_creator_of_every_content_type(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """A book's author, a film's director, a show's creators, a game's developer.
-
-        One type missing from the creator expression would leave its rows
-        searchable by title only, and nothing about the upgrade would say so —
-        the columns are filled, just not with the name.
-        """
+        """One type missing from the creator expression would leave its rows
+        searchable by title only, and nothing about the upgrade would say so — the
+        columns are filled, just not with the name."""
         create_schema(temp_db)
         self._seed_every_content_type(temp_db)
 
@@ -367,13 +312,7 @@ class TestTheDerivedColumnBackfill:
     def test_a_row_with_no_detail_row_fills_its_title_alone(
         self, temp_db: sqlite3.Connection
     ) -> None:
-        """A creator nobody recorded is an empty half, not a skipped row.
-
-        The creator expression selects a column of a table the row may have no
-        entry in, so it yields NULL — which has to reach the search text as an
-        empty creator rather than making the whole value NULL and taking the
-        title down with it.
-        """
+        """A creator nobody recorded is an empty half, not a skipped row."""
         create_schema(temp_db)
         temp_db.execute("""INSERT INTO content_items
                (user_id, title, normalized_title, content_type, status)
@@ -431,7 +370,6 @@ class TestOpeningADatabaseThatPredatesSyncScheduling:
 
 
 def test_get_all_users_multiple(temp_db: sqlite3.Connection) -> None:
-    """Test get_all_users returns all users ordered by id."""
     create_schema(temp_db)
 
     create_user(temp_db, username="alice", display_name="Alice")

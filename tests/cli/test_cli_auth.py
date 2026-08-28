@@ -1,5 +1,3 @@
-"""Tests for CLI auth commands."""
-
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -18,12 +16,10 @@ USER_ID = 1
 
 @pytest.fixture()
 def storage(tmp_path: Path) -> StorageManager:
-    """A real credential database, so the auth commands resolve real sources."""
     return StorageManager(sqlite_path=tmp_path / "test.db")
 
 
 def _sources(**plugins: str) -> dict[str, Any]:
-    """A config whose ``inputs`` declare each source id on its plugin."""
     return {
         "inputs": {
             source_id: {"plugin": plugin, "enabled": True}
@@ -33,8 +29,6 @@ def _sources(**plugins: str) -> dict[str, Any]:
 
 
 class TestAuthStatus:
-    """Tests for auth status command."""
-
     def test_auth_status_no_sources_configured(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -46,7 +40,6 @@ class TestAuthStatus:
     def test_auth_status_shows_every_oauth_source(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """Non-OAuth sources are configured too, and stay off the list."""
         storage.credentials.save(USER_ID, "gog_work", "refresh_token", "token")
         config = _sources(
             gog_work="gog", epic_work="epic_games", my_books="calibre_web"
@@ -61,12 +54,6 @@ class TestAuthStatus:
 
 
 class TestAuthStatusShowsADisabledSourcesTokenRegression:
-    """Reported: disabling a source hid the token it still holds.
-
-    Cause: the token was only read inside the enabled check, the same
-    conflation the web status dropped. Fix: both are asked, and printed.
-    """
-
     @pytest.mark.parametrize(
         ("source_id", "plugin"), [("gog_work", "gog"), ("epic_work", "epic_games")]
     )
@@ -87,12 +74,6 @@ class TestAuthStatusShowsADisabledSourcesTokenRegression:
 
 
 class TestAuthStatusSeesADatabaseBackedSourceRegression:
-    """Reported: a source added from the Data tab was absent from ``auth status``.
-
-    Cause: the enablement checks were called without storage, so they read
-    config.yaml alone. Fix: every check is asked with the database too.
-    """
-
     @pytest.mark.parametrize(
         ("source_id", "plugin"), [("gog_db", "gog"), ("epic_db", "epic_games")]
     )
@@ -112,10 +93,7 @@ class TestAuthStatusSeesADatabaseBackedSourceRegression:
 
 
 class TestAuthConnect:
-    """Tests for auth connect command."""
-
     def test_connect_source_not_enabled(self, cli_runner: CliRunner) -> None:
-        """Test connecting a source that is not enabled in config."""
         mock_storage = make_storage_mock()
         with patch("src.cli.commands._auth.is_gog_enabled", return_value=False):
             result = _invoke_with_mocks(
@@ -128,10 +106,8 @@ class TestAuthConnect:
         assert "'gog' is not an enabled gog source" in result.output
 
     def test_connect_gog(self, cli_runner: CliRunner) -> None:
-        """Test connecting GOG account."""
         mock_storage = make_storage_mock()
         config = _sources(gog="gog")
-        # Auth codes must be >=20 chars to pass extract_code_from_input validation
         auth_code = "test-auth-code-abc123xyz"
         with (
             patch("src.cli.commands._auth.is_gog_enabled", return_value=True),
@@ -161,7 +137,6 @@ class TestAuthConnect:
         )
 
     def test_connect_trakt_success(self, cli_runner: CliRunner) -> None:
-        """Trakt device flow connects when the first poll approves."""
         mock_storage = make_storage_mock()
         flow = {
             "device_code": "dev123",
@@ -197,11 +172,9 @@ class TestAuthConnect:
         mock_save.assert_called_once_with(
             mock_storage, "trakt-refresh", source_id="trakt", user_id=1
         )
-        # The poll loop waits the cadence Trakt returned before each poll.
         mock_sleep.assert_called_once_with(flow["interval"])
 
     def test_connect_trakt_denied(self, cli_runner: CliRunner) -> None:
-        """Trakt connect aborts when the user denies the request."""
         mock_storage = make_storage_mock()
         flow = {
             "device_code": "dev123",
@@ -234,7 +207,6 @@ class TestAuthConnect:
         mock_save.assert_not_called()
 
     def test_connect_no_refresh_token(self, cli_runner: CliRunner) -> None:
-        """Test that connect aborts when exchange returns no refresh token."""
         mock_storage = make_storage_mock()
         auth_code = "test-auth-code-abc123xyz"
         with (
@@ -261,12 +233,6 @@ class TestAuthConnect:
 
 
 class TestConnectingASourceTheWebCanConnectRegression:
-    """Reported: ``auth connect`` refused a source the browser connects fine.
-
-    Cause: the enablement check was called with neither storage nor a source
-    id, so a database-managed source read as absent however it was named.
-    """
-
     @staticmethod
     def _connect(
         cli_runner: CliRunner,
@@ -319,7 +285,6 @@ class TestConnectingASourceTheWebCanConnectRegression:
     def test_a_named_trakt_source_resolves_its_own_client_credentials(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """The device flow reads the client id off the source being connected."""
         config = _sources(trakt_work="trakt")
         config["inputs"]["trakt_work"]["client_id"] = "cid"
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
@@ -355,14 +320,10 @@ class TestConnectingASourceTheWebCanConnectRegression:
         )
 
 
-# Each ``--source`` choice, the plugin behind it and the id a bare invocation
-# addresses. Epic is the one where the two differ.
 PROVIDERS = [("gog", "gog"), ("epic", "epic_games"), ("trakt", "trakt")]
 
 
 class TestAuthDisconnect:
-    """Tests for auth disconnect command."""
-
     @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
     def test_disconnect_deletes_the_default_sources_token(
         self,
@@ -388,7 +349,6 @@ class TestAuthDisconnect:
     def test_disconnect_without_yes(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """Test aborting disconnect when user declines confirmation."""
         storage.credentials.save(USER_ID, "gog", "refresh_token", "token")
 
         result = _invoke_with_mocks(
@@ -405,11 +365,6 @@ class TestAuthDisconnect:
     def test_disconnect_no_active_connection(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """Disconnect exits non-zero when no credential existed to delete.
-
-        Mirrors the web `DELETE /api/{source}/token` 404 response — both
-        interfaces signal "nothing to disconnect" as an error, not success.
-        """
         result = _invoke_with_mocks(
             cli_runner,
             ["auth", "disconnect", "--source", "gog", "--yes"],
@@ -422,12 +377,6 @@ class TestAuthDisconnect:
 
 
 class TestDisconnectingASourceOfItsOwnNameRegression:
-    """Reported: ``gog_work``'s refresh token could not be revoked from the CLI.
-
-    Cause: deletion was keyed on the plugin name, which this release stopped
-    storing tokens under. Fix: ``--source-id``, resolved as the web resolves it.
-    """
-
     @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
     def test_a_named_source_can_revoke_its_own_token(
         self,
@@ -460,8 +409,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
         assert (
             storage.credentials.get(USER_ID, f"{plugin}_work", "refresh_token") is None
         )
-        # The row under the plugin name belongs to whoever is named that, and
-        # this call was never asked about it.
         assert (
             storage.credentials.get(USER_ID, plugin, "refresh_token")
             == "the-plugin-name-row"
@@ -470,7 +417,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
     def test_a_disabled_source_can_still_revoke_its_token(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """Disabling a source is how revoking its token starts."""
         storage.credentials.save(USER_ID, "gog_work", "refresh_token", "still-live")
         config = _sources(gog_work="gog")
         config["inputs"]["gog_work"]["enabled"] = False
@@ -496,7 +442,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
     def test_an_id_another_plugin_owns_is_refused(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """The id is a credential key, so the plugin behind it decides."""
         storage.credentials.save(USER_ID, "trakt_work", "refresh_token", "not-gogs")
 
         result = _invoke_with_mocks(
@@ -523,12 +468,6 @@ class TestDisconnectingASourceOfItsOwnNameRegression:
 
 
 class TestRevokingATokenNoSourceClaimsRegression:
-    """Reported: deleting ``inputs.gog`` left its refresh token undeletable.
-
-    Cause: the gate read "no source claims this id" as "another plugin does".
-    Fix: only another plugin's source puts an id out of reach.
-    """
-
     @pytest.mark.parametrize(("source", "plugin"), PROVIDERS)
     def test_a_stranded_token_can_still_be_revoked(
         self,
@@ -551,13 +490,6 @@ class TestRevokingATokenNoSourceClaimsRegression:
 
 
 class TestBothAuthVerbsValidateTheSourceId:
-    """The id is a credential key here as much as on the ten web routes.
-
-    An unvalidated one files a token under an id no route can address, and
-    ``docs/SECURITY.md`` already promises both interfaces check it.
-    """
-
-    #: The extra flag each verb needs to reach its own body unprompted.
     _VERB_FLAGS = {"connect": ["--no-browser"], "disconnect": ["--yes"]}
 
     @pytest.mark.parametrize("verb", sorted(_VERB_FLAGS))
@@ -591,30 +523,18 @@ class TestBothAuthVerbsValidateTheSourceId:
 
         assert result.exit_code != 0
         assert "--source-id must start with a lowercase letter" in result.output
-        # The row a bare invocation would have hit, untouched: neither verb
-        # falls back to the plugin's own id for an argument it refused.
         assert storage.credentials.get(USER_ID, plugin, "refresh_token") == (
             "the-default-id"
         )
 
 
 class TestAFileHeldTokenReachesBothAuthVerbsRegression:
-    """Reported: ``auth status`` said not connected for a config.yaml token.
-
-    Cause: the credential migration ran inside ``update`` alone, so an unsynced
-    install kept the token in the file, not the row status reads. Fix: migrate
-    on every command.
-    """
-
     @staticmethod
     def _yaml_held(
         storage: StorageManager, source_id: str, plugin: str
     ) -> dict[str, Any]:
-        """A source whose refresh token is still in config.yaml."""
         config = _sources(**{source_id: plugin})
         config["inputs"][source_id]["refresh_token"] = "from-yaml"
-        # Trakt is enabled by its client credentials rather than its token, and
-        # the enabled half of the line must not move with the token.
         config["inputs"][source_id]["client_id"] = "cid"
         storage.credentials.save(USER_ID, source_id, "client_secret", "secret")
         return config
@@ -638,7 +558,6 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
         source: str,
         plugin: str,
     ) -> None:
-        """The two verbs agree, which is what reading the row is for."""
         source_id = f"{plugin}_work"
         config = self._yaml_held(storage, source_id, plugin)
 
@@ -664,15 +583,8 @@ class TestAFileHeldTokenReachesBothAuthVerbsRegression:
     def test_a_migrated_source_drops_the_file_copy_instead(
         self, cli_runner: CliRunner, storage: StorageManager, plugin: str
     ) -> None:
-        """The other half of the same pass, which the web asserts per provider.
-
-        A source with a row keeps it: reading the file back would undo a
-        revoke, so the copy is discarded and nothing reports it connected.
-        """
         source_id = f"{plugin}_work"
         config = self._yaml_held(storage, source_id, plugin)
-        # The row shadows the file entry wholesale, and Trakt's enabled half is
-        # its client id — which would otherwise move with the token.
         storage.sources.upsert(
             USER_ID, source_id, plugin, {"client_id": "cid"}, enabled=True
         )

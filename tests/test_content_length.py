@@ -1,5 +1,3 @@
-"""Tests for normalized content length preferences."""
-
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -21,11 +19,6 @@ def _unknown_game_score(preferences: dict[str, str]) -> float:
     return score_length_match(
         make_item(content_type=ContentType.VIDEO_GAME, metadata={}), preferences
     )
-
-
-# ---------------------------------------------------------------------------
-# get_length_value tests
-# ---------------------------------------------------------------------------
 
 
 class TestGetLengthValue:
@@ -54,11 +47,6 @@ class TestGetLengthValue:
         assert get_length_value(item) == 300
 
 
-# ---------------------------------------------------------------------------
-# classify_length tests
-# ---------------------------------------------------------------------------
-
-
 class TestClassifyLength:
     def test_long_book(self) -> None:
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
@@ -69,17 +57,14 @@ class TestClassifyLength:
         assert classify_length(item) is None
 
     def test_boundary_short_max(self) -> None:
-        """Value exactly at short_max boundary is classified as short."""
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 250})
         assert classify_length(item) == LengthPreference.SHORT
 
     def test_boundary_medium_max(self) -> None:
-        """Value exactly at medium_max boundary is classified as medium."""
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 500})
         assert classify_length(item) == LengthPreference.MEDIUM
 
     def test_boundary_video_game_short_max(self) -> None:
-        """Ten average hours is the last short game, eleven the first medium one."""
         short = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": 10},
@@ -92,7 +77,6 @@ class TestClassifyLength:
         assert classify_length(medium) == LengthPreference.MEDIUM
 
     def test_boundary_video_game_medium_max(self) -> None:
-        """Forty average hours is the last medium game, forty-one the first long one."""
         medium = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": 40},
@@ -111,7 +95,6 @@ class TestClassifyLength:
     def test_fractional_average_truncates_toward_the_shorter_band(
         self, average: float, expected: LengthPreference
     ) -> None:
-        """A fractional average is truncated, never rounded, at both band edges."""
         item = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": average},
@@ -119,11 +102,7 @@ class TestClassifyLength:
         assert classify_length(item) == expected
 
     def test_zero_average_is_a_short_game(self) -> None:
-        """Zero is a length, not a blank, which is why RAWG never writes its 0.
-
-        See ``test_enrich_game_with_no_playtime_writes_no_average`` in the RAWG
-        provider tests for the other half of this pair.
-        """
+        """Zero is a length, not a blank, which is why RAWG never writes its 0."""
         item = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": 0},
@@ -131,14 +110,7 @@ class TestClassifyLength:
         assert classify_length(item) == LengthPreference.SHORT
 
 
-# ---------------------------------------------------------------------------
-# score_length_match tests
-# ---------------------------------------------------------------------------
-
-
 class TestScoreLengthMatch:
-    """Tests for the soft scoring function."""
-
     def test_any_preference_returns_1(self) -> None:
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 1000})
         assert score_length_match(item, {"book": "any"}) == 1.0
@@ -152,7 +124,6 @@ class TestScoreLengthMatch:
         assert score_length_match(item, {"book": "short"}) == 1.0
 
     def test_score_falls_as_the_length_moves_further_from_the_preference(self) -> None:
-        """A medium book beats a long one when the preference is short."""
         short = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
         adjacent = make_item(content_type=ContentType.BOOK, metadata={"pages": 350})
         opposite = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
@@ -164,7 +135,6 @@ class TestScoreLengthMatch:
         )
 
     def test_no_metadata_scores_between_a_match_and_a_mismatch(self) -> None:
-        """Items without length metadata get benefit of the doubt."""
         unknown = make_item(content_type=ContentType.BOOK, metadata={})
         matching = make_item(content_type=ContentType.BOOK, metadata={"pages": 200})
         mismatched = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
@@ -176,13 +146,11 @@ class TestScoreLengthMatch:
         )
 
     def test_different_content_type_not_affected(self) -> None:
-        """A movie preference does not penalize a book."""
         item = make_item(content_type=ContentType.BOOK, metadata={"pages": 800})
         assert score_length_match(item, {"movie": "short"}) == 1.0
 
     @pytest.mark.parametrize("average", [None, "", "unknown", []])
     def test_game_with_unusable_rawg_playtime_has_no_length(self, average: Any) -> None:
-        """A blank or non-numeric average is no length, and is not an error."""
         item = make_item(
             content_type=ContentType.VIDEO_GAME,
             metadata={"average_playtime_hours": average},
@@ -193,25 +161,8 @@ class TestScoreLengthMatch:
         )
 
 
-# ---------------------------------------------------------------------------
-# Regression tests
-# ---------------------------------------------------------------------------
-
-
 class TestVideoGameLengthRegression:
-    """Video game length was read from the player's own playtime.
-
-    Symptom: a roguelike with 300 logged hours classified as "long" and a
-    100-hour JRPG abandoned after two hours classified as "short", so asking
-    for short games returned the ones the user had barely played.
-
-    Root cause: classification read ``playtime_hours``, which Steam fills with
-    the user's own recorded playtime and the generic importers fill from the
-    ``hours_played`` column.
-
-    Fix: classification reads only ``average_playtime_hours``, RAWG's average
-    across players, which describes the game rather than the player.
-    """
+    """Video game length was read from the player's own playtime."""
 
     def test_heavily_played_game_is_not_long(self) -> None:
         item = make_item(
@@ -235,12 +186,9 @@ class TestVideoGameLengthRegression:
     def test_steam_ingestion_writes_no_key_the_scorer_reads(
         self, mock_get_games: MagicMock
     ) -> None:
-        """The item Steam really builds carries no length, hand-built dicts aside.
-
-        Steam is the source that reported the bug, so this takes its ingestion
-        output rather than a fixture shaped like it: a new playtime key added
-        there would fail here.
-        """
+        """Steam is the source that reported the bug, so this takes its ingestion
+        output rather than a fixture shaped like it: a new playtime key added there
+        would fail here."""
         mock_get_games.return_value = [
             {"appid": 12345, "name": "Vampire Survivors", "playtime_forever": 18000}
         ]

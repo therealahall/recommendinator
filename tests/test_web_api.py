@@ -1,5 +1,3 @@
-"""Tests for web API endpoints."""
-
 import asyncio
 import csv
 import io
@@ -99,7 +97,6 @@ from tests.factories import (
 
 @pytest.fixture
 def mock_config():
-    """Create a mock configuration."""
     return {
         "storage": {"database_path": "data/test.db"},
         "web": {
@@ -121,8 +118,6 @@ def mock_config():
 
 @pytest.fixture
 def mock_components(mock_config):
-    """Create mock components."""
-    # Reset sync manager to ensure clean state between tests
     reset_sync_manager()
 
     mock_storage_manager = make_storage_mock()
@@ -144,29 +139,23 @@ def mock_components(mock_config):
             "engine": mock_engine_instance,
         }
 
-    # Clean up sync manager after test
     reset_sync_manager()
 
 
 @pytest.fixture
 def client(mock_components):
-    """Create test client."""
     return authenticated_client(mock_components["app"])
 
 
 @pytest.fixture
 def anonymous_client(mock_components):
-    """Create a test client carrying no API token."""
     return TestClient(mock_components["app"])
 
 
 def _cors_kwargs(app) -> dict:
-    """Return the kwargs actually handed to the CORS middleware.
-
-    Read off the middleware rather than ``app_state.config``: the config keeps
+    """Read off the middleware rather than ``app_state.config``: the config keeps
     whatever YAML supplied, and the type guard in ``create_app`` is what decides
-    the value that reaches Starlette.
-    """
+    the value that reaches Starlette."""
     for middleware in app.user_middleware:
         if middleware.cls is CORSMiddleware:
             return middleware.kwargs
@@ -174,7 +163,6 @@ def _cors_kwargs(app) -> dict:
 
 
 def _cors_origins(app) -> list[str]:
-    """Return the origin list actually handed to the CORS middleware."""
     return _cors_kwargs(app)["allow_origins"]
 
 
@@ -182,13 +170,6 @@ class TestCreateAppSettingsMigration:
     """create_app assembles DB-overlaid settings before reading global config."""
 
     def test_create_app_overlays_db_settings_onto_config(self, mock_config, tmp_path):
-        """create_app runs the real settings assembly against an isolated DB.
-
-        Drives the *real* ``migrate_config_settings`` hook with a real temp-DB
-        StorageManager (no stub): a stored DB leaf must win over the YAML value
-        on the running config that create_app stores in app_state, and boot
-        must not write anything to the settings table.
-        """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # A stored DB leaf must win over the YAML value on boot.
@@ -203,16 +184,8 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
 
     def test_debug_resolves_from_yaml_not_the_db_overlay(self, mock_config, tmp_path):
-        """A stale ``web.debug`` DB row must not enable the OpenAPI docs.
-
-        Regression: create_app read ``web.debug`` from the config AFTER
-        migrate_config_settings ran. ``web`` is still an in-scope section and the
-        overlay applies unknown/legacy leaves, so a ``web.debug`` row left by an
-        earlier build — when it was briefly a registry leaf — re-enabled /docs
-        and /redoc here while src/web/main.py (raw YAML) ignored it. The row is
-        also unreachable from the app, since `settings reset` refuses a key with
-        no registry entry. Debug must resolve pre-overlay, matching the launcher.
-        """
+        """Regression: create_app read ``web.debug`` from the config AFTER
+        migrate_config_settings ran."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         # Write the row directly: the settings API would reject this key now.
@@ -228,12 +201,9 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
 
     def test_yaml_debug_true_opens_the_openapi_docs(self, mock_config, tmp_path):
-        """The positive half: YAML ``web.debug`` is what actually gates /docs.
-
-        Without this, ``debug_mode`` could be hardcoded False and the negative
-        test above would still pass — proving the docs are closed, but nothing
-        about where the value comes from.
-        """
+        """Without this, ``debug_mode`` could be hardcoded False and the negative
+        test above would still pass — proving the docs are closed, but nothing about
+        where the value comes from."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {**mock_config.get("web", {}), "debug": True}}
@@ -245,31 +215,20 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
 
     def test_non_dict_web_section_does_not_crash_boot(self, mock_config, tmp_path):
-        """A ``web:`` header with no children must not take the app down.
-
-        Regression: the debug read moved above ``migrate_config_settings``, which
-        is what heals a non-dict section — so ``config.get("web", {})`` returned
-        None (the default only fires on an ABSENT key) and boot died with an
-        AttributeError outside the try/except.
-        """
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": None}
         with booted_web_app(storage_manager, config) as app:
             # Fails closed on both counts: no debug, and CORS pinned to the
-            # restrictive default rather than whatever a malformed section
-            # produced.
+            # restrictive default rather than whatever a malformed section produced.
             assert app.docs_url is None
             assert _cors_origins(app) == default_of("web.allowed_origins")
         reset_sync_manager()
 
     def test_configured_origins_reach_the_middleware(self, mock_config, tmp_path):
-        """A well-formed non-default list must pass through, not fall back.
-
-        Every other CORS test asserts the FALLBACK, so replacing the guard with
-        an unconditional `default_of(...)` would keep them all green while
-        silently discarding the CORS policy of every operator who configured one.
-        """
+        """Every other CORS test asserts the FALLBACK, so replacing the guard
+        with an unconditional `default_of(...)` would keep them all green while
+        silently discarding the CORS policy of every operator who configured one."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {
@@ -284,15 +243,9 @@ class TestCreateAppSettingsMigration:
     def test_unusable_allowed_origins_falls_back_to_the_default(
         self, mock_config, tmp_path, bad_origins
     ):
-        """A malformed CORS list must not crash boot or widen the policy.
-
-        Regression: a blank ``allowed_origins:`` yields None and ``"*" not in
-        None`` raised outside the try/except, so boot died with a bare
-        traceback. A scalar string was worse — Starlette's origin check is
-        ``origin in self.allow_origins``, which on a string is a substring test,
-        so ``https://app.example.co`` would have been accepted against a
-        configured ``https://app.example.com``.
-        """
+        """Regression: a blank ``allowed_origins:`` yields None and
+        ``"*" not in None`` raised outside the try/except, so boot died with a bare
+        traceback."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {**mock_config, "web": {"allowed_origins": bad_origins}}
@@ -301,13 +254,9 @@ class TestCreateAppSettingsMigration:
         reset_sync_manager()
 
     def test_create_app_migrates_config_secret_into_storage(self, tmp_path) -> None:
-        """create_app sweeps a YAML provider secret into encrypted storage.
-
-        Regression: the ``migrate_config_secrets`` boot hook must actually run
-        during ``create_app`` — asserted end-to-end against a real temp-DB (no
-        stub). The plaintext api_key must land in encrypted storage and be
-        stripped from the running config held in app_state.
-        """
+        """Regression: the ``migrate_config_secrets`` boot hook must actually run
+        during ``create_app`` — asserted end-to-end against a real temp-DB
+        (no stub)."""
         reset_sync_manager()
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         config = {
@@ -326,28 +275,12 @@ class TestCreateAppSettingsMigration:
 
 
 class TestBootStartsFromCleanStateRegression:
-    """A boot must not inherit what an earlier test left in ``app_state``.
-
-    Bug reported: ``config_watcher`` is the one ``AppState`` field
-    ``create_app`` never assigns, so a test that installed a mock watcher
-    handed that mock to every app booted after it — a later lifespan would
-    start and stop somebody else's mock instead of a watcher of its own.
-    Root cause: ``booted_web_app`` snapshotted ``app_state`` and restored it,
-    which protects the caller's own mutations but carries a pre-existing leak
-    straight into the boot.
-    Fix: the helper installs ``AppState()`` defaults before the boot as well as
-    restoring the snapshot after, so it is clean-start and leak-free both.
-    """
-
     def test_no_field_survives_the_boot_and_every_one_comes_back(
         self, mock_config, tmp_path, monkeypatch
     ) -> None:
-        """Clean-start and leak-free hold for the whole dataclass, not one field.
-
-        A sentinel per field, so a field the helper forgot to reset shows up as
-        the caller's object reaching the boot, and one it forgot to restore
-        shows up as the caller's object not coming back.
-        """
+        """A sentinel per field, so a field the helper forgot to reset shows up as
+        the caller's object reaching the boot, and one it forgot to restore shows up
+        as the caller's object not coming back."""
         storage_manager = StorageManager(sqlite_path=tmp_path / "test.db")
         sentinels = {field.name: object() for field in fields(app_state)}
         for name, sentinel in sentinels.items():
@@ -365,10 +298,7 @@ class TestBootStartsFromCleanStateRegression:
 
 
 class TestRootEndpoint:
-    """Tests for the root HTML endpoint."""
-
     def test_fallback_when_template_missing(self, client):
-        """root() returns a fallback page when no HTML template exists."""
         original_exists = Path.exists
 
         def patched_exists(self: Path) -> bool:
@@ -384,7 +314,6 @@ class TestRootEndpoint:
 
 
 def test_status_endpoint(client):
-    """Test status endpoint returns version from src.__version__."""
     response = client.get("/api/status")
     assert response.status_code == 200
     data = response.json()
@@ -394,10 +323,7 @@ def test_status_endpoint(client):
 
 
 class TestStatusRecommendationsConfig:
-    """Tests for recommendations_config in the /api/status response."""
-
     def test_status_includes_recommendations_config_defaults(self, client):
-        """GET /api/status includes default max_count and default_count."""
         app_state.config = {}
 
         response = client.get("/api/status")
@@ -407,7 +333,6 @@ class TestStatusRecommendationsConfig:
         assert rec_cfg["default_count"] == 5
 
     def test_status_reads_recommendations_config_from_config(self, client):
-        """GET /api/status surfaces max_count and default_count from config."""
         app_state.config = {
             "recommendations": {"max_count": 50, "default_count": 10},
         }
@@ -420,7 +345,6 @@ class TestStatusRecommendationsConfig:
 
 
 def test_sync_sources_endpoint(client, mock_config):
-    """Test sync sources endpoint returns only enabled sources from config."""
     response = client.get("/api/sync/sources")
     assert response.status_code == 200
     sources = response.json()
@@ -433,12 +357,8 @@ def test_sync_sources_endpoint(client, mock_config):
 
 
 def test_sync_sources_lists_all_with_enabled_flag(client):
-    """All configured sources are listed; ``enabled`` flag exposed per source.
-
-    The UI renders disabled sources in a muted state instead of hiding them
-    entirely, so the listing endpoint must surface them. ``resolve_inputs``
-    is the gate that filters to enabled-only for sync execution.
-    """
+    """The UI renders disabled sources in a muted state instead of hiding them
+    entirely, so the listing endpoint must surface them."""
     app_state.config = {
         "inputs": {
             "goodreads_rss": {
@@ -479,8 +399,6 @@ def test_sync_sources_lists_all_with_enabled_flag(client):
 
 
 def test_recommendations_endpoint(client, mock_components):
-    """Test recommendations endpoint."""
-    # Setup mock recommendations
     mock_item = ContentItem(
         id="1",
         title="Test Book",
@@ -508,13 +426,11 @@ def test_recommendations_endpoint(client, mock_components):
 
 
 def test_recommendations_invalid_type(client):
-    """Test recommendations endpoint with invalid type."""
     response = client.get("/api/recommendations?type=invalid&count=1")
     assert response.status_code == 400
 
 
 def test_complete_endpoint(client, mock_components):
-    """Test complete endpoint."""
     mock_components["storage"].complete_content_item.return_value = 1
 
     response = client.post(
@@ -534,11 +450,8 @@ def test_complete_endpoint(client, mock_components):
 
 
 def _client_on(app, storage: StorageManager) -> TestClient:
-    """Swap *storage* into app state and sign a fresh client in against it.
-
-    Sessions live in the database, so a client made before the swap carries a
-    cookie the new database has never heard of.
-    """
+    """Sessions live in the database, so a client made before the swap carries a
+    cookie the new database has never heard of."""
     app_state.storage = storage
     return authenticated_client(app)
 
@@ -546,19 +459,8 @@ def _client_on(app, storage: StorageManager) -> TestClient:
 def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
     mock_components, tmp_path, host_timezone
 ):
-    """POST /api/complete dates a completion by the day the user is living.
-
-    Bug reported: an item finished at 21:00 in America/Los_Angeles came back
-    dated tomorrow. The endpoint stamped ``datetime.now(UTC).date()``, so west
-    of UTC an evening completion crossed into the next UTC day — while a date
-    arriving from an import was narrowed to the host's zone. The ``TZ`` a
-    Docker operator sets was honoured for one and ignored for the other.
-    Root cause: the endpoint chose the date itself, in UTC.
-    Fix: the endpoint sends no date; the storage door stamps today in the
-    host's zone. The clock is frozen because under the suite's UTC default the
-    two implementations agree, and a live clock disagrees with itself across
-    UTC midnight.
-    """
+    """Bug reported: an item finished at 21:00 in America/Los_Angeles came back
+    dated tomorrow."""
     host_timezone("America/Los_Angeles")
     storage = StorageManager(sqlite_path=tmp_path / "complete.db")
     client = _client_on(mock_components["app"], storage)
@@ -580,16 +482,9 @@ def test_complete_endpoint_dates_by_the_host_calendar_day_regression(
 def test_complete_endpoint_preserves_an_imported_completion_date_regression(
     mock_components, tmp_path
 ):
-    """POST /api/complete does not re-date an item that already has a date.
-
-    Bug reported: completing an item imported with
-    ``date_completed = 2020-01-01`` rewrote the date to today — silent loss of
-    a date the user owns, which feeds the variety ladder's ordering.
-    Root cause: the endpoint stamped today's date onto the item it built, and
-    the sync door's later-date-wins rule takes today over any past date.
-    Fix: the endpoint sends no date; the door fills an empty one and keeps a
-    stored one.
-    """
+    """Bug reported: completing an item imported with ``date_completed = 2020-01-01``
+    rewrote the date to today — silent loss of a date the user owns, which feeds the
+    variety ladder's ordering."""
     storage = StorageManager(sqlite_path=tmp_path / "complete.db")
     db_id = storage.save_content_item(
         ContentItem(
@@ -617,17 +512,8 @@ def test_complete_endpoint_preserves_an_imported_completion_date_regression(
 def test_complete_endpoint_stores_a_movie_director_regression(
     mock_components, tmp_path
 ):
-    """POST /api/complete keeps the creator of a non-book content type.
-
-    Bug reported: posting a movie with ``author`` set returned 200 and stored
-    no director, so the completed item showed none and exported a blank
-    creator cell.
-    Root cause: the endpoint passed ``author`` through for books alone,
-    because no other content type had anywhere to keep a creator.
-    Fix: every type stores its creator in the column its type declares, so
-    the endpoint hands the value over whatever the type. The CLI door's half
-    of this is in ``tests/test_cli.py``.
-    """
+    """Bug reported: posting a movie with ``author`` set returned 200 and stored
+    no director, so the completed item showed none and exported a blank creator cell."""
     storage = StorageManager(sqlite_path=tmp_path / "creator.db")
     client = _client_on(mock_components["app"], storage)
 
@@ -649,19 +535,6 @@ def test_complete_endpoint_stores_a_movie_director_regression(
 def test_complete_endpoint_overwrites_existing_rating_regression(
     mock_components, tmp_path
 ):
-    """POST /api/complete replaces the rating an item already has.
-
-    Bug reported: completing an already-rated item through the API returns
-    200 with "Marked 'Dune' as completed" while the stored rating is left at
-    its old value, so the user's correction is silently discarded and
-    preference analysis keeps scoring on the stale rating.
-    Root cause: the endpoint persisted through ``save_content_item`` — the
-    ingestion/sync door, whose fill-only rule never overwrites a user-owned
-    field that already has a value — rather than an explicit-user-action door.
-    Marking something complete from the UI is an explicit user action.
-    Fix: the completion door applies the explicit-action rules, so the
-    supplied rating and review win.
-    """
     storage = StorageManager(sqlite_path=tmp_path / "complete.db")
     db_id = storage.save_content_item(
         ContentItem(
@@ -688,9 +561,8 @@ def test_complete_endpoint_overwrites_existing_rating_regression(
 
 
 class TestCompletionEndpointRefusesABlankReview:
-    """Typed ``str | None``, ``{"review": ""}`` reaches the overwriting
-    completion door and erases a review the user wrote. The CLI half of this
-    defect is covered in ``tests/cli/test_cli_error_disclosure.py``."""
+    """Typed ``str | None``, ``{"review": ""}`` reaches the overwriting completion
+    door and erases a review the user wrote."""
 
     @pytest.mark.parametrize("blank_review", ["", "   "])
     def test_the_request_model_refuses_it_regression(self, blank_review: str) -> None:
@@ -701,13 +573,12 @@ class TestCompletionEndpointRefusesABlankReview:
 
 
 def test_complete_invalid_rating(client):
-    """Test complete endpoint with invalid rating."""
     response = client.post(
         "/api/complete",
         json={
             "content_type": "book",
             "title": "Test Book",
-            "rating": 6,  # Invalid
+            "rating": 6,
         },
     )
 
@@ -716,8 +587,6 @@ def test_complete_invalid_rating(client):
 
 
 def test_update_endpoint(client, mock_components):
-    """Test update endpoint starts background sync."""
-    # Mock the parser
     mock_item = ContentItem(
         id="1",
         title="Test Book",
@@ -744,17 +613,12 @@ def test_update_endpoint(client, mock_components):
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
-        # New async behavior: returns "sync started" message, not count
         assert "started" in data["message"].lower() or "sources" in data
 
 
 def test_update_endpoint_steam(client, mock_components):
-    """Test update endpoint starts background sync for Steam.
-
-    The sync manager is stubbed because the real one spawns a thread that
-    outlives the test calling the live Steam API.
-    """
-    # Update app_state config to include Steam
+    """The sync manager is stubbed because the real one spawns a thread that
+    outlives the test calling the live Steam API."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
@@ -771,18 +635,13 @@ def test_update_endpoint_steam(client, mock_components):
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
-    # Background sync: returns "sync started" message
     assert "started" in data["message"].lower() or "sources" in data
 
 
 def test_update_endpoint_steam_disabled(client, mock_components):
-    """A disabled source is rejected with 400, not a 200 dead-end.
-
-    The single-source /update branch must answer 4xx for a disabled or
+    """The single-source /update branch must answer 4xx for a disabled or
     unconfigured source so the web UI's Sync button clears its optimistic
-    "syncing" state. A 200 "message" body left the button stuck spinning
-    because no SyncJob is ever created to end the frontend polling.
-    """
+    "syncing" state."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
@@ -798,7 +657,6 @@ def test_update_endpoint_steam_disabled(client, mock_components):
 
 
 def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
-    """Test update endpoint with missing Steam API key."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "",
@@ -817,7 +675,6 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
 
 
 def test_update_endpoint_all_sources(client, mock_components):
-    """Test update endpoint with 'all' source starts background sync."""
     app_state.config["inputs"]["steam"] = {
         "plugin": "steam",
         "api_key": "test_api_key",
@@ -867,7 +724,6 @@ def test_update_endpoint_all_sources(client, mock_components):
 
         assert response.status_code == 200
         data = response.json()
-        # New async behavior: returns sync started message with sources list
         assert "message" in data
         assert "sources" in data
         assert "goodreads_rss" in data["sources"]
@@ -876,10 +732,7 @@ def test_update_endpoint_all_sources(client, mock_components):
 
 class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     """Reported: ``POST /api/update`` echoed the caller's source id and the
-    plugin's validation text. The id is unbounded caller input and the text
-    names configured paths, so both go to the log alone now, as
-    ``require_plugin`` already did — see ``TestSyncLogsTheReasonItRefused``.
-    """
+    plugin's validation text."""
 
     def test_an_unknown_source_id_is_logged_not_echoed(self, client, caplog):
         """The id is unbounded caller input, so it stays out of the body."""
@@ -894,11 +747,8 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     def test_the_source_id_stays_off_a_validation_refusal_too(
         self, client, mock_components, caplog
     ):
-        """The id and the plugin's prose stay off the wire; field names go on.
-
-        Named distinctly because the steam plugin's own messages say "steam",
-        which would pass this assertion without the endpoint keeping quiet.
-        """
+        """Named distinctly because the steam plugin's own messages say "steam",
+        which would pass this assertion without the endpoint keeping quiet."""
         app_state.config["inputs"]["probe_me_42"] = {
             "plugin": "steam",
             "api_key": "",
@@ -924,11 +774,8 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     def test_prose_naming_no_field_falls_back_to_the_generic_refusal(
         self, client, mock_components
     ):
-        """A "not found" names no field, so the answer says nothing about it.
-
-        Keeps the oracle closed: whether the file is there must not change the
-        wording, only the status code the caller already had.
-        """
+        """Keeps the oracle closed: whether the file is there must not change the
+        wording, only the status code the caller already had."""
         app_state.config["inputs"]["games"] = {
             "plugin": "roms",
             "paths": ["/srv/private/roms"],
@@ -946,11 +793,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
         assert "/srv/private" not in response.text
 
     def test_a_containment_refusal_discloses_neither_path_nor_allowlist(self, client):
-        """Unmocked: the real refusal quotes the path and the config key.
-
-        Neither reaches the wire — the caller learns only that the source is
-        misconfigured, which is what keeps the arbitrary-read oracle closed.
-        """
+        """Unmocked: the real refusal quotes the path and the config key."""
         app_state.config["inputs"]["games"] = {
             "plugin": "roms",
             "paths": ["/etc/shadow"],
@@ -978,17 +821,13 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
 class TestUpdateResolvesTheSourceOnceRegression:
     """Reported: the handler resolved the source id twice, and a delete landing
     between the two made the second lookup miss — answering with the caller's
-    own unbounded id. Fixed by validating the entry already in hand.
-    """
+    own unbounded id."""
 
     def test_a_source_deleted_after_it_resolved_still_syncs(
         self, client, mock_components
     ):
-        """A source vanishing after the first lookup changes no answer.
-
-        The sync manager is stubbed because the real one spawns a thread
-        that outlives the test calling the live Steam API.
-        """
+        """The sync manager is stubbed because the real one spawns a thread that
+        outlives the test calling the live Steam API."""
         app_state.config["inputs"]["probe_me_42"] = {
             "plugin": "steam",
             "api_key": "test_api_key",
@@ -1015,12 +854,8 @@ class TestUpdateResolvesTheSourceOnceRegression:
 
 
 def _sync_a_source_typed(client, content_type):
-    """Sync one source carrying *content_type* and run its completion hook.
-
-    Returns the response and the content type auto-enrichment was started
-    with, which is the only place the endpoint's reading of the config value
-    is observable.
-    """
+    """Returns the response and the content type auto-enrichment was started with,
+    which is the only place the endpoint's reading of the config value is observable."""
     app_state.config["enrichment"] = {"enabled": True, "auto_enrich_on_sync": True}
     app_state.config["inputs"]["typed"] = {
         "plugin": "goodreads_rss",
@@ -1055,7 +890,6 @@ class TestUpdateEnrichmentContentType:
     """What ``inputs.<id>.content_type`` does to the enrichment auto-start."""
 
     def test_a_valid_content_type_narrows_the_enrichment(self, client, mock_components):
-        """Only the synced type is enriched when the source declares one."""
         response, started_with = _sync_a_source_typed(client, "book")
 
         assert response.status_code == 200
@@ -1064,11 +898,8 @@ class TestUpdateEnrichmentContentType:
     def test_an_unknown_content_type_enriches_every_type(
         self, client, mock_components, caplog
     ):
-        """A value no ``ContentType`` member matches is a warning, not a refusal.
-
-        The sync still starts and enrichment falls back to every type, so a
-        typo in the config file cannot strand the source.
-        """
+        """The sync still starts and enrichment falls back to every type, so a typo
+        in the config file cannot strand the source."""
         with caplog.at_level(logging.WARNING, logger="src.web.sync_dispatch"):
             response, started_with = _sync_a_source_typed(client, "paperback")
 
@@ -1079,11 +910,8 @@ class TestUpdateEnrichmentContentType:
     def test_a_falsy_content_type_is_read_as_unset(
         self, client, mock_components, caplog
     ):
-        """``content_type: false`` is a missing value, not a wrong one.
-
-        Coercing ahead of the emptiness check would make it the string
-        "False" and warn about a source nobody misconfigured.
-        """
+        """Coercing ahead of the emptiness check would make it the string "False"
+        and warn about a source nobody misconfigured."""
         with caplog.at_level(logging.WARNING, logger="src.web.sync_dispatch"):
             response, started_with = _sync_a_source_typed(client, False)
 
@@ -1093,11 +921,6 @@ class TestUpdateEnrichmentContentType:
 
 
 class TestNonStringContentTypeRegression:
-    """Reported: ``content_type: 2024`` in YAML reached ``sanitize_for_log`` as
-    an ``int``, which raised ``TypeError`` out of the handler — a 500 and no
-    sync — because ``config`` is ``dict[str, Any]`` and nothing coerced it.
-    """
-
     def test_a_yaml_integer_content_type_still_starts_the_sync(
         self, client, mock_components
     ):
@@ -1108,13 +931,7 @@ class TestNonStringContentTypeRegression:
         assert started_with is None
 
 
-# ---------------------------------------------------------------------------
-# User preferences endpoint tests (Phase 5)
-# ---------------------------------------------------------------------------
-
-
 def test_get_user_preferences_defaults(client, mock_components):
-    """GET /api/users/1/preferences returns defaults for new user."""
     mock_components["storage"].get_user_preference_config = Mock(
         return_value=UserPreferenceConfig()
     )
@@ -1128,7 +945,6 @@ def test_get_user_preferences_defaults(client, mock_components):
 
 
 def test_put_user_preferences_full(client, mock_components):
-    """PUT /api/users/1/preferences can update all fields."""
     back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
@@ -1151,7 +967,6 @@ def test_put_user_preferences_full(client, mock_components):
 def test_put_user_preferences_rejects_out_of_range_variety_penalty(
     client, mock_components
 ):
-    """variety_penalty above the 5.0 maximum is rejected with a 422."""
     merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
@@ -1165,7 +980,6 @@ def test_put_user_preferences_rejects_out_of_range_variety_penalty(
 def test_put_user_preferences_keeps_stored_fields_the_request_omits(
     client, mock_components
 ):
-    """A partial update merges onto what was stored, not onto the defaults."""
     back_mock_preference_store(
         mock_components["storage"],
         UserPreferenceConfig(series_in_order=False, custom_rules=["no horror"]),
@@ -1186,11 +1000,8 @@ def test_put_user_preferences_keeps_stored_fields_the_request_omits(
 def test_put_user_preferences_merges_for_the_user_named_in_the_path(
     client, mock_components
 ):
-    """The path id is what storage merges on.
-
-    Every other case on this route uses user 1, so a handler that merged a
-    hardcoded 1 would keep the whole suite green.
-    """
+    """Every other case on this route uses user 1, so a handler that merged a
+    hardcoded 1 would keep the whole suite green."""
     merge = back_mock_preference_store(mock_components["storage"])
 
     response = client.put(
@@ -1206,10 +1017,8 @@ _CONTENT_TYPE_NAMES = [member.value for member in ContentType]
 
 
 class TestUserPreferenceBounds:
-    """The merge is additive, so keys a request names stay in
-    ``users.settings`` for good and every recommendation request parses them.
-    The sibling ``ItemEditRequest`` bounds its collections; this one did not.
-    """
+    """The merge is additive, so keys a request names stay in ``users.settings``
+    for good and every recommendation request parses them."""
 
     @pytest.mark.parametrize(
         "payload",
@@ -1234,7 +1043,6 @@ class TestUserPreferenceBounds:
     def test_an_over_long_payload_is_rejected_rather_than_persisted(
         self, client, mock_components, payload
     ):
-        """Validation refuses it, so storage is never asked to merge it."""
         merge = back_mock_preference_store(mock_components["storage"])
 
         response = client.put("/api/users/1/preferences", json=payload)
@@ -1245,11 +1053,8 @@ class TestUserPreferenceBounds:
     def test_a_payload_sitting_exactly_on_every_bound_is_accepted(
         self, client, mock_components
     ):
-        """An off-by-one the other way refuses what the bound allows.
-
-        The rule is astral-plane characters: ``max_length`` counting UTF-8
-        bytes would cut this one to a quarter of the documented 500.
-        """
+        """The rule is astral-plane characters: ``max_length`` counting UTF-8 bytes
+        would cut this one to a quarter of the documented 500."""
         back_mock_preference_store(mock_components["storage"])
         at_bound_rule = "🎬" * UserPreferenceConfig.MAX_CUSTOM_RULE_LENGTH
 
@@ -1276,10 +1081,8 @@ class TestUserPreferenceBounds:
     def test_a_non_finite_scorer_weight_is_refused_rather_than_stored(
         self, settings_app, literal
     ):
-        """``JSONResponse`` will not render one, so a stored one answers 500
-        on every later read of the page. Sent raw because ``json=`` declines
-        to encode it, and read back over the real store.
-        """
+        """``JSONResponse`` will not render one, so a stored one answers 500 on
+        every later read of the page."""
         client, _storage = settings_app
         tolerant = authenticated_client(client.app, raise_server_exceptions=False)
 
@@ -1295,11 +1098,8 @@ class TestUserPreferenceBounds:
     def test_a_weight_stored_before_the_bound_no_longer_500s_the_read(
         self, settings_app
     ):
-        """The refusal above arrived after rows like this were already written.
-
-        Poisoned through ``update_user_settings`` because every door the app
-        offers now refuses one, which is exactly why the read has to cope.
-        """
+        """Poisoned through ``update_user_settings`` because every door the app
+        offers now refuses one, which is exactly why the read has to cope."""
         client, storage = settings_app
         with storage.sqlite_db.connection() as conn:
             update_user_settings(
@@ -1316,9 +1116,8 @@ class TestUserPreferenceBounds:
     def test_a_non_finite_variety_penalty_is_refused_the_same_way(
         self, settings_app, literal
     ):
-        """The sibling instance: the bound already rejected it, and quoting it
-        back in the 422 body is what turned the refusal into a 500.
-        """
+        """The sibling instance: the bound already rejected it, and quoting it back
+        in the 422 body is what turned the refusal into a 500."""
         client, _storage = settings_app
         tolerant = authenticated_client(client.app, raise_server_exceptions=False)
 
@@ -1332,9 +1131,7 @@ class TestUserPreferenceBounds:
 
     def test_a_stored_weight_survives_a_write_that_fills_the_bound(self, settings_app):
         """An earlier fix evicted by insertion order, so one write naming every
-        scorer discarded the weight the user set first. The filling write omits
-        that one, or overwriting it would read as surviving.
-        """
+        scorer discarded the weight the user set first."""
         client, _storage = settings_app
         client.put(
             "/api/users/1/preferences",
@@ -1351,9 +1148,7 @@ class TestUserPreferenceBounds:
 
 class TestPreferenceKeysAreAClosedSet:
     """Reported: the web accepted any scorer name where the CLI checks against
-    ``SCORER_NAME_MAP``. The engine drops an unknown one, so it weighted
-    nothing and grew the blob every recommendation request parses.
-    """
+    ``SCORER_NAME_MAP``."""
 
     @pytest.mark.parametrize(
         "payload",
@@ -1382,9 +1177,7 @@ class TestPreferenceKeysAreAClosedSet:
 
 class TestPreferenceWriteNamingAnUnknownUser:
     """Reported: the write is an ``UPDATE`` keyed on the id, so for a missing
-    user it changed nothing, committed, and answered 200. The 404 comes from
-    that write's refusal — a pre-check would be a second answer to it.
-    """
+    user it changed nothing, committed, and answered 200."""
 
     def test_a_real_store_answers_404_for_a_row_it_does_not_have(self, settings_app):
         """Against SQLite, not a mock: the id is the one with no users row."""
@@ -1414,11 +1207,8 @@ class TestPreferenceWriteNamingAnUnknownUser:
 
 
 class TestPreferenceReset:
-    """``preferences reset`` writes a fresh config; the page had no door to it.
-
-    Both surfaces have to mean the same thing by "defaults", so the assertion
-    is against the model the CLI writes rather than a copy of its fields.
-    """
+    """Both surfaces have to mean the same thing by "defaults", so the assertion
+    is against the model the CLI writes rather than a copy of its fields."""
 
     def test_reset_restores_what_the_cli_reset_writes(self, settings_app):
         """Against SQLite: the read back is what a later page load gets."""
@@ -1442,8 +1232,8 @@ class TestPreferenceReset:
         assert stored.json() == UserPreferenceConfig().to_dict()
 
     def test_the_chosen_theme_survives_the_reset(self, settings_app):
-        """Regression: the theme rode in the preference blob this write
-        replaces, so resetting the scoring preferences reverted it."""
+        """Regression: the theme rode in the preference blob this write replaces, so
+        resetting the scoring preferences reverted it."""
         client, _storage = settings_app
         client.put("/api/users/1/theme", json={"theme": "snowstorm"})
 
@@ -1498,15 +1288,13 @@ class TestThemeEndpoints:
 
 
 def test_list_users(client, mock_components):
-    """Test GET /api/users returns user list."""
     mock_components["storage"].get_all_users = Mock(
         return_value=[
             {"id": 1, "username": "default", "display_name": "Default User"},
             {"id": 2, "username": "alice", "display_name": "Alice"},
         ]
     )
-    # The password stamp is fetched per row, and an unstubbed Mock is not
-    # subscriptable.
+    # The password stamp is fetched per row, and an unstubbed Mock is not subscriptable.
     mock_components["storage"].accounts.describe = Mock(return_value=None)
 
     response = client.get("/api/users")
@@ -1518,7 +1306,6 @@ def test_list_users(client, mock_components):
 
 
 def test_list_items(client, mock_components):
-    """Test GET /api/items returns filtered items."""
     mock_items = [
         ContentItem(
             id="1",
@@ -1542,19 +1329,16 @@ def test_list_items(client, mock_components):
 
 
 def test_list_items_invalid_type(client, mock_components):
-    """Test GET /api/items with invalid type returns 400."""
     response = client.get("/api/items?type=invalid")
     assert response.status_code == 400
 
 
 def test_list_items_invalid_status(client, mock_components):
-    """Test GET /api/items with invalid status returns 400."""
     response = client.get("/api/items?status=invalid")
     assert response.status_code == 400
 
 
 def test_recommendations_include_breakdown(client, mock_components):
-    """Test recommendations response includes score_breakdown."""
     mock_item = ContentItem(
         id="1",
         title="Test Book",
@@ -1640,18 +1424,11 @@ def test_recommendations_with_user_id(client, mock_components):
     data = response.json()
     assert len(data) == 1
 
-    # Verify engine was called with user_preference_config
     call_kwargs = mock_components["engine"].generate_recommendations.call_args.kwargs
     assert call_kwargs["user_preference_config"] is not None
 
 
-# ---------------------------------------------------------------------------
-# Ignore Item Tests
-# ---------------------------------------------------------------------------
-
-
 def test_ignore_item_success(client, mock_components):
-    """PATCH /api/items/{db_id}/ignore sets item ignored status."""
     mock_item = ContentItem(
         id="ext_1",
         db_id=42,
@@ -1672,14 +1449,12 @@ def test_ignore_item_success(client, mock_components):
     assert response.status_code == 200
     assert response.json() == ignore_result_to_dict(42, "Test Book", True)
 
-    # Verify storage method was called
     mock_components["storage"].set_item_ignored.assert_called_once_with(
         42, True, user_id=1
     )
 
 
 def test_list_items_includes_ignored(client, mock_components):
-    """GET /api/items returns items with ignored field."""
     mock_items = [
         ContentItem(
             id="1",
@@ -1711,7 +1486,6 @@ def test_list_items_includes_ignored(client, mock_components):
 
 
 def test_list_items_include_ignored_true(client, mock_components):
-    """GET /api/items?include_ignored=true passes include_ignored=True to storage."""
     mock_components["storage"].get_content_items = Mock(return_value=[])
 
     response = client.get("/api/items?user_id=1&include_ignored=true")
@@ -1723,7 +1497,6 @@ def test_list_items_include_ignored_true(client, mock_components):
 
 
 def test_list_items_needs_rating_forces_completed_and_unrated(client, mock_components):
-    """GET /api/items?needs_rating=true forwards status=completed + unrated_only."""
     mock_components["storage"].get_content_items.return_value = []
 
     response = client.get("/api/items?user_id=1&needs_rating=true")
@@ -1736,7 +1509,6 @@ def test_list_items_needs_rating_forces_completed_and_unrated(client, mock_compo
 
 
 def test_list_items_needs_rating_overrides_explicit_status(client, mock_components):
-    """needs_rating forces completed status even when a different status is passed."""
     mock_components["storage"].get_content_items.return_value = []
 
     response = client.get("/api/items?user_id=1&status=unread&needs_rating=true")
@@ -1768,13 +1540,7 @@ def test_list_items_answers_for_a_stored_object_shaped_genre(mock_components, tm
     assert response.json()[0]["genres"] == ["Crime"]
 
 
-# ---------------------------------------------------------------------------
-# GET /api/items/{db_id} — Single item retrieval
-# ---------------------------------------------------------------------------
-
-
 def test_get_single_item(client, mock_components):
-    """GET /api/items/{db_id} returns a single content item."""
     mock_item = ContentItem(
         id="ext_1",
         external_ids=[ExternalId(source="goodreads_csv", external_id="ext_1")],
@@ -1802,20 +1568,13 @@ def test_get_single_item(client, mock_components):
 
 
 def test_get_single_item_not_found(client, mock_components):
-    """GET /api/items/{db_id} returns 404 if item not found."""
     mock_components["storage"].get_content_item = Mock(return_value=None)
 
     response = client.get("/api/items/999?user_id=1")
     assert response.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# PATCH /api/items/{db_id} — Item edit
-# ---------------------------------------------------------------------------
-
-
 def test_edit_item_status(client, mock_components):
-    """PATCH /api/items/{db_id} updates item status."""
     updated_item = ContentItem(
         id="ext_1",
         db_id=42,
@@ -1850,7 +1609,6 @@ def test_edit_item_status(client, mock_components):
 
 
 def test_edit_tv_show_seasons(client, mock_components):
-    """PATCH /api/items/{db_id} passes seasons_watched for TV shows."""
     updated_item = ContentItem(
         id="ext_1",
         db_id=42,
@@ -1887,30 +1645,22 @@ def test_edit_tv_show_seasons(client, mock_components):
 
 
 def test_edit_rejects_out_of_range_season_regression(client, mock_components):
-    """PATCH /api/items/{db_id} rejects season numbers outside the cap.
-
-    Regression: seasons_watched was unbounded, so a hostile value could feed
-    an enormous range() downstream. The request model now bounds each element
-    to 1..MAX_SEASONS and the list to MAX_SEASONS entries, rejecting bad input
-    at the API boundary before any storage write.
-    """
+    """Regression: seasons_watched was unbounded, so a hostile value could feed
+    an enormous range() downstream."""
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
-    # Above the per-element cap.
     too_high = client.patch(
         "/api/items/42?user_id=1",
         json={"status": "currently_consuming", "seasons_watched": [1, 2_000_000_000]},
     )
     assert too_high.status_code == 422
 
-    # Below the per-element minimum (ge=1).
     too_low = client.patch(
         "/api/items/42?user_id=1",
         json={"status": "currently_consuming", "seasons_watched": [0]},
     )
     assert too_low.status_code == 422
 
-    # More entries than the list cap allows.
     too_many = client.patch(
         "/api/items/42?user_id=1",
         json={
@@ -1924,15 +1674,6 @@ def test_edit_rejects_out_of_range_season_regression(client, mock_components):
 
 
 def test_edit_rejects_blank_review_regression(client, mock_components):
-    """PATCH /api/items/{db_id} rejects a review that is empty or all spaces.
-
-    Regression: ``review`` was bounded above but not below, so a hand-written
-    request storing ``""`` reached the state ``library edit --review ""``
-    already refuses — an empty string reads as a review the user wrote, and it
-    blocks any later import from filling the field in. The request model now
-    requires a non-blank review, so clearing one is only ever the explicit
-    null the CLI spells ``--clear-review``.
-    """
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
     empty = client.patch(
@@ -1952,16 +1693,8 @@ def test_edit_rejects_blank_review_regression(client, mock_components):
 
 
 def test_edit_item_status_preserves_rating_regression(client, mock_components):
-    """PATCH with only a status leaves the stored rating and review alone.
-
-    Bug reported: a status-only edit from the library UI silently nulled the
-    item's rating and review.
-    Root cause: the endpoint always forwarded request.rating / request.review,
-    both defaulting to None, and storage wrote whatever it was handed — so an
-    omitted field and a cleared field were indistinguishable.
-    Fix: fields absent from the request body are forwarded as UNSET, which
-    storage leaves untouched; an explicit null still clears.
-    """
+    """Bug reported: a status-only edit from the library UI silently nulled the
+    item's rating and review."""
     updated_item = ContentItem(
         id="ext_1",
         db_id=42,
@@ -1991,7 +1724,6 @@ def test_edit_item_status_preserves_rating_regression(client, mock_components):
 
 
 def test_edit_item_explicit_null_clears_rating(client, mock_components):
-    """PATCH with an explicit null rating still clears it (the edit dialog's path)."""
     updated_item = ContentItem(
         id="ext_1",
         db_id=42,
@@ -2018,7 +1750,6 @@ def test_edit_item_explicit_null_clears_rating(client, mock_components):
 
 
 def test_edit_invalid_status(client, mock_components):
-    """PATCH /api/items/{db_id} returns 400 for invalid status."""
     response = client.patch(
         "/api/items/42?user_id=1",
         json={"status": "invalid_status"},
@@ -2028,17 +1759,11 @@ def test_edit_invalid_status(client, mock_components):
 
 
 class TestEditRouteCompletesEverySeasonRegression:
-    """Completing a show over PATCH left the checklist partial (#123).
-
-    Symptom: a stated completed kept the old half-ticked list. Cause: status
-    derived from seasons, never the reverse. Fix: the stated side fills the
-    other.
-    """
+    """Completing a show over PATCH left the checklist partial (#123)."""
 
     def test_patch_completed_ticks_every_season_regression(
         self, mock_components, tmp_path
     ):
-        """PATCH {"status": "completed"} marks every season of the show watched."""
         storage = StorageManager(sqlite_path=tmp_path / "edit.db")
         db_id = storage.save_content_item(
             ContentItem(
@@ -2062,13 +1787,7 @@ class TestEditRouteCompletesEverySeasonRegression:
         assert data["seasons_watched"] == [1, 2, 3, 4, 5]
 
 
-# ---------------------------------------------------------------------------
-# GET /api/items — enrichment filter and exposed fields
-# ---------------------------------------------------------------------------
-
-
 def test_list_items_filters_not_enriched(client, mock_components):
-    """GET /api/items?enrichment=not_enriched forwards the filter to storage."""
     mock_components["storage"].get_content_items = Mock(return_value=[])
 
     response = client.get("/api/items?user_id=1&enrichment=not_enriched")
@@ -2079,13 +1798,11 @@ def test_list_items_filters_not_enriched(client, mock_components):
 
 
 def test_list_items_invalid_enrichment_returns_422(client, mock_components):
-    """GET /api/items?enrichment=bogus is rejected at the API boundary."""
     response = client.get("/api/items?user_id=1&enrichment=bogus")
     assert response.status_code == 422
 
 
 def test_list_items_response_exposes_enrichment_fields(client, mock_components):
-    """GET /api/items exposes enriched plus genres/tags/description."""
     mock_item = ContentItem(
         id="movie_1",
         db_id=7,
@@ -2112,7 +1829,6 @@ def test_list_items_response_exposes_enrichment_fields(client, mock_components):
 
 
 def test_edit_item_manual_metadata(client, mock_components):
-    """PATCH /api/items/{db_id} forwards manual genres/tags/description."""
     updated_item = ContentItem(
         id="movie_1",
         db_id=7,
@@ -2222,14 +1938,8 @@ def test_an_emptied_description_clears_and_the_reset_hands_the_item_back(
 
 
 def test_edit_rejects_oversized_manual_metadata(client, mock_components):
-    """PATCH /api/items/{db_id} rejects manual metadata above the model caps.
-
-    Bounds the manual-edit fields at the API boundary: at most 50 genres and
-    100 tags, each genre/tag string at most 100 chars, and a description at
-    most 10000 chars. Each over-cap payload must be refused before any storage
-    write. The review bound is checked with the rest of the dialog's own
-    refusals, which are worded for it to render.
-    """
+    """The review bound is checked with the rest of the dialog's own refusals,
+    which are worded for it to render."""
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
     too_many_genres = client.patch(
@@ -2270,18 +1980,10 @@ def test_edit_rejects_oversized_manual_metadata(client, mock_components):
     mock_components["storage"].update_item_from_ui.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# GOG Exchange Endpoint Tests
-# ---------------------------------------------------------------------------
-
-
 class TestExchangeGogTokenEndpoint:
-    """Tests for POST /api/gog/exchange endpoint security behavior."""
-
     def test_successful_exchange_saves_to_db(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Token is saved to DB (not config file) and never returned in response."""
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
@@ -2311,11 +2013,8 @@ class TestExchangeGogTokenEndpoint:
     def test_exchange_succeeds_with_readonly_config(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Regression test: GOG exchange succeeds even when config is read-only.
-
-        Bug: Docker mounts config read-only, causing OSError when
-        update_config_with_token tried to write. Now tokens go to DB.
-        """
+        """Bug: Docker mounts config read-only, causing OSError when
+        update_config_with_token tried to write."""
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
@@ -2333,7 +2032,6 @@ class TestExchangeGogTokenEndpoint:
                 "/api/gog/exchange", json={"code_or_url": "valid_code"}
             )
 
-        # No manual_setup fallback — always succeeds via DB
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
@@ -2342,7 +2040,6 @@ class TestExchangeGogTokenEndpoint:
     def test_auth_error_returns_generic_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Auth failure returns generic 400 without leaking error details."""
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
@@ -2359,7 +2056,6 @@ class TestExchangeGogTokenEndpoint:
     def test_unexpected_exception_returns_generic_500(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Unexpected exceptions return a generic 500 without leaking error details."""
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
@@ -2376,7 +2072,6 @@ class TestExchangeGogTokenEndpoint:
     def test_gog_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Endpoint rejects requests when GOG is not enabled."""
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": False}
 
         response = client.post("/api/gog/exchange", json={"code_or_url": "some_code"})
@@ -2385,18 +2080,10 @@ class TestExchangeGogTokenEndpoint:
         assert "not enabled" in response.json()["detail"]
 
 
-# ---------------------------------------------------------------------------
-# Pagination and Sorting Tests (8I)
-# ---------------------------------------------------------------------------
-
-
 class TestPaginationAndSorting:
-    """Tests for pagination offset and sort_by query params on /api/items."""
-
     def test_sort_by_invalid_value_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/items?sort_by=invalid returns 400 with error detail."""
         response = client.get("/api/items?sort_by=invalid")
         assert response.status_code == 400
         assert "Invalid sort_by" in response.json()["detail"]
@@ -2404,7 +2091,6 @@ class TestPaginationAndSorting:
     def test_sort_by_case_insensitive(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/items?sort_by=Rating is accepted (case insensitive)."""
         mock_components["storage"].get_content_items = Mock(return_value=[])
 
         response = client.get("/api/items?sort_by=Rating")
@@ -2416,7 +2102,6 @@ class TestPaginationAndSorting:
     def test_offset_and_sort_by_combined(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/items?offset=5&sort_by=rating passes both params correctly."""
         mock_components["storage"].get_content_items = Mock(return_value=[])
 
         response = client.get("/api/items?offset=5&sort_by=rating&limit=20")
@@ -2429,12 +2114,9 @@ class TestPaginationAndSorting:
 
 
 class TestSearchParam:
-    """Tests for the search query param on /api/items."""
-
     def test_search_combined_with_type_filter(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/items?search=dune&type=book forwards both to storage."""
         mock_components["storage"].get_content_items = Mock(
             spec=StorageManager.get_content_items, return_value=[]
         )
@@ -2449,17 +2131,7 @@ class TestSearchParam:
     def test_over_long_search_term_is_rejected_regression(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """An unbounded search term is a free scan of the whole library.
-
-        Bug reported: the search parameter had no maximum length. Matching
-        normalizes both sides and then slides a SequenceMatcher window over
-        every candidate title, and the query has no SQL LIMIT to shorten the
-        candidate set, so the term's length multiplies the cost of a scan an
-        anonymous caller can start.
-        Root cause: ``search`` was declared as a plain optional string.
-        Fix: the parameter is bounded, and the CLI's ``--search`` refuses the
-        same length so the two interfaces agree on what a valid search is.
-        """
+        """An unbounded search term is a free scan of the whole library."""
         mock_components["storage"].get_content_items = Mock(
             spec=StorageManager.get_content_items, return_value=[]
         )
@@ -2474,7 +2146,6 @@ class TestSearchParam:
     def test_search_term_at_the_limit_is_accepted(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """The bound is inclusive, so a term of exactly the limit still runs."""
         mock_components["storage"].get_content_items = Mock(
             spec=StorageManager.get_content_items, return_value=[]
         )
@@ -2487,18 +2158,7 @@ class TestSearchParam:
         assert call_kwargs["search"] == term
 
 
-# ---------------------------------------------------------------------------
-# Count > max_count validation (8J)
-# ---------------------------------------------------------------------------
-
-
 def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
-    """GET /api/recommendations returns 400 when count exceeds config max_count.
-
-    The recommendations endpoint validates the requested count against the
-    max_count value from the recommendations config section (default: 20).
-    """
-    # Set a low max_count in config
     app_state.config["recommendations"] = {"max_count": 5}
 
     response = client.get("/api/recommendations?type=book&count=10")
@@ -2507,7 +2167,6 @@ def test_recommendations_count_exceeds_max_returns_400(client, mock_components):
 
 
 def test_recommendations_count_at_max_is_allowed(client, mock_components):
-    """GET /api/recommendations allows count == max_count (boundary)."""
     app_state.config["recommendations"] = {"max_count": 5}
     mock_components["engine"].generate_recommendations.return_value = []
     mock_components["storage"].get_user_preference_config.return_value = None
@@ -2518,7 +2177,6 @@ def test_recommendations_count_at_max_is_allowed(client, mock_components):
 
 
 def _rec_record(item: ContentItem) -> Recommendation:
-    """Wrap a ContentItem in the recommendation record the engine emits."""
     return Recommendation(
         item=item,
         score=0.85,
@@ -2528,12 +2186,8 @@ def _rec_record(item: ContentItem) -> Recommendation:
 
 
 def test_recommendations_tv_season_payload_includes_db_id(client, mock_components):
-    """GET /api/recommendations serializes a TV season rec with a non-null db_id.
-
-    A season-expanded TV candidate carries its parent show's db_id (id is
-    ``tvdb:42:s1`` but db_id is the show-level row).  The response must surface
-    that db_id so the card renders the Mark complete / Ignore actions.
-    """
+    """A season-expanded TV candidate carries its parent show's db_id (id is
+    ``tvdb:42:s1`` but db_id is the show-level row)."""
     season_item = ContentItem(
         id="tvdb:42:s1",
         db_id=42,
@@ -2556,16 +2210,8 @@ def test_recommendations_tv_season_payload_includes_db_id(client, mock_component
     assert body[0]["db_id"] == 42
 
 
-# ---------------------------------------------------------------------------
-# Export Endpoint Tests (8E)
-# ---------------------------------------------------------------------------
-
-
 class TestExportEndpoint:
-    """Tests for GET /api/items/export HTTP endpoint wiring."""
-
     def test_csv_export(self, client: TestClient, mock_components: dict) -> None:
-        """CSV export returns attachment response with correct media type."""
         mock_items = [
             ContentItem(
                 id="1",
@@ -2587,7 +2233,6 @@ class TestExportEndpoint:
         assert "Test Book" in response.text
 
     def test_json_export(self, client: TestClient, mock_components: dict) -> None:
-        """JSON export returns attachment response with correct media type."""
         mock_items = [
             ContentItem(
                 id="1",
@@ -2614,9 +2259,7 @@ class TestExportEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Bug: the Export button did nothing on the default view, because the
-        endpoint demanded a type. Now no type means every type, on the same
-        terms as ``library export``: ignored items included, filters ignored.
-        """
+        endpoint demanded a type."""
         mock_components["storage"].get_content_items = Mock(
             return_value=[
                 ContentItem(
@@ -2653,9 +2296,7 @@ class TestExportEndpoint:
         self, client: TestClient, mock_components: dict
     ) -> None:
         """Bug: the download body carried a title verbatim, so a spreadsheet
-        evaluated it. Root cause: the CSV writer emitted every cell as stored.
-        Fix: an apostrophe guards a leading formula character.
-        """
+        evaluated it."""
         mock_components["storage"].get_content_items = Mock(
             return_value=[
                 ContentItem(
@@ -2677,29 +2318,19 @@ class TestExportEndpoint:
     def test_invalid_format_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Invalid export format returns 400 error."""
         response = client.get("/api/items/export?type=book&format=xml")
 
         assert response.status_code == 400
         assert "Invalid format" in response.json()["detail"]
 
 
-# ---------------------------------------------------------------------------
-# Update Endpoint 409 Conflict Tests (8F)
-# ---------------------------------------------------------------------------
-
-
 class TestUpdateEndpoint409Conflict:
-    """POST /api/update returns 409 when the SAME source is already syncing.
-
-    Distinct sources can run concurrently after issue #45, so the 409
-    only fires when ``is_running(<source_label>)`` reports True.
-    """
+    """Distinct sources can run concurrently after issue #45, so the 409 only
+    fires when ``is_running(<source_label>)`` reports True."""
 
     def test_update_returns_409_when_same_source_already_running(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """409 surfaces start_sync's atomic check-and-set rejection."""
         with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.is_running.return_value = False
@@ -2719,13 +2350,6 @@ class TestUpdateEndpoint409Conflict:
     def test_update_allows_different_sources_concurrently(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """A second source is accepted while a different source is running.
-
-        Plants a real RUNNING job for Steam in the global SyncManager
-        before triggering a Goodreads RSS sync. The endpoint must reject
-        only when the SAME label is running — different labels return
-        200 even with another sync still in flight.
-        """
         # Plant a running Steam job so the manager genuinely has work in
         # progress when the second POST lands.
         from src.web.sync_manager import SyncJob, SyncStatus, get_sync_manager
@@ -2753,8 +2377,6 @@ class TestUpdateEndpoint409Conflict:
 
         assert response.status_code == 200, response.text
         assert "Sync started" in response.json()["message"]
-        # Manager now tracks both jobs; the Steam one is still running
-        # and the Goodreads one was added on top.
         assert manager.is_running("Steam") is True
         assert "Goodreads Rss" in {
             job["source"] for job in manager.get_status()["jobs"]
@@ -2854,25 +2476,12 @@ class TestASourceAnotherProcessHoldsIsRefused:
 
 
 class TestUpdateEndpointParallelSync:
-    """Tests for max_workers wiring in POST /api/update (issue #45).
-
-    The endpoint must read ``config['sync']['max_workers']`` and forward
-    it to ``execute_multi_source_sync`` so the underlying ThreadPoolExecutor
-    sizes correctly. ``GET /api/sync/status`` must include the per-source
-    progress map in its response so the UI can render parallel progress.
-    """
-
     @staticmethod
     def _make_capture(
         captured_kwargs: dict, completion: threading.Event
     ) -> Callable[..., list[SyncResult]]:
-        """Build a fake execute_multi_source_sync that signals completion.
-
-        The endpoint hands the real call off to a daemon thread, so the
-        test must wait for that thread to invoke the patched function
-        before asserting on captured kwargs. A ``threading.Event`` set
-        from inside the fake is deterministic — no time-budget polling.
-        """
+        """A ``threading.Event`` set from inside the fake is deterministic — no
+        time-budget polling."""
 
         def fake_execute(**kwargs: object) -> list:
             try:
@@ -2890,7 +2499,6 @@ class TestUpdateEndpointParallelSync:
     def test_config_max_workers_forwarded_to_executor(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """config['sync']['max_workers'] is passed to execute_multi_source_sync."""
         app_state.config["sync"] = {"max_workers": 7}
 
         captured_kwargs: dict = {}
@@ -2914,7 +2522,6 @@ class TestUpdateEndpointParallelSync:
     def test_request_body_max_workers_overrides_config(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """max_workers in the POST body overrides config (CLI parity)."""
         app_state.config["sync"] = {"max_workers": 2}
 
         captured_kwargs: dict = {}
@@ -2940,14 +2547,12 @@ class TestUpdateEndpointParallelSync:
     def test_request_body_max_workers_above_ceiling_rejected(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Pydantic le=MAX_WORKERS_CEILING rejects max_workers above the ceiling."""
         response = client.post("/api/update", json={"source": "all", "max_workers": 99})
         assert response.status_code == 422
 
     def test_sync_status_includes_per_source_progress(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """GET /api/sync/status emits a `jobs[]` array with per-source progress."""
         manager = get_sync_manager()
         # Patch Thread so start_sync's daemon thread never runs and the
         # planted per-source progress survives until /sync/status is hit.
@@ -2977,7 +2582,6 @@ class TestUpdateEndpointParallelSync:
         response = client.get("/api/sync/status")
         assert response.status_code == 200
         body = response.json()
-        # New shape: top-level status + jobs[] (multi-job model).
         assert body["status"] == "running"
         assert len(body["jobs"]) == 1
         sources = body["jobs"][0]["sources"]
@@ -2994,7 +2598,6 @@ class TestUpdateEndpointParallelSync:
     def test_sync_status_lists_multiple_concurrent_jobs(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Two jobs keyed by different sources are both reported."""
         manager = get_sync_manager()
         with patch("src.web.sync_manager.threading.Thread"):
             steam = manager.start_sync(source="Steam", sync_function=lambda _job: 0)
@@ -3015,11 +2618,7 @@ class TestUpdateEndpointParallelSync:
 
 
 class TestSyncStatusNamesTheSourceThatFailedRegression:
-    """Reported: a failed source showed the web a badge reading "1 error".
-
-    Cause: errors reached the job as bare strings, keyed on the job label.
-    Fix: each names its source, so the UI shows the CLI's text.
-    """
+    """Reported: a failed source showed the web a badge reading "1 error"."""
 
     REMEDY = (
         "TLS verification failed for Sonarr at https://sonarr.example: bad "
@@ -3095,7 +2694,6 @@ class TestSyncStatusBoundsThePerItemErrorList:
         slot = job["sources"][0]
         assert slot["omitted_errors"] == failures - MAX_REPORTED_ERRORS
         assert len(job["errors"]) + slot["omitted_errors"] == failures
-        # Bounded list, unrounded count.
         assert job["total_items"] == failures
 
 
@@ -3130,10 +2728,7 @@ class TestUpdateEndpointRecordsTheRun:
 
 
 class TestConfigReload:
-    """Tests for POST /api/config/reload."""
-
     def test_reload_success(self, client, mock_components):
-        """Successful config reload returns 200."""
         with patch("src.web.api.reload_config", return_value=True):
             response = client.post("/api/config/reload")
         assert response.status_code == 200
@@ -3141,19 +2736,15 @@ class TestConfigReload:
         assert data["success"] is True
 
     def test_reload_failure(self, client, mock_components):
-        """Failed config reload returns 500."""
         with patch("src.web.api.reload_config", return_value=False):
             response = client.post("/api/config/reload")
         assert response.status_code == 500
 
 
 class TestExchangeEpicTokenEndpoint:
-    """Tests for POST /api/epic/exchange endpoint security behavior."""
-
     def test_successful_exchange_saves_to_db(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Token is saved to DB and never returned in response."""
         app_state.config["inputs"]["epic_games"] = {
             "plugin": "epic_games",
             "enabled": True,
@@ -3187,7 +2778,6 @@ class TestExchangeEpicTokenEndpoint:
     def test_auth_error_returns_generic_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Auth failure returns generic 400 without leaking error details."""
         app_state.config["inputs"]["epic_games"] = {
             "plugin": "epic_games",
             "enabled": True,
@@ -3207,7 +2797,6 @@ class TestExchangeEpicTokenEndpoint:
     def test_epic_not_enabled_returns_400(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Requesting exchange when Epic is disabled returns 400."""
         app_state.config["inputs"]["epic_games"] = {
             "plugin": "epic_games",
             "enabled": False,
@@ -3224,7 +2813,6 @@ class TestExchangeEpicTokenEndpoint:
     def test_unexpected_error_returns_500(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Unexpected errors produce a generic 500 without leaking internals."""
         app_state.config["inputs"]["epic_games"] = {
             "plugin": "epic_games",
             "enabled": True,
@@ -3248,10 +2836,7 @@ class TestExchangeEpicTokenEndpoint:
 
 
 class TestEpicStatus:
-    """Tests for GET /api/epic/status."""
-
     def test_epic_enabled_connected(self, client, mock_components):
-        """Epic enabled and connected returns correct flags."""
         with (
             patch("src.web.api.is_epic_enabled", return_value=True),
             patch("src.web.api.has_epic_token", return_value=True),
@@ -3268,7 +2853,6 @@ class TestEpicStatus:
         assert data["auth_url"] == "https://www.epicgames.com/id/login?test"
 
     def test_epic_disabled(self, client, mock_components):
-        """Epic disabled returns enabled=False and no auth_url."""
         with (
             patch("src.web.api.is_epic_enabled", return_value=False),
             patch("src.web.api.has_epic_token", return_value=False),
@@ -3281,7 +2865,6 @@ class TestEpicStatus:
         assert data["auth_url"] is None
 
     def test_epic_enabled_auth_url_failure_returns_null(self, client, mock_components):
-        """When get_epic_auth_url raises, status returns 200 with auth_url=None."""
         with (
             patch("src.web.api.is_epic_enabled", return_value=True),
             patch("src.web.api.has_epic_token", return_value=False),
@@ -3299,19 +2882,10 @@ class TestEpicStatus:
 
 
 class TestExchangeEpicTokenEndpointRegression:
-    """Guards against token persistence writing to config files in Docker."""
-
     def test_exchange_succeeds_with_readonly_config_regression(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        """Regression: Epic exchange succeeds even when config is read-only.
-
-        Bug reported: Docker mounts config as a read-only volume. OAuth
-        completion failed with OSError in Docker environments.
-        Root cause: token persistence used config file write instead of DB.
-        Fix: tokens are now saved exclusively via save_epic_token() to the
-        credential database, which is never a read-only mount.
-        """
+        """Bug reported: Docker mounts config as a read-only volume."""
         app_state.config["inputs"]["epic_games"] = {
             "plugin": "epic_games",
             "enabled": True,
@@ -3332,8 +2906,6 @@ class TestExchangeEpicTokenEndpointRegression:
                 "/api/epic/exchange", json={"code_or_json": "valid_code"}
             )
 
-        # Token goes to DB via save_epic_token, not to the config file.
-        # The endpoint has no config-write path — this is the fix.
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
@@ -3343,15 +2915,8 @@ class TestExchangeEpicTokenEndpointRegression:
 
 
 class TestAuthDisconnectEndpoints:
-    """Tests for DELETE /api/gog/token and /api/epic/token (matches CLI auth disconnect)."""
-
     @pytest.fixture(autouse=True)
     def oauth_sources(self, mock_components):
-        """Declare the three sources these deletes address.
-
-        The route resolves the id before deleting anything, so an undeclared
-        one is refused ahead of storage.
-        """
         app_state.config["inputs"].update(
             {
                 "gog": {"plugin": "gog", "enabled": True},
@@ -3377,7 +2942,6 @@ class TestAuthDisconnectEndpoints:
         storage.credentials.delete.assert_not_called()
 
     def test_gog_disconnect_success(self, client, mock_components):
-        """DELETE /api/gog/token removes stored refresh token."""
         storage = mock_components["storage"]
         storage.credentials.delete.return_value = True
 
@@ -3388,7 +2952,6 @@ class TestAuthDisconnectEndpoints:
         storage.credentials.delete.assert_called_once_with(1, "gog", "refresh_token")
 
     def test_gog_disconnect_not_connected(self, client, mock_components):
-        """DELETE /api/gog/token returns 404 when no credential exists."""
         mock_components["storage"].credentials.delete.return_value = False
 
         response = client.delete("/api/gog/token")
@@ -3396,7 +2959,6 @@ class TestAuthDisconnectEndpoints:
         assert response.status_code == 404
 
     def test_gog_disconnect_custom_user_id(self, client, mock_components):
-        """user_id query parameter is forwarded to storage."""
         storage = mock_components["storage"]
         storage.credentials.delete.return_value = True
 
@@ -3407,10 +2969,7 @@ class TestAuthDisconnectEndpoints:
 
 
 class TestTraktStartDeviceFlow:
-    """Tests for POST /api/trakt/start-device-flow."""
-
     def test_returns_user_code_and_url(self, client, mock_components) -> None:
-        """Start returns the user code/verification URL, never the secret."""
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3441,11 +3000,8 @@ class TestTraktStartDeviceFlow:
         assert "secret" not in response.text
 
     def test_not_configured_returns_400(self, client, mock_components) -> None:
-        """Start returns 400 with a generic message when creds are missing.
-
-        The raw resolver error (which can name config internals) must never
-        reach the client; only the generic message is surfaced.
-        """
+        """The raw resolver error (which can name config internals) must never reach
+        the client; only the generic message is surfaced."""
         with patch(
             "src.web.api.resolve_trakt_client_credentials",
             side_effect=TraktAuthError("Trakt is not configured."),
@@ -3457,10 +3013,7 @@ class TestTraktStartDeviceFlow:
 
 
 class TestTraktPollDeviceApproval:
-    """Tests for POST /api/trakt/poll-device-approval."""
-
     def test_success_saves_token(self, client, mock_components) -> None:
-        """A SUCCESS poll saves the refresh token and reports connected."""
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3483,7 +3036,6 @@ class TestTraktPollDeviceApproval:
         )
 
     def test_pending_returns_status(self, client, mock_components) -> None:
-        """A PENDING poll returns connected=False with the status."""
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3516,11 +3068,6 @@ class TestTraktPollDeviceApproval:
     def test_non_terminal_statuses_return_message(
         self, client, mock_components, status
     ) -> None:
-        """SLOW_DOWN/EXPIRED/DENIED polls return connected=False with a message.
-
-        The endpoint must surface a human-readable message for every documented
-        device-poll status, not just PENDING — the frontend renders it verbatim.
-        """
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3546,11 +3093,6 @@ class TestTraktPollDeviceApproval:
     def test_success_without_refresh_token_returns_500(
         self, client, mock_components
     ) -> None:
-        """A SUCCESS result missing a refresh token fails closed with a 500.
-
-        The endpoint must not save an empty credential or 200 a non-connection;
-        an explicit check (not a stripped assert) guards this.
-        """
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3571,7 +3113,6 @@ class TestTraktPollDeviceApproval:
         mock_save.assert_not_called()
 
     def test_poll_error_message_is_generic(self, client, mock_components) -> None:
-        """A poll TraktAuthError surfaces only the generic message, never raw."""
         with (
             patch(
                 "src.web.api.resolve_trakt_client_credentials",
@@ -3590,7 +3131,6 @@ class TestTraktPollDeviceApproval:
         assert response.json()["detail"] == "Trakt authentication failed"
 
     def test_short_device_code_rejected(self, client, mock_components) -> None:
-        """A device_code shorter than the min length is rejected before polling."""
         with patch("src.web.api.poll_device_token") as mock_poll:
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "short"}
@@ -3600,18 +3140,14 @@ class TestTraktPollDeviceApproval:
         mock_poll.assert_not_called()
 
 
-# Sensitive and non-sensitive leaves reused across the settings endpoint tests.
 _SETTINGS_SECRET_KEY = "enrichment.providers.tmdb.api_key"
 _SETTINGS_INT_KEY = "recommendations.default_count"
 
 
 class TestSettingsEndpoints:
-    """Global settings API: grouped view, updates + live-apply, reset, secrets.
-
-    Drives ``create_app`` with a real isolated temp-DB StorageManager (mirrors
-    the per-source config suite) so persistence and secret masking are exercised
-    end-to-end without mocks.
-    """
+    """Drives ``create_app`` with a real isolated temp-DB StorageManager
+    (mirrors the per-source config suite) so persistence and secret masking are
+    exercised end-to-end without mocks."""
 
     @pytest.fixture()
     def settings_env(self, tmp_path: Path):
@@ -3660,7 +3196,6 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 200
         assert storage.settings.get(_SETTINGS_INT_KEY) == 7
-        # Live-applied to the running config held in app_state.
         assert config["recommendations"]["default_count"] == 7
         setting = self._find(response.json(), _SETTINGS_INT_KEY)
         assert setting["value"] == 7
@@ -3676,17 +3211,13 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 422
         assert response.json()["detail"]["key"] == "recommendations.max_count"
-        # Nothing persisted and the running config is untouched.
         assert storage.settings.list() == {}
         assert config["recommendations"]["default_count"] == 5
 
     def test_a_rejected_update_leaves_the_next_one_writable(self, settings_env) -> None:
-        """``SettingsValidationError`` unwinds ``writable_config``, lock included.
-
-        A leaked ``_config_lock`` would hang the next settings write rather
-        than name a failure, so the lock is asserted free between the two PUTs
-        and the second one landing is the behavioural half.
-        """
+        """A leaked ``_config_lock`` would hang the next settings write rather than
+        name a failure, so the lock is asserted free between the two PUTs and the
+        second one landing is the behavioural half."""
         client, storage, _config = settings_env
 
         rejected = client.put(
@@ -3709,7 +3240,6 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 200
         assert storage.settings.get("logging.level") == "DEBUG"
-        # Restart-required: persisted but the running config is unchanged.
         assert config["logging"]["level"] == "INFO"
         setting = self._find(response.json(), "logging.level")
         assert setting["restart_required"] is True
@@ -3737,11 +3267,8 @@ class TestSettingsEndpoints:
         assert response.status_code == 404
 
     def test_the_file_import_allowlist_is_not_reachable(self, settings_env) -> None:
-        """``security.allowed_source_roots`` is config.yaml only, by design.
-
-        A caller able to widen it could point a file-based source anywhere and
-        read the host's filesystem, so it is deliberately not a registry leaf.
-        """
+        """A caller able to widen it could point a file-based source anywhere and
+        read the host's filesystem, so it is deliberately not a registry leaf."""
         client, storage, _config = settings_env
         key = "security.allowed_source_roots"
         before = get_allowed_source_roots()
@@ -3774,23 +3301,9 @@ class TestSettingsEndpoints:
         assert storage.settings.get("web.allowed_origins") is None
 
     def test_delete_sensitive_key_is_graceful_not_500(self, settings_env) -> None:
-        """DELETE /api/settings/{key} on a sensitive key must not 500.
-
-        Reported: resetting a secret leaf via the web returns 500 Internal
-        Server Error, while the CLI ``settings reset <secret>`` rejects it
-        cleanly (exit != 0) — a CLI/UI parity break and an ungraceful crash.
-
-        Root cause: ``reset_setting_endpoint`` only guards ``get_entry(key) is
-        None`` (404). A sensitive key IS registered, so it falls through to
-        ``reset_setting``, which raises ``SettingsValidationError`` ("use the
-        secret endpoint for secrets"). That exception is uncaught in the DELETE
-        handler (unlike the PUT and secret handlers), so FastAPI returns 500.
-
-        Expected fix: map the sensitive-key rejection to 422 with the offending
-        key + reason, mirroring the PUT ``/api/settings`` handler so the settings
-        API has one uniform ``SettingsValidationError`` -> HTTP contract. This
-        test asserts that exact 422 shape and that no server crash leaks.
-        """
+        """Reported: resetting a secret leaf via the web returns 500 Internal Server
+        Error, while the CLI ``settings reset <secret>`` rejects it cleanly (exit
+        != 0) — a CLI/UI parity break and an ungraceful crash."""
         client, _storage, _config = settings_env
 
         # The defect surfaces either as an uncaught exception (TestClient
@@ -3823,9 +3336,7 @@ class TestSettingsEndpoints:
 
         assert put.status_code == 204
         assert storage.secrets.has(_SETTINGS_SECRET_KEY) is True
-        # The secret is never persisted in the plaintext settings table.
         assert storage.settings.list() == {}
-        # And it surfaces only as has_secret, never as a value.
         secret = self._find(client.get("/api/settings").json(), _SETTINGS_SECRET_KEY)
         assert secret["has_secret"] is True
         assert "value" not in secret
@@ -3856,15 +3367,10 @@ class TestSettingsEndpoints:
     def test_a_reset_survives_a_reload_that_lands_mid_request(
         self, settings_env
     ) -> None:
-        """The reset writer's half of what the config lock guarantees.
-
-        ``TestConfigReloadRacingASettingsSaveRegression`` pins the same thing
-        for ``PUT``: a writer must publish into the config the server is
-        running, not into the one its ``RequiredConfig`` dependency resolved
-        before ``POST /api/config/reload`` replaced it. Both writers resolve
-        the binding inside ``writable_config`` for that reason, and this is the
-        one that says so for ``DELETE``.
-        """
+        """``TestConfigReloadRacingASettingsSaveRegression`` pins the same thing
+        for ``PUT``: a writer must publish into the config the server is running,
+        not into the one its ``RequiredConfig`` dependency resolved before
+        ``POST /api/config/reload`` replaced it."""
         client, storage, _config = settings_env
         # Pinned, not just performed: this test asserts an absence, and without
         # the override in place the const default is already what both final
@@ -3905,7 +3411,6 @@ _STORAGE_UNAVAILABLE = "Storage unavailable"
 _CONFIG_UNAVAILABLE = "Config unavailable"
 _ENGINE_UNAVAILABLE = "Recommendation engine unavailable"
 
-# The 503 message each guarded component produces, keyed by its AppState field.
 _UNAVAILABLE_DETAIL = {
     "storage": _STORAGE_UNAVAILABLE,
     "config": _CONFIG_UNAVAILABLE,
@@ -3915,15 +3420,6 @@ _UNAVAILABLE_DETAIL = {
 
 @dataclass(frozen=True)
 class _Endpoint:
-    """One API endpoint and the components it needs initialised.
-
-    ``requires`` names ``AppState`` fields, and is empty for an endpoint that
-    needs no initialised component at all. Which of several a handler names
-    first is not observable to a caller, so the tests below assert the set and
-    never the order — reordering two adjacent guard calls changes nothing a
-    caller can see and must not turn anything red.
-    """
-
     method: str
     route: str
     requires: tuple[str, ...] = ()
@@ -4230,7 +3726,6 @@ _GUARD_CASES = [
 
 
 def _served_api_routes(app: FastAPI) -> set[tuple[str, str]]:
-    """Every ``(method, path)`` under ``/api`` the app actually serves."""
     return {
         (method, path)
         for method, path, _ in served_api_operations(app)
@@ -4245,33 +3740,24 @@ _CLASSIFIED_API_ROUTES = {
 
 
 def _clear_dependencies() -> None:
-    """Drop every component but storage, ahead of a request.
-
-    Storage stays because authentication reads the session out of it: gone, a
-    503 answers before any handler's own guard runs.
-    """
+    """Storage stays because authentication reads the session out of it: gone, a
+    503 answers before any handler's own guard runs."""
     app_state.config = None
     app_state.engine = None
 
 
 class TestDependencyGuards:
-    """Every uninitialised dependency answers 503, one message per dependency.
-
-    An absent component is unavailability, not a server fault, and one server
+    """An absent component is unavailability, not a server fault, and one server
     state has to read the same way everywhere: a 500 from ``/api/items`` and a
-    503 from ``/api/profile`` described the identical outage two ways.
-    """
+    503 from ``/api/profile`` described the identical outage two ways."""
 
     @pytest.mark.parametrize(("endpoint", "component"), _GUARD_CASES)
     def test_each_dependency_is_guarded_on_its_own(
         self, client, endpoint, component
     ) -> None:
-        """Down alone, each component is named by every endpoint that needs it.
-
-        Clearing all five at once only ever reaches a handler's first guard, so
-        the second guard on a two-component handler could be deleted with the
-        suite staying green. One component down at a time is what pins it.
-        """
+        """Clearing all five at once only ever reaches a handler's first guard, so
+        the second guard on a two-component handler could be deleted with the suite
+        staying green."""
         setattr(app_state, component, None)
 
         response = client.request(endpoint.method, endpoint.target, json=endpoint.body)
@@ -4281,13 +3767,9 @@ class TestDependencyGuards:
 
     @pytest.mark.parametrize("endpoint", _DEPENDENCY_FREE_ENDPOINTS, ids=_endpoint_id)
     def test_dependency_free_endpoint_still_answers(self, client, endpoint) -> None:
-        """These serve off constants or a manager of their own, so they answer.
-
-        ``< 500`` rather than ``!= 503``: a handler that grows a dependency and
-        hand-rolls a 500 for it belongs in the guarded list, and this is what
-        says so. The classification test alone only proves no route is
-        unlisted, not that it is listed in the right place.
-        """
+        """``< 500`` rather than ``!= 503``: a handler that grows a dependency and
+        hand-rolls a 500 for it belongs in the guarded list, and this is what says
+        so."""
         _clear_dependencies()
         # /config/reload re-reads whatever ``config_path`` names, so it is
         # pinned to the example file here rather than mocked out: a mocked
@@ -4300,12 +3782,9 @@ class TestDependencyGuards:
         assert response.status_code < 500
 
     def test_status_reports_initializing_when_components_are_down(self, client) -> None:
-        """``/api/status`` answers 200 and names the outage, rather than being it.
-
-        The counterpart to every 503 above, and the reason it is not guarded:
-        reporting which components are down is the whole of its contract, so a
-        503 here would replace the report with the thing it reports on.
-        """
+        """The counterpart to every 503 above, and the reason it is not guarded:
+        reporting which components are down is the whole of its contract, so a 503
+        here would replace the report with the thing it reports on."""
         _clear_dependencies()
 
         response = client.get("/api/status")
@@ -4337,7 +3816,6 @@ _OPEN_API_ROUTES = {
 
 
 def _authenticates(route: RouteContext) -> bool:
-    """Whether ``require_session`` is anywhere in *route*'s dependency tree."""
     pending = list(route.dependant.dependencies)
     while pending:
         dependency = pending.pop()
@@ -4348,7 +3826,6 @@ def _authenticates(route: RouteContext) -> bool:
 
 
 def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
-    """Every ``/api`` route the app serves without demanding a session."""
     return {
         (method, path)
         for method, path, route in served_api_operations(app)
@@ -4357,16 +3834,9 @@ def _exempt_api_routes(app: FastAPI) -> set[tuple[str, str]]:
 
 
 class TestEveryApiRouteRequiresASession:
-    """Attached to the routers, so a route is authenticated by being
-    registered. Only the four sign-in routes are exempt: ``GET /api/status``
-    publishes a fingerprint, and nothing here probes it signed out.
-    """
+    """Attached to the routers, so a route is authenticated by being registered."""
 
     def test_a_request_with_an_unknown_cookie_is_401(self, mock_components) -> None:
-        """A dead session is refused like an absent one.
-
-        Every other route: ``test_the_sign_in_routes_are_the_only_exempt_ones``.
-        """
         client = TestClient(
             mock_components["app"], cookies={SESSION_COOKIE: _WRONG_SESSION}
         )
@@ -4380,29 +3850,22 @@ class TestEveryApiRouteRequiresASession:
         assert client.get("/api/status").status_code == 200
 
     def test_the_spa_shell_is_served_without_one(self, anonymous_client) -> None:
-        """It is what collects the credentials, so it cannot require them.
-
-        A browser navigating to ``/`` carries no cookie yet, and the shell
-        holds no library data — only the sign-in form.
-        """
+        """A browser navigating to ``/`` carries no cookie yet, and the shell holds
+        no library data — only the sign-in form."""
         assert anonymous_client.get("/").status_code == 200
 
     def test_the_sign_in_routes_are_the_only_exempt_ones(self, mock_components) -> None:
-        """Read off the dependency tree, so an exemption has to be deliberate.
-
-        Named rather than counted: a new open route would otherwise arrive as
-        an edit to a number, which is not a decision anybody reviews.
-        """
+        """Named rather than counted: a new open route would otherwise arrive as an
+        edit to a number, which is not a decision anybody reviews."""
         assert _exempt_api_routes(mock_components["app"]) == _OPEN_API_ROUTES
 
 
 class TestTheSessionTokenStaysOutOfEverythingObservable:
-    """The cookie is a credential, so nothing a caller or an operator reads
-    back may carry it."""
+    """The cookie is a credential, so nothing a caller or an operator reads back
+    may carry it."""
 
     @pytest.fixture()
     def real_boot(self, mock_config, tmp_path, caplog):
-        """Boot on a real database, capturing everything logged."""
         reset_sync_manager()
         storage = StorageManager(sqlite_path=tmp_path / "test.db")
         with caplog.at_level(logging.DEBUG):
@@ -4441,18 +3904,8 @@ _BODYLESS_METHODS = {"GET", "DELETE"}
 
 
 class TestInjectedDependenciesStayOffTheWire:
-    """A ``Depends`` parameter must not turn into something a caller sends.
-
-    Drop the ``Depends`` from ``RequiredStorage``, ``RequiredEngine`` or
-    ``ResolvedPlugin`` and FastAPI raises at route registration: those
-    annotations are classes it cannot build a field from, so the mistake never
-    reaches a caller. ``RequiredConfig`` is the quiet one. ``dict[str, Any]``
-    is a shape FastAPI can serialise, so unrecognised it becomes a **required
-    request body** — on ``GET /api/settings`` and ``DELETE
-    /api/settings/{key}`` among others, breaking every existing caller of a
-    route that has never had one. A body is not a parameter, so reading
-    ``operation["parameters"]`` is exactly what misses it.
-    """
+    """A body is not a parameter, so reading ``operation["parameters"]`` is
+    exactly what misses it."""
 
     @staticmethod
     def _operations(app: FastAPI) -> list[tuple[str, str, RouteContext]]:
@@ -4463,7 +3916,6 @@ class TestInjectedDependenciesStayOffTheWire:
         ]
 
     def test_no_get_or_delete_route_asks_for_a_body(self, mock_components) -> None:
-        """``body_field`` is the field FastAPI would populate from the request."""
         operations = self._operations(mock_components["app"])
 
         assert operations, "no bodyless /api operations to check"
@@ -4484,22 +3936,9 @@ class TestSourceReadGuardsRegression:
     def test_read_reports_unavailable_rather_than_missing_regression(
         self, client, url
     ) -> None:
-        """Regression: a source read 404s with storage down instead of 503.
-
-        Bug reported: with ``app_state.storage`` unset, a read on a source that
+        """Bug reported: with ``app_state.storage`` unset, a read on a source that
         exists answered 404 "Source not found.", while every write on that same
-        source answered 503 "Storage unavailable".
-        Root cause: ``get_source_schema`` and ``get_source_config_endpoint``
-        reached ``require_plugin`` with no guard in front of it.
-        ``resolve_source_plugin`` reads the plugin name off storage, falling
-        back to config, so with both ``None`` it resolved nothing and the
-        handler raised 404 — blaming the caller for the server being down.
-        Fix: ``require_plugin`` takes ``RequiredStorage`` itself, so no
-        caller can reach the lookup before the outage has been reported.
-        Authentication now reads the session out of storage and reports the
-        same outage first; the caller-visible claim is what this holds, and
-        ``require_plugin``'s own guard is read off the signature below.
-        """
+        source answered 503 "Storage unavailable"."""
         _clear_dependencies()
         app_state.storage = None
 
@@ -4515,22 +3954,9 @@ class TestSourceReadGuardsRegression:
     def test_read_reports_unavailable_with_config_down_regression(
         self, client, mock_components, url
     ) -> None:
-        """Regression: config down left source reads answering off storage alone.
-
-        Bug reported: the sweep above guarded storage and left ``get_config()``
-        passing through, so with ``app_state.config`` unset a source read
-        answered whatever the DB half alone could resolve — 404 "Source not
-        found." for a YAML-only source, 200 off a stale-by-half view for a
-        migrated one — while ``GET /api/sync/sources`` answered 503 for that
-        same server state.
-        Root cause: ``require_plugin`` guarded storage only, and
-        ``resolve_source_plugin`` treats a missing config as "no YAML entry"
-        rather than as an outage.
-        Fix: ``require_plugin`` takes ``RequiredConfig`` too.
-        The DB row is what makes this fail on the bug rather than on an id
-        nothing could resolve: with it the lookup succeeds, so the 503 is the
-        guard firing and nothing else.
-        """
+        """The DB row is what makes this fail on the bug rather than on an id
+        nothing could resolve: with it the lookup succeeds, so the 503 is the guard
+        firing and nothing else."""
         mock_components["storage"].sources.get.return_value = {
             "source_id": "my_books",
             "plugin": "goodreads_rss",
@@ -4544,11 +3970,6 @@ class TestSourceReadGuardsRegression:
         assert response.json()["detail"] == _CONFIG_UNAVAILABLE
 
     def test_write_on_the_same_source_answers_503(self, client) -> None:
-        """The other half of the disagreement: one server state, one resource.
-
-        Paired with the config-down read above, which is the outage a request
-        can still arrive during.
-        """
         _clear_dependencies()
 
         response = client.post("/api/sync/sources/my_books/migrate")
@@ -4558,15 +3979,9 @@ class TestSourceReadGuardsRegression:
 
 
 class TestDependencyGuardPrecedence:
-    """The guard answers before anything else the request could be faulted for.
-
-    A 400 or a 404 raised ahead of the guard reads as the caller's mistake, and
-    the caller cannot tell it from one — which is how the same server state came
-    to have several different answers in the first place.
-    """
+    """The guard answers before anything else the request could be faulted for."""
 
     def test_guard_precedes_the_handlers_own_rejections(self, client) -> None:
-        """An unknown type and an over-max count still answer 503, not 400."""
         _clear_dependencies()
 
         response = client.get("/api/recommendations?type=bogus&count=999999")
@@ -4575,18 +3990,9 @@ class TestDependencyGuardPrecedence:
         assert response.json()["detail"] == _ENGINE_UNAVAILABLE
 
     def test_the_guard_outranks_request_validation_too(self, client) -> None:
-        """Even a request FastAPI would reject is answered with the outage.
-
-        ``count=0`` fails the ``ge=1`` bound, and while the guards were called
-        from the handler body that 422 came back: parsing finished before the
-        handler ran, so the guard never got a say. A guard that IS the
-        parameter is resolved with the rest of the dependency tree, which
-        FastAPI does before validating the endpoint's own params — so the 503
-        now outranks the 422 as well. This is the one answer the conversion
-        changed, and it changed toward this class's rule rather than away from
-        it: the caller is not faulted for a request the server could not have
-        served whatever it said.
-        """
+        """``count=0`` fails the ``ge=1`` bound, and while the guards were called
+        from the handler body that 422 came back: parsing finished before the handler
+        ran, so the guard never got a say."""
         _clear_dependencies()
 
         response = client.get("/api/recommendations?type=book&count=0")
@@ -4595,7 +4001,6 @@ class TestDependencyGuardPrecedence:
         assert response.json()["detail"] == _ENGINE_UNAVAILABLE
 
     def test_guard_precedes_lookup_of_an_unresolvable_source_id(self, client) -> None:
-        """A non-ASCII id no source could carry reports the outage, not a miss."""
         _clear_dependencies()
 
         response = client.post("/api/sync/sources/%F0%9F%92%A9/migrate")
@@ -4605,19 +4010,12 @@ class TestDependencyGuardPrecedence:
 
 
 class TestUnguardedReadsAreOptional:
-    """``requires`` proves which components produce a 503; nothing there proves
-    the unlisted ones were left out deliberately. Harden one of these reads
-    into a guard and the 200 becomes a 503 with every case above still green.
-    """
+    """Harden one of these reads into a guard and the 200 becomes a 503 with
+    every case above still green."""
 
     def test_recommendations_serve_without_the_config(
         self, client, mock_components
     ) -> None:
-        """The count bound falls back to the registered default without it.
-
-        Storage is no longer cleared alongside it: authentication reads the
-        session out of storage, so no request arrives with it down.
-        """
         mock_components["engine"].generate_recommendations.return_value = []
         app_state.config = None
 
@@ -4640,25 +4038,12 @@ class TestUnguardedReadsAreOptional:
 
 
 class TestSourceCreateReadsBothHalvesRegression:
-    """The last unguarded read on the sync-sources surface.
-
-    Bug reported: ``POST /api/sync/sources`` passed ``get_config()`` straight
-    into ``create_source``, which refuses an id YAML already defines. With
-    config down that check saw no ``inputs`` section and read it as "no
-    collision possible", so the create the server would have answered 409 to
-    succeeded instead and planted a database source over the YAML one — the
-    same one-state-two-answers shape the other source routes were swept for,
-    except that here the wrong answer is a write.
-    Root cause: the endpoint guarded storage only, so config being unreadable
-    was indistinguishable from there being nothing to read.
-    Fix: the endpoint takes ``RequiredConfig``, and is classified
-    ``('storage', 'config')`` alongside every other route that reads both.
-    """
+    """Bug reported: ``POST /api/sync/sources`` passed ``get_config()`` straight
+    into ``create_source``, which refuses an id YAML already defines."""
 
     def test_create_refuses_rather_than_shadowing_a_yaml_source(
         self, client, mock_components
     ) -> None:
-        """With config down the create is refused, and nothing is written."""
         storage = mock_components["storage"]
         storage.sources.get.return_value = None
         app_state.config = None
@@ -4704,23 +4089,12 @@ _PLUGIN_ROUTES_WITH_A_BODY = [
 
 
 class TestPluginLookupVersusRequestValidation:
-    """The URL is answered before the body, on the routes carrying both.
-
-    ``require_plugin`` is a dependency now rather than the handler's first
-    statement, so FastAPI resolves it with the rest of the dependency tree —
-    ahead of validating the endpoint's own params — and its 404 outranks the
-    422 an invalid body used to get. That is the accepted answer
-    rather than a regression, and it is the same argument as the 503 that now
-    outranks a 422: the URL names a resource this server cannot serve, so
-    reporting the body error would be faulting the caller for a request that
-    could never have succeeded whatever it said. Fix the id, then the body.
-    """
+    """The URL is answered before the body, on the routes carrying both."""
 
     @pytest.mark.parametrize("url", _PLUGIN_ROUTES_WITH_A_BODY)
     def test_an_unresolvable_source_outranks_an_invalid_body(
         self, client, mock_components, url
     ) -> None:
-        """Bad body plus unknown id answers 404 for the id, not 422 for the body."""
         mock_components["storage"].sources.get.return_value = None
 
         response = client.put(url, json={})
@@ -4739,20 +4113,12 @@ _BLOCKED_GRACE_SECONDS = 0.5
 
 
 class TestSlowRequestsDoNotStallTheServerRegression:
-    """A request in flight must not hold the loop against every other one.
-
-    Bug reported: while a recommendation generation was running, the Data
-    page's two-second sync poll froze, so sync progress appeared stuck.
-    Root cause: ``get_recommendations`` was ``async def`` with no ``await`` in
-    its body, so FastAPI ran the whole scoring pass directly on the event loop.
-    Fix: the handler is plain ``def``, which Starlette runs in a threadpool
-    worker, leaving the loop free to serve everything else.
-    """
+    """Bug reported: while a recommendation generation was running, the Data
+    page's two-second sync poll froze, so sync progress appeared stuck."""
 
     def test_status_answers_while_a_recommendation_is_in_flight(
         self, mock_components
     ) -> None:
-        """A concurrent ``/api/status`` returns before the slow request does."""
         engine_reached = threading.Event()
         release_engine = threading.Event()
         engine_returned = threading.Event()
@@ -4770,7 +4136,6 @@ class TestSlowRequestsDoNotStallTheServerRegression:
         # The context-manager form shares ONE portal, so both requests land on
         # one event loop. A bare TestClient builds a portal per request, each
         # with a loop of its own, where this stall cannot be observed at all.
-        # Clearing config_path keeps that lifespan off the config watcher.
         app_state.config_path = None
 
         with (
@@ -4794,11 +4159,8 @@ class TestSlowRequestsDoNotStallTheServerRegression:
 def _awatch_reporting_one_change_on(
     trigger: threading.Event,
 ) -> Callable[[Path], AsyncIterator[set[tuple[str, str]]]]:
-    """A ``watchfiles.awatch`` stand-in reporting one change when *trigger* is set.
-
-    Waits off the loop so the fake is never itself the thing stalling it, which
-    is what the test using this is trying to observe.
-    """
+    """Waits off the loop so the fake is never itself the thing stalling it, which
+    is what the test using this is trying to observe."""
 
     async def awatch(path: Path) -> AsyncIterator[set[tuple[str, str]]]:
         await asyncio.to_thread(trigger.wait, _STALL_TIMEOUT_SECONDS)
@@ -4809,22 +4171,11 @@ def _awatch_reporting_one_change_on(
 
 
 class TestTheConfigWatcherDoesNotStallTheServerRegression:
-    """The fourth config writer is a task on the serving loop, and must not be.
-
-    Defect: ``ConfigWatcher._watch`` called ``reload_config()`` straight, so the
-    event loop itself waited on the config lock — held by ``PUT /api/settings``
-    across a whole registry sweep, one SQLite connection per entry — and then on
-    the reload's own file read, migrations and Fernet decrypts. A config file
-    touched during a settings save therefore stopped the server answering
-    anything at all: the head-of-line stall this change exists to remove,
-    reintroduced at the one caller that is not a handler.
-    Fix: ``_watch`` hands the reload to a worker thread.
-    """
+    """The fourth config writer is a task on the serving loop, and must not be."""
 
     def test_status_answers_while_the_watchers_reload_waits_for_the_lock(
         self, mock_components
     ) -> None:
-        """A concurrent ``/api/status`` returns before the blocked reload does."""
         lock_held = threading.Event()
         release_lock = threading.Event()
         file_changed = threading.Event()
@@ -4872,11 +4223,8 @@ class TestTheConfigWatcherDoesNotStallTheServerRegression:
 
 @pytest.fixture()
 def settings_app(tmp_path: Path):
-    """A booted app over a real temp-DB store, plus that store.
-
-    The settings suite's own fixture in miniature; a module-level copy because
-    a fixture defined inside a class is not visible from another one.
-    """
+    """The settings suite's own fixture in miniature; a module-level copy because
+    a fixture defined inside a class is not visible from another one."""
     reset_sync_manager()
     storage = StorageManager(sqlite_path=tmp_path / "settings.db")
     config = {
@@ -4889,24 +4237,11 @@ def settings_app(tmp_path: Path):
 
 
 class TestConfigReloadRacingASettingsSaveRegression:
-    """Every writer of the running config has to be kept apart from the others.
-
-    Defect: the sweep left ``PUT /api/settings`` and ``DELETE
-    /api/settings/{key}`` ``async`` because the single event loop is the only
-    thing serialising a write to the running config — and then converted
-    ``POST /api/config/reload``, which writes the running config too and
-    wholesale, to plain ``def``. In a threadpool worker it can rebind
-    ``app_state.config`` while a save is mid-request, and the save then
-    publishes its live-apply into the dict nobody reads any more: the database
-    keeps the new value, the running config keeps the old one, and nothing
-    reports an error. That is the exact disagreement the two exceptions exist
-    to prevent, arriving through the third writer.
-    """
+    """Every writer of the running config has to be kept apart from the others."""
 
     def test_a_save_survives_a_reload_that_lands_mid_request(
         self, settings_app
     ) -> None:
-        """The value the save persisted is the value the server is running."""
         client, storage = settings_app
         save_holds_its_config = threading.Event()
         reload_finished = threading.Event()
@@ -4943,20 +4278,7 @@ class TestConfigReloadRacingASettingsSaveRegression:
     def test_a_reload_cannot_land_while_a_save_holds_the_lock(
         self, settings_app
     ) -> None:
-        """The lock itself, rather than what surviving a reload looks like.
-
-        The two tests above pass with ``with _config_lock:`` deleted from both
-        of its sites: the reload simply completes first, and the save then
-        resolves the new binding inside ``writable_config`` and publishes into
-        that, so the database and the running config still agree. What they pin
-        is the re-resolution, which is worth pinning and is not this.
-
-        This one parks the save inside its locked block and then asks the
-        reload to run. ``load_config`` is the reload's first statement inside
-        the lock, so calling it at all is the reload having got past a lock
-        that should have stopped it — and with the lock removed the whole
-        request completes here rather than after the save is released.
-        """
+        """The lock itself, rather than what surviving a reload looks like."""
         client, storage = settings_app
         save_inside_the_lock = threading.Event()
         release_save = threading.Event()
@@ -4994,13 +4316,8 @@ class TestConfigReloadRacingASettingsSaveRegression:
 
 
 class TestOverlappingPreferenceWritesRegression:
-    """Two preference writes at once must both survive.
-
-    Bug: the handler read, merged and wrote as three calls, so the later write
-    stored a blob built before the earlier landed, losing all of
-    ``users.settings``.
-    Fix: storage merges under ``_save_lock``.
-    """
+    """Bug: the handler read, merged and wrote as three calls, so the later write
+    stored a blob built before the earlier landed, losing all of ``users.settings``."""
 
     def test_the_first_write_survives_a_second_that_overlaps_it(
         self, settings_app
@@ -5052,9 +4369,6 @@ class TestOverlappingPreferenceWritesRegression:
         assert stored.scorer_weights == {"genre_match": 3.0}
 
 
-# Each lazily-built process singleton behind the sync endpoints: the accessor,
-# its reset hook, the name its module builds, and the lock the build is supposed
-# to happen under.
 _LAZY_SINGLETONS = [
     pytest.param(
         get_sync_manager,
@@ -5068,17 +4382,8 @@ _LAZY_SINGLETONS = [
 
 
 class TestLazySingletonsAreBuiltOnceRegression:
-    """A cold process must not hand two callers two managers.
-
-    Bug reported: sync progress freezes — a job started through ``POST
-    /api/update`` never appears in ``GET /api/sync/status``.
-    Root cause: ``get_sync_manager`` is a check-then-set with no lock, and the
-    threadpool conversion made both of its callers plain ``def``. Two requests
-    arriving together on a cold process both see ``None`` and each keep a
-    manager of their own, so the job lives in one and the status endpoint reads
-    the other.
-    Fix: the lazy build happens under a module-level lock.
-    """
+    """Bug reported: sync progress freezes — a job started through
+    ``POST /api/update`` never appears in ``GET /api/sync/status``."""
 
     @pytest.mark.parametrize(
         ("acquire", "reset", "target", "manager_class", "module_lock"), _LAZY_SINGLETONS
@@ -5086,19 +4391,7 @@ class TestLazySingletonsAreBuiltOnceRegression:
     def test_two_cold_callers_share_one_manager(
         self, acquire, reset, target, manager_class, module_lock
     ) -> None:
-        """Forced interleaving, not a race: the build cannot finish unreleased.
-
-        The first caller is parked inside the constructor until the test lets
-        it out, so the second reaches the accessor while the first is still
-        building — the window the missing lock left open. Unlocked, the second
-        passes the ``is None`` check and builds a second manager, and ``built``
-        ends up holding two objects that are not each other.
-
-        The constructor asserts the lock is held rather than the test asserting
-        the second caller has not finished: "not done yet" is also what a
-        thread that has merely been descheduled looks like, so it would hold on
-        the unlocked code too.
-        """
+        """Forced interleaving, not a race: the build cannot finish unreleased."""
         building = threading.Event()
         release = threading.Event()
         built: list[Any] = []
@@ -5143,9 +4436,8 @@ def _api_log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 class TestExoticBreaksCannotForgeAnApiLogLine:
-    """``\\u2028`` is the case a reviewer misses and ``str.splitlines`` does not,
-    so each sink is driven with every break the shared constant names.
-    """
+    """``\\u2028`` is the case a reviewer misses and ``str.splitlines`` does
+    not, so each sink is driven with every break the shared constant names."""
 
     @pytest.mark.parametrize("breaker", LINE_BREAKS)
     def test_a_recommendation_failure_stays_on_one_line(
@@ -5175,12 +4467,7 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
 
 
 class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
-    """Reported: two spellings of exception logging, and one drops the class.
-
-    Bug: ``sanitize_for_log(str(exc))`` in a catch-all ``except Exception``
-    logs a trailing colon and nothing else for a bare ``TimeoutError()``.
-    Fix: both go through ``exception_for_log``.
-    """
+    """Reported: two spellings of exception logging, and one drops the class."""
 
     def test_the_recommendations_sink_names_it(
         self,
@@ -5221,13 +4508,7 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
 
 
 class TestANonUtf8ThemeNameStillWritesItsWarningRegression:
-    """Reported by QA: the warning for a bad theme directory disappeared.
-
-    Bug: ``os.listdir`` surrogate-escapes a name that is not valid UTF-8, the
-    encoder raised on it, and the only content of the warning deleted the
-    warning.
-    Fix: ``sanitize_for_log`` escapes surrogates.
-    """
+    """Reported by QA: the warning for a bad theme directory disappeared."""
 
     def test_the_warning_reaches_the_log_file(self, tmp_path: Path) -> None:
         theme_dir = tmp_path / os.fsdecode(b"solar\xff")
@@ -5250,12 +4531,7 @@ class TestANonUtf8ThemeNameStillWritesItsWarningRegression:
 
 
 class TestNoLogEscapeReachesAResponseBodyRegression:
-    """Reported: a title came back holding a literal ``\\n`` where one was.
-
-    Bug: both title-echoing endpoints were routed through
-    ``sanitize_for_log``, which shapes a value for a log file, not a client.
-    Fix: the body carries the stored title.
-    """
+    """Reported: a title came back holding a literal ``\\n`` where one was."""
 
     def test_ignore_echoes_the_stored_title(self, client, mock_components) -> None:
         mock_components["storage"].get_content_item = Mock(
@@ -5299,22 +4575,15 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
     def test_the_echoed_title_can_never_hold_a_lone_surrogate(
         self, surrogate: str
     ) -> None:
-        """The door refuses one, so nothing downstream has to read past it.
-
-        ``json.loads`` accepts an unpaired ``\\ud800`` escape, and the model
-        bound is the only thing keeping one out of a stored title.
-        """
+        """``json.loads`` accepts an unpaired ``\\ud800`` escape, and the model
+        bound is the only thing keeping one out of a stored title."""
         with pytest.raises(ValidationError):
             src.web.api.CompletionRequest(content_type="book", title=f"Dune{surrogate}")
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])
     def test_the_refusal_itself_renders(self, surrogate: str, mock_components) -> None:
-        """Regression: the refusal above answered 500.
-
-        Bug: the 422 quotes the rejected input back, and ``json.loads``
-        accepts an unpaired ``\\ud800`` escape, so the refusal could not
-        render. Sent as raw ASCII bytes: ``json=`` declines to encode one.
-        """
+        """Bug: the 422 quotes the rejected input back, and ``json.loads`` accepts
+        an unpaired ``\\ud800`` escape, so the refusal could not render."""
         tolerant = authenticated_client(
             mock_components["app"], raise_server_exceptions=False
         )
@@ -5357,12 +4626,8 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
     def test_a_stored_title_holding_a_lone_surrogate_still_answers(
         self, surrogate: str, mock_components
     ) -> None:
-        """Regression: no request model stands between storage and this body.
-
-        Bug: ``JSONResponse`` encodes strictly, so the ignore succeeded and
-        the caller got a 500.
-        Fix: the app's one response class writes the escape instead.
-        """
+        """Bug: ``JSONResponse`` encodes strictly, so the ignore succeeded and the
+        caller got a 500."""
         mock_components["storage"].get_content_item = Mock(
             return_value=ContentItem(
                 id="ext_1",
@@ -5391,11 +4656,8 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
     def test_the_ignore_body_keeps_a_title_that_encodes(
         self, astral: str, mock_components
     ) -> None:
-        """The escape is for what UTF-8 refuses, never for what it accepts.
-
-        Rendering runs on every title now, so a legible one must survive it
-        byte for byte.
-        """
+        """Rendering runs on every title now, so a legible one must survive it byte
+        for byte."""
         mock_components["storage"].get_content_item = Mock(
             return_value=ContentItem(
                 id="ext_1",
@@ -5434,11 +4696,8 @@ _LONE_SURROGATES = ["\ud800", "\udcff", "\udfff"]
 
 
 def _item_holding(surrogate: str) -> ContentItem:
-    """One item carrying *surrogate* in a column and in the metadata blob.
-
-    The blob is how a real row reaches this code with one: sqlite3 encodes a
-    TEXT bind strictly, while ``json.dumps`` escapes to ASCII first.
-    """
+    """The blob is how a real row reaches this code with one: sqlite3 encodes a
+    TEXT bind strictly, while ``json.dumps`` escapes to ASCII first."""
     return ContentItem(
         id="ext_1",
         db_id=42,
@@ -5450,7 +4709,6 @@ def _item_holding(surrogate: str) -> ContentItem:
 
 
 def _client_reading(mock_components, item: ContentItem) -> TestClient:
-    """A 500-reporting client whose store answers every item read with *item*."""
     storage = mock_components["storage"]
     storage.get_content_items = Mock(return_value=[item])
     storage.get_content_item = Mock(return_value=item)
@@ -5461,9 +4719,7 @@ def _client_reading(mock_components, item: ContentItem) -> TestClient:
 @pytest.mark.parametrize("surrogate", _LONE_SURROGATES)
 class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
     """Bug: a JSON blob column stores an unpaired ``\\ud800`` escape as ASCII,
-    and every body carrying it back was encoded strictly and answered 500.
-    Fix: one response class for the app, encoding with ``backslashreplace``.
-    """
+    and every body carrying it back was encoded strictly and answered 500."""
 
     def test_listing_items_answers(self, surrogate, mock_components) -> None:
         client = _client_reading(mock_components, _item_holding(surrogate))
@@ -5515,9 +4771,8 @@ class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
     def test_exporting_the_library_as_csv_answers(
         self, surrogate, mock_components
     ) -> None:
-        """A CSV cell carries no escape of its own, so the code unit arrives
-        as the six characters ``backslashreplace`` wrote.
-        """
+        """A CSV cell carries no escape of its own, so the code unit arrives as the
+        six characters ``backslashreplace`` wrote."""
         client = _client_reading(mock_components, _item_holding(surrogate))
 
         response = client.get("/api/items/export?type=book&format=csv")
@@ -5529,19 +4784,15 @@ class TestAStoredLoneSurrogate500edEveryEndpointEchoingItRegression:
 class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
     """Bug: a rule stored as ASCII and read back with ``ensure_ascii=False``
     500ed the page — every later read, for good, with no door left to correct
-    the row by.
-    Fix: the app's one response class encodes the escape instead.
-    """
+    the row by."""
 
     RULE = "avoid \ud800"
 
     def test_the_put_door_refuses_one_rather_than_storing_it(
         self, settings_app
     ) -> None:
-        """The rule's length bound makes pydantic read a string it cannot
-        represent, so the row below is the case left — the one with no door to
-        correct it by. Sent raw: ``json=`` declines to encode one.
-        """
+        """The rule's length bound makes pydantic read a string it cannot represent,
+        so the row below is the case left — the one with no door to correct it by."""
         client, storage = settings_app
         tolerant = authenticated_client(client.app, raise_server_exceptions=False)
 
@@ -5575,17 +4826,13 @@ class TestAStoredCustomRulePermanently500edThePreferencesPageRegression:
 class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
     """Bug: FastAPI renders an ``HTTPException`` through its own handler, on a
     stock ``JSONResponse`` the app's class never sees, so a detail holding a
-    lone surrogate answers 500 rather than the refusal.
-    Fix: that handler names the app's encode too.
-    """
+    lone surrogate answers 500 rather than the refusal."""
 
     def test_an_unknown_settings_key_holding_one_is_refused_not_500ed(
         self, settings_app
     ) -> None:
         """``updates`` is a bare ``dict[str, Any]``, so no bound refuses the key
-        at the door and it reaches the 422 detail verbatim. Sent raw because
-        ``json=`` declines to encode one.
-        """
+        at the door and it reaches the 422 detail verbatim."""
         client, _storage = settings_app
         tolerant = authenticated_client(client.app, raise_server_exceptions=False)
 
@@ -5602,10 +4849,9 @@ class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
     def test_a_status_that_may_not_carry_a_body_still_gets_none(
         self, status: int
     ) -> None:
-        """Standing in for FastAPI's handler means keeping the rest of its
-        contract: every status it withholds a body from, and the headers that
-        go with it — a challenge dropped here is a 401 nobody can answer.
-        """
+        """Standing in for FastAPI's handler means keeping the rest of its contract:
+        every status it withholds a body from, and the headers that go with it — a
+        challenge dropped here is a 401 nobody can answer."""
         rendered = asyncio.run(
             _raised_refusal_json_can_carry(
                 Mock(spec=Request),
@@ -5625,10 +4871,9 @@ class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
     def test_every_status_carries_the_detail_and_its_headers(
         self, status: int, surrogate: str
     ) -> None:
-        """The defect was the renderer, not the 422 — one endpoint echoes a
-        caller's key there today, and any status raising a detail built from
-        request text hit the same strict encode.
-        """
+        """The defect was the renderer, not the 422 — one endpoint echoes a caller's
+        key there today, and any status raising a detail built from request text hit
+        the same strict encode."""
         rendered = asyncio.run(
             _raised_refusal_json_can_carry(
                 Mock(spec=Request),
@@ -5648,10 +4893,9 @@ class TestAnHTTPExceptionDetailBypassesTheAppResponseClassRegression:
     def test_the_handler_it_replaced_still_refuses_that_detail(
         self, surrogate: str
     ) -> None:
-        """The counterfactual the app tests cannot show: FastAPI's own handler
-        is what every one of them reached before, and it still raises on the
-        same input — so nothing above passes without the registration.
-        """
+        """The counterfactual the app tests cannot show: FastAPI's own handler is
+        what every one of them reached before, and it still raises on the same input
+        — so nothing above passes without the registration."""
         with pytest.raises(UnicodeEncodeError):
             asyncio.run(
                 http_exception_handler(
@@ -5692,11 +4936,8 @@ def test_edit_item_corrects_the_release_year_and_creator(client, mock_components
 def test_edit_item_rejects_a_correction_outside_the_shared_bounds(
     client, mock_components
 ):
-    """Each refusal is a sentence naming the bound, not a nested 422 list.
-
-    The edit dialog renders ``detail`` and nothing else, so a schema constraint
-    left it with "422 Unprocessable Entity" to show for a mistyped year.
-    """
+    """The edit dialog renders ``detail`` and nothing else, so a schema
+    constraint left it with "422 Unprocessable Entity" to show for a mistyped year."""
     mock_components["storage"].update_item_from_ui = Mock(return_value=True)
 
     for correction, says in (

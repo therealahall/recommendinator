@@ -1,5 +1,3 @@
-"""Tests for text formatting utilities."""
-
 import logging
 import sys
 from pathlib import Path
@@ -25,8 +23,6 @@ ALL_LINE_BREAKS = ["\n", "\r", "\r\n", *EXOTIC_LINE_BREAKS]
 
 
 class TestHumanizeSourceIdBasic:
-    """Tests for basic snake_case to human-readable conversion."""
-
     @pytest.mark.parametrize(
         ("source_id", "expected"),
         [
@@ -35,7 +31,6 @@ class TestHumanizeSourceIdBasic:
         ],
     )
     def test_normal_snake_case_inputs(self, source_id: str, expected: str) -> None:
-        """Normal snake_case source IDs are title-cased with spaces."""
         assert humanize_source_id(source_id) == expected
 
     @pytest.mark.parametrize(
@@ -45,18 +40,13 @@ class TestHumanizeSourceIdBasic:
         ],
     )
     def test_hyphenated_inputs(self, source_id: str, expected: str) -> None:
-        """Hyphenated source IDs split on hyphens like underscores.
-
-        Hyphens became valid source-id characters so the "Add data source"
-        modal can prefill plugin names such as ``calibre-web``; the humanizer
-        must split on both separators to render "Calibre Web".
-        """
+        """Hyphens became valid source-id characters so the "Add data source" modal
+        can prefill plugin names such as ``calibre-web``; the humanizer must split on
+        both separators to render "Calibre Web"."""
         assert humanize_source_id(source_id) == expected
 
 
 class TestHumanizeSourceIdAcronyms:
-    """Tests for acronym uppercasing in humanize_source_id."""
-
     @pytest.mark.parametrize(
         ("source_id", "expected"),
         [
@@ -65,15 +55,12 @@ class TestHumanizeSourceIdAcronyms:
         ],
     )
     def test_acronym_within_multi_word_id(self, source_id: str, expected: str) -> None:
-        """Acronyms within longer snake_case IDs are uppercased correctly."""
         assert humanize_source_id(source_id) == expected
 
 
 class TestSanitizeRuleText:
     """Rules are stripped, not allowlisted: an allowlist ate the ``+`` from
-    ``prefer 4+ star ratings``. Only slot structure and characters that
-    cannot survive a UTF-8 encode go.
-    """
+    ``prefer 4+ star ratings``."""
 
     @pytest.mark.parametrize(
         "rule",
@@ -84,7 +71,6 @@ class TestSanitizeRuleText:
         ],
     )
     def test_operator_typed_characters_survive(self, rule: str) -> None:
-        """Punctuation, accents, CJK and emoji are the operator's own words."""
         assert sanitize_rule_text(rule) == rule
 
     @pytest.mark.parametrize("structure", ['"', "{", "}"])
@@ -94,7 +80,6 @@ class TestSanitizeRuleText:
 
     @pytest.mark.parametrize("code", [0x00, 0x1B, 0x7F, 0x9B, 0xD800])
     def test_no_control_or_surrogate_survives(self, code: int) -> None:
-        """C0, DEL, C1 and both halves of the surrogate range are removed."""
         assert chr(code) not in sanitize_rule_text(f"avoid {chr(code)}horror")
 
     def test_no_codepoint_survives_unencodable(self) -> None:
@@ -132,11 +117,8 @@ class TestStripLoneSurrogates:
 
 
 class TestSanitizeForLog:
-    """Tests for sanitize_for_log — the one helper every log sink uses.
-
-    Escapes rather than strips, unlike the rule sanitizer: a forged log
-    line is the risk, and the reader still wants the value that caused it.
-    """
+    """Escapes rather than strips, unlike the rule sanitizer: a forged log line is
+    the risk, and the reader still wants the value that caused it."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
@@ -148,7 +130,6 @@ class TestSanitizeForLog:
     def test_line_structure_characters_are_escaped(
         self, raw: str, expected: str
     ) -> None:
-        """CR, LF and NUL become their two-character escapes."""
         assert sanitize_for_log(raw) == expected
 
     @pytest.mark.parametrize(
@@ -156,11 +137,9 @@ class TestSanitizeForLog:
         ["攻殻機動隊 📚 «Café»", " ~"],
     )
     def test_only_breaks_controls_and_surrogates_are_targets(self, raw: str) -> None:
-        """Everything else comes back as it came, U+0020 and U+007E included.
-
-        Those two bracket the escaped ASCII ranges; its neighbours in this
-        module are allowlist strippers, and this is not one.
-        """
+        """Everything else comes back as it came, U+0020 and U+007E included. Those
+        two bracket the escaped ASCII ranges; its neighbours in this module are
+        allowlist strippers, and this is not one."""
         assert sanitize_for_log(raw) == raw
 
     @pytest.mark.parametrize("code", [0x00, 0x1B, 0x7F])
@@ -177,12 +156,7 @@ class TestSanitizeForLog:
 
     @pytest.mark.parametrize("code", [0x80, 0x9B, 0x9F])
     def test_every_c1_control_is_escaped(self, code: int) -> None:
-        """Reported: C1 was excluded as bytes UTF-8 never carries.
-
-        Bug: true of the wire, not of the sink. The log file is UTF-8, so a
-        terminal decodes U+009B out of it and obeys CSI.
-        Fix: escaped like C0.
-        """
+        """Reported: C1 was excluded as bytes UTF-8 never carries."""
         control = chr(code)
 
         assert sanitize_for_log(f"Real Title{control}ERROR") == (
@@ -193,28 +167,19 @@ class TestSanitizeForLog:
     def test_the_codepoints_bracketing_the_control_ranges_survive(
         self, neighbour: str
     ) -> None:
-        """U+00A0 sits one past C1 and arrives in real scraped titles.
-
-        Widening the range to 0x9f must not start eating printable Latin-1.
-        """
+        """U+00A0 sits one past C1 and arrives in real scraped titles."""
         assert sanitize_for_log(f"Dune{neighbour}Part Two") == (
             f"Dune{neighbour}Part Two"
         )
 
     @pytest.mark.parametrize("breaker", EXOTIC_LINE_BREAKS)
     def test_the_exotic_breaks_are_escaped_too(self, breaker: str) -> None:
-        """Reported: U+2028 forged a line straight through this function.
-
-        Bug: only \\n, \\r and NUL were escaped, while ``str.splitlines`` and
-        the single-line log format break on eight more.
-        Fix: the escape table is built from the shared ``LINE_BREAKS``.
-        """
+        """Reported: U+2028 forged a line straight through this function."""
         escaped = sanitize_for_log(f"Real Title{breaker}ERROR forged")
 
         assert escaped == f"Real Title\\u{ord(breaker):04x}ERROR forged"
 
     def test_no_codepoint_survives_into_a_second_log_line(self) -> None:
-        """Every codepoint at once still logs as a single line."""
         every_codepoint = "".join(
             f"A{chr(code)}B" for code in range(sys.maxunicode + 1)
         )
@@ -223,11 +188,8 @@ class TestSanitizeForLog:
 
 
 def _write_one_record(message: str, log_file: Path) -> None:
-    """Put one record through a handler built as ``configure_logging`` builds it.
-
-    Strict errors here would test a sink the app does not configure, and the
-    line-forging these cases are about is the same either way.
-    """
+    """Strict errors here would test a sink the app does not configure, and the
+    line-forging these cases are about is the same either way."""
     handler = logging.FileHandler(log_file, encoding="utf-8", errors="backslashreplace")
     handler.setFormatter(logging.Formatter("%(levelname)s | %(message)s"))
     writer = logging.getLogger("tests.sanitize_for_log")
@@ -242,11 +204,8 @@ def _write_one_record(message: str, log_file: Path) -> None:
 
 
 class TestExceptionForLog:
-    """The rendering every catch-all sink uses instead of a traceback.
-
-    ``str(TimeoutError())`` is the empty string, so the class name is the
-    whole diagnostic for a fault that carries no message.
-    """
+    """``str(TimeoutError())`` is the empty string, so the class name is the whole
+    diagnostic for a fault that carries no message."""
 
     def test_a_message_less_exception_still_names_its_class(self) -> None:
         assert exception_for_log(TimeoutError()) == "TimeoutError: "
@@ -257,13 +216,7 @@ class TestExceptionForLog:
 
 
 class TestARequestFaultIsScrubbedWhoeverRendersIt:
-    """Regression: the renderer kept a ``requests`` message whole.
-
-    Bug: consolidating ``_render_error`` dropped its
-    ``isinstance(error, RequestException)`` branch, leaving the scrub to each
-    caller's handler ordering at catch-alls around token exchanges.
-    Fix: :func:`exception_for_log` dispatches on the exception itself.
-    """
+    """Regression: the renderer kept a ``requests`` message whole."""
 
     def test_an_http_fault_surfaces_only_its_status(self) -> None:
         """The message quotes the URL, and providers key it with ``?api_key=``."""
@@ -291,11 +244,7 @@ class TestARequestFaultIsScrubbedWhoeverRendersIt:
 
 
 class TestTheEscapedValueReachesTheFileAsOneLine:
-    """caplog holds a record; the forgery happens in the file it is written to.
-
-    So these drive a real ``FileHandler`` with the single-line format the app
-    configures, and count the physical lines it produced.
-    """
+    """caplog holds a record; the forgery happens in the file it is written to."""
 
     def test_every_break_at_once_writes_one_line(self, tmp_path: Path) -> None:
         log_file = tmp_path / "app.log"
@@ -306,11 +255,7 @@ class TestTheEscapedValueReachesTheFileAsOneLine:
         assert len(log_file.read_text(encoding="utf-8").splitlines()) == 1
 
     def test_a_decoded_csi_reaches_the_file_as_its_escape(self, tmp_path: Path) -> None:
-        """U+009B is ESC[ in one codepoint, so it erases the line unescaped.
-
-        The file is written UTF-8 and read back decoded, which is what the
-        terminal rendering `docker logs` does too.
-        """
+        """U+009B is ESC[ in one codepoint, so it erases the line unescaped."""
         log_file = tmp_path / "app.log"
 
         _write_one_record(sanitize_for_log("Dune\x9b2KERROR | forged"), log_file)
@@ -321,11 +266,7 @@ class TestTheEscapedValueReachesTheFileAsOneLine:
 
 
 class TestALoneSurrogateIsEscaped:
-    """Reported by QA: a surrogate deleted the whole entry, not one character.
-
-    The handlers escape it themselves now, so what turns on this is one
-    readable escape at every sink rather than each codec's own.
-    """
+    """Reported by QA: a surrogate deleted the whole entry, not one character."""
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
     def test_each_end_of_the_range_is_escaped(self, surrogate: str) -> None:
@@ -344,7 +285,6 @@ class TestEveryCodepointIsAccountedFor:
     """Exhaustive sweeps, so a hand-written break list cannot go stale."""
 
     def test_line_break_inventory_is_complete(self) -> None:
-        """No codepoint outside ALL_LINE_BREAKS splits a string in two."""
         breaking = {
             chr(code)
             for code in range(sys.maxunicode + 1)
@@ -353,7 +293,6 @@ class TestEveryCodepointIsAccountedFor:
         assert breaking == set(ALL_LINE_BREAKS) - {"\r\n"}
 
     def test_no_codepoint_survives_as_a_line_break(self) -> None:
-        """Every codepoint at once still sanitizes down to a single line."""
         every_codepoint = "".join(
             f"A{chr(code)}B" for code in range(sys.maxunicode + 1)
         )

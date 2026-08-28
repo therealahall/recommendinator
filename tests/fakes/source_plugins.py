@@ -1,9 +1,3 @@
-"""Shared fake ``SourcePlugin`` implementations and registry states.
-
-The web, CLI and registry suites all need them, so a change to
-``SourcePlugin`` or to discovery only has to update one file.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -21,8 +15,6 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class FakeFilePlugin(SourcePlugin):
-    """File-based fake: a single non-sensitive ``path`` field."""
-
     @property
     def name(self) -> str:
         return "fake_file"
@@ -72,8 +64,6 @@ class FakeFilePlugin(SourcePlugin):
 
 
 class FakeApiPlugin(SourcePlugin):
-    """API-based fake: sensitive ``api_key`` plus str/int/list/bool fields."""
-
     @property
     def name(self) -> str:
         return "fake_api"
@@ -159,11 +149,6 @@ UNLOADED_PLUGIN_DETAIL = (
 
 @pytest.fixture()
 def registry_with_source_fakes() -> Iterator[None]:
-    """Replace the ``PluginRegistry`` singleton with the two source-config fakes.
-
-    Use ``@pytest.mark.usefixtures("registry_with_source_fakes")`` on the
-    test class. The registry is restored on teardown.
-    """
     registry = PluginRegistry.get_instance()
     registry._discovered = True
     registry._plugins.clear()
@@ -176,11 +161,7 @@ def registry_with_source_fakes() -> Iterator[None]:
 
 @pytest.fixture()
 def registry_with_a_failed_import() -> Iterator[None]:
-    """The two fakes, plus a module discovery could not import.
-
-    ``tests/test_registry.py`` proves a raising module lands here; this is the
-    same state, reached without a real broken module in the tree.
-    """
+    """``tests/test_registry.py`` proves a raising module lands here."""
     registry = PluginRegistry.get_instance()
     registry._discovered = True
     registry._plugins.clear()
@@ -199,7 +180,6 @@ BROKEN_PRIVATE_REASON = "ModuleNotFoundError: no module named 'httpx'"
 
 
 def _private_module_names() -> list[str]:
-    """The imported ``private`` package and its submodules, if any."""
     return [
         name
         for name in list(sys.modules)
@@ -209,10 +189,7 @@ def _private_module_names() -> list[str]:
 
 @pytest.fixture()
 def private_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """An empty ``private/plugins/`` the next discovery pass scans instead.
-
-    The scan reads the project root off ``registry.py``, three levels down.
-    """
+    """The scan reads the project root off ``registry.py``, three levels down."""
     private_path = tmp_path / "private" / "plugins"
     private_path.mkdir(parents=True)
     (private_path.parent / "__init__.py").write_text("")
@@ -236,11 +213,6 @@ def private_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
 
 @pytest.fixture()
 def registry_with_a_broken_private_module(private_plugins: Path) -> Iterator[None]:
-    """A private module that raises on import, reached through real discovery.
-
-    Nothing is injected here, unlike ``registry_with_a_failed_import``, so the
-    whole path from the private scan to the interface is under test.
-    """
     (private_plugins / f"{BROKEN_PRIVATE_MODULE}.py").write_text(
         "raise ModuleNotFoundError(\"no module named 'httpx'\")\n"
     )

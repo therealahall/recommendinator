@@ -1,11 +1,6 @@
-"""Tests for the taste-signal index behind adaptations and references.
-
-The behaviour these lookups produce is pinned by
-``tests/test_recommendation_engine.py``. What is pinned here is the
-cost: each signal item is derived once per request, and a candidate reaches
-its matches through the index rather than by comparing itself against the
-whole signal set.
-"""
+"""What is pinned here is the cost: each signal item is derived once per request,
+and a candidate reaches its matches through the index rather than by comparing
+itself against the whole signal set."""
 
 from __future__ import annotations
 
@@ -34,7 +29,6 @@ _DERIVERS = ("extract_genres", "extract_creator", "get_series_name", "get_sort_t
 
 
 def _signal_item(index: int, *, genre: str, content_type: ContentType) -> ContentItem:
-    """One consumed item with a title, author and genre unique to *index*."""
     return make_item(
         item_id=f"signal-{index}",
         db_id=index,
@@ -48,7 +42,6 @@ def _signal_item(index: int, *, genre: str, content_type: ContentType) -> Conten
 
 
 def _candidate(index: int, *, genre: str, content_type: ContentType) -> ContentItem:
-    """One unconsumed item with a title, author and genre unique to *index*."""
     return make_item(
         item_id=f"candidate-{index}",
         db_id=1000 + index,
@@ -61,8 +54,6 @@ def _candidate(index: int, *, genre: str, content_type: ContentType) -> ContentI
 
 
 def _storage_over(items: list[ContentItem]) -> Mock:
-    """A spec'd StorageManager serving *items* from memory."""
-
     def completed(content_type: ContentType | None = None, **_: Any) -> list[Any]:
         return [
             item
@@ -90,26 +81,11 @@ def _storage_over(items: list[ContentItem]) -> Mock:
 
 
 class TestDerivedValuesComputedOncePerItemRegression:
-    """Regression: matching re-derived every signal item for every candidate.
-
-    Symptom: a recommendation request over a real library spent most of its
-    time normalising the same handful of consumed items over and over. A
-    season-expanded TV library turns 300 shows into thousands of candidates,
-    and each one re-derived the whole signal set.
-
-    Root cause: adaptation and contributing-reference matching each looped over
-    the entire signal set per candidate, and called ``get_sort_title``,
-    ``extract_genres``, ``extract_creator`` and ``get_series_name`` on the
-    consumed side *inside* that inner loop, so every derived value was
-    recomputed once per (candidate, consumed item) pair.
-
-    Fix: ``SignalIndex`` derives each signal item's values once when it is
-    built, and the engine builds it once per request.
-    """
+    """Symptom: a recommendation request over a real library spent most of its time
+    normalising the same handful of consumed items over and over."""
 
     @pytest.fixture
     def counted_derivers(self, monkeypatch) -> Counter[tuple[str, str]]:
-        """Count each deriver's calls, keyed by the argument it was given."""
         counts: Counter[tuple[str, str]] = Counter()
 
         def counting(name: str):
@@ -127,12 +103,8 @@ class TestDerivedValuesComputedOncePerItemRegression:
         return counts
 
     def test_each_signal_item_is_derived_once_per_request(self, counted_derivers):
-        """20 signal items against 12 candidates: one derivation each, not 240.
-
-        Titles and authors are unique per item, so a per-string count is a
-        per-item count. The pre-fix code called every one of these four
-        functions once per pair.
-        """
+        """Titles and authors are unique per item, so a per-string count is a per-item
+        count."""
         signal_items = [
             _signal_item(index, genre="Science Fiction", content_type=ContentType.BOOK)
             for index in range(20)
@@ -161,16 +133,11 @@ class TestDerivedValuesComputedOncePerItemRegression:
 
 
 class TestMatchingGoesThroughTheIndex:
-    """A candidate is compared against what the index reaches, not everything.
-
-    Before the index each candidate ran the full comparison against every
-    citable signal item, and normalised every signal title while looking for
-    adaptations. Both now cost only the items a lookup returns.
-    """
+    """Before the index each candidate ran the full comparison against every citable
+    signal item, and normalised every signal title while looking for adaptations."""
 
     @staticmethod
     def _crowd(genre: str, content_type: ContentType) -> list[ContentItem]:
-        """200 highly rated signal items sharing nothing but their genre."""
         return [
             _signal_item(index, genre=genre, content_type=content_type)
             for index in range(200)
@@ -178,7 +145,6 @@ class TestMatchingGoesThroughTheIndex:
 
     @staticmethod
     def _cyberpunk_candidate() -> ContentItem:
-        """A candidate whose one genre the crowd below does not share."""
         return make_item(
             item_id="candidate",
             title="Cyberpunk Candidate",
@@ -189,11 +155,8 @@ class TestMatchingGoesThroughTheIndex:
 
     @pytest.fixture
     def compared_ids(self, monkeypatch) -> list[str]:
-        """Record the id of every signal item a candidate is scored against.
-
-        Scoring happens only during a lookup, never while the index is built,
-        so patching here counts lookups whenever the index is constructed.
-        """
+        """Scoring happens only during a lookup, never while the index is built, so
+        patching here counts lookups whenever the index is constructed."""
         compared: list[str] = []
         real_overlap = reference_index_module._pair_overlap
 
@@ -205,7 +168,6 @@ class TestMatchingGoesThroughTheIndex:
         return compared
 
     def test_only_signal_items_a_lookup_reaches_are_compared(self, compared_ids):
-        """One shared genre in a crowd of 200 costs exactly one comparison."""
         related = make_item(
             item_id="related",
             title="Shared Genre",
@@ -223,18 +185,11 @@ class TestMatchingGoesThroughTheIndex:
 
 
 class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
-    """The lookup plus its fill must choose the same three items a scan did.
-
-    A same-type signal item the user rated highly qualifies on its rating
-    alone, so no genre or creator lookup reaches it. Those are offered from a
-    list kept in signal order, and what these pin is that the three slots end
-    up holding exactly what comparing the candidate against every signal item
-    would have put in them.
-    """
+    """A same-type signal item the user rated highly qualifies on its rating alone,
+    so no genre or creator lookup reaches it."""
 
     @staticmethod
     def _liked_westerns(count: int, content_type: ContentType) -> list[ContentItem]:
-        """*count* highly rated items sharing a genre the candidates never have."""
         return [
             make_item(
                 item_id=f"liked-{index}",
@@ -248,11 +203,8 @@ class TestSameTypeSlotsHoldWhatAFullScanWouldHold:
         ]
 
     def test_the_fill_skips_the_candidates_own_series_before_taking_three(self) -> None:
-        """Excluded seasons must not consume the three slots they are barred from.
-
-        Filling first and excluding afterwards would return one reference
-        instead of three, which is what a full scan returns.
-        """
+        """Filling first and excluding afterwards would return one reference instead
+        of three, which is what a full scan returns."""
         expanse = [
             make_item(
                 item_id=f"expanse-s{season}",
@@ -284,7 +236,6 @@ class TestCrossTypeReferencesReachedByCreator:
     """A shared creator is a way in that owes nothing to genres or clusters."""
 
     def test_a_shared_creator_cites_an_item_of_another_type(self) -> None:
-        """No shared cluster, but the same author clears the cross-type minimum."""
         consumed = make_item(
             item_id="dust-roads",
             title="Dust Roads",
@@ -312,11 +263,8 @@ class TestReferenceGroupOrder:
     """The candidate's own type leads, and the rest follow their best match."""
 
     def test_own_type_leads_and_other_types_follow_their_best_reference(self) -> None:
-        """A weaker same-type reference still outranks a stronger cross-type one.
-
-        The movie beats the show on a shared creator, so the groups must come
-        out books, movie, show even though the book scores lowest of the three.
-        """
+        """The movie beats the show on a shared creator, so the groups must come out
+        books, movie, show even though the book scores lowest of the three."""
         weak_book = make_item(
             item_id="weak-book",
             title="Four Genres",
@@ -360,8 +308,6 @@ class TestReferenceGroupOrder:
 
 
 class TestAdaptationLookupEdges:
-    """What the title and author indexes must and must not return."""
-
     @staticmethod
     def _book(item_id: str, title: str, *, rating: int, author: str) -> ContentItem:
         return make_item(
@@ -384,7 +330,6 @@ class TestAdaptationLookupEdges:
         )
 
     def test_a_leading_article_does_not_stop_a_title_matching(self) -> None:
-        """Both sides normalise through the same article stripping."""
         book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
 
         adaptations = SignalIndex([book]).adaptations_of(self._film("Silent Tide"))
@@ -402,11 +347,8 @@ class TestAdaptationLookupEdges:
         assert adaptations == []
 
     def test_a_shared_creator_and_a_similar_title_is_an_adaptation(self) -> None:
-        """The author index is the only way in when the titles are not identical.
-
-        Both sides need a creator for this branch to fire, which for items read
-        from storage only became possible once every content type carried one.
-        """
+        """Both sides need a creator for this branch to fire, which for items read
+        from storage only became possible once every content type carried one."""
         book = self._book("book", "The Silent Tide", rating=5, author="Mira Vale")
 
         adaptations = SignalIndex([book]).adaptations_of(
@@ -416,7 +358,6 @@ class TestAdaptationLookupEdges:
         assert [item.id for item in adaptations] == ["book"]
 
     def test_a_shared_author_with_an_unrelated_title_is_not_an_adaptation(self) -> None:
-        """The author index still has to clear the title similarity check."""
         book = self._book("book", "Dust Roads", rating=5, author="Mira Vale")
 
         adaptations = SignalIndex([book]).adaptations_of(
@@ -492,19 +433,11 @@ _TYPE_POOL: tuple[ContentType, ...] = (
 
 
 class TestTheIndexCitesTheTrueTopOfEachType:
-    """Over randomised libraries, the lookup must miss nothing a scan would find.
-
-    The index scores only the signal items a lookup reaches, so the failure it
-    risks is a reference it never compares and therefore never cites. These
-    walk the whole signal set with the same ``_pair_overlap`` the index itself
-    uses and rebuild the selection independently, which pins that the slots
-    hold the true top of each content type rather than whatever the lookup
-    happened to reach.
-    """
+    """The index scores only the signal items a lookup reaches, so the failure it
+    risks is a reference it never compares and therefore never cites."""
 
     @staticmethod
     def _library(rng: random.Random) -> list[ContentItem]:
-        """A signal set of every content type, rating and genre mix."""
         return [
             make_item(
                 item_id=f"signal-{position}",
@@ -522,7 +455,6 @@ class TestTheIndexCitesTheTrueTopOfEachType:
     def _expected_slots(
         profile: Any, records: list[Any], content_type: str, *, same_type: bool
     ) -> set[str]:
-        """The three best citable records of *content_type*, found by scanning."""
         minimum = 0.0 if same_type else CROSS_TYPE_MIN_OVERLAP
         scored: list[tuple[float, int, str]] = []
         for record in records:
@@ -540,7 +472,6 @@ class TestTheIndexCitesTheTrueTopOfEachType:
     def test_every_type_group_holds_what_a_full_scan_would_hold(
         self, seed: int
     ) -> None:
-        """No lookup-reachable shortcut may change which items get cited."""
         rng = random.Random(seed)
         signal_items = self._library(rng)
         candidate = make_item(
@@ -587,8 +518,6 @@ class TestTheIndexCitesTheTrueTopOfEachType:
 
 
 class TestAnEmptySignalSet:
-    """An index over nothing answers both lookups without failing."""
-
     @staticmethod
     def _candidate() -> ContentItem:
         return make_item(

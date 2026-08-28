@@ -1,5 +1,3 @@
-"""Tests for preference analysis."""
-
 from itertools import product
 
 import pytest
@@ -11,7 +9,6 @@ RATINGS = [1, 2, 3, 4, 5]
 
 
 def _rated_book(item_id, author, rating, genre):
-    """Build a completed book carrying one author, one rating and one genre."""
     return ContentItem(
         id=item_id,
         title=f"Book {item_id}",
@@ -24,7 +21,6 @@ def _rated_book(item_id, author, rating, genre):
 
 
 def test_preference_analyzer_basic():
-    """Test basic preference analysis."""
     analyzer = PreferenceAnalyzer(min_rating=4)
 
     items = [
@@ -64,7 +60,6 @@ def test_preference_analyzer_basic():
 
 
 def test_user_preferences_get_author_score():
-    """Test getting author preference score."""
     preferences = UserPreferences(
         preferred_authors={"author a": 0.8, "author b": 0.5},
         preferred_genres={},
@@ -79,11 +74,9 @@ def test_user_preferences_get_author_score():
 
 
 def test_preference_analyzer_cross_content_type():
-    """Test preference analysis across multiple content types."""
     analyzer = PreferenceAnalyzer(min_rating=4)
 
     items = [
-        # Sci-fi books
         ContentItem(
             id="1",
             title="Dune",
@@ -93,7 +86,6 @@ def test_preference_analyzer_cross_content_type():
             rating=5,
             metadata={"genre": "Science Fiction"},
         ),
-        # Sci-fi games
         ContentItem(
             id="2",
             title="Mass Effect",
@@ -102,7 +94,6 @@ def test_preference_analyzer_cross_content_type():
             rating=5,
             metadata={"genres": ["Action", "RPG", "Science Fiction"]},
         ),
-        # Sci-fi TV show
         ContentItem(
             id="3",
             title="The Expanse",
@@ -115,7 +106,6 @@ def test_preference_analyzer_cross_content_type():
 
     preferences = analyzer.analyze(items)
 
-    # Should extract preferences from all content types
     assert preferences.total_items == 3
     assert "science fiction" in preferences.preferred_genres
     assert "frank herbert" in preferences.preferred_authors
@@ -124,24 +114,13 @@ def test_preference_analyzer_cross_content_type():
 
 
 class TestScoreNormalisationBounds:
-    """Regression tests for preference score normalisation.
-
-    Symptom: with recommendations.min_rating_for_preference below 4, generating
+    """Symptom: with recommendations.min_rating_for_preference below 4, generating
     recommendations either crashed (500 from GET /api/recommendations) or, worse,
-    silently inverted taste, so the worst rated author scored a perfect match.
-    Root cause: _score_attributes weighed every rating against a fixed neutral of
-    3, so the preferred bucket could accumulate a zero maximum (the unguarded
-    normalisation divided by it) or a negative one (which flipped every sign and
-    pushed scores past the documented 1.0 ceiling).
-    Fix: a preferred rating now weighs its distance above min_rating, which is
-    always positive, so normalisation preserves rating order and the documented
-    [-1.0, 1.0] range holds at every threshold.
-    """
+    silently inverted taste, so the worst rated author scored a perfect match."""
 
     def test_min_rating_three_with_all_three_star_items_does_not_raise_regression(
         self,
     ):
-        """A library of nothing but 3 star items normalises instead of raising."""
         analyzer = PreferenceAnalyzer(min_rating=3)
 
         preferences = analyzer.analyze(
@@ -159,7 +138,6 @@ class TestScoreNormalisationBounds:
         }
 
     def test_min_rating_one_does_not_invert_preference_regression(self):
-        """The better rated author outranks the worse one when both are liked."""
         analyzer = PreferenceAnalyzer(min_rating=1)
 
         # Both ratings sit below the old neutral of 3: any higher rating in the
@@ -182,7 +160,6 @@ class TestScoreNormalisationBounds:
     def test_scores_stay_in_range_for_every_min_rating(
         self, min_rating, rating_a, rating_b
     ):
-        """Every rating pair at every threshold scores inside [-1.0, 1.0]."""
         analyzer = PreferenceAnalyzer(min_rating=min_rating)
 
         # One shared genre, so a split pair puts it in both buckets at once
@@ -199,7 +176,6 @@ class TestScoreNormalisationBounds:
 
     @pytest.mark.parametrize("min_rating", RATINGS)
     def test_liked_ratings_rank_in_rating_order_at_every_min_rating(self, min_rating):
-        """Above the threshold, a better rating always scores at least as well."""
         analyzer = PreferenceAnalyzer(min_rating=min_rating)
         liked = [r for r in RATINGS if r >= min_rating]
 
@@ -216,7 +192,6 @@ class TestScoreNormalisationBounds:
         assert scores[-1] == 1.0
 
     def test_unrated_items_leave_both_buckets_empty(self):
-        """A library with no ratings at all yields empty maps, not a crash."""
         analyzer = PreferenceAnalyzer(min_rating=4)
 
         preferences = analyzer.analyze(
@@ -241,16 +216,12 @@ class TestScoreNormalisationBounds:
 
 
 class TestPreferredWeightAccumulation:
-    """The preferred weighting under repeats, at the threshold, and at default.
-
-    The reweighting that fixed the normalisation is a linear rescale of the old
+    """The reweighting that fixed the normalisation is a linear rescale of the old
     weights at the default threshold of 4, so these pin the accumulated and
-    default-threshold results the engine's scorers consume.
-    """
+    default-threshold results the engine's scorers consume."""
 
     @pytest.mark.parametrize("min_rating", RATINGS)
     def test_a_rating_exactly_at_the_threshold_is_preferred(self, min_rating):
-        """The threshold rating itself lands in the preferred bucket, at 1.0."""
         analyzer = PreferenceAnalyzer(min_rating=min_rating)
 
         preferences = analyzer.analyze(
@@ -276,7 +247,6 @@ class TestPreferredWeightAccumulation:
 
     @pytest.mark.parametrize("min_rating", RATINGS)
     def test_many_repeats_of_one_author_stay_at_the_ceiling(self, min_rating):
-        """A long shelf by one author normalises to 1.0, never past it."""
         analyzer = PreferenceAnalyzer(min_rating=min_rating)
 
         preferences = analyzer.analyze(
@@ -292,7 +262,6 @@ class TestPreferredWeightAccumulation:
         assert preferences.get_genre_score("Science Fiction") == 1.0
 
     def test_disliked_only_author_scores_negative_within_range(self):
-        """An author nobody liked scores below zero and no further than -1.0."""
         analyzer = PreferenceAnalyzer(min_rating=4)
 
         preferences = analyzer.analyze(
@@ -329,18 +298,11 @@ class TestPreferredWeightAccumulation:
 
 
 class TestCreatorNamespaceIsFlatAcrossTypes:
-    """One creator namespace serves all four types, keyed by name alone.
-
-    Storage populates ``ContentItem.author`` for every content type: a book's
-    author, a film's director, a show's creator, a game's developer. ``analyze``
-    accumulates them with no type filter, so a director earns a preference the
-    way an author does, a badly rated film puts its director in
-    ``disliked_authors``, and one name appearing on two types is one entry.
-    """
+    """Storage populates ``ContentItem.author`` for every content type: a book's
+    author, a film's director, a show's creator, a game's developer."""
 
     @staticmethod
     def _rated(item_id, *, creator, rating, content_type):
-        """A completed item of *content_type* credited to *creator*."""
         return ContentItem(
             id=item_id,
             title=f"Title {item_id}",
@@ -352,7 +314,6 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
         )
 
     def test_every_types_creator_enters_the_preferred_namespace(self):
-        """A director, a showrunner and a developer sit beside a book author."""
         analyzer = PreferenceAnalyzer(min_rating=4)
 
         preferences = analyzer.analyze(
@@ -392,7 +353,6 @@ class TestCreatorNamespaceIsFlatAcrossTypes:
         }
 
     def test_one_name_on_two_types_is_one_entry_that_nets_out(self):
-        """Nothing separates the film credit from the book credit."""
         analyzer = PreferenceAnalyzer(min_rating=4)
 
         preferences = analyzer.analyze(

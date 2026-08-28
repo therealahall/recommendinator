@@ -1,5 +1,3 @@
-"""The upload door: POST /api/import and the picker's format list."""
-
 from __future__ import annotations
 
 import builtins
@@ -72,15 +70,12 @@ def test_an_upload_imports_the_file_and_reports_the_line_it_skipped(
 
 
 def test_a_clean_file_still_carries_an_empty_errors_list(client: TestClient) -> None:
-    """``errors`` is never absent: a client reading it may not check first."""
     body = _upload(client, b"title,author\nDune,Frank Herbert\n").json()
 
     assert (body["errors"], body["skipped"], body["failed"]) == ([], 0, 0)
 
 
 class TestARefusedFile:
-    """Every refusal names what to fix, and none of them is a 500."""
-
     def test_bytes_that_are_not_utf8_name_the_one_that_broke(
         self, client: TestClient
     ) -> None:
@@ -130,30 +125,20 @@ class TestARefusedFile:
 def test_an_upload_past_the_spool_threshold_writes_nothing_under_a_name(
     client: TestClient,
 ) -> None:
-    """A library export runs past ``spool_max_size``, where Starlette rolls the
-    part out of memory — the size the old 70-byte body never reached. The
-    rollover is an unnamed descriptor, and the import opens no path of its own.
-    """
     opened_to_write: list[Any] = []
     real_open = builtins.open
 
     def record(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
-        # The rollover opens the temp directory through an opener that unlinks
-        # the descriptor it returns. A save of ours would open a plain path.
         if set(mode) & set("wxa+") and "opener" not in kwargs:
             opened_to_write.append(file)
         return real_open(file, mode, *args, **kwargs)
 
-    # A JSON string, not a CSV field: csv caps one field at 128KB.
     padding = b"H" * MultiPartParser.spool_max_size
     body = b'[{"title": "Dune", "author": "%s"}]' % padding
 
-    # Both names: a bare ``open()`` resolves to the builtin, and ``Path.open``
-    # — what a save would most likely be written as — calls ``io.open``.
     with patch("builtins.open", record), patch("io.open", record):
         response = _upload(client, body, importer="json_import")
 
-    # Added, so the rolled-over part was read back whole.
     assert response.json()["added"] == 1
     assert opened_to_write == []
 
@@ -162,9 +147,6 @@ def test_an_upload_past_the_spool_threshold_writes_nothing_under_a_name(
 def test_the_config_gate_decides_whether_imported_items_are_queued(
     storage: StorageManager, auto_enrich: bool
 ) -> None:
-    """``enrichment.auto_enrich_on_sync``, read as the sync path reads it: an
-    upload ignoring it would leave every imported item unenriched.
-    """
     config = {
         "storage": {"database_path": "data/test.db"},
         "enrichment": {"enabled": True, "auto_enrich_on_sync": auto_enrich},
@@ -179,8 +161,6 @@ def test_the_config_gate_decides_whether_imported_items_are_queued(
 
 
 class TestTheTemplateAnOperatorFillsIn:
-    """In Docker ``templates/`` is inside the image, with no shell to copy from."""
-
     def test_a_template_downloads_byte_for_byte_as_it_ships(
         self, client: TestClient
     ) -> None:
@@ -200,7 +180,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_the_listing_names_every_template_the_install_ships(
         self, client: TestClient
     ) -> None:
-        """The picker renders from this, so a name hardcoded beside it is drift."""
         payload = client.get("/api/import/templates").json()
 
         assert {frozenset(entry) for entry in payload} == {
@@ -235,7 +214,6 @@ class TestTheTemplateAnOperatorFillsIn:
     def test_a_template_that_is_not_ours_is_refused_rather_than_resolved(
         self, client: TestClient, importer: str, content_type: str
     ) -> None:
-        """Neither parameter is a path segment, so neither can name a file."""
         response = client.get(
             "/api/import/templates/download",
             params={"importer": importer, "content_type": content_type},
@@ -259,9 +237,6 @@ class TestTheTemplateAnOperatorFillsIn:
         monkeypatch: pytest.MonkeyPatch,
         url: str,
     ) -> None:
-        """An empty list, or a 404 on the download, reads as an install that
-        ships no templates rather than a directory that is not there.
-        """
         absent = tmp_path / "absent"
         monkeypatch.setattr("src.ingestion.import_templates.TEMPLATES_DIR", absent)
 
@@ -274,9 +249,6 @@ class TestTheTemplateAnOperatorFillsIn:
 def test_the_format_list_says_which_ones_need_a_content_type(
     client: TestClient,
 ) -> None:
-    """Asking a Goodreads export for a content type asks a question the format
-    already answers, and offering none for a generic CSV refuses the upload.
-    """
     formats = client.get("/api/importers").json()
 
     assert {entry["name"]: entry["requires_content_type"] for entry in formats} == {

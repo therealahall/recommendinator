@@ -1,12 +1,3 @@
-"""Tests for the CLI ``settings`` group.
-
-Mirrors the global-settings web endpoints in ``src/web/api.py`` — the
-``--format json`` output shape must match the ``SettingsResponse``/``SettingView``
-Pydantic models exactly so the two interfaces stay in lockstep. Business logic
-lives in ``src.settings.service`` (shared with the API); these tests exercise
-the CLI adapter against a real temp-DB ``StorageManager``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,13 +11,11 @@ from src.settings.metadata import default_of
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 
-# A representative leaf per behaviour, kept as constants so a registry rename
-# fails loudly in one place rather than across every assertion.
-_INT_KEY = "recommendations.default_count"  # int, non-restart, min 1
-_BOOL_KEY = "enrichment.enabled"  # bool, non-restart
-_LIST_KEY = "web.allowed_origins"  # list, restart_required, advanced
-_ADVANCED_KEY = "logging.file"  # string, restart_required, advanced
-_SECRET_KEY = "enrichment.providers.tmdb.api_key"  # sensitive string
+_INT_KEY = "recommendations.default_count"
+_BOOL_KEY = "enrichment.enabled"
+_LIST_KEY = "web.allowed_origins"
+_ADVANCED_KEY = "logging.file"
+_SECRET_KEY = "enrichment.providers.tmdb.api_key"
 
 
 @pytest.fixture()
@@ -43,7 +32,6 @@ class TestSettingsList:
         assert result.exit_code == 0
         assert "recommendations" in result.output
         assert "Default count" in result.output
-        # Advanced infra/security leaves are hidden without --advanced.
         assert _ADVANCED_KEY not in result.output
 
     def test_list_section_filter_limits_output(
@@ -70,8 +58,6 @@ class TestSettingsList:
         payload = json.loads(result.output)
         assert set(payload.keys()) == {"sections"}
         setting = _find_json(payload, _INT_KEY)
-        # Exact key set for a non-sensitive leaf — matches the web SettingView
-        # with response_model_exclude_unset (value/db_overridden, no has_secret).
         assert set(setting.keys()) == {
             "key",
             "section",
@@ -153,11 +139,6 @@ class TestSettingsSet:
     def test_set_takes_effect_on_next_invocation(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """A set value is persisted and overlaid onto config on the next boot.
-
-        This is the user-visible live effect: after ``set``, a fresh ``get``
-        (a new process/boot) resolves the DB-overlaid value, not the default.
-        """
         set_result = _invoke_with_mocks(
             cli_runner, ["settings", "set", _INT_KEY, "9"], storage
         )
@@ -242,7 +223,6 @@ class TestSettingsSet:
         running: str,
         restarts: bool,
     ) -> None:
-        """A restart_required leaf is written without being live-applied."""
         result = _invoke_with_mocks(
             cli_runner, ["settings", "set", key, written], storage
         )
@@ -333,7 +313,6 @@ class TestSettingsSecrets:
     def test_clear_secret_removes_it_with_yes_and_no_prompt(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """No stdin to answer with: a prompt here would abort instead."""
         storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
@@ -358,7 +337,6 @@ class TestSettingsSecrets:
         )
 
         assert result.exit_code == 0
-        # The prompt names the key whose secret would go.
         assert _SECRET_KEY in result.output
         assert storage.secrets.has(_SECRET_KEY) is True
 
@@ -374,8 +352,6 @@ class TestSettingsSecrets:
 
 
 class TestSettingsApply:
-    """``settings apply`` — the CLI equivalent of PUT /api/settings (atomic)."""
-
     def test_apply_persists_batch_from_stdin(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -395,7 +371,6 @@ class TestSettingsApply:
     def test_apply_is_all_or_nothing_on_invalid_key(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """One bad value rejects the whole batch — nothing is written."""
         payload = json.dumps({_INT_KEY: 9, "recommendations.max_count": 0})
 
         result = _invoke_with_mocks(
@@ -406,10 +381,8 @@ class TestSettingsApply:
         )
 
         assert result.exit_code != 0
-        # The offending key and reason are surfaced.
         assert "recommendations.max_count" in result.output
         assert ">= 1" in result.output
-        # All-or-nothing: the valid key in the same batch was not written.
         assert storage.settings.list() == {}
 
     def test_apply_rejects_sensitive_key_in_batch(
@@ -490,18 +463,9 @@ class TestEveryWriteNamesTheLeavesItCouldNotApply:
 
 
 class TestSettingsBootSecretMigration:
-    """CLI group boot sweeps plaintext config secrets into encrypted storage."""
-
     def test_boot_migrates_config_secret_and_strips_it(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """A YAML provider api_key is encrypted on boot and dropped from config.
-
-        Regression: the ``migrate_config_secrets`` boot hook in the CLI group
-        must actually run — asserted end-to-end against a real temp-DB. The
-        config dict is mutated in place by the hook, so after invocation the
-        plaintext leaf is gone and the encrypted secret is present.
-        """
         config = {"enrichment": {"providers": {"tmdb": {"api_key": "tmdb-secret"}}}}
 
         result = _invoke_with_mocks(
@@ -513,23 +477,12 @@ class TestSettingsBootSecretMigration:
 
         assert result.exit_code == 0
         assert storage.secrets.has(_SECRET_KEY) is True
-        # Stripped from the running config the CLI assembled in place.
         providers = config.get("enrichment", {}).get("providers", {})
         assert providers.get("tmdb", {}).get("api_key") is None
         assert "tmdb-secret" not in result.output
 
 
 class TestMutatingCommandsEmitTheRefreshedView:
-    """Parity: the web mutations return the updated body; the CLI must too.
-
-    ``PUT /api/settings`` and ``DELETE /api/settings/{key}`` both respond with
-    the full refreshed ``SettingsResponse``. Without a JSON mode on the CLI's
-    equivalents, a scripted caller had to issue a second ``settings list`` to
-    reconstruct what the API hands back in one round trip — a real asymmetry,
-    not an interface-appropriate difference. The ``source`` group already
-    establishes this pattern via the shared ``emit_view``.
-    """
-
     def test_set_emits_the_updated_view(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
@@ -541,7 +494,6 @@ class TestMutatingCommandsEmitTheRefreshedView:
         payload = json.loads(result.output)
         assert set(payload.keys()) == {"sections"}
         setting = _find_json(payload, _INT_KEY)
-        # The NEW value, from the same call that wrote it.
         assert setting["value"] == 9
         assert setting["db_overridden"] is True
 
@@ -562,7 +514,6 @@ class TestMutatingCommandsEmitTheRefreshedView:
     def test_json_output_never_carries_a_secret(
         self, cli_runner: CliRunner, storage: StorageManager
     ) -> None:
-        """The refreshed view spans every section, including sensitive leaves."""
         storage.secrets.set(_SECRET_KEY, "SECRETPLAIN")
 
         result = _invoke_with_mocks(
@@ -576,7 +527,6 @@ class TestMutatingCommandsEmitTheRefreshedView:
 
 
 def _find_json(payload: dict, key: str) -> dict:
-    """Return the setting view with ``key`` from a grouped settings response."""
     for section in payload["sections"]:
         for setting in section["settings"]:
             if setting["key"] == key:

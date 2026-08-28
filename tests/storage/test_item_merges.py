@@ -1,9 +1,3 @@
-"""A merge is recorded, hides rather than deletes, and undoes exactly.
-
-The absorbed row is never written, so the round trips assert both rows column
-for column, not the fields the merge was expected to move.
-"""
-
 import json
 import re
 from datetime import date
@@ -24,8 +18,6 @@ from src.storage.schema import (
 from src.storage.sqlite_db import SQLiteDB
 from src.utils.series import get_series_item_number, get_series_name
 
-# Pinned so restoring a bumped ``updated_at`` is provable: CURRENT_TIMESTAMP
-# resolves to the second, and a merge and its undo run inside one.
 PINNED_UPDATE = "2020-01-01 00:00:00"
 
 _ROW_TABLES = (
@@ -151,8 +143,6 @@ def test_merging_a_rated_item_into_an_unrated_one_and_unmerging_restores_both(
 
 
 def test_an_ignored_absorbed_row_does_not_hide_the_survivor(db: SQLiteDB) -> None:
-    """DEFECT: the merge ORed the two flags, so absorbing the row the operator had
-    ignored to work around the duplicate hid the one row left."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two", ignored=True)
 
@@ -173,7 +163,6 @@ def test_an_absorbed_item_is_hidden_from_every_read_and_kept_in_the_table(
     db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
 
     assert [item.db_id for item in db.get_content_items()] == [survivor_id]
-    # A term matching both titles: search filters the candidates it scans.
     assert [item.db_id for item in db.get_content_items(search="Portal")] == [
         survivor_id
     ]
@@ -230,7 +219,6 @@ def test_the_survivor_reports_both_rows_ids_and_hands_them_back_on_unmerge(
     merged = db.get_content_item(survivor_id)
     assert merged is not None
     assert _id_pairs(merged) == [("gog", "1207658961"), ("steam", "620")]
-    # Its own source's id, so re-saving what was read records no new pair.
     assert merged.id == "620"
 
     db.unmerge_content_items(record.id)
@@ -251,8 +239,6 @@ def test_the_enrichment_stats_count_the_survivor_and_not_the_row_behind_it(
     with db.connection() as conn:
         stats = get_enrichment_stats(conn, user_id=1)
 
-    # An absorbed row keeps its enrichment row, so counting the tracked rows
-    # without the items they belong to drives ``pending`` negative.
     assert (stats["total"], stats["enriched"], stats["pending"]) == (1, 1, 0)
 
 
@@ -290,8 +276,6 @@ def test_a_merge_is_refused_when_a_row_is_hidden_or_they_cross_content_types(
         with pytest.raises(MergeError):
             db.merge_content_items(other_id, refused, MergeEvidence.MANUAL)
 
-    # A hidden survivor would leave what it absorbed resolving, in the one
-    # COALESCE every lookup spends, onto a hidden row.
     with pytest.raises(MergeError):
         db.merge_content_items(absorbed_id, other_id, MergeEvidence.MANUAL)
 
@@ -299,7 +283,6 @@ def test_a_merge_is_refused_when_a_row_is_hidden_or_they_cross_content_types(
 def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them_back(
     db: SQLiteDB,
 ) -> None:
-    """A survivor already holding one takes on a row holding two."""
     keeper_id = _save(db, "steam", "620", title="Portal 2")
     held_id = _save(db, "humble", "portal-dos", title="Portal Dos")
     middle_id = _save(db, "gog", "1207658961", title="Portal Two")
@@ -335,8 +318,6 @@ def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them
     ]
     assert db.count_items() == 1
 
-    # Each refusal names the merge to undo first: given an item id instead, the
-    # operator has to scan the log for the record that hid it.
     for blocked, first in ((already, outer), (inner, also_inner), (also_inner, outer)):
         with pytest.raises(MergeError, match=f"before merge {first.id}"):
             db.unmerge_content_items(blocked.id)
@@ -359,7 +340,6 @@ def test_absorbing_a_row_that_has_absorbed_two_carries_only_those_and_hands_them
 
 
 def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) -> None:
-    """No build that wrote a record without the key could make a group to carry."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two", rating=5)
     pair = (survivor_id, absorbed_id)
@@ -376,8 +356,6 @@ def test_a_merge_recorded_before_the_carry_existed_still_undoes(db: SQLiteDB) ->
 def test_undoing_two_merges_into_one_survivor_newest_first_leaves_it_as_it_began(
     db: SQLiteDB,
 ) -> None:
-    """Undone oldest first, the older record writes an unmerged row's rating back
-    onto the survivor."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     rated_id = _save(
         db, "gog", "1207658961", title="Portal Two", rating=5, review="Still the best"
@@ -432,8 +410,6 @@ def test_an_undo_restores_what_the_merge_wrote_and_leaves_a_later_ignore_alone(
 def test_an_undo_of_a_merge_that_carried_nothing_keeps_a_rating_written_since(
     db: SQLiteDB,
 ) -> None:
-    """DEFECT: merging two unplayed rows moves no column, and the record still
-    held the survivor's empty rating and review, so an undo cleared both."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
 
@@ -452,9 +428,6 @@ def test_an_undo_of_a_merge_that_carried_nothing_keeps_a_rating_written_since(
 def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
     db: SQLiteDB,
 ) -> None:
-    """DEFECT: the record was taken whenever the absorbed row had a detail or
-    enrichment row of its own, not when the merge wrote the survivor's, so an
-    undo wiped a description and a provider the merge never touched."""
     survivor_id = _save(
         db, "steam", "620", title="Portal 2", metadata={"developer": "Valve"}
     )
@@ -492,8 +465,6 @@ def test_an_undo_keeps_the_enrichment_that_landed_after_the_merge(
 def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
     db: SQLiteDB,
 ) -> None:
-    """DEFECT: the reset counted the absorbed row's enrichment row, so it told the
-    operator it had re-queued more items than the queue can ever hand out."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
     _enrich(db, survivor_id)
@@ -511,9 +482,6 @@ def test_a_reset_neither_requeues_nor_counts_the_row_behind_a_merge(
 
 
 def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
-    """Each door selects by id alone, so an id held across a merge — a stale merge
-    surface, an enrichment batch — wrote a row no read hands back, and the undo
-    handed that row back carrying the write."""
     survivor_id = _save(db, "steam", "620", title="Portal 2")
     absorbed_id = _save(db, "gog", "1207658961", title="Portal Two")
     before = _snapshot(db, absorbed_id)
@@ -543,9 +511,6 @@ def test_no_write_door_reaches_the_row_behind_a_merge(db: SQLiteDB) -> None:
 
 
 def test_no_door_in_src_deletes_a_content_row() -> None:
-    """A deleted row takes its children, external ids and merge record out by
-    cascade, with no undo holding them. The boundary spares the migration's
-    ``content_items_old``."""
     doors = re.compile(r"delete\s+from\s+content_items\b", re.IGNORECASE)
     assert doors.search("DELETE FROM content_items WHERE id = ?")
     src = Path(__file__).resolve().parents[2] / "src"
@@ -560,7 +525,6 @@ def test_no_door_in_src_deletes_a_content_row() -> None:
 
 
 def test_a_survivor_gains_the_series_the_absorbed_row_states(db: SQLiteDB) -> None:
-    """A survivor taking no position from the row it absorbs leaves its series."""
     survivor_id = _save(
         db,
         "generic_csv",
