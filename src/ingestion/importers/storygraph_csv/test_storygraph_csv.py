@@ -1,5 +1,3 @@
-"""Tests for The StoryGraph CSV export importer."""
-
 from datetime import date
 
 import pytest
@@ -66,11 +64,6 @@ class TestExport:
         assert second.id is None
 
     def test_did_not_finish_counts_as_completed_and_keeps_the_raw_status(self) -> None:
-        """A rated-then-abandoned book is a real preference signal.
-
-        It scores as completed, and the true StoryGraph status stays in
-        metadata so nothing is lost.
-        """
         parsed = items("Gave Up,Some Author,,,,did-not-finish," + "," * 16 + "\n")
 
         assert parsed[0].status == ConsumptionStatus.COMPLETED
@@ -158,12 +151,6 @@ class TestExport:
 
 
 class TestQuarterStarRatings:
-    """StoryGraph rates in quarter stars; the library stores 1-5.
-
-    Rounding half up rather than truncating is what keeps a 3.5 from reading as
-    a 3, and a 0 is unrated rather than clamped up to 1.
-    """
-
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [("3.5", 4), ("3.25", 3), ("0", None), ("9", 5), ("abc", None)],
@@ -178,11 +165,6 @@ class TestQuarterStarRatings:
 
 class TestSkippedRows:
     def test_a_row_longer_than_its_header_is_skipped_not_imported_mangled(self) -> None:
-        """An unquoted comma in a title imported silently shifted.
-
-        Every cell after it moved a column left, so the book landed with the
-        wrong author and status, and nothing was reported.
-        """
         rows = (
             "Dune, Part Two,Frank Herbert,,,,read," + "," * 16 + "\n"
             "Real Book,Real Author,,,,read," + "," * 16 + "\n"
@@ -201,11 +183,6 @@ class TestSkippedRows:
         assert reported(rows) == [(2, "no title")]
 
     def test_a_row_shorter_than_its_header_is_skipped_not_a_crash(self) -> None:
-        """A truncated row used to import as a book with every signal blank.
-
-        Reporting it instead is what tells the operator their file is short,
-        rather than leaving a half-empty book in the library.
-        """
         rows = (
             "Short Row,Terse Author,,,,read\n"
             "Real Book,Real Author,,,,read," + "," * 16 + "\n"

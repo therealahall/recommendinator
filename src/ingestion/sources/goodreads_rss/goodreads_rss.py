@@ -1,21 +1,7 @@
-"""Goodreads public-shelf sync via RSS.
-
-Goodreads exposes every *public* profile's shelves as RSS feeds at
-``https://www.goodreads.com/review/list_rss/<user_id>?shelf=<shelf>``. This
-plugin fetches one feed per requested shelf, paginates through all results,
-and maps each ``<item>`` to a :class:`ContentItem`. The ``metadata`` dict
-shares ``book_id``/``isbn``/``pages``/``year_published`` with the
-``goodreads_csv`` importer and additionally carries ``average_rating``,
-``description``, and ``shelf``, plus ``series``/``series_index`` when the title
-states a series. RSS cannot supply ``isbn13`` or ``publisher``, so those keys
-are absent.
-
-Unlike that importer there is no manual export step — the profile just has to
-be public. The three default shelves (``read``, ``currently-reading``,
-``to-read``) are mutually exclusive, but users may add custom shelves that
-overlap them, so :meth:`GoodreadsRssPlugin.fetch` deduplicates within a single
-run and keeps the strongest consumption status
-(``completed`` > ``currently_consuming`` > ``unread``).
+"""The three default shelves (``read``, ``currently-reading``, ``to-read``) are
+mutually exclusive, but users may add custom shelves that overlap them, so
+:meth:`GoodreadsRssPlugin.fetch` deduplicates within a single run and keeps the
+strongest consumption status (``completed`` > ``currently_consuming`` > ``unread``).
 """
 
 from __future__ import annotations
@@ -61,7 +47,6 @@ FEED_PATH = "/review/list_rss"
 # without this check the parser blames Goodreads' markup for an access refusal.
 SIGN_IN_PATH = "/user/sign_in"
 
-# Shelves synced when the user does not override the ``shelves`` config field.
 DEFAULT_SHELVES = ["read", "currently-reading", "to-read"]
 
 # Goodreads paginates RSS feeds; request the max page size and walk pages
@@ -73,7 +58,6 @@ PER_PAGE = 100
 # so we fail loudly instead of paginating forever.
 MAX_PAGES = 500
 
-# Per-request timeout in seconds.
 REQUEST_TIMEOUT = 30
 
 # Goodreads sits behind Amazon's edge, which answers the ``requests`` default
@@ -91,9 +75,7 @@ REQUEST_HEADERS = {
     "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
 }
 
-# Consumption-status precedence for cross-shelf deduplication. A book that
-# appears on several requested shelves is yielded once with the strongest
-# status.
+# Consumption-status precedence for cross-shelf deduplication.
 _STATUS_RANK = {
     ConsumptionStatus.UNREAD.value: 0,
     ConsumptionStatus.CURRENTLY_CONSUMING.value: 1,
@@ -102,30 +84,12 @@ _STATUS_RANK = {
 
 
 class GoodreadsRssError(SourceError):
-    """Exception raised when the Goodreads RSS source fails.
-
-    Subclasses :class:`SourceError` so the ingestion pipeline handles it like
-    any other source failure. Messages are scrubbed of the request URL to
-    avoid leaking the user's profile identifier into logs.
+    """Messages are scrubbed of the request URL to avoid leaking the user's profile
+    identifier into logs.
     """
 
 
 def parse_goodreads_user_id(raw: str) -> str:
-    """Extract the numeric Goodreads user ID from a raw config value.
-
-    Accepts either a bare numeric ID (returned unchanged) or a Goodreads
-    profile / review-list URL, from which the first digit run after
-    ``/user/show/`` or ``/review/list/`` is extracted.
-
-    Args:
-        raw: A numeric ID or a Goodreads URL.
-
-    Returns:
-        The numeric user ID as a string.
-
-    Raises:
-        ValueError: If no numeric user ID can be extracted.
-    """
     text = raw.strip()
     if not text:
         raise ValueError("Goodreads 'user_id' is empty")
@@ -142,11 +106,6 @@ def parse_goodreads_user_id(raw: str) -> str:
 
 
 def _coerce_string_list(value: Any, field_name: str) -> tuple[list[str], str | None]:
-    """Coerce a YAML value into a list of strings.
-
-    Returns ``(values, error)``. Error is non-None when *value* is not a list
-    of strings.
-    """
     if isinstance(value, str):
         return [], f"'{field_name}' must be a list, got string"
     if not isinstance(value, list):
@@ -160,11 +119,6 @@ def _coerce_string_list(value: Any, field_name: str) -> tuple[list[str], str | N
 
 
 def _status_for_shelf(shelf: str) -> ConsumptionStatus:
-    """Map a Goodreads shelf name to a consumption status.
-
-    ``read`` -> completed, ``currently-reading`` -> currently consuming;
-    ``to-read`` and any custom shelf -> unread.
-    """
     if shelf == "read":
         return ConsumptionStatus.COMPLETED
     if shelf == "currently-reading":
@@ -173,13 +127,11 @@ def _status_for_shelf(shelf: str) -> ConsumptionStatus:
 
 
 def _child_text(item: Element, tag: str) -> str:
-    """Return the stripped text of a direct child element, or ``""``."""
     text = item.findtext(tag)
     return text.strip() if text else ""
 
 
 def _pages(item: Element) -> str | None:
-    """Extract page count from ``<num_pages>`` or nested ``<book><num_pages>``."""
     top = _child_text(item, "num_pages")
     if top:
         return top
@@ -192,7 +144,6 @@ def _pages(item: Element) -> str | None:
 
 
 def _parse_rss_date(raw: str) -> date | None:
-    """Parse an RFC 822 Goodreads timestamp into a ``date`` (``None`` on failure)."""
     if not raw:
         return None
     try:
@@ -203,13 +154,6 @@ def _parse_rss_date(raw: str) -> date | None:
 
 
 class GoodreadsRssPlugin(SourcePlugin):
-    """Plugin for syncing public Goodreads shelves via RSS.
-
-    Fetches one RSS feed per requested shelf, paginates through every result,
-    and yields deduplicated :class:`ContentItem` objects. Requires the target
-    profile to be public; no API key is needed.
-    """
-
     @property
     def name(self) -> str:
         return "goodreads_rss"
@@ -289,18 +233,6 @@ class GoodreadsRssPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch books from a user's public Goodreads shelves.
-
-        Args:
-            config: Must contain 'user_id'; optional 'shelves' list.
-            progress_callback: Optional callback for progress updates.
-
-        Yields:
-            ContentItem for each unique book across the requested shelves.
-
-        Raises:
-            GoodreadsRssError: On network failure or malformed RSS.
-        """
         raw_user_id = config.get("user_id")
         user_id_str = str(raw_user_id).strip() if raw_user_id is not None else ""
         try:
@@ -309,9 +241,7 @@ class GoodreadsRssPlugin(SourcePlugin):
             raise GoodreadsRssError(self.name, str(error)) from error
 
         # ``.get(key, default)`` only returns the default when the key is
-        # absent; an explicit ``shelves: null`` yields ``None``, which is not
-        # iterable. Fall back to defaults for both cases while leaving an
-        # explicit empty list intact so ``[]`` still means "sync nothing".
+        # absent; an explicit ``shelves: null`` yields ``None``, which is not iterable.
         shelves = config.get("shelves")
         if shelves is None:
             shelves = DEFAULT_SHELVES
@@ -348,12 +278,6 @@ class GoodreadsRssPlugin(SourcePlugin):
             yield content
 
     def _iter_shelf_items(self, user_id: str, shelf: str) -> Iterator[Element]:
-        """Yield every ``<item>`` element on a shelf, walking all RSS pages.
-
-        Terminates on the first empty page. Raises :class:`GoodreadsRssError`
-        if a shelf exceeds :data:`MAX_PAGES`, which signals a broken feed or a
-        redirect loop rather than a genuinely huge shelf.
-        """
         for page in range(1, MAX_PAGES + 1):
             xml_text = self._fetch_page(user_id, shelf, page)
             items = self._parse_items(xml_text, shelf)
@@ -366,7 +290,6 @@ class GoodreadsRssPlugin(SourcePlugin):
         )
 
     def _fetch_page(self, user_id: str, shelf: str, page: int) -> str:
-        """GET a single RSS page for a shelf, returning the response body."""
         url = f"{GOODREADS_BASE}{FEED_PATH}/{user_id}"
         params: dict[str, str | int] = {
             "shelf": shelf,
@@ -397,17 +320,10 @@ class GoodreadsRssPlugin(SourcePlugin):
         return response.text
 
     def _parse_items(self, xml_text: str, shelf: str) -> list[Element]:
-        """Parse an RSS page into its ``<item>`` elements.
-
-        Uses ``defusedxml`` rather than the stdlib parser: the feed is
+        """Uses ``defusedxml`` rather than the stdlib parser: the feed is
         untrusted remote XML, and defusedxml blocks both XXE (external entity)
         attacks and entity-expansion denial-of-service (billion-laughs /
         quadratic-blowup).
-
-        Both malformed XML (``ParseError``) and hostile entity/DTD payloads
-        (``DefusedXmlException``) surface as :class:`GoodreadsRssError`. The
-        defused-payload message is deliberately generic so the untrusted feed
-        content, request URL, and user id never leak into logs or errors.
         """
         try:
             root = ET.fromstring(xml_text)
@@ -427,15 +343,8 @@ class GoodreadsRssPlugin(SourcePlugin):
         shelf: str,
         status: ConsumptionStatus,
     ) -> ContentItem | None:
-        """Build a ContentItem from an RSS ``<item>`` element.
-
-        Returns ``None`` for items without a title. The ``metadata`` dict shares
-        ``book_id``/``isbn``/``pages``/``year_published`` with the
-        ``goodreads_csv`` importer and additionally carries ``average_rating``,
-        ``description``, and ``shelf``, plus ``series``/``series_index`` when
-        the title states a series. RSS cannot supply ``isbn13`` or
-        ``publisher``, so those keys are omitted entirely rather than set to
-        ``None``.
+        """RSS cannot supply ``isbn13`` or ``publisher``, so those keys are omitted
+        entirely rather than set to ``None``.
         """
         raw_title = _child_text(element, "title")
         if not raw_title:

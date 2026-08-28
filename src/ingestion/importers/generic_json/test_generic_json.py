@@ -1,5 +1,3 @@
-"""Tests for the generic JSON/JSONL importer."""
-
 import json
 import logging
 from datetime import date
@@ -122,11 +120,6 @@ class TestEntries:
         assert parsed[0].metadata["seasons_watched"] == [1, 2, 5, 6]
 
     def test_a_list_valued_field_is_not_wrapped_again(self) -> None:
-        """JSON, unlike a CSV cell, can already hold several genres.
-
-        The single-value form is wrapped on import, so an array has to pass
-        through rather than becoming a list of one list.
-        """
         parsed = items(
             json.dumps(
                 [
@@ -205,11 +198,7 @@ class TestSkippedRows:
 
 
 class TestIgnoredField:
-    """Regression: a re-import cleared the flag on every untouched entry.
-
-    Cause: an absent field and an explicit null both parsed as False, a stated
-    "not ignored" that storage wrote over the operator's flag.
-    """
+    """Regression: a re-import cleared the flag on every untouched entry."""
 
     def test_an_absent_ignored_field_states_nothing(self) -> None:
         parsed = items(json.dumps([{"title": "Test", "status": "completed"}]))
@@ -227,11 +216,7 @@ ESCAPED_TITLE = "Dune\\nImported 9999 items from JSON file"
 
 
 class TestLogInjectionRegression:
-    """Regression: an imported field forged log entries.
-
-    Bug: the title and the date were logged raw, and a JSON string carries any
-    character. Fix: ``sanitize_for_log`` at every sink.
-    """
+    """Regression: an imported field forged log entries."""
 
     def test_a_newline_in_a_title_cannot_forge_a_log_entry(
         self, caplog: pytest.LogCaptureFixture

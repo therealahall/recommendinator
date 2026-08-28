@@ -1,5 +1,3 @@
-"""Tests for the row helpers every importer shares."""
-
 from src.ingestion.importers.rows import parse_boolean_field, parse_seasons_watched
 from src.utils.series import MAX_SEASONS
 

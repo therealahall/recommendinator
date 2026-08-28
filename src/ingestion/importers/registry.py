@@ -1,8 +1,4 @@
-"""Every import format, in the order they are offered.
-
-Listed rather than discovered: an import writes to the library off a name the
-operator typed, so the set of formats is one a reader can see whole.
-"""
+"""Every import format, in the order they are offered."""
 
 from __future__ import annotations
 
@@ -25,5 +21,4 @@ _BY_NAME: dict[str, Importer] = {importer.name: importer for importer in IMPORTE
 
 
 def get_importer(name: str) -> Importer | None:
-    """The format the operator named, or None if it is not one of ours."""
     return _BY_NAME.get(name)

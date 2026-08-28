@@ -1,27 +1,5 @@
-"""Trakt integration plugin for importing watched, rated, and watchlisted media.
-
-Credential contract (depended on by the web/CLI auth task)
-----------------------------------------------------------
-Credentials are stored under the id of the source, which defaults to ``"trakt"``
-but is whatever the operator named it.  The config schema exposes four fields:
-
-- ``client_id``     (str, required, sensitive=False) — the user's own Trakt API
-  application client id.  Not secret, but identifies the app for every request
-  via the ``trakt-api-key`` header.
-- ``client_secret`` (str, required, sensitive=True)  — the user's Trakt API
-  application secret, used only for the OAuth token exchange.
-- ``refresh_token`` (str, required, sensitive=True)  — obtained later via the
-  device-code OAuth flow.  It is NOT present in YAML; the auth task writes it to
-  the encrypted credential store.  Trakt rotates this token on every refresh, so
-  the new value is persisted through the ``_on_credential_rotated`` callback.
-- ``include_watchlist`` (bool, required=False, default=True) — whether to import
-  watchlisted items as ``UNREAD``.
-
-On each fetch the plugin exchanges ``refresh_token`` (plus ``client_id`` and
-``client_secret``) for a fresh access token via ``POST /oauth/token``
-(``grant_type=refresh_token``).  All Trakt requests carry the standard headers:
-``trakt-api-version: 2``, ``trakt-api-key: <client_id>``, and
-``Authorization: Bearer <access_token>``.
+"""Credentials are stored under the id of the source, which defaults to ``"trakt"``
+but is whatever the operator named it.
 """
 
 from __future__ import annotations
@@ -58,27 +36,14 @@ _REQUIRED_SENSITIVE_FIELDS = ("client_secret", "refresh_token")
 
 
 class TraktAPIError(Exception):
-    """Exception raised for Trakt API errors."""
-
     pass
 
 
 def refresh_access_token(
     refresh_token: str, client_id: str, client_secret: str
 ) -> dict[str, str]:
-    """Exchange a Trakt OAuth refresh token for a fresh access token.
-
-    Args:
-        refresh_token: Trakt OAuth refresh token from the device-code flow.
-        client_id: The user's Trakt API application client id.
-        client_secret: The user's Trakt API application secret.
-
-    Returns:
-        Dictionary with 'access_token' and 'refresh_token' keys. Trakt rotates
-        the refresh token, so the returned value may differ from the input.
-
-    Raises:
-        TraktAPIError: If the token refresh fails.
+    """Trakt rotates the refresh token, so the returned value may differ from
+    the input.
     """
     payload = {
         "refresh_token": refresh_token,
@@ -106,7 +71,6 @@ def refresh_access_token(
 
 
 def _trakt_headers(access_token: str, client_id: str) -> dict[str, str]:
-    """Build the standard Trakt API request headers."""
     return {
         "Content-Type": "application/json",
         "trakt-api-version": "2",
@@ -121,20 +85,6 @@ def fetch_list(
     client_id: str,
     extended: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch a Trakt sync list, following pagination if present.
-
-    Args:
-        endpoint: API path (e.g. "/sync/watched/movies").
-        access_token: Valid Trakt OAuth access token.
-        client_id: Trakt API application client id (sent as trakt-api-key).
-        extended: Optional value for the ``extended`` query parameter.
-
-    Returns:
-        Flat list of result objects across all pages.
-
-    Raises:
-        TraktAPIError: If any request fails.
-    """
     headers = _trakt_headers(access_token, client_id)
     base_params: dict[str, Any] = {}
     if extended:
@@ -181,29 +131,6 @@ def fetch_show_season_totals(
     access_token: str,
     client_id: str,
 ) -> dict[int, int]:
-    """Fetch each real season's total episode count for a show.
-
-    Calls ``GET /shows/{id}/seasons?extended=full``, which returns one object
-    per season with ``number`` and ``episode_count`` fields (season 0 is
-    specials). The watched-shows sync endpoint only reports the episodes the
-    user has watched, with no per-season totals, so this extra call is the only
-    way to tell a fully-watched season from a partially-watched one — and to
-    learn how many seasons exist for a partially-watched show.
-
-    Args:
-        trakt_id: The show's Trakt id.
-        access_token: Valid Trakt OAuth access token.
-        client_id: Trakt API application client id (sent as trakt-api-key).
-
-    Returns:
-        Map of ``season_number -> episode_count`` for every season whose
-        ``number`` is >= 1 (specials excluded). A season with no reported
-        episode count maps to 0. The map's length is the show's real-season
-        count.
-
-    Raises:
-        TraktAPIError: If the request fails.
-    """
     headers = _trakt_headers(access_token, client_id)
     endpoint = f"/shows/{trakt_id}/seasons"
     try:
@@ -253,29 +180,7 @@ def _show_season_progress(
     season_totals: dict[int, int],
     fully_watched: bool,
 ) -> tuple[list[int], int]:
-    """Compute fully-watched seasons and the highest of them for a show.
-
-    Season 0 (specials) is excluded from both values. A season counts as watched
-    only when the user has watched every episode in it: the watched-shows sync
-    endpoint lists only the episodes the user has seen, so a partially-watched
-    season has a non-empty ``episodes`` array and must be checked against its
-    true episode total. ``season_totals`` carries those totals (from
-    ``fetch_show_season_totals``); when the show as a whole is fully watched the
-    map is empty and every season with watched episodes is complete by
-    definition.
-
-    Args:
-        seasons: The ``seasons`` array from a watched-show entry.
-        season_totals: Map of ``season_number -> total episode count``.
-        fully_watched: Whether the whole show has been fully watched.
-
-    Returns:
-        Tuple of (sorted fully-watched season numbers, highest such number).
-        The second value is NOT the true season total — the watched-shows sync
-        endpoint only reports seasons the user has watched. It is a placeholder
-        used only for COMPLETED shows, which are excluded from season expansion;
-        in-progress shows derive the true count from ``season_totals``.
-    """
+    """Season 0 (specials) is excluded from both values."""
     watched: list[int] = []
     for season in seasons:
         number = season.get("number")
@@ -289,9 +194,7 @@ def _show_season_progress(
             continue
         # Compare against the season's TOTAL episodes (episode_count), not aired
         # episodes: a currently-airing season the user is caught up on still has
-        # more episodes coming, so it stays in-progress. If the total is unknown
-        # (absent from the map or <= 0) leave the season in-progress — better to
-        # re-surface a finished season than to hide an unfinished one.
+        # more episodes coming, so it stays in-progress.
         season_total = season_totals.get(number, 0)
         if season_total > 0 and watched_count >= season_total:
             watched.append(number)
@@ -304,12 +207,9 @@ def _season_watched_dates(
     seasons: list[dict[str, Any]],
     watched_numbers: list[int],
 ) -> dict[str, str]:
-    """Map each fully-watched season to its latest episode watch time.
-
-    The value is the max ``last_watched_at`` (normalized ISO 8601) across the
+    """The value is the max ``last_watched_at`` (normalized ISO 8601) across the
     season's watched episodes — the moment the user finished that season, used
-    as the variety ladder's recency key. Seasons absent from *watched_numbers*
-    and seasons with no parseable episode dates are omitted.
+    as the variety ladder's recency key.
     """
     watched = set(watched_numbers)
     result: dict[str, str] = {}
@@ -341,7 +241,6 @@ def _watched_episode_count(seasons: list[dict[str, Any]]) -> int:
 
 
 def _media_metadata(media: dict[str, Any]) -> dict[str, Any]:
-    """Build the base metadata dict shared by movie and show items."""
     ids = media.get("ids") or {}
     metadata: dict[str, Any] = {"trakt_id": ids.get("trakt")}
     if ids.get("slug"):
@@ -358,12 +257,6 @@ def _media_metadata(media: dict[str, Any]) -> dict[str, Any]:
 
 
 class TraktPlugin(SourcePlugin):
-    """Plugin for importing watched, rated, and watchlisted media from Trakt.
-
-    Fetches watched movies/shows, ratings, and (optionally) the watchlist,
-    de-duplicating each title across lists into a single ContentItem.
-    """
-
     @property
     def name(self) -> str:
         return "trakt"
@@ -386,7 +279,6 @@ class TraktPlugin(SourcePlugin):
 
     @classmethod
     def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-        """Normalise Trakt config fields (strip credentials, apply defaults)."""
         return {
             "client_id": (raw_fields.get("client_id") or "").strip(),
             "client_secret": (raw_fields.get("client_secret") or "").strip(),
@@ -459,18 +351,7 @@ class TraktPlugin(SourcePlugin):
         return errors
 
     def normalize_rating(self, raw_rating: Any) -> int | None:
-        """Normalize a Trakt 1-10 rating to the 1-5 scale.
-
-        Trakt ratings are integers 1-10 (0/None means unrated). The 10-point
-        scale is halved and rounded up so every rated value maps to 1-5 and a
-        rated item never normalizes to 0.
-
-        Args:
-            raw_rating: Raw Trakt rating (1-10), 0, or None.
-
-        Returns:
-            Normalized rating (1-5), or None if unrated/invalid.
-        """
+        """Trakt ratings are integers 1-10 (0/None means unrated)."""
         if raw_rating is None:
             return None
         try:
@@ -486,19 +367,6 @@ class TraktPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch watched, rated, and watchlisted media from Trakt.
-
-        Args:
-            config: Must contain 'client_id', 'client_secret', 'refresh_token'.
-                Optional: 'include_watchlist'.
-            progress_callback: Optional callback for progress updates.
-
-        Yields:
-            One ContentItem per unique title across the synced lists.
-
-        Raises:
-            SourceError: If the Trakt API returns an error.
-        """
         on_rotated = config.get("_on_credential_rotated")
         if not callable(on_rotated):
             on_rotated = None
@@ -524,7 +392,6 @@ class TraktPlugin(SourcePlugin):
         progress_callback: ProgressCallback | None,
         on_credential_rotated: CredentialUpdateCallback | None,
     ) -> Iterator[ContentItem]:
-        """Fetch, merge, and yield Trakt items (see fetch for the public API)."""
         logger.info("Refreshing Trakt access token...")
         tokens = refresh_access_token(refresh_token, client_id, client_secret)
         access_token = tokens["access_token"]
@@ -607,9 +474,7 @@ class TraktPlugin(SourcePlugin):
             # The sync endpoint reports only watched episodes with no per-season
             # totals, so an in-progress show needs the per-season episode counts
             # to tell a fully-watched season from a partially-watched one and to
-            # learn its true real-season count. Completed shows skip the call:
-            # every watched season is complete and they are excluded from season
-            # expansion, so they reuse the high-water mark.
+            # learn its true real-season count.
             if fully_watched:
                 season_totals: dict[int, int] = {}
             else:

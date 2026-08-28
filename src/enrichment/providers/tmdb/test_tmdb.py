@@ -1,5 +1,3 @@
-"""Tests for the TMDB enrichment provider."""
-
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -16,40 +14,29 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class TestCleanTitleForSearch:
-    """Tests for title cleaning before TMDB search."""
-
     def test_removes_year_suffix(self) -> None:
-        """Test removal of year in parentheses."""
         assert clean_media_title_for_search("Monster (2022)") == "Monster"
         assert clean_media_title_for_search("The Matrix (1999)") == "The Matrix"
 
     def test_removes_country_code(self) -> None:
-        """Test removal of country codes."""
         assert clean_media_title_for_search("Euphoria (US)") == "Euphoria"
         assert clean_media_title_for_search("The Office (UK)") == "The Office"
 
 
 class TestTMDBProviderValidation:
-    """Tests for TMDB provider config validation."""
-
     def test_validate_missing_api_key(self) -> None:
-        """Test validation with missing API key."""
         provider = TMDBProvider()
         errors = provider.validate_config({})
         assert "'api_key' is required for TMDB provider" in errors
 
 
 class TestTMDBProviderMovieEnrichment:
-    """Tests for TMDB movie enrichment."""
-
     @pytest.fixture
     def provider(self) -> TMDBProvider:
-        """Create TMDB provider instance."""
         return TMDBProvider()
 
     @pytest.fixture
     def movie_item(self) -> ContentItem:
-        """Create a sample movie item."""
         return ContentItem(
             id="movie123",
             title="The Matrix",
@@ -60,13 +47,11 @@ class TestTMDBProviderMovieEnrichment:
 
     @pytest.fixture
     def config(self) -> dict[str, Any]:
-        """Create test config."""
         return {"api_key": "test-api-key", "language": "en-US"}
 
     def test_enrich_movie_with_id_lookup(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:
-        """Test enriching movie when tmdb_id is in metadata."""
         item = ContentItem(
             id="movie123",
             title="The Matrix",
@@ -128,7 +113,6 @@ class TestTMDBProviderMovieEnrichment:
     def test_enrich_movie_with_search(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:
-        """Test enriching movie using title search."""
         mock_search_response = {"results": [{"id": 603, "title": "The Matrix"}]}
 
         mock_movie_response = {
@@ -170,7 +154,6 @@ class TestTMDBProviderMovieEnrichment:
     def test_enrich_movie_not_found(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
     ) -> None:
-        """Test enriching movie that doesn't exist in TMDB."""
         mock_search_response = {"results": []}
 
         with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
@@ -187,7 +170,6 @@ class TestTMDBProviderMovieEnrichment:
     def test_enrich_movie_fallback_to_title_only(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:
-        """Test that search falls back to title-only when year yields no results."""
         item = ContentItem(
             id="movie123",
             title="Some Movie",
@@ -196,9 +178,7 @@ class TestTMDBProviderMovieEnrichment:
             metadata={"release_year": 2020},
         )
 
-        # First search with year returns empty
         mock_empty_response = {"results": []}
-        # Second search without year finds movie
         mock_found_response = {"results": [{"id": 12345, "title": "Some Movie"}]}
         mock_movie_response = {
             "id": 12345,
@@ -240,11 +220,6 @@ class TestTMDBProviderMovieEnrichment:
     def test_enrich_movie_sets_director_and_excludes_non_director_roles(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:
-        """Test that only Director-job crew is stored, excluding other roles.
-
-        The crew below includes a Writer that must NOT be picked up: only the
-        Director-job entry should land in the 'director' field.
-        """
         item = ContentItem(
             id="movie123",
             title="Pulp Fiction",
@@ -283,13 +258,11 @@ class TestTMDBProviderMovieEnrichment:
             result = provider.enrich(item, config)
 
         assert result is not None
-        # The Writer (Roger Avary) is excluded; only the Director remains.
         assert result.extra_metadata.get("director") == "Quentin Tarantino"
 
     def test_enrich_movie_comma_joins_multiple_directors(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:
-        """Test that multiple directors are comma-joined and capped at three."""
         item = ContentItem(
             id="movie123",
             title="Cloud Atlas",
@@ -337,16 +310,12 @@ class TestTMDBProviderMovieEnrichment:
 
 
 class TestTMDBProviderTVShowEnrichment:
-    """Tests for TMDB TV show enrichment."""
-
     @pytest.fixture
     def provider(self) -> TMDBProvider:
-        """Create TMDB provider instance."""
         return TMDBProvider()
 
     @pytest.fixture
     def tv_item(self) -> ContentItem:
-        """Create a sample TV show item."""
         return ContentItem(
             id="show123",
             title="Breaking Bad",
@@ -357,13 +326,11 @@ class TestTMDBProviderTVShowEnrichment:
 
     @pytest.fixture
     def config(self) -> dict[str, Any]:
-        """Create test config."""
         return {"api_key": "test-api-key"}
 
     def test_enrich_tv_show_with_search(
         self, provider: TMDBProvider, tv_item: ContentItem, config: dict[str, Any]
     ) -> None:
-        """Test enriching TV show using title search."""
         mock_search_response = {"results": [{"id": 1396, "name": "Breaking Bad"}]}
 
         mock_tv_response = {
@@ -421,22 +388,17 @@ class TestTMDBProviderTVShowEnrichment:
 
 
 class TestTMDBProviderKeywords:
-    """Tests for TMDB keyword fetching."""
-
     @pytest.fixture
     def provider(self) -> TMDBProvider:
-        """Create TMDB provider instance."""
         return TMDBProvider()
 
     @pytest.fixture
     def config(self) -> dict[str, Any]:
-        """Create test config."""
         return {"api_key": "test-api-key", "include_keywords": True}
 
     def test_keywords_failure_does_not_fail_enrichment(
         self, provider: TMDBProvider, config: dict[str, Any]
     ) -> None:
-        """Test that keyword fetch failure doesn't fail the whole enrichment."""
         item = ContentItem(
             id="movie123",
             title="Test Movie",
@@ -453,7 +415,6 @@ class TestTMDBProviderKeywords:
         }
 
         with patch("src.enrichment.providers.tmdb.tmdb.requests.get") as mock_get:
-            # Movie details succeeds, keywords fails
             mock_get.side_effect = [
                 MagicMock(
                     spec=requests.Response,
@@ -467,10 +428,9 @@ class TestTMDBProviderKeywords:
 
         assert result is not None
         assert result.genres == ["Action"]
-        assert result.tags is None  # Keywords failed but enrichment succeeded
+        assert result.tags is None
 
     def test_skip_keywords_when_disabled(self, provider: TMDBProvider) -> None:
-        """Test that keywords are not fetched when disabled."""
         config = {"api_key": "test-api-key", "include_keywords": False}
         item = ContentItem(
             id="movie123",
@@ -494,17 +454,13 @@ class TestTMDBProviderKeywords:
 
             result = provider.enrich(item, config)
 
-        # Should only be one call (movie details, no keywords)
         assert mock_get.call_count == 1
         assert result is not None
         assert result.tags is None
 
 
 class TestTMDBProviderUnsupportedTypes:
-    """Tests for handling unsupported content types."""
-
     def test_enrich_book_returns_none(self) -> None:
-        """Test that enriching a book returns None."""
         provider = TMDBProvider()
         item = ContentItem(
             id="book123",
@@ -518,24 +474,6 @@ class TestTMDBProviderUnsupportedTypes:
 
 
 class TestTMDBApiKeyScrubbingRegression:
-    """Regression tests for the TMDB API key leaking via error messages.
-
-    Bug: TMDB requests pass the key as a query parameter
-    (``?api_key=<secret>``). On a failed request, ``requests.HTTPError``'s
-    ``str()`` embeds the full request URL — key and all. The provider
-    interpolated the raw exception into ``ProviderError(... f"...: {error}")``,
-    and that message flows into the enrichment status the web API and CLI
-    surface to users and logs, leaking the key.
-
-    Root cause: ``f"...: {error}"`` called the default
-    ``RequestException.__str__`` containing the request URL with the
-    ``api_key`` query parameter.
-
-    Fix: each ``except requests.RequestException`` block now renders the
-    error through :func:`src.utils.request_errors.scrub_request_error`, which
-    emits only ``HTTP <status>`` or the exception class name.
-    """
-
     _API_KEY = "SECRET_TMDB_KEY_123"
 
     def _http_error(self, status_code: int) -> requests.HTTPError:
@@ -554,7 +492,6 @@ class TestTMDBApiKeyScrubbingRegression:
         return {"api_key": self._API_KEY, "language": "en-US"}
 
     def test_search_error_does_not_leak_api_key(self) -> None:
-        """A failed search surfaces only the status code, not the key."""
         provider = TMDBProvider()
         item = ContentItem(
             id="movie1",
@@ -577,7 +514,6 @@ class TestTMDBApiKeyScrubbingRegression:
         assert "Failed to search TMDB: HTTP 401" in message
 
     def test_transport_error_surfaces_only_exception_type(self) -> None:
-        """A connection error surfaces only the class name, not its message."""
         provider = TMDBProvider()
         item = ContentItem(
             id="movie1",
@@ -602,13 +538,6 @@ class TestTMDBApiKeyScrubbingRegression:
 
 
 class TestSearchTitleCannotForgeALogLineRegression:
-    """Reported: the search log writes ``item.title`` unescaped.
-
-    A title restricts no characters and the file formatter is single-line, so
-    a newline writes its own entry (CWE-117). Fix: ``sanitize_for_log``, as
-    ``EnrichmentManager._process_item`` already does.
-    """
-
     _FORGED = "Real Title\nWARNING  | forged | line (1999)"
 
     def test_a_newline_in_a_title_is_escaped_before_the_search_log(

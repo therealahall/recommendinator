@@ -181,7 +181,8 @@ def parse_seasons_watched(value: str | int | list[int] | None) -> list[int]:
 
 def parse_seasons_watched_dates(value: Any) -> dict[str, str]:
     """An unparseable timestamp is dropped: stored, it would read back as a
-    watch date that is not one."""
+    watch date that is not one.
+    """
     if isinstance(value, str):
         try:
             value = json.loads(value)

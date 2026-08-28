@@ -1,5 +1,3 @@
-"""Tests for the RomScannerPlugin (ROM Library)."""
-
 from __future__ import annotations
 
 import logging
@@ -22,12 +20,6 @@ def plugin() -> RomScannerPlugin:
 
 @pytest.fixture()
 def rom_dir(tmp_path: Path) -> Path:
-    """A scan root with a realistic mix of ROMs, a folder, and junk files.
-
-    Default-extension matches: Chrono Trigger.zip, Mario Kart 64 (USA).z64
-    Folder (always included): Doom/
-    Filtered out by default-extension check: notes.txt, EMULATOR.cfg
-    """
     root = tmp_path / "snes"
     root.mkdir()
     (root / "Chrono Trigger.zip").write_bytes(b"rom-data")
@@ -41,8 +33,6 @@ def rom_dir(tmp_path: Path) -> Path:
 
 
 class TestRomScannerValidation:
-    """Tests for config validation."""
-
     def test_missing_paths(self, plugin: RomScannerPlugin) -> None:
         errors = plugin.validate_config({})
         assert any("paths" in error for error in errors)
@@ -96,15 +86,11 @@ class TestRomScannerValidation:
 
 
 class TestRomScannerFetchExtensionFiltering:
-    """Default extension filter and include/exclude knobs."""
-
     def test_only_extension_matching_files_included(
         self, plugin: RomScannerPlugin, rom_dir: Path
     ) -> None:
         items = list(plugin.fetch({"paths": [str(rom_dir)]}))
         titles = {item.title for item in items}
-        # Doom/ folder always included; .zip + .z64 match defaults;
-        # .txt and .cfg are filtered out by extension; dotfile skipped.
         assert titles == {"Chrono Trigger", "Mario Kart 64", "Doom"}
 
     def test_include_extensions_adds_to_defaults(
@@ -146,8 +132,6 @@ class TestRomScannerFetchExtensionFiltering:
 
 
 class TestRomScannerFetchTitleCleaning:
-    """Built-in cleaner and extra_strip_patterns interaction."""
-
     def test_default_cleaner_strips_region_and_year(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -198,8 +182,6 @@ class TestRomScannerFetchTitleCleaning:
 
 
 class TestRomScannerMultiDiscCollapse:
-    """The hero use case: 4 discs of one game collapse to one item."""
-
     def test_multi_disc_collapses_to_one_item(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -218,7 +200,6 @@ class TestRomScannerMultiDiscCollapse:
     ) -> None:
         root = tmp_path / "psx"
         root.mkdir()
-        # Create out of order to prove sort wins, not creation order.
         (root / "Final Fantasy VII (USA) (Disc 2).bin").write_bytes(b"d2")
         (root / "Final Fantasy VII (USA) (Disc 1).bin").write_bytes(b"d1")
         items = list(plugin.fetch({"paths": [str(root)]}))
@@ -228,8 +209,6 @@ class TestRomScannerMultiDiscCollapse:
 
 
 class TestRomScannerFolders:
-    """Folder entries are always included unless excluded by name."""
-
     def test_folder_included_regardless_of_extension(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -245,10 +224,6 @@ class TestRomScannerFolders:
     def test_exclude_names_glob_pattern(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
-        """Glob exclusion runs against names that would otherwise pass the
-        extension filter — proves the glob is the operative filter, not a
-        side-effect of the extension check.
-        """
         root = tmp_path / "stash"
         root.mkdir()
         (root / "common.zip").write_bytes(b"a")
@@ -319,7 +294,6 @@ class TestRomScannerMetadata:
         items = list(plugin.fetch({"paths": [str(rom_dir)]}))
         by_title = {item.title: item for item in items}
         assert by_title["Chrono Trigger"].metadata["size_bytes"] == len(b"rom-data")
-        # Directory entries have no size_bytes — only files do.
         assert "size_bytes" not in by_title["Doom"].metadata
 
 
@@ -367,13 +341,6 @@ class TestRomScannerErrors:
 
 
 class TestRomScannerPathContainmentRegression:
-    """Regression: source config as a filesystem enumeration primitive.
-
-    Bug: ``paths`` came straight from HTTP-writable source config, so a scan of
-    ``/home`` listed every directory as an item. Cause: no containment. Fix:
-    every entry resolves against ``security.allowed_source_roots``.
-    """
-
     def test_validate_refuses_a_scan_root_outside_every_allowed_root(
         self, plugin: RomScannerPlugin, tmp_path: Path
     ) -> None:
@@ -410,13 +377,6 @@ ROMS_LOGGER = "src.ingestion.sources.roms.roms"
 
 
 class TestRomScannerLogInjectionRegression:
-    """Regression: a scanned file name forged log entries.
-
-    Bug: the path and the ``OSError`` quoting it are interpolated raw, and a
-    file name may hold a break. Cause: the sanitiser pass covered the three
-    generic import plugins alone. Fix: ``sanitize_for_log``/``exception_for_log``.
-    """
-
     def test_a_newline_in_a_scanned_name_cannot_forge_a_log_entry(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -439,8 +399,6 @@ class TestRomScannerLogInjectionRegression:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The duplicate-title sink escaped its title by ``%r`` and not the
-        path beside it, so a break in the scan root still forged an entry."""
         root = tmp_path / "roms\nImported 9999 items from ROM scan"
         root.mkdir()
         (root / "Doom (Disc 1).zip").write_bytes(b"x")

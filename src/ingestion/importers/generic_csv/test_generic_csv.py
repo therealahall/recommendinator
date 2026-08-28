@@ -1,5 +1,3 @@
-"""Tests for the generic CSV importer."""
-
 import logging
 from datetime import date
 
@@ -151,12 +149,6 @@ class TestRefusals:
 
 
 class TestSkippedRows:
-    """Every dropped row is reported, because a silent one loses data.
-
-    Bug: a blank title vanished, and a row shorter than its header crashed the
-    import on ``.strip()`` of the ``None`` ``csv.DictReader`` leaves behind.
-    """
-
     def test_a_row_shorter_than_its_header_is_skipped_not_a_crash(self) -> None:
         text = (
             "title,author,rating,status,review\n"
@@ -169,11 +161,6 @@ class TestSkippedRows:
         assert reported(text) == [(3, "3 fields short of the header")]
 
     def test_a_row_longer_than_its_header_is_skipped_not_imported_mangled(self) -> None:
-        """An unquoted comma in a title imported silently shifted.
-
-        ``csv.DictReader`` read the author out of the title's tail and the
-        rating out of the author, landing an unrated book nobody was told about.
-        """
         text = (
             "title,author,rating\n"
             "Dune, Part Two,Frank Herbert,5\n"
@@ -194,11 +181,6 @@ class TestSkippedRows:
         assert reported(text) == [(2, "no title")]
 
     def test_a_quoted_newline_does_not_shift_the_line_numbers(self) -> None:
-        """The number is the file line, so a multi-line cell has to be counted.
-
-        A review with a line break is ordinary, and numbering rows by position
-        would report the wrong line for every row after one.
-        """
         parsed = parse('title,review\nDune,"line one\nline two"\n,Orphaned\n')
 
         assert [row.number for row in parsed] == [3, 4]
@@ -206,11 +188,7 @@ class TestSkippedRows:
 
 
 class TestIgnoredColumn:
-    """Regression: a re-import cleared the flag on every untouched row.
-
-    Cause: ``csv.DictReader`` puts every header key into every row, so a blank
-    cell read as a stated "not ignored". Fix: only a real value counts.
-    """
+    """Regression: a re-import cleared the flag on every untouched row."""
 
     def test_a_blank_ignored_cell_states_nothing(self) -> None:
         assert items("title,status,ignored\nTest,completed,\n")[0].ignored is None
@@ -227,11 +205,7 @@ ESCAPED_TITLE = "Dune\\nImported 9999 items from CSV file"
 
 
 class TestLogInjectionRegression:
-    """Regression: an imported cell forged log entries.
-
-    Bug: the title, the date and the unknown-column list were logged raw, and
-    a CSV field carries any character. Fix: ``sanitize_for_log`` at every sink.
-    """
+    """Regression: an imported cell forged log entries."""
 
     @staticmethod
     def _messages(caplog: pytest.LogCaptureFixture, logger: str) -> list[str]:

@@ -1,6 +1,4 @@
-"""Parse an uploaded file, save what parsed, report what happened.
-
-An upload is not a sync: nothing here writes a ``source_configs`` row, takes a
+"""An upload is not a sync: nothing here writes a ``source_configs`` row, takes a
 cadence or records a ``sync_runs`` run.
 """
 
@@ -28,9 +26,7 @@ MAX_REPORTED_ERRORS = 200
 
 @dataclass
 class ImportResult:
-    """Five counts, capped per-row misses with a tally, and file-level notes.
-
-    Each miss names its number in the importer's own unit: a file line, or an
+    """Each miss names its number in the importer's own unit: a file line, or an
     entry of a JSON array, which does not sit one per line.
     """
 
@@ -65,9 +61,7 @@ class ImportResult:
 
 
 def decode_import_text(data: bytes) -> str:
-    """Decode an uploaded export, or refuse it naming the byte that is not.
-
-    ``utf-8-sig``: a spreadsheet writes the export with a BOM, which left in
+    """``utf-8-sig``: a spreadsheet writes the export with a BOM, which left in
     place becomes part of the first column's name, so every row loses its title.
     """
     try:
@@ -87,11 +81,7 @@ def import_file(
     content_type: ContentType | None = None,
     mark_for_enrichment: bool = False,
 ) -> ImportResult:
-    """Import *text* as *importer*'s format, saving every row that parsed.
-
-    ``ImporterError`` means the text is not that format. An empty file is not
-    that: it reports zeros and no error, since "0 rows read" says it already.
-    """
+    """``ImporterError`` means the text is not that format."""
     result = ImportResult(
         importer=importer.name,
         # A format that handles one content type decides it; the rest ask.

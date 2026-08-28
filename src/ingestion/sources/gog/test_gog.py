@@ -1,5 +1,3 @@
-"""Tests for GOG.com API integration."""
-
 import logging
 import traceback
 from unittest.mock import Mock, patch
@@ -24,13 +22,10 @@ from src.models.content import ConsumptionStatus, ContentType
 
 
 class TestRefreshAccessToken:
-    """Tests for GOG OAuth token refresh."""
-
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_preserves_old_refresh_token_when_not_returned(
         self, mock_get: Mock
     ) -> None:
-        """Test that old refresh token is kept when response omits it."""
         mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "access_token": "new_access",
@@ -44,11 +39,8 @@ class TestRefreshAccessToken:
 
 
 class TestGetOwnedGames:
-    """Tests for fetching owned games from GOG."""
-
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_multiple_pages(self, mock_get: Mock) -> None:
-        """Test paginating through multiple pages of owned games."""
         page1_response = Mock(spec=requests.Response)
         page1_response.json.return_value = {
             "totalPages": 2,
@@ -72,11 +64,8 @@ class TestGetOwnedGames:
 
 
 class TestGetWishlistProductIds:
-    """Tests for fetching wishlist product IDs."""
-
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_success(self, mock_get: Mock) -> None:
-        """Test successful wishlist fetch."""
         mock_response = Mock(spec=requests.Response)
         mock_response.json.return_value = {
             "wishlist": {"12345": True, "67890": True, "11111": True}
@@ -90,11 +79,8 @@ class TestGetWishlistProductIds:
 
 
 class TestGetProductDetails:
-    """Tests for fetching individual product details."""
-
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_not_found_returns_none(self, mock_get: Mock) -> None:
-        """Test that 404 returns None instead of raising."""
         mock_response = Mock(spec=requests.Response)
         mock_response.status_code = 404
         mock_get.return_value = mock_response
@@ -105,14 +91,11 @@ class TestGetProductDetails:
 
 
 class TestGetMultipleProductDetails:
-    """Tests for batch product detail fetching."""
-
     @patch("src.ingestion.sources.gog.gog.get_product_details")
     def test_skips_none_results(self, mock_get_details: Mock) -> None:
-        """Test that None results (404s) are excluded."""
         mock_get_details.side_effect = [
             {"id": 1, "title": "Game 1"},
-            None,  # 404
+            None,
             {"id": 3, "title": "Game 3"},
         ]
 
@@ -123,10 +106,7 @@ class TestGetMultipleProductDetails:
 
 
 class TestGogPluginValidation:
-    """Tests for GogPlugin config validation."""
-
     def test_validate_missing_refresh_token(self) -> None:
-        """Test validation fails when refresh_token is missing."""
         plugin = GogPlugin()
         errors = plugin.validate_config({})
 
@@ -134,29 +114,12 @@ class TestGogPluginValidation:
         assert "'refresh_token' is required" in errors[0]
 
     def test_validate_missing_token_passes_when_in_db(self) -> None:
-        """Regression: CLI sync fails when refresh_token is in DB but not config.
-
-        Bug: validate_config() checked for refresh_token in the config dict
-        without considering that the token might be stored in the encrypted
-        credential database (used by the web UI's OAuth flow). This caused
-        CLI sync to fail with "'refresh_token' is required" even though
-        resolve_inputs() would inject the DB credential before fetch().
-
-        Root cause: validate_config() had no awareness of DB-stored
-        credentials, so it rejected configs where sensitive fields were
-        absent from the YAML but present in the credential store.
-
-        Fix: validate_config() now accepts optional storage and user_id
-        parameters. When a required sensitive field is missing from config
-        but a credential exists in DB for that source, validation passes.
-        """
         plugin = GogPlugin()
         mock_storage = Mock()
         mock_storage.credentials.get_for_source.return_value = {
             "refresh_token": "db_stored_token"
         }
 
-        # Config has no refresh_token, but DB does — should pass
         errors = plugin.validate_config(
             {"_source_id": "my_gog"},
             storage=mock_storage,
@@ -167,17 +130,12 @@ class TestGogPluginValidation:
 
 
 class TestGogPluginTransformConfig:
-    """Tests for GogPlugin.transform_config."""
-
     def test_strips_whitespace(self) -> None:
-        """Test that whitespace is stripped from refresh_token."""
         result = GogPlugin.transform_config({"refresh_token": "  my_token  "})
         assert result["refresh_token"] == "my_token"
 
 
 class TestGogPluginFetch:
-    """Tests for GogPlugin.fetch()."""
-
     @patch("src.ingestion.sources.gog.gog.get_wishlist_product_ids")
     @patch("src.ingestion.sources.gog.gog.get_owned_games")
     @patch("src.ingestion.sources.gog.gog.refresh_access_token")
@@ -187,7 +145,6 @@ class TestGogPluginFetch:
         mock_owned: Mock,
         mock_wishlist: Mock,
     ) -> None:
-        """Test fetching owned games through the plugin interface."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -221,7 +178,6 @@ class TestGogPluginFetch:
         mock_wishlist: Mock,
         mock_details: Mock,
     ) -> None:
-        """Test fetching both owned and wishlisted games."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -276,7 +232,6 @@ class TestGogPluginFetch:
         mock_owned: Mock,
         mock_wishlist: Mock,
     ) -> None:
-        """Test that wishlist is not fetched when include_wishlist is False."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -303,7 +258,6 @@ class TestGogPluginFetch:
         mock_owned: Mock,
         mock_wishlist: Mock,
     ) -> None:
-        """Test that games both owned and wishlisted are only yielded once (owned)."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -311,7 +265,6 @@ class TestGogPluginFetch:
         mock_owned.return_value = [
             {"id": 100, "title": "Duplicate Game"},
         ]
-        # Same game ID appears in wishlist
         mock_wishlist.return_value = [100, 200]
 
         plugin = GogPlugin()
@@ -326,8 +279,6 @@ class TestGogPluginFetch:
             )
         )
 
-        # Only the owned game should appear (wishlist ID 100 is filtered,
-        # ID 200 is skipped because no title without enrichment)
         assert len(items) == 1
         assert items[0].metadata["gog_owned"] is True
 
@@ -338,7 +289,6 @@ class TestGogPluginFetch:
         mock_refresh: Mock,
         mock_owned: Mock,
     ) -> None:
-        """Test that games without titles are skipped."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -364,8 +314,6 @@ class TestGogPluginFetch:
         mock_refresh: Mock,
         mock_owned: Mock,
     ) -> None:
-        """Test that metadata fields are populated correctly, GOG's tag objects
-        included: a list column refuses one, failing the whole game's save."""
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -409,20 +357,6 @@ class TestGogPluginFetch:
         mock_refresh: Mock,
         mock_owned: Mock,
     ) -> None:
-        """``worksOn`` with nothing set writes no platforms at all.
-
-        Bug reported: GOG wrote ``platforms`` as a per-platform flag dict
-        while every other source — and the ``platforms`` detail column —
-        uses a list of names, so a GOG game exported a Python repr into the
-        CSV ``platform`` cell and re-imported that literal string.
-
-        Root cause: the flag dict was stored verbatim. It was also always
-        truthy, so a game GOG reports as running nowhere still claimed a
-        platform value.
-
-        Fix: keep only the platforms reported as supported, as a list of
-        their names, and write nothing when none are.
-        """
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -453,15 +387,6 @@ class TestGogPluginFetch:
         mock_wishlist: Mock,
         mock_details: Mock,
     ) -> None:
-        """Every shape GOG names a company in leaves the plugin as text.
-
-        ``developer`` and ``publisher`` are text columns, which refuse a
-        mapping outright, so a product describing its companies as objects
-        rather than bare names has to be reduced here or its whole row fails
-        the sync. Both shapes appear in the fixtures this file already had, so
-        a nameless object and a lone object standing in for the list are
-        covered beside them.
-        """
         mock_refresh.return_value = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -485,7 +410,6 @@ class TestGogPluginFetch:
 
     @patch("src.ingestion.sources.gog.gog.refresh_access_token")
     def test_api_error_raises_source_error(self, mock_refresh: Mock) -> None:
-        """Test that GOG API errors are wrapped in SourceError."""
         mock_refresh.side_effect = GogAPIError("Token expired")
 
         plugin = GogPlugin()
@@ -502,19 +426,6 @@ class TestGogPluginFetch:
         mock_refresh: Mock,
         mock_owned: Mock,
     ) -> None:
-        """Regression test: rotated GOG refresh tokens must be persisted.
-
-        Bug: When GOG returns a new refresh_token during sync (token rotation),
-        the updated token was discarded. If the old token expired before the
-        next sync, the user had to re-authenticate.
-
-        Root cause: _fetch_gog_games only used the access_token from the
-        refresh response and ignored the new refresh_token.
-
-        Fix: When the refresh_token changes, call the _on_credential_rotated
-        callback (injected by execute_sync) so the new token is saved to the
-        credential database.
-        """
         mock_refresh.return_value = {
             "access_token": "new_access",
             "refresh_token": "rotated_refresh_token",
@@ -558,18 +469,10 @@ def _expired_token_response() -> Mock:
 
 
 class TestGogRefreshTokenChainRegression:
-    """Regression: the refresh token reached the log via ``__cause__``.
-
-    A scrubbed message still left ``raise ... from error``, whose cause renders
-    the token URL under a caller's ``exc_info=True``. Fix: ``from None`` here,
-    chain kept where the cause is clean.
-    """
-
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_refresh_traceback_omits_the_refresh_token(
         self, mock_get: Mock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Nothing a caller can render off the raised error names the token."""
         mock_get.return_value = _expired_token_response()
 
         with caplog.at_level(logging.ERROR, logger="src.ingestion.sources.gog.gog"):
@@ -585,7 +488,6 @@ class TestGogRefreshTokenChainRegression:
 
     @patch("src.ingestion.sources.gog.gog.requests.get")
     def test_fetch_traceback_omits_the_refresh_token(self, mock_get: Mock) -> None:
-        """The ``SourceError`` sync_manager logs carries a clean chain."""
         mock_get.return_value = _expired_token_response()
 
         with pytest.raises(SourceError) as raised:

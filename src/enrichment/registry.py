@@ -1,5 +1,3 @@
-"""Registry for discovering and managing enrichment providers."""
-
 import importlib
 import inspect
 import logging
@@ -21,31 +19,16 @@ _registry_lock = threading.Lock()
 
 
 class EnrichmentRegistry:
-    """The enrichment providers, discovered rather than listed.
-
-    Built-in ones come from ``src/enrichment/providers/``, private ones from
-    ``private/plugins/``: shipping a provider is dropping a folder in, never
-    editing this file. Get the singleton from :func:`get_enrichment_registry`.
-    """
+    """The enrichment providers, discovered rather than listed."""
 
     _instance: "EnrichmentRegistry | None" = None
 
     def __init__(self) -> None:
-        """Initialize empty registry.
-
-        Use get_instance() or get_enrichment_registry() instead of direct
-        instantiation.
-        """
         self._providers: dict[str, EnrichmentProvider] = {}
         self._discovered = False
 
     @classmethod
     def get_instance(cls) -> "EnrichmentRegistry":
-        """Get singleton registry instance.
-
-        Returns:
-            The global EnrichmentRegistry instance
-        """
         with _registry_lock:
             if cls._instance is None:
                 cls._instance = EnrichmentRegistry()
@@ -53,18 +36,11 @@ class EnrichmentRegistry:
 
     @classmethod
     def reset_instance(cls) -> None:
-        """Reset the singleton instance.
-
-        Primarily used for testing to ensure clean state.
-        """
         cls._instance = None
 
     def discover_providers(self, force: bool = False) -> None:
-        """Register every provider the two directories hold.
-
-        A pass fills a registry of its own and swaps the finished map in, and
-        scans outside ``_registry_lock``: it constructs code this repo does not
-        control. :meth:`PluginRegistry.discover_plugins` spells out both.
+        """A pass fills a registry of its own and swaps the finished map in, and
+        scans outside ``_registry_lock``: it constructs code this repo does not control.
         """
         with _registry_lock:
             if self._discovered and not force:
@@ -84,7 +60,6 @@ class EnrichmentRegistry:
         )
 
     def _discover_builtin_providers(self) -> None:
-        """Discover built-in providers from src/enrichment/providers/."""
         try:
             import src.enrichment.providers as providers_package
 
@@ -113,13 +88,6 @@ class EnrichmentRegistry:
             )
 
     def _discover_private_providers(self) -> None:
-        """Discover private providers from private/plugins/.
-
-        The same directory the source-plugin registry scans: what a private
-        module holds decides which registry keeps it, not where it sits. Both
-        registries import every module here, so a failure names the module and
-        the scan that hit it rather than claiming a provider was lost.
-        """
         project_root = Path(__file__).parent.parent.parent
 
         for module_name in private_plugin_module_names(
@@ -139,13 +107,6 @@ class EnrichmentRegistry:
     def _register_providers_from_module(
         self, module: Any, module_name: str, origin: str
     ) -> None:
-        """Register all EnrichmentProvider subclasses from a module.
-
-        Args:
-            module: Imported module to scan
-            module_name: The module's own name, as the log names it
-            origin: Where it was found ("builtin" or "private")
-        """
         for attr_name in dir(module):
             if attr_name.startswith("_"):
                 continue
@@ -176,14 +137,6 @@ class EnrichmentRegistry:
                     )
 
     def register(self, provider: EnrichmentProvider) -> None:
-        """Register a provider instance.
-
-        Args:
-            provider: Provider instance to register
-
-        Raises:
-            ValueError: If provider with same name already registered
-        """
         if provider.name in self._providers:
             raise ValueError(
                 f"Enrichment provider '{provider.name}' already registered"
@@ -197,42 +150,14 @@ class EnrichmentRegistry:
         )
 
     def get_provider(self, name: str) -> EnrichmentProvider | None:
-        """Get a provider by name.
-
-        Triggers discovery if not already done.
-
-        Args:
-            name: Provider name
-
-        Returns:
-            Provider instance or None if not found
-        """
         self.discover_providers()
         return self._providers.get(name)
 
     def get_all_providers(self) -> dict[str, EnrichmentProvider]:
-        """Get all registered providers.
-
-        Triggers discovery if not already done.
-
-        Returns:
-            Dict mapping provider names to instances
-        """
         self.discover_providers()
         return dict(self._providers)
 
     def get_enabled_providers(self, config: dict[str, Any]) -> list[EnrichmentProvider]:
-        """Get providers that are enabled in config.
-
-        A provider is considered enabled if config has:
-        enrichment.providers.<provider_name>.enabled = true
-
-        Args:
-            config: Full application config
-
-        Returns:
-            List of enabled provider instances
-        """
         self.discover_providers()
 
         enrichment_config = config.get("enrichment", {})
@@ -248,11 +173,4 @@ class EnrichmentRegistry:
 
 
 def get_enrichment_registry() -> EnrichmentRegistry:
-    """Get the global enrichment provider registry.
-
-    Convenience function for accessing the singleton instance.
-
-    Returns:
-        The global EnrichmentRegistry instance
-    """
     return EnrichmentRegistry.get_instance()

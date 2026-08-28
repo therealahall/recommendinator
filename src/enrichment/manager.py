@@ -1,9 +1,3 @@
-"""Background enrichment manager for processing content items.
-
-The EnrichmentManager coordinates the enrichment process, running providers
-in a background thread to fill gaps in content metadata.
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,8 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# HTTP statuses that mean "ask again later" rather than "your request is
-# wrong". Every other 4xx is the caller's own configuration — a revoked or
+# Every other 4xx is the caller's own configuration — a revoked or
 # mistyped API key above all — and repeating it on every run is a flood aimed
 # at the provider that can never come out differently.
 _RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
@@ -41,9 +34,7 @@ _MAX_CONSECUTIVE_REJECTIONS = 5
 
 @dataclass(frozen=True)
 class _ProviderFailure:
-    """One provider's failure on one item, described without its own words.
-
-    ``reason`` is built only from values this module derives, never from the
+    """``reason`` is built only from values this module derives, never from the
     provider's message, because it is persisted to the database.
     """
 
@@ -56,12 +47,7 @@ class _ProviderFailure:
 
 
 def _underlying_request_error(error: Exception) -> requests.RequestException | None:
-    """Find the ``requests`` failure underneath a provider's exception.
-
-    Every raise form leaves it reachable: ``from error`` on ``__cause__``,
-    implicit chaining and ``from None`` on ``__context__``. TMDB and RAWG
-    raise ``from None``, so a suppressed chain is still read.
-    """
+    """TMDB and RAWG raise ``from None``, so a suppressed chain is still read."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
@@ -73,21 +59,9 @@ def _underlying_request_error(error: Exception) -> requests.RequestException | N
 
 
 def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
-    """Describe a provider failure safely enough to store it.
-
-    A provider is free to interpolate the failing request URL — API key and
+    """A provider is free to interpolate the failing request URL — API key and
     all — into its own message, and enrichment errors are written to the
-    database, so the description is assembled here instead: the provider name,
-    plus the HTTP status or transport error class ``requests`` reported, or the
-    exception type when no ``requests`` failure is on the chain.
-
-    Args:
-        provider_name: Name of the provider that failed.
-        error: The exception it raised.
-
-    Returns:
-        The failure, flagged retryable unless it is positively identifiable as
-        the provider rejecting the request itself.
+    database, so the description is assembled here instead.
     """
     request_error = _underlying_request_error(error)
     if request_error is None:
@@ -100,11 +74,8 @@ def _classify_failure(provider_name: str, error: Exception) -> _ProviderFailure:
 
 
 def _is_retryable(error: requests.RequestException) -> bool:
-    """Whether repeating this request could plausibly succeed later.
-
-    Transport failures (connection refused, timeouts) and server-side or
-    throttling statuses clear on their own. Any other client error is the
-    request being wrong, and will be answered identically every time.
+    """Transport failures (connection refused, timeouts) and server-side or
+    throttling statuses clear on their own.
     """
     if isinstance(error, requests.HTTPError) and error.response is not None:
         status = error.response.status_code
@@ -114,36 +85,27 @@ def _is_retryable(error: requests.RequestException) -> bool:
 
 @dataclass
 class EnrichmentJobStatus:
-    """Status of an enrichment job."""
-
-    # Job state
     running: bool = False
     completed: bool = False
     cancelled: bool = False
 
-    # Progress
     items_processed: int = 0
     items_enriched: int = 0
     items_failed: int = 0
     items_not_found: int = 0
     total_items: int = 0
 
-    # Current item being processed
     current_item: str = ""
 
-    # Content type filter (if any)
     content_type: str | None = None
 
-    # Errors encountered
     errors: list[str] = field(default_factory=list)
 
-    # Timing
     started_at: float | None = None
     completed_at: float | None = None
 
     @property
     def elapsed_seconds(self) -> float:
-        """Get elapsed time in seconds."""
         if self.started_at is None:
             return 0.0
         end_time = self.completed_at or time.time()
@@ -151,7 +113,6 @@ class EnrichmentJobStatus:
 
     @property
     def progress_percent(self) -> float:
-        """Get progress as percentage (0-100)."""
         if self.total_items == 0:
             return 0.0
         return (self.items_processed / self.total_items) * 100
@@ -160,7 +121,6 @@ class EnrichmentJobStatus:
 #: Whole up to here; past it the count is the useful part.
 MAX_RECORDED_ERRORS = 50
 
-#: How often the run re-reads the stop flag and re-publishes its tally.
 _POLL_INTERVAL_SECONDS = 1.0
 
 
@@ -192,48 +152,12 @@ def job_status(storage_manager: StorageManager) -> EnrichmentJobStatus:
 
 
 class EnrichmentManager:
-    """Manages background enrichment of content items.
-
-    Coordinates the enrichment process:
-    1. Fetches items needing enrichment from storage
-    2. Runs appropriate providers based on content type
-    3. Merges results into content metadata (gap-filling only)
-    4. Updates enrichment status in database
-
-    Thread safety:
-        All public methods are thread-safe. The enrichment job runs in
-        a background thread and can be controlled via start/stop methods.
-
-    Example usage:
-        manager = EnrichmentManager(storage_manager, config)
-
-        # Start enrichment for all types
-        manager.start_enrichment()
-
-        # Or start for a specific type
-        manager.start_enrichment(content_type=ContentType.MOVIE)
-
-        # Check status
-        status = manager.get_status()
-        print(f"Progress: {status.progress_percent:.1f}%")
-
-        # Stop if needed
-        manager.stop_enrichment()
-    """
-
     def __init__(
         self,
         storage_manager: StorageManager,
         config: dict[str, Any],
         registry: EnrichmentRegistry | None = None,
     ) -> None:
-        """Initialize enrichment manager.
-
-        Args:
-            storage_manager: StorageManager instance for database access
-            config: Application configuration dict
-            registry: Optional EnrichmentRegistry (uses global if not provided)
-        """
         self.storage_manager = storage_manager
         self.config = config
         self.registry = registry or get_enrichment_registry()
@@ -266,16 +190,6 @@ class EnrichmentManager:
         user_id: int | None = None,
         include_not_found: bool = False,
     ) -> bool:
-        """Start background enrichment job.
-
-        Args:
-            content_type: Optional filter to only enrich one content type
-            user_id: User ID for filtering items
-            include_not_found: Also retry items previously marked as not_found
-
-        Returns:
-            True if job started, False if already running
-        """
         with self._lock:
             # The claim is the mutual exclusion, and it spans processes: a
             # local flag let the CLI start a second job beside the server's.
@@ -310,28 +224,13 @@ class EnrichmentManager:
             return True
 
     def stop_enrichment(self) -> bool:
-        """Ask the running job to stop, whichever process owns it.
-
-        It stops after the current item. False when nothing was running.
-        """
+        """It stops after the current item."""
         asked = self._jobs.request_stop()
         if asked:
             logger.info("Requested enrichment job stop")
         return asked
 
     def _wait_for_completion(self, timeout: float = 5.0) -> bool:
-        """Wait for this process's worker thread to exit.
-
-        Which the shared record cannot answer, and the interrupt path must know
-        before releasing the claim itself. Callers asking what the job is doing
-        want :meth:`get_status`.
-
-        Args:
-            timeout: Maximum time to wait in seconds.
-
-        Returns:
-            True if the thread completed within the timeout, False otherwise.
-        """
         with self._lock:
             thread = self._thread
         if thread is None:
@@ -344,11 +243,6 @@ class EnrichmentManager:
         return _to_status(self._jobs.read())
 
     def _record_error(self, rendered: str) -> None:
-        """Cap the list, keeping a running count in one last entry.
-
-        It is re-serialised on every heartbeat, so an expired key failing 20k
-        items would cost quadratic writes.
-        """
         with self._lock:
             errors = self._status.errors
             if len(errors) < MAX_RECORDED_ERRORS:
@@ -362,9 +256,7 @@ class EnrichmentManager:
                 errors[-1] = summary
 
     def _stop_asked(self) -> bool:
-        """The stop flag, re-read at most once a second.
-
-        An item matching no provider never touches the network, so a per-item
+        """An item matching no provider never touches the network, so a per-item
         read makes a wrong-type sweep thousands of round trips and nothing else.
         """
         now = time.monotonic()
@@ -405,18 +297,10 @@ class EnrichmentManager:
         user_id: int | None,
         include_not_found: bool = False,
     ) -> None:
-        """Run the enrichment job in background thread.
-
-        Args:
-            content_type: Optional content type filter
-            user_id: User ID for filtering items
-            include_not_found: Also retry items previously marked as not_found
-        """
         try:
             with self._lock:
                 self._status.started_at = time.time()
 
-            # Get batch size from config
             enrichment_config = self.config.get("enrichment", {})
             batch_size = enrichment_config.get("batch_size", 50)
 
@@ -447,16 +331,12 @@ class EnrichmentManager:
 
             # An item whose provider errored stays queued so a later run
             # retries it, which means this run's own query keeps returning it.
-            # The queue is ordered by database ID, so walking a cursor forward
-            # past the last row fetched reaches the items behind the failures
-            # while keeping every fetch exactly one batch wide.
             after_db_id: int | None = None
             # A not_found item pulled in from the set below joins the queue
             # proper if it fails, and it sits behind the cursor rather than
             # ahead of it, so the cursor alone cannot keep it from coming back.
             retried_ids: set[int] = set()
 
-            # Process items in batches
             while not self._stop_asked() and not self._every_provider_abandoned(
                 content_type
             ):
@@ -472,14 +352,11 @@ class EnrichmentManager:
                     (db_id, item) for db_id, item in fetched if db_id not in retried_ids
                 ]
 
-                # Add any remaining not_found items to this batch
                 if not_found_ids and len(items) < batch_size:
-                    # Fetch not_found items in a single batch query
                     batch_ids = list(not_found_ids)[: batch_size - len(items)]
                     batch_items = self.storage_manager.get_content_items_by_db_ids(
                         batch_ids
                     )
-                    # Build a db_id -> item map from the batch results
                     fetched_map = {
                         item.db_id: item
                         for item in batch_items
@@ -492,10 +369,8 @@ class EnrichmentManager:
                             retried_ids.add(db_id)
 
                 if not fetched and not items:
-                    # Both queues are drained
                     break
 
-                # Process each item
                 self._process_batch(items)
 
             # Uncached, unlike the loop's check: this one decides what the run
@@ -542,11 +417,6 @@ class EnrichmentManager:
             self._jobs.finish(completed=False, cancelled=False, errors=errors)
 
     def _process_batch(self, items: list[tuple[int, ContentItem]]) -> None:
-        """Process a batch of items.
-
-        Args:
-            items: List of (db_id, ContentItem) tuples
-        """
         for db_id, item in items:
             if self._stop_asked():
                 return
@@ -554,18 +424,11 @@ class EnrichmentManager:
             self._publish()
 
     def _process_item(self, db_id: int, item: ContentItem) -> None:
-        """Process a single content item.
-
-        Args:
-            db_id: Database ID of the item
-            item: ContentItem to enrich
-        """
         with self._lock:
             self._status.current_item = item.title
             item_num = self._status.items_processed + 1
             total = self._status.total_items
 
-        # Get content type
         content_type = (
             item.content_type
             if isinstance(item.content_type, ContentType)
@@ -585,7 +448,6 @@ class EnrichmentManager:
             safe_title,
         )
 
-        # Find providers for this content type
         enabled_providers = self.registry.get_enabled_providers(self.config)
         matching_providers = [
             provider
@@ -623,11 +485,9 @@ class EnrichmentManager:
 
         for provider in available_providers:
             try:
-                # Apply rate limiting
                 limiter = self._get_rate_limiter(provider.name)
                 limiter.acquire()
 
-                # Get provider config
                 provider_config = self._get_provider_config(provider.name)
 
                 logger.debug(
@@ -687,9 +547,7 @@ class EnrichmentManager:
             if any(failure.retryable for failure in failures):
                 # A provider that blew up, timed out or could not be reached
                 # never said whether it has this item, so "no match" is an
-                # unknown rather than a settled miss. Record the failure, which
-                # leaves the item queued for the next run instead of retiring
-                # it as not_found.
+                # unknown rather than a settled miss.
                 logger.info(
                     "[ENRICHMENT] Enrichment of %s failed, will retry: %s",
                     content_type_str,
@@ -722,9 +580,7 @@ class EnrichmentManager:
     def _settle_storage_failure(
         self, db_id: int, safe_title: str, error: Exception
     ) -> None:
-        """Retire an item whose enrichment arrived but could not be written.
-
-        Re-fetching spends a third party's quota on a failure of ours that
+        """Re-fetching spends a third party's quota on a failure of ours that
         repeating cannot clear.
         """
         logger.error(
@@ -740,11 +596,8 @@ class EnrichmentManager:
             self._status.items_failed += 1
 
     def _note_failure(self, failure: _ProviderFailure) -> None:
-        """Record the failure, and abandon a provider that keeps rejecting.
-
-        A revoked key rejects every item alike: thousands of requests already
-        answered no. Recording it once keeps its duplicates from pushing the
-        abandonment past a truncated view.
+        """A revoked key rejects every item alike: thousands of requests already
+        answered no.
         """
         if failure.retryable:
             self._rejections.pop(failure.provider, None)
@@ -771,11 +624,6 @@ class EnrichmentManager:
         )
 
     def _every_provider_abandoned(self, content_type: ContentType | None) -> bool:
-        """Whether nothing is left that could answer *this* run, so it should end.
-
-        Scoped to the run's type: an unabandoned book provider is no reason to
-        keep paging a movie queue nothing can enrich.
-        """
         if not self._abandoned_providers:
             return False
         return all(
@@ -785,14 +633,6 @@ class EnrichmentManager:
         )
 
     def _get_rate_limiter(self, provider_name: str) -> RateLimiter:
-        """Get or create rate limiter for a provider.
-
-        Args:
-            provider_name: Provider name
-
-        Returns:
-            RateLimiter for the provider
-        """
         if provider_name not in self._rate_limiters:
             provider = self.registry.get_provider(provider_name)
             rate = provider.rate_limit_requests_per_second if provider else 1.0
@@ -800,20 +640,6 @@ class EnrichmentManager:
         return self._rate_limiters[provider_name]
 
     def _get_provider_config(self, provider_name: str) -> dict[str, Any]:
-        """Get configuration for a specific provider.
-
-        Non-sensitive provider settings come from the assembled config; each
-        sensitive field (e.g. ``api_key``) is overlaid from the encrypted
-        ``credentials`` table, where it lives after boot migration instead of
-        plaintext config. A missing secret leaves the field absent so the
-        provider degrades gracefully.
-
-        Args:
-            provider_name: Provider name
-
-        Returns:
-            Provider-specific config dict (a fresh copy — never mutates config)
-        """
         enrichment_config: dict[str, Any] = self.config.get("enrichment", {})
         providers_config: dict[str, Any] = enrichment_config.get("providers", {})
         provider_config: dict[str, Any] = dict(providers_config.get(provider_name, {}))
@@ -831,13 +657,8 @@ class EnrichmentManager:
         return provider_config
 
     def _read_cached_secret(self, key: str) -> str | None:
-        """Return the decrypted global secret for *key*, reading it at most once.
-
-        Enrichment resolves each provider's secrets for every content item, and
-        each read is a SQLite query plus a Fernet decrypt. Caching the result
-        (including a missing ``None``) keeps that cost off the per-item hot loop.
-        The manager is short-lived — one per run — so the cache never outlives
-        the settings it captured.
+        """Enrichment resolves each provider's secrets for every content item, and
+        each read is a SQLite query plus a Fernet decrypt.
         """
         if key not in self._secret_cache:
             self._secret_cache[key] = read_secret(self.storage_manager, key)
@@ -849,11 +670,6 @@ class EnrichmentManager:
         item: ContentItem,
         result: EnrichmentResult,
     ) -> None:
-        """Fill *item*'s empty metadata from *result*, on the row it came from.
-
-        Written by db_id: the queue handed one over, and finding the row again
-        by source id or title reaches a different row.
-        """
         self.storage_manager.save_enrichment_metadata(
             db_id,
             item.model_copy(
@@ -866,21 +682,9 @@ def merge_enrichment(
     existing_metadata: dict[str, Any],
     result: EnrichmentResult,
 ) -> dict[str, Any]:
-    """Merge enrichment result into existing metadata using gap-filling.
-
-    Only fills in fields that are missing or empty in the existing metadata.
-    Never overwrites existing data.
-
-    Args:
-        existing_metadata: Current metadata dict
-        result: EnrichmentResult with new data
-
-    Returns:
-        Merged metadata dict
-    """
+    """Only fills in fields that are missing or empty in the existing metadata."""
     merged = dict(existing_metadata)
 
-    # Merge genres - enrichment provides better genre data
     if result.genres:
         existing_genres = merged.get("genres", []) or []
         if isinstance(existing_genres, str):
@@ -894,7 +698,6 @@ def merge_enrichment(
         ]
         merged["genres"] = combined
 
-    # Merge tags - combine enrichment tags with existing
     if result.tags:
         existing_tags = merged.get("tags", []) or []
         if isinstance(existing_tags, str):
@@ -908,16 +711,13 @@ def merge_enrichment(
         ]
         merged["tags"] = combined
 
-    # Fill description if missing
     if not merged.get("description") and result.description:
         merged["description"] = result.description
 
-    # Fill extra_metadata fields (only if missing)
     for key, value in result.extra_metadata.items():
         if key not in merged or merged[key] is None or merged[key] == "":
             merged[key] = value
 
-    # Store the enrichment source
     if result.external_id:
         merged["enrichment_id"] = result.external_id
 

@@ -48,11 +48,8 @@ def url_origin(value: str) -> UrlOrigin | NoOrigin:
 
 
 def source_url_error(value: str) -> str | None:
-    """Return why *value* is unusable as a source base URL, or None.
-
-    ``file://`` would read the server's own disk, and a ``user:pass@host``
-    prefix hands those credentials to whatever host follows it. An unreadable
-    url is refused rather than stored.
+    """``file://`` would read the server's own disk, and a ``user:pass@host``
+    prefix hands those credentials to whatever host follows it.
     """
     origin = url_origin(value)
     if origin is NoOrigin.UNREADABLE:

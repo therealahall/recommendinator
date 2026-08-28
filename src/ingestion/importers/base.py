@@ -1,6 +1,4 @@
-"""What an importer is: a format, and a parse over text.
-
-Nothing here takes a path, and ``test_importers.py`` holds every format to it:
+"""Nothing here takes a path, and ``test_importers.py`` holds every format to it:
 an importer that could open a file would be a second way to read the disk.
 """
 

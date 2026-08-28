@@ -1,4 +1,4 @@
-"""Cadence presets and due computation. Pure logic: callers pass aware UTC in."""
+"""Pure logic: callers pass aware UTC in."""
 
 from __future__ import annotations
 

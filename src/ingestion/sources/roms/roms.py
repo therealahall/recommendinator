@@ -1,32 +1,7 @@
-"""ROM Library scanner plugin.
-
-Scans configurable filesystem directories at a single depth level. Each
-direct child becomes one :class:`ContentItem`:
-
-- **File** entries are included only when their extension matches the
-  effective extension allow-list (``DEFAULT_EXTENSIONS`` plus
-  ``include_extensions`` minus ``exclude_extensions``).
-- **Folder** entries are always included (a multi-disc folder layout like
-  ``Final Fantasy VII (Disc 1)/`` containing ``.bin`` + ``.cue`` is one
-  game, not two), unless an ``exclude_names`` glob skips the folder name.
-
-Titles are run through the built-in ROM title cleaner
-(``_rom_title.clean_display_title``) which strips region/language/year/
-revision/disc tags and bracket noise from No-Intro / Redump / TOSEC style
-filenames. Users can append additional regex strips via
-``extra_strip_patterns``.
-
-Entries are deduplicated within a single fetch by both **resolved
+"""Entries are deduplicated within a single fetch by both **resolved
 absolute path** (so two symlinks to the same target collapse) and
 **normalized title** (so multi-disc games collapse to one item once
-``(Disc N)`` is stripped). The first matching entry wins (entries are
-processed in case-insensitive name order per scan root, then in
-scan-root order).
-
-Item IDs are stable SHA-256 hashes of the resolved path so re-syncs
-update existing rows rather than create duplicates. The storage layer's
-forward-only status progression preserves any user-set status (e.g. a
-ROM marked ``completed`` in the UI keeps that status across re-syncs).
+``(Disc N)`` is stripped).
 """
 
 from __future__ import annotations
@@ -144,11 +119,6 @@ DEFAULT_EXTENSIONS: frozenset[str] = frozenset(
 
 
 def _coerce_string_list(value: Any, field_name: str) -> tuple[list[str], str | None]:
-    """Coerce a YAML value into a list of strings.
-
-    Returns ``(values, error)``. Error is non-None when *value* is not a
-    list of strings.
-    """
     if value is None:
         return [], None
     if isinstance(value, str):
@@ -164,7 +134,6 @@ def _coerce_string_list(value: Any, field_name: str) -> tuple[list[str], str | N
 
 
 def _normalize_extensions(raw: list[str]) -> set[str]:
-    """Lowercase and ensure each extension begins with a single leading dot."""
     normalized: set[str] = set()
     for ext in raw:
         cleaned = ext.strip().lower()
@@ -177,7 +146,6 @@ def _normalize_extensions(raw: list[str]) -> set[str]:
 
 
 def _effective_extensions(include: list[str], exclude: list[str]) -> set[str]:
-    """Compute the active extension set: defaults + include - exclude."""
     return (set(DEFAULT_EXTENSIONS) | _normalize_extensions(include)) - (
         _normalize_extensions(exclude)
     )
@@ -189,9 +157,7 @@ def _matches_any_glob(name: str, patterns: list[str]) -> bool:
 
 
 def _entry_id(absolute_path: Path) -> str:
-    """Build a stable, unique ContentItem ID from an absolute path.
-
-    ``backslashreplace`` because a strict encode raises on the lone surrogate
+    """``backslashreplace`` because a strict encode raises on the lone surrogate
     ``iterdir`` returns for an undecodable name, and a strip would give two
     ROMs differing only in those bytes one id.
     """
@@ -202,11 +168,6 @@ def _entry_id(absolute_path: Path) -> str:
 
 
 def _safe_size_bytes(path: Path) -> int | None:
-    """Return ``path.stat().st_size`` or ``None`` if stat fails.
-
-    Wrapper exists so the size lookup is independently testable and so
-    flaky-mount stat failures don't abort the surrounding scan.
-    """
     try:
         return path.stat().st_size
     except OSError as error:
@@ -219,14 +180,6 @@ def _safe_size_bytes(path: Path) -> int | None:
 
 
 class RomScannerPlugin(SourcePlugin):
-    """Scan local directories for emulator ROMs and game files.
-
-    Each direct child (file matching the active extension set, or any
-    directory) becomes one :class:`ContentItem`. Titles are cleaned with
-    a built-in ROM title cleaner; users can extend the cleanup with
-    ``extra_strip_patterns``.
-    """
-
     @property
     def name(self) -> str:
         return "roms"
@@ -472,11 +425,6 @@ class RomScannerPlugin(SourcePlugin):
 
 
 def _collect_entries(scan_roots: list[Path], exclude_names: list[str]) -> list[Path]:
-    """Collect direct children of each scan root in deterministic order.
-
-    Hidden dotfiles (names starting with ``.``) are always skipped. Entries
-    whose name matches any glob in *exclude_names* are also skipped.
-    """
     entries: list[Path] = []
     for root in scan_roots:
         try:

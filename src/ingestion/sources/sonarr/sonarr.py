@@ -1,5 +1,3 @@
-"""Sonarr TV series import plugin."""
-
 import logging
 from typing import Any
 
@@ -10,16 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class SonarrPlugin(ArrPlugin):
-    """Plugin for importing TV series from Sonarr.
-
-    Sonarr is a TV series management tool. This plugin fetches all series
-    in your Sonarr library and imports them as UNREAD (wishlisted) TV show items.
-
-    Note: Sonarr tracks downloads, not watch status. All imported items
-    are set to UNREAD. The monitored state is ignored since it can change
-    based on file availability. Use ratings and manual status updates to
-    track what you've actually watched.
-    """
+    """The monitored state is ignored since it can change based on file availability."""
 
     @property
     def name(self) -> str:
@@ -58,17 +47,8 @@ class SonarrPlugin(ArrPlugin):
 
 
 def _build_sonarr_metadata(series: dict[str, Any]) -> dict[str, Any]:
-    """Build metadata dict from Sonarr series data.
-
-    Args:
-        series: Sonarr series data dict
-
-    Returns:
-        Metadata dictionary
-    """
     metadata: dict[str, Any] = {}
 
-    # Basic info
     if series.get("tvdbId"):
         metadata["tvdb_id"] = series["tvdbId"]
     if series.get("imdbId"):
@@ -80,12 +60,10 @@ def _build_sonarr_metadata(series: dict[str, Any]) -> dict[str, Any]:
     if series.get("overview"):
         metadata["overview"] = series["overview"]
 
-    # Genres
     genres = series.get("genres", [])
     if genres:
         metadata["genres"] = genres
 
-    # Season/episode info from statistics
     # Keys must match tv_show_details column mapping in sqlite_db.py
     statistics = series.get("statistics", {})
     if statistics:
@@ -96,7 +74,6 @@ def _build_sonarr_metadata(series: dict[str, Any]) -> dict[str, Any]:
         if statistics.get("episodeFileCount"):
             metadata["downloaded_episodes"] = statistics["episodeFileCount"]
 
-    # Series type and status
     if series.get("seriesType"):
         metadata["series_type"] = series["seriesType"]
     if series.get("status"):
