@@ -1,8 +1,3 @@
-"""Recommendinator.
-
-A privacy-focused recommendation engine for books, movies, TV shows, and video games.
-"""
-
 from __future__ import annotations
 
 import tomllib

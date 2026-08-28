@@ -1,6 +1,4 @@
-"""The tabular template shape of each content type.
-
-Not in the CSV plugin: the JSON plugin and the export path read the same
+"""Not in the CSV plugin: the JSON plugin and the export path read the same
 tables, and a column round-trips only while one declaration names it.
 """
 
