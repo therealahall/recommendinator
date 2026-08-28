@@ -1,6 +1,4 @@
-"""Password credentials and browser sessions for the one web account.
-
-Neither secret is reversible, so neither goes through ``encryption.py``: a
+"""Neither secret is reversible, so neither goes through ``encryption.py``: a
 password is stored as a scrypt digest under a random per-account salt, a
 session token as its SHA-256 digest.
 """
@@ -33,31 +31,26 @@ _ABSENT_ACCOUNT_SALT = b"\x00" * _SALT_BYTES
 
 _SESSION_TOKEN_BYTES = 32
 
-#: The shortest password this instance accepts, wherever one is set. Long
-#: enough that the scrypt cost above is what an attacker meets rather than an
-#: exhaustive search.
+#: Long enough that the scrypt cost above is what an attacker meets rather than
+#: an exhaustive search.
 MIN_PASSWORD_LENGTH = 12
 
 #: Names the rule, because both interfaces render this at the user.
 PASSWORD_TOO_SHORT = f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
 
-#: The longest username or display name either interface stores.
 MAX_ACCOUNT_NAME_LENGTH = 100
 
 #: Named rules, because a caller with no validator of its own renders these raw.
 ACCOUNT_NAME_BLANK = "A username cannot be blank."
 ACCOUNT_NAME_TOO_LONG = f"A name may be at most {MAX_ACCOUNT_NAME_LENGTH} characters."
 
-#: How long a session stays valid. Rolling: every ``lookup_session`` pushes
-#: the expiry out by this much again, so only an idle session lapses.
+#: Rolling: every ``lookup_session`` pushes the expiry out by this much again,
+#: so only an idle session lapses.
 SESSION_LIFETIME = timedelta(days=30)
 
 
 class AccountRecord(TypedDict):
-    """The account as an operator asks after it: who it is, and its password's age.
-
-    Neither the hash nor the salt is in it, so it is safe to render.
-    """
+    """Neither the hash nor the salt is in it, so it is safe to render."""
 
     id: int
     username: str
@@ -67,36 +60,21 @@ class AccountRecord(TypedDict):
 
 
 class AccountAlreadyClaimedError(RuntimeError):
-    """There is no unclaimed account row to write.
-
-    A second claim would hand the library to whoever asked for it. Changing
-    a password is :func:`set_password`.
-    """
+    """A second claim would hand the library to whoever asked for it."""
 
 
 class PasswordTooShortError(ValueError):
-    """The offered password is under :data:`MIN_PASSWORD_LENGTH`.
-
-    Raised where the password is written rather than at each interface, so
+    """Raised where the password is written rather than at each interface, so
     the CLI and the web inherit one floor and a third caller cannot miss it.
     """
 
 
 class AccountNameError(ValueError):
-    """A username or display name breaks the rule both interfaces enforce.
-
-    The password floor's counterpart, raised where the name is written.
-    """
+    """The password floor's counterpart, raised where the name is written."""
 
 
 def normalize_account_name(value: str | None, *, required: bool) -> str:
-    """Return *value* trimmed; "" is a display name the caller may clear.
-
-    The cap is measured after the trim: that is what lands in the column.
-
-    Raises:
-        AccountNameError: Blank where *required*, or past the cap.
-    """
+    """The cap is measured after the trim: that is what lands in the column."""
     trimmed = (value or "").strip()
     if len(trimmed) > MAX_ACCOUNT_NAME_LENGTH:
         raise AccountNameError(ACCOUNT_NAME_TOO_LONG)
@@ -106,7 +84,6 @@ def normalize_account_name(value: str | None, *, required: bool) -> str:
 
 
 def _derive_key(plaintext: str, salt: bytes) -> str:
-    """Return the scrypt digest of *plaintext* under *salt*, hex-encoded."""
     return hashlib.scrypt(
         plaintext.encode(),
         salt=salt,
@@ -118,27 +95,18 @@ def _derive_key(plaintext: str, salt: bytes) -> str:
 
 
 def _token_hash(token: str) -> str:
-    """Return the stored form of a session token: its SHA-256 digest."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _utc_text(moment: datetime) -> str:
-    """Render *moment* as ISO 8601 text at second resolution.
-
-    Session expiry is compared in SQL, and ``isoformat`` drops the
-    microseconds field when it is zero — one stamp in a million that sorts
-    short.
+    """Session expiry is compared in SQL, and ``isoformat`` drops the
+    microseconds field when it is zero — one stamp in a million that sorts short.
     """
     return moment.isoformat(timespec="seconds")
 
 
 def _password_columns(plaintext: str) -> tuple[str, str, str]:
-    """Return the ``(hash, salt, updated_at)`` triple for a new password.
-
-    Raises:
-        PasswordTooShortError: *plaintext* is under the floor. Every write
-            path runs through here, which is what makes the floor one rule.
-    """
+    """Every write path runs through here, which is what makes the floor one rule."""
     if len(plaintext) < MIN_PASSWORD_LENGTH:
         raise PasswordTooShortError(PASSWORD_TOO_SHORT)
     salt = secrets.token_bytes(_SALT_BYTES)
@@ -146,7 +114,6 @@ def _password_columns(plaintext: str) -> tuple[str, str, str]:
 
 
 def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | None:
-    """Report *user_id*'s names and the state of its password, or None."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT username, display_name, password_hash, password_updated_at "
@@ -166,7 +133,6 @@ def describe_account(conn: sqlite3.Connection, user_id: int) -> AccountRecord | 
 
 
 def account_is_claimed(conn: sqlite3.Connection) -> bool:
-    """Report whether anyone has set a password on this instance."""
     account = describe_account(conn, get_default_user_id())
     return account is not None and account["claimed"]
 
@@ -177,13 +143,6 @@ def claim_account(
     display_name: str | None,
     plaintext_password: str,
 ) -> UserDict:
-    """Claim the instance: name the account and give it a password.
-
-    Raises:
-        AccountAlreadyClaimedError: The account already has a password.
-        AccountNameError: The username is blank or over-long.
-        PasswordTooShortError: The password is under the floor.
-    """
     stored_username = normalize_account_name(username, required=True)
     stored_display_name = normalize_account_name(display_name, required=False) or None
     password_hash, salt, updated_at = _password_columns(plaintext_password)
@@ -216,12 +175,6 @@ def claim_account(
 
 
 def set_password(conn: sqlite3.Connection, user_id: int, plaintext: str) -> None:
-    """Replace *user_id*'s password with *plaintext*.
-
-    Raises:
-        PasswordTooShortError: The password is under the floor; nothing is
-            written.
-    """
     password_hash, salt, updated_at = _password_columns(plaintext)
     cursor = conn.cursor()
     cursor.execute(
@@ -236,12 +189,6 @@ def set_password(conn: sqlite3.Connection, user_id: int, plaintext: str) -> None
 def verify_password(
     conn: sqlite3.Connection, username: str, plaintext: str
 ) -> UserDict | None:
-    """Return the user *plaintext* logs *username* in as, or None.
-
-    An unknown username and an unclaimed account are hashed against
-    :data:`_ABSENT_ACCOUNT_SALT` and matched against nothing, so no rejection
-    is the cheap one.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, password_hash, password_salt FROM users WHERE username = ?",
@@ -256,9 +203,7 @@ def verify_password(
 
 
 def create_session(conn: sqlite3.Connection, user_id: int) -> str:
-    """Open a session for *user_id* and return its token.
-
-    The one moment the token exists in plaintext: the caller hands it to the
+    """The one moment the token exists in plaintext: the caller hands it to the
     browser, and only its digest is stored.
     """
     token = secrets.token_urlsafe(_SESSION_TOKEN_BYTES)
@@ -281,11 +226,6 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> str:
 
 
 def lookup_session(conn: sqlite3.Connection, token: str) -> UserDict | None:
-    """Return the user *token* is signed in as, or None if it names no live one.
-
-    A live session's expiry rolls forward by :data:`SESSION_LIFETIME` on
-    every lookup, so only an idle one lapses.
-    """
     token_hash = _token_hash(token)
     now = utc_now()
     cursor = conn.cursor()
@@ -305,7 +245,6 @@ def lookup_session(conn: sqlite3.Connection, token: str) -> UserDict | None:
 
 
 def revoke_session(conn: sqlite3.Connection, token: str) -> None:
-    """End the session *token* names."""
     cursor = conn.cursor()
     cursor.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
     conn.commit()
@@ -314,11 +253,6 @@ def revoke_session(conn: sqlite3.Connection, token: str) -> None:
 def revoke_other_sessions(
     conn: sqlite3.Connection, user_id: int, keep_token: str
 ) -> None:
-    """End every session *user_id* holds except the one *keep_token* names.
-
-    What a password change does: every other browser is signed out, and the
-    one making the change is not made to sign in again.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
@@ -328,14 +262,12 @@ def revoke_other_sessions(
 
 
 def revoke_all_sessions(conn: sqlite3.Connection, user_id: int) -> None:
-    """End every session *user_id* holds, on every device."""
     cursor = conn.cursor()
     cursor.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
     conn.commit()
 
 
 def purge_expired_sessions(conn: sqlite3.Connection) -> int:
-    """Delete the lapsed sessions, returning how many were deleted."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM sessions WHERE expires_at <= ?", (_utc_text(utc_now()),)
@@ -346,73 +278,51 @@ def purge_expired_sessions(conn: sqlite3.Connection) -> int:
 
 
 class AccountStore:
-    """The one account and its sessions. ``StorageManager.accounts``."""
-
     def __init__(self, sqlite_db: SQLiteDB) -> None:
         self._sqlite_db = sqlite_db
 
     def is_claimed(self) -> bool:
-        """Report whether anyone has set a password on this instance."""
         with self._sqlite_db.connection() as conn:
             return account_is_claimed(conn)
 
     def describe(self, user_id: int) -> AccountRecord | None:
-        """Report a user's names and the state of its password, or None."""
         with self._sqlite_db.connection() as conn:
             return describe_account(conn, user_id)
 
     def claim(
         self, username: str, display_name: str | None, plaintext_password: str
     ) -> UserDict:
-        """Claim the instance: name the account and give it a password.
-
-        Raises:
-            AccountAlreadyClaimedError: The account already has a password.
-            PasswordTooShortError: The password is under the floor.
-        """
         with self._sqlite_db.connection() as conn:
             return claim_account(conn, username, display_name, plaintext_password)
 
     def set_password(self, user_id: int, plaintext: str) -> None:
-        """Replace a user's password.
-
-        Raises:
-            PasswordTooShortError: The password is under the floor.
-        """
         with self._sqlite_db.connection() as conn:
             set_password(conn, user_id, plaintext)
 
     def verify_password(self, username: str, plaintext: str) -> UserDict | None:
-        """Return the user *plaintext* logs *username* in as, or None."""
         with self._sqlite_db.connection() as conn:
             return verify_password(conn, username, plaintext)
 
     def create_session(self, user_id: int) -> str:
-        """Open a session and return its token, the only copy in plaintext."""
         with self._sqlite_db.connection() as conn:
             return create_session(conn, user_id)
 
     def lookup_session(self, token: str) -> UserDict | None:
-        """Return the user *token* is signed in as, extending the session."""
         with self._sqlite_db.connection() as conn:
             return lookup_session(conn, token)
 
     def revoke_session(self, token: str) -> None:
-        """End one session."""
         with self._sqlite_db.connection() as conn:
             revoke_session(conn, token)
 
     def revoke_other_sessions(self, user_id: int, keep_token: str) -> None:
-        """End every session a user holds but the one making the request."""
         with self._sqlite_db.connection() as conn:
             revoke_other_sessions(conn, user_id, keep_token)
 
     def revoke_all_sessions(self, user_id: int) -> None:
-        """End every session a user holds, on every device."""
         with self._sqlite_db.connection() as conn:
             revoke_all_sessions(conn, user_id)
 
     def purge_expired_sessions(self) -> int:
-        """Delete the lapsed sessions, returning how many were deleted."""
         with self._sqlite_db.connection() as conn:
             return purge_expired_sessions(conn)

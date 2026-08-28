@@ -1,13 +1,4 @@
-"""Shared merge helpers for content-item deduplication.
-
-The row-absorbing ones serve ``item_merges.absorb_item``, the one merge door.
-No sync path merges rows: it deleted ids other sources held.
-
-``__all__`` is this module's contract: every name in it is read from outside —
-``sqlite_db``, ``schema``, ``derived`` and ``duplicates`` between them import
-all but ``normalize_creator_for_matching``, which the veto's own tests read —
-so none can be renamed or reshaped without following its readers.
-"""
+"""No sync path merges rows: it deleted ids other sources held."""
 
 import json
 import re
@@ -51,13 +42,8 @@ __all__ = [
     "years_conflict",
 ]
 
-# ---------------------------------------------------------------------------
-# JSON helpers
-# ---------------------------------------------------------------------------
-
 
 def parse_json_list(raw: str | None) -> list[str]:
-    """Read a JSON array string as its names; absent or unparseable reads empty."""
     if not raw:
         return []
     try:
@@ -68,10 +54,6 @@ def parse_json_list(raw: str | None) -> list[str]:
         pass
     return []
 
-
-# ---------------------------------------------------------------------------
-# Detail table constants
-# ---------------------------------------------------------------------------
 
 # Hand-written rather than derived from ``models.detail_fields``: it is the
 # source of ALLOWED_DETAIL_TABLES, which guards every SQL identifier this
@@ -126,22 +108,18 @@ ALLOWED_DETAIL_TABLES: frozenset[str] = frozenset(_DETAIL_TABLE_COLUMNS.keys())
 
 
 def detail_columns(table: str) -> tuple[str, ...]:
-    """Every column of *table* but its key, for a whole-row copy or restore."""
     if table not in _DETAIL_TABLE_COLUMNS:
         raise ValueError(f"Unknown detail table: {table!r}")
     return (*_DETAIL_TABLE_COLUMNS[table], "metadata")
 
 
 def assert_known_detail_table(spec: ContentTypeFields) -> None:
-    """Raise unless the detail table this spec names is allow-listed."""
     if spec.table not in ALLOWED_DETAIL_TABLES:
         raise ValueError(f"Unknown detail table: {spec.table!r}")
 
 
 def detail_join(spec: ContentTypeFields) -> str:
-    """The LEFT JOIN one detail table contributes to a content-item query.
-
-    Shared by the joined read in ``sqlite_db`` and the derived-column source
+    """Shared by the joined read in ``sqlite_db`` and the derived-column source
     select in ``derived``, which both join every detail table onto the same
     ``ci`` alias and must agree on what that join is.
     """
@@ -152,16 +130,10 @@ def detail_join(spec: ContentTypeFields) -> str:
     )
 
 
-# Columns merged additively (union of both rows' lists) during dedup.
 MERGEABLE_DETAIL_COLUMNS: frozenset[str] = frozenset({"genres", "tags"})
 
-# Columns that can only increase (e.g. TV show gaining new seasons).
 MONOTONIC_DETAIL_COLUMNS: frozenset[str] = frozenset({"seasons", "episodes"})
 
-
-# ---------------------------------------------------------------------------
-# Status ordering
-# ---------------------------------------------------------------------------
 
 _STATUS_ORDER: dict[str, int] = {
     "unread": 0,
@@ -171,12 +143,7 @@ _STATUS_ORDER: dict[str, int] = {
 
 
 def resolve_status_forward(existing_status: str | None, incoming_status: str) -> str:
-    """Return the later of two statuses (forward-only progression).
-
-    Status can only advance: unread → currently_consuming → completed.
-    A re-sync with an earlier status does not revert, and neither does a
-    duplicate-row merge.
-    """
+    """Status can only advance: unread → currently_consuming → completed."""
     if existing_status is None:
         return incoming_status
     existing_order = _STATUS_ORDER.get(existing_status, 0)
@@ -184,11 +151,6 @@ def resolve_status_forward(existing_status: str | None, incoming_status: str) ->
     if incoming_order >= existing_order:
         return incoming_status
     return existing_status
-
-
-# ---------------------------------------------------------------------------
-# Title normalisation
-# ---------------------------------------------------------------------------
 
 
 # "The Office (US)" and "DOOM (2016)" collapse onto their namesakes; the year
@@ -208,7 +170,6 @@ _TITLE_YEAR = re.compile(r"\((\d{4})\)\s*$")
 
 
 def _is_qualifier(inner: str) -> bool:
-    """Whether a trailing parenthetical qualifies the work rather than names it."""
     inner = inner.strip()
     if _YEAR.match(inner):
         return True
@@ -226,7 +187,6 @@ def _strip_qualifying_parentheticals(title: str) -> str:
 
 
 def normalize_title_for_matching(title: str) -> str:
-    """Normalize a title for duplicate detection."""
     if not title:
         return ""
 
@@ -290,10 +250,7 @@ def normalize_title_for_matching(title: str) -> str:
 
 
 def bare_title_key(title: str) -> str:
-    """The key with any trailing parenthetical dropped, qualifier or not.
-
-    Not the save door's key: "(Malazan Book 2)" may name a different work.
-    """
+    """Not the save door's key: "(Malazan Book 2)" may name a different work."""
     return normalize_title_for_matching(_TRAILING_PARENTHETICAL.sub("", title))
 
 
@@ -302,7 +259,6 @@ _REGION_ALIASES = {"usa": "us", "gb": "uk"}
 
 
 def stated_region(title: str | None) -> str | None:
-    """The region a title qualifies its work with: "The Traitors (AU)" is "au"."""
     remaining = (title or "").lower()
     while match := _TRAILING_PARENTHETICAL.search(remaining):
         inner = match.group(1)
@@ -316,16 +272,13 @@ def stated_region(title: str | None) -> str | None:
 
 
 def regions_conflict(one: str | None, other: str | None) -> bool:
-    """Whether two titles name different productions, vetoing a title match.
-
-    Not the year rule: a region only one side states is not disagreement, it
+    """Not the year rule: a region only one side states is not disagreement, it
     qualifies the Hell's Kitchen nobody else qualifies.
     """
     return one is not None and other is not None and one != other
 
 
 def _collapse_initials(tokens: list[str]) -> list[str]:
-    """Join each run of single-letter tokens, so "J. K." is the one token "jk"."""
     collapsed: list[str] = []
     following_initial = False
     for token in tokens:
@@ -351,9 +304,7 @@ def normalize_creator_for_matching(creator: str | None) -> str:
 
 
 def stated_creator(creator: str | None) -> str | None:
-    """The creator a value names, or None for a placeholder naming nobody.
-
-    The column is fill-only, so a stored "Unknown" is permanent — an import
+    """The column is fill-only, so a stored "Unknown" is permanent — an import
     writing one undoes what the schema-17 step cleared.
     """
     return creator if normalize_creator_for_matching(creator) else None
@@ -389,11 +340,8 @@ _GENERIC_CREATOR_TOKENS = frozenset(
 
 
 def creators_conflict(one: str | None, other: str | None) -> bool:
-    """Whether two creators clearly disagree, vetoing a title match.
-
-    Unstated or sharing a name is not disagreement: a source omitting the
+    """Unstated or sharing a name is not disagreement: a source omitting the
     author would manufacture duplicates, and "Arkane Lyon" is "Arkane Studios".
-    Sharing only corporate furniture is not sharing a name.
     """
     left = normalize_creator_for_matching(one)
     right = normalize_creator_for_matching(other)
@@ -407,8 +355,6 @@ def creators_conflict(one: str | None, other: str | None) -> bool:
 
 @dataclass(frozen=True)
 class StatedYear:
-    """A release year one row states, and whether its title is what states it."""
-
     value: int | None = None
     in_title: bool = False
 
@@ -416,7 +362,6 @@ class StatedYear:
 def stated_release_year(
     content_type: str, stated: Any, title: str | None
 ) -> StatedYear:
-    """The year a row states its work came out, taking *stated* as its field."""
     if content_type not in RELEASE_YEAR_FIELDS:
         return StatedYear()
     year = to_int(stated)
@@ -427,31 +372,17 @@ def stated_release_year(
 
 
 def years_conflict(one: StatedYear, other: StatedYear) -> bool:
-    """Whether two release years disagree, vetoing a title match.
-
-    A year only one source states is not disagreement. A title spelling one
-    out is: a store writes "DOOM (2016)" because the bare name is taken.
-    """
+    """A year only one source states is not disagreement."""
     if one.value is not None and other.value is not None:
         return one.value != other.value
     return one.in_title or other.in_title
 
 
-# ---------------------------------------------------------------------------
-# Merge operations
-# ---------------------------------------------------------------------------
-
-
 def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Merge the user-owned scalar columns from a duplicate into the kept row.
-
-    The duplicate row is hidden after this runs, so every column a user can
-    own has to be carried across or it is invisible until an unmerge: rating
-    and review fill a null, and the later date_completed and further-advanced
-    status win. ``ignored`` is not read here at all: each row keeps its own,
-    because carrying it hides the survivor behind the duplicate's ignore.
-
-    Requires ``row_factory = sqlite3.Row``.
+    """Every other user-owned column is carried across, the duplicate row being
+    hidden. ``ignored`` is not read here at all: each row keeps its own, because
+    carrying it hides the survivor behind the duplicate's ignore. Requires
+    ``row_factory = sqlite3.Row``.
     """
     # Skipped entirely when no column moves, so a merge that changes nothing
     # leaves updated_at — a user-facing sort key — alone.
@@ -511,12 +442,7 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
 def merge_enrichment_status(
     cursor: sqlite3.Cursor, keep_id: int, delete_id: int
 ) -> None:
-    """Carry the absorbed row's outcome onto a kept row still queued.
-
-    A settled miss counts as settled: one work, one outcome. A manual merge of
-    unlike titles can retire a survivor no provider tried;
-    ``enrichment start --retry-not-found`` requeues it.
-    """
+    """A settled miss counts as settled: one work, one outcome."""
     cursor.execute(
         "SELECT * FROM enrichment_status WHERE content_item_id = ?", (delete_id,)
     )
@@ -549,13 +475,6 @@ def merge_enrichment_status(
 def _merge_detail_metadata(
     keep_detail: sqlite3.Row | None, dup_detail: sqlite3.Row | None
 ) -> str | None:
-    """Merge metadata JSON from the duplicate into the kept detail row.
-
-    Returns None when the merge must be skipped, leaving the kept row as-is.
-    Existing keys win, incoming fills gaps. ``seasons_watched`` instead takes
-    the union of both rows and ``seasons_watched_dates`` the later watch date
-    per season.
-    """
     # merge_detail_tables already guards both rows, so this only fires if that
     # guard regresses. Skipping matches every other degenerate case here: dedup
     # leaves the kept row alone rather than aborting the whole merge.
@@ -606,13 +525,7 @@ def _merge_detail_metadata(
 
 
 def merge_detail_tables(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -> None:
-    """Merge detail table rows from duplicate into kept row.
-
-    A table only the duplicate has a row in is copied, leaving the duplicate
-    its own; where both have one, genres and tags merge additively, nulls fill,
-    and the metadata blob follows ``_merge_detail_metadata``.
-
-    Leaves ``updated_at`` alone: what moves here is bookkeeping, not an edit
+    """Leaves ``updated_at`` alone: what moves here is bookkeeping, not an edit
     the user made. Requires ``row_factory = sqlite3.Row``.
     """
     for table, columns in _DETAIL_TABLE_COLUMNS.items():

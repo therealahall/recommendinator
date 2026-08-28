@@ -1,5 +1,3 @@
-"""Database schema definitions."""
-
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -22,8 +20,6 @@ from src.utils.series import split_series_from_title
 
 
 class EnrichmentStatusDict(TypedDict):
-    """Enrichment status for a content item."""
-
     content_item_id: int
     last_enriched_at: str | None
     enrichment_provider: str | None
@@ -33,8 +29,6 @@ class EnrichmentStatusDict(TypedDict):
 
 
 class UserDict(TypedDict):
-    """A user record."""
-
     id: int
     username: str
     display_name: str | None
@@ -43,8 +37,6 @@ class UserDict(TypedDict):
 
 
 class PreferenceProfileRow(TypedDict):
-    """A ``preference_profiles`` row, with ``profile_json`` already parsed."""
-
     id: int
     user_id: int
     profile: dict[str, Any]
@@ -52,8 +44,6 @@ class PreferenceProfileRow(TypedDict):
 
 
 class SourceConfigRow(TypedDict):
-    """Raw row from the source_configs table."""
-
     source_id: str
     plugin: str
     config_json: str
@@ -64,13 +54,6 @@ class SourceConfigRow(TypedDict):
 
 
 class SourceConfigDict(TypedDict):
-    """Parsed source config record returned by SourceConfigStore.
-
-    ``config`` is the deserialised non-sensitive config dict; sensitive
-    values stay in the encrypted ``credentials`` table and must be merged in
-    by ``resolve_inputs`` at sync time.
-    """
-
     source_id: str
     plugin: str
     config: dict[str, Any]
@@ -97,26 +80,12 @@ class SyncRunDict(TypedDict):
     omitted_errors: int
 
 
-# One-time steps, guarded by the stored ``PRAGMA user_version``: 1 and 2 clear
-# seeded ``settings`` rows, 3 repairs legacy content rows, 6 prunes orphaned
-# leaves.
-
-# 16 reduces a list column holding an object and clears a re-queued item's
-# stale quality; 17 splits a crammed series title, drops a placeholder author,
-# folds a company name, re-normalizes every title and re-derives every row's
-# sort and search columns; 18 rebuilds sync_runs, whose unfinished row is a
-# claim; 19 carries the UI theme out of the preference blob.
-
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
 _SCHEMA_VERSION = 19
 
-# Leaves that were settings-registry entries on an earlier iteration of the
-# database-backed config and no longer are. ``web.host``/``port``/``debug`` moved
-# to bootstrap-only config (the launcher reads them before any database is open)
-# and the ``ingestion`` section was removed with the conflict-resolution code it
-# configured. Rows for these keys are unreachable from the app but would still
+# Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
 _ORPHANED_SETTING_KEYS: tuple[str, ...] = (
     "web.host",
@@ -309,10 +278,7 @@ _CONTENT_ITEM_INDEXES = (
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Create the database schema.
-
-    Sets ``conn.row_factory`` on the caller's connection unconditionally.
-    """
+    """Sets ``conn.row_factory`` on the caller's connection unconditionally."""
     # Required by the steps below, which read columns by name.
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -422,7 +388,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # than the databases that have never had one.
     backfill_derived_columns(cursor)
 
-    # Preference profile snapshots (regenerated periodically)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS preference_profiles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -445,7 +410,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     if stored_version < 19:
         _move_themes_off_preference_blob(cursor)
 
-    # Credentials table for encrypted source credentials (API keys, tokens)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS credentials (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -457,12 +421,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
         """)
 
-    # Source configs table: per-source non-sensitive config that has been
-    # migrated from config.yaml into the database. Once a row exists for
-    # (user_id, source_id), the YAML entry for that source is no longer
-    # consulted by resolve_inputs — the database is the source of truth.
-    # Sensitive fields (API keys, tokens) keep going through the encrypted
-    # ``credentials`` table above; this table holds the rest.
+    # Once a row exists for (user_id, source_id), the YAML entry for that source is
+    # no longer consulted by resolve_inputs — the database is the source of truth.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS source_configs (
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -519,11 +479,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
         """)
 
-    # Global/system settings: dotted leaf key -> JSON-encoded value. Holds ONLY
-    # the leaves a user explicitly set via the Settings page / `settings` CLI,
-    # keyed by dotted path (e.g. "recommendations.default_count"). Nothing is
-    # seeded here on boot; a stored leaf wins over YAML and the registry const
-    # default. Per-source config and credentials keep their own tables above.
+    # Nothing is seeded here on boot; a stored leaf wins over YAML and the
+    # registry const default.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -532,17 +489,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
         """)
 
-    # Version-guarded one-time settings migrations (see _migrate_settings_table).
     _migrate_settings_table(cursor, stored_version)
 
-    # Records that every guarded step above has run, so the next open skips
-    # them. Written inside the same transaction as the steps themselves: an
+    # Written inside the same transaction as the steps themselves: an
     # open that raises advances nothing and the next one retries the lot.
-    # Only ever moves forward. Skipped when the version already says this,
-    # because the pragma rewrites the database header and an open with nothing
-    # to upgrade should leave the file alone, and skipped when the version is
-    # higher because a database written by a later build must not be rewound
-    # into re-running one of its one-time steps.
     #
     # PRAGMA statements cannot be parameterised; the value is a validated
     # module-level integer constant, not caller input.
@@ -554,19 +504,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
 
 def _like_prefix(prefix: str) -> str:
-    """Return the ``LIKE`` pattern matching every key starting with *prefix*."""
     escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"{escaped}%"
 
 
 def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
-    """Read the version the one-time upgrade steps must start from.
-
-    A database with no tables at all is being created by this open, so
+    """A database with no tables at all is being created by this open, so
     ``CREATE TABLE`` is about to write every row in the current shape and no
-    guarded step has anything to find. It reports as already current rather
-    than as version 0 — which is the version an upgrading database that
-    predates ``user_version`` really carries.
+    guarded step has anything to find.
     """
     cursor.execute("SELECT COUNT(*) FROM sqlite_master")
     if cursor.fetchone()[0] == 0:
@@ -576,18 +521,10 @@ def _stored_schema_version(cursor: sqlite3.Cursor) -> int:
 
 
 def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
-    """Rewrite the content rows left in shapes storage no longer writes.
-
-    Each reads the whole library, so both are guarded to run once per
-    database: no current write path produces what either looks for, and a
-    row a pass deliberately declines to settle — a fill-only column holding
-    another producer's object, say — would otherwise be re-read on every open
-    for the life of the database.
-
-    They share the transaction ``create_schema``'s ``INSERT OR IGNORE INTO
-    users`` opened and its commit closes. Nothing between them may commit, and
-    that connection must keep implicit transactions, or a step that raises
-    leaves the ones before it committed over a half-upgraded library.
+    """The steps below share the transaction ``create_schema``'s ``INSERT OR
+    IGNORE INTO users`` opened. Nothing between them may commit, and that
+    connection must keep implicit transactions, or a step that raises leaves the
+    ones before it committed over a half-upgraded library.
     """
     # Approximate normalization for a column the caller's ALTER may have just
     # added; step 17 corrects it with the full Python function.
@@ -600,9 +537,7 @@ def _repair_legacy_content_rows(cursor: sqlite3.Cursor) -> None:
 
 @contextmanager
 def _rebuilding(conn: sqlite3.Connection) -> Iterator[None]:
-    """Hold the connection where a rebuild is safe, and commit its transaction.
-
-    Foreign keys off so the drop ending a rebuild cannot cascade; legacy
+    """Foreign keys off so the drop ending a rebuild cannot cascade; legacy
     renaming on so it leaves the children's REFERENCES alone. Neither pragma
     survives inside a transaction.
     """
@@ -628,18 +563,11 @@ def _move_external_ids_off_content_items(conn: sqlite3.Connection) -> None:
 
 
 def _foreign_key_parents(cursor: sqlite3.Cursor, table: str) -> set[str]:
-    """The tables *table* declares a foreign key to; empty when it has none."""
     cursor.execute(f"PRAGMA foreign_key_list({table})")
     return {row["table"] for row in cursor.fetchall()}
 
 
 def _assert_no_child_followed(cursor: sqlite3.Cursor, scratch: str) -> None:
-    """Refuse a rename that dragged the children onto *scratch*.
-
-    A pragma is a no-op inside a transaction, so only the caller's ordering
-    keeps these clauses on content_items — and an unchecked rebuild commits a
-    database no write can use.
-    """
     followed = sorted(
         table
         for table in _CONTENT_ITEM_CHILDREN
@@ -653,9 +581,6 @@ def _assert_no_child_followed(cursor: sqlite3.Cursor, scratch: str) -> None:
 
 
 def _rebuild_content_items(cursor: sqlite3.Cursor) -> None:
-    """``source`` names the last source to sync the row, not the one whose id
-    ``external_id`` holds. Filing legacy ids under a name no source can claim
-    keeps every source's next sync on the title path instead of a duplicate."""
     cursor.execute("ALTER TABLE content_items RENAME TO content_items_old")
     _assert_no_child_followed(cursor, "content_items_old")
     cursor.execute(_CONTENT_ITEMS_TABLE)
@@ -699,9 +624,7 @@ def _rebuild_sync_runs(cursor: sqlite3.Cursor) -> None:
 
 
 def _move_themes_off_preference_blob(cursor: sqlite3.Cursor) -> None:
-    """Carry each user's stored theme into ``user_ui_settings``.
-
-    Only this step can reach the theme an upgrading operator picked; without
+    """Only this step can reach the theme an upgrading operator picked; without
     it, the first open after the upgrade paints the default instead.
     """
     cursor.execute("SELECT id, settings FROM users WHERE settings IS NOT NULL")
@@ -720,37 +643,7 @@ def _move_themes_off_preference_blob(cursor: sqlite3.Cursor) -> None:
 
 
 def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None:
-    """Run the version-guarded one-time migrations of the ``settings`` table.
-
-    **Version 1 — drop every pre-existing row.**
-    An earlier iteration of the database-backed config seeded the ``settings``
-    table on every boot — both dotted-leaf rows (``recommendations.max_count``)
-    and stale whole-section JSON-blob rows (``recommendations`` -> a dict).
-    Seed-on-boot
-    has since been removed; the table now holds only leaves a user explicitly
-    sets via the settings UI/CLI. Because that feature is unreleased, no
-    pre-existing row is genuine user input — every one is a seed artifact — so
-    the whole table is cleared once on the first upgrade.
-
-    Guarded by ``PRAGMA user_version``: each step runs only while *stored_version*
-    is below the version that introduced it, and ``create_schema`` advances the
-    stored version once every guarded step has run, so neither fires again. A
-    leaf a user sets after the upgrade therefore survives every later init.
-
-    **Version 2 — prune only the keys in :data:`_ORPHANED_SETTING_KEYS`.**
-    Unlike version 1 this must SPARE every other row: by now a developer on this
-    branch may have set real values. These five were briefly registry entries and
-    no longer are, leaving rows the app cannot reach — ``settings reset`` and
-    ``DELETE /api/settings`` both refuse a key with no registry entry. The
-    ``web.*`` rows would still be overlaid onto ``config["web"]`` by
-    ``migrate_config_settings``; the ``ingestion.*`` rows cannot be, since that
-    section left ``IN_SCOPE_SECTIONS`` too, and are deleted simply as garbage.
-    Also unreleased, so no row here is genuine user intent either.
-
-    **Version 6 — prune :data:`_ORPHANED_SETTING_PREFIXES`.** Unlike the rows
-    above these were released, so this discards values a user really set: the
-    subsystem they configured no longer exists.
-    """
+    """Steps are guarded on ``PRAGMA user_version``, advanced only once all have run."""
     if stored_version < 1:
         cursor.execute("DELETE FROM settings")
 
@@ -769,10 +662,7 @@ def _migrate_settings_table(cursor: sqlite3.Cursor, stored_version: int) -> None
 
 
 def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
-    """Re-normalize all content_items titles using the full Python function.
-
-    SQL's ``lower(title)`` backfill strips no punctuation, article or suffix.
-    """
+    """SQL's ``lower(title)`` backfill strips no punctuation, article or suffix."""
     cursor.execute("SELECT id, title FROM content_items WHERE title IS NOT NULL")
     # fetchall() required: cursor is reused for UPDATEs inside the loop
     for row in cursor.fetchall():
@@ -784,8 +674,6 @@ def _renormalize_titles(cursor: sqlite3.Cursor) -> None:
 
 
 def _split_crammed_series_titles(cursor: sqlite3.Cursor) -> None:
-    """Move a book title's series marker into its metadata, where the plugins
-    now put it: crammed, it keys as itself and stops naming its Calibre twin."""
     cursor.execute(
         "SELECT ci.id, ci.title, bd.metadata FROM content_items AS ci"
         " JOIN book_details AS bd ON bd.content_item_id = ci.id"
@@ -829,13 +717,10 @@ def _clear_derived_columns(cursor: sqlite3.Cursor) -> None:
 
 
 def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
-    """Rewrite detail rows left in shapes storage no longer writes.
-
-    No shape self-repairs on a re-sync — the metadata blob merge lets
+    """No shape self-repairs on a re-sync — the metadata blob merge lets
     existing keys win, and ``platforms``, ``developer`` and ``publisher`` are
     fill-only in ``SQLiteDB._save_detail_table`` — so a one-off rewrite is the
-    only fix. Every pass skips rows already in the current shape, so
-    re-running is a no-op.
+    only fix.
     """
     _move_stranded_total_seasons(cursor)
     _fold_stranded_company_names(cursor)
@@ -843,14 +728,6 @@ def _migrate_stranded_detail_shapes(cursor: sqlite3.Cursor) -> None:
 
 
 def _move_stranded_total_seasons(cursor: sqlite3.Cursor) -> None:
-    """Move a blob ``total_seasons`` onto the ``seasons`` column.
-
-    Shows written before the column accepted ``total_seasons`` as an alias
-    kept the count in the free-form metadata blob. ``src/utils/series.py``
-    prefers that copy, so leaving it there means a later sync raising the
-    column drifts away from the number the recommender reads — a completed
-    show reappears as in-progress, and the variety ladder mis-ranks it.
-    """
     cursor.execute(
         "SELECT content_item_id, seasons, metadata FROM tv_show_details"
         " WHERE metadata LIKE '%total_seasons%'"
@@ -873,12 +750,6 @@ def _move_stranded_total_seasons(cursor: sqlite3.Cursor) -> None:
 
 
 def _higher_season_count(column_value: Any, blob_value: Any) -> Any:
-    """Return the higher of a column and blob season count.
-
-    ``seasons`` is monotonic (:data:`~src.storage.merge.MONOTONIC_DETAIL_COLUMNS`),
-    so folding the blob copy in must never lower it — and on a row written
-    before the alias existed the blob holds the only count there is.
-    """
     counts: list[int] = []
     for value in (column_value, blob_value):
         try:
@@ -897,23 +768,9 @@ _STRANDED_COMPANY_COLUMNS: dict[str, str] = {
 
 
 def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
-    """Fold a blob ``developers``/``publishers`` onto its own column.
-
-    GOG wrote both plural spellings straight from its API, and neither was a
-    known key then, so a legacy blob holds whatever the API said — including
-    the object shape ``[{"name": "CD Projekt Red"}]``. The read path merges
-    the blob into the item it returns and a text column refuses an object, so
-    every re-save of such an item raises: enrichment records a provider
-    failure, leaves the item queued, and fails the same way on every later
-    run. Folding the names onto the column and dropping the key ends the
-    shape, and recovers a name that until now existed only in the blob.
-
-    Written for two columns of one table and no more: the SELECT and the
-    UPDATE name ``developer``, ``publisher`` and ``video_game_details``
-    literally. A later alias stranded in front of a text column needs its own
-    pass — on another table it needs its own SELECT anyway — because a key
-    added to :data:`_STRANDED_COMPANY_COLUMNS` would be popped out of every
-    game blob here and written to no column at all.
+    """A later alias stranded in front of a text column needs its own pass
+    because a key added to :data:`_STRANDED_COMPANY_COLUMNS` would be popped
+    out of every game blob here and written to no column at all.
     """
     cursor.execute(
         "SELECT content_item_id, developer, publisher, metadata"
@@ -947,13 +804,7 @@ def _fold_stranded_company_names(cursor: sqlite3.Cursor) -> None:
 
 
 def _rewrite_platform_flag_dicts(cursor: sqlite3.Cursor) -> None:
-    """Rewrite GOG's per-platform flag dict as the list of names.
-
-    GOG used to write ``platforms`` as ``{"windows": true, ...}`` where every
-    other producer writes a list of names, and the column is fill-only, so a
-    re-sync never replaces it: an export writes the dict's Python repr into
-    the platform cell and re-importing stores that repr as a literal string.
-    The dict was truthy even when it named nothing, so a game supported on no
+    """The dict was truthy even when it named nothing, so a game supported on no
     platform ends up with no platform value at all.
     """
     cursor.execute(
@@ -971,16 +822,6 @@ def _rewrite_platform_flag_dicts(cursor: sqlite3.Cursor) -> None:
 
 
 def _platform_names_from_flags(raw: Any) -> list[str] | None:
-    """Read a stored flag dict as the platform names it says are supported.
-
-    Returns ``None`` for anything that is not the old shape — the current
-    list of names included — so that row is left untouched. A flag dict maps
-    every name to a boolean, and a dict that does not is some other producer's
-    object: ``generic_json`` wraps a non-list ``platform`` in a list, so an
-    imported ``{"name": "PC"}`` arrives in exactly this shape, and reading its
-    keys as names would rewrite the value to ``["Name"]`` on the next start,
-    and on every start after that.
-    """
     try:
         stored = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -999,8 +840,6 @@ def _platform_names_from_flags(raw: Any) -> list[str] | None:
 
 
 def _clear_quality_on_requeued_items(cursor: sqlite3.Cursor) -> None:
-    """``not_found`` reads the label and ``pending`` the retry state, so a
-    re-queued item keeping its label is counted in both."""
     cursor.execute(
         "UPDATE enrichment_status SET enrichment_quality = NULL"
         " WHERE needs_enrichment = 1 AND enrichment_quality IS NOT NULL"
@@ -1008,11 +847,6 @@ def _clear_quality_on_requeued_items(cursor: sqlite3.Cursor) -> None:
 
 
 def _reduce_non_scalar_list_columns(cursor: sqlite3.Cursor) -> None:
-    """Rewrite a list column holding an object as its names.
-
-    A row synced before the codec refused an object still holds one, so every
-    save of it raises. After the flag-dict repair, which recovers those names.
-    """
     for spec in DETAIL_FIELDS.values():
         columns = [
             field.column
@@ -1041,8 +875,6 @@ def _reduce_non_scalar_list_columns(cursor: sqlite3.Cursor) -> None:
 
 
 def _reduced_list_names(raw: Any) -> list[str] | None:
-    """The names to rewrite a stored list column as, or None to leave it:
-    the codec decides which, so the pass cannot drift from what it refuses."""
     try:
         stored = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -1072,11 +904,8 @@ def _add_column_if_not_exists(
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
-# User management functions
-
-
 class UnknownUserError(LookupError):
-    """A write named a user id no ``users`` row carries."""
+    pass
 
 
 def _row_to_user_dict(row: sqlite3.Row) -> UserDict:
@@ -1096,7 +925,6 @@ def _row_to_user_dict(row: sqlite3.Row) -> UserDict:
 
 
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> UserDict | None:
-    """Get a user by ID."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users WHERE id = ?",
@@ -1107,7 +935,6 @@ def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> UserDict | None:
 
 
 def get_user_by_username(conn: sqlite3.Connection, username: str) -> UserDict | None:
-    """Get a user by username."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users WHERE username = ?",
@@ -1123,7 +950,6 @@ def create_user(
     display_name: str | None = None,
     settings: dict[str, Any] | None = None,
 ) -> int:
-    """Create a new user, returning its id."""
     cursor = conn.cursor()
     settings_json = json.dumps(settings) if settings else None
     cursor.execute(
@@ -1137,12 +963,6 @@ def create_user(
 def update_user_settings(
     conn: sqlite3.Connection, user_id: int, settings: dict[str, Any]
 ) -> bool:
-    """Merge *settings* into the user's blob.
-
-    Returns:
-        False when the UPDATE matched no row, so a caller can tell a write
-        that landed from one naming a user that does not exist.
-    """
     cursor = conn.cursor()
     cursor.execute("SELECT settings FROM users WHERE id = ?", (user_id,))
     row = cursor.fetchone()
@@ -1170,15 +990,6 @@ def update_user_identity(
     username: str,
     display_name: str | None,
 ) -> UserDict | None:
-    """Write both names, leaving the credentials alone: a rename must not cost
-    anyone their password or their open sessions.
-
-    Returns:
-        None when the UPDATE matched no row.
-
-    Raises:
-        sqlite3.IntegrityError: Another row already holds *username*.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE users SET username = ?, display_name = ? WHERE id = ?",
@@ -1189,7 +1000,6 @@ def update_user_identity(
 
 
 def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
-    """Get all users, ordered by id."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, username, display_name, created_at, settings FROM users ORDER BY id"
@@ -1198,12 +1008,10 @@ def get_all_users(conn: sqlite3.Connection) -> list[UserDict]:
 
 
 def get_default_user_id() -> int:
-    """Get the default user ID."""
     return 1
 
 
 def get_user_theme(conn: sqlite3.Connection, user_id: int) -> str:
-    """Get the user's UI theme id, empty when they have not picked one."""
     cursor = conn.cursor()
     cursor.execute("SELECT theme FROM user_ui_settings WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
@@ -1211,12 +1019,6 @@ def get_user_theme(conn: sqlite3.Connection, user_id: int) -> str:
 
 
 def set_user_theme(conn: sqlite3.Connection, user_id: int, theme_id: str) -> bool:
-    """Set the user's UI theme id.
-
-    Returns:
-        False when the write matched no ``users`` row, so a caller can tell a
-        write that landed from one naming a user that does not exist.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO user_ui_settings (user_id, theme) "
@@ -1228,13 +1030,9 @@ def set_user_theme(conn: sqlite3.Connection, user_id: int, theme_id: str) -> boo
     return cursor.rowcount > 0
 
 
-# Enrichment status functions
-
-
 def get_enrichment_status(
     conn: sqlite3.Connection, content_item_id: int
 ) -> EnrichmentStatusDict | None:
-    """Get enrichment status for a content item."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT content_item_id, last_enriched_at, enrichment_provider, "
@@ -1261,10 +1059,7 @@ def write_enrichment_complete(
     provider: str,
     quality: str,
 ) -> None:
-    """Write the "enriched" status row without committing.
-
-    ``mark_enrichment_complete`` wraps it for a caller that wants the commit.
-    """
+    """``mark_enrichment_complete`` wraps it for a caller that wants the commit."""
     cursor.execute(
         "INSERT OR REPLACE INTO enrichment_status "
         "(content_item_id, last_enriched_at, enrichment_provider, "
@@ -1281,7 +1076,6 @@ def mark_enrichment_complete(
     provider: str,
     quality: str,
 ) -> None:
-    """Mark an item as successfully enriched and commit."""
     write_enrichment_complete(conn.cursor(), content_item_id, provider, quality)
     conn.commit()
 
@@ -1291,13 +1085,9 @@ def mark_enrichment_failed(
     content_item_id: int,
     error: str,
 ) -> None:
-    """Mark an item's enrichment as failed and keep it queued.
-
-    A failure means no provider ever said whether it has this item, so the
+    """A failure means no provider ever said whether it has this item, so the
     outcome is unknown rather than settled: ``needs_enrichment`` stays 1 so the
-    next enrichment run retries the item. Contrast ``mark_enrichment_complete``
-    with quality ``not_found``, which records a settled miss and retires the
-    item from the queue.
+    next enrichment run retries the item.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -1316,11 +1106,6 @@ def mark_enrichment_settled_failure(
     content_item_id: int,
     error: str,
 ) -> None:
-    """Retire an item from the queue carrying the error that stopped it.
-
-    Writing ``not_found`` here instead would tell an operator no provider had
-    the item when one did, and would count it as a miss the run counted failed.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "INSERT OR REPLACE INTO enrichment_status "
@@ -1337,7 +1122,6 @@ def mark_item_needs_enrichment(
     conn: sqlite3.Connection,
     content_item_id: int,
 ) -> None:
-    """Mark an item as needing enrichment."""
     cursor = conn.cursor()
     cursor.execute(
         "INSERT OR IGNORE INTO enrichment_status (content_item_id, needs_enrichment) "
@@ -1355,11 +1139,6 @@ def reset_enrichment_status(
     user_id: int | None = None,
     content_item_id: int | None = None,
 ) -> int:
-    """Re-queue every tracked item a filter left as ``None`` does not exclude.
-
-    Returns the number reset, which is the number the queue will hand out: a
-    row behind a merge is neither reset nor counted.
-    """
     conditions = ["ci.merged_into IS NULL"]
     params: list[str | int] = []
     if content_item_id is not None:
@@ -1396,7 +1175,6 @@ def reset_enrichment_status(
 def _enrichment_count(
     cursor: sqlite3.Cursor, source: str, where: str, params: tuple[int, ...]
 ) -> int:
-    """Count enrichment rows of *source* matching *where*."""
     cursor.execute(f"SELECT COUNT(*) FROM {source} WHERE {where}", params)
     result: int = cursor.fetchone()[0]
     return result
@@ -1409,7 +1187,6 @@ def _enrichment_group(
     scope: str,
     params: tuple[int, ...],
 ) -> dict[str, int]:
-    """Count enrichment rows of *source* per distinct value of *column*."""
     cursor.execute(
         f"SELECT {column}, COUNT(*) FROM {source}"
         f" WHERE {column} IS NOT NULL AND {scope}"
@@ -1423,9 +1200,7 @@ def get_enrichment_stats(
     conn: sqlite3.Connection,
     user_id: int | None = None,
 ) -> dict[str, int | dict[str, int]]:
-    """Count each item under exactly one enrichment state.
-
-    ``enriched``, ``pending``, ``not_found`` and ``failed`` sum to ``total``:
+    """``enriched``, ``pending``, ``not_found`` and ``failed`` sum to ``total``:
     untracked counts as pending, failed only as failed. ``resettable`` is
     the tracked rows an unfiltered reset re-queues.
     """
@@ -1489,9 +1264,6 @@ def get_enrichment_stats(
     }
 
 
-# Preference profile functions
-
-
 def get_preference_profile(
     conn: sqlite3.Connection, user_id: int
 ) -> PreferenceProfileRow | None:
@@ -1521,7 +1293,6 @@ def save_preference_profile(
     user_id: int,
     profile_json: str,
 ) -> int:
-    """Save or update the user's single preference profile, returning its id."""
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO preference_profiles (user_id, profile_json, generated_at) "
@@ -1535,16 +1306,12 @@ def save_preference_profile(
     return cursor.lastrowid  # type: ignore
 
 
-# Credential functions
-
-
 def get_credential(
     conn: sqlite3.Connection,
     user_id: int,
     source_id: str,
     credential_key: str,
 ) -> str | None:
-    """Get a single credential value (raw/encrypted)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT credential_value FROM credentials "
@@ -1562,10 +1329,7 @@ def save_credential(
     credential_key: str,
     credential_value: str,
 ) -> None:
-    """Save or update a credential (UPSERT).
-
-    *credential_value* is stored verbatim; encrypting it is the caller's job.
-    """
+    """*credential_value* is stored verbatim; encrypting it is the caller's job."""
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -1586,7 +1350,6 @@ def delete_credential(
     source_id: str,
     credential_key: str,
 ) -> bool:
-    """Delete a credential row, reporting whether one was there."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM credentials "
@@ -1602,7 +1365,6 @@ def delete_credentials_for_source(
     user_id: int,
     source_id: str,
 ) -> int:
-    """Delete every credential row for a source, returning the row count."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM credentials WHERE user_id = ? AND source_id = ?",
@@ -1618,7 +1380,6 @@ def credential_row_exists(
     source_id: str,
     credential_key: str,
 ) -> bool:
-    """Check if a credential row exists (without decrypting)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT 1 FROM credentials "
@@ -1633,7 +1394,6 @@ def get_credentials_for_source(
     user_id: int,
     source_id: str,
 ) -> dict[str, str]:
-    """Get all credential key-value pairs for a source (raw/encrypted)."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT credential_key, credential_value FROM credentials "
@@ -1643,17 +1403,7 @@ def get_credentials_for_source(
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
-# Source config functions
-
-
 def _row_to_source_config(row: sqlite3.Row) -> SourceConfigRow:
-    """Map a ``source_configs`` row to a typed dict.
-
-    ``conn.row_factory`` is set to ``sqlite3.Row`` by ``create_schema``, so
-    every connection coming through this module supports column-name access.
-    Using names instead of positional indexes keeps mappings safe if the
-    SELECT column order ever drifts.
-    """
     return SourceConfigRow(
         source_id=row["source_id"],
         plugin=row["plugin"],
@@ -1670,11 +1420,6 @@ def get_source_config(
     user_id: int,
     source_id: str,
 ) -> SourceConfigRow | None:
-    """Get the migrated source config row for a (user, source).
-
-    Returns ``None`` when the source has not been migrated to the database
-    yet — callers should fall back to the YAML config in that case.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "SELECT source_id, plugin, config_json, enabled, sync_interval, "
@@ -1694,11 +1439,8 @@ def upsert_source_config(
     config_json: str,
     enabled: bool,
 ) -> None:
-    """Insert or update a migrated source config (UPSERT).
-
-    On insert ``migrated_at`` is set to ``CURRENT_TIMESTAMP``. On update only
-    ``updated_at`` advances, and ``sync_interval`` is left alone: editing a
-    source's config must not clear the schedule it is on.
+    """On update only ``updated_at`` advances, and ``sync_interval`` is left
+    alone: editing a source's config must not clear the schedule it is on.
     """
     cursor = conn.cursor()
     cursor.execute(
@@ -1725,11 +1467,6 @@ def set_source_config_enabled(
     source_id: str,
     enabled: bool,
 ) -> bool:
-    """Toggle the enabled flag for a migrated source.
-
-    Returns ``True`` if a row was updated, ``False`` if the source has not
-    been migrated yet (caller should ignore or surface a 404).
-    """
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE source_configs SET enabled = ?, updated_at = CURRENT_TIMESTAMP "
@@ -1762,7 +1499,6 @@ def delete_source_config(
     user_id: int,
     source_id: str,
 ) -> bool:
-    """Delete a migrated source config row, reporting whether one was there."""
     cursor = conn.cursor()
     cursor.execute(
         "DELETE FROM source_configs WHERE user_id = ? AND source_id = ?",
@@ -1776,7 +1512,6 @@ def list_source_configs(
     conn: sqlite3.Connection,
     user_id: int,
 ) -> list[SourceConfigRow]:
-    """List every migrated source config for a user."""
     cursor = conn.cursor()
     cursor.execute(
         "SELECT source_id, plugin, config_json, enabled, sync_interval, "
@@ -1787,15 +1522,7 @@ def list_source_configs(
     return [_row_to_source_config(row) for row in cursor.fetchall()]
 
 
-# Settings functions (global/system config, key -> JSON-encoded value)
-
-
 def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
-    """Get the raw JSON-encoded value for a settings key.
-
-    Returns ``None`` when the key has not been stored — callers should fall
-    back to the YAML config in that case.
-    """
     cursor = conn.cursor()
     cursor.execute("SELECT value_json FROM settings WHERE key = ?", (key,))
     row = cursor.fetchone()
@@ -1803,10 +1530,6 @@ def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
 
 
 def set_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
-    """Insert or update a settings value (UPSERT).
-
-    *value_json* must be a JSON-encoded string; the caller owns serialisation.
-    """
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO settings (key, value_json, updated_at) "
@@ -1820,14 +1543,12 @@ def set_setting(conn: sqlite3.Connection, key: str, value_json: str) -> None:
 
 
 def list_settings(conn: sqlite3.Connection) -> dict[str, str]:
-    """Return every stored setting as a key -> raw JSON string mapping."""
     cursor = conn.cursor()
     cursor.execute("SELECT key, value_json FROM settings")
     return {row[0]: row[1] for row in cursor.fetchall()}
 
 
 def delete_setting(conn: sqlite3.Connection, key: str) -> None:
-    """Delete a settings row by key. No error if the key is absent."""
     cursor = conn.cursor()
     cursor.execute("DELETE FROM settings WHERE key = ?", (key,))
     conn.commit()

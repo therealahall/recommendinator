@@ -1,5 +1,3 @@
-"""Auto-migrate sensitive credentials from config file to encrypted DB storage."""
-
 from __future__ import annotations
 
 import logging
@@ -17,7 +15,6 @@ logger = logging.getLogger(__name__)
 def _discard_file_secrets(
     entry: dict[str, Any], plugin: SourcePlugin, source_id: str
 ) -> None:
-    """Drop *entry*'s plaintext secrets without writing any of them back."""
     for field in plugin.get_config_schema():
         if not field.sensitive:
             continue
@@ -38,26 +35,8 @@ def migrate_config_credentials(
     storage: StorageManager,
     user_id: int = 1,
 ) -> None:
-    """Migrate sensitive credentials from config to the database.
-
-    **A source with a ``source_configs`` row is skipped**, its file-held
-    secrets discarded rather than read. Otherwise clearing a secret through
-    ``DELETE /api/sync/sources/{id}/secret/{key}`` — what an operator does
-    before repointing a source at a new host — would be undone by the next
-    reload re-seeding it from the file, handing the secret to that host.
-
-    Reading secrets from ``config.yaml`` is a **deprecated** legacy path kept so
-    existing installs keep working: a ``sensitive=True`` field found in the file
-    logs a deprecation warning telling the user to delete it. Nothing writes
-    secrets to the file any more — the Add-source modal, the connect flows, and
-    ``source set-secret`` all write straight to encrypted storage.
-
-    This is safe to call on every startup and on config hot-reload.
-
-    **Mutates ``config`` in place:** once a sensitive field has been migrated to
-    the database — or superseded by a credential already stored there — its
-    plaintext value is removed from the in-memory config dict so it does not
-    linger in ``app_state.config`` for the process lifetime.
+    """**A source with a ``source_configs`` row is skipped**, its file-held
+    secrets discarded rather than read. **Mutates ``config`` in place.**
     """
     registry = get_registry()
     inputs_config = config.get("inputs")

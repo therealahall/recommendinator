@@ -1,15 +1,3 @@
-"""The content columns derived from an item's title, creator and series.
-
-``content_items.sort_title`` and ``content_items.search_text`` exist so that
-the library list can be ordered in SQL under a real LIMIT/OFFSET, and searched
-over a projection of those parts, instead of building a ``ContentItem`` for
-every row and slicing in Python.
-
-Nothing reads them as input: both are recomputed from what is stored on every
-write that can change either source, and ``schema.create_schema`` backfills
-whatever row reaches an open without them.
-"""
-
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -29,9 +17,7 @@ from src.utils.sorting import build_search_text, get_sort_title
 
 
 def _build_creator_source() -> tuple[str, str]:
-    """Build the creator expression and the joins it reads from.
-
-    By content type, as ``SQLiteDB._row_to_content_item`` chooses it: a
+    """By content type, as ``SQLiteDB._row_to_content_item`` chooses it: a
     COALESCE over every table would take whichever table held a row for that
     id, once anything had left a detail row behind.
     """
@@ -48,10 +34,7 @@ def _build_creator_source() -> tuple[str, str]:
 
 
 def _build_year_expression() -> str:
-    """The release-year expression, by content type.
-
-    Books have no branch, so theirs reads NULL: see ``RELEASE_YEAR_FIELDS``.
-    """
+    """Books have no branch, so theirs reads NULL: see ``RELEASE_YEAR_FIELDS``."""
     branches = [
         f"WHEN '{content_type}' THEN {spec.table_alias}.{field.column}"
         for content_type, spec in DETAIL_FIELDS.items()
@@ -61,7 +44,6 @@ def _build_year_expression() -> str:
 
 
 def _build_metadata_expression() -> str:
-    """The free-form blob expression, chosen by content type as the creator is."""
     branches = [
         f"WHEN '{content_type}' THEN {spec.table_alias}.metadata"
         for content_type, spec in DETAIL_FIELDS.items()
@@ -94,18 +76,16 @@ _LIVE_MATCH_ROWS_SELECT = (
     " WHERE ci.user_id = ? AND ci.merged_into IS NULL ORDER BY ci.id"
 )
 
-# The rows the backfill has anything to do. Both columns are written together,
-# so either being NULL means the row came from something that does not know
-# about them, and a library where none does costs one filtered read per open.
+# Both columns are written together, so either being NULL means the row came
+# from something that does not know about them, and a library where none does
+# costs one filtered read per open.
 _BACKFILL_SELECT = (
     f"{_SOURCE_SELECT} WHERE ci.sort_title IS NULL OR ci.search_text IS NULL"
 )
 
 
 def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
-    """Recompute one row's derived columns from what it stores.
-
-    Read back from the database rather than taken from the item being saved:
+    """Read back from the database rather than taken from the item being saved:
     the creator column is fill-only, so what a sync hands over is not always
     what ends up stored.
     """
@@ -117,17 +97,13 @@ def write_derived_columns(cursor: sqlite3.Cursor, db_id: int) -> None:
 
 @dataclass(frozen=True)
 class MatchSignals:
-    """What a title match is vetoed on, read off one stored row."""
-
     creator: str | None = None
     release_year: StatedYear = StatedYear()
     region: str | None = None
 
 
 def signals_conflict(one: MatchSignals, other: MatchSignals) -> bool:
-    """Whether any veto separates two rows a title brought together.
-
-    Shared with the save door, which refuses more besides: its key keeps a
+    """Shared with the save door, which refuses more besides: its key keeps a
     numbered edition apart, and where one key names two rows it takes neither.
     """
     return (
@@ -148,14 +124,12 @@ class MatchRow:
 
 
 def read_match_signals(cursor: sqlite3.Cursor, db_id: int) -> MatchSignals:
-    """The creator, release year and region one row states, chosen by its type."""
     cursor.execute(_MATCH_SIGNAL_SELECT, (db_id,))
     row = cursor.fetchone()
     return MatchSignals() if row is None else _read_signals(row)
 
 
 def read_live_match_rows(cursor: sqlite3.Cursor, user_id: int) -> list[MatchRow]:
-    """Every row the library shows for *user_id*, with what a match reads."""
     cursor.execute(_LIVE_MATCH_ROWS_SELECT, (user_id,))
     return [
         MatchRow(
@@ -181,12 +155,9 @@ def _read_signals(row: sqlite3.Row) -> MatchSignals:
 
 
 def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
-    """Fill the derived columns for every row that is missing one.
-
-    Selected on the columns themselves rather than on the schema version,
+    """Selected on the columns themselves rather than on the schema version,
     because a build older than they are can insert a row into a database this
-    build already stamped, and no version guard would ever revisit it. Such a
-    row is unreachable by search and sorts ahead of the whole library.
+    build already stamped, and no version guard would ever revisit it.
     """
     cursor.execute(_BACKFILL_SELECT)
     # fetchall() required: the cursor is reused for the UPDATEs in the loop
@@ -195,7 +166,6 @@ def backfill_derived_columns(cursor: sqlite3.Cursor) -> None:
 
 
 def _stated_series(blob: str | None) -> str | None:
-    """The series a row's blob states; one that is unreadable states none."""
     if not blob:
         return None
     try:
@@ -208,7 +178,6 @@ def _stated_series(blob: str | None) -> str | None:
 
 
 def _write_row(cursor: sqlite3.Cursor, row: sqlite3.Row) -> None:
-    """Write the derived columns for one row of :data:`_SOURCE_SELECT`."""
     title = row["title"] or ""
     cursor.execute(
         "UPDATE content_items SET sort_title = ?, search_text = ? WHERE id = ?",
