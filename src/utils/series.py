@@ -1,12 +1,3 @@
-"""Series detection and parsing utilities for all content types.
-
-Supports series detection for:
-- Books: Book 1, 2, 3, etc. (e.g., "The Witcher, Book 1")
-- TV Shows: Season 1, 2, 3, etc. (e.g., "The Expanse, Season 1")
-- Movies: Part 1, 2, 3, etc. or Episode N (e.g., "Lord of the Rings, Part 1")
-- Video Games: Part 1, 2, 3, etc. (e.g., "Mass Effect, #1")
-"""
-
 import math
 import re
 from collections import defaultdict
@@ -17,17 +8,10 @@ from typing import Any, NamedTuple, TypedDict
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
 from src.utils.dates import local_date_from_iso_timestamp
 
-# Upper bound on TV season numbers and counts. No real series approaches this,
-# but season values arrive from user-supplied metadata (imports, the web edit
-# endpoint) and feed ``range()`` calls when expanding shows to seasons and when
-# building the recommendation gap ladder. Bounding them keeps a malformed or
-# hostile season value (e.g. 2_000_000_000) from allocating an enormous list.
 MAX_SEASONS = 200
 
 
 class _SeriesPattern(NamedTuple):
-    """Pre-compiled regex pattern for series detection."""
-
     regex: re.Pattern[str]
     max_number: int
 
@@ -52,14 +36,6 @@ _SERIES_PATTERNS: list[_SeriesPattern] = [
 
 
 def _roman_to_int(roman: str) -> int | None:
-    """Convert a Roman numeral string to an integer.
-
-    Args:
-        roman: Roman numeral string (e.g. "XII", "IV").
-
-    Returns:
-        Integer value, or ``None`` if the string is not a valid Roman numeral.
-    """
     roman_values: dict[str, int] = {
         "I": 1,
         "V": 5,
@@ -86,19 +62,13 @@ def _roman_to_int(roman: str) -> int | None:
     return total if total > 0 else None
 
 
-# Trailing Arabic numeral in a title (e.g., "Dungeon Siege 3",
-# "Fallout 4: New Vegas", "FINAL FANTASY XII THE ZODIAC AGE").
 # The series name must start with a letter to avoid matching titles like
 # "1942" or "2048".  The series-name capture uses ``.*?`` (lazy) so it
-# can include colons/dashes (e.g., "Batman: Arkham Knight 2").  The
-# suffix pattern allows space, colon, dash, em-dash, plus, or slash as
-# delimiters so subtitles like "THE ZODIAC AGE" (space) and
-# "+ Re Mind (DLC)" (plus) are matched.
+# can include colons/dashes (e.g., "Batman: Arkham Knight 2").
 _TITLE_ARABIC_PATTERN: re.Pattern[str] = re.compile(
     r"^([A-Za-z].*?)\s+(\d+)(?:[\s:—\-+/].+)?$"
 )
 
-# Trailing Roman numeral (e.g., "Final Fantasy XII", "Grand Theft Auto V").
 # Uses ``[IVXLCDM]+`` instead of a strict structural regex so that
 # standalone V (5), X (10), L (50), C (100) are accepted.  Validation
 # happens downstream via ``_roman_to_int()`` + range check (1-100).
@@ -108,18 +78,6 @@ _TITLE_ROMAN_PATTERN: re.Pattern[str] = re.compile(
 
 
 def _extract_series_from_title(title: str) -> tuple[str, float] | None:
-    """Try to extract series info from trailing numbers in a title.
-
-    Matches patterns like "Dungeon Siege 3" or "Final Fantasy XII".
-    The series name must start with a letter to avoid false positives
-    on titles that are just numbers (e.g. "1942", "2048").
-
-    Args:
-        title: Content title.
-
-    Returns:
-        Tuple of (series_name, number) or ``None``.
-    """
     # Try Arabic numerals first (more common). Title-embedded game numbers are
     # whole numbers, but return a float to match the series-number type used
     # everywhere else (fractional novella positions like #2.5).
@@ -150,27 +108,6 @@ def extract_series_info(
     metadata: dict[str, Any] | None = None,
     content_type: ContentType | None = None,
 ) -> tuple[str, float] | None:
-    """Extract series name and item number from title or metadata.
-
-    Works for all content types (books, games, TV shows, movies, etc.).
-
-    Handles patterns like:
-    - Books: "Title (Series Name, #1)", "Title (Series Name, Book 1)"
-    - TV Shows: "Title (Series Name, Season 1)", "Title (Series Name, S1)"
-    - Movies: "Title (Series Name, Part 1)", "Title (Series Name, Episode 1)"
-    - Games: "Title (Series Name, #1)", "Title (Series Name, Part 1)"
-    - Video Games (title-embedded): "Dungeon Siege 3", "Final Fantasy XII"
-
-    Also checks metadata for series information if title parsing fails.
-
-    Args:
-        title: Content title
-        metadata: Optional metadata dictionary that may contain series info
-        content_type: Optional content type to help with pattern matching
-
-    Returns:
-        Tuple of (series_name, item_number) if found, None otherwise
-    """
     if metadata:
         series_info = _extract_from_metadata(metadata, content_type)
         if series_info:
@@ -197,19 +134,6 @@ def extract_series_info(
 def _extract_from_metadata(
     metadata: dict[str, Any], content_type: ContentType | None = None
 ) -> tuple[str, float] | None:
-    """Extract series information from metadata.
-
-    Checks common metadata fields for series information:
-    - series_name, series, series_title
-    - series_number, series_num, season, episode, part
-
-    Args:
-        metadata: Metadata dictionary
-        content_type: Optional content type to help with field selection
-
-    Returns:
-        Tuple of (series_name, item_number) if found, None otherwise
-    """
     series_name = None
     for key in ["series_name", "series", "series_title", "franchise"]:
         if key in metadata and metadata[key]:
@@ -303,10 +227,6 @@ def get_series_position_from_metadata(metadata: dict[str, Any] | None) -> float 
 def _get_series_info(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> tuple[str, float] | None:
-    """Extract series info from a ContentItem or title string.
-
-    Shared implementation for get_series_name and get_series_item_number.
-    """
     if item is not None:
         return extract_series_info(item.title, item.metadata, item.content_type)
     if title is not None:
@@ -317,15 +237,6 @@ def _get_series_info(
 def get_series_name(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> str | None:
-    """Get series name from ContentItem or title (checks title and metadata).
-
-    Args:
-        item: Optional ContentItem to extract series name from
-        title: Optional title string (keyword-only)
-
-    Returns:
-        Series name if found, None otherwise
-    """
     info = _get_series_info(item, title=title)
     return info[0] if info else None
 
@@ -333,15 +244,6 @@ def get_series_name(
 def get_series_item_number(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> float | None:
-    """Get item number in series from ContentItem or title.
-
-    Args:
-        item: Optional ContentItem
-        title: Optional title string (keyword-only)
-
-    Returns:
-        Item number if found, None otherwise
-    """
     info = _get_series_info(item, title=title)
     return info[1] if info else None
 
@@ -350,19 +252,6 @@ def inject_seasons_watched_tracking(
     unconsumed_items: list[ContentItem],
     series_tracking: dict[str, set[float]],
 ) -> dict[str, set[float]]:
-    """Add seasons_watched metadata from unconsumed TV shows to series tracking.
-
-    When a user imports TV shows with specific seasons_watched (e.g., [5, 6]),
-    those seasons should be treated as consumed for recommendation purposes
-    even though the show-level item is still "unconsumed" in the library.
-
-    Args:
-        unconsumed_items: List of unconsumed ContentItem objects (TV shows)
-        series_tracking: Existing series tracking dictionary from consumed items
-
-    Returns:
-        New dictionary with seasons_watched merged in (does not mutate original)
-    """
     merged = dict(series_tracking)
 
     for item in unconsumed_items:
@@ -389,11 +278,6 @@ def inject_seasons_watched_tracking(
 def all_seasons_watched(
     seasons_watched: Sequence[int] | None, total_seasons: int | None
 ) -> bool:
-    """Whether every season of a show has been watched.
-
-    An unknown total means no: nothing proves a show finished without a count
-    of the seasons it has.
-    """
     if not seasons_watched or not total_seasons or total_seasons < 1:
         return False
     # Deduplicated, and int-filtered because a stored list arrives from a JSON
@@ -404,7 +288,6 @@ def all_seasons_watched(
 def status_for_seasons_watched(
     seasons_watched: Sequence[int] | None, total_seasons: int | None
 ) -> ConsumptionStatus:
-    """The status a show's watched-season list implies."""
     if not seasons_watched:
         return ConsumptionStatus.UNREAD
     if all_seasons_watched(seasons_watched, total_seasons):
@@ -413,22 +296,13 @@ def status_for_seasons_watched(
 
 
 def seasons_watched_for_completed(total_seasons: int | None) -> list[int] | None:
-    """Every season of a show the user has marked completed.
-
-    ``None`` when the total is unknown — callers leave the stored list alone
-    rather than inventing a history from a count nobody reported.
-    """
     if not total_seasons or total_seasons < 1:
         return None
     return list(range(1, min(total_seasons, MAX_SEASONS) + 1))
 
 
 def merge_seasons_watched(existing: Any, incoming: Any) -> list[int] | None:
-    """Union of a stored and an incoming watched-season list.
-
-    A sync may add a season, never remove one: manual check-offs share the
-    list. ``None`` when neither side is a list, leaving the stored value alone.
-    """
+    """A sync may add a season, never remove one: manual check-offs share the list."""
     sides = [side for side in (existing, incoming) if isinstance(side, list)]
     if not sides:
         return None
@@ -438,14 +312,9 @@ def merge_seasons_watched(existing: Any, incoming: Any) -> list[int] | None:
 
 
 def latest_season_watched_date(item: ContentItem) -> date | None:
-    """Most recent watched-season date for a TV show, or None if unknown.
-
-    Reads the ``seasons_watched_dates`` metadata map (season -> ISO timestamp)
-    written on manual season check-off or Trakt sync, and returns the latest
-    date. The stored timestamps are UTC instants, so each is narrowed to the
+    """The stored timestamps are UTC instants, so each is narrowed to the
     host's local calendar day (see ``local_date_from_iso_timestamp``) rather
-    than the UTC one. Used by the variety ladder to date an ongoing show's
-    genre-completion event. Returns None when no parseable date exists.
+    than the UTC one.
     """
     dates = item.metadata.get("seasons_watched_dates")
     if not isinstance(dates, dict) or not dates:
@@ -459,17 +328,8 @@ def latest_season_watched_date(item: ContentItem) -> date | None:
 
 
 def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
-    """Expand TV show items into season-level items for granular recommendations.
-
-    Library stays at show level; this expansion is for recommendation scoring only.
-    Each show with total_seasons in metadata becomes N items (one per season).
-    Shows without season info are passed through unchanged.
-
-    Args:
-        items: List of ContentItem (expected ContentType.TV_SHOW)
-
-    Returns:
-        Expanded list with season-level items where applicable
+    """Library stays at show level; this expansion is for recommendation scoring
+    only.
     """
     expanded: list[ContentItem] = []
     for item in items:
@@ -539,18 +399,6 @@ def expand_tv_shows_to_seasons(items: list[ContentItem]) -> list[ContentItem]:
 def build_series_tracking(
     items: list[ContentItem],
 ) -> dict[str, set[float]]:
-    """Build a map of series names to the item numbers present in *items*.
-
-    Works for all content types (books, games, TV shows, movies). Callers pass
-    consumed items to track reading progress, or unconsumed ones to learn which
-    positions are still available.
-
-    Args:
-        items: List of ContentItem objects
-
-    Returns:
-        Dictionary mapping series names to sets of item numbers
-    """
     series_tracking: dict[str, set[float]] = defaultdict(set)
 
     for item in items:
@@ -565,17 +413,6 @@ def build_series_tracking(
 def is_first_item_in_series(
     item: ContentItem | None = None, *, title: str | None = None
 ) -> bool:
-    """Check if this is the first item in a series.
-
-    Works for all content types (Book 1, Season 1, Part 1, etc.).
-
-    Args:
-        item: Optional ContentItem
-        title: Optional title string (keyword-only)
-
-    Returns:
-        True if this is item #1 in a series
-    """
     info = _get_series_info(item, title=title)
     return info is not None and info[1] == 1
 
@@ -585,23 +422,6 @@ def is_next_after_consumed(
     consumed_numbers: set[float],
     known_positions: set[float],
 ) -> bool:
-    """Check whether *item_number* is the earliest entry ahead of the consumed run.
-
-    The entries ahead are the positions known to exist in the data, the item's
-    own position, and the next whole-numbered slot after the consumed run. So a
-    half-numbered novella such as ``#2.5`` is the next entry for a reader on
-    ``#2`` while ``#3`` waits its turn, and a series with nothing in between
-    still advances to the next whole number. Flooring the slot keeps a consumed
-    ``#2.5`` pointing at ``#3``.
-
-    Args:
-        item_number: Series position of the item being checked.
-        consumed_numbers: Positions the user has consumed. Must not be empty.
-        known_positions: Other positions of the series known to exist.
-
-    Returns:
-        True if no known entry sits between the consumed run and this item.
-    """
     max_consumed = max(consumed_numbers)
     if item_number <= max_consumed:
         return False
@@ -617,39 +437,6 @@ def should_recommend_item(
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem] | None = None,
 ) -> bool:
-    """Determine if an item should be recommended based on series rules.
-
-    Works for all content types (books, games, TV shows, movies). Rules:
-    - If not in a series: recommend
-    - If first item (#1) in unstarted series: recommend
-    - If user has completed all previous items: recommend
-    - If previous items exist in unconsumed data but aren't completed:
-      don't recommend
-    - If previous items don't exist in unconsumed data: recommend
-      (assume they don't exist)
-    - Prequels: consuming item #0 unlocks item #1 as the next entry (this
-      falls out of the gap-finding logic rather than being special-cased)
-
-    Item numbers may be fractional — half-numbered novellas such as
-    "(The Expanse, #2.5)" sort *after* book ``#2`` and *before* ``#3``, so a
-    user who has only read book ``#1`` is not recommended a ``#2.5`` novella
-    until they have read ``#2``.
-
-    Examples:
-    - Books: If you've read Book 1 and 2, Book 3 is recommended
-    - TV Shows: If you've watched Season 1, Season 2 is recommended
-    - Movies: If you've watched Part 1, Part 2 is recommended
-    - Games: If you've played Game 1, Game 2 is recommended
-
-    Args:
-        item: ContentItem to check
-        series_tracking: Series tracking dictionary (consumed items)
-        unconsumed_items: Optional list of unconsumed items to check if
-                         previous items exist in the data
-
-    Returns:
-        True if item should be recommended
-    """
     series_info = extract_series_info(item.title, item.metadata, item.content_type)
     if not series_info:
         return True
@@ -674,8 +461,7 @@ def should_recommend_item(
     if not consumed_numbers:
         # User hasn't started this series. Only recommend the first item (#1)
         # or a prequel (#0); a later entry waits until an earlier one in the
-        # data is consumed. If unconsumed_items is None we can't verify what
-        # exists, so be conservative and don't recommend a later entry.
+        # data is consumed.
         if item_num == 1 or item_num == 0:
             return True
         if unconsumed_items is None:
@@ -683,21 +469,9 @@ def should_recommend_item(
         # If any earlier entry exists in the unconsumed data, hold this one.
         return not any(num < item_num for num in unconsumed_item_nums)
 
-    # User has started this series. Recommend the item only if it is the
-    # earliest entry the user has not yet consumed. The candidate pool is the
-    # union of: numbers known to exist in the data (consumed + unconsumed),
-    # this item's own number (so direct callers that pass an item absent from
-    # ``unconsumed_items`` are still considered), and the virtual sequential
-    # slots 1..max+1 (so a missing next book still blocks later entries, and
-    # gaps like a skipped season 2 are surfaced before season 7). Fractional
-    # novellas naturally slot between their neighbouring integer books.
-    #
-    # ``int(max_consumed)`` floors fractional positions intentionally: a
-    # consumed #2.5 novella still yields integer slots up to the next whole
-    # book. ``max_consumed`` is bounded — series positions are capped at 1000
+    # ``max_consumed`` is bounded — series positions are capped at 1000
     # in ``extract_series_info`` and injected TV seasons at ``MAX_SEASONS`` in
-    # ``inject_seasons_watched_tracking`` — so the slot set never grows without
-    # bound.
+    # ``inject_seasons_watched_tracking`` — so the slot set never grows without bound.
     max_consumed = max(consumed_numbers)
     virtual_slots = {float(slot) for slot in range(1, int(max_consumed) + 2)}
     positions = consumed_numbers | unconsumed_item_nums | {item_num} | virtual_slots
@@ -710,20 +484,8 @@ def find_earliest_recommendable(
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem],
 ) -> ContentItem | None:
-    """Find the earliest unconsumed item in a series that passes series rules.
-
-    Used by the engine to substitute a later series entry (e.g., FF XII) with
-    the earliest playable entry (e.g., FF X) when ``series_in_order`` is
-    enabled.
-
-    Args:
-        series_name: Name of the series to search.
-        series_tracking: Series tracking dictionary (consumed items).
-        unconsumed_items: All unconsumed items to search through.
-
-    Returns:
-        The earliest unconsumed item in the series that passes
-        :func:`should_recommend_item`, or ``None`` if none qualifies.
+    """Used by the engine to substitute a later series entry (e.g., FF XII) with
+    the earliest playable entry (e.g., FF X) when ``series_in_order`` is enabled.
     """
     series_candidates: list[tuple[float, ContentItem]] = []
     for item in unconsumed_items:
@@ -750,32 +512,15 @@ def is_active_series_continuation(
     series_tracking: dict[str, set[float]],
     unconsumed_items: list[ContentItem] | None = None,
 ) -> bool:
-    """Return True if *item* is the next entry in an already-started series.
-
-    "Already-started" means the user has consumed at least one entry of the
-    series; "next entry" means the item passes :func:`should_recommend_item`.
-    The first book of an *unstarted* series and standalone items return False —
+    """The first book of an *unstarted* series and standalone items return False —
     beginning a brand-new series is not a continuation and should not be
     shielded from the variety penalty.
-
-    Used to soften (not remove) the genre-fatigue variety penalty for the book
-    a user is actively working towards, so the next entry in a series they are
-    mid-way through is not buried beneath unrelated content.
-
-    Args:
-        item: Candidate item being scored.
-        series_tracking: Series tracking dictionary (consumed items).
-        unconsumed_items: Optional unconsumed items for ordering checks.
-
-    Returns:
-        True if the item continues a series the user has already started.
     """
     series_info = extract_series_info(item.title, item.metadata, item.content_type)
     if series_info is None:
         return False
     series_name = series_info[0]
     if not series_tracking.get(series_name):
-        # Unstarted series (or untracked) — starting fresh is not continuation.
         return False
     return should_recommend_item(item, series_tracking, unconsumed_items)
 
@@ -793,11 +538,7 @@ class SeriesFields(TypedDict, total=False):
 
 
 def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
-    """The work's own title, and the series a marker in it states.
-
-    A shelf appends what Calibre states separately, so one book arrives under
-    two spellings. "Book 1" needs its comma: "(Malazan Book 2)" names a work.
-    """
+    """The work's own title, and the series a marker in it states."""
     match = _SERIES_MARKER.search(title)
     if match is None:
         return title, {}
@@ -809,16 +550,6 @@ def split_series_from_title(title: str) -> tuple[str, SeriesFields]:
 
 
 def strip_series_suffix_from_title(title: str) -> str:
-    """Strip trailing parenthetical series info from a title for display.
-
-    Removes patterns like "(Shannara, #2)", "(Series, Book N)".
-
-    Args:
-        title: Original title string.
-
-    Returns:
-        Title without series suffix.
-    """
     cleaned = re.sub(r"\s*\([^)]*#\d+[^)]*\)\s*$", "", title)
     cleaned = re.sub(r"\s*\([^)]*Book\s+\d+[^)]*\)\s*$", "", cleaned, flags=re.I)
     return cleaned.strip()

@@ -1,5 +1,3 @@
-"""The ``recommend`` command."""
-
 from __future__ import annotations
 
 import json
@@ -73,7 +71,6 @@ def recommend(
     click.echo(f"Generating {count} {content_type_str} recommendations...", err=True)
 
     try:
-        # Load user preferences
         user_preference_config = storage.get_user_preference_config(user_id)
 
         recommendations = engine.generate_recommendations(
@@ -103,7 +100,6 @@ def recommend(
             output = [rec.to_payload() for rec in recommendations]
             click.echo(json.dumps(output, indent=2))
         else:
-            # Table output
             table_data = []
             for rank, rec in enumerate(recommendations, 1):
                 item = rec.item

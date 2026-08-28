@@ -1,5 +1,3 @@
-"""The ``account`` group."""
-
 from __future__ import annotations
 
 import json
@@ -38,10 +36,7 @@ def _account_or_abort(storage: StorageManager, user_id: int) -> AccountRecord:
 
 
 def _normalized_name(option: str, value: str, *, required: bool) -> str:
-    """The storage door's own rule, named after the option that broke it.
-
-    A second copy of the cap here is what let the two refuse different widths.
-    """
+    """The storage door's own rule, named after the option that broke it."""
     try:
         return normalize_account_name(value, required=required)
     except AccountNameError as error:

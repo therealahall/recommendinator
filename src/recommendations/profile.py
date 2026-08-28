@@ -1,5 +1,3 @@
-"""Preference profile generation from user data."""
-
 import json
 import logging
 from collections import defaultdict
@@ -19,12 +17,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PreferenceProfile:
-    """A distilled summary of user preferences.
-
-    Generated from the user's ratings, reviews and completions, and shown by
-    ``profile show`` and ``GET /api/profile``.
-    """
-
     user_id: int
     genre_affinities: dict[str, float] = field(default_factory=dict)
     theme_preferences: list[str] = field(default_factory=list)
@@ -47,10 +39,7 @@ class ProfilePayload(TypedDict):
 def profile_payload(
     user_id: int, record: PreferenceProfileRow | None
 ) -> ProfilePayload:
-    """Serialise a ``profiles.get`` record; ``None`` is the empty shape.
-
-    The CLI emits this mapping; the web validates it into a ProfileResponse.
-    """
+    """Serialise a ``profiles.get`` record; ``None`` is the empty shape."""
     profile: dict[str, Any] = (record["profile"] if record else None) or {}
     return {
         "user_id": user_id,
@@ -65,7 +54,6 @@ def profile_payload(
     }
 
 
-# Theme keywords that indicate preference signals
 THEME_KEYWORDS = {
     "exploration",
     "narrative depth",
@@ -221,56 +209,21 @@ PROFILE_GENRES = {
     "indie",
 }
 
-# Minimum number of rated items per genre to include in profile
 MIN_ITEMS_PER_GENRE = 2
 
 
 def _extract_profile_genres(item: ContentItem) -> list[str]:
-    """Extract genres from an item, filtered to broad genre categories.
-
-    Uses the shared normalizer for extraction and normalization, then
-    filters to PROFILE_GENRES to show only meaningful genre/subgenre
-    categories in user-facing profile summaries. Excludes themes, moods,
-    settings, character archetypes, and game mechanics.
-
-    Args:
-        item: Content item to extract genres from
-
-    Returns:
-        List of normalized genre strings from the profile genre set
-    """
     return [genre for genre in extract_genres(item) if genre in PROFILE_GENRES]
 
 
 class ProfileGenerator:
-    """Generates distilled preference profiles from user data."""
-
     def __init__(
         self,
         storage_manager: "StorageManager",
     ) -> None:
-        """Initialize the profile generator.
-
-        Args:
-            storage_manager: Storage manager for database operations
-        """
         self.storage = storage_manager
 
     def generate_profile(self, user_id: int) -> PreferenceProfile:
-        """Generate a preference profile from all user data.
-
-        Analyzes:
-        - Genre affinities from average ratings (1-5 scale)
-        - Theme preferences from high-rated content metadata
-        - Anti-preferences using consistency checks (avg + positive ratio)
-        - Cross-media patterns (e.g., "loves sci-fi books, prefers fantasy games")
-
-        Args:
-            user_id: User ID to generate profile for
-
-        Returns:
-            PreferenceProfile with computed preferences
-        """
         # Only rated, non-ignored items carry a taste signal for the profile;
         # ignored/unrated content must not shape it (issue #99).
         completed_items = self.storage.get_signal_items(user_id=user_id, limit=1000)
@@ -295,17 +248,6 @@ class ProfileGenerator:
         )
 
     def _calculate_genre_affinities(self, items: list[ContentItem]) -> dict[str, float]:
-        """Calculate genre preference scores from rated items.
-
-        Uses average rating per genre on a 1.0-5.0 scale. Requires at least
-        MIN_ITEMS_PER_GENRE rated items per genre to avoid small-sample bias.
-
-        Args:
-            items: List of completed content items
-
-        Returns:
-            Dictionary mapping genre to average rating (1.0 to 5.0), sorted descending
-        """
         genre_ratings: dict[str, list[int]] = defaultdict(list)
 
         for item in items:
@@ -325,14 +267,6 @@ class ProfileGenerator:
         return dict(sorted(affinities.items(), key=lambda pair: pair[1], reverse=True))
 
     def _identify_theme_preferences(self, items: list[ContentItem]) -> list[str]:
-        """Identify theme preferences from high-rated content.
-
-        Args:
-            items: List of completed content items
-
-        Returns:
-            List of identified theme preferences
-        """
         theme_counts: dict[str, int] = defaultdict(int)
 
         high_rated_items = [
@@ -344,14 +278,11 @@ class ProfileGenerator:
             for theme in themes:
                 theme_counts[theme] += 1
 
-        # Return themes that appear in at least 2 high-rated items
-        # or if user has few items, themes that appear at least once
         min_count = 2 if len(high_rated_items) >= 5 else 1
         preferences = [
             theme for theme, count in theme_counts.items() if count >= min_count
         ]
 
-        # Sort by count descending, take top 10
         preferences.sort(key=lambda theme: theme_counts[theme], reverse=True)
         return preferences[:10]
 
@@ -359,20 +290,6 @@ class ProfileGenerator:
         self,
         completed_items: list[ContentItem],
     ) -> list[str]:
-        """Identify anti-preferences using consistency-based checks.
-
-        A genre is an anti-preference only if:
-        1. It has at least MIN_ITEMS_PER_GENRE rated items
-        2. Its average rating is <= 3.0 (mediocre or worse)
-        3. At most 1 item OR at most 20% of items rated 4+ stars
-           (prevents genres the user sometimes loves from appearing here)
-
-        Args:
-            completed_items: List of completed content items
-
-        Returns:
-            List of identified anti-preferences
-        """
         genre_ratings: dict[str, list[int]] = defaultdict(list)
 
         for item in completed_items:
@@ -397,7 +314,6 @@ class ProfileGenerator:
             if high_count <= 1 or high_ratio <= 0.2:
                 anti_prefs[genre] = average_rating
 
-        # Sort by average rating ascending (worst first), take top 10
         sorted_anti = sorted(anti_prefs.items(), key=lambda pair: pair[1])
         return [genre for genre, _average in sorted_anti[:10]]
 
@@ -406,54 +322,32 @@ class ProfileGenerator:
         items: list[ContentItem],
         genre_affinities: dict[str, float],
     ) -> list[str]:
-        """Find patterns across content types.
-
-        Args:
-            items: List of completed content items
-            genre_affinities: Overall genre affinity scores
-
-        Returns:
-            List of cross-media pattern descriptions
-        """
         patterns: list[str] = []
 
-        # Group items by content type
         by_type: dict[str, list[ContentItem]] = defaultdict(list)
         for item in items:
             if item.rating is not None:
                 by_type[item.content_type].append(item)
 
-        # Calculate genre affinities per content type
         type_genre_affinities: dict[str, dict[str, float]] = {}
         for content_type, type_items in by_type.items():
             type_affinities = self._calculate_genre_affinities(type_items)
             if type_affinities:
                 type_genre_affinities[content_type] = type_affinities
 
-        # Look for interesting patterns
         if len(type_genre_affinities) >= 2:
             patterns.extend(self._find_genre_divergence_patterns(type_genre_affinities))
 
-        # Look for content type preferences
         type_ratings = self._calculate_type_average_ratings(items)
         patterns.extend(self._find_type_preference_patterns(type_ratings))
 
-        return patterns[:5]  # Limit to top 5 patterns
+        return patterns[:5]
 
     def _extract_themes(self, item: ContentItem) -> list[str]:
-        """Extract theme keywords from item metadata.
-
-        Args:
-            item: Content item to extract themes from
-
-        Returns:
-            List of theme keywords found
-        """
         themes: list[str] = []
 
         metadata = item.metadata or {}
 
-        # Check theme/tag fields
         theme_fields = ["themes", "tags", "keywords", "features"]
 
         for theme_field in theme_fields:
@@ -471,31 +365,20 @@ class ProfileGenerator:
                     else:
                         themes.append(value.lower())
 
-        # Check review for theme keywords
         if item.review:
             review_lower = item.review.lower()
             for keyword in THEME_KEYWORDS:
                 if keyword in review_lower:
                     themes.append(keyword)
 
-        # Filter to known keywords and deduplicate
         known_themes = [t for t in themes if t in THEME_KEYWORDS]
         return list(set(known_themes))
 
     def _find_genre_divergence_patterns(
         self, type_genre_affinities: dict[str, dict[str, float]]
     ) -> list[str]:
-        """Find patterns where genre preferences differ across content types.
-
-        Args:
-            type_genre_affinities: Genre affinities by content type
-
-        Returns:
-            List of pattern descriptions
-        """
         patterns: list[str] = []
 
-        # Compare each pair of content types
         types = list(type_genre_affinities.keys())
         for i, type1 in enumerate(types):
             for type2 in types[i + 1 :]:
@@ -509,7 +392,6 @@ class ProfileGenerator:
                     score1 = affinities1[genre]
                     score2 = affinities2[genre]
 
-                    # Significant divergence
                     if score1 >= 4.0 and score2 <= 2.5:
                         type1_name = self._format_content_type(type1)
                         type2_name = self._format_content_type(type2)
@@ -528,14 +410,6 @@ class ProfileGenerator:
     def _calculate_type_average_ratings(
         self, items: list[ContentItem]
     ) -> dict[str, float]:
-        """Calculate average rating per content type.
-
-        Args:
-            items: List of completed content items
-
-        Returns:
-            Dictionary mapping content type to average rating
-        """
         type_ratings: dict[str, list[int]] = defaultdict(list)
 
         for item in items:
@@ -552,20 +426,11 @@ class ProfileGenerator:
     def _find_type_preference_patterns(
         self, type_ratings: dict[str, float]
     ) -> list[str]:
-        """Find patterns in content type preferences.
-
-        Args:
-            type_ratings: Average ratings by content type
-
-        Returns:
-            List of pattern descriptions
-        """
         patterns: list[str] = []
 
         if len(type_ratings) < 2:
             return patterns
 
-        # Find the highest and lowest rated types
         sorted_types = sorted(
             type_ratings.items(), key=lambda pair: pair[1], reverse=True
         )
@@ -573,7 +438,6 @@ class ProfileGenerator:
         highest_type, highest_rating = sorted_types[0]
         lowest_type, lowest_rating = sorted_types[-1]
 
-        # Only report if there's a significant difference
         if highest_rating - lowest_rating >= 0.5:
             highest_name = self._format_content_type(highest_type)
             lowest_name = self._format_content_type(lowest_type)
@@ -582,14 +446,6 @@ class ProfileGenerator:
         return patterns
 
     def _format_content_type(self, content_type: str) -> str:
-        """Format content type for human-readable output.
-
-        Args:
-            content_type: Raw content type string
-
-        Returns:
-            Formatted content type name
-        """
         type_names = {
             ContentType.BOOK: "books",
             ContentType.MOVIE: "movies",
@@ -603,19 +459,9 @@ class ProfileGenerator:
         return type_names.get(content_type, str(content_type))
 
     def regenerate_and_save(self, user_id: int) -> PreferenceProfile:
-        """Generate a new profile and save it to the database.
-
-        Args:
-            user_id: User ID to generate profile for
-
-        Returns:
-            The generated and saved PreferenceProfile
-        """
         profile = self.generate_profile(user_id)
 
-        # Convert to JSON for storage
         profile_dict = asdict(profile)
-        # Convert datetime to ISO format string for JSON serialization
         if profile_dict.get("generated_at"):
             profile_dict["generated_at"] = profile_dict["generated_at"].isoformat()
         profile_json = json.dumps(profile_dict)

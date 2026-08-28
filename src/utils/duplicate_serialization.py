@@ -36,7 +36,6 @@ def suggestion_evidence_label(evidence: SuggestionEvidence) -> str:
 
 
 def merge_evidence_label(record: MergeRecord) -> str:
-    """What the merge was made on, and the detail it matched where there is one."""
     label = _MERGE_EVIDENCE_LABELS.get(record.evidence, record.evidence.value)
     return f"{label} ({record.evidence_detail})" if record.evidence_detail else label
 

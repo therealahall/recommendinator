@@ -1,10 +1,4 @@
-"""The recommendation record the engine emits and every consumer reads.
-
-One declared shape for both producer paths in
-:mod:`src.recommendations.engine` — the scored path and the library fallback —
-so a path with nothing to say about references or per-scorer rows says so with
-an empty default instead of a missing key.
-"""
+"""The recommendation record the engine emits and every consumer reads."""
 
 from dataclasses import dataclass, field
 from typing import TypedDict
@@ -17,12 +11,7 @@ from src.utils.series import (
 
 
 class RecommendationPayload(TypedDict):
-    """The JSON shape both interfaces emit for one recommendation.
-
-    The field order is the order :class:`src.web.api.RecommendationResponse`
-    declares, so the CLI's ``--format json`` and the web response serialise the
-    same keys in the same order.
-    """
+    """The JSON shape both interfaces emit for one recommendation."""
 
     db_id: int | None
     title: str
@@ -37,21 +26,6 @@ class RecommendationPayload(TypedDict):
 
 @dataclass(frozen=True)
 class Recommendation:
-    """One recommended item with everything the engine worked out about it.
-
-    Attributes:
-        item: The recommended content item.
-        score: Pipeline aggregate in ``[0, 1]``, after any variety penalty.
-        reasoning: Pipeline-generated explanation shown to the user.
-        score_breakdown: Scorer config key -> raw score, empty on the paths
-            that never ran the pipeline.
-        variety_penalty: Genre-fatigue fraction applied to ``score`` (0.0 when
-            the preference is off or the item's genre was not recently
-            finished).
-        contributing_items: Consumed items cited as the reason for this pick.
-        adaptations: Consumed items this candidate adapts across media.
-    """
-
     item: ContentItem
     score: float
     reasoning: str
@@ -61,12 +35,6 @@ class Recommendation:
     adaptations: list[ContentItem] = field(default_factory=list)
 
     def to_payload(self) -> RecommendationPayload:
-        """Serialise to the shared CLI/web JSON shape.
-
-        The CLI emits this mapping directly; the web API validates it into a
-        :class:`src.web.api.RecommendationResponse`. Keeping the construction
-        here is what stops the two interfaces from drifting apart.
-        """
         return {
             "db_id": self.item.db_id,
             "title": self.item.title,

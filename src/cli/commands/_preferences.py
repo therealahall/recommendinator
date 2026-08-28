@@ -1,5 +1,3 @@
-"""The ``preferences`` group and its ``custom-rules`` subgroup."""
-
 from __future__ import annotations
 
 import json
@@ -29,12 +27,7 @@ def _edit_preferences(
     user_id: int,
     apply: Callable[[UserPreferenceConfig], None],
 ) -> UserPreferenceConfig:
-    """Apply *apply* to a user's preferences under storage's write lock.
-
-    An unlocked read-mutate-save loses whatever a concurrent write stored, and
-    the write is an UPDATE keyed on the id, so an unknown user used to print
-    success and persist nothing.
-    """
+    """Apply *apply* to a user's preferences under storage's write lock."""
     storage: StorageManager = ctx.obj["storage"]
     try:
         return storage.merge_user_preference_config(user_id, apply)
@@ -67,7 +60,6 @@ def preferences_get(ctx: click.Context, user_id: int, output_format: str) -> Non
     if output_format == "json":
         click.echo(json.dumps(data, indent=2))
     else:
-        # Table output
         table_data = []
         for key, value in data.items():
             table_data.append([key, str(value)])
@@ -129,8 +121,7 @@ def preferences_set_toggle(
 ) -> None:
     """Enable or disable a boolean preference toggle.
 
-    TOGGLE_NAME is the setting to change (series_in_order).  VALUE is 'on' or
-    'off'.
+    TOGGLE_NAME is the setting to change (series_in_order).  VALUE is 'on' or 'off'.
     """
     enabled = value.lower() == "on"
     # Guard against the allowlist drifting away from the model's bool fields.
@@ -162,10 +153,8 @@ def preferences_set_variety(ctx: click.Context, penalty: float, user_id: int) ->
     """Set the variety-after-completion penalty for a user.
 
     PENALTY is the strength of the genre-fatigue penalty (0.0-5.0, the same
-    scale as scorer weights). 0.0 turns it off; higher values more strongly
-    demote genres you have recently finished so recommendations vary instead of
-    marching through the next entry in a just-completed series, up to 5.0 which
-    fully zeroes a just-finished genre. The penalty decays as you finish more.
+    scale as scorer weights). 0.0 turns it off, up to 5.0 which fully zeroes a
+    just-finished genre.
     """
 
     def set_variety(preference_config: UserPreferenceConfig) -> None:

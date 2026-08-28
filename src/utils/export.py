@@ -1,5 +1,3 @@
-"""Export library items to CSV and JSON formats."""
-
 import csv
 import io
 import json
@@ -51,16 +49,6 @@ _ALL_CSV_COLUMNS: list[str] = [
 def _item_to_export_dict(
     item: ContentItem, content_type: ContentType, for_csv: bool = False
 ) -> dict[str, Any]:
-    """Convert a ContentItem to a flat dict matching template fields.
-
-    Args:
-        item: ContentItem to convert
-        content_type: Content type for field mapping
-        for_csv: If True, format values for CSV (strings); if False, for JSON
-
-    Returns:
-        Dictionary with template-matching keys
-    """
     content_type_value = get_enum_value(content_type)
     creator_field = CREATOR_FIELD[content_type_value]
 

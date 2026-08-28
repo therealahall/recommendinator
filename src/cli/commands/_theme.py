@@ -1,5 +1,3 @@
-"""The ``theme`` group: the per-user UI theme (mirrors the /api/themes routes)."""
-
 from __future__ import annotations
 
 import json
@@ -89,8 +87,7 @@ def theme_set(
     """Set the theme a user's interface paints.
 
     THEME_ID is an installed theme's id, as ``theme list`` reports it. A
-    ``preferences reset`` leaves it alone: the theme is not a scoring
-    preference.
+    ``preferences reset`` leaves it alone: the theme is not a scoring preference.
     """
     storage = require_storage(ctx)
     installed = installed_theme_ids()

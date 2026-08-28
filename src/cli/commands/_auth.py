@@ -1,5 +1,3 @@
-"""The ``auth`` group."""
-
 from __future__ import annotations  # noqa: I001
 
 import time
@@ -65,9 +63,7 @@ _SOURCE_ID_HELP = (
 
 
 def _auth_source_id(source: str, source_id: str | None) -> str:
-    """The id an auth verb acts on, refused unless the routes could address it.
-
-    The id is a credential key, so an unvalidated one files a token where no
+    """The id is a credential key, so an unvalidated one files a token where no
     web route can ever reach it.
     """
     if source_id is None:
@@ -83,7 +79,6 @@ def _is_trakt_enabled(
     source_id: str,
     user_id: int,
 ) -> bool:
-    """Whether *source_id* has client credentials saved for the device flow."""
     try:
         resolve_trakt_client_credentials(config, storage, source_id, user_id)
     except TraktAuthError:
@@ -139,9 +134,7 @@ def _auth_status_line(
     plugin_name: str,
     user_id: int,
 ) -> str:
-    """One source's line, answering both questions separately.
-
-    A disabled source keeps its token, and only a line saying so tells the
+    """A disabled source keeps its token, and only a line saying so tells the
     operator there is still something to revoke.
     """
     is_enabled, has_token = _OAUTH_STATUS[plugin_name]
@@ -236,12 +229,6 @@ def _connect_trakt(
     source_id: str,
     user_id: int,
 ) -> None:
-    """Run the Trakt device-code flow: print the user code, then poll to approval.
-
-    Resolves the saved client_id/client_secret, starts the device flow, and
-    polls at the cadence Trakt returned until the user approves, the code
-    expires, or the request is denied.
-    """
     try:
         client_id, client_secret = resolve_trakt_client_credentials(
             config, storage, source_id, user_id

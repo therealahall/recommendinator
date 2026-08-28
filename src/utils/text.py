@@ -1,5 +1,3 @@
-"""Text formatting utilities."""
-
 from __future__ import annotations
 
 import re
@@ -53,17 +51,6 @@ _UPPERCASE_WORDS: dict[str, str] = {
 
 
 def humanize_source_id(source_id: str) -> str:
-    """Convert a snake_case source ID to a human-readable title.
-
-    Applies title-casing with special handling for known acronyms.
-
-    Examples:
-        ``finished_tv_shows`` → ``Finished TV Shows``
-        ``gog`` → ``GOG``
-        ``my_books`` → ``My Books``
-        ``personal_site_games`` → ``Personal Site Games``
-        ``calibre-web`` → ``Calibre Web``
-    """
     words = re.split(r"[_-]", source_id)
     return " ".join(_UPPERCASE_WORDS.get(word, word.capitalize()) for word in words)
 
@@ -74,56 +61,34 @@ def is_blank(value: str) -> bool:
 
 
 def _log_escape(match: re.Match[str]) -> str:
-    """The conventional spelling where one exists, the codepoint otherwise."""
     character = match.group()
     return _LOG_ESCAPES.get(character, f"\\u{ord(character):04x}")
 
 
 def sanitize_for_log(value: str) -> str:
-    """Escape every line break, control character and lone surrogate.
-
-    The single-line file format means an unescaped break forges an entry
-    (CWE-117), a terminal control rewrites one and a surrogate deletes one.
-    Never on a JSON body.
-    """
+    """Never on a JSON body."""
     return _LOG_UNSAFE_RE.sub(_log_escape, value)
 
 
 def exception_for_log(error: BaseException) -> str:
-    """Render an exception as one log-safe line, class name included.
-
-    A ``requests`` fault is scrubbed instead: its words quote the request URL
-    and the ``?api_key=`` in it. Dispatching here spares every caller's
-    handler ordering. Never on client-facing text.
-    """
+    """Never on client-facing text."""
     if isinstance(error, requests.RequestException):
         return sanitize_for_log(scrub_request_error(error))
     return sanitize_for_log(f"{type(error).__name__}: {error}")
 
 
 def sanitize_rule_text(raw: str) -> str:
-    """Reduce a preference rule to one safe line of text.
-
-    Strips rather than allowlists: the ``+`` in ``prefer 4+ star ratings`` is
-    the operator's own word. Uncapped; the caller applies its storage cap.
+    """Strips rather than allowlists: the ``+`` in ``prefer 4+ star ratings`` is
+    the operator's own word.
     """
     return _RULE_UNSAFE_RE.sub("", _WHITESPACE_RUN_RE.sub(" ", raw)).strip()
 
 
 def strip_lone_surrogates(raw: str) -> str:
-    """Drop what argv carries and no strict UTF-8 encoder takes.
-
-    ``surrogateescape`` hands an undecodable byte over as a lone surrogate, and
-    SQLite and ``click.echo`` both raise on one. Line breaks stay: they encode.
-    """
+    """Drop what argv carries and no strict UTF-8 encoder takes."""
     return _LONE_SURROGATE_RE.sub("", raw)
 
 
 def escape_lone_surrogates(raw: str) -> str:
-    """Spell out the same bytes instead of dropping them.
-
-    A filename of nothing but undecodable bytes strips to an empty, unfindable
-    title, and two differing only in those bytes strip to one row. Same escape
-    as :func:`sanitize_for_log`.
-    """
+    """Spell out the same bytes instead of dropping them."""
     return _LONE_SURROGATE_RE.sub(_log_escape, raw)

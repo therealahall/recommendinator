@@ -1,10 +1,3 @@
-"""Normalized content length preferences and filtering.
-
-Provides a unified length preference system across content types, replacing
-the old ``minimum_book_pages`` / ``maximum_movie_runtime`` fields with a
-simpler short/medium/long/any model.
-"""
-
 from __future__ import annotations
 
 from enum import Enum
@@ -13,8 +6,6 @@ from src.models.content import ContentItem, get_enum_value
 
 
 class LengthPreference(str, Enum):
-    """User preference for content length."""
-
     ANY = "any"
     SHORT = "short"
     MEDIUM = "medium"
@@ -22,9 +13,6 @@ class LengthPreference(str, Enum):
 
 
 # Thresholds per content type: (short_max, medium_max)
-# Short: value <= short_max
-# Medium: short_max < value <= medium_max
-# Long: value > medium_max
 _THRESHOLDS: dict[str, tuple[int, int]] = {
     "book": (250, 500),  # pages
     "movie": (90, 150),  # minutes
@@ -32,7 +20,6 @@ _THRESHOLDS: dict[str, tuple[int, int]] = {
     "video_game": (10, 40),  # hours of average playtime
 }
 
-# Metadata keys to check for each content type.
 # A game has one key only, RAWG's average across players. playtime_hours holds
 # the user's own hours, from Steam or an imported hours_played column, which
 # describes the player rather than the game.
@@ -45,14 +32,6 @@ _LENGTH_METADATA_KEYS: dict[str, list[str]] = {
 
 
 def get_length_value(item: ContentItem) -> int | None:
-    """Extract the length value from a content item's metadata.
-
-    Args:
-        item: Content item to inspect.
-
-    Returns:
-        The numeric length value, or ``None`` if no length metadata is present.
-    """
     content_type_str = get_enum_value(item.content_type)
     keys = _LENGTH_METADATA_KEYS.get(content_type_str, [])
 
@@ -73,15 +52,6 @@ def get_length_value(item: ContentItem) -> int | None:
 def classify_length(
     item: ContentItem,
 ) -> LengthPreference | None:
-    """Classify an item's length as short, medium, or long.
-
-    Args:
-        item: Content item to classify.
-
-    Returns:
-        The length classification, or ``None`` if no length metadata is
-        available.
-    """
     content_type_str = get_enum_value(item.content_type)
     thresholds = _THRESHOLDS.get(content_type_str)
     if thresholds is None:
@@ -103,22 +73,6 @@ def score_length_match(
     item: ContentItem,
     content_length_preferences: dict[str, str],
 ) -> float:
-    """Score how well an item matches the user's length preference.
-
-    Returns a score between 0.0 and 1.0:
-    - 1.0: exact match or ``"any"`` preference or no metadata
-    - 0.7: adjacent category (short↔medium or medium↔long)
-    - 0.4: opposite ends (short↔long)
-    - 0.8: no length metadata available (benefit of the doubt)
-
-    Args:
-        item: Content item to score.
-        content_length_preferences: Mapping of content type string to
-            length preference string.
-
-    Returns:
-        A float between 0.0 and 1.0.
-    """
     content_type_str = get_enum_value(item.content_type)
     preference_str = content_length_preferences.get(content_type_str, "any")
 
@@ -132,7 +86,6 @@ def score_length_match(
     if classification.value == preference_str:
         return 1.0
 
-    # Adjacent vs opposite penalty
     order = [LengthPreference.SHORT, LengthPreference.MEDIUM, LengthPreference.LONG]
     try:
         pref_enum = LengthPreference(preference_str)
@@ -141,5 +94,5 @@ def score_length_match(
 
     distance = abs(order.index(classification) - order.index(pref_enum))
     if distance == 1:
-        return 0.7  # adjacent
-    return 0.4  # opposite ends
+        return 0.7
+    return 0.4

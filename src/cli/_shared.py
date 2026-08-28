@@ -1,8 +1,3 @@
-"""What more than one command group needs.
-
-A helper only one group calls belongs in that group's module.
-"""
-
 from __future__ import annotations
 
 import json
@@ -42,12 +37,7 @@ def report_failure(
     message: str,
     error: BaseException,
 ) -> None:
-    """Refuse in the web's words, keeping the fault's own out of the terminal.
-
-    Root ``--verbose`` is for the operator whose log file is unreadable — a
-    root-owned ``data/`` bind mount, say. It adds the message, never the
-    traceback.
-    """
+    """Refuse in the web's words, keeping the fault's own out of the terminal."""
     logger.error("%s", message, exc_info=True)
     if ctx.obj.get("verbose"):
         # A control character in the fault's words would otherwise rewrite the
@@ -62,7 +52,7 @@ def abort_after_failure(
     message: str,
     error: BaseException,
 ) -> NoReturn:
-    """Refuse and stop. A loop that must keep going calls ``report_failure``."""
+    """A loop that must keep going calls ``report_failure``."""
     report_failure(ctx, message, error)
     raise click.Abort()
 
@@ -75,11 +65,8 @@ def require_storage(ctx: click.Context) -> StorageManager:
 
 
 def is_blank_review(review: str | None) -> bool:
-    """Whether a ``--review`` value is empty or all whitespace.
-
-    Stored, ``""`` blocks a later import from filling one in, so ``complete``
-    and ``library edit`` both refuse it. Each words its own message: only one
-    has ``--clear-review``.
+    """Stored, ``""`` blocks a later import from filling one in, so ``complete``
+    and ``library edit`` both refuse it.
     """
     return review is not None and is_blank(review)
 
@@ -94,9 +81,7 @@ def series_label(metadata: dict[str, Any] | None) -> str:
 
 
 class ValueCoercionError(Exception):
-    """*raw* is not a value of *value_type*.
-
-    Carries the type rather than a message: the source group answers by
+    """Carries the type rather than a message: the source group answers by
     aborting and the settings group by raising a validation error.
     """
 
@@ -106,12 +91,6 @@ class ValueCoercionError(Exception):
 
 
 def coerce_value(value_type: str, raw: str) -> bool | int | float | list[str] | str:
-    """Parse a CLI string argument into *value_type*.
-
-    Booleans accept true/false/1/0/yes/no/on/off; lists are comma-separated;
-    ints and floats are parsed as written. Any other type passes through for
-    the caller's own validation.
-    """
     if value_type == "bool":
         lowered = raw.strip().lower()
         if lowered in _TRUE_VALUES:
@@ -135,11 +114,7 @@ def coerce_value(value_type: str, raw: str) -> bool | int | float | list[str] | 
 
 
 def read_json_payload(from_json: str) -> dict[str, Any]:
-    """Read a JSON object from stdin (``-``) or a file path.
-
-    Aborts with a friendly message rather than letting ``FileNotFoundError`` /
-    ``PermissionError`` surface as a Python traceback.
-    """
+    """Read a JSON object from stdin (``-``) or a file path."""
     if from_json == "-":
         raw = sys.stdin.read()
     else:
@@ -163,11 +138,7 @@ def write_output_file(
     *,
     assume_yes: bool,
 ) -> bool:
-    """False means the operator kept the file that was already there.
-
-    The OS judges what is unwritable — a directory, an absent parent, a mode —
-    so one ``except`` covers every shape rather than a check per shape.
-    """
+    """False means the operator kept the file that was already there."""
     if not assume_yes and output_path.is_file():
         if not click.confirm(f"{output_path} already exists. Overwrite it?"):
             click.echo("Aborted.")
@@ -184,9 +155,7 @@ def emit_view(
     build_view: Callable[[], dict[str, Any]],
     success_message: str,
 ) -> None:
-    """Render a mutation's result: the refreshed view, or a line of prose.
-
-    The web mutations answer with the refreshed body, so a scripted caller
+    """The web mutations answer with the refreshed body, so a scripted caller
     gets it from the call that wrote, not from a second read.
     """
     if output_format == "json":

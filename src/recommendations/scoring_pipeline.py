@@ -1,5 +1,3 @@
-"""Scoring pipeline that aggregates multiple scorers into a single ranking."""
-
 from __future__ import annotations
 
 import hashlib
@@ -21,19 +19,6 @@ _CLASS_TO_NAME: dict[type[Scorer], str] = {
 
 
 def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
-    """Generate a tiebreaker key for sorting items with equal scores.
-
-    Priority:
-    1. First items in a series (to encourage starting new series)
-    2. Stable hash of title (for pseudo-random but consistent ordering)
-
-    Args:
-        item: Content item to generate key for.
-
-    Returns:
-        Tuple of (is_not_first_in_series, title_hash) for sorting.
-        Lower values sort first, so first-in-series items come first.
-    """
     is_first = is_first_item_in_series(item=item)
     # Hash the title for stable pseudo-random ordering (avoids pure alphabetical).
     # MD5 chosen for speed; this is not a security context (usedforsecurity=False).
@@ -43,36 +28,13 @@ def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
 
 @dataclass
 class ScoredCandidate:
-    """A candidate item with its aggregate score and per-scorer breakdown.
-
-    Attributes:
-        item: The content item.
-        aggregate_score: Weight-normalised aggregate score in [0, 1].
-        score_breakdown: Mapping of scorer config key to raw (clamped) score.
-    """
-
     item: ContentItem
     aggregate_score: float
     score_breakdown: dict[str, float] = field(default_factory=dict)
 
 
 class ScoringPipeline:
-    """Run a list of :class:`Scorer` instances over candidates and produce
-    weight-normalised aggregate scores.
-
-    Usage::
-
-        pipeline = ScoringPipeline(scorers)
-        scored = pipeline.score_candidates_with_breakdown(candidates, context)
-        # scored is [ScoredCandidate, ...] sorted descending by score
-    """
-
     def __init__(self, scorers: list[Scorer]) -> None:
-        """Initialise the pipeline.
-
-        Args:
-            scorers: Ordered list of scorers to evaluate.
-        """
         self.scorers = scorers
 
     def score_candidates_with_breakdown(
@@ -80,21 +42,6 @@ class ScoringPipeline:
         candidates: list[ContentItem],
         context: ScoringContext,
     ) -> list[ScoredCandidate]:
-        """Score and sort *candidates*, returning per-scorer breakdowns.
-
-        Each scorer produces a ``[0, 1]`` score that is multiplied by its
-        weight. The weighted scores are summed and divided by the total weight
-        to produce a normalised aggregate in ``[0, 1]``. Additionally captures
-        the raw (clamped, pre-weight) score from each scorer.
-
-        Args:
-            candidates: Unconsumed items to evaluate.
-            context: Shared scoring context.
-
-        Returns:
-            List of :class:`ScoredCandidate` sorted by aggregate score
-            descending.
-        """
         if not candidates:
             return []
 
@@ -125,7 +72,6 @@ class ScoringPipeline:
                 )
             )
 
-        # Sort descending by score, with tiebreaker for equal scores
         results.sort(
             key=lambda scored: (-scored.aggregate_score, _tiebreaker_key(scored.item)),
         )
