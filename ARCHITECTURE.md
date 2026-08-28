@@ -1,11 +1,5 @@
 # Architecture Documentation
 
-## Overview
-
-Recommendinator ingests from multiple sources and ranks recommendations through a
-scoring pipeline. Everything runs on the local machine, and every score is
-arithmetic a reader can follow back to the library it came from.
-
 ## System Components
 
 ### 1. Data Ingestion (`src/ingestion/`)
@@ -61,7 +55,6 @@ SQLite holds everything.
 #### User-owned fields
 
 `rating`, `review`, `status`, `date_completed` and `ignored` belong to the user.
-Five methods on `SQLiteDB` write them.
 
 `save_content_item` is the sync door:
 
@@ -79,9 +72,7 @@ One exception to forward-only sits outside that resolution. After the upsert,
 `_handle_tv_season_change` regresses a completed TV show to
 `currently_consuming` when the season count rises above the seasons the
 user checked off, because new seasons mean the show is not finished. It needs an
-existing `seasons_watched` list, and it skips ignored items. A stored season
-count that is unknown or zero gives it nothing to compare against, so no
-regression happens there either.
+existing `seasons_watched` list, and it skips ignored items.
 
 The enrichment door runs that same pass:
 
@@ -89,63 +80,27 @@ The enrichment door runs that same pass:
   table and the derived columns. Of the user-owned fields it writes only
   `status`, and only through the season regression above.
 
-A missing column, a blank CSV cell and a JSON `null` all reach storage as `None`
-(`parse_ignored_field`, `src/ingestion/importers/rows.py`). That
-protects a hand-maintained file, not this project's exports.
-`_item_to_export_dict` (`src/utils/export.py`) states `true` or `false` on every
-row, so re-importing an export replaces the ignore list wholesale with the state
-at export time. Storage cannot tell a stated `false` from a plugin's defaulted
-`False`, so a plugin states the flag only when its source does. See
-[PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md#best-practices).
-
 The three user-action doors overwrite freely and write only what the caller
 supplied:
 
 - **`complete_content_item`** backs the `complete` CLI command and
   `POST /api/complete`. It finds or creates the row and applies rating, review,
   status and date in one transaction. `status` is written outright rather than
-  resolved forward. A named date is written as given even when it precedes the
-  stored one.
+  resolved forward.
 - **`update_item_from_ui`** backs the web edit modal and `library edit`.
   "Not supplied" is spelled two ways. `status`, `rating` and `review` use the
   `UNSET` sentinel, because for the last two `None` has to mean clear.
   `seasons_watched`, `genres`, `tags` and `description` use `None`, so there the
-  *empty* value clears: `[]` or `""`. `PATCH /api/items/{id}` can clear all four,
-  and so can `library edit`: `--clear-seasons`, `--clear-genres`, `--clear-tags`
-  and `--description ""`.
+  *empty* value clears: `[]` or `""`.
 - **`set_item_ignored`** backs the Ignore buttons
   (`PATCH /api/items/{id}/ignore`) and `library ignore` / `library unignore`. It
   writes `ignored` alone.
-
-For a TV show, an omitted status is derived from `seasons_watched` in
-`src/utils/series.py`, and a stated `completed` ticks every season unless the
-total is unknown. No status empties the list: a Trakt sync and a CSV/JSON import
-both write watched seasons, and the dialog hides its checklist for a show whose
-total never synced, so that show's status-only save would erase them unseen.
-Both supplied are written as given.
-
-**No door stores a blank review.** A stored `""` reads as a review the user wrote
-and blocks every later import from filling the field. The sync door declines to
-fill from one, `_write_completion` drops one, `update_item_from_ui` clears the
-column, and `complete --review`, `POST /api/complete` and
-`PATCH /api/items/{id}` all refuse one outright.
 
 **`date_completed` is never replaced silently.** A completion carrying no date
 fills an empty column with today and keeps an existing date. A named date is
 written as given, but no further ahead than `MAX_COMPLETION_DATE_SKEW` — one
 day, for a caller in a zone ahead of the server — and the check is at the door,
 so no surface can skip it.
-`update_item_from_ui` stamps a date only on a transition *into* `completed` on an
-undated row, so an unrelated edit cannot date a years-old import as finished
-today. Dates are the host's local calendar day rather than UTC (`local_today`,
-`local_date_from_iso_timestamp`), and a container takes its zone from `TZ`. See
-[DOCKER.md](docs/DOCKER.md#environment-variables). The
-[variety ladder](docs/SCORING.md#variety-after-completion) orders completions by
-this date.
-
-The merge door, `merge_content_items`, also writes all five, under the
-[dedup rules](#cross-source-deduplication) and through `merge_scalar_columns`
-(`src/storage/merge.py`). It is the only door that can be undone.
 
 #### Source configuration precedence
 
@@ -199,20 +154,13 @@ database with no tables yet reports as already current.
 Versions 1, 2 and 6 prune the `settings` rows the app can no longer reach.
 
 Version 3 is `_repair_legacy_content_rows`: an approximate SQL
-`normalized_title` backfill and the stranded detail-shape repair. Version 16
-reduces a list column holding an object and clears a re-queued item's stale
-quality. Version 17 moves a book title's `(Series, #N)` marker into its
-metadata, clears a placeholder author, folds a stranded company name,
-re-normalizes every title and clears the derived columns for the backfill.
-Version 18 rebuilds `sync_runs`, whose unfinished row is a claim and so cannot
-keep `finished_at` NOT NULL. Version 19 carries the UI theme out of the
-preference blob.
+`normalized_title` backfill and the stranded detail-shape repair.
 
 No step merges or unmerges rows: an upgraded library rewrites its keys and
 leaves the merge door to decide the rest.
 
-Versions 4, 5 and 7 to 15 record a shape rather than guarding a step; the
-derived-column fill and version 17's re-normalize cover the rows they left.
+`src/storage/schema.py` says which versions guard a step and which only record
+a shape.
 
 The one table rebuild, `_move_external_ids_off_content_items`, guards on the
 `content_items.external_id` column rather than the version, since it commits
@@ -225,23 +173,14 @@ before the stamp. `_assert_no_child_followed` aborts it when SQLite ignores the
 (`src/storage/derived.py`) hold `get_sort_title(title)` and the item's
 normalized title, creator and series, so `get_content_items` orders in SQL
 under a real `LIMIT`/`OFFSET` and builds a `ContentItem` only for the rows it
-returns. Both are recomputed from what is stored after every save and every
-merge — the creator column is fill-only, so they are read back from the row
-rather than taken from the item being saved, and the creator is picked by
-content type the way the read picks it. Every `ORDER BY` ends in `ci.id`,
-because SQL ordering is not stable and a page boundary inside a tie repeats one
-row and drops another.
+returns. Every `ORDER BY` ends in `ci.id`, because SQL ordering is not stable
+and a page boundary inside a tie repeats one row and drops another.
 
 A search is one matched set. SQL orders the filtered candidates and projects
 each as an `id` and its `search_text`; `search_text_matches` runs all three
 tiers — exact, substring and the fuzzy window scan SQL cannot express — and the
 page is sliced out of what matched, so no candidate that misses and no match
-outside the page costs a `ContentItem`. The scan stops as soon as the page is
-full, so a search carrying a limit never reads past it. Typo tolerance is never
-conditional, and the pages of a search concatenate into the answer that search
-gives unpaged. `search_text` joins its parts with a character search
-normalization can never produce, so a term never matches across the boundary
-between a title, its creator and the series it states.
+outside the page costs a `ContentItem`.
 
 #### Cross-source deduplication
 
@@ -253,37 +192,12 @@ of its ids are two items.
 The key is deliberately lossy — a region qualifier, an edition and a trailing
 year all leave it — and three vetoes make it safe. A creator, a
 year or a region both rows state and disagree on refuses the match, as does a
-year one row spells into its title against a row stating none. Books are
-exempt: their `year_published` is the edition's. Where the key names two rows,
-only one spelled as the incoming title is taken.
-
-Comparison is core's and source shape is the plugin's. Core sees two rows and
-decides whether they name one work; only a plugin knows what its own source
-appends to a title or writes where it has no value. So a shelf emits `title`
-beside `metadata["series"]` rather than "All Systems Red (The Murderbot
-Diaries, #1)", and the save door refuses the "Unknown" Calibre-Web sends for an
-authorless book, once for every source. Schema 17 splits what earlier builds
-stored, re-keys every title and re-derives every row's sort and search columns.
-
-It updates the matched row in place and absorbs nothing: absorbing the
-same-titled rows beside an id match destroyed ids a third source held. A pair
-predating both ids stays two rows until the merge door below joins them.
+year one row spells into its title against a row stating none.
 
 External ids live in `content_item_external_ids`, one per source per item:
-Steam's app 440 and GOG's product 440 are different games. Either path records
-the incoming `(source, external_id)`, which makes a merge survive the losing
-source's next sync.
+Steam's app 440 and GOG's product 440 are different games.
 
-`content_items.source` is display provenance and no sync overwrites it. A read
-reports every `(source, external_id)` pair the item holds, which both interfaces
-carry as `external_ids`; `ContentItem.id` stays the id of the item's own source,
-because a save keys on it.
-
-The version-8 migration rebuilds `content_items` to drop the id column and the
-`(user_id, external_id, content_type)` key it sat under. Every id it held is
-filed under the source `(legacy)`, which no source id can spell: the column
-beside those ids named the last source to sync the row, not the id's owner, so
-each source attaches its own on its next sync and matches by title until then.
+`content_items.source` is display provenance and no sync overwrites it.
 
 The rules every merge follows:
 
@@ -304,32 +218,15 @@ evidence (so far only the operator's own choice) and what it overwrote.
 
 `unmerge_content_items` writes that back: a record holds the columns that merge
 itself moved, so an undo puts those back and leaves a rating, a description or
-an enrichment run that landed since where it stands. It holds the survivor
-whole, so merges undo newest first, refusing any other order, and
-`list_content_item_merges` lists them in it.
-
-Enrichment merges too: a survivor still queued takes the absorbed row's settled
-outcome, so absorbing an enriched item never re-queues it. Both save lookups
-resolve one hop through `merged_into`, so the survivor reports the group's ids
-and absorbing a row that has absorbed one brings it up, keeping the hop single.
+an enrichment run that landed since where it stands.
 
 #### Detail-shape repairs
 
 `_migrate_stranded_detail_shapes`, in the same `create_schema` pass, rewrites
-three shapes storage no longer writes and no re-sync corrects. A `total_seasons`
+shapes storage no longer writes and no re-sync corrects. A `total_seasons`
 duplicated in a TV show's metadata blob moves onto the `seasons` column, taking
 the higher of the two so the count is never lowered. It runs inside the one
-transaction `create_schema` commits, so a failure after it discards it.
-A GOG game's `developers`/`publishers`, stranded in the
-blob by a build that spelled them so, fold onto the `developer` and `publisher`
-columns as names, filling only a column that is empty; schema 17 runs that fold
-again, because neither plural is an accepted spelling any more. Without it, the
-objects
-GOG uses on some products make every later save of the item raise. GOG's old
-per-platform flag dict becomes the list of names every
-other producer writes — or nothing, since the dict was truthy even when it named
-no supported platform — and only a dict whose values are all booleans is read as
-flags, so an imported object such as `{"name": "PC"}` is left alone. Rows already
+transaction `create_schema` commits, so a failure after it discards it. Rows already
 in the current shape are untouched, so re-running is a no-op.
 
 #### Thread safety
@@ -367,77 +264,41 @@ RecommendationEngine
 ```
 
 Every contribution to the score is one of those scorers, so the Score Details
-panel's rows and their weights reproduce the number displayed beside them. The
-variety penalty is the only factor applied afterwards, and it has its own row.
+panel's rows and their weights reproduce the number displayed beside them.
 See [docs/SCORING.md](docs/SCORING.md).
 
 **Weights resolve const default < `config.yaml` < `settings` table < per-user.**
-The first three assemble into the effective global. A per-user override
-(`users.settings` JSON, `"preference_config"`) then wins per key, and an unset key
-keeps the global. `min_rating_for_preference` and the counts have no per-user
-field. The engine asks for the running config once per request and resolves the
-weights, `min_rating_for_preference` and the custom-rule weight from that one
-read, so a Settings-page edit reaches the next set of recommendations without a
-restart. It asks rather than holds because scoring and config writes run in
-different threadpool workers, so nothing keeps them apart in time: a hot-reload
-binds a whole new config in one statement, and a save publishes all of its
-live-applied leaves as one swap per section. A request in flight therefore
-scores on the configuration it read at its start, whole, and a save landing
-mid-request reaches the next one instead.
+`min_rating_for_preference` and the counts have no per-user field.
 
 Invariants:
 
-- The engine's output is one declared record (`record.py`). Every path that
-  produces recommendations — scored or library fallback — returns
-  `Recommendation`, and a path with nothing to say about references says so with
-  an empty default rather than a missing field. Both interfaces
+- The engine's output is one declared record (`record.py`). Both interfaces
   serialise it through `to_payload`, which is what keeps `recommend --format
   json` and `GET /api/recommendations` one document.
 - The taste signal is completed items that are **rated** and **not ignored**,
   across all content types. Nothing else shapes preferences or scoring. Two
-  consumption facts sit outside it and are answered from
-  wider sets: series ordering, from the full completed set, and the variety
-  penalty below, which multiplies the final score rather than contributing to
-  it.
+  consumption facts sit outside it and are answered from wider sets: series
+  ordering, from the full completed set, and the variety penalty below, which
+  multiplies the final score rather than contributing to it.
 - Ignored items are filtered from the candidate pool at fetch time, as they are
-  from the signal set. Consumed items are excluded too.
+  from the signal set.
 - Series filtering with substitution (`series_in_order`) replaces a candidate
   failing the ordering rules with the earliest recommendable entry in its series,
   scored on its own merits, once per series.
 - The variety penalty multiplies a candidate's final score by `1 - penalty`,
-  taking the strongest penalty among its recently finished genre clusters. The
-  ladder is built from the completions **of the recommended content type**
-  (`get_consumption_items`: everything consumed or in progress that is not
-  ignored, rated or not, which the ladder then narrows to completion events),
-  because finishing something tires you of its genre whether or not you rated
-  it. An ignored completion claims no rung. Its top rung is the user's
-  `variety_penalty` over the `5.0` maximum, clamped into `[0, 1]` by
-  `top_penalty_for_preference` so no candidate is penalised past zero. A
-  finished season of an ongoing show counts as a completion, dated by that
-  season's watch timestamp. An active series continuation takes 60% of the
-  penalty (`is_active_series_continuation`). See
+  taking the strongest penalty among its recently finished genre clusters. See
   [SCORING.md](docs/SCORING.md#variety-after-completion).
 
 **Cross-content-type matching is a lookup, not a model.** Genre clusters
 (`genre_clusters.py`) map raw genre and tag terms onto a fixed set of thematic
 clusters, so a book tagged "space warfare" reaches a TV show tagged "war".
 Compound terms like "Sci-Fi & Fantasy" split first (`genre_normalizer.py`).
-Cross-type reference items use cluster overlap rather than raw Jaccard, so
-broadly-matching items cannot dominate.
 
 **Adaptations and reference items are matched through an index**
 (`reference_index.py`), built once per request over the taste signal. The
 adaptation lookup runs once per candidate, before scoring. The reference lookup
 runs after the slice, once per emitted recommendation, because nothing but those
-records reads its result. Each signal item's normalized title, genres, thematic
-clusters, creator and series name are derived when the index is built, and a
-candidate reaches its matches by lookup: an adaptation by normalized title or
-author, a reference by shared genre within its own content type or by shared
-cluster across types. That matters because TV candidates are season-expanded, so
-a few hundred shows become a few thousand candidates. The one thing no lookup
-reaches is a same-type item the user rated 4+ with nothing else in common, which
-qualifies as a reference on its rating alone, so each type also keeps its highly
-rated items in signal order to fill the slots the lookup leaves empty.
+records reads its result.
 
 ### 4. Enrichment (`src/enrichment/`)
 
@@ -470,14 +331,10 @@ Rules:
 - **A failure is classified before it is acted on** (`_classify_failure`,
   `_is_retryable`). Transport errors, 5xx, 408 and 429 are retryable, so
   `mark_enrichment_failed` records the error and leaves `needs_enrichment=1`. Any
-  other 4xx would be rejected identically every run and is not retryable. One
-  retryable failure keeps the item queued. Failures that are all non-retryable
-  settle it as `not_found`.
+  other 4xx would be rejected identically every run and is not retryable.
 - **A provider that keeps rejecting is abandoned for the run.** Five consecutive
   non-retryable rejections (`_MAX_CONSECUTIVE_REJECTIONS`) drop it, and the run
-  ends once nothing unabandoned is left for its content type. Items no remaining
-  provider reached are left queued and unwritten, and the run reports "stopped on
-  an error" — whether or not a content type filter narrowed it.
+  ends once nothing unabandoned is left for its content type.
 - **A failed save is ours, not a miss.** `mark_enrichment_settled_failure` takes
   the item out of the queue with the error on the row, so it is not counted as
   one more `not_found`.
@@ -494,21 +351,20 @@ neither a subset of the other. Every service both call sits outside both
 packages: recommendation, ingestion, storage, settings,
 `src/config/service.py` (YAML loading, bootstrap resolution, component
 factories), `src/sources/service.py` (source config CRUD), `src/auth/` (GOG,
-Epic and Trakt OAuth) and `src/utils/export.py`. So `parity-review` reviews every
-change but those under `docs/`, `tests/`, tooling and themes: the capability
-surface is all of `src/` and `resources/`.
+Epic and Trakt OAuth) and `src/utils/export.py`.
 
 Neither interface package imports the other, and each
 framework stays in the package it serves: `fastapi` and `starlette` only under
 `src/web/`, `click` only under `src/cli/`.
 
+#### CLI surface
+
 **CLI** (`src/cli/`): Click groups `status`, `recommend`, `update`, `complete`,
 `source`, `settings`, `preferences`, `enrichment`, `library`, `auth`, `account`,
-`profile`, `theme`, most carrying a `--format json` view. One module
-each under `src/cli/commands/`, re-exported from its `__init__` for
-`src/cli/main.py`;
-`src/cli/_shared.py` holds what more than one group uses. Full reference in
+`profile`, `theme`, most carrying a `--format json` view. Full reference in
 [docs/CLI.md](docs/CLI.md).
+
+#### Web surface
 
 **Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA,
 built by Vite from `resources/js/` and `resources/css/` into
@@ -516,42 +372,20 @@ built by Vite from `resources/js/` and `resources/css/` into
 Library, Duplicates, Data, Preferences and Settings. Internal network only.
 
 - The **Settings** page is the UI peer of the `settings` CLI group, over the
-  shared `src/settings/service.py`. Infra and security leaves
-  (`web.allowed_origins`, `logging.*`) sit in an **Advanced** group badged
-  **restart required**. Provider secrets get masked write-only controls.
-- Recommendation cards **ignore** or **mark complete**, each removing the card
-  without regenerating the list.
+  shared `src/settings/service.py`.
 - The **Preferences** page carries the generated taste profile, the UI peer of
   `profile show` and `profile regenerate`.
 - **Library search is bounded at 200 characters in four places**
   (`MAX_SEARCH_LENGTH` in `src/utils/sorting.py`, mirrored in
-  `resources/js/constants/library.ts`), because a candidate matching neither the
-  exact nor the substring tier costs a fuzzy-match window slid across it.
-  `GET /api/items` answers 422, `library list --search` errors, the input caps
-  typing and announces the cap to screen readers, and the library store
-  truncates in `setFilter`. Within the bound, titles normalize on Python's `\w`,
-  which spans every script. An ASCII-only class normalizes a Cyrillic or
-  Japanese title to the empty string and makes it unreachable.
-- Themes are folder-per-theme in `src/web/static/themes/` or `private/themes/`,
-  each a `theme.json` and a `colors.css` overriding the `:root` vars `base.css`
-  declares. `color-mix()` means a theme defines only core colors. Selection
-  persists per user in `user_ui_settings`, defaulting to `nord`, is untouched by
-  a preference reset, and is rendered into the page shell so the first paint
-  needs no request. See
-  [THEME_DEVELOPMENT.md](docs/THEME_DEVELOPMENT.md).
-- The UI polls `GET /api/status` every 5 seconds until the backend answers
-  ready, then every 5 minutes, and banners a newer server version. A call that
-  fails outright offers a retry rather than waiting out the next poll.
-- Library export: `GET /api/items/export?type=book&format=csv`. `type` is
-  optional on both interfaces and omitting it exports every content type, under
-  a header carrying all four types' columns.
+  `resources/js/constants/library.ts`). `GET /api/items` answers 422,
+  `library list --search` errors, the input caps typing and announces the cap
+  to screen readers, and the library store truncates in `setFilter`.
+- Library export: `GET /api/items/export?type=book&format=csv`.
 - The duplicates review reaches the merge door from both sides: `/api/duplicates`
   and `/api/merges` behind the **Duplicates** page, `library duplicates`,
   `merge`, `unmerge`, `merges`, `decline-duplicate`, `declined-duplicates` and
   `undecline-duplicate` on the CLI. Both serialize through
-  `src/utils/duplicate_serialization.py`. Neither offers to delete a row: every
-  id they show is one a merge can hide, and deleting a hidden row would take its
-  children with it and leave no undo.
+  `src/utils/duplicate_serialization.py`.
 - `sync_scheduler` (`src/web/scheduler.py`) runs on the app's lifespan, ticking
   once a minute and starting one due source, so a backlog staggers instead of
   opening a thread per source. No server, no scheduled sync. It and
@@ -559,62 +393,39 @@ Library, Duplicates, Data, Preferences and Settings. Internal network only.
   (`src/web/sync_dispatch.py`), so a scheduled run records and enriches as a
   requested one does. The run over every source overlaps nothing: the tick skips
   while it runs, and `POST /api/update` answers **409** either way.
+
+#### Request handling
+
+Every `/api` handler is plain `def`, so Starlette runs all of them in a
+threadpool: they do blocking SQLite, scoring and outbound OAuth work with
+nothing to await, and on the event loop one of them stalled every other request.
+That threadpool is anyio's, capped at **40 tokens**, so enough concurrent slow
+requests is where the API stops answering.
+
 - A component a handler **requires** is a parameter of it, annotated with one
   of the `Required*` aliases in `src/web/guards.py` (`RequiredStorage`,
-  `RequiredConfig`, `RequiredEngine`). Absent, it answers
-  **503**, never 500, with one message per dependency, so one server state gets
-  one status code and one message on every route. Declaring it in the signature
-  rather than calling a guard in the body means it cannot be forgotten while
-  the handler still compiles, FastAPI caches it so a handler and its own
-  dependencies acquire it once, and it resolves **before** request validation —
-  an invalid request to an endpoint whose component is down answers 503, not
-  422. `create_app` populates every component or raises, so the guards hold that
-  invariant rather than describing a state a served request meets.
-- Every `/api` handler is plain `def`, so Starlette runs all of them in a
-  threadpool: they do blocking SQLite, scoring and outbound OAuth work with
-  nothing to await, and on the event loop one of them stalled every other
-  request for its whole duration. That threadpool is anyio's, capped at **40
-  tokens**, so enough concurrent slow requests is where the API stops answering,
-  and it is the first thing to check when it does. The config watcher is not a
-  handler and hands its reload to a worker thread for the same reason.
+  `RequiredConfig`, `RequiredEngine`). Declaring it in the signature rather than
+  calling a guard in the body means it cannot be forgotten while the handler
+  still compiles, FastAPI caches it so a handler and its own dependencies
+  acquire it once, and it resolves **before** request validation — an invalid
+  request to an endpoint whose component is down answers 503, not 422.
 - Writing the running config is serialised by one lock in `src/web/state.py`,
   not by the event loop. Four paths write it — `PUT /api/settings`,
   `DELETE /api/settings/{key}`, `POST /api/config/reload` and the config
-  watcher — and each is a read-copy-store, so a reload rebinding
-  `app_state.config` mid-save would leave the save publishing into a dict
-  nobody reads any more: database and running config disagreeing with no error
-  anywhere. The two writers reach the config through `writable_config()` rather
-  than their `RequiredConfig` dependency, because the binding has to be
-  resolved *inside* the lock — a dependency resolves and is released before the
-  handler body runs. `RequiredConfig` stays on those routes as the 503 guard.
-- The plugin and enrichment-provider registries publish under a module-level
-  lock too. A pass used to clear and refill the live map, so a threadpool
-  worker reading mid-pass left the registry flagged discovered over a partial
-  map for good: 404 for a source that exists. A pass now fills a map of its own
-  and swaps it in. Building it stays *outside* the lock, because a
-  `private/plugins/` plugin calling `get_registry()` under it would hang the
-  process silently.
+  watcher.
 - The lazily-built process singleton behind `/api/sync/*` (`get_sync_manager`)
   builds under a module-level lock for the same reason: two threadpool requests
   on a cold process would otherwise each get a manager of their own, and a job
   started through one is invisible to the status endpoint reading the other.
-  `/api/enrichment/*` needs no singleton — its job lives in the shared
-  `enrichment_job` record, so each handler reads or claims that record directly.
 - A handler that does **not** require a component reads it through the
-  unguarded `get_*` accessors in `src/web/state.py` and falls back when it is
-  `None`, still answering 200: recommendations serve on the engine alone,
-  `POST /api/complete` falls back to the registered feature-flag defaults, and
-  `GET /api/status` guards none of the four it reads, because reporting which
-  are down is its job. In `tests/test_web_api.py`,
+  unguarded `get_*` accessors and falls back when it is `None`, still answering
+  200: recommendations serve on the engine alone, `POST /api/complete` falls
+  back to the registered feature-flag defaults, and `GET /api/status` guards
+  none of the four it reads. In `tests/test_web_api.py`,
   `TestUnguardedReadsAreOptional` pins the first two and
   `TestDependencyGuards.test_status_reports_initializing_when_components_are_down`
   pins the third, so a new handler picks one or the other: guard the read, or
   make the fallback real.
-
-Dev server: Vite on `:5173` proxies `/api/*` and `/static/themes/*` to FastAPI on
-`:18473`. Ports, proxy target and HMR client settings default to those and take
-`DEV_SERVER_*` overrides. See `resources/vite/devServer.ts` and
-[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Data Flow
 

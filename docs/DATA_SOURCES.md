@@ -38,10 +38,7 @@ reads.
 
 ## Adding, editing and removing sources in the UI
 
-The **Data** tab lists every source as an accordion, enabled ones first. A
-disabled source stays listed, muted with a **Disabled** badge and an inert Sync
-button, and both `Sync All` and its own Sync button skip it. Each accordion
-carries an Enable/Disable toggle.
+The **Data** tab lists every source as an accordion, enabled ones first.
 
 Two ways to create a source:
 
@@ -96,27 +93,17 @@ Per-source rate limits are enforced inside each plugin and are untouched by this
 ## Library export
 
 Click **Export** on the **Library** tab and pick CSV or JSON. The file covers
-the content type you have selected, or the whole library when none is, and
-carries your ignored items either way. Nothing else on screen narrows it: the
-status, search and enrichment filters shape the view, not the export. The CLI
-equivalent is `uv run python -m src.cli library export`, whose `--type` is
-optional for the same reason, see [CLI.md](CLI.md#library-management).
+the content type you have selected, or the whole library when none is. Nothing
+else on screen narrows it: the status, search and enrichment filters shape the
+view, not the export.
 
-The enrichment filter finds items still missing metadata so you can fill them
-in by hand, see
-[ENRICHMENT_SETUP.md](ENRICHMENT_SETUP.md#manual-enrichment-editing).
-
-Only a single-type export matches the import template. A whole-library CSV adds
-a `content_type` column so you can tell its rows apart while reading it; no
-importer reads that column, and whole-library JSON has no type field at all.
-Re-importing either file stamps every row with the one type you pass to
-`--content-type`. What a re-import may change depends on the field, and is
-usually less than you expect:
+Only a single-type export matches the import template. What a re-import may
+change depends on the field, and is usually less than you expect:
 
 | Field | What a re-import can do to it |
 |-------|-------------------------------|
 | `rating`, `review` | Fill an empty value. Never replaces one you wrote in the app |
-| `status` | Move forward only, unread to consuming to completed. Never reverts a completion |
+| `status` | Move forward only, unread to consuming to completed. Never reverts a completion, except that a completed TV show whose season checklist you have filled in returns to in-progress when an import raises its `total_seasons` above the seasons you have watched, unless the item is ignored |
 | `date_completed` | Replace it with a later date only |
 | `ignored` | Whatever the file states, in either direction. An absent column, a blank cell or a JSON `null` all say nothing, and your value stands |
 | `genre` | Merge in. An import never removes a genre |
@@ -124,15 +111,6 @@ usually less than you expect:
 | `seasons_watched` | Merge in. An import adds a season, never removes one. Unticking one in the season checklist or with `library edit --seasons-watched` holds only until a source reports that season again, so to drop it for good remove it at the source (unwatch the season in Trakt, say) |
 | `year_published`, `pages`, `isbn`, `runtime_minutes`, `platform`, `hours_played`, `notes`, `series`, `series_index` | Fill an empty value, and nothing else ever. There is no edit surface for these either, so fix them at the source they came from |
 | `year` and the creator: `author`, `director`, `creator`, `developer` | Fill an empty value. The edit modal and `library edit --release-year`/`--creator` replace one |
-
-The edit modal and `library edit` cover status, rating, review, seasons watched,
-genres, tags, description, release year and creator, and nothing else. `notes`
-is the fill-only column most likely to catch you out, being universal and far
-more inviting to hand-edit than an ISBN.
-
-One thing does move a status backward, and it is not a status rule. A completed
-TV show whose season checklist you have filled in returns to in-progress when an
-import raises its `total_seasons` above the seasons you have watched.
 
 Every row this app exports carries a real `true` or `false` in `ignored`, never
 a blank cell, so re-importing an export replaces your entire ignore list with
@@ -143,34 +121,23 @@ creator columns (`director`, `creator`, `developer`) used to export blank and no
 export correctly, so retake any export you keep as a backup — except a creator
 that arrived through a generic CSV or JSON import before this release, which the
 old write path never stored at all, so it stays blank until you re-import that
-file. Three things still need care:
+file.
 
 - **`platform` on a GOG library synced before the platform-shape fix.** Starting
   the app rewrites the stored per-platform flag dict as the platform names it
-  meant, so a row still holding that dict repairs itself. It happens once, when
-  the database opens, so restart the app rather than looking for it in the UI.
-  One shape is beyond the repair: a row whose value has already been through an
-  export and a re-import holds the dict's Python repr
-  (`{'windows': True, ...}`) as a literal string, which the repair does not
-  recognise. The column is fill-only, so no later sync replaces it either.
-- **`developer` and `publisher` on a GOG library synced before this release.**
-  GOG named both in the free-form metadata rather than the columns, so they
-  exported blank. Starting the app folds the names onto the columns, keeping
-  anything already there, and the item stops failing enrichment.
+  meant. It happens once, when the database opens, so restart the app rather
+  than looking for it in the UI. One shape is beyond the repair: a row whose
+  value has already been through an export and a re-import holds the dict's
+  Python repr (`{'windows': True, ...}`).
 - **`hours_played` on a video game a CSV or JSON import brought in before that
   column was renamed** to the library's own `playtime_hours`. Those rows still
   carry the old key and export blank. The number is not lost, and importing the
-  file again writes the new key. Nothing but the export is affected: the
-  [length scorer](SCORING.md#content-length-preferences) reads RAWG's average
-  playtime, never your own hours.
-
-Book titles change on first open, once: `Leviathan Wakes (The Expanse, #1)`
-becomes `Leviathan Wakes`, and the marker moves into the `series` and
-`series_index` columns an export now carries.
+  file again writes the new key.
 
 ## Credential storage
 
 API keys and OAuth tokens are encrypted at rest with Fernet. The key lives at
 `data/.credential_key`, or wherever `RECOMMENDINATOR_KEY_PATH` points. Copy it
-alongside the database if you move to a new host. See
+alongside the database if you move to a new host: without it, stored credentials
+cannot be decrypted and have to be re-entered. See
 [SECURITY.md](SECURITY.md#credential-encryption).

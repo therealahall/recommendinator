@@ -167,8 +167,7 @@ type and lifts those into the type's detail table (`book_details`,
 `movie_details`, `tv_show_details`, `video_game_details`). Anything else is kept
 verbatim in the detail row's free-form blob. **A misspelled key is not an error
 anywhere**, so spell a recognised one correctly: the value lands in the blob and
-never reaches the column the rest of the app queries. Both tables below come
-from `src/models/detail_fields.py`, which declares every field once.
+never reaches the column the rest of the app queries.
 
 | Content type | Recognised keys |
 |---|---|
@@ -179,8 +178,7 @@ from `src/models/detail_fields.py`, which declares every field once.
 
 The first key of each row above is that type's creator, and it is the one
 exception to metadata in and metadata out: storage reads it back on
-`ContentItem.author`, not in `metadata`. Setting `author` on the item works
-just as well, and wins if you do both.
+`ContentItem.author`, not in `metadata`.
 
 Six columns accept a second spelling, and reach the same column either way:
 
@@ -197,8 +195,7 @@ A text column takes a string, a number, or a list of either, joined with commas
 — so `developer` may be a list of studios. An object is refused rather than
 stored as its Python repr, and the refusal fails the whole item's save: sync
 reports only `Failed to process '<title>'`, naming no field, while the log line
-beside it names the key. So `metadata["publisher"] = {"name": "X"}` loses the
-item, not just the publisher. Reduce the shape to names before handing it over.
+beside it names the key.
 
 The blob is a shared namespace rather than scratch space. First-party code reads
 these keys out of it, and none of them is a recognised key:
@@ -215,9 +212,7 @@ files. Beyond it and the recognised keys, the blob is yours.
 
 **Taking one of those keys for your own bookkeeping changes behaviour, with no
 warning and no error at any layer.** Your own `number_of_seasons` re-classifies
-the show's length. Your own `franchise` re-orders a series. Your own
-`average_playtime_hours` re-classifies a game's length, where `playtime_hours`
-does not: that key holds the user's own hours, and nothing scores it.
+the show's length. Your own `franchise` re-orders a series.
 
 Enrichment writes into the blob too. RAWG writes `average_playtime_hours`,
 `franchise` and `series_position`, TMDB writes `series_name`, `series_position`
@@ -244,14 +239,14 @@ to the library export and back in as a literal string. Write
 what it already stored.** `platforms` is fill-only, so a stored value wins on
 every later sync, and the user has no way to undo it. Removing the source drops
 its config and secrets but keeps its items, so re-adding syncs into the same rows
-and the stored value still wins. Nothing in the web API or the CLI deletes a
-library item, either. Your fix reaches only items nobody has synced yet, and that
-holds for every fill-only column.
+and the stored value still wins.
 
 **`genres` and `tags` merge additively, and `seasons` and `episodes` only ever
 increase.** Every other detail column is fill-only, written while the stored
 value is empty and left alone afterwards, because enrichment and the user's own
-edits outrank a re-sync.
+edits outrank a re-sync. The
+[full rules](../ARCHITECTURE.md#user-owned-fields) for the fields the user owns
+cover every case.
 
 ## Example: file-based plugin
 
@@ -436,65 +431,38 @@ Mock every network call. Never make a real one.
 
 ## Best practices
 
-The traps that bite hardest come first.
-
 **Say nothing about `ignored` unless your source really says something.**
-`ignored` is user-owned, and storage writes it whenever your plugin states a
-value: `True` ignores the item, `False` *un-ignores* one the user ignored in the
-app. `None`, the default, means this source has no opinion, and the stored flag
-is left alone. Storage receives a boolean or nothing, so it cannot tell a file's
-explicit `false` from a `False` you defaulted to, and **a defaulted `False`
+`None`, the default, means this source has no opinion, and the stored flag is
+left alone. Storage cannot tell a file's explicit `false` from a `False` you
+defaulted to, and **a defaulted `False`
 silently clears the user's ignore list on every sync**. If your source carries
-the flag, read it with `parse_ignored_field()` from `importers.rows`: it
-returns `None` for an absent key, a blank cell or a JSON `null`, and a boolean
-only when stated. Do not reach for the lower-level `parse_boolean_field()`,
-which returns `False` for a missing value.
-
-The library exporter (`src/utils/export.py`) is the one deliberate exception, not a
-precedent. It states `ignored` on every row, because re-importing an edited
-export is the supported bulk un-ignore. That is why a re-imported export replaces
-the whole ignore list with its state at export time — see
-[DATA_SOURCES.md](DATA_SOURCES.md#library-export).
+the flag, read it with `parse_ignored_field()` from `importers.rows`, not
+`parse_boolean_field()`, which reads nothing as `False`.
 
 **`seasons_watched` is a list of season numbers**, `[1, 2, 5, 6]`, not a count.
 Use `parse_seasons_watched()` from `importers.rows` to convert a string. A bare
 integer is read as a count for backward compatibility, so `5` becomes
-`[1, 2, 3, 4, 5]`.
-
-**Populate `seasons_watched_dates` when you have per-season timestamps.** It maps
-`{season_number_str: iso_timestamp}`, keyed by the same numbers as
-`seasons_watched`, and it is how a finished season of an in-progress show gets
-correct recency on the [variety ladder](SCORING.md#variety-after-completion).
-Omit it and the season still reaches the ladder, on the undated bottom rung.
+`[1, 2, 3, 4, 5]`. `seasons_watched_dates` maps those season numbers, as
+strings, to ISO timestamps; anything else is discarded.
 
 **Scrub `requests` errors that may carry secrets.** If your plugin passes a
 secret in the URL or query string, the default `str()` of a `requests` exception
 embeds the full request URL and leaks that credential into raised errors and
 logs. Pass it through `scrub_request_error()` from `src.utils.request_errors`,
-which returns only `HTTP <status>` or the bare exception class name. The TMDB and
-RAWG enrichment providers and the Steam source all do this.
+which returns only `HTTP <status>` or the exception class name.
 
-**A URL-borne secret also needs `from None`.** Scrubbing the message leaves the
-original on `__cause__`, and a caller logging `exc_info=True` prints its URL.
-Break the chain when the credential is in the query string; keep `from error`
-when it travels in a header, where the URL is clean.
+**A URL-borne secret also needs `from None`.** Break the chain when the
+credential is in the query string; keep `from error` when it travels in a
+header, where the URL is clean.
 A plugin that sends a credential as a query parameter owes two things, and
 `tests/test_credential_url_chains.py` fails until it has both: a handler that
 neither logs the raw error, renders a traceback, nor keeps it as `__cause__`,
-and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`. The scan enrols you
-automatically — it reads `src/auth/`, `src/config/`, `src/enrichment/providers/`,
-`src/ingestion/sources/`, `src/sources/`, `src/utils/` and `src/web/`, and
-reports any function naming a credential key beside a `params=` call that the
-list omits.
+and an entry in that file's `_CREDENTIAL_URL_FUNCTIONS`.
 
 Raise it from inside the `except` block. `from None` clears `__cause__` but
 leaves `__context__`, and the enrichment manager reads that chain to tell a
 timeout from a rejected API key — raise outside the handler and every failure
 of yours reads as retryable.
-
-Beyond those: raise `SourceError` for recoverable failures, validate every
-required config field, skip items missing required fields rather than yielding
-them, and keep ids unique within a content type.
 
 ## Thread safety
 
