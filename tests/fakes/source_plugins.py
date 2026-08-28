@@ -87,6 +87,7 @@ class FakeApiPlugin(SourcePlugin):
                 field_type=str,
                 required=True,
                 sensitive=True,
+                default="placeholder-key",
                 description="API key",
             ),
             ConfigField(

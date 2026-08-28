@@ -58,13 +58,9 @@ function numberSetting(key: string, value: number): SettingView {
   return { ...textSetting(key, ''), type: 'int', widget: 'number', value } as SettingView
 }
 
-// Every mount here uses attachTo (focus() is inert on a detached element), so
-// each one leaks its DOM into document.body until unmounted. That matters more
-// than usual: SettingsSection resolves focus targets with
-// document.getElementById, which returns the FIRST match in tree order — so a
-// leaked node from an earlier test would satisfy a focus assertion in a later
-// one, and the assertion could not tell the difference. Unmount everything
-// between tests so each starts from an empty body.
+// SettingsSection resolves focus targets with document.getElementById, which returns
+// the FIRST match in tree order — so a leaked node from an earlier test would satisfy
+// a focus assertion in a later one, and the assertion could not tell the difference.
 enableAutoUnmount(afterEach)
 
 function mountSection(section: SettingsSectionType) {
@@ -210,16 +206,33 @@ describe('SettingsSection', () => {
 
   describe('when a reset or secret action fails', () => {
     // Regression: onReset/onSetSecret/onClearSecret used try/finally with no
-    // catch, and neither the store nor useApi swallows a non-2xx. So a 503 or a
-    // dropped connection produced a button that flickered busy and back, an
-    // empty live region, and an unhandled promise rejection — a silent no-op.
-    // Only the save path had a failure branch, which is why this survived.
+    // catch, and neither the store nor useApi swallows a non-2xx.
     const OVERRIDDEN: SettingsSectionType = {
       section: 'enrichment',
       settings: [
         textSetting('enrichment.providers.tmdb.language', 'en-US', {
           db_overridden: true,
         }),
+      ],
+    }
+
+    const SECRET: SettingsSectionType = {
+      section: 'enrichment',
+      settings: [
+        {
+          key: 'enrichment.providers.tmdb.api_key',
+          section: 'enrichment',
+          label: 'API Key',
+          help: '',
+          type: 'string',
+          widget: 'text',
+          choices: null,
+          validation: null,
+          advanced: false,
+          restart_required: false,
+          sensitive: true,
+          has_secret: true,
+        } as SettingView,
       ],
     }
 
@@ -240,6 +253,28 @@ describe('SettingsSection', () => {
       expect(
         wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').attributes('disabled'),
       ).toBeUndefined()
+    })
+
+    it('announces a failed secret save instead of doing nothing', async () => {
+      mockPut.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
+      const wrapper = mountSection(SECRET)
+
+      await wrapper.find('[data-testid="secret-replace-enrichment.providers.tmdb.api_key"]').trigger('click')
+      await wrapper.find('#secret-input-enrichment\\.providers\\.tmdb\\.api_key').setValue('sk-999')
+      await wrapper.find('[data-testid="secret-save-enrichment.providers.tmdb.api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('p.sr-only').text()).toContain('Saving the secret failed.')
+    })
+
+    it('announces a failed secret clear instead of doing nothing', async () => {
+      mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
+      const wrapper = mountSection(SECRET)
+
+      await wrapper.find('[data-testid="secret-clear-enrichment.providers.tmdb.api_key"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('p.sr-only').text()).toContain('Clearing the secret failed.')
     })
   })
 })
