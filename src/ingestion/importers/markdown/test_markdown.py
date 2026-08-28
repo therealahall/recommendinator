@@ -1,5 +1,3 @@
-"""Tests for the Markdown importer."""
-
 import logging
 from datetime import date
 
@@ -128,10 +126,6 @@ class TestSections:
 
 class TestSkippedRows:
     def test_a_list_item_that_parses_as_nothing_is_reported_by_line(self) -> None:
-        """Prose is not a row, but a bullet the operator meant as one is.
-
-        The line number is what lets them find the item that never imported.
-        """
         text = (
             "# My Books\n\n"
             "Some descriptive paragraph.\n\n"
@@ -164,11 +158,7 @@ ESCAPED_TITLE = "Dune\\u001b[2KImported 9999 items"
 
 
 class TestLogInjectionRegression:
-    """Regression: an imported list item rewrote log entries.
-
-    Bug: the title and the date were logged raw, and neither is restricted to
-    printable text. Fix: ``sanitize_for_log`` at every sink.
-    """
+    """Regression: an imported list item rewrote log entries."""
 
     def test_a_control_character_in_a_title_cannot_rewrite_a_log_entry(
         self, caplog: pytest.LogCaptureFixture

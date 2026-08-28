@@ -1,19 +1,3 @@
-"""Internal ROM title cleaner for the roms plugin.
-
-Module-private (underscore prefix); not part of the plugin discovery surface.
-Used by ``RomScannerPlugin`` to normalize ROM filenames into user-facing
-titles.
-
-The cleaner removes the No-Intro / Redump / TOSEC release-tag conventions
-that plague ROM filenames — region codes, language sets, year, revision,
-disc markers, status flags, dump-quality brackets, hex IDs — leaving the
-plain game name. Case is preserved.
-
-A consolidated approach beats user-supplied regex-soup in two ways:
-- Defaults are curated and tested against real-world ROM datasets.
-- Users only need to add patterns for the corner cases their stash has.
-"""
-
 from __future__ import annotations
 
 import re
@@ -53,29 +37,7 @@ _MAX_TRAILING_PASSES = 8
 def clean_display_title(
     raw: str, extra_patterns: Iterable[re.Pattern[str]] | None = None
 ) -> str:
-    """Return a user-facing title with ROM release artifacts stripped.
-
-    Built-in cleanup handles:
-
-    - No-Intro / Redump / TOSEC trailing tags: ``(USA)``, ``(Europe)``,
-      ``(1994)``, ``(Rev A)``, ``(En,Fr,Es)``, ``(Disc 1)``, ``(Beta)``,
-      ``(Proto)``, ``(Sample)``, ``(Demo)``, ``(Unl)``, ``(Alpha)``,
-      ``(v1.0)``, and any other trailing parenthesized group
-    - Bracket tags: ``[NTSC-U]``, ``[SLUS-00067]``, ``[!]``, ``[b]``, ``[h]``,
-      ``[v0]``, ``[T+En]``, ``[0100F2C0115B6000]``
-    - Known noise suffixes: ``(nsw2u.com)``
-
-    User-supplied ``extra_patterns`` are applied last, after the built-ins.
-
-    Args:
-        raw: The raw filename stem (without file extension).
-        extra_patterns: Optional compiled regex objects appended to the
-            built-in cleanup pipeline.
-
-    Returns:
-        Cleaned title with surrounding whitespace trimmed. Returns the
-        empty string if the input is empty after stripping.
-    """
+    """User-supplied ``extra_patterns`` are applied last, after the built-ins."""
     title = raw.strip()
     if not title:
         return ""
@@ -99,7 +61,6 @@ def clean_display_title(
 
 
 def _strip_trailing_groups(title: str) -> str:
-    """Repeatedly remove trailing ``(...)`` and ``[...]`` groups."""
     for _ in range(_MAX_TRAILING_PASSES):
         new = _TRAILING_BRACKET.sub("", title)
         new = _TRAILING_PAREN.sub("", new)
@@ -110,11 +71,6 @@ def _strip_trailing_groups(title: str) -> str:
 
 
 def compile_extra_patterns(patterns: Iterable[str]) -> list[re.Pattern[str]]:
-    """Compile user-supplied regex strings.
-
-    Raises ``ValueError`` if there are too many patterns, or on the first
-    invalid one (syntax error or excessive length).
-    """
     raw_patterns = list(patterns)
     if len(raw_patterns) > _MAX_PATTERN_COUNT:
         raise ValueError(
@@ -139,14 +95,11 @@ _WHITESPACE_RUN = re.compile(r"\s+")
 
 
 def _collapse_whitespace(text: str) -> str:
-    """Collapse internal whitespace runs to single spaces."""
     return _WHITESPACE_RUN.sub(" ", text)
 
 
 def normalize_title_key(title: str) -> str:
-    """Return a key for case-insensitive whitespace-collapsed dedup.
-
-    Two titles whose normalized keys match are considered the same game by
+    """Two titles whose normalized keys match are considered the same game by
     the plugin's title-level deduplication.
     """
     return _WHITESPACE_RUN.sub(" ", title.strip().lower())

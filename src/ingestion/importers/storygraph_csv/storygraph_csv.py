@@ -1,5 +1,3 @@
-"""The StoryGraph library CSV export importer."""
-
 from __future__ import annotations
 
 import math

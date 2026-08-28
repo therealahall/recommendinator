@@ -1,5 +1,3 @@
-"""Abstract base class for enrichment providers."""
-
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -15,9 +13,7 @@ from src.utils.text import sanitize_for_log
 def log_search_title(
     provider_logger: logging.Logger, original: str, cleaned: str
 ) -> None:
-    """Record that a title was rewritten before searching, escaped.
-
-    Titles restrict no characters, and twice now a provider has grown its own
+    """Titles restrict no characters, and twice now a provider has grown its own
     unescaped copy of this log (CWE-117). The sink lives here and nowhere else.
     """
     if cleaned == original:
@@ -31,232 +27,64 @@ def log_search_title(
 
 @dataclass
 class EnrichmentResult:
-    """Result of enriching a content item.
-
-    Contains the metadata retrieved from the external API.
-    Fields that couldn't be found are set to None.
-    """
-
     # Provider's ID for the item (e.g., "tmdb:12345", "openlibrary:OL123W")
     external_id: str | None = None
 
-    # Core metadata fields
     genres: list[str] | None = None
     tags: list[str] | None = None
     description: str | None = None
 
-    # Additional provider-specific metadata
     extra_metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Quality of the match
     # "high" = matched by ID or exact title+year
     # "medium" = fuzzy match
     # "not_found" = no match found
     match_quality: str = "high"
 
-    # Provider that produced this result
     provider: str = ""
 
 
 class ProviderError(Exception):
-    """Exception raised when an enrichment provider encounters an error.
-
-    Attributes:
-        provider_name: Name of the provider that raised the error
-        message: Human-readable error message
-    """
-
     def __init__(self, provider_name: str, message: str) -> None:
-        """Initialize ProviderError.
-
-        Args:
-            provider_name: Name of the provider that raised the error
-            message: Human-readable error message
-        """
         self.provider_name = provider_name
         self.message = message
         super().__init__(f"{provider_name}: {message}")
 
 
 class EnrichmentProvider(ABC):
-    """Abstract base class for metadata enrichment providers.
-
-    All enrichment providers must implement this interface. Providers are
-    discovered and registered automatically from src/enrichment/providers/ and
-    private/plugins/.
-
-    Example implementation:
-
-        class MyProvider(EnrichmentProvider):
-            @property
-            def name(self) -> str:
-                return "my_api"
-
-            @property
-            def display_name(self) -> str:
-                return "My API"
-
-            @property
-            def content_types(self) -> list[ContentType]:
-                return [ContentType.MOVIE]
-
-            @property
-            def requires_api_key(self) -> bool:
-                return True
-
-            def get_config_schema(self) -> list[ConfigField]:
-                return [
-                    ConfigField(
-                        name="api_key",
-                        field_type=str,
-                        required=True,
-                        description="API key for My API",
-                        sensitive=True,
-                    ),
-                ]
-
-            def validate_config(self, config: dict[str, Any]) -> list[str]:
-                errors = []
-                if not config.get("api_key"):
-                    errors.append("'api_key' is required")
-                return errors
-
-            def enrich(
-                self, item: ContentItem, config: dict[str, Any]
-            ) -> EnrichmentResult | None:
-                # Fetch metadata and return EnrichmentResult
-                return EnrichmentResult(
-                    genres=["Action"],
-                    description="A great movie",
-                    provider=self.name,
-                )
-    """
-
     @property
     @abstractmethod
     def name(self) -> str:
-        """Unique identifier for this provider.
-
-        Used in config as enrichment.providers.<name>.* and in CLI commands.
-        Should be lowercase with underscores (e.g., "tmdb", "openlibrary").
-
-        Returns:
-            Provider identifier string
-        """
+        """Used in config as enrichment.providers.<name>.* and in CLI commands."""
         ...
 
     @property
     @abstractmethod
-    def display_name(self) -> str:
-        """Human-readable name for display purposes.
-
-        Used in UI, logs, and error messages.
-        Example: "TMDB", "Open Library", "RAWG"
-
-        Returns:
-            Human-readable provider name
-        """
-        ...
+    def display_name(self) -> str: ...
 
     @property
     @abstractmethod
-    def content_types(self) -> list[ContentType]:
-        """Content types this provider can enrich.
-
-        Used to filter providers by content type.
-
-        Returns:
-            List of ContentType values this provider supports
-        """
-        ...
+    def content_types(self) -> list[ContentType]: ...
 
     @property
     @abstractmethod
-    def requires_api_key(self) -> bool:
-        """Whether this provider requires an API key.
-
-        Used to validate configuration before enriching and to indicate
-        in the UI that credentials are needed.
-
-        Returns:
-            True if an API key is required, False otherwise
-        """
-        ...
+    def requires_api_key(self) -> bool: ...
 
     @property
     def description(self) -> str:
-        """Short description of what this provider does.
-
-        Used in UI and CLI help text. Default derives from display_name.
-
-        Returns:
-            Human-readable description string
-        """
         return f"Enrich metadata from {self.display_name}"
 
     @property
     def rate_limit_requests_per_second(self) -> float:
-        """Maximum requests per second to the API.
-
-        Used by the rate limiter to enforce API limits.
-        Default is 1 request per second (conservative).
-
-        Returns:
-            Maximum requests per second
-        """
         return 1.0
 
     @abstractmethod
-    def get_config_schema(self) -> list[ConfigField]:
-        """Get configuration schema for this provider.
-
-        Returns a list of ConfigField objects describing the required
-        and optional configuration options. Used for validation,
-        documentation, and UI generation.
-
-        Returns:
-            List of ConfigField objects
-        """
-        ...
+    def get_config_schema(self) -> list[ConfigField]: ...
 
     @abstractmethod
-    def validate_config(self, config: dict[str, Any]) -> list[str]:
-        """Validate provider configuration.
-
-        Checks that all required fields are present and valid.
-        Called before enrich() to catch configuration errors early.
-
-        Args:
-            config: Provider-specific configuration dict
-
-        Returns:
-            List of validation error messages (empty list if valid)
-        """
-        ...
+    def validate_config(self, config: dict[str, Any]) -> list[str]: ...
 
     @abstractmethod
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
-    ) -> EnrichmentResult | None:
-        """Enrich a content item with metadata from this provider.
-
-        Fetches metadata from the external API and returns an EnrichmentResult.
-        Returns None if the item cannot be found or matched.
-
-        The implementation should:
-        1. Try to match the item using available identifiers (IDs, title, year)
-        2. Fetch detailed metadata if a match is found
-        3. Return EnrichmentResult with filled fields
-        4. Set match_quality appropriately ("high", "medium", "not_found")
-
-        Args:
-            item: ContentItem to enrich
-            config: Provider-specific configuration dict
-
-        Returns:
-            EnrichmentResult with fetched metadata, or None if not found
-
-        Raises:
-            ProviderError: If an API error occurs
-        """
-        ...
+    ) -> EnrichmentResult | None: ...

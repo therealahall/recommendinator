@@ -1,5 +1,3 @@
-"""Tests for Radarr movie import plugin."""
-
 from unittest.mock import Mock, patch
 
 import pytest
@@ -30,13 +28,11 @@ def _redirect_response(location: str) -> Mock:
 
 @pytest.fixture()
 def plugin() -> RadarrPlugin:
-    """Create a RadarrPlugin instance."""
     return RadarrPlugin()
 
 
 @pytest.fixture()
 def sample_movies() -> list[dict]:
-    """Create sample Radarr API response data."""
     return [
         {
             "title": "Inception",
@@ -81,8 +77,6 @@ def sample_movies() -> list[dict]:
 
 
 class TestRadarrPluginValidation:
-    """Tests for RadarrPlugin config validation."""
-
     def test_validate_missing_api_key(self, plugin: RadarrPlugin) -> None:
         errors = plugin.validate_config({"url": "http://localhost:7878"})
         assert any("api_key" in error for error in errors)
@@ -119,12 +113,6 @@ class TestRadarrUrlValidation:
     def test_an_unparseable_netloc_is_reported_not_raised(
         self, plugin: RadarrPlugin, url: str
     ) -> None:
-        """``urlsplit`` raises ``ValueError`` on these.
-
-        The url is HTTP-writable, and ``_config_error_to_http`` catches
-        ``SourceConfigError`` alone, so one escaping here is a 500 carrying a
-        traceback. Same defect the settings validator had.
-        """
         errors = plugin.validate_config({"url": url, "api_key": "abc123"})
 
         assert errors == [f"'url' is not a valid URL: {url}"]
@@ -138,11 +126,8 @@ class TestRadarrUrlValidation:
 
 
 class TestRadarrPluginFetch:
-    """Tests for RadarrPlugin fetch functionality."""
-
     @pytest.fixture(autouse=True)
     def _patch_requests(self):
-        """Patch requests.get shared by arr_base and radarr modules."""
         with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
             self.mock_get = mock_get
             yield
@@ -150,7 +135,6 @@ class TestRadarrPluginFetch:
     def _mock_radarr_responses(
         self, movies: list, collections: list | None = None
     ) -> None:
-        """Configure mock to return movies and collections for Radarr API calls."""
         if collections is None:
             collections = []
 
@@ -165,14 +149,12 @@ class TestRadarrPluginFetch:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """All movies should be imported regardless of monitored state."""
         self._mock_radarr_responses(sample_movies)
 
         items = list(
             plugin.fetch({"url": "http://localhost:7878", "api_key": "test_key"})
         )
 
-        # All 3 movies imported (monitored state is ignored)
         assert len(items) == 3
         assert items[0].title == "Inception"
         assert items[1].title == "Blade Runner 2049"
@@ -183,7 +165,6 @@ class TestRadarrPluginFetch:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """External ID should be tmdb:{tmdbId} for deduplication."""
         self._mock_radarr_responses(sample_movies)
 
         items = list(
@@ -198,7 +179,6 @@ class TestRadarrPluginFetch:
         plugin: RadarrPlugin,
         sample_movies: list[dict],
     ) -> None:
-        """Metadata should include genres, studio, runtime, etc."""
         self._mock_radarr_responses(sample_movies)
 
         items = list(
@@ -243,11 +223,8 @@ class TestRadarrPluginFetch:
 
 
 class TestRadarrPluginErrors:
-    """Tests for error handling."""
-
     @pytest.fixture(autouse=True)
     def _patch_requests(self):
-        """Patch requests.get shared by arr_base and radarr modules."""
         with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
             self.mock_get = mock_get
             yield
@@ -265,11 +242,8 @@ class TestRadarrPluginErrors:
 
 
 class TestRadarrCollections:
-    """Tests for Radarr collection metadata (movie series)."""
-
     @pytest.fixture(autouse=True)
     def _patch_requests(self):
-        """Patch requests.get shared by arr_base and radarr modules."""
         with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
             self.mock_get = mock_get
             yield
@@ -299,7 +273,6 @@ class TestRadarrCollections:
         self,
         plugin: RadarrPlugin,
     ) -> None:
-        """Movies in collections should get series_name and movie_number."""
         movies = [
             {
                 "title": "Back to the Future",
@@ -342,8 +315,6 @@ class TestRadarrCollections:
     def test_a_second_source_is_not_tagged_from_the_firsts_collections(
         self, plugin: RadarrPlugin
     ) -> None:
-        """Bug: the map was cached on the plugin the registry hands out, so a
-        second Radarr's movies took the first Radarr's series and order."""
         self._serve_two_radarrs()
 
         main = list(plugin.fetch({"url": MAIN_RADARR, "api_key": "key"}))
@@ -356,8 +327,6 @@ class TestRadarrCollections:
     def test_two_sources_fetching_at_once_keep_their_own_collections(
         self, plugin: RadarrPlugin
     ) -> None:
-        """max_workers > 1 leaves two syncs in flight together; interleaving the
-        generators is that overlap without the thread timing."""
         self._serve_two_radarrs()
 
         main = plugin.fetch({"url": MAIN_RADARR, "api_key": "key"})
@@ -372,8 +341,6 @@ class TestRadarrCollections:
     def test_a_later_sync_of_one_source_sees_its_collections_change(
         self, plugin: RadarrPlugin
     ) -> None:
-        """The scheduler re-syncs in the same process, so a map held between
-        runs serves the collections Radarr had when the server booted."""
         movies = [{"title": "Back to the Future Part III", "tmdbId": 166}]
         collections: list[dict] = []
 
@@ -397,8 +364,6 @@ class TestRadarrCollections:
 
 
 class TestRadarrTls:
-    """Radarr behind TLS, across both of the request sites it uses."""
-
     @pytest.fixture(autouse=True)
     def _patch_requests(self):
         with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
@@ -438,11 +403,6 @@ class TestRadarrTls:
         self,
         plugin: RadarrPlugin,
     ) -> None:
-        """Bug: a redirect handed ``X-Api-Key`` to a host nobody configured.
-
-        ``requests`` strips ``Authorization`` across hosts, but not a custom
-        header. A redirect off the origin is refused now.
-        """
         self.mock_get.return_value = _redirect_response(
             "http://attacker.example/api/v3/movie"
         )

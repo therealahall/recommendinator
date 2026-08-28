@@ -1,5 +1,3 @@
-"""GOG.com integration plugin for fetching user game library and wishlist."""
-
 from __future__ import annotations
 
 import logging
@@ -39,23 +37,10 @@ GOG_API_URL = "https://api.gog.com"
 
 
 class GogAPIError(Exception):
-    """Exception raised for GOG API errors."""
-
     pass
 
 
 def refresh_access_token(refresh_token: str) -> dict[str, str]:
-    """Exchange a GOG OAuth refresh token for a new access token.
-
-    Args:
-        refresh_token: GOG OAuth refresh token obtained from browser login.
-
-    Returns:
-        Dictionary with 'access_token' and 'refresh_token' keys.
-
-    Raises:
-        GogAPIError: If the token refresh fails.
-    """
     params = {
         "client_id": GOG_CLIENT_ID,
         "client_secret": GOG_CLIENT_SECRET,
@@ -86,21 +71,9 @@ def get_owned_games(
     access_token: str,
     rate_limit_seconds: float = 1.0,
 ) -> list[dict[str, Any]]:
-    """Fetch all owned games from GOG account, paginating through results.
-
-    Args:
-        access_token: Valid GOG OAuth access token.
-        rate_limit_seconds: Delay between paginated requests.
-
-    Returns:
-        Flat list of all product dictionaries from the GOG API.
-
-    Raises:
-        GogAPIError: If the API request fails.
-    """
     all_products: list[dict[str, Any]] = []
     page = 1
-    total_pages = 1  # Will be updated from first response
+    total_pages = 1
 
     headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -145,17 +118,6 @@ def get_owned_games(
 
 
 def get_wishlist_product_ids(access_token: str) -> list[int]:
-    """Fetch product IDs from the user's GOG wishlist.
-
-    Args:
-        access_token: Valid GOG OAuth access token.
-
-    Returns:
-        List of product IDs on the wishlist.
-
-    Raises:
-        GogAPIError: If the API request fails.
-    """
     url = f"{GOG_EMBED_URL}/user/wishlist.json"
     headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -174,17 +136,6 @@ def get_wishlist_product_ids(access_token: str) -> list[int]:
 
 
 def get_product_details(product_id: int) -> dict[str, Any] | None:
-    """Fetch detailed product information from GOG's public API.
-
-    Args:
-        product_id: GOG product ID.
-
-    Returns:
-        Product details dictionary, or None if product not found (404).
-
-    Raises:
-        GogAPIError: If the API request fails (except 404).
-    """
     url = f"{GOG_API_URL}/products/{product_id}"
     params = {"expand": "description"}
 
@@ -214,18 +165,6 @@ def get_multiple_product_details(
     backoff_multiplier: float = 2.0,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """Fetch detailed information for multiple GOG products with rate limiting.
-
-    Args:
-        product_ids: List of GOG product IDs.
-        rate_limit_seconds: Base delay between requests.
-        max_retries: Maximum number of retries per request on failure.
-        backoff_multiplier: Multiplier for exponential backoff on retries.
-        progress_callback: Optional callback(current, total) called after each fetch.
-
-    Returns:
-        Dictionary mapping product_id to product details.
-    """
     details: dict[int, dict[str, Any]] = {}
     total = len(product_ids)
 
@@ -260,7 +199,6 @@ def get_multiple_product_details(
                         product_id,
                     )
 
-        # Rate limit between requests (skip after last)
         if index < len(product_ids) - 1 and rate_limit_seconds > 0:
             time.sleep(rate_limit_seconds)
 
@@ -268,12 +206,6 @@ def get_multiple_product_details(
 
 
 class GogPlugin(SourcePlugin):
-    """Plugin for importing video games from a GOG.com library.
-
-    Uses GOG's embed API to fetch owned games and wishlist items.
-    Requires a GOG OAuth refresh token for authentication.
-    """
-
     @property
     def name(self) -> str:
         return "gog"
@@ -296,7 +228,6 @@ class GogPlugin(SourcePlugin):
 
     @classmethod
     def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-        """Normalise GOG config fields (strip whitespace, apply defaults)."""
         return {
             "refresh_token": raw_fields.get("refresh_token", "").strip(),
             "include_wishlist": raw_fields.get("include_wishlist", True),
@@ -336,7 +267,6 @@ class GogPlugin(SourcePlugin):
     ) -> list[str]:
         errors: list[str] = []
         if not (config.get("refresh_token") or "").strip():
-            # Check DB credentials before rejecting
             source_id = config.get("_source_id", self.name)
             if storage is not None:
                 db_creds = storage.credentials.get_for_source(user_id, source_id)
@@ -354,21 +284,6 @@ class GogPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch games from a GOG library and optional wishlist.
-
-        Args:
-            config: Must contain 'refresh_token'. Optional: 'include_wishlist',
-                'enrich_wishlist'.
-            progress_callback: Optional callback for progress updates.
-
-        Yields:
-            ContentItem for each game in the library/wishlist.
-
-        Raises:
-            SourceError: If the GOG API returns an error.
-        """
-
-        # Adapter: GOG internal (current, total, phase) -> plugin callback
         def gog_internal_callback(current: int, total: int, phase: str) -> None:
             if progress_callback:
                 phase_message = (
@@ -401,32 +316,16 @@ def _fetch_gog_games(
     progress_callback: Callable[[int, int, str], None] | None = None,
     on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
-    """Fetch and parse GOG game library and wishlist.
-
-    Args:
-        refresh_token: GOG OAuth refresh token.
-        include_wishlist: Whether to import wishlisted games.
-        enrich_wishlist: Whether to fetch detailed metadata for wishlist items.
-        progress_callback: Optional callback(current, total, phase).
-        on_credential_rotated: Optional callback(key, value) called when the
-            refresh token is rotated by the OAuth server.
-
-    Yields:
-        ContentItem objects for each game.
-    """
-    # Phase 1: Authenticate
     logger.info("Refreshing GOG access token...")
     tokens = refresh_access_token(refresh_token)
     access_token = tokens["access_token"]
 
-    # Persist rotated refresh token if it changed
     new_refresh_token = tokens.get("refresh_token")
     if new_refresh_token and new_refresh_token != refresh_token:
         if on_credential_rotated:
             on_credential_rotated("refresh_token", new_refresh_token)
             logger.info("GOG refresh token rotated and persisted")
 
-    # Phase 2: Fetch owned games
     logger.info("Fetching owned games from GOG...")
     owned_products = get_owned_games(access_token)
     logger.info("Found %d owned games on GOG", len(owned_products))
@@ -434,10 +333,8 @@ def _fetch_gog_games(
     if progress_callback:
         progress_callback(len(owned_products), len(owned_products), "owned_games")
 
-    # Track owned product IDs for deduplication with wishlist
     owned_product_ids: set[int] = set()
 
-    # Phase 3: Yield owned games
     count = 0
     for product in owned_products:
         product_id = product.get("id")
@@ -456,7 +353,6 @@ def _fetch_gog_games(
             "gog_wishlisted": False,
         }
 
-        # Extract available metadata from owned games response
         if product.get("slug"):
             metadata["slug"] = product["slug"]
             metadata["url"] = f"https://www.gog.com/game/{product['slug']}"
@@ -471,10 +367,8 @@ def _fetch_gog_games(
         if product.get("dlcCount") is not None:
             metadata["dlc_count"] = product["dlcCount"]
 
-        # Platform availability, as the list of names every other source
-        # writes and the platforms detail column stores. GOG reports it as a
-        # flag per platform, but a dict here reaches the export as a Python
-        # repr and re-imports as that literal string.
+        # GOG reports platform availability as a flag per platform, but a dict here
+        # reaches the export as a Python repr and re-imports as that literal string.
         platforms = [
             platform
             for platform, supported in (product.get("worksOn") or {}).items()
@@ -500,7 +394,6 @@ def _fetch_gog_games(
             metadata=metadata,
         )
 
-    # Phase 4: Wishlist (if enabled)
     if not include_wishlist:
         return
 
@@ -508,7 +401,6 @@ def _fetch_gog_games(
     wishlist_ids = get_wishlist_product_ids(access_token)
     logger.info("Found %d items on GOG wishlist", len(wishlist_ids))
 
-    # Filter out already-owned games
     new_wishlist_ids = [
         product_id for product_id in wishlist_ids if product_id not in owned_product_ids
     ]
@@ -521,7 +413,6 @@ def _fetch_gog_games(
     if not new_wishlist_ids:
         return
 
-    # Optionally enrich wishlist items with public API details
     wishlist_details: dict[int, dict[str, Any]] = {}
     if enrich_wishlist:
         logger.info("Enriching wishlist items with product details...")
@@ -535,7 +426,6 @@ def _fetch_gog_games(
             progress_callback=wishlist_progress,
         )
 
-    # Yield wishlist items
     for product_id in new_wishlist_ids:
         details = wishlist_details.get(product_id, {})
         title = (details.get("title") or "").strip()

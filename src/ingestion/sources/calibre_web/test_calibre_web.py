@@ -1,5 +1,3 @@
-"""Tests for the Calibre-Web OPDS book import plugin."""
-
 from pathlib import Path
 from unittest.mock import Mock, patch
 from xml.etree import ElementTree
@@ -35,7 +33,6 @@ def _entry(
     author: str = "J.R.R. Tolkien",
     extra: str = "",
 ) -> str:
-    """Build an OPDS <entry> XML fragment for tests."""
     return (
         "<entry>"
         f"<id>{entry_id}</id>"
@@ -47,7 +44,6 @@ def _entry(
 
 
 def _feed(entries: str, next_href: str | None = None) -> str:
-    """Wrap entry fragments in an OPDS feed, optionally with a next link."""
     next_link = (
         f'<link rel="next" href="{next_href}" '
         'type="application/atom+xml;profile=opds-catalog"/>'
@@ -58,7 +54,6 @@ def _feed(entries: str, next_href: str | None = None) -> str:
 
 
 def _xml_response(body: str, status_code: int = 200) -> Mock:
-    """Build a mocked requests.Response carrying an OPDS feed body."""
     response = Mock(spec=requests.Response)
     response.status_code = status_code
     response.content = body.encode("utf-8")
@@ -71,19 +66,16 @@ def _xml_response(body: str, status_code: int = 200) -> Mock:
 
 
 def _empty_read_feed() -> Mock:
-    """A read-books feed with no entries (nothing marked completed)."""
     return _xml_response(_feed(""))
 
 
 @pytest.fixture()
 def plugin() -> CalibreWebPlugin:
-    """Create a CalibreWebPlugin instance."""
     return CalibreWebPlugin()
 
 
 @pytest.fixture()
 def config() -> dict[str, object]:
-    """Minimal valid runtime config for fetch()."""
     return {
         "url": "http://localhost:8083",
         "username": "reader",
@@ -93,8 +85,6 @@ def config() -> dict[str, object]:
 
 
 class TestCalibreWebTransformConfig:
-    """Tests for transform_config normalisation."""
-
     def test_strips_trailing_slash_and_whitespace(self) -> None:
         result = CalibreWebPlugin.transform_config(
             {
@@ -109,13 +99,10 @@ class TestCalibreWebTransformConfig:
 
 
 class TestCalibreWebValidateConfig:
-    """Tests for validate_config."""
-
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_blank_url_username_password_required(
         self, plugin: CalibreWebPlugin, blank: str
     ) -> None:
-        """Empty-string and whitespace-only fields are reported as required."""
         errors = plugin.validate_config(
             {"url": blank, "username": blank, "password": blank}
         )
@@ -126,7 +113,6 @@ class TestCalibreWebValidateConfig:
     def test_password_from_credential_store_passes(
         self, plugin: CalibreWebPlugin
     ) -> None:
-        """Password absent from config but present in the DB should validate."""
         mock_storage = make_storage_mock()
         mock_storage.credentials.get_for_source.return_value = {"password": "db_secret"}
         errors = plugin.validate_config(
@@ -139,8 +125,6 @@ class TestCalibreWebValidateConfig:
 
 
 class TestCalibreWebFetch:
-    """Tests for fetch() OPDS parsing behaviour."""
-
     def test_happy_path_parses_entry_fields(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
@@ -203,7 +187,6 @@ class TestCalibreWebFetch:
 
         titles = [item.title for item in items]
         assert titles == ["Book One", "Book Two"]
-        # read feed + 2 catalog pages
         assert mock_get.call_count == 3
         second_page_url = mock_get.call_args_list[2].args[0]
         assert second_page_url == "http://localhost:8083/opds/new?offset=1"
@@ -227,7 +210,6 @@ class TestCalibreWebFetch:
     def test_read_shelf_unavailable_defaults_unread(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """A missing read-books shelf (404) must not crash or guess COMPLETED."""
         catalog = _feed(_entry(entry_id="urn:uuid:x", title="Book"))
         responses = [
             _xml_response("<html>not found</html>", status_code=404),
@@ -242,7 +224,6 @@ class TestCalibreWebFetch:
     def test_rating_scheme_category_not_emitted_as_tag(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """A rating category's star label must not leak into the tag list."""
         entry = _entry(
             extra=(
                 "<rating>10</rating>"
@@ -327,12 +308,9 @@ class TestCalibreWebFetch:
 
 
 class TestCalibreWebSeries:
-    """Series parsing against the real schema.org Calibre-Web OPDS shape."""
-
     def test_schema_org_series_attributes(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Calibre-Web's <schema:Series schema:name/schema:position> is read."""
         entry = _entry(
             entry_id="urn:uuid:series-attr",
             title="The Fellowship of the Ring",
@@ -351,7 +329,6 @@ class TestCalibreWebSeries:
     def test_bare_series_elements_fallback(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Bare <series>/<series_index> children are read when no schema:Series."""
         entry = _entry(
             entry_id="urn:uuid:series-bare",
             title="Bare Series Book",
@@ -366,18 +343,9 @@ class TestCalibreWebSeries:
 
 
 class TestCalibreWebEdgeCases:
-    """QA edge-case probes added during issue #32 verification."""
-
     def test_off_host_next_link_not_followed(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """SSRF guard: a rel=next link to a foreign host is not requested.
-
-        The next-page URL is fetched with the user's basic-auth credentials, so
-        a rel=next pointing at an internal/foreign host (cloud metadata,
-        localhost service, etc.) must be refused. Pagination stops and no
-        request is ever made to the foreign host.
-        """
         page1 = _feed(
             _entry(entry_id="urn:uuid:safe", title="Safe Book"),
             next_href="http://169.254.169.254/latest/meta-data/",
@@ -387,7 +355,6 @@ class TestCalibreWebEdgeCases:
             items = list(plugin.fetch(config))
 
         assert [i.title for i in items] == ["Safe Book"]
-        # read feed + page 1 only; the off-host next link is not fetched.
         assert mock_get.call_count == 2
         requested_hosts = [call.args[0] for call in mock_get.call_args_list]
         assert all("169.254.169.254" not in url for url in requested_hosts)
@@ -395,12 +362,6 @@ class TestCalibreWebEdgeCases:
     def test_scheme_downgrade_next_link_not_followed(
         self, plugin: CalibreWebPlugin
     ) -> None:
-        """SSRF guard: a same-host rel=next that downgrades HTTPS->HTTP is refused.
-
-        Basic-auth credentials must never be sent over plaintext, so a rel=next
-        keeping the configured host but switching the scheme to http is treated
-        as off-origin: pagination stops and no plaintext request is made.
-        """
         https_config = {
             "url": "https://library.example.com",
             "username": "reader",
@@ -416,17 +377,13 @@ class TestCalibreWebEdgeCases:
             items = list(plugin.fetch(https_config))
 
         assert [i.title for i in items] == ["Safe Book"]
-        # read feed + page 1 only; the http downgrade link is not fetched.
         assert mock_get.call_count == 2
         requested_urls = [call.args[0] for call in mock_get.call_args_list]
         assert all(not url.startswith("http://") for url in requested_urls)
 
 
 class TestCalibreWebXmlHardening:
-    """Tests that OPDS parsing rejects XXE / billion-laughs vectors."""
-
     def test_doctype_rejected(self) -> None:
-        """A DOCTYPE (entity-definition vector) must be refused."""
         payload = (
             b'<?xml version="1.0"?>' b'<!DOCTYPE feed [<!ENTITY lol "lol">]>' b"<feed/>"
         )
@@ -435,27 +392,9 @@ class TestCalibreWebXmlHardening:
 
 
 class TestCalibreWebRegression:
-    """Regression tests for fixed Calibre-Web plugin bugs (issue #32)."""
-
     def test_numeric_category_label_preserved_as_tag_regression(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Bug: a non-rating numeric category label was dropped from tags.
-
-        Bug: Calibre-Web books carry numeric facets such as a publication year
-        ("2008") as ordinary ``<category>`` elements with no rating scheme. An
-        earlier implementation treated any numeric category label as a rating
-        signal, so a year-tagged book had the year silently dropped from its
-        tag list.
-
-        Root cause: the rating-category check accepted any numeric ``<category>``
-        label rather than requiring a category whose ``scheme`` marks it as a
-        rating.
-
-        Fix: only a category whose scheme contains ``"rating"`` is excluded as a
-        rating category; bare numeric labels are preserved as tags by
-        ``_parse_tags``.
-        """
         entry = _entry(
             entry_id="urn:uuid:year",
             title="Year Tagged",
@@ -470,19 +409,6 @@ class TestCalibreWebRegression:
     def test_unread_book_yields_unread_status_regression(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Bug: a re-import could regress a completed book back to unread.
-
-        Bug: status is resolved forward-only by resolve_status_forward in
-        src/storage/merge.py, so a re-sync never reverts a COMPLETED item.
-        That protection only works if the plugin emits UNREAD (not some other
-        status) for unread library books; emitting anything else would defeat
-        the forward-only guard.
-
-        Root cause / fix: the plugin must assign ConsumptionStatus.UNREAD to
-        unread library books. The DB-level forward-only behaviour itself is
-        covered generically by tests/test_sqlite_db.py::TestStatusForwardOnly;
-        here we pin the plugin's contribution to it.
-        """
         catalog = _feed(_entry(entry_id="urn:uuid:fwd", title="Backlog Book"))
         responses = [_empty_read_feed(), _xml_response(catalog)]
         with patch("requests.get", side_effect=responses):
@@ -496,19 +422,6 @@ class TestCalibreWebRegression:
         config: dict[str, object],
         tmp_path: Path,
     ) -> None:
-        """Bug: Calibre star ratings overwrote the user's own rating on sync.
-
-        Bug: Calibre's "download metadata" feature writes a community-average
-        star rating that the plugin used to map onto the user's 1-5 rating. On a
-        re-sync that fabricated rating could clobber a rating the user had set in
-        Recommendinator.
-
-        Root cause / fix: the plugin no longer extracts any rating, so it emits
-        ContentItem.rating == None. The DB's set-once rating rule (covered
-        generically by tests/test_sqlite_db.py::TestRatingSetOnce) then leaves an
-        existing user rating untouched. Here we pin the end-to-end contract: a
-        re-sync of an already-rated book preserves that rating.
-        """
         db = SQLiteDB(tmp_path / "resync.db")
         db.save_content_item(
             ContentItem(
@@ -536,21 +449,6 @@ class TestCalibreWebRegression:
     def test_read_shelf_partial_pagination_keeps_collected_ids_regression(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
     ) -> None:
-        """Bug: a failed later read-shelf page discarded already-collected ids.
-
-        Bug: when the read-books shelf spans multiple pages and a 2nd+ page
-        request fails, _fetch_read_book_ids returned an empty set, throwing away
-        read ids gathered from earlier pages. On a first sync (nothing persisted
-        yet) those books — correctly identified COMPLETED on page 1 — would be
-        yielded UNREAD with no way for the forward-only guard to recover them.
-
-        Root cause: the SourceError handler returned set() unconditionally
-        instead of distinguishing a missing shelf (first page fails -> empty)
-        from a partial pagination failure (later page fails -> keep what we have).
-
-        Fix: return the accumulated read_ids on a later-page failure and log a
-        WARNING; only a first-page failure yields an empty set.
-        """
         read_page1 = _feed(
             _entry(entry_id="urn:uuid:r1", title="Read One")
             + _entry(entry_id="urn:uuid:r2", title="Read Two"),
@@ -575,19 +473,6 @@ class TestCalibreWebRegression:
         assert by_id["calibre:u1"] == ConsumptionStatus.UNREAD
 
     def test_transform_config_none_values_regression(self) -> None:
-        """Bug: None config values crashed transform_config with AttributeError.
-
-        Bug: when a YAML key is present with no value (e.g. ``url:``), PyYAML
-        parses it as None. ``config.get("url", "").strip()`` then returns None
-        (the key exists) and ``.strip()`` raises ``AttributeError: 'NoneType'``.
-        Steam hit this exact class of crash in production.
-
-        Root cause: relying on the .get default instead of guarding None.
-
-        Fix: use the ``(value or "")`` pattern before ``.strip()`` so explicit
-        None coerces to "" without raising. The resulting config is invalid and
-        is rejected by validate_config.
-        """
         result = CalibreWebPlugin.transform_config(
             {"url": None, "username": None, "password": None}
         )
@@ -601,13 +486,6 @@ class TestCalibreWebRegression:
 
 
 class TestCalibreWebCredentialMoveRegression:
-    """Regression: editing this source's settings deleted its password.
-
-    Repointing ``url`` once sent the password to the new host; the clear that
-    fixed that then fired on any edit. Fix: only a change of host counts, and
-    it is refused.
-    """
-
     @pytest.fixture()
     def storage(self, tmp_path: Path) -> StorageManager:
         return StorageManager(sqlite_path=tmp_path / "calibre.db")
@@ -651,7 +529,6 @@ class TestCalibreWebCredentialMoveRegression:
     def test_upgrading_to_https_keeps_the_password(
         self, plugin: CalibreWebPlugin, migrated: StorageManager
     ) -> None:
-        """The reported edit: same Calibre-Web, now behind TLS."""
         update_source_config_values(
             "calibre_web", plugin, migrated, {"url": "https://localhost:8083"}
         )

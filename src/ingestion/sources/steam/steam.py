@@ -1,5 +1,3 @@
-"""Steam Web API integration plugin for fetching user game library."""
-
 from __future__ import annotations
 
 import logging
@@ -23,26 +21,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Steam Web API base URL
 STEAM_API_BASE = "https://api.steampowered.com"
 
 
 class SteamAPIError(Exception):
-    """Exception raised for Steam API errors."""
-
     pass
 
 
 def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
-    """Resolve Steam vanity URL to Steam ID.
-
-    Args:
-        api_key: Steam Web API key
-        vanity_url: Steam vanity URL (e.g., username or custom URL)
-
-    Returns:
-        Steam ID (64-bit) or None if not found
-    """
     url = f"{STEAM_API_BASE}/ISteamUser/ResolveVanityURL/v0001/"
     params = {"key": api_key, "vanityurl": vanity_url}
     try:
@@ -66,16 +52,6 @@ def get_steam_id_from_vanity_url(api_key: str, vanity_url: str) -> str | None:
 def get_owned_games(
     api_key: str, steam_id: str, include_appinfo: bool = True
 ) -> list[dict[str, Any]]:
-    """Fetch user's owned games from Steam API.
-
-    Args:
-        api_key: Steam Web API key
-        steam_id: Steam ID (64-bit)
-        include_appinfo: Whether to include app details (name, etc.)
-
-    Returns:
-        List of game dictionaries with appid, name, playtime_forever, etc.
-    """
     url = f"{STEAM_API_BASE}/IPlayerService/GetOwnedGames/v0001/"
     params = {
         "key": api_key,
@@ -98,12 +74,6 @@ def get_owned_games(
 
 
 class SteamPlugin(SourcePlugin):
-    """Plugin for importing video games from a Steam library.
-
-    Uses the Steam Web API to fetch owned games, playtime, and metadata.
-    Requires a Steam API key and either a Steam ID or vanity URL.
-    """
-
     @property
     def name(self) -> str:
         return "steam"
@@ -126,7 +96,6 @@ class SteamPlugin(SourcePlugin):
 
     @classmethod
     def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-        """Normalise Steam config fields (strip whitespace, coerce empty to None)."""
         return {
             "api_key": (raw_fields.get("api_key") or "").strip(),
             "steam_id": (raw_fields.get("steam_id") or "").strip() or None,
@@ -188,25 +157,12 @@ class SteamPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch games from a Steam library.
-
-        Args:
-            config: Must contain 'api_key' and either 'steam_id' or 'vanity_url'
-            progress_callback: Optional callback for progress updates
-
-        Yields:
-            ContentItem for each game in the library
-
-        Raises:
-            SourceError: If the Steam API returns an error
-        """
         config = self.__class__.transform_config(config)
         api_key = config["api_key"]
         steam_id = config.get("steam_id")
         vanity_url = config.get("vanity_url")
         min_playtime_minutes = config.get("min_playtime_minutes", 0)
 
-        # Adapter: Steam internal (current, total, phase) -> plugin (items, total, item)
         def steam_internal_callback(current: int, total: int, phase: str) -> None:
             if progress_callback:
                 phase_msg = "Fetching library..." if phase == "owned_games" else phase
@@ -233,25 +189,7 @@ def _fetch_steam_games(
     min_playtime_minutes: int = 0,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> Iterator[ContentItem]:
-    """Fetch and parse Steam game library.
-
-    Only the GetOwnedGames endpoint is called. Richer per-game metadata
-    (release date, developers, publishers, genres, Metacritic score, etc.)
-    is filled in asynchronously by the RAWG enrichment provider so initial
-    sync stays fast even for large libraries.
-
-    Args:
-        api_key: Steam Web API key
-        steam_id: Steam ID (64-bit)
-        vanity_url: Steam vanity URL
-        min_playtime_minutes: Minimum playtime filter
-        progress_callback: Optional callback(fetched_count, total, phase) for
-            progress reporting. Phase is "owned_games" or a per-item title.
-
-    Yields:
-        ContentItem objects for each game
-    """
-    # Resolve Steam ID if needed
+    """Only the GetOwnedGames endpoint is called."""
     if not steam_id:
         if not vanity_url:
             raise ValueError("Either steam_id or vanity_url must be provided")
@@ -261,7 +199,6 @@ def _fetch_steam_games(
                 f"Could not resolve Steam ID from vanity URL: {vanity_url}"
             )
 
-    # Fetch owned games
     logger.info(
         "Fetching owned games from Steam API for Steam ID: %s",
         sanitize_for_log(steam_id),

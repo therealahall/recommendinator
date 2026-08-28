@@ -1,5 +1,3 @@
-"""The Goodreads library CSV export importer."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

@@ -1,5 +1,3 @@
-"""Tests for the Goodreads CSV export importer."""
-
 from datetime import date
 
 from src.ingestion.importers.base import ImportedRow, ParsedRow, SkippedRow
@@ -89,11 +87,6 @@ class TestExport:
 
 class TestSkippedRows:
     def test_a_row_longer_than_its_header_is_skipped_not_imported_mangled(self) -> None:
-        """An unquoted comma in a title imported silently shifted.
-
-        Every cell after it moved a column left, so the book landed with
-        another book's author and no rating, and nothing was reported.
-        """
         text = (
             "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
             "123,Dune, Part Two,Frank Herbert,5,read\n"
@@ -114,11 +107,6 @@ class TestSkippedRows:
         assert reported(text) == [(2, "no title")]
 
     def test_a_row_shorter_than_its_header_is_skipped_not_a_crash(self) -> None:
-        """A hand-edited export used to take the whole import down.
-
-        ``csv.DictReader`` fills the missing trailing fields with ``None``, and
-        ``.strip()`` on one raised straight out of the parse.
-        """
         text = (
             "Book Id,Title,Author,My Rating,Exclusive Shelf\n"
             "123,Truncated,Test Author\n"

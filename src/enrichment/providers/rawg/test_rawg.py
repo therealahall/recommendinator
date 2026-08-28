@@ -1,5 +1,3 @@
-"""Tests for the RAWG enrichment provider."""
-
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -18,28 +16,22 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class TestCleanTitleForSearch:
-    """Tests for title cleaning before search."""
-
     def test_removes_goty_edition_dash(self) -> None:
-        """Test removal of GOTY Edition with dash."""
         assert (
             clean_game_title_for_search("The Witcher 3: Wild Hunt - GOTY Edition")
             == "The Witcher 3: Wild Hunt"
         )
 
     def test_removes_edition_in_parentheses(self) -> None:
-        """Test removal of edition in parentheses."""
         assert clean_game_title_for_search("Mass Effect (Legendary)") == "Mass Effect"
         assert clean_game_title_for_search("Skyrim (Special Edition)") == "Skyrim"
 
     def test_removes_trademark_symbols(self) -> None:
-        """Test removal of trademark and registered symbols."""
         assert clean_game_title_for_search("Cyberpunk 2077™") == "Cyberpunk 2077"
         assert clean_game_title_for_search("DOOM®") == "DOOM"
         assert clean_game_title_for_search("The Sims™ 4") == "The Sims 4"
 
     def test_preserves_colons_in_subtitles(self) -> None:
-        """Test that colons in game subtitles are preserved."""
         assert (
             clean_game_title_for_search("The Witcher 3: Wild Hunt")
             == "The Witcher 3: Wild Hunt"
@@ -50,7 +42,6 @@ class TestCleanTitleForSearch:
         )
 
     def test_removes_dlc_suffix(self) -> None:
-        """Test removal of DLC suffix like '+ Re Mind (DLC)'."""
         assert (
             clean_game_title_for_search("KINGDOM HEARTS III + Re Mind (DLC)")
             == "KINGDOM HEARTS III"
@@ -58,26 +49,19 @@ class TestCleanTitleForSearch:
 
 
 class TestRAWGProviderValidation:
-    """Tests for RAWG provider config validation."""
-
     def test_validate_missing_api_key(self) -> None:
-        """Test validation with missing API key."""
         provider = RAWGProvider()
         errors = provider.validate_config({})
         assert "'api_key' is required for RAWG provider" in errors
 
 
 class TestRAWGProviderEnrichment:
-    """Tests for RAWG game enrichment."""
-
     @pytest.fixture
     def provider(self) -> RAWGProvider:
-        """Create provider instance."""
         return RAWGProvider()
 
     @pytest.fixture
     def game_item(self) -> ContentItem:
-        """Create sample game item."""
         return ContentItem(
             id="game1",
             title="The Witcher 3: Wild Hunt",
@@ -88,7 +72,6 @@ class TestRAWGProviderEnrichment:
 
     @pytest.fixture
     def config(self) -> dict[str, Any]:
-        """Create test config."""
         return {"api_key": "test-api-key"}
 
     def test_enrich_game_success(
@@ -97,7 +80,6 @@ class TestRAWGProviderEnrichment:
         game_item: ContentItem,
         config: dict[str, Any],
     ) -> None:
-        """Test successful game enrichment."""
         mock_search = {
             "results": [
                 {
@@ -167,11 +149,6 @@ class TestRAWGProviderEnrichment:
         game_item: ContentItem,
         config: dict[str, Any],
     ) -> None:
-        """RAWG reports 0 hours for a game nobody has logged, which is no length.
-
-        Writing the 0 would classify every such game as short, so the key stays
-        out and the length scorer falls through to benefit of the doubt.
-        """
         mock_search = {"results": [{"id": 3328, "name": "The Witcher 3: Wild Hunt"}]}
         mock_game = {
             "id": 3328,
@@ -206,7 +183,6 @@ class TestRAWGProviderEnrichment:
         provider: RAWGProvider,
         config: dict[str, Any],
     ) -> None:
-        """Test enrichment when game is not found."""
         item = ContentItem(
             id="game1",
             title="Nonexistent Game",
@@ -231,7 +207,6 @@ class TestRAWGProviderEnrichment:
         provider: RAWGProvider,
         config: dict[str, Any],
     ) -> None:
-        """Test that search prefers matches with correct year."""
         item = ContentItem(
             id="game1",
             title="Doom",
@@ -242,8 +217,8 @@ class TestRAWGProviderEnrichment:
 
         mock_search = {
             "results": [
-                {"id": 1, "name": "Doom", "released": "1993-12-10"},  # Wrong year
-                {"id": 2, "name": "Doom", "released": "2016-05-13"},  # Correct year
+                {"id": 1, "name": "Doom", "released": "1993-12-10"},
+                {"id": 2, "name": "Doom", "released": "2016-05-13"},
             ]
         }
 
@@ -272,14 +247,11 @@ class TestRAWGProviderEnrichment:
             result = provider.enrich(item, config)
 
         assert result is not None
-        assert result.external_id == "rawg:2"  # Should match 2016 version
+        assert result.external_id == "rawg:2"
 
 
 class TestRAWGProviderDescriptionCleaning:
-    """Tests for HTML description cleaning."""
-
     def test_clean_description_removes_html(self) -> None:
-        """Test that HTML tags are removed."""
         provider = RAWGProvider()
         html = "<p>This is a <b>great</b> game with <i>amazing</i> graphics.</p>"
 
@@ -289,7 +261,6 @@ class TestRAWGProviderDescriptionCleaning:
         assert "<" not in cleaned
 
     def test_clean_description_limits_length(self) -> None:
-        """Test that long descriptions are truncated."""
         provider = RAWGProvider()
         long_desc = "A" * 3000
 
@@ -300,10 +271,7 @@ class TestRAWGProviderDescriptionCleaning:
 
 
 class TestRAWGProviderUnsupportedTypes:
-    """Tests for handling unsupported content types."""
-
     def test_enrich_movie_returns_none(self) -> None:
-        """Test that enriching a movie returns None."""
         provider = RAWGProvider()
         item = ContentItem(
             id="movie1",
@@ -317,10 +285,7 @@ class TestRAWGProviderUnsupportedTypes:
 
 
 class TestLongestCommonPrefix:
-    """Tests for _longest_common_prefix franchise name derivation."""
-
     def test_dragon_age_series(self) -> None:
-        """Dragon Age titles share 'Dragon Age' prefix."""
         titles = [
             "Dragon Age: Origins",
             "Dragon Age II",
@@ -329,37 +294,12 @@ class TestLongestCommonPrefix:
         assert _longest_common_prefix(titles) == "Dragon Age"
 
     def test_no_common_prefix(self) -> None:
-        """Unrelated titles return empty string."""
         titles = ["Halo", "Zelda", "Mario"]
         assert _longest_common_prefix(titles) == ""
 
 
 class TestLongestCommonPrefixOutlierFiltering:
-    """Regression tests for outlier title filtering in _longest_common_prefix.
-
-    Bug reported: All Final Fantasy games missing franchise data after RAWG
-    enrichment.
-
-    Root cause: _longest_common_prefix computes a character-level prefix of
-    ALL titles.  RAWG returns titles like ["Final Fantasy XIII",
-    "Final Fantasy XIII-2", "Lightning Returns: Final Fantasy XIII"] for the
-    FF XIII series.  "F" != "L" at index 0 collapses the prefix to "" and
-    no franchise data is produced.
-
-    Fix: Before computing the prefix, filter out outlier titles by
-    majority-based first-word voting.  "Lightning" is the minority first
-    word (1 of 3), "Final" is the majority (2 of 3), so the outlier is
-    excluded and the prefix is computed from the two "Final Fantasy" titles.
-    """
-
     def test_ff_xiii_with_lightning_returns_outlier_regression(self) -> None:
-        """FF XIII series with 'Lightning Returns' outlier -> 'Final Fantasy XIII'.
-
-        After filtering, the two remaining titles are "Final Fantasy XIII" and
-        "Final Fantasy XIII-2".  Their LCP is "Final Fantasy XIII" (the '-2'
-        suffix starts with a non-alphanumeric delimiter so no word-boundary
-        trim is needed).  This is the correct sub-series franchise name.
-        """
         titles = [
             "Final Fantasy XIII",
             "Final Fantasy XIII-2",
@@ -368,24 +308,19 @@ class TestLongestCommonPrefixOutlierFiltering:
         assert _longest_common_prefix(titles) == "Final Fantasy XIII"
 
     def test_filter_outlier_titles_returns_original_if_fewer_than_2(self) -> None:
-        """If filtering leaves < 2 titles, original list is returned."""
         titles = ["Alpha Game", "Beta Game", "Gamma Game"]
         filtered = _filter_outlier_titles(titles)
         assert filtered == titles
 
 
 class TestRAWGFranchiseExtraction:
-    """Tests for RAWG franchise/game-series extraction."""
-
     @pytest.fixture
     def provider(self) -> RAWGProvider:
-        """Create provider instance."""
         return RAWGProvider()
 
     def test_fetch_game_series_success_with_position(
         self, provider: RAWGProvider
     ) -> None:
-        """Franchise name and position are extracted from game-series API."""
         mock_series_response = {
             "results": [
                 {"id": 100, "name": "Dragon Age: Origins", "released": "2009-11-03"},
@@ -411,7 +346,6 @@ class TestRAWGFranchiseExtraction:
     def test_fetch_game_series_api_error_graceful_fallback(
         self, provider: RAWGProvider
     ) -> None:
-        """API error returns (None, None) without raising."""
         with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
             mock_get.side_effect = requests.RequestException("Connection failed")
 
@@ -428,7 +362,6 @@ class TestRAWGFranchiseExtraction:
     def test_full_enrich_flow_populates_franchise_data(
         self, provider: RAWGProvider
     ) -> None:
-        """End-to-end: enrich() stores franchise and series_position in metadata."""
         item = ContentItem(
             id="game1",
             title="Dragon Age: Inquisition",
@@ -476,24 +409,6 @@ class TestRAWGFranchiseExtraction:
 
 
 class TestRAWGApiKeyScrubbingRegression:
-    """Regression tests for the RAWG API key leaking via error messages.
-
-    Bug: RAWG requests pass the key as a query parameter (``?key=<secret>``).
-    On a failed request, ``requests.HTTPError``'s ``str()`` embeds the full
-    request URL — key and all. The provider interpolated the raw exception
-    into ``ProviderError(... f"...: {error}")``, and that message flows into
-    the enrichment status the web API and CLI surface to users and logs,
-    leaking the key.
-
-    Root cause: ``f"...: {error}"`` called the default
-    ``RequestException.__str__`` containing the request URL with the ``key``
-    query parameter.
-
-    Fix: each ``except requests.RequestException`` block now renders the
-    error through :func:`src.utils.request_errors.scrub_request_error`, which
-    emits only ``HTTP <status>`` or the exception class name.
-    """
-
     _API_KEY = "SECRET_RAWG_KEY_123"
 
     def _http_error(self, status_code: int) -> requests.HTTPError:
@@ -515,7 +430,6 @@ class TestRAWGApiKeyScrubbingRegression:
         )
 
     def test_search_error_does_not_leak_api_key(self) -> None:
-        """A failed search surfaces only the status code, not the key."""
         provider = RAWGProvider()
 
         with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
@@ -531,7 +445,6 @@ class TestRAWGApiKeyScrubbingRegression:
         assert "Failed to search RAWG: HTTP 401" in message
 
     def test_transport_error_surfaces_only_exception_type(self) -> None:
-        """A connection error surfaces only the class name, not its message."""
         provider = RAWGProvider()
 
         with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
@@ -549,12 +462,6 @@ class TestRAWGApiKeyScrubbingRegression:
 
 
 class TestSearchTitleCannotForgeALogLineRegression:
-    """Reported: the search log writes ``item.title`` unescaped.
-
-    A title restricts no characters and the file formatter is single-line, so
-    a newline writes its own entry (CWE-117). Fix: ``log_search_title``.
-    """
-
     _FORGED = "Real Game\nWARNING  | forged | line - GOTY Edition"
 
     def test_a_newline_in_a_title_is_escaped_before_the_search_log(

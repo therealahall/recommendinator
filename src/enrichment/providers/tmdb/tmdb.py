@@ -1,9 +1,3 @@
-"""TMDB enrichment provider for movies and TV shows.
-
-The Movie Database (TMDB) provides comprehensive metadata for movies
-and TV shows, including genres, descriptions, and more.
-"""
-
 import logging
 import re
 from typing import Any
@@ -22,10 +16,8 @@ from src.utils.request_errors import scrub_request_error
 
 logger = logging.getLogger(__name__)
 
-# TMDB API base URL
 TMDB_API_BASE = "https://api.themoviedb.org/3"
 
-# Patterns to clean from titles before searching
 # Year in parentheses: (2022), (1999)
 YEAR_PATTERN = re.compile(r"\s*\(\d{4}\)\s*$")
 # Country codes: (US), (UK), (JP), etc.
@@ -33,23 +25,8 @@ COUNTRY_PATTERN = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
 
 
 def clean_media_title_for_search(title: str) -> str:
-    """Remove year and country suffixes from title for better search matching.
-
-    Examples:
-        "Monster (2022)" -> "Monster"
-        "Euphoria (US)" -> "Euphoria"
-        "The Office (US)" -> "The Office"
-
-    Args:
-        title: Original movie/TV show title
-
-    Returns:
-        Cleaned title without year/country suffixes
-    """
     cleaned = title
-    # Remove year suffix
     cleaned = YEAR_PATTERN.sub("", cleaned).strip()
-    # Remove country code suffix
     cleaned = COUNTRY_PATTERN.sub("", cleaned).strip()
     return cleaned if cleaned else title
 
@@ -63,20 +40,6 @@ _DEFAULT_INCLUDE_KEYWORDS = True
 
 
 class TMDBProvider(EnrichmentProvider):
-    """Enrichment provider using The Movie Database (TMDB) API.
-
-    Enriches movies and TV shows with:
-    - Genres
-    - Tags (derived from keywords)
-    - Description (overview)
-    - Additional metadata (runtime, vote average, etc.)
-
-    Matching strategy:
-    1. Direct ID lookup if item has tmdb_id in metadata
-    2. Title + year search for movies/TV shows
-    3. Falls back to title-only search if year not available
-    """
-
     @property
     def name(self) -> str:
         return "tmdb"
@@ -132,18 +95,6 @@ class TMDBProvider(EnrichmentProvider):
     def enrich(
         self, item: ContentItem, config: dict[str, Any]
     ) -> EnrichmentResult | None:
-        """Enrich a movie or TV show with TMDB metadata.
-
-        Args:
-            item: ContentItem to enrich (must be MOVIE or TV_SHOW)
-            config: Provider configuration with api_key
-
-        Returns:
-            EnrichmentResult with metadata, or None if not found
-
-        Raises:
-            ProviderError: If API request fails
-        """
         api_key = config.get("api_key", "")
         language = config.get("language", _DEFAULT_LANGUAGE)
         include_keywords = config.get("include_keywords", _DEFAULT_INCLUDE_KEYWORDS)
@@ -169,12 +120,9 @@ class TMDBProvider(EnrichmentProvider):
         language: str,
         include_keywords: bool,
     ) -> EnrichmentResult | None:
-        """Enrich a movie with TMDB data."""
-        # Try to find TMDB ID
         tmdb_id = self._get_tmdb_id(item, "movie")
 
         if tmdb_id is None:
-            # Search for the movie
             tmdb_id = self._search_movie(item, api_key, language)
 
         if tmdb_id is None:
@@ -183,7 +131,6 @@ class TMDBProvider(EnrichmentProvider):
                 provider=self.name,
             )
 
-        # Fetch movie details
         return self._fetch_movie_details(tmdb_id, api_key, language, include_keywords)
 
     def _enrich_tv_show(
@@ -193,12 +140,9 @@ class TMDBProvider(EnrichmentProvider):
         language: str,
         include_keywords: bool,
     ) -> EnrichmentResult | None:
-        """Enrich a TV show with TMDB data."""
-        # Try to find TMDB ID
         tmdb_id = self._get_tmdb_id(item, "tv")
 
         if tmdb_id is None:
-            # Search for the TV show
             tmdb_id = self._search_tv_show(item, api_key, language)
 
         if tmdb_id is None:
@@ -207,29 +151,17 @@ class TMDBProvider(EnrichmentProvider):
                 provider=self.name,
             )
 
-        # Fetch TV show details
         return self._fetch_tv_details(tmdb_id, api_key, language, include_keywords)
 
     def _get_tmdb_id(self, item: ContentItem, media_type: str) -> int | None:
-        """Extract TMDB ID from item metadata if available.
-
-        Args:
-            item: ContentItem to check
-            media_type: "movie" or "tv"
-
-        Returns:
-            TMDB ID if found, None otherwise
-        """
         metadata = item.metadata or {}
 
-        # Check for tmdb_id in metadata
         if "tmdb_id" in metadata:
             try:
                 return int(metadata["tmdb_id"])
             except (ValueError, TypeError):
                 pass
 
-        # Check external_id format like "tmdb:12345"
         if item.id and item.id.startswith("tmdb:"):
             try:
                 return int(item.id.split(":")[1])
@@ -246,18 +178,6 @@ class TMDBProvider(EnrichmentProvider):
         endpoint: str,
         year_param: str,
     ) -> int | None:
-        """Search TMDB for a movie or TV show by title and year.
-
-        Args:
-            item: Content item to search for.
-            api_key: TMDB API key.
-            language: Language code.
-            endpoint: API search endpoint (e.g. "search/movie" or "search/tv").
-            year_param: Query parameter name for year filter.
-
-        Returns:
-            TMDB ID if found, None otherwise.
-        """
         search_title = clean_media_title_for_search(item.title)
         log_search_title(logger, item.title, search_title)
 
@@ -283,7 +203,6 @@ class TMDBProvider(EnrichmentProvider):
             if results:
                 return int(results[0]["id"])
 
-            # Retry without year if no results
             if year and year_param in params:
                 del params[year_param]
                 response = requests.get(
@@ -308,13 +227,11 @@ class TMDBProvider(EnrichmentProvider):
     def _search_movie(
         self, item: ContentItem, api_key: str, language: str
     ) -> int | None:
-        """Search for a movie by title and year."""
         return self._search_media(item, api_key, language, "search/movie", "year")
 
     def _search_tv_show(
         self, item: ContentItem, api_key: str, language: str
     ) -> int | None:
-        """Search for a TV show by title and year."""
         return self._search_media(
             item, api_key, language, "search/tv", "first_air_date_year"
         )
@@ -326,17 +243,6 @@ class TMDBProvider(EnrichmentProvider):
         language: str,
         include_keywords: bool,
     ) -> EnrichmentResult:
-        """Fetch detailed movie information from TMDB.
-
-        Args:
-            tmdb_id: TMDB movie ID
-            api_key: API key
-            language: Language code
-            include_keywords: Whether to fetch keywords
-
-        Returns:
-            EnrichmentResult with movie metadata
-        """
         try:
             response = requests.get(
                 f"{TMDB_API_BASE}/movie/{tmdb_id}",
@@ -350,15 +256,12 @@ class TMDBProvider(EnrichmentProvider):
             response.raise_for_status()
             movie = response.json()
 
-            # Extract genres
             genres = [genre["name"] for genre in movie.get("genres", [])]
 
-            # Extract keywords/tags if requested
             tags = None
             if include_keywords:
                 tags = self._fetch_movie_keywords(tmdb_id, api_key)
 
-            # Build extra metadata
             extra_metadata: dict[str, Any] = {}
             if movie.get("runtime"):
                 extra_metadata["runtime"] = movie["runtime"]
@@ -366,7 +269,6 @@ class TMDBProvider(EnrichmentProvider):
                 extra_metadata["tmdb_rating"] = movie["vote_average"]
             if movie.get("release_date"):
                 extra_metadata["release_date"] = movie["release_date"]
-                # Extract year
                 try:
                     extra_metadata["release_year"] = int(movie["release_date"][:4])
                 except (ValueError, IndexError):
@@ -380,7 +282,6 @@ class TMDBProvider(EnrichmentProvider):
                 if studios:
                     extra_metadata["studio"] = studios[0]
 
-            # Extract director(s) from credits (requested via append_to_response).
             # The truthiness guard on `name` excludes missing/None/empty values;
             # the str() cast hardens against non-string names in the API payload.
             crew = movie.get("credits", {}).get("crew", [])
@@ -392,12 +293,10 @@ class TMDBProvider(EnrichmentProvider):
             if directors:
                 extra_metadata["director"] = ", ".join(directors)
 
-            # Extract collection/franchise info for series ordering
             collection = movie.get("belongs_to_collection")
             if collection:
                 extra_metadata["series_name"] = collection.get("name")
                 extra_metadata["tmdb_collection_id"] = collection.get("id")
-                # Fetch collection details to get movie order
                 movie_position = self._get_movie_position_in_collection(
                     collection["id"], tmdb_id, api_key
                 )
@@ -427,17 +326,6 @@ class TMDBProvider(EnrichmentProvider):
         language: str,
         include_keywords: bool,
     ) -> EnrichmentResult:
-        """Fetch detailed TV show information from TMDB.
-
-        Args:
-            tmdb_id: TMDB TV show ID
-            api_key: API key
-            language: Language code
-            include_keywords: Whether to fetch keywords
-
-        Returns:
-            EnrichmentResult with TV show metadata
-        """
         try:
             response = requests.get(
                 f"{TMDB_API_BASE}/tv/{tmdb_id}",
@@ -447,15 +335,12 @@ class TMDBProvider(EnrichmentProvider):
             response.raise_for_status()
             show = response.json()
 
-            # Extract genres
             genres = [genre["name"] for genre in show.get("genres", [])]
 
-            # Extract keywords/tags if requested
             tags = None
             if include_keywords:
                 tags = self._fetch_tv_keywords(tmdb_id, api_key)
 
-            # Build extra metadata
             extra_metadata: dict[str, Any] = {}
             if show.get("number_of_seasons"):
                 extra_metadata["seasons"] = show["number_of_seasons"]
@@ -475,9 +360,8 @@ class TMDBProvider(EnrichmentProvider):
                 networks = [network["name"] for network in show["networks"][:2]]
                 if networks:
                     extra_metadata["network"] = networks[0]
-            # Extract creator(s). The truthiness guard on `name` excludes
-            # missing/None/empty values; the str() cast hardens against
-            # non-string names in the API payload.
+            # The truthiness guard on `name` excludes missing/None/empty values;
+            # the str() cast hardens against non-string names in the API payload.
             creators = [
                 str(creator["name"])
                 for creator in show.get("created_by", [])
@@ -511,17 +395,6 @@ class TMDBProvider(EnrichmentProvider):
         api_key: str,
         result_key: str = "keywords",
     ) -> list[str] | None:
-        """Fetch keywords for a movie or TV show.
-
-        Args:
-            media_type: "movie" or "tv".
-            tmdb_id: TMDB ID.
-            api_key: API key.
-            result_key: JSON key containing keywords list.
-
-        Returns:
-            List of keyword strings, or None if unavailable.
-        """
         try:
             response = requests.get(
                 f"{TMDB_API_BASE}/{media_type}/{tmdb_id}/keywords",
@@ -539,26 +412,14 @@ class TMDBProvider(EnrichmentProvider):
             return None
 
     def _fetch_movie_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
-        """Fetch keywords for a movie."""
         return self._fetch_keywords("movie", tmdb_id, api_key, "keywords")
 
     def _fetch_tv_keywords(self, tmdb_id: int, api_key: str) -> list[str] | None:
-        """Fetch keywords for a TV show."""
         return self._fetch_keywords("tv", tmdb_id, api_key, "results")
 
     def _get_movie_position_in_collection(
         self, collection_id: int, movie_id: int, api_key: str
     ) -> int | None:
-        """Get a movie's position in its collection (sorted by release date).
-
-        Args:
-            collection_id: TMDB collection ID
-            movie_id: TMDB movie ID to find position for
-            api_key: API key
-
-        Returns:
-            1-based position in collection, or None if unavailable
-        """
         try:
             response = requests.get(
                 f"{TMDB_API_BASE}/collection/{collection_id}",
@@ -572,16 +433,14 @@ class TMDBProvider(EnrichmentProvider):
             if not parts:
                 return None
 
-            # Sort by release date to get proper order
             sorted_parts = sorted(
                 parts,
                 key=lambda movie: movie.get("release_date") or "9999-99-99",
             )
 
-            # Find position of this movie
             for index, movie in enumerate(sorted_parts):
                 if movie.get("id") == movie_id:
-                    return index + 1  # 1-based position
+                    return index + 1
 
             return None
 

@@ -1,5 +1,3 @@
-"""Radarr movie import plugin."""
-
 import logging
 from typing import Any
 
@@ -13,16 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class RadarrPlugin(ArrPlugin):
-    """Plugin for importing movies from Radarr.
-
-    Radarr is a movie management tool. This plugin fetches all movies
-    in your Radarr library and imports them as UNREAD (wishlisted) movie items.
-
-    Note: Radarr tracks downloads, not watch status. All imported items
-    are set to UNREAD. The monitored state is ignored since it can change
-    based on file availability. Use ratings and manual status updates to
-    track what you've actually watched.
-    """
+    """The monitored state is ignored since it can change based on file availability."""
 
     @property
     def name(self) -> str:
@@ -70,7 +59,6 @@ class RadarrPlugin(ArrPlugin):
         metadata: dict[str, Any],
         context: Any,
     ) -> None:
-        """Add collection/series info from Radarr collections."""
         tmdb_id = item.get("tmdbId")
         collection_info = context.get(tmdb_id) if tmdb_id else None
         if collection_info:
@@ -80,9 +68,7 @@ class RadarrPlugin(ArrPlugin):
     def _fetch_collections(
         self, base_url: str, api_key: str, verify_ssl: bool
     ) -> dict[int, dict[str, Any]]:
-        """Fetch collections and build tmdb_id -> (title, order) map.
-
-        Radarr collections (e.g., Back to the Future) provide movie order for
+        """Radarr collections (e.g., Back to the Future) provide movie order for
         series-aware recommendations.
         """
         url = f"{base_url}/api/v3/collection"
@@ -120,17 +106,8 @@ class RadarrPlugin(ArrPlugin):
 
 
 def _build_radarr_metadata(movie: dict[str, Any]) -> dict[str, Any]:
-    """Build metadata dict from Radarr movie data.
-
-    Args:
-        movie: Radarr movie data dict
-
-    Returns:
-        Metadata dictionary
-    """
     metadata: dict[str, Any] = {}
 
-    # Basic info
     if movie.get("tmdbId"):
         metadata["tmdb_id"] = movie["tmdbId"]
     if movie.get("imdbId"):
@@ -144,12 +121,10 @@ def _build_radarr_metadata(movie: dict[str, Any]) -> dict[str, Any]:
     if movie.get("runtime"):
         metadata["runtime_minutes"] = movie["runtime"]
 
-    # Genres
     genres = movie.get("genres", [])
     if genres:
         metadata["genres"] = genres
 
-    # Movie status
     if movie.get("status"):
         metadata["movie_status"] = movie["status"]
     if movie.get("hasFile") is not None:

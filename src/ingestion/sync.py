@@ -1,9 +1,3 @@
-"""Shared sync executor for plugin-based data import.
-
-Provides a single save loop used by both the web API and CLI, eliminating
-duplicated sync logic across callers.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -39,13 +33,6 @@ MAX_REPORTED_ERRORS = 200
 
 @dataclass
 class SyncResult:
-    """Result of a sync operation.
-
-    ``items_synced`` counts the saves that succeeded; the three outcome
-    counters split those by what the save did, so a re-sync that changed
-    nothing is distinguishable from the import that added everything.
-    """
-
     source_name: str
     source_id: str = ""
     items_synced: int = 0
@@ -104,14 +91,9 @@ def resolve_max_workers(
     override: int | None = None,
     default: int = 4,
 ) -> int:
-    """Resolve the parallel-sync worker count from override + config + default.
-
-    Order of precedence: ``override`` (typically a CLI flag) wins; otherwise
-    ``config['sync']['max_workers']`` is used; otherwise ``default``. The
-    result is always clamped to ``[1, MAX_WORKERS_CEILING]``. Non-integer
-    config values fall back to ``default`` rather than raising — this path
-    runs on every sync invocation, so the function must not crash on a
-    malformed config.
+    """Non-integer config values fall back to ``default`` rather than raising —
+    this path runs on every sync invocation, so the function must not crash on
+    a malformed config.
     """
 
     def _clamp(value: int) -> int:
@@ -156,11 +138,7 @@ def release_sources(
 
 
 class _ClaimHeartbeat:
-    """Beat every claim a run still owes, from the driver, not from a worker.
-
-    A source queued behind ``max_workers``, or one whose plugin reports no
-    progress, has nothing beating for it and loses its claim mid-run.
-    """
+    """Beat every claim a run still owes, from the driver, not from a worker."""
 
     def __init__(
         self,
@@ -341,7 +319,6 @@ def execute_sync(
             result.items_synced += 1
             result.counts.record(saved.outcome)
 
-            # Mark for enrichment if enabled
             if mark_for_enrichment:
                 try:
                     storage_manager.enrichment.mark_needed(saved.db_id)
@@ -413,36 +390,7 @@ def execute_multi_source_sync(
     user_id: int = 1,
     max_workers: int = 1,
 ) -> list[SyncResult]:
-    """Execute sync for multiple plugin sources, optionally in parallel.
-
-    With ``max_workers <= 1`` (default), sources sync sequentially.
-    With ``max_workers > 1``, sources run on a ThreadPoolExecutor, capped
-    at ``min(max_workers, len(sources))``. Per-source rate limiting is
-    enforced inside each plugin, so cross-source parallelism is safe.
-
-    Thread-safety contract: when ``max_workers > 1``, ``progress_callback``
-    and ``result_callback`` may be invoked concurrently from multiple worker
-    threads. Both callers in this codebase honour that contract — the web
-    ``SyncManager`` takes a lock internally, and the CLI ``cli_progress``
-    serialises ``click.echo`` via its own lock — but any future caller
-    must do the same.
-
-    Args:
-        sources: List of (plugin, plugin_config) tuples to sync.
-        storage_manager: Storage manager for saving items.
-        progress_callback: Optional callback for progress updates. Must be
-            thread-safe when ``max_workers > 1``.
-        result_callback: Optional callback handed each source's result as that
-            source finishes, errors and counts alike. Must be thread-safe when
-            ``max_workers > 1``.
-        mark_for_enrichment: Whether to mark items as needing enrichment after save.
-        user_id: User ID for credential storage (default 1).
-        max_workers: Maximum sources to sync concurrently. ``1`` (default)
-            preserves the legacy sequential behaviour.
-
-    Returns:
-        List of SyncResult, one per source, in the same order as ``sources``.
-    """
+    """Above one worker the progress and result callbacks may run concurrently."""
 
     def _run_one(plugin: SourcePlugin, plugin_config: dict[str, Any]) -> SyncResult:
         started_at = utc_now()

@@ -1,5 +1,3 @@
-"""Tests for Sonarr TV series import plugin."""
-
 from unittest.mock import Mock, patch
 
 import pytest
@@ -27,13 +25,11 @@ def _redirect_response(location: str) -> Mock:
 
 @pytest.fixture()
 def plugin() -> SonarrPlugin:
-    """Create a SonarrPlugin instance."""
     return SonarrPlugin()
 
 
 @pytest.fixture()
 def sample_series() -> list[dict]:
-    """Create sample Sonarr API response data."""
     return [
         {
             "title": "Breaking Bad",
@@ -78,8 +74,6 @@ def sample_series() -> list[dict]:
 
 
 class TestSonarrPluginFetch:
-    """Tests for SonarrPlugin fetch functionality."""
-
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_fetch_all_series(
         self,
@@ -87,14 +81,12 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """All series should be imported regardless of monitored state."""
         mock_get.return_value = _api_response(sample_series)
 
         items = list(
             plugin.fetch({"url": "http://localhost:8989", "api_key": "test_key"})
         )
 
-        # All 3 series imported (monitored state is ignored)
         assert len(items) == 3
         assert items[0].title == "Breaking Bad"
         assert items[1].title == "The Expanse"
@@ -107,7 +99,6 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """External ID should be tvdb:{tvdbId} for deduplication."""
         mock_get.return_value = _api_response(sample_series)
 
         items = list(
@@ -124,7 +115,6 @@ class TestSonarrPluginFetch:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """Metadata should include genres, network, seasons, etc."""
         mock_get.return_value = _api_response(sample_series)
 
         items = list(
@@ -161,8 +151,6 @@ class TestSonarrPluginFetch:
 
 
 class TestSonarrPluginErrors:
-    """Tests for error handling."""
-
     @patch("src.ingestion.sources.arr_base.requests.get")
     def test_tls_failure_is_reported_as_tls_not_as_unreachable(
         self,
@@ -180,8 +168,6 @@ class TestSonarrPluginErrors:
 
 
 class TestSonarrTls:
-    """Sonarr behind TLS, with and without a verifiable certificate."""
-
     @pytest.fixture(autouse=True)
     def _patch_requests(self):
         with patch("src.ingestion.sources.arr_base.requests.get") as mock_get:
@@ -192,12 +178,6 @@ class TestSonarrTls:
         self,
         plugin: SonarrPlugin,
     ) -> None:
-        """Bug: a proxy 301'd the configured http url to https.
-
-        ``requests`` followed it, so the sync died on
-        CERTIFICATE_VERIFY_FAILED for a scheme the operator never configured.
-        A redirect off the origin is refused now.
-        """
         self.mock_get.return_value = _redirect_response(
             "https://sonarr.lan/api/v3/series"
         )
@@ -249,12 +229,6 @@ class TestSonarrTls:
         plugin: SonarrPlugin,
         sample_series: list[dict],
     ) -> None:
-        """Bug: a proxy naming ``:443`` explicitly had its redirect refused.
-
-        The origin was a raw netloc, so ``sonarr.lan:443`` read as a different
-        party than ``sonarr.lan`` — stricter than the check guarding the
-        stored API key.
-        """
         self.mock_get.side_effect = [
             _redirect_response("https://sonarr.lan:443/api/v3/series/"),
             _api_response(sample_series),

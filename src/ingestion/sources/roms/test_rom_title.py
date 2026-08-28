@@ -1,5 +1,3 @@
-"""Tests for the internal ROM title cleaner used by the roms plugin."""
-
 from __future__ import annotations
 
 import pytest
@@ -37,7 +35,6 @@ class TestCleanDisplayTitleParens:
         assert clean_display_title(raw) == expected
 
     def test_does_not_strip_internal_parens(self) -> None:
-        # Parens inside the title (not at the end) are preserved.
         assert (
             clean_display_title("Game (HD Remix) Edition") == "Game (HD Remix) Edition"
         )
@@ -76,9 +73,9 @@ class TestCleanDisplayTitleUnderscores:
     @pytest.mark.parametrize(
         "raw,expected",
         [
-            ("Some___Game", "Some Game"),  # multiple underscores collapse
-            ("Some_Game_(USA)_(Beta)", "Some Game"),  # underscores expose tail parens
-            ("Foo_Bar.Baz_Qux", "Foo Bar.Baz Qux"),  # dots preserved
+            ("Some___Game", "Some Game"),
+            ("Some_Game_(USA)_(Beta)", "Some Game"),
+            ("Foo_Bar.Baz_Qux", "Foo Bar.Baz Qux"),
         ],
     )
     def test_underscores_become_spaces(self, raw: str, expected: str) -> None:
@@ -103,7 +100,6 @@ class TestCleanDisplayTitleEdgeCases:
         """12 trailing groups; cap is 8 passes, so 8 groups strip and 4 remain."""
         raw = "Game" + " (x)" * 12
         result = clean_display_title(raw)
-        # 12 groups - 8 passes = 4 remaining trailing groups.
         assert result.count("(x)") == 4
 
 
@@ -127,7 +123,6 @@ class TestCompileExtraPatterns:
             compile_extra_patterns(["a" * 201])
 
     def test_rejects_list_exceeding_count_cap(self) -> None:
-        """Per-title regex work is bounded by capping how many may be supplied."""
         with pytest.raises(ValueError, match="exceeds 32 entries"):
             compile_extra_patterns(["x"] * 33)
 

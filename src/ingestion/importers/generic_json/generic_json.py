@@ -118,8 +118,7 @@ def _load_entries(text: str) -> tuple[RowUnit, list[tuple[int, Any]]]:
 
 def _build_metadata(entry: dict[str, Any], content_type: ContentType) -> dict[str, Any]:
     """Unlike a CSV cell, a JSON field can already hold the list a
-    list-valued column wants, so only a single value is wrapped. An absent or
-    empty field says nothing and is left out entirely.
+    list-valued column wants, so only a single value is wrapped.
     """
     metadata: dict[str, Any] = {}
 

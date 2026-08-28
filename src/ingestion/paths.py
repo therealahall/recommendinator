@@ -1,6 +1,4 @@
-"""Filesystem containment for the paths file-based source plugins read.
-
-``security.allowed_source_roots`` is config.yaml only, deliberately absent from
+"""``security.allowed_source_roots`` is config.yaml only, deliberately absent from
 the settings registry: source config is writable over HTTP, so a caller able to
 widen the allowlist could read any file.
 """
@@ -31,17 +29,11 @@ def set_allowed_source_roots(roots: Sequence[str]) -> None:
 
 
 def get_allowed_source_roots() -> tuple[str, ...]:
-    """Return the configured roots, unresolved."""
     return _allowed_roots
 
 
 def configure_allowed_source_roots(config: dict[str, Any]) -> None:
-    """Install ``security.allowed_source_roots`` from *config* as the allowlist.
-
-    Called from ``load_config`` so every entry point shares one answer. An
-    unusable value falls back to the default rather than widening; an explicit
-    empty list means no file-based source may read anything.
-    """
+    """Called from ``load_config`` so every entry point shares one answer."""
     section = config.get("security")
     raw = section.get("allowed_source_roots") if isinstance(section, dict) else None
 
@@ -65,9 +57,7 @@ def configure_allowed_source_roots(config: dict[str, Any]) -> None:
 
 
 def resolve_source_path(value: str) -> Path:
-    """Resolve *value*, raising ``PathNotAllowed`` unless a root contains it.
-
-    Both sides resolve before comparison, so a symlink planted inside a root
+    """Both sides resolve before comparison, so a symlink planted inside a root
     cannot reach out of it and a string prefix cannot fake containment.
     """
     try:

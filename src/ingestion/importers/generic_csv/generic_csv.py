@@ -117,8 +117,7 @@ def _build_metadata(
     cells: Mapping[str, Any], content_type: ContentType
 ) -> dict[str, Any]:
     """Storing a value under the key the library uses for it is what lands it in
-    its detail-table column rather than in the free-form blob. An empty cell
-    says nothing about the field and is left out entirely.
+    its detail-table column rather than in the free-form blob.
     """
     metadata: dict[str, Any] = {}
 

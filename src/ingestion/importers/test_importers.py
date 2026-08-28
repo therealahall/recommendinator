@@ -1,5 +1,3 @@
-"""Tests for the importer package as a whole."""
-
 import ast
 import csv
 import inspect
@@ -79,9 +77,6 @@ def test_the_guard_above_rejects_a_module_that_reads_a_file(
 
 
 def test_no_shipped_format_disappears_from_the_registry() -> None:
-    """The operator's picker is rendered from this list, so an entry that quietly
-    goes missing is a file format nobody can choose any more.
-    """
     assert {
         "goodreads_csv",
         "storygraph_csv",
@@ -97,9 +92,6 @@ _RELATIVE_DOC_LINK = re.compile(r"\]\((\.\.?/[^)\s]+\.md)\)")
 
 
 def test_every_shipped_format_reaches_its_guide_from_the_shared_page() -> None:
-    """DATA_SOURCES.md is the only page an importing operator is sent to, so a
-    format it links nowhere has a guide nobody arrives at.
-    """
     page = DATA_SOURCES_PAGE.read_text(encoding="utf-8")
     linked = {
         (DATA_SOURCES_PAGE.parent / target).resolve()
@@ -120,9 +112,6 @@ def test_every_template_names_a_format_the_registry_offers() -> None:
 
 
 def test_the_templates_directory_is_found_beside_the_package_not_the_cwd() -> None:
-    """A relative path passes here and 503s in the image, whose working
-    directory is /app and not the repository root (bd-qs5i.5.24).
-    """
     assert TEMPLATES_DIR.is_absolute()
     assert available_templates(), "nothing resolved, so the directory is not the one"
 
@@ -144,10 +133,6 @@ def _template_id(template: ImportTemplate) -> str:
 def test_every_shipped_template_imports_through_the_format_it_names(
     template: ImportTemplate,
 ) -> None:
-    """A template is downloaded, filled in and uploaded back, and this is the
-    only thing tying ``templates/`` to the parsers: one whose example row
-    stopped parsing ships as a file whose every line is skipped.
-    """
     importer = get_importer(template.importer)
     assert importer is not None
 
@@ -174,10 +159,6 @@ def test_every_shipped_template_imports_through_the_format_it_names(
 def test_no_tabular_template_offers_a_column_the_importer_drops(
     template: ImportTemplate,
 ) -> None:
-    """A column the importer does not know is warned about and ignored, never
-    skipped, so a template naming one loses whatever the operator typed into it
-    with nothing said on either interface.
-    """
     text = decode_import_text(read_template(template))
     offered = (
         set(json.loads(text)[0])

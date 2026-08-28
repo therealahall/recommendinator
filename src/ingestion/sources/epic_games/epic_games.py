@@ -1,14 +1,3 @@
-"""Epic Games Store integration plugin for fetching user game library.
-
-Uses the legendary launcher's EPCAPI client to interact with Epic's
-reverse-engineered APIs.  Authentication requires an OAuth refresh token
-obtained via the web UI (Data tab → Connect Epic Games).
-
-Limitations:
-- No wishlist support (legendary doesn't implement it).
-- No playtime data (Epic doesn't expose it).
-"""
-
 from __future__ import annotations
 
 import logging
@@ -36,28 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 class EpicGamesAPIError(Exception):
-    """Exception raised for Epic Games API errors."""
-
     pass
 
 
-# ---------------------------------------------------------------------------
-# Module-level helper functions (individually testable)
-# ---------------------------------------------------------------------------
-
-
 def authenticate(refresh_token: str) -> EPCAPI:
-    """Create an authenticated EPCAPI session using a refresh token.
-
-    Args:
-        refresh_token: Epic Games OAuth refresh token.
-
-    Returns:
-        Authenticated EPCAPI instance ready for API calls.
-
-    Raises:
-        EpicGamesAPIError: If authentication fails.
-    """
     api = EPCAPI()
     try:
         api.start_session(refresh_token=refresh_token)
@@ -73,19 +44,7 @@ def authenticate(refresh_token: str) -> EPCAPI:
 
 
 def get_library_items(api: EPCAPI) -> list[dict[str, Any]]:
-    """Fetch all library records from the authenticated Epic Games account.
-
-    Cursor-based pagination is handled internally by EPCAPI.
-
-    Args:
-        api: Authenticated EPCAPI instance.
-
-    Returns:
-        Flat list of all library record dicts.
-
-    Raises:
-        EpicGamesAPIError: If the API request fails.
-    """
+    """Cursor-based pagination is handled internally by EPCAPI."""
     try:
         records: list[dict[str, Any]] = api.get_library_items(include_metadata=True)
         return records
@@ -98,19 +57,6 @@ def get_library_items(api: EPCAPI) -> list[dict[str, Any]]:
 def get_game_metadata(
     api: EPCAPI, namespace: str, catalog_item_id: str
 ) -> dict[str, Any] | None:
-    """Fetch detailed catalog metadata for a single game.
-
-    Args:
-        api: Authenticated EPCAPI instance.
-        namespace: Epic Games namespace for the game.
-        catalog_item_id: Catalog item identifier.
-
-    Returns:
-        Catalog metadata dict, or None if the item was not found.
-
-    Raises:
-        EpicGamesAPIError: If the API request fails.
-    """
     try:
         result: dict[str, Any] | None = api.get_game_info(namespace, catalog_item_id)
         return result
@@ -121,14 +67,6 @@ def get_game_metadata(
 
 
 def is_base_game(game_metadata: dict[str, Any]) -> bool:
-    """Determine whether a catalog item represents a base game (not DLC/mod).
-
-    Args:
-        game_metadata: Catalog metadata dict from :func:`get_game_metadata`.
-
-    Returns:
-        True if this is a standalone base game, False for DLC or mods.
-    """
     # DLC has a reference to the main game
     if "mainGameItem" in game_metadata:
         return False
@@ -149,15 +87,6 @@ def extract_metadata_fields(
     game_metadata: dict[str, Any],
     library_record: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a metadata dict from catalog data and the library record.
-
-    Args:
-        game_metadata: Catalog metadata from :func:`get_game_metadata`.
-        library_record: Library record dict from :func:`get_library_items`.
-
-    Returns:
-        Flat dict of metadata fields suitable for :class:`ContentItem`.
-    """
     metadata: dict[str, Any] = {
         "epic_namespace": library_record.get("namespace", ""),
         "epic_catalog_item_id": game_metadata.get("id", ""),
@@ -190,18 +119,7 @@ def extract_metadata_fields(
     return metadata
 
 
-# ---------------------------------------------------------------------------
-# Plugin class
-# ---------------------------------------------------------------------------
-
-
 class EpicGamesPlugin(SourcePlugin):
-    """Plugin for importing video games from an Epic Games Store library.
-
-    Uses the legendary launcher's EPCAPI to fetch owned games.
-    Requires an Epic Games OAuth refresh token for authentication.
-    """
-
     @property
     def name(self) -> str:
         return "epic_games"
@@ -224,7 +142,6 @@ class EpicGamesPlugin(SourcePlugin):
 
     @classmethod
     def transform_fields(cls, raw_fields: dict[str, Any]) -> dict[str, Any]:
-        """Normalise Epic Games config fields (strip whitespace)."""
         return {
             "refresh_token": raw_fields.get("refresh_token", "").strip(),
         }
@@ -253,7 +170,6 @@ class EpicGamesPlugin(SourcePlugin):
     ) -> list[str]:
         errors: list[str] = []
         if not (config.get("refresh_token") or "").strip():
-            # Check DB credentials before rejecting
             source_id = config.get("_source_id", self.name)
             if storage is not None:
                 db_creds = storage.credentials.get_for_source(user_id, source_id)
@@ -271,18 +187,6 @@ class EpicGamesPlugin(SourcePlugin):
         config: dict[str, Any],
         progress_callback: ProgressCallback | None = None,
     ) -> Iterator[ContentItem]:
-        """Fetch games from an Epic Games Store library.
-
-        Args:
-            config: Must contain 'refresh_token'.
-            progress_callback: Optional callback for progress updates.
-
-        Yields:
-            ContentItem for each base game in the library.
-
-        Raises:
-            SourceError: If the Epic Games API returns an error.
-        """
         try:
             yield from _fetch_epic_games(
                 refresh_token=config.get("refresh_token", "").strip(),
@@ -297,32 +201,14 @@ class EpicGamesPlugin(SourcePlugin):
             raise SourceError(self.name, str(error)) from error
 
 
-# ---------------------------------------------------------------------------
-# Internal fetch implementation
-# ---------------------------------------------------------------------------
-
-
 def _fetch_epic_games(
     refresh_token: str,
     progress_callback: ProgressCallback | None = None,
     on_credential_rotated: CredentialUpdateCallback | None = None,
 ) -> Iterator[ContentItem]:
-    """Fetch and parse Epic Games Store library.
-
-    Args:
-        refresh_token: Epic Games OAuth refresh token.
-        progress_callback: Optional callback(current, total, message).
-        on_credential_rotated: Optional callback(key, value) called when the
-            refresh token is rotated by the OAuth server.
-
-    Yields:
-        ContentItem objects for each base game.
-    """
-    # Phase 1: Authenticate
     logger.info("Authenticating with Epic Games Store...")
     api = authenticate(refresh_token)
 
-    # Persist rotated refresh token if it changed
     user_data = getattr(api, "user", None)
     new_refresh_token = (
         user_data.get("refresh_token") if isinstance(user_data, dict) else None
@@ -332,7 +218,6 @@ def _fetch_epic_games(
             on_credential_rotated("refresh_token", new_refresh_token)
             logger.info("Epic Games refresh token rotated and persisted")
 
-    # Phase 2: Fetch all library records
     logger.info("Fetching Epic Games library...")
     library_records = get_library_items(api)
     logger.info("Found %d items in Epic Games library", len(library_records))
@@ -340,7 +225,6 @@ def _fetch_epic_games(
     if progress_callback:
         progress_callback(0, len(library_records), "Fetching library...")
 
-    # Phase 3: Process each record
     count = 0
     for index, record in enumerate(library_records):
         namespace = record.get("namespace", "")
@@ -351,7 +235,6 @@ def _fetch_epic_games(
         if namespace == "ue":
             continue
 
-        # Skip private sandbox items
         if record.get("sandboxType") == "PRIVATE":
             continue
 
@@ -359,7 +242,6 @@ def _fetch_epic_games(
         if app_name == "1":
             continue
 
-        # Fetch detailed metadata
         try:
             game_metadata = get_game_metadata(api, namespace, catalog_item_id)
         except EpicGamesAPIError:
@@ -378,16 +260,13 @@ def _fetch_epic_games(
             )
             continue
 
-        # Skip DLC and mods
         if not is_base_game(game_metadata):
             continue
 
-        # Extract title
         title = (game_metadata.get("title") or "").strip()
         if not title:
             continue
 
-        # Build metadata
         metadata = extract_metadata_fields(game_metadata, record)
 
         log_progress(logger, "Epic Games library", index + 1, len(library_records))

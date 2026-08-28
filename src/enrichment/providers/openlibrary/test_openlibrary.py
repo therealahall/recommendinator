@@ -1,5 +1,3 @@
-"""Tests for the OpenLibrary enrichment provider."""
-
 import logging
 from unittest.mock import MagicMock, patch
 
@@ -14,17 +12,13 @@ from src.models.content import ConsumptionStatus, ContentItem, ContentType
 
 
 class TestCleanTitleForSearch:
-    """Tests for title cleaning before search."""
-
     def test_removes_series_with_comma(self) -> None:
-        """Test removal of series info with comma format."""
         assert (
             clean_title_for_search("For We Are Many (Bobiverse, #2)")
             == "For We Are Many"
         )
 
     def test_handles_parentheses_without_series_number(self) -> None:
-        """Test that parentheses without series numbers are preserved."""
         assert (
             clean_title_for_search("The Stand (Uncut Edition)")
             == "The Stand (Uncut Edition)"
@@ -32,15 +26,11 @@ class TestCleanTitleForSearch:
 
 
 class TestOpenLibraryProviderISBNLookup:
-    """Tests for ISBN lookup."""
-
     @pytest.fixture
     def provider(self) -> OpenLibraryProvider:
-        """Create provider instance."""
         return OpenLibraryProvider()
 
     def test_isbn_lookup_success(self, provider: OpenLibraryProvider) -> None:
-        """Test successful ISBN lookup."""
         item = ContentItem(
             id="book1",
             title="1984",
@@ -89,7 +79,6 @@ class TestOpenLibraryProviderISBNLookup:
         assert result.match_quality == "high"
 
     def test_isbn_not_found(self, provider: OpenLibraryProvider) -> None:
-        """Test ISBN lookup when not found."""
         item = ContentItem(
             id="book1",
             title="Unknown Book",
@@ -103,12 +92,11 @@ class TestOpenLibraryProviderISBNLookup:
         with patch(
             "src.enrichment.providers.openlibrary.openlibrary.requests.get"
         ) as mock_get:
-            # ISBN lookup returns 404, then search returns empty
             mock_get.side_effect = [
-                MagicMock(spec=requests.Response, status_code=404),  # ISBN lookup
+                MagicMock(spec=requests.Response, status_code=404),
                 MagicMock(
                     spec=requests.Response, status_code=200, json=lambda: mock_search
-                ),  # Search
+                ),
             ]
 
             result = provider.enrich(item, {})
@@ -118,16 +106,12 @@ class TestOpenLibraryProviderISBNLookup:
 
 
 class TestOpenLibraryProviderSearch:
-    """Tests for title/author search."""
-
     @pytest.fixture
     def provider(self) -> OpenLibraryProvider:
-        """Create provider instance."""
         return OpenLibraryProvider()
 
     @pytest.fixture
     def book_item(self) -> ContentItem:
-        """Create sample book item."""
         return ContentItem(
             id="book1",
             title="Pride and Prejudice",
@@ -139,7 +123,6 @@ class TestOpenLibraryProviderSearch:
     def test_search_with_author(
         self, provider: OpenLibraryProvider, book_item: ContentItem
     ) -> None:
-        """Test search with title and author."""
         mock_search = {
             "docs": [
                 {
@@ -177,7 +160,6 @@ class TestOpenLibraryProviderSearch:
         assert "Romance" in result.genres
 
     def test_search_fallback_to_title_only(self, provider: OpenLibraryProvider) -> None:
-        """Test that search falls back to title-only when author search fails."""
         item = ContentItem(
             id="book1",
             title="Some Book",
@@ -186,7 +168,6 @@ class TestOpenLibraryProviderSearch:
             status=ConsumptionStatus.UNREAD,
         )
 
-        # First search with author returns empty, second without author finds it
         mock_empty = {"docs": []}
         mock_found = {
             "docs": [
@@ -224,10 +205,7 @@ class TestOpenLibraryProviderSearch:
 
 
 class TestOpenLibraryProviderSubjectFiltering:
-    """Tests for subject/genre filtering."""
-
     def test_filter_subjects_genre_keywords(self) -> None:
-        """Test that genre keywords are kept."""
         provider = OpenLibraryProvider()
         subjects = [
             "Fiction",
@@ -245,22 +223,17 @@ class TestOpenLibraryProviderSubjectFiltering:
         assert len(filtered) <= 10
 
     def test_filter_subjects_deduplication(self) -> None:
-        """Test that duplicate subjects are removed."""
         provider = OpenLibraryProvider()
         subjects = ["Fiction", "fiction", "FICTION", "Mystery"]
 
         filtered = provider._filter_subjects(subjects)
 
-        # Should only have one "Fiction" variant
         fiction_count = sum(1 for s in filtered if s.lower() == "fiction")
         assert fiction_count == 1
 
 
 class TestOpenLibraryProviderUnsupportedTypes:
-    """Tests for handling unsupported content types."""
-
     def test_enrich_movie_returns_none(self) -> None:
-        """Test that enriching a movie returns None."""
         provider = OpenLibraryProvider()
         item = ContentItem(
             id="movie1",
@@ -274,12 +247,6 @@ class TestOpenLibraryProviderUnsupportedTypes:
 
 
 class TestSearchTitleCannotForgeALogLineRegression:
-    """Reported: the search log writes ``item.title`` unescaped.
-
-    A title restricts no characters and the file formatter is single-line, so
-    a newline writes its own entry (CWE-117). Fix: ``log_search_title``.
-    """
-
     _FORGED = "Real Book\nWARNING  | forged | line (Bobiverse, #2)"
 
     def test_a_newline_in_a_title_is_escaped_before_the_search_log(
@@ -311,12 +278,6 @@ class TestSearchTitleCannotForgeALogLineRegression:
 
 
 class TestIsbnLookupRendersItsFailureThroughTheScrubberRegression:
-    """Reported: ``docs/SECURITY.md`` points here for OpenLibrary's
-    ``scrub_request_error`` claim; nothing held it. Root cause: the transport
-    error above carries no status, so ``exception_for_log`` clears the same
-    assertions. Fix: an ``HTTPError``, where the two renderers differ.
-    """
-
     _URL = "https://openlibrary.org/isbn/9780441013593.json"
 
     def test_an_http_failure_reaches_the_log_as_a_status_alone(

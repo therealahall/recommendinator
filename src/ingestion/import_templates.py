@@ -1,6 +1,4 @@
-"""The blank files an operator fills in and uploads back.
-
-Not under ``importers/``: every module there is proved to touch no filesystem,
+"""Not under ``importers/``: every module there is proved to touch no filesystem,
 and these are files on disk.
 """
 
@@ -18,13 +16,11 @@ TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
 
 
 class TemplatesUnavailable(Exception):
-    """The templates that ship with the application are not where they ship to."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class ImportTemplate:
-    """One blank file: the format that parses it, and the content type it holds."""
-
     importer: str
     content_type: str
     filename: str
@@ -73,7 +69,6 @@ def available_templates() -> list[ImportTemplate]:
 
 
 def find_template(importer: str, content_type: str) -> ImportTemplate | None:
-    """The template for that pair, or None where the install ships no such file."""
     directory = _directory()
     template = _TEMPLATES.get((importer, content_type))
     if template is None or not (directory / template.filename).is_file():

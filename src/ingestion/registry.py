@@ -1,5 +1,3 @@
-"""Plugin registry for discovering and managing source plugins."""
-
 from __future__ import annotations
 
 import importlib
@@ -24,45 +22,15 @@ _registry_lock = threading.Lock()
 
 
 class PluginRegistry:
-    """Registry for source plugins.
-
-    Discovers and manages plugins from:
-    1. Built-in plugins in src/ingestion/sources/
-    2. Private plugins in private/plugins/ (if exists)
-
-    Uses singleton pattern - get instance via get_registry() or
-    PluginRegistry.get_instance().
-
-    Example usage:
-        registry = get_registry()
-        registry.discover_plugins()
-
-        # Get a specific plugin
-        plugin = registry.get_plugin("goodreads_rss")
-
-        # List all available plugins
-        for name, plugin in registry.get_all_plugins().items():
-            print(f"{name}: {plugin.display_name}")
-    """
-
     _instance: PluginRegistry | None = None
 
     def __init__(self) -> None:
-        """Initialize empty registry.
-
-        Use get_instance() or get_registry() instead of direct instantiation.
-        """
         self._plugins: dict[str, SourcePlugin] = {}
         self._import_errors: dict[str, str] = {}
         self._discovered = False
 
     @classmethod
     def get_instance(cls) -> PluginRegistry:
-        """Get singleton registry instance.
-
-        Returns:
-            The global PluginRegistry instance
-        """
         with _registry_lock:
             if cls._instance is None:
                 cls._instance = PluginRegistry()
@@ -70,30 +38,13 @@ class PluginRegistry:
 
     @classmethod
     def reset_instance(cls) -> None:
-        """Reset the singleton instance.
-
-        Primarily used for testing to ensure clean state.
-        """
         cls._instance = None
 
     def discover_plugins(self, force: bool = False) -> None:
-        """Discover and register all available plugins.
-
-        Scans built-in and private plugin directories for SourcePlugin
-        subclasses and registers them. A pass accumulates into a registry of its
-        own and swaps the finished map in, so ``self._plugins`` never holds a
-        half-built one.
-
-        The scan is deliberately not held under ``_registry_lock``: importing a
+        """The scan is deliberately not held under ``_registry_lock``: importing a
         module and constructing a plugin both run arbitrary code from
         ``private/plugins/``, and a plugin reaching back into ``get_registry()``
-        would block on a lock its own caller holds, wedging the process with no
-        exception to catch. Such a plugin now gets its registry back rather than
-        blocking. The cost is that two cold passes each do the work; both
-        publish a complete map and the later swap wins.
-
-        Args:
-            force: If True, re-discover even if already done
+        would block on a lock its own caller holds.
         """
         with _registry_lock:
             if self._discovered and not force:
@@ -119,16 +70,9 @@ class PluginRegistry:
             )
 
     def _record_import_failure(self, module_name: str, error: BaseException) -> None:
-        """Retain what the catch used to drop.
-
-        A plugin whose module raised is otherwise indistinguishable from one
-        that was never installed, so both interfaces blamed the operator's
-        config for a stale container.
-        """
         self._import_errors[module_name] = f"{type(error).__name__}: {error}"
 
     def _discover_builtin_plugins(self) -> None:
-        """Discover built-in plugins from src/ingestion/sources/."""
         try:
             import src.ingestion.sources as sources_package
 
@@ -160,11 +104,8 @@ class PluginRegistry:
             )
 
     def _discover_private_plugins(self) -> None:
-        """Discover private plugins from private/plugins/.
-
-        The enrichment registry scans this directory too, so a failure names the
-        module and this scan rather than a source plugin: it may have held a
-        provider.
+        """The enrichment registry scans this directory too, so a failure names the
+        module and this scan rather than a source plugin: it may have held a provider.
         """
         project_root = Path(__file__).parent.parent.parent
 
@@ -184,20 +125,12 @@ class PluginRegistry:
     def _register_plugins_from_module(
         self, module: Any, module_name: str, origin: str
     ) -> None:
-        """Register all SourcePlugin subclasses from a module.
-
-        Args:
-            module: Imported module to scan
-            module_name: The module's own name, which keys a load failure
-            origin: Where it was found ("builtin" or "private")
-        """
         for attr_name in dir(module):
             if attr_name.startswith("_"):
                 continue
 
             attr = getattr(module, attr_name)
 
-            # Check if it's a concrete SourcePlugin subclass
             if (
                 isinstance(attr, type)
                 and issubclass(attr, SourcePlugin)
@@ -223,14 +156,6 @@ class PluginRegistry:
                     )
 
     def register(self, plugin: SourcePlugin) -> None:
-        """Register a plugin instance.
-
-        Args:
-            plugin: Plugin instance to register
-
-        Raises:
-            ValueError: If plugin with same name already registered
-        """
         if plugin.name in self._plugins:
             raise ValueError(f"Plugin '{plugin.name}' already registered")
 
@@ -238,48 +163,17 @@ class PluginRegistry:
         logger.debug("Registered plugin: %s (%s)", plugin.name, plugin.display_name)
 
     def get_plugin(self, name: str) -> SourcePlugin | None:
-        """Get a plugin by name.
-
-        Triggers discovery if not already done.
-
-        Args:
-            name: Plugin name
-
-        Returns:
-            Plugin instance or None if not found
-        """
         self.discover_plugins()
         return self._plugins.get(name)
 
     def get_all_plugins(self) -> dict[str, SourcePlugin]:
-        """Get all registered plugins.
-
-        Triggers discovery if not already done.
-
-        Returns:
-            Dict mapping plugin names to instances
-        """
         self.discover_plugins()
         return dict(self._plugins)
 
     def get_import_errors(self) -> dict[str, str]:
-        """Every module the last pass could not load, mapped to why.
-
-        Triggers discovery if not already done.
-
-        Returns:
-            Dict mapping module name to the exception that lost it
-        """
         self.discover_plugins()
         return dict(self._import_errors)
 
 
 def get_registry() -> PluginRegistry:
-    """Get the global plugin registry.
-
-    Convenience function for accessing the singleton instance.
-
-    Returns:
-        The global PluginRegistry instance
-    """
     return PluginRegistry.get_instance()

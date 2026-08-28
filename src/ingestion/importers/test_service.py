@@ -1,5 +1,3 @@
-"""Tests for the shared import service."""
-
 from __future__ import annotations
 
 import json
@@ -58,9 +56,6 @@ def test_an_import_saves_the_rows_that_parsed_and_names_the_line_it_skipped(
 def test_both_kinds_of_malformed_line_are_named_and_the_file_still_imports(
     storage: StorageManager,
 ) -> None:
-    """The short line used to raise on ``None.strip()`` and take the import
-    down; the long one shifted every cell a column left and imported silently.
-    """
     columns = "title,author,isbn,pages,year_published,genre,rating,status,review"
     rows = [f"Book {n},Author {n},978{n},300,1990,sf,4,read,Fine" for n in range(1, 13)]
     rows[5] = "Short Book,Author S,9781"
@@ -133,8 +128,6 @@ def test_importing_the_same_file_twice_reports_unchanged_rather_than_added(
 def test_a_re_import_matches_on_the_id_in_the_file_rather_than_the_title(
     storage: StorageManager,
 ) -> None:
-    """An importer names a source, so the ids its rows carry are recorded like
-    a sync's. A book retitled upstream would otherwise import twice."""
     header = "Title,Author,Book Id\n"
     import_file(
         storage, 1, header + "Dune,Frank Herbert,44767458\n", GoodreadsCsvImporter()
@@ -201,13 +194,6 @@ def test_a_format_that_owns_its_content_type_reports_it_unasked(
 
 
 class TestARefusedValueCostsOneEntry:
-    """A value no text column can hold fails its own entry, not the file.
-
-    The JSON importer forwards whatever the file gives for ``isbn``, so
-    storage can be handed an object. ``to_text`` refuses it rather than
-    storing a repr.
-    """
-
     def test_the_rest_of_the_file_still_imports(
         self, storage: StorageManager, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -246,12 +232,7 @@ class TestARefusedValueCostsOneEntry:
 
 
 class TestUserOwnedFieldsSurviveAReimport:
-    """Regression: a re-import un-ignored the items the user had ignored.
-
-    Cause: the importers called ``parse_boolean_field`` on a missing key,
-    which returns False, so every item carried an ``ignored=False`` storage
-    wrote over the user's flag.
-    """
+    """Regression: a re-import un-ignored the items the user had ignored."""
 
     def _only_item(self, storage: StorageManager) -> ContentItem:
         items = storage.get_content_items(user_id=1)
@@ -370,11 +351,6 @@ class TestARestoreLandsOnTheShowItNames:
 def test_enrichment_is_queued_only_when_the_caller_opens_the_gate(
     storage: StorageManager, mark_for_enrichment: bool
 ) -> None:
-    """The gate is ``enrichment.auto_enrich_on_sync``, resolved by the caller.
-
-    The queue row is what the gate leaves behind: ``items_needing`` counts an
-    untracked item as queued too, so it reads the same either way.
-    """
     import_file(
         storage,
         1,
