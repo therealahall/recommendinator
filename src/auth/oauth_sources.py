@@ -1,9 +1,3 @@
-"""The two questions an OAuth route asks about a source id.
-
-Which plugin runs it, and whether a token under it may be revoked. Written out
-per provider the copies drifted, one reading back whatever row the id named.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -29,20 +23,13 @@ def may_revoke(
     storage: StorageManager | None,
     user_id: int = 1,
 ) -> bool:
-    """Whether *plugin_name* may delete *source_id*'s stored token.
-
-    Only a source running another plugin puts an id out of reach: that row is
-    what its sync reads. Refusing an id no source claims would leave the
-    credential undeletable.
-    """
+    """Refusing an id no source claims would leave the credential undeletable."""
     owner = resolve_source_plugin(source_id, config, storage, user_id)
     return owner is None or owner.name == plugin_name
 
 
 @dataclass(frozen=True)
 class OAuthSourceBinding:
-    """How one OAuth plugin's sources are resolved and their tokens stored."""
-
     plugin_name: str
     display_name: str
     error_class: type[Exception]
@@ -54,9 +41,7 @@ class OAuthSourceBinding:
         source_id: str,
         user_id: int,
     ) -> dict[str, Any] | None:
-        """*source_id*'s sync-ready config, unless it runs another plugin.
-
-        Reads the database as well as ``inputs``, so a source added from the
+        """Reads the database as well as ``inputs``, so a source added from the
         Data tab is found too.
         """
         resolved = resolve_input_for_plugin(
@@ -71,7 +56,6 @@ class OAuthSourceBinding:
         source_id: str,
         user_id: int,
     ) -> bool:
-        """Whether *source_id* is an enabled source on this plugin."""
         return self.resolve(config, storage, source_id, user_id) is not None
 
     def has_token(
@@ -81,12 +65,7 @@ class OAuthSourceBinding:
         source_id: str,
         user_id: int,
     ) -> bool:
-        """Whether *source_id* holds a token this plugin could revoke.
-
-        The stored row, not the resolved value: disconnect deletes rows.
-        Startup moves a file-held token into one, unless the source already had
-        a row — then it is discarded.
-        """
+        """The stored row, not the resolved value: disconnect deletes rows."""
         return (
             storage is not None
             and may_revoke(self.plugin_name, source_id, config, storage, user_id)
@@ -100,7 +79,6 @@ class OAuthSourceBinding:
         source_id: str,
         user_id: int,
     ) -> None:
-        """Encrypt and store the refresh token under *source_id*."""
         try:
             storage.credentials.save(
                 user_id, source_id, REFRESH_TOKEN_KEY, refresh_token

@@ -1,16 +1,6 @@
-"""One declaration of the fields each content type stores.
-
-:data:`DETAIL_FIELDS` is the single place a detail-table field is described.
-The joined SELECT and the detail-table read and write paths in
-``src/storage/sqlite_db.py`` and the template column tables in
-``src/models/templates.py``, which the import plugins and
-``src/utils/export.py`` read, all derive their column lists from it, so adding
-or renaming a field is one edit rather than five.
-
-The ``CREATE TABLE`` statements in ``src/storage/schema.py`` are deliberately
+"""The ``CREATE TABLE`` statements in ``src/storage/schema.py`` are deliberately
 *not* generated from this declaration — generating them would put the
-migration path at risk for no gain. ``tests/test_detail_fields.py`` reads
-``PRAGMA table_info`` instead and fails when the two disagree.
+migration path at risk for no gain.
 """
 
 from __future__ import annotations
@@ -25,38 +15,18 @@ from src.models.content import ContentType
 
 
 def unchanged(value: Any) -> Any:
-    """Return the value as it stands, for columns needing no conversion."""
     return value
 
 
 #: What a text column can hold: a JSON scalar, whose ``str()`` is the value
-#: itself rather than a Python repr. A bool is an int here. Named as what is
-#: allowed rather than what is not, because a plugin builds its metadata by
-#: hand and can reach for a container no JSON document produces — a tuple, a
-#: set, bytes — and a list of names to refuse would let each of those through.
+#: itself rather than a Python repr. A bool is an int here.
 _TEXT_SCALARS: tuple[type, ...] = (str, int, float)
 
 
 def to_text(value: Any) -> str | None:
-    """Flatten a metadata value into the one string its column holds.
-
-    A source hands over a list where the column takes a single name — two
-    studios, several directors — so the names are joined into one. An entry
-    naming nothing is dropped before the join: a None would read as the text
-    "None", and an empty string as a comma in front of the name beside it.
-
-    A value naming nothing — an empty string as much as an empty list — is
-    None rather than "". Every text column is fill-only in
-    ``SQLiteDB._save_detail_table``, which tests ``is not None``, so an empty
-    string written once would lock the column against every later sync.
-
-    Raises:
-        TypeError: For anything but a scalar in :data:`_TEXT_SCALARS`, at the
-            top level or inside a list. Its ``str()`` is a Python repr, and a
-            text column is neither mergeable nor monotonic, so the repr would
-            be written once and never corrected by anything. Failing the write
-            is the only outcome a caller can act on.
-            :meth:`DetailField.store` adds the field it came from.
+    """Every text column is fill-only in ``SQLiteDB._save_detail_table``, which
+    tests ``is not None``, so an empty string written once would lock the column
+    against every later sync.
     """
     if value is None:
         return None
@@ -69,13 +39,6 @@ def to_text(value: Any) -> str | None:
 
 
 def text_names(value: Any) -> list[str]:
-    """Keep the names in *value* that a text column can hold.
-
-    An entry naming itself in an object — ``{"name": "CD Projekt Red"}`` — is
-    read for that name, and anything with no text form is dropped rather than
-    stringified into a repr. A caller reducing a shape it knows uses this;
-    :func:`to_text` stays the backstop for a shape nobody reduced.
-    """
     entries = value if isinstance(value, list) else [value]
     names = [
         entry.get("name") if isinstance(entry, Mapping) else entry for entry in entries
@@ -84,7 +47,6 @@ def text_names(value: Any) -> list[str]:
 
 
 def to_int(value: Any) -> int | None:
-    """Coerce a metadata value to an int, or None when it is not a number."""
     if value is None or isinstance(value, int):
         return value
     try:
@@ -94,13 +56,8 @@ def to_int(value: Any) -> int | None:
 
 
 def to_json_array(value: Any) -> str | None:
-    """Serialize a value as the JSON array its column holds.
-
-    A bare string is wrapped: ``"Drama"`` alone reads back as a string
-    nothing parses. One starting with ``[`` passes through.
-
-    Raises:
-        TypeError: For anything but a scalar, as :func:`to_text` does.
+    """A bare string is wrapped: ``"Drama"`` alone reads back as a string
+    nothing parses.
     """
     if value is None:
         return None
@@ -114,9 +71,7 @@ def to_json_array(value: Any) -> str | None:
 
 
 def parse_json_array(value: Any) -> list[str] | None:
-    """Read a JSON array column back as the names it holds.
-
-    A row filled before :func:`to_json_array` refused an object still holds
+    """A row filled before :func:`to_json_array` refused an object still holds
     one, and every reader of the metadata key treats an element as a name.
     """
     if value is None:
@@ -130,14 +85,6 @@ def parse_json_array(value: Any) -> list[str] | None:
 
 
 class FieldKind(Enum):
-    """What a field holds, and so how it crosses the column boundary.
-
-    ``CREATOR`` is the type's creator — author, director, creators,
-    developer — which crosses as ``ContentItem.author`` rather than a
-    metadata key. ``FREE_FORM`` has no column of its own and lives in the
-    detail row's metadata blob.
-    """
-
     CREATOR = "creator"
     TEXT = "text"
     INTEGER = "integer"
@@ -147,8 +94,6 @@ class FieldKind(Enum):
 
 @dataclass(frozen=True)
 class FieldCodec:
-    """How one kind of value is written to and read back from its column."""
-
     store: Callable[[Any], Any]
     load: Callable[[Any], Any]
 
@@ -163,20 +108,6 @@ _CODECS: dict[FieldKind, FieldCodec] = {
 
 @dataclass(frozen=True)
 class DetailField:
-    """One value a content type stores.
-
-    Args:
-        metadata_key: Key ``ContentItem.metadata`` carries the value under.
-        kind: What the value is, which selects its codec.
-        column: Detail-table column, or None when the metadata blob holds it.
-        select_alias: Name the column takes in the joined SELECT, where the
-            bare column name would collide with another detail table's.
-        aliases: Further metadata keys accepted on write, because the plugins
-            do not all agree on the spelling ("genre" for "genres").
-        template_column: Column the CSV/JSON templates and the export call
-            this field, when they carry it at all.
-    """
-
     metadata_key: str
     kind: FieldKind
     column: str | None = None
@@ -185,7 +116,6 @@ class DetailField:
     template_column: str | None = None
 
     def __post_init__(self) -> None:
-        """Reject a field whose kind and column disagree, at import time."""
         if self.column is None:
             if self.kind is not FieldKind.FREE_FORM:
                 raise ValueError(
@@ -202,24 +132,15 @@ class DetailField:
 
     @property
     def codec(self) -> FieldCodec:
-        """The codec for this field's kind."""
         return _CODECS[self.kind]
 
     @property
     def metadata_keys(self) -> tuple[str, ...]:
-        """The canonical key first, then the aliases accepted for it."""
         return (self.metadata_key, *self.aliases)
 
     def store(self, value: Any) -> Any:
-        """Convert *value* for this field's column, naming the field if it cannot.
-
-        A codec sees a value and no field, so its refusal names a type and
-        nothing to act on: every CREATOR and TEXT column shares
-        :func:`to_text`. The metadata key is all that is added — a provider's
-        value must not reach an exception message, a log line or an API body.
-
-        Raises:
-            TypeError: What the codec raised, naming this field's key.
+        """The metadata key is all that is added — a provider's value must not reach an
+        exception message, a log line or an API body.
         """
         try:
             return self.codec.store(value)
@@ -227,11 +148,6 @@ class DetailField:
             raise TypeError(f"{self.metadata_key!r}: {error}") from error
 
     def value_from(self, metadata: Mapping[str, Any]) -> Any:
-        """Take this field's value out of an item's metadata.
-
-        An alias is consulted only when the key before it says nothing, so an
-        item carrying both spellings keeps the canonical one.
-        """
         value = None
         for key in self.metadata_keys:
             value = metadata.get(key)
@@ -242,16 +158,9 @@ class DetailField:
 
 @dataclass(frozen=True)
 class ContentTypeFields:
-    """Everything one content type stores, in template order.
-
-    Args:
-        table: Detail table holding the columns.
-        table_alias: Alias the table takes in the joined SELECT.
-        metadata_alias: Alias that table's free-form blob column takes there.
-        fields: The fields, ordered as the templates and export list them.
-            The order is presentational: the importer and the exporter both
-            key by column name, so reordering changes how an exported file
-            reads and nothing about what it means.
+    """The order is presentational: the importer and the exporter both
+    key by column name, so reordering changes how an exported file
+    reads and nothing about what it means.
     """
 
     table: str
@@ -260,13 +169,6 @@ class ContentTypeFields:
     fields: tuple[DetailField, ...]
 
     def __post_init__(self) -> None:
-        """Reject a type not naming its creator exactly once, at import time.
-
-        Import and export both take the creator off ``ContentItem.author``
-        and find its template column here, so a type declaring none would
-        export a column nothing fills, and one declaring two would export
-        whichever field came first.
-        """
         columns = self._creator_columns()
         if len(columns) != 1:
             raise ValueError(
@@ -275,7 +177,6 @@ class ContentTypeFields:
             )
 
     def _creator_columns(self) -> list[str]:
-        """Every template column this type marks as carrying its creator."""
         return [
             field.template_column
             for field in self.fields
@@ -284,23 +185,18 @@ class ContentTypeFields:
 
     @property
     def creator_column(self) -> str:
-        """Template column carrying the creator: "director", "creator"...
-
-        Its value is ``ContentItem.author`` rather than a metadata key, so
+        """Its value is ``ContentItem.author`` rather than a metadata key, so
         import and export both take it off the item's author attribute.
         """
         return self._creator_columns()[0]
 
     @property
     def columns(self) -> tuple[str, ...]:
-        """The detail-table columns, in declaration order."""
         return tuple(field.column for field in self.fields if field.column is not None)
 
     @property
     def known_keys(self) -> frozenset[str]:
-        """Metadata keys the columns consume, aliases included.
-
-        Storage drops these from the leftover metadata blob, so a value is
+        """Storage drops these from the leftover metadata blob, so a value is
         never both in its column and duplicated into the JSON beside it.
         """
         return frozenset(
@@ -312,12 +208,6 @@ class ContentTypeFields:
 
     @property
     def template_columns(self) -> dict[str, str]:
-        """Template column to the metadata key the library stores it under.
-
-        The two are not always the same word — a template says "year", the
-        library stores "release_year" — and import and export both read this,
-        so a column is written and read back under one name.
-        """
         return {
             field.template_column: field.metadata_key
             for field in self.fields
@@ -556,9 +446,7 @@ RELEASE_YEAR_FIELDS: dict[str, DetailField] = {
 
 
 def _assert_select_aliases_are_unique() -> None:
-    """Fail at import when two detail tables would share a SELECT alias.
-
-    The joined read hands every detail column to one ``sqlite3.Row``, which
+    """The joined read hands every detail column to one ``sqlite3.Row``, which
     resolves a repeated name to whichever came first, so a collision reads one
     table's value as another's rather than raising.
     """
@@ -575,13 +463,9 @@ def _assert_select_aliases_are_unique() -> None:
 
 
 def _assert_every_content_type_is_declared() -> None:
-    """Fail at import when a content type has no declaration, or vice versa.
-
-    Callers index this mapping by content type and expect a hit — the CLI's
-    creator label and the export column order both do. Without this an added
-    ``ContentType`` raises ``KeyError`` wherever it is first read, which is
-    exactly the write-but-never-read class of failure the declaration exists
-    to stop.
+    """Without this an added ``ContentType`` raises ``KeyError`` wherever it is
+    first read, which is exactly the write-but-never-read class of failure the
+    declaration exists to stop.
     """
     declared = set(DETAIL_FIELDS)
     known = {content_type.value for content_type in ContentType}

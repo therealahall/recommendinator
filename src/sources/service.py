@@ -1,9 +1,5 @@
-"""Dynamic sync source discovery from config.
-
-Sources are discovered from PluginRegistry - each entry in config['inputs']
-must have a ``plugin`` field identifying the plugin type. The config key is
-the user-defined source identifier, allowing multiple instances of the same
-plugin (e.g. two roms sources for two libraries).
+"""The config key is the user-defined source identifier, allowing multiple
+instances of the same plugin (e.g. two roms sources for two libraries).
 """
 
 from __future__ import annotations
@@ -54,17 +50,13 @@ SourceConfigErrorKind = Literal[
 
 @dataclass(frozen=True)
 class PluginImportFailure:
-    """A plugin module that did not load, and the exception that lost it."""
-
     module: str
     reason: str
 
 
 @dataclass(frozen=True)
 class PluginNotLoaded:
-    """A configured plugin is missing, and every module this build lost.
-
-    Nothing ties a failure to *plugin*: a module that raised never declared
+    """Nothing ties a failure to *plugin*: a module that raised never declared
     the plugin name it would have provided.
     """
 
@@ -74,13 +66,7 @@ class PluginNotLoaded:
 
 @dataclass
 class SyncSourceInfo:
-    """Info about a configured sync source.
-
-    ``enabled`` follows whichever side is authoritative, the DB row or YAML.
-    ``plugin_not_loaded`` is set when the plugin is missing: listed rather
-    than dropped, since vanishing hid the failure. ``resolve_inputs`` stays
-    the sync gate.
-    """
+    """``enabled`` follows whichever side is authoritative, the DB row or YAML."""
 
     id: str
     display_name: str
@@ -96,13 +82,8 @@ class SyncSourceInfo:
 
 @dataclass
 class ResolvedInput:
-    """A resolved input entry ready for sync.
-
-    Attributes:
-        source_id: User-defined name (the YAML key under ``inputs``).
-        plugin: The plugin instance that handles this source.
-        config: Config dict ready for ``plugin.fetch()`` / ``plugin.validate_config()``,
-            with ``_source_id`` injected and ``plugin``/``enabled`` keys stripped.
+    """Config dict ready for ``plugin.fetch()`` / ``plugin.validate_config()``,
+    with ``_source_id`` injected and ``plugin``/``enabled`` keys stripped.
     """
 
     source_id: str
@@ -112,12 +93,6 @@ class ResolvedInput:
 
 @dataclass
 class ConfiguredSource:
-    """What is configured under a source id, enabled or not.
-
-    Which plugin a source runs and whether it is enabled are separate
-    questions, and a caller asking one must not be handed the other.
-    """
-
     plugin: SourcePlugin
     enabled: bool
     fields: dict[str, Any]
@@ -136,11 +111,6 @@ def _declared_plugin_name(
 
 
 def _plugin_not_loaded(plugin_name: str | None) -> PluginNotLoaded | None:
-    """*plugin_name* is unregistered and this build lost modules — say which.
-
-    ``None`` when the plugin is there, or when nothing failed to import and
-    the name is simply wrong.
-    """
     if plugin_name is None:
         return None
     registry = get_registry()
@@ -159,7 +129,6 @@ def _plugin_not_loaded(plugin_name: str | None) -> PluginNotLoaded | None:
 
 
 def _failed_modules(not_loaded: PluginNotLoaded) -> str:
-    """Each lost module and its reason, one string, for a log or a message."""
     return "; ".join(
         f"{failure.module}: {failure.reason}" for failure in not_loaded.failures
     )
@@ -170,10 +139,6 @@ def _authoritative_source(
     db_row: SourceConfigDict | None,
     yaml_entry: Any,
 ) -> ConfiguredSource | None:
-    """The DB row for *source_id* once migrated, else its YAML ``inputs`` entry.
-
-    ``None`` when neither declares a plugin this build ships.
-    """
     plugin_name = _declared_plugin_name(db_row, yaml_entry)
     if plugin_name is None:
         # A DB row always carries a plugin, so only a YAML entry reaches here,
@@ -220,7 +185,6 @@ def _configured_source(
     storage: StorageManager | None,
     user_id: int,
 ) -> ConfiguredSource | None:
-    """``_authoritative_source`` for one id, reading the DB row it needs."""
     db_row = storage.sources.get(user_id, source_id) if storage is not None else None
     return _authoritative_source(
         source_id, db_row, (config or {}).get("inputs", {}).get(source_id)
@@ -232,33 +196,9 @@ def resolve_inputs(
     storage: StorageManager | None = None,
     user_id: int = 1,
 ) -> list[ResolvedInput]:
-    """Resolve inputs config into (source_id, plugin, config) entries.
-
-    Resolution combines two sources of truth:
-
-    * The ``inputs`` section of the YAML config.
-    * The ``source_configs`` table (when *storage* is provided), populated
-      when the user clicks "Migrate to DB" in the web UI for a given source.
-
-    For any source_id present in ``source_configs`` the database row is
+    """For any source_id present in ``source_configs`` the database row is
     authoritative — its plugin, config dict and enabled flag fully replace
-    the YAML entry. For source_ids only present in YAML, the YAML entry is
-    used as before. Sources may also exist only in the database (the YAML
-    entry can be deleted post-migration); they are still resolved.
-
-    Only enabled entries (per whichever side is authoritative) are returned.
-
-    When *storage* is provided, encrypted credentials from the
-    ``credentials`` table are merged on top of every plugin's resolved
-    config, overriding both YAML and DB-config values for sensitive fields.
-
-    Args:
-        config: Full application config (from load_config).
-        storage: Optional StorageManager for DB config + credential lookup.
-        user_id: User ID for credential lookup (default 1).
-
-    Returns:
-        List of ResolvedInput for each enabled, valid source, sorted by ID.
+    the YAML entry.
     """
     inputs_config = config.get("inputs", {})
 
@@ -316,9 +256,7 @@ def configured_source_plugins(
     storage: StorageManager,
     user_id: int,
 ) -> dict[str, str]:
-    """Map every configured source id to its plugin, disabled ones included.
-
-    A disabled source still owns items and still makes its plugin ambiguous,
+    """A disabled source still owns items and still makes its plugin ambiguous,
     so leaving it out would let a sibling claim its rows.
     """
     sources: dict[str, str] = {}
@@ -336,16 +274,11 @@ def configured_source_plugins(
 def _plugin_config_without_credentials(
     source_id: str, plugin: SourcePlugin, fields: dict[str, Any]
 ) -> dict[str, Any]:
-    """The plugin's own view of *fields*, with no stored secret layered on."""
     return type(plugin).transform_config({**fields, "_source_id": source_id})
 
 
 def redact_credentials(text: str, plugin: SourcePlugin, config: dict[str, Any]) -> str:
-    """Replace every secret in *config* wherever it appears verbatim in *text*.
-
-    A derived form (truncated, masked, encoded) still gets through. The rule
-    plugins are held to is the guarantee; this backstops the obvious breach.
-    """
+    """A derived form (truncated, masked, encoded) still gets through."""
     for field in plugin.get_config_schema():
         if not field.sensitive:
             continue
@@ -362,9 +295,7 @@ def assemble_plugin_config(
     storage: StorageManager | None,
     user_id: int = 1,
 ) -> dict[str, Any]:
-    """Build the config a sync validates and then fetches with.
-
-    Stored credentials go on last, overriding the field values, so validation
+    """Stored credentials go on last, overriding the field values, so validation
     judges the config the sync would really run.
     """
     assembled = _plugin_config_without_credentials(source_id, plugin, fields)
@@ -397,7 +328,6 @@ def schedule_state(
     plugin: SourcePlugin,
     latest_run: SyncRunDict | None,
 ) -> ScheduleState:
-    """Everything ``next_due`` asks about a source, for the listing and the tick."""
     return ScheduleState(
         interval=resolve_source_interval(row, plugin),
         last_finished_at=(
@@ -420,24 +350,8 @@ def get_available_sync_sources(
     storage: StorageManager | None = None,
     user_id: int = 1,
 ) -> list[SyncSourceInfo]:
-    """List every configured sync source, including disabled ones.
-
-    The UI uses this list to render the data accordions and visually
-    distinguishes disabled sources via the ``enabled`` flag. ``resolve_inputs``
-    is still the gate for sync execution — it continues to filter out
-    disabled and unknown-plugin entries.
-
-    Sources may exist in YAML, the database (post-migration), or both.
-    DB rows are authoritative when present; YAML provides the bootstrap.
-
-    Args:
-        config: Full application config (from load_config).
-        storage: Optional StorageManager for DB lookup.
-        user_id: User ID for DB lookup (default 1).
-
-    Returns:
-        Every known source as a ``SyncSourceInfo`` (with its current
-        ``enabled`` flag), sorted by ID.
+    """``resolve_inputs`` is still the gate for sync execution — it continues
+    to filter out disabled and unknown-plugin entries.
     """
     inputs_config = config.get("inputs", {})
 
@@ -508,7 +422,6 @@ def source_plugin_not_loaded(
     storage: StorageManager | None = None,
     user_id: int = 1,
 ) -> PluginNotLoaded | None:
-    """The missing plugin that makes *source_id* unusable, if that is why."""
     db_row = storage.sources.get(user_id, source_id) if storage is not None else None
     yaml_entry = (config or {}).get("inputs", {}).get(source_id)
     return _plugin_not_loaded(_declared_plugin_name(db_row, yaml_entry))
@@ -529,11 +442,8 @@ def resolve_input_for_plugin(
     storage: StorageManager | None = None,
     user_id: int = 1,
 ) -> ResolvedInput | None:
-    """The enabled source *source_id*, ``None`` unless it runs *plugin_name*.
-
-    A client-supplied id is a credential key: unchecked, a GOG exchange files
-    its token where Trakt reads one. Revocation asks ``may_revoke``, a disabled
-    source's token being the one to revoke.
+    """A client-supplied id is a credential key: unchecked, a GOG exchange files
+    its token where Trakt reads one.
     """
     source = _configured_source(source_id, config, storage, user_id)
     if source is None or source.plugin.name != plugin_name:
@@ -550,24 +460,8 @@ def resolve_input_for_plugin(
 
 
 class SourceConfigError(Exception):
-    """A user-recoverable per-source config error.
-
-    Carries a ``kind`` that callers map to an HTTP status / CLI exit code:
-
-    * ``not_found``       — source or field does not exist (404)
-    * ``not_migrated``    — operation requires the source to be migrated (404)
-    * ``invalid_field``   — payload references an unknown field (400)
-    * ``invalid_values``  — the plugin refused the values written (400).
-      The message names the offending field, or repeats a containment
-      refusal; it never carries the plugin's own words.
-    * ``not_sensitive``   — secret operation targeted a non-sensitive field (400)
-    * ``sensitive_in_config`` — bulk update attempted to set a secret (400)
-    * ``conflict``        — create attempted on an existing source id (409)
-    * ``invalid_id``      — source id violates the allowed character set (400)
-    * ``unknown_plugin``  — create / migrate referenced an unregistered plugin (400)
-    * ``credential_move`` — the write would point stored credentials at a
-      different host (400). The message names the fields involved, from the
-      schema alone.
+    """The message names the offending field, or repeats a containment
+    refusal; it never carries the plugin's own words.
     """
 
     def __init__(self, kind: SourceConfigErrorKind, message: str) -> None:
@@ -577,26 +471,13 @@ class SourceConfigError(Exception):
 
 
 def is_nonempty_secret_value(value: Any) -> TypeGuard[str]:
-    """Return True when *value* should count as a stored secret.
-
-    Sensitive fields are always strings on the wire. Any other type
-    (``False``, ``0``, ``None``) means "no secret set" — checking
-    ``str(value).strip()`` would otherwise mis-classify ``False`` as set
-    because ``str(False) == "False"``. Acts as a ``TypeGuard`` so callers
-    that pass the predicate get ``value`` narrowed to ``str``.
-    """
+    """Sensitive fields are always strings on the wire."""
     if not isinstance(value, str):
         return False
     return bool(value.strip())
 
 
 def field_type_name(field_type: type) -> str:
-    """Map a Python type used in ``ConfigField.field_type`` to a UI tag.
-
-    Falls back to ``"str"`` for unknown types and warns so a future
-    ``ConfigField(field_type=...)`` extension can't silently render as a
-    plain text input.
-    """
     if field_type is bool:
         return "bool"
     if field_type is int:
@@ -618,11 +499,7 @@ def resolve_source_plugin(
     storage: StorageManager | None,
     user_id: int = 1,
 ) -> SourcePlugin | None:
-    """Return the plugin instance for *source_id*, or ``None`` if unknown.
-
-    Reads the migrated DB row first (when storage is available), then falls
-    back to the YAML ``inputs`` entry. The enabled flag is not consulted.
-    """
+    """The enabled flag is not consulted."""
     source = _configured_source(source_id, config, storage, user_id)
     return source.plugin if source is not None else None
 
@@ -635,9 +512,7 @@ def _yaml_entry_for(source_id: str, config: dict[str, Any] | None) -> dict[str, 
 
 
 def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
-    """Return the source listing shape, matching ``SyncSourceResponse``.
-
-    Both CLI spellings of the listing (``source list`` and
+    """Both CLI spellings of the listing (``source list`` and
     ``update --source list``) serialise through here.
     """
     return [
@@ -667,10 +542,7 @@ def build_sources_view(sources: list[SyncSourceInfo]) -> list[dict[str, Any]]:
 
 
 def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
-    """Return the run-history shape, matching ``SyncRunResponse``.
-
-    The row id is dropped: nothing addresses a run on its own.
-    """
+    """The row id is dropped: nothing addresses a run on its own."""
     return [
         {
             "source_id": run["source_id"],
@@ -689,14 +561,6 @@ def build_runs_view(runs: list[SyncRunDict]) -> list[dict[str, Any]]:
 
 
 def build_schema_view(source_id: str, plugin: SourcePlugin) -> dict[str, Any]:
-    """Return the schema response shape for *plugin*.
-
-    Matches the ``SourceSchemaResponse`` Pydantic model exactly.
-
-    ``default`` is masked to ``None`` for sensitive fields so a future
-    plugin that mistakenly hard-codes a placeholder credential as the
-    default never serialises it onto the wire.
-    """
     return {
         "source_id": source_id,
         "plugin": plugin.name,
@@ -727,10 +591,7 @@ def build_config_view(
     storage: StorageManager | None,
     user_id: int = 1,
 ) -> dict[str, Any]:
-    """Return the current config response shape for *source_id*.
-
-    Matches the ``SourceConfigResponse`` Pydantic model exactly. Sensitive
-    field values are never included — only their presence in
+    """Sensitive field values are never included — only their presence in
     ``secret_status``.
     """
     schema = plugin.get_config_schema()
@@ -782,11 +643,6 @@ def _secret_names_with_a_stored_row(
     storage: StorageManager,
     user_id: int,
 ) -> list[str]:
-    """What ``secrets_migrated`` reports, asked of the rows.
-
-    Not what a call moved: startup empties the YAML entry first, so a source it
-    just encrypted would report none.
-    """
     return sorted(
         name
         for name in sensitive_names
@@ -801,15 +657,8 @@ def migrate_source(
     storage: StorageManager,
     user_id: int = 1,
 ) -> dict[str, Any]:
-    """Copy the YAML entry for *source_id* into the database (idempotent).
-
-    On first migration sensitive fields move into the encrypted credentials
-    table and the rest into ``source_configs``. The YAML entry is left in
-    place — once the DB row exists ``resolve_inputs`` treats it as
-    authoritative and ignores the YAML side. On a re-call (when a row
-    already exists) the function is a no-op and returns the current state.
-
-    Returns a dict matching ``SourceMigrationResponse``.
+    """The YAML entry is left in place — once the DB row exists
+    ``resolve_inputs`` treats it as authoritative and ignores the YAML side.
     """
     schema = plugin.get_config_schema()
     sensitive_names = [f.name for f in schema if f.sensitive]
@@ -886,11 +735,6 @@ def _fields_moving_the_credentials(
     stored: dict[str, Any],
     values: dict[str, Any],
 ) -> list[str]:
-    """The ``credential_bound`` fields *values* points at a different party.
-
-    An unset field falls back to the schema default, which is the host every
-    sync so far actually used.
-    """
     return sorted(
         key
         for key, value in values.items()
@@ -907,11 +751,7 @@ SOURCE_MISCONFIGURED_DETAIL = "Source is not properly configured — check its s
 
 
 def misconfigured_detail(plugin: SourcePlugin, errors: list[str]) -> str:
-    """Name the settings a refusal is about, not the plugin's own words.
-
-    The names come from the schema, so none of the plugin's text survives.
-    Prose naming no field gets the unqualified refusal.
-    """
+    """Name the settings a refusal is about, not the plugin's own words."""
     reason = " ".join(errors).lower()
     named = [
         field.name
@@ -968,7 +808,6 @@ def _log_refusal(
 
 
 def _changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
-    """The keys this write gave a new value, in a stable order."""
     return sorted(
         key for key in set(before) | set(after) if before.get(key) != after.get(key)
     )
@@ -977,7 +816,6 @@ def _changed_fields(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
 def _with_field_reverted(
     before: dict[str, Any], after: dict[str, Any], key: str
 ) -> dict[str, Any]:
-    """*after* as it would be had this write left *key* alone."""
     reverted = dict(after)
     if key in before:
         reverted[key] = before[key]
@@ -987,7 +825,6 @@ def _with_field_reverted(
 
 
 def _submitted_paths(value: Any) -> list[str]:
-    """The path strings in a ``reads_path`` field, which may hold a list."""
     if isinstance(value, str):
         return [value]
     if isinstance(value, list):
@@ -998,11 +835,7 @@ def _submitted_paths(value: Any) -> list[str]:
 def _refuse_paths_outside_the_allowed_roots(
     plugin: SourcePlugin, before: dict[str, Any], after: dict[str, Any]
 ) -> None:
-    """Refuse a containment breach here, before any plugin has spoken.
-
-    Containment reads no disk, so its reason repeats only what was submitted.
-    Past this point the caller gets a field name instead.
-    """
+    """Refuse a containment breach here, before any plugin has spoken."""
     schema = {field.name: field for field in plugin.get_config_schema()}
     for key in _changed_fields(before, after):
         field = schema.get(key)
@@ -1023,9 +856,7 @@ def _refuse_values_that_break_the_source(
     after: dict[str, Any],
     user_id: int,
 ) -> None:
-    """Raise ``invalid_values`` naming the field a validation error blames.
-
-    Only what this write broke: a source whose secret is not entered yet is
+    """Only what this write broke: a source whose secret is not entered yet is
     incomplete by design, and refusing to edit one would deadlock it.
     """
     _refuse_paths_outside_the_allowed_roots(plugin, before, after)
@@ -1093,14 +924,6 @@ def update_source_config_values(
     values: dict[str, Any],
     user_id: int = 1,
 ) -> None:
-    """Apply non-sensitive field updates to a migrated source.
-
-    Repointing a ``credential_bound`` field at another host is refused while
-    the source holds a secret, rather than clearing it.
-
-    Raises ``SourceConfigError`` — ``not_migrated``, ``invalid_field``,
-    ``invalid_values``, ``sensitive_in_config``, ``credential_move``.
-    """
     db_row = storage.sources.get(user_id, source_id)
     if db_row is None:
         raise SourceConfigError(
@@ -1140,10 +963,6 @@ def set_source_secret_value(
     value: str,
     user_id: int = 1,
 ) -> None:
-    """Encrypt and store a sensitive field's value.
-
-    Raises ``SourceConfigError`` if the field is unknown or non-sensitive.
-    """
     schema = {f.name: f for f in plugin.get_config_schema()}
     field = schema.get(key)
     if field is None:
@@ -1163,12 +982,6 @@ def clear_source_secret_value(
     key: str,
     user_id: int = 1,
 ) -> None:
-    """Delete the stored secret for a field (no-op if missing).
-
-    Raises ``SourceConfigError`` if *key* is not a sensitive field on the
-    plugin's schema, mirroring ``set_source_secret_value`` so the two
-    operations refuse the same garbage.
-    """
     schema = {f.name: f for f in plugin.get_config_schema()}
     field = schema.get(key)
     if field is None:
@@ -1184,10 +997,6 @@ def set_source_enabled_state(
     enabled: bool,
     user_id: int = 1,
 ) -> None:
-    """Toggle the enabled flag on an already-migrated source.
-
-    Raises ``SourceConfigError("not_migrated", …)`` if no DB row exists.
-    """
     updated = storage.sources.set_enabled(user_id, source_id, enabled)
     if not updated:
         raise SourceConfigError(
@@ -1202,10 +1011,6 @@ def set_source_schedule(
     interval: str,
     user_id: int = 1,
 ) -> None:
-    """Store a ``SYNC_INTERVAL_KEYS`` cadence on an already-migrated source.
-
-    Raises ``SourceConfigError("not_migrated", …)`` if no DB row exists.
-    """
     if not storage.sources.set_schedule(user_id, source_id, interval):
         raise SourceConfigError(
             "not_migrated",
@@ -1227,21 +1032,13 @@ SOURCE_ID_RULE = (
 
 
 def is_valid_source_id(source_id: str) -> bool:
-    """Whether *source_id* is safe as a URL parameter, YAML key and credential key.
-
-    ``fullmatch``, not the pattern's own anchors: ``$`` matches before a
+    """``fullmatch``, not the pattern's own anchors: ``$`` matches before a
     trailing newline.
     """
     return _SOURCE_ID_RE.fullmatch(source_id) is not None
 
 
 def list_available_plugins() -> list[dict[str, Any]]:
-    """Return every registered source plugin's metadata.
-
-    Used by the "Add data source" UI/CLI to populate the plugin picker.
-    Includes the same field schema returned by ``build_schema_view`` so
-    the frontend can preview required fields before the user commits.
-    """
     registry = get_registry()
     plugins = []
     for name, plugin in sorted(registry.get_all_plugins().items()):
@@ -1272,11 +1069,7 @@ def list_available_plugins() -> list[dict[str, Any]]:
 
 
 def build_plugins_view() -> dict[str, Any]:
-    """The Add-Source picker's whole answer: what loaded, and what did not.
-
-    A plugin missing from the list is otherwise a plugin the operator has no
-    way to ask about.
-    """
+    """The Add-Source picker's whole answer: what loaded, and what did not."""
     return {
         "plugins": list_available_plugins(),
         "import_errors": [
@@ -1295,24 +1088,6 @@ def create_source(
     user_id: int = 1,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a new DB-backed source.
-
-    Mirrors ``POST /api/sync/sources``. Validates the source_id format,
-    rejects collisions with existing DB rows AND existing YAML entries,
-    looks up the plugin, validates every key in *values* against the
-    plugin schema (and rejects sensitive fields — those go through the
-    secret endpoint after creation), then inserts the row.
-
-    Returns the freshly-built ``SourceConfigResponse``-shaped dict.
-
-    Raises ``SourceConfigError`` for any of:
-        - ``invalid_id`` — bad source_id format
-        - ``conflict`` — the source_id is already in use
-        - ``unknown_plugin`` — plugin_name is not registered
-        - ``invalid_field`` — values has a key not in the plugin schema
-        - ``invalid_values`` — the plugin refused one of the values
-        - ``sensitive_in_config`` — values has a sensitive-flagged field
-    """
     if not is_valid_source_id(source_id):
         raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")
 
@@ -1366,12 +1141,8 @@ def delete_source(
     config: dict[str, Any],
     user_id: int = 1,
 ) -> None:
-    """Remove a DB-backed source and every credential stored for it.
-
-    Keyed by source id, not by the plugin's current schema: an unregistered
+    """Keyed by source id, not by the plugin's current schema: an unregistered
     plugin or a no-longer-sensitive field must not leave a row behind.
-
-    Raises ``SourceConfigError`` — ``invalid_id`` or ``not_migrated``.
     """
     if not is_valid_source_id(source_id):
         raise SourceConfigError("invalid_id", f"Source id {SOURCE_ID_RULE}")

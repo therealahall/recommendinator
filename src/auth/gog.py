@@ -1,11 +1,3 @@
-"""GOG OAuth authentication service, called by both the web API and the CLI.
-
-Handles the OAuth flow for connecting GOG accounts:
-1. Generate auth URL for user to visit
-2. Exchange authorization code for tokens
-3. Save refresh token to encrypted DB storage
-"""
-
 from __future__ import annotations
 
 import logging
@@ -35,8 +27,6 @@ GOG_REDIRECT_URI = "https://embed.gog.com/on_login_success?origin=client"
 
 
 class GogAuthError(Exception):
-    """Exception raised for GOG authentication errors."""
-
     pass
 
 
@@ -44,11 +34,6 @@ _GOG = OAuthSourceBinding(GOG_PLUGIN, "GOG", GogAuthError)
 
 
 def get_gog_auth_url() -> str:
-    """Generate the GOG OAuth authorization URL.
-
-    Returns:
-        URL for user to visit to authorize the app.
-    """
     params = (
         f"client_id={GOG_CLIENT_ID}"
         f"&redirect_uri={GOG_REDIRECT_URI}"
@@ -59,24 +44,8 @@ def get_gog_auth_url() -> str:
 
 
 def extract_code_from_input(user_input: str) -> str:
-    """Extract authorization code from user input.
-
-    User can paste either:
-    - Just the code
-    - The full redirect URL containing the code
-
-    Args:
-        user_input: Code or URL pasted by user.
-
-    Returns:
-        Extracted authorization code.
-
-    Raises:
-        GogAuthError: If code cannot be extracted.
-    """
     user_input = user_input.strip()
 
-    # Check if it's a URL
     if user_input.startswith("http"):
         parsed = urlparse(user_input)
         query_params = parse_qs(parsed.query)
@@ -87,7 +56,6 @@ def extract_code_from_input(user_input: str) -> str:
             "Make sure you copied the full redirect URL after logging in."
         )
 
-    # Assume it's the raw code
     if len(user_input) < 20:
         raise GogAuthError(
             "Input appears too short to be a valid authorization code. "
@@ -98,17 +66,6 @@ def extract_code_from_input(user_input: str) -> str:
 
 
 def exchange_code_for_tokens(code: str) -> dict[str, Any]:
-    """Exchange authorization code for access and refresh tokens.
-
-    Args:
-        code: Authorization code from OAuth redirect.
-
-    Returns:
-        Token response dict with access_token, refresh_token, etc.
-
-    Raises:
-        GogAuthError: If token exchange fails.
-    """
     params = {
         "client_id": GOG_CLIENT_ID,
         "client_secret": GOG_CLIENT_SECRET,
@@ -149,11 +106,6 @@ def save_gog_token(
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> None:
-    """Encrypt and store the refresh token under *source_id*.
-
-    Raises:
-        GogAuthError: If saving fails.
-    """
     _GOG.save_token(storage, refresh_token, source_id, user_id)
 
 
@@ -163,7 +115,6 @@ def is_gog_enabled(
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether *source_id* is an enabled GOG source."""
     return _GOG.is_enabled(config, storage, source_id, user_id)
 
 
@@ -173,5 +124,4 @@ def has_gog_token(
     source_id: str = GOG_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether a GOG source called *source_id* has a refresh token."""
     return _GOG.has_token(config, storage, source_id, user_id)

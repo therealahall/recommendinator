@@ -1,12 +1,9 @@
-"""Content type models."""
-
 from datetime import date
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Default user ID used across the application when no user is specified
 DEFAULT_USER_ID = 1
 
 # Longest ``review`` all four writing surfaces accept (both CLI commands, both
@@ -34,8 +31,6 @@ EnrichmentFilter = Literal["enriched", "not_enriched"]
 
 
 class ContentType(str, Enum):
-    """Supported content types."""
-
     BOOK = "book"
     MOVIE = "movie"
     TV_SHOW = "tv_show"
@@ -43,17 +38,6 @@ class ContentType(str, Enum):
 
     @classmethod
     def from_string(cls, value: str) -> "ContentType":
-        """Convert a string value to a ContentType enum member.
-
-        Args:
-            value: String representation (e.g. "book", "tv_show").
-
-        Returns:
-            Corresponding ContentType enum member.
-
-        Raises:
-            ValueError: If the value doesn't match any content type.
-        """
         try:
             return cls(value.lower())
         except ValueError:
@@ -64,47 +48,27 @@ class ContentType(str, Enum):
 
 
 def get_enum_value(value: "Enum | str") -> str:
-    """Extract the string value from an enum member or pass through strings.
-
-    Handles the common pattern where a value may be either an Enum instance
-    (with a .value attribute) or already a plain string (e.g. due to Pydantic's
-    use_enum_values=True).
-
-    Args:
-        value: An Enum member, string, or other value.
-
-    Returns:
-        The string value.
-    """
     if isinstance(value, Enum):
         return str(value.value)
     return str(value)
 
 
 class ConsumptionStatus(str, Enum):
-    """Status of content consumption."""
-
     UNREAD = "unread"
     CURRENTLY_CONSUMING = "currently_consuming"
     COMPLETED = "completed"
 
 
 class ExternalId(BaseModel):
-    """One source's id for an item, as ``content_item_external_ids`` holds it."""
-
     source: str
     external_id: str
 
 
 class ContentItem(BaseModel):
-    """Represents a piece of content (book, movie, etc.)."""
-
     model_config = ConfigDict(use_enum_values=True)
 
-    # User association
     user_id: int = DEFAULT_USER_ID
 
-    # Core fields
     # The id of the source that is saving or saved this item — a save keys on
     # ``(source, id)``. An item collects other sources' ids too; ``external_ids``
     # is the whole set, and is what a reader should report.
@@ -114,16 +78,11 @@ class ContentItem(BaseModel):
     content_type: ContentType
     status: ConsumptionStatus
 
-    # Optional fields
-    # The type's creator, whichever word that type uses for it: a book's
-    # author, a movie's director, a show's creators, a game's developer. It
-    # crosses the storage boundary here rather than in ``metadata``.
     author: str | None = None
     rating: int | None = Field(None, ge=1, le=5)
     review: str | None = None
     date_completed: date | None = None
 
-    # Source tracking - which plugin/source this came from
     source: str | None = None  # e.g., "goodreads_csv", "steam", "manual"
 
     # Runtime-only: every source's id for this item, populated on read. Empty
@@ -142,10 +101,8 @@ class ContentItem(BaseModel):
     # genres, tags or description writes and only a reset undoes.
     manually_enriched: bool | None = None
 
-    # Whether this item is ignored (excluded from recommendations).
     # None means "not specified by this source" — the existing database
-    # value is preserved on update.  True/False explicitly sets the flag.
+    # value is preserved on update.
     ignored: bool | None = None
 
-    # Flexible metadata for type-specific fields
     metadata: dict[str, Any] = Field(default_factory=dict)

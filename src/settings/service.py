@@ -1,31 +1,3 @@
-"""Framework-agnostic business logic for the global-settings surface.
-
-This module is the single home for reading, validating, and writing the
-in-scope global-config leaves described by :mod:`src.settings.metadata`. Both
-the FastAPI endpoints (``src.web.api``) and the CLI ``settings`` group call
-these functions so the two interfaces stay in lock-step (parity).
-
-Design:
-
-* **View** — :func:`build_settings_view` returns the grouped, JSON-ready shape
-  the API/CLI render. Non-sensitive leaves expose their effective value and a
-  ``db_overridden`` flag; sensitive leaves expose only ``has_secret`` (never the
-  plaintext).
-* **Write** — :func:`apply_settings` validates every update up front and only
-  then writes, so a single bad key never leaves a partial write. For
-  non-``restart_required`` leaves it also publishes the new values into the
-  passed-in running config (live-apply). Unlike the boot assembly, which owns
-  the config it is building and writes it with :func:`set_leaf`, live-apply
-  writes a config the engine is reading from another thread, so it goes
-  through :func:`set_leaves_atomically`. The two are not interchangeable.
-  Swapping this one back for the in-place helper reopens the window described
-  on :func:`_apply_live`.
-* **Reset** — :func:`reset_setting` drops the DB row and live-applies the const
-  default so the running config immediately reflects the reset-to-default.
-* **Secrets** — :func:`set_secret` / :func:`clear_secret` gate on the registry's
-  ``sensitive`` flag and route through the encrypted global-secret store.
-"""
-
 from __future__ import annotations
 
 import re
@@ -56,11 +28,8 @@ _ALLOWED_ORIGINS_KEY = "web.allowed_origins"
 
 
 class SettingsValidationError(Exception):
-    """A user-recoverable settings error carrying the offending key + reason.
-
-    The API maps this to ``422`` (config updates) or ``400`` (secret gating);
-    the CLI maps it to a friendly message. ``key`` and ``reason`` are safe to
-    surface — neither ever contains a secret value.
+    """``key`` and ``reason`` are safe to surface — neither ever contains a
+    secret value.
     """
 
     def __init__(self, key: str, reason: str) -> None:
@@ -72,11 +41,6 @@ class SettingsValidationError(Exception):
 def build_settings_view(
     config: dict[str, Any], storage: StorageManager
 ) -> dict[str, Any]:
-    """Return every in-scope setting grouped by section for the API/CLI.
-
-    The shape is ``{"sections": [{"section": str, "settings": [view, ...]}]}``
-    with sections and settings in registry declaration order.
-    """
     return {
         "sections": [
             {
@@ -91,12 +55,7 @@ def build_settings_view(
 def setting_view(
     entry: SettingMetadata, config: dict[str, Any], storage: StorageManager
 ) -> dict[str, Any]:
-    """Return one setting's metadata plus its value/secret state.
-
-    Non-sensitive leaves include ``value`` (the effective running value) and
-    ``db_overridden``. Sensitive leaves include only ``has_secret`` and never a
-    plaintext value.
-    """
+    """Sensitive leaves include only ``has_secret`` and never a plaintext value."""
     view: dict[str, Any] = {
         "key": entry.key,
         "section": entry.section,
@@ -121,15 +80,9 @@ def setting_view(
 def apply_settings(
     config: dict[str, Any], storage: StorageManager, updates: dict[str, Any]
 ) -> None:
-    """Validate every update, then persist and live-apply them all.
-
-    All-or-nothing: if any key is unknown, sensitive, or fails validation, a
+    """All-or-nothing: if any key is unknown, sensitive, or fails validation, a
     :class:`SettingsValidationError` is raised before anything is written, so a
-    bad key cannot leave a partial write. Non-``restart_required`` leaves are
-    then published into *config* and take effect immediately, each top-level
-    section in one store, so a reader cannot rank a request on half of a
-    section. ``restart_required`` leaves are persisted only, applying on next
-    boot.
+    bad key cannot leave a partial write.
     """
     validated: list[tuple[SettingMetadata, Any]] = []
     for key, value in updates.items():
@@ -154,12 +107,9 @@ def apply_settings(
 
 
 def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> None:
-    """Reset a setting to its default by dropping the DB override.
-
-    Deletes the stored leaf so it falls back to the YAML/const layers, and
+    """Deletes the stored leaf so it falls back to the YAML/const layers, and
     live-applies the const default to *config* for non-``restart_required``
-    leaves (a full config reload re-derives any YAML value). Raises for an
-    unknown or sensitive key.
+    leaves (a full config reload re-derives any YAML value).
     """
     entry = get_entry(key)
     if entry is None:
@@ -174,33 +124,17 @@ def reset_setting(config: dict[str, Any], storage: StorageManager, key: str) -> 
 
 
 def set_secret(storage: StorageManager, key: str, value: str) -> None:
-    """Store a sensitive setting's value in the encrypted global-secret store.
-
-    Raises :class:`SettingsValidationError` when *key* is unknown or not marked
-    sensitive in the registry. The value is never persisted in plaintext.
-    """
+    """The value is never persisted in plaintext."""
     _require_sensitive(key)
     storage.secrets.set(key, value)
 
 
 def clear_secret(storage: StorageManager, key: str) -> bool:
-    """Delete a sensitive setting's stored secret.
-
-    Returns True when a stored secret was removed. Raises
-    :class:`SettingsValidationError` when *key* is unknown or not sensitive.
-    """
     _require_sensitive(key)
     return storage.secrets.clear(key)
 
 
 def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
-    """Coerce *value* to *entry*'s type and validate its constraints.
-
-    Returns the coerced value on success. Raises
-    :class:`SettingsValidationError` (with the offending key + reason) on a type
-    mismatch, an out-of-range number, an over-long/non-matching string, an enum
-    value outside ``choices``, or a CORS origin a browser could never send.
-    """
     setting_type = entry.type
     if setting_type == "bool":
         if not isinstance(value, bool):
@@ -241,20 +175,9 @@ def coerce_and_validate(entry: SettingMetadata, value: Any) -> Any:
 
 
 def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[str]:
-    """Return the CORS allowlist with each entry normalised and checked.
-
-    Starlette matches with ``origin in self.allow_origins`` — an exact string
+    """Starlette matches with ``origin in self.allow_origins`` — an exact string
     comparison — so a malformed entry can never match any request and is a
-    silently inert allowance the operator believes is working. ``"null"`` is
-    refused outright: a sandboxed iframe and a ``data:``/``file:`` document both
-    send ``Origin: null``, so it names no site and cannot be an allowlist entry
-    anyone intended.
-
-    Items are normalised before checking, and the normalised list is what gets
-    persisted: a pasted origin carrying a stray space, a tab, a Unicode label
-    separator or a trailing slash would otherwise validate on one spelling and
-    then be compared as another. A trailing slash is therefore accepted rather
-    than refused — no browser sends one, so keeping it would be inert.
+    silently inert allowance the operator believes is working.
     """
     normalized = [normalize_origin(origin) for origin in origins]
     for origin in normalized:
@@ -281,7 +204,6 @@ def _validated_cors_origins(entry: SettingMetadata, origins: list[str]) -> list[
 
 
 def _coerce_int(entry: SettingMetadata, value: Any) -> int:
-    """Coerce *value* to int, allowing an integral float (JSON ``5`` or ``5.0``)."""
     if isinstance(value, bool):
         raise SettingsValidationError(entry.key, "expected an integer")
     if isinstance(value, int):
@@ -292,7 +214,6 @@ def _coerce_int(entry: SettingMetadata, value: Any) -> int:
 
 
 def _check_numeric_bounds(entry: SettingMetadata, value: float) -> None:
-    """Enforce ``validation.min``/``max`` on a numeric value."""
     constraints = entry.validation
     if constraints is None:
         return
@@ -303,7 +224,6 @@ def _check_numeric_bounds(entry: SettingMetadata, value: float) -> None:
 
 
 def _check_string_constraints(entry: SettingMetadata, value: str) -> None:
-    """Enforce ``validation.max_length``/``pattern`` on a string value."""
     constraints = entry.validation
     if constraints is None:
         return
@@ -317,10 +237,7 @@ def _check_string_constraints(entry: SettingMetadata, value: str) -> None:
     ):
         # Point at the help rather than interpolating the raw regex. This lands
         # in a role="alert" live region, where a screen reader reads the
-        # metacharacters aloud as a plausible-but-wrong literal path. Both
-        # pattern leaves (logging.file, tmdb.language) carry the required shape
-        # AND a worked example in their help text, which is where the user can
-        # actually recover from.
+        # metacharacters aloud as a plausible-but-wrong literal path.
         raise SettingsValidationError(
             entry.key,
             "does not match the required format — see this setting's help for examples",
@@ -328,7 +245,6 @@ def _check_string_constraints(entry: SettingMetadata, value: str) -> None:
 
 
 def _validation_view(validation: Validation | None) -> dict[str, Any] | None:
-    """Serialize a :class:`Validation` to a JSON dict, or ``None`` when absent."""
     if validation is None:
         return None
     return {
@@ -340,31 +256,19 @@ def _validation_view(validation: Validation | None) -> dict[str, Any] | None:
 
 
 def _effective_value(config: dict[str, Any], entry: SettingMetadata) -> Any:
-    """Read the running value at *entry*'s dotted path, else the const default.
-
-    ``default_of`` rather than ``entry.default``: this value is serialised into
+    """``default_of`` rather than ``entry.default``: this value is serialised into
     API/CLI responses, and must never be the registry's own container.
     """
     return get_leaf(config, tuple(entry.key.split(".")), default_of(entry.key))
 
 
 def _apply_live(config: dict[str, Any], updates: Sequence[tuple[str, Any]]) -> None:
-    """Publish *updates* into the running *config* at their dotted paths.
-
-    All of them together, because the engine reads the running config from
-    another threadpool worker while this runs. Writing them one at a time would
-    leave a window where a request reads the first key of a save and the
-    baseline for the rest, and writing any of them in place would break the
-    engine's iteration of ``recommendations.scorer_weights`` outright, since
-    inserting a key into a dict under an iterator raises.
-    """
     set_leaves_atomically(
         config, [(tuple(key.split(".")), value) for key, value in updates]
     )
 
 
 def _require_sensitive(key: str) -> None:
-    """Raise unless *key* is a known sensitive registry leaf."""
     entry = get_entry(key)
     if entry is None or not entry.sensitive:
         raise SettingsValidationError(key, "not a configurable secret")

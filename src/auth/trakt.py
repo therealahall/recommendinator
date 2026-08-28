@@ -1,19 +1,6 @@
-"""Trakt OAuth device-code authentication service for the web API and the CLI.
-
-Handles the device-code OAuth flow for connecting a Trakt account:
-
-1. ``start_device_auth_flow`` requests a device code + user code from Trakt.
-2. ``poll_device_token`` performs a single poll of the device-token endpoint,
-   returning either the issued tokens or a typed pending/slow-down/expired/
-   denied result. Callers (the web endpoint and the CLI loop) decide how to
-   repeat the poll rather than blocking inside one HTTP handler.
-3. ``save_trakt_token`` persists the issued ``refresh_token`` to the encrypted
-   credential store under the id of the source being connected.
-
-The user registers their OWN Trakt API application, so ``client_id`` and
+"""The user registers their OWN Trakt API application, so ``client_id`` and
 ``client_secret`` are saved to the source config/credential store before the
-device flow runs. ``resolve_trakt_client_credentials`` reads those back from
-storage so neither the web client nor the CLI ever has to supply secrets.
+device flow runs.
 """
 
 from __future__ import annotations
@@ -45,24 +32,13 @@ TRAKT_DEVICE_TOKEN_URL = f"{TRAKT_API_URL}/oauth/device/token"
 
 
 class TraktAuthError(Exception):
-    """Exception raised for Trakt device-code authentication errors."""
+    pass
 
 
 _TRAKT = OAuthSourceBinding(TRAKT_PLUGIN, "Trakt", TraktAuthError)
 
 
 class DevicePollStatus(str, Enum):
-    """Outcome of a single device-token poll attempt.
-
-    Mirrors Trakt's documented device-token status codes:
-
-    - ``SUCCESS``  (200) — tokens issued.
-    - ``PENDING``  (400) — user has not yet approved; keep polling.
-    - ``SLOW_DOWN`` (429) — polling too fast; back off then keep polling.
-    - ``EXPIRED``  (410) — the device code expired; restart the flow.
-    - ``DENIED``   (418) — the user denied the request.
-    """
-
     SUCCESS = "success"
     PENDING = "pending"
     SLOW_DOWN = "slow_down"
@@ -72,28 +48,13 @@ class DevicePollStatus(str, Enum):
 
 @dataclass(frozen=True)
 class DevicePollResult:
-    """Result of a single device-token poll.
-
-    ``refresh_token`` is only populated when ``status`` is ``SUCCESS``.
-    """
+    """``refresh_token`` is only populated when ``status`` is ``SUCCESS``."""
 
     status: DevicePollStatus
     refresh_token: str | None = None
 
 
 def start_device_auth_flow(client_id: str) -> dict[str, Any]:
-    """Request a device code and user code from Trakt.
-
-    Args:
-        client_id: The user's Trakt API application client id.
-
-    Returns:
-        Dict with ``device_code``, ``user_code``, ``verification_url``,
-        ``expires_in`` and ``interval`` (poll cadence in seconds).
-
-    Raises:
-        TraktAuthError: If the request fails or the response is malformed.
-    """
     try:
         response = requests.post(
             TRAKT_DEVICE_CODE_URL,
@@ -125,21 +86,6 @@ def start_device_auth_flow(client_id: str) -> dict[str, Any]:
 def poll_device_token(
     device_code: str, client_id: str, client_secret: str
 ) -> DevicePollResult:
-    """Poll the Trakt device-token endpoint exactly once.
-
-    Args:
-        device_code: The device code from ``start_device_auth_flow``.
-        client_id: The user's Trakt API application client id.
-        client_secret: The user's Trakt API application secret.
-
-    Returns:
-        A ``DevicePollResult`` describing this attempt. On ``SUCCESS`` the
-        result carries the issued ``refresh_token``.
-
-    Raises:
-        TraktAuthError: If the device code is invalid, already used, or the
-            success response omits a refresh token.
-    """
     try:
         response = requests.post(
             TRAKT_DEVICE_TOKEN_URL,
@@ -182,11 +128,6 @@ def save_trakt_token(
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> None:
-    """Encrypt and store the refresh token under *source_id*.
-
-    Raises:
-        TraktAuthError: If saving fails.
-    """
     _TRAKT.save_token(storage, refresh_token, source_id, user_id)
 
 
@@ -196,14 +137,8 @@ def resolve_trakt_client_credentials(
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> tuple[str, str]:
-    """Resolve *source_id*'s ``(client_id, client_secret)``.
-
-    Refuses a source running another plugin: the token this unlocks is stored
+    """Refuses a source running another plugin: the token this unlocks is stored
     under the id.
-
-    Raises:
-        TraktAuthError: If the source is not configured or either credential
-            is missing.
     """
     trakt_config = _TRAKT.resolve(config, storage, source_id, user_id)
 
@@ -230,5 +165,4 @@ def has_trakt_token(
     source_id: str = TRAKT_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether a Trakt source called *source_id* has a refresh token."""
     return _TRAKT.has_token(config, storage, source_id, user_id)

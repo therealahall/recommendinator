@@ -1,17 +1,6 @@
-"""Metadata registry for global/system config leaves — the single source of truth.
-
-Every in-scope global-config leaf (the sections in
-:data:`~src.storage.settings_migration.IN_SCOPE_SECTIONS`) has exactly one
-:class:`SettingMetadata` entry here. The registry pairs each dotted leaf key
-(e.g. ``"recommendations.default_count"``) with its human label, help text,
-value type, frontend widget hint, validation bounds, and — crucially — the
-**hardcoded default** used as the const fallback when neither the database nor
-``config.yaml`` supply the leaf.
-
-The dotted-key scheme and the in-scope section list match
+"""The dotted-key scheme and the in-scope section list match
 ``src.storage.settings_migration`` so the registry and the config overlay
-describe the same leaves. Out-of-scope config (``storage.*``, ``inputs``,
-per-source config, and the ``web`` bind settings) is intentionally absent.
+describe the same leaves.
 """
 
 from __future__ import annotations
@@ -46,12 +35,6 @@ _LOG_LEVEL_CHOICES: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Validation:
-    """Optional constraints for a setting's value.
-
-    ``min``/``max`` bound numeric values; ``max_length``/``pattern`` constrain
-    strings. Every field is optional — an unset field imposes no constraint.
-    """
-
     min: float | None = None
     max: float | None = None
     max_length: int | None = None
@@ -60,24 +43,6 @@ class Validation:
 
 @dataclass(frozen=True)
 class SettingMetadata:
-    """Describes one global-config leaf for the API, CLI, and frontend.
-
-    Attributes:
-        key: Dotted leaf path (e.g. ``"recommendations.scorer_weights.genre_match"``).
-        section: Top-level section, derived from the key prefix.
-        label: Concise human label.
-        help: One-line description of what the setting does.
-        type: The value type (``bool``/``int``/``float``/``string``/``list``/``enum``).
-        default: The hardcoded fallback value used when neither DB nor YAML supply
-            the leaf. This is NOT seeded into the DB; it is the const default.
-        widget: Frontend rendering hint, defaulted from ``type``.
-        sensitive: True for secret leaves that must never be persisted plaintext.
-        restart_required: True when a change only takes effect after a restart.
-        advanced: True for infra/security leaves grouped under "Advanced" in the UI.
-        choices: Allowed values for ``enum`` types (``None`` otherwise).
-        validation: Optional value constraints.
-    """
-
     key: str
     section: str
     label: str
@@ -105,12 +70,6 @@ def _entry(
     restart_required: bool = False,
     advanced: bool = False,
 ) -> SettingMetadata:
-    """Build a :class:`SettingMetadata`, deriving section, widget, and sensitivity.
-
-    ``section`` comes from the key prefix, ``widget`` defaults from ``type``, and
-    ``sensitive`` is True when the final key segment is a known secret name (see
-    :data:`SENSITIVE_LEAF_KEYS`).
-    """
     return SettingMetadata(
         key=key,
         section=key.split(".", 1)[0],
@@ -318,7 +277,6 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         type="bool",
         default=False,
     ),
-    # web — CORS takes effect only on restart; infra/security → advanced.
     # NOTE: web.host / web.port / web.debug are deliberately absent. They are
     # read by the uvicorn launcher (src/web/main.py) before any database is
     # open, so a database-backed value could never be honoured — see
@@ -370,48 +328,25 @@ _BY_KEY: dict[str, SettingMetadata] = {entry.key: entry for entry in _REGISTRY}
 
 
 def all_entries() -> tuple[SettingMetadata, ...]:
-    """Return every registry entry in declaration order."""
     return _REGISTRY
 
 
 def get_entry(key: str) -> SettingMetadata | None:
-    """Return the entry for a dotted leaf key, or ``None`` if it is not in scope."""
     return _BY_KEY.get(key)
 
 
 def _public(value: Any) -> Any:
-    """Return a caller-safe view of a stored registry default.
-
-    Container defaults are stored immutably (a ``tuple``) and converted to a
-    fresh ``list`` on the way out. Storing them mutably and copying at each
-    accessor is the version that goes wrong: it only takes one new accessor —
-    or one caller reading ``entry.default`` directly — to hand out the shared
-    object, and ``web.allowed_origins`` flows straight into CORSMiddleware.
-    """
     return list(value) if isinstance(value, tuple) else value
 
 
 def default_of(key: str) -> Any:
-    """Return the const default for a registered leaf key.
-
-    The single source of truth for a leaf's fallback value, so callers never
+    """The single source of truth for a leaf's fallback value, so callers never
     re-hardcode a default the registry already declares.
-
-    Container defaults come back as a fresh mutable via :func:`_public`, so a
-    caller cannot corrupt the registry in place.
-
-    Raises:
-        KeyError: If *key* is not a registered leaf (a programming error).
     """
     return _public(_BY_KEY[key].default)
 
 
 def entries_by_section() -> dict[str, list[SettingMetadata]]:
-    """Return entries grouped by section, ordered by :data:`IN_SCOPE_SECTIONS`.
-
-    Within each section, entries keep their declaration order. Only sections
-    that actually have entries appear in the result.
-    """
     grouped: dict[str, list[SettingMetadata]] = {}
     for section in IN_SCOPE_SECTIONS:
         section_entries = [e for e in _REGISTRY if e.section == section]
@@ -421,16 +356,10 @@ def entries_by_section() -> dict[str, list[SettingMetadata]]:
 
 
 def flat_defaults() -> dict[str, Any]:
-    """Return the hardcoded defaults as a flat ``{dotted_key: value}`` mapping."""
     return {entry.key: _public(entry.default) for entry in _REGISTRY}
 
 
 def default_config() -> dict[str, Any]:
-    """Return the hardcoded defaults as a nested dict keyed by section.
-
-    Suitable as the base for ``deep_merge(default_config(), yaml_config)`` so a
-    later config-assembly step has a complete const fallback for every leaf.
-    """
     nested: dict[str, Any] = {}
     for key, value in flat_defaults().items():
         parts = key.split(".")
@@ -442,11 +371,6 @@ def default_config() -> dict[str, Any]:
 
 
 def is_sensitive(key: str) -> bool:
-    """Return True when the leaf key holds a secret that must not be persisted.
-
-    Uses the registry entry when present; otherwise falls back to matching the
-    final key segment against :data:`SENSITIVE_LEAF_KEYS`.
-    """
     entry = _BY_KEY.get(key)
     if entry is not None:
         return entry.sensitive

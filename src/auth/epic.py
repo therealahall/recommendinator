@@ -1,12 +1,3 @@
-"""Epic Games OAuth authentication service, called by the web API and the CLI.
-
-Handles the OAuth flow for connecting Epic Games accounts:
-1. Generate auth URL via legendary's EPCAPI
-2. Accept authorization code from user (raw or JSON format)
-3. Exchange code for tokens via EPCAPI.start_session()
-4. Save refresh token to encrypted DB storage
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,8 +23,6 @@ EPIC_SOURCE_ID = EPIC_PLUGIN
 
 
 class EpicAuthError(Exception):
-    """Exception raised for Epic Games authentication errors."""
-
     pass
 
 
@@ -41,37 +30,14 @@ _EPIC = OAuthSourceBinding(EPIC_PLUGIN, "Epic Games", EpicAuthError)
 
 
 def get_epic_auth_url() -> str:
-    """Generate the Epic Games OAuth authorization URL.
-
-    Uses legendary's built-in EPCAPI to generate the correct URL.
-
-    Returns:
-        URL for user to visit to authorize the app.
-    """
     api = EPCAPI()
     url: str = api.get_auth_url()
     return url
 
 
 def extract_code_from_input(user_input: str) -> str:
-    """Extract authorization code from user input.
-
-    User can paste either:
-    - Just the authorization code
-    - JSON response containing {"authorizationCode": "..."}
-
-    Args:
-        user_input: Code or JSON pasted by user.
-
-    Returns:
-        Extracted authorization code.
-
-    Raises:
-        EpicAuthError: If code cannot be extracted.
-    """
     user_input = user_input.strip()
 
-    # Try to parse as JSON (Epic's redirect returns JSON with authorizationCode)
     try:
         data = json.loads(user_input)
         if "authorizationCode" in data:
@@ -84,12 +50,10 @@ def extract_code_from_input(user_input: str) -> str:
             "Please copy the full JSON response from Epic's redirect page."
         )
     except json.JSONDecodeError:
-        # Not JSON — fall through to raw code path.
         # json.JSONDecodeError is a subclass of ValueError; catching only
         # JSONDecodeError avoids silently swallowing unrelated ValueErrors.
         pass
 
-    # Assume it's the raw code
     if len(user_input) < 20:
         raise EpicAuthError(
             "Input appears too short to be a valid authorization code. "
@@ -100,17 +64,6 @@ def extract_code_from_input(user_input: str) -> str:
 
 
 def exchange_code_for_tokens(code: str) -> dict[str, Any]:
-    """Exchange authorization code for tokens via EPCAPI.
-
-    Args:
-        code: Authorization code from OAuth redirect.
-
-    Returns:
-        Session dict containing access_token, refresh_token, etc.
-
-    Raises:
-        EpicAuthError: If token exchange fails.
-    """
     api = EPCAPI()
     try:
         session_data: dict[str, Any] = api.start_session(authorization_code=code)
@@ -139,11 +92,6 @@ def save_epic_token(
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> None:
-    """Encrypt and store the refresh token under *source_id*.
-
-    Raises:
-        EpicAuthError: If saving fails.
-    """
     _EPIC.save_token(storage, refresh_token, source_id, user_id)
 
 
@@ -153,7 +101,6 @@ def is_epic_enabled(
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether *source_id* is an enabled Epic Games source."""
     return _EPIC.is_enabled(config, storage, source_id, user_id)
 
 
@@ -163,5 +110,4 @@ def has_epic_token(
     source_id: str = EPIC_SOURCE_ID,
     user_id: int = 1,
 ) -> bool:
-    """Whether an Epic source called *source_id* has a refresh token."""
     return _EPIC.has_token(config, storage, source_id, user_id)
