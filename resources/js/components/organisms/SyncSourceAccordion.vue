@@ -8,6 +8,7 @@ import SourceSyncOutcome from '@/components/molecules/SourceSyncOutcome.vue'
 import SourceSyncProgress from '@/components/molecules/SourceSyncProgress.vue'
 import SourceSyncSchedule from '@/components/molecules/SourceSyncSchedule.vue'
 import { useDataStore } from '@/stores/data'
+import { rescueFocus } from '@/utils/focus'
 import type { SyncJobResponse, SyncSourceResponse } from '@/types/api'
 
 const props = defineProps<{
@@ -69,14 +70,14 @@ async function onRetryDetails(): Promise<void> {
     // for the length of the request, taking the focus with it.
     detailsMessage.value = 'Still could not load these settings. Try again in a moment.'
     await nextTick()
-    panelControl(`details-retry-${props.source.id}`)?.focus()
+    rescueFocus(panelControl(`details-retry-${props.source.id}`))
     return
   }
   detailsMessage.value = ''
   await nextTick()
   // Retry unmounts with the error it belonged to, so the keyboard follows the
   // settings it just loaded rather than dropping to <body> (WCAG 2.4.3).
-  panelControl(`details-body-${props.source.id}`)?.focus()
+  rescueFocus(panelControl(`details-body-${props.source.id}`))
 }
 
 async function onToggleExpanded(value: boolean): Promise<void> {
@@ -99,7 +100,7 @@ async function onMigrate(): Promise<void> {
   } catch (err) {
     migrateError.value = err instanceof Error ? err.message : 'Unknown error'
     await nextTick()
-    panelControl(`migrate-error-${props.source.id}`)?.focus()
+    rescueFocus(panelControl(`migrate-error-${props.source.id}`))
   } finally {
     migrating.value = false
   }

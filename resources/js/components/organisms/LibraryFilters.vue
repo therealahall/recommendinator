@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import TypePills from '@/components/atoms/TypePills.vue'
 import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 import SearchInput from '@/components/atoms/SearchInput.vue'
 import { MAX_SEARCH_LENGTH, SORT_OPTIONS } from '@/constants/library'
+import { rescueFocus } from '@/utils/focus'
 
 const props = defineProps<{
   typeFilter: string
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 
 const exportOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
+const exportTrigger = ref<HTMLElement | null>(null)
 
 const statusLabels: Record<string, Record<string, string>> = {
   unread: { book: 'Unread', movie: 'Unwatched', tv_show: 'Unwatched', video_game: 'Unplayed', default: 'Not Started' },
@@ -42,20 +44,39 @@ const exportScope = computed(() =>
     : 'Exports your whole library, every type. Your other filters do not apply.'
 )
 
-function doExport(format: 'csv' | 'json') {
+// Every way out unmounts the menu holding the pressed button, so the trigger
+// takes the keyboard back — unless the click that closed it landed on a control.
+function closeExport() {
+  if (!exportOpen.value) return
   exportOpen.value = false
+  void nextTick(() => rescueFocus(exportTrigger.value))
+}
+
+function doExport(format: 'csv' | 'json') {
+  closeExport()
   emit('export', format)
 }
 
 function onClickOutside(e: MouseEvent) {
   if (e.target === null) return
   if (dropdownRef.value && !dropdownRef.value.contains(e.target as Node)) {
-    exportOpen.value = false
+    closeExport()
   }
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape') exportOpen.value = false
+  if (e.key === 'Escape') closeExport()
+}
+
+// aria-disabled, not disabled: a disabled select cannot be tabbed to, so the
+// hint saying why it went dead never reaches the user it was written for.
+function onStatusChange(e: Event) {
+  const select = e.target as HTMLSelectElement
+  if (props.needsRating) {
+    select.value = 'completed'
+    return
+  }
+  emit('filterChange', 'status', select.value)
 }
 
 onMounted(() => {
@@ -101,9 +122,9 @@ onUnmounted(() => {
           class="toolbar-select"
           aria-label="Status"
           :value="needsRating ? 'completed' : statusFilter"
-          :disabled="needsRating"
+          :aria-disabled="needsRating || undefined"
           :aria-describedby="needsRating ? 'status-locked-hint' : undefined"
-          @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)"
+          @change="onStatusChange"
         >
           <option value="">All Statuses</option>
           <option value="unread">{{ unreadLabel }}</option>
@@ -139,14 +160,16 @@ onUnmounted(() => {
         />
         <div ref="dropdownRef" class="dropdown-wrap toolbar-right">
           <button
+            ref="exportTrigger"
             class="btn btn-secondary"
             title="Export library items"
             :aria-expanded="exportOpen"
+            :aria-controls="exportOpen ? 'export-menu' : undefined"
             @click="exportOpen = !exportOpen"
           >
             Export
           </button>
-          <div v-if="exportOpen" class="dropdown-menu">
+          <div v-if="exportOpen" id="export-menu" class="dropdown-menu">
             <p id="export-scope" class="export-scope">{{ exportScope }}</p>
             <button class="dropdown-menu-item" aria-describedby="export-scope" @click="doExport('csv')">CSV</button>
             <button class="dropdown-menu-item" aria-describedby="export-scope" @click="doExport('json')">JSON</button>

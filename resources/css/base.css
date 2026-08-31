@@ -473,6 +473,25 @@ input[type="checkbox"] {
   display: none;
 }
 
+/* Off screen until focused, so the bypass costs the layout nothing. Declared
+   after the toggle it shares a corner and a stacking step with, to land on
+   top of it while focused. */
+.skip-link {
+  position: fixed;
+  top: -100%;
+  left: var(--space-3);
+  z-index: var(--z-drawer-toggle);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.skip-link:focus {
+  top: var(--space-3);
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
@@ -878,6 +897,13 @@ input[type="checkbox"] {
 
 .toolbar-select:focus {
   border-color: var(--border-focus);
+}
+
+/* On the edge, never a fade: aria-disabled keeps the control focusable, so it
+   is not exempt from 4.5:1 the way a native disabled one is (WCAG 1.4.3). */
+.toolbar-select[aria-disabled='true'] {
+  border-style: dashed;
+  cursor: not-allowed;
 }
 
 .pref-section {

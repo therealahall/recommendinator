@@ -33,6 +33,12 @@ function closeSidebar() {
   sidebarOpen.value = false
 }
 
+// Prevented rather than followed: the router owns the fragment, so navigating to
+// #main-content would throw the route away.
+function skipToMain() {
+  mainContent.value?.focus()
+}
+
 function trackViewport(change: MediaQueryListEvent) {
   isNarrow.value = change.matches
 }
@@ -133,6 +139,7 @@ watch(
   />
 
   <template v-else-if="auth.isAuthenticated">
+    <a class="skip-link" href="#main-content" @click.prevent="skipToMain">Skip to main content</a>
     <button
       class="sidebar-toggle"
       aria-label="Toggle navigation"

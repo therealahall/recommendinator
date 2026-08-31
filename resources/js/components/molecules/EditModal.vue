@@ -4,6 +4,7 @@ import type { ContentItemResponse, ItemEditRequest } from '@/types/api'
 import { MAX_CREATOR_LENGTH, RELEASE_YEAR_TYPES } from '@/constants/library'
 import { formatContentType, formatStatusForContentType } from '@/utils/format'
 import { useDiscardGuard } from '@/composables/useDiscardGuard'
+import { rescueFocus } from '@/utils/focus'
 import ModalDialog from '@/components/atoms/ModalDialog.vue'
 import StarRating from '@/components/atoms/StarRating.vue'
 import SeasonChecklist from '@/components/molecules/SeasonChecklist.vue'
@@ -55,14 +56,12 @@ const loaded = {
 const refusal = ref<HTMLElement | null>(null)
 const enrichmentStatus = ref<HTMLElement | null>(null)
 
-// The dialog covers the page, so focus is what carries a refusal to a user who
-// cannot see the whole screen.
 watch(
   () => props.saveError,
   async (said) => {
     if (!said) return
     await nextTick()
-    refusal.value?.focus()
+    rescueFocus(refusal.value)
   },
 )
 
@@ -73,7 +72,7 @@ watch(
   async (manual, was) => {
     if (manual || !was) return
     await nextTick()
-    enrichmentStatus.value?.focus()
+    rescueFocus(enrichmentStatus.value)
   },
 )
 

@@ -345,6 +345,28 @@ describe('App', () => {
     expect(document.title).toContain(APP_NAME)
   })
 
+  it('opens the shell on a bypass that lands the keyboard on the page', async () => {
+    // Regression: a hard reload or a Shift+Tab left the six sidebar nav buttons
+    // between the keyboard and the first control on the page (WCAG 2.4.1).
+    spyOnLoad()
+    answerSession(true, true, AARON)
+    const wrapper = mount(App, { shallow: true, attachTo: document.body })
+    await flushPromises()
+
+    const bypass = wrapper.get('a.skip-link')
+    expect(wrapper.findAll('a, button')[0].element).toBe(bypass.element)
+    expect(
+      bypass.element.compareDocumentPosition(wrapper.getComponent(AppSidebar).element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+
+    ;(bypass.element as HTMLElement).focus()
+    await bypass.trigger('click')
+
+    expect(document.activeElement).toBe(wrapper.get('#main-content').element)
+    wrapper.unmount()
+  })
+
   it('hides it again when the window itself narrows', async () => {
     // The viewport can cross the breakpoint without the toggle being touched —
     // a rotated tablet, a resized window — and the state has to follow it.

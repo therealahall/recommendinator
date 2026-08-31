@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import ConfirmPanel from '@/components/molecules/ConfirmPanel.vue'
-import { focusStranded } from '@/utils/focus'
+import { rescueFocus } from '@/utils/focus'
 import type { SourceFieldSchema } from '@/types/api'
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -245,7 +245,7 @@ async function settleSecret(name: string): Promise<void> {
   secretEditing[name] = false
   secretDrafts[name] = ''
   await nextTick()
-  if (focusStranded()) control(`secret-replace-${name}`)?.focus()
+  rescueFocus(control(`secret-replace-${name}`))
 }
 
 watch(
@@ -253,8 +253,7 @@ watch(
   (now, before) => {
     for (const [name, status] of Object.entries(now)) {
       if (status === before?.[name]) continue
-      // A refusal takes focus, so it is read where it happened.
-      if (status === 'error') void nextTick(() => control(`secret-error-${name}`)?.focus())
+      if (status === 'error') void nextTick(() => rescueFocus(control(`secret-error-${name}`)))
       else if (status === 'saved') void settleSecret(name)
     }
   },
