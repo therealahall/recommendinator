@@ -325,11 +325,13 @@ const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
 const SETTING_CONTROL = 'resources/js/components/molecules/SettingControl.vue'
 const SETTING_SECRET = 'resources/js/components/molecules/SettingSecret.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
+const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
 const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
 const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
+const EDGE_SURFACES = [...MUTED_SURFACES, '--bg-hover']
 const RING_SURFACES = [
   '--bg-card',
   '--bg-input',
@@ -365,10 +367,8 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
     expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // Six surfaces, three colours in either theme, and the hover fill is the
-  // extreme of them: it binds for every control that is not a field.
-  it('--border-default divides a control from --bg-hover', () => {
-    expect(ratio('--border-default', '--bg-hover')).toBeGreaterThanOrEqual(NON_TEXT)
+  it.each(EDGE_SURFACES)('--border-default divides a control from %s', (surface) => {
+    expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
   // The app's one focus indicator, and the measurement THEME_DEVELOPMENT.md
@@ -622,10 +622,12 @@ describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, th
   })
 })
 
-/** The track a bar fills, and the rule painting the fill. */
+/** The track a bar fills and the rule painting the fill, which for the range is one rule. */
 const BARS: [string, string, string, string][] = [
   ['a scorer contribution', BASE, '.score-bar-bg', '.score-bar-fill'],
   ['a variety penalty', BASE, '.score-bar-bg', '.score-bar-fill-penalty'],
+  ['a source sync', SOURCE_SYNC_PROGRESS, '.source-progress-bar', '.source-progress-fill'],
+  ['a scorer weight', BASE, 'input[type="range"]', 'input[type="range"]'],
 ]
 
 describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
@@ -643,10 +645,11 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
 
   it.each(BARS)('%s is bounded by its track', (_label, path, trackSelector, fillSelector) => {
     const source = read(path)
-    const track = declaration(ruleBody(source, trackSelector), 'background')
-    const fill = declaration(ruleBody(source, fillSelector), 'background')
+    const stops = gradientColours(declaration(ruleBody(source, trackSelector), 'background'))
+    const track = stops[stops.length - 1]
+    const fills = gradientColours(declaration(ruleBody(source, fillSelector), 'background'))
 
-    boundedBy(gradientColours(fill), toRgba(track, vars))
+    boundedBy(fills.filter((colour) => colour !== track), toRgba(track, vars))
   })
 })
 
@@ -684,6 +687,15 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
       expect(divides(edge, toRgba(surface, vars))).toBeGreaterThanOrEqual(NON_TEXT)
     },
   )
+
+  it('the spinner segment that turns is told apart from the ring around it', () => {
+    const spinner = ruleBody(read(BASE), '.spinner')
+    const page = toRgba('var(--bg-primary)', vars)
+    const segment = over(toRgba(declaration(spinner, 'border-top-color'), vars), page)
+    const ring = toRgba(colourIn(declaration(spinner, 'border')), vars)
+
+    expect(contrast(segment, ring)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
 
   // The thinner of the two tints a secondary button lands on, so the nearer of
   // the two to the page the button is cut out of.

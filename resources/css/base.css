@@ -1479,7 +1479,7 @@ button.btn[aria-disabled='true'] {
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-default);
-  border-top-color: var(--accent-light);
+  border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -1586,7 +1586,7 @@ button.btn[aria-disabled='true'] {
 
 /* The text mixes the success colour toward --text-primary (light in dark
    themes, dark in light themes) so it clears WCAG 1.4.3 4.5:1 against the
-   tinted card surface in both Nord (4.77:1) and Snowstorm (4.90:1). */
+   tinted card surface whatever palette the theme sets. */
 .btn-complete,
 .btn-unignore {
   background: color-mix(in srgb, var(--color-success) 12%, var(--bg-card));
@@ -1651,8 +1651,8 @@ button.btn[aria-disabled='true'] {
 .profile-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .profile-tag { padding: 2px 8px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--text-primary); border-radius: var(--radius-sm); font-size: var(--text-xs); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* No fill on the anti tag: --color-error-text clears 4.5:1 on --bg-card with
-   nothing to spare (4.82:1 on Nord), and a 10% error wash under it took that
-   to 4.45:1. The border carries the distinction instead. */
+   nothing to spare, and a 10% error wash under it took that below the floor.
+   The border carries the distinction instead. */
 .profile-tag.anti { background: transparent; color: var(--color-error-text); border-color: color-mix(in srgb, var(--color-error) 30%, transparent); }
 .profile-status { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
 .profile-status.failed { color: var(--color-error-text); }

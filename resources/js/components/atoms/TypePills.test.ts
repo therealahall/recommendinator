@@ -99,7 +99,9 @@ describe('TypePills', () => {
 
   it.each([
     ['ArrowRight', 'movie', 'tv_show', 'TV Show'],
+    ['ArrowDown', 'movie', 'tv_show', 'TV Show'],
     ['ArrowLeft', 'movie', 'book', 'Book'],
+    ['ArrowUp', 'movie', 'book', 'Book'],
     ['Home', 'movie', '', 'All'],
     ['End', 'movie', 'video_game', 'Game'],
     ['ArrowLeft', '', 'video_game', 'Game'],
@@ -131,17 +133,17 @@ describe('TypePills', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([['video_game']])
   })
 
-  it('leaves a modified arrow to the browser shortcut it belongs to', () => {
+  it.each([['altKey', 'ArrowLeft'], ['metaKey', 'ArrowLeft'], ['ctrlKey', 'Home']])('leaves %s+%s to the browser shortcut', (modifier, key) => {
     const wrapper = mount(TypePills, {
       props: { modelValue: 'movie' },
     })
 
     const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
     const event = new KeyboardEvent('keydown', {
-      key: 'ArrowLeft',
+      key,
       bubbles: true,
       cancelable: true,
-      altKey: true,
+      [modifier]: true,
     })
     start.element.dispatchEvent(event)
 
