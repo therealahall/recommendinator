@@ -333,7 +333,6 @@ const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
 const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
-const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
 const EDGE_SURFACES = [...MUTED_SURFACES, '--bg-hover']
 const RING_SURFACES = [
   '--bg-card',
@@ -366,7 +365,7 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
 
   // In a light theme a field and the card behind it are both white, so this
   // edge is the only thing saying where the field is (WCAG 1.4.11).
-  it.each(CONTROL_SURFACES)('--border-interactive divides a control from %s', (surface) => {
+  it.each(EDGE_SURFACES)('--border-interactive divides a control from %s', (surface) => {
     expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
