@@ -21,6 +21,7 @@
   --text-secondary: #d8dee9;
   --text-muted: #b3c7da;
   --text-inverse: #2e3440;
+  --text-on-dark-fill: #ffffff;
 
   /* Pulled toward the text colour because this edge is what identifies the
      secondary button, the accordion, the drop zone and the spinner, so it owes
@@ -738,11 +739,9 @@ input[type="checkbox"] {
   font-size: var(--text-xs);
 }
 
-/* The fill is a dark error mix in every theme, so the label cannot follow
-   --text-primary: in a light theme that is dark-on-dark at 1.53:1. */
 .btn-danger {
   background: color-mix(in srgb, var(--color-error) 75%, black);
-  color: #ffffff;
+  color: var(--text-on-dark-fill);
   border-color: color-mix(in srgb, var(--color-error) 75%, black);
 }
 
@@ -1480,7 +1479,7 @@ button.btn[aria-disabled='true'] {
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-default);
-  border-top-color: var(--text-inverse);
+  border-top-color: var(--accent-light);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }

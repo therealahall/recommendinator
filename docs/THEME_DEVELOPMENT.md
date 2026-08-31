@@ -117,7 +117,9 @@ owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter.
 Both separate a control from its own fill and from the surface behind it, so
 each owes 3:1 against every background a control lands on (WCAG 1.4.11).
 `--border-default` is pulled toward `--text-primary` to earn that, so a theme
-setting its text colour inherits an edge and need not override either.
+setting its text colour inherits an edge and need not override either. Override
+`--border-interactive` alone to give fields a heavier edge than the buttons and
+menus that keep `--border-default`.
 
 ### Semantic
 
@@ -180,7 +182,7 @@ variants yourself.
 4. Start the server, select the theme from the Preferences tab or with
    `theme set`, and check every page for text readability, badge contrast and
    button visibility. `resources/css/contrast.test.ts` measures every floor
-   above for each theme in `src/web/static/themes/`, yours included.
+   above for each theme in `src/web/static/themes/`.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override

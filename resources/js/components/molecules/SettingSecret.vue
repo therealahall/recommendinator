@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { focusStranded } from '@/utils/focus'
+import { rescueFocus } from '@/utils/focus'
 import type { SettingViewSecret } from '@/types/api'
 
 const props = withDefaults(
@@ -63,9 +63,7 @@ watch(
   () => props.busy,
   (busy, wasBusy) => {
     if (!wasBusy || busy) return
-    nextTick(() => {
-      if (focusStranded()) replaceButton.value?.focus()
-    })
+    nextTick(() => rescueFocus(replaceButton.value))
   },
 )
 </script>
