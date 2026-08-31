@@ -229,12 +229,11 @@ function onFloatBlur(event: Event): void {
         v-if="setting.db_overridden"
         type="button"
         class="btn btn-secondary btn-small"
-        :aria-label="`Reset ${setting.label} to default`"
         :aria-disabled="disabled || resetting || undefined"
         :aria-describedby="disabled && !resetting ? resetLockId : undefined"
         :data-testid="`reset-${setting.key}`"
         @click="onReset"
-      >{{ resetting ? 'Resetting…' : 'Reset to default' }}</button>
+      >{{ resetting ? 'Resetting…' : 'Reset to default' }}<span class="sr-only"> — {{ setting.label }}</span></button>
       <span v-if="disabled && !resetting" :id="resetLockId" class="sr-only"
         >Unavailable while this section is saving.</span
       >
@@ -305,8 +304,8 @@ function onFloatBlur(event: Event): void {
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
-/* The text mix, not the fill colour: --color-error reaches only 2.46:1 against
-   the field it outlines and 2.09:1 on the tint beside it (WCAG 1.4.11). */
+/* The text mix, not the fill colour: --color-error is sized for fills and falls
+   short of 3:1 on both the field it outlines and the tint beside it (1.4.11). */
 .setting-input--invalid {
   border-color: var(--color-error-text) !important;
 }

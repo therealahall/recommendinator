@@ -188,7 +188,7 @@ describe('AddSourceModal', () => {
     }
   })
 
-  it('keeps the reason plugins are missing on screen when Create is pressed anyway', async () => {
+  it('names the plugin and the id a freshly opened modal is still waiting for, and keeps the scan failure on screen', async () => {
     const store = useDataStore()
     vi.spyOn(store, 'loadAvailablePlugins').mockRejectedValue(new Error('plugin scan failed'))
     const wrapper = mount(AddSourceModal)
@@ -196,6 +196,13 @@ describe('AddSourceModal', () => {
 
     const submit = wrapper.get('[data-testid="add-source-submit"]')
     expect(submit.attributes('aria-disabled')).toBe('true')
+    const described = (submit.attributes('aria-describedby') ?? '')
+      .split(' ')
+      .filter(Boolean)
+      .map((id) => wrapper.get(`[id="${id}"]`).text())
+      .join(' ')
+    expect(described).toContain('a plugin')
+    expect(described).toContain('a source id')
 
     await submit.trigger('click')
     await flushPromises()
