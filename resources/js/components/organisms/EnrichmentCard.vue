@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useDataStore } from '@/stores/data'
-import { formatContentType, truncate } from '@/utils/format'
+import { formatContentType, progressMilestone, truncate } from '@/utils/format'
 import EnrichmentReset from '@/components/molecules/EnrichmentReset.vue'
 import TypePills from '@/components/atoms/TypePills.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
@@ -26,6 +26,30 @@ const errorsAnnouncement = computed(() => {
   const count = jobErrors.value.length
   if (count === 0) return ''
   return `This enrichment run reported ${count} ${count === 1 ? 'error' : 'errors'}.`
+})
+// The stored job keeps `completed` set long after the run, so an end is only
+// news to a page that saw the run going.
+const watchedRun = ref(false)
+watch(
+  running,
+  (isRunning) => {
+    if (isRunning) watchedRun.value = true
+  },
+  // A page opened mid-run has seen it too, and gets no later flip to true.
+  { immediate: true },
+)
+// Transitions, not state: the counts below refresh on every poll, and only a
+// milestone crossing or the end of the run is worth interrupting for.
+const progressAnnouncement = computed(() => {
+  const job = data.enrichmentJob
+  if (!job) return ''
+  if (job.running) {
+    const reached = progressMilestone(job.progress_percent)
+    return reached === 0 ? 'Enrichment running.' : `Enrichment ${reached}% complete.`
+  }
+  return job.completed && watchedRun.value
+    ? `Enrichment finished. ${job.items_enriched} items enriched.`
+    : ''
 })
 const resettable = computed(() =>
   enrichType.value || !stats.value
@@ -108,11 +132,9 @@ const onReset = (provider: string) =>
         </div>
       </div>
 
-      <div
-        class="enrichment-status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
+      <!-- Not live: this refreshes on every poll. The sr-only region below
+           carries the milestones. -->
+      <div class="enrichment-status">
         <template v-if="data.enrichmentJob?.running">
           <span class="spinner" aria-hidden="true" />
           <span class="sr-only">Enriching: </span>
@@ -188,6 +210,13 @@ const onReset = (provider: string) =>
       aria-live="polite"
       aria-atomic="true"
     >{{ message }}</p>
+    <p
+      class="sr-only"
+      data-testid="enrichment-progress-status"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ progressAnnouncement }}</p>
     <p
       class="sr-only"
       data-testid="enrichment-errors-status"

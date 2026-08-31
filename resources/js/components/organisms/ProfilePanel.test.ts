@@ -85,6 +85,23 @@ describe('ProfilePanel', () => {
     expect(wrapper.text()).not.toContain('No profile generated')
   })
 
+  it('says a regenerate finished rather than clearing the region', async () => {
+    // Success blanked the region, and clearing one announces nothing: the tags
+    // above changed under the operator with no word that the run had ended.
+    mockGet.mockResolvedValue(NEVER_GENERATED)
+    mockPost.mockResolvedValue(THEMES_ONLY)
+
+    const wrapper = mount(ProfilePanel)
+    await flushPromises()
+    const region = wrapper.get('[role="status"]')
+    expect(region.text()).toBe('')
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(region.text()).toContain('regenerated')
+  })
+
   it('announces a failed regenerate and unlocks the button', async () => {
     // The store swallowed the rejection, so a 500 read exactly like a success
     // on an empty library: the panel still said no profile was generated.

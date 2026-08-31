@@ -186,6 +186,19 @@ describe('SourceConfigForm', () => {
     expect(save.attributes('aria-disabled')).toBeUndefined()
   })
 
+  it('announces a landed save through the region already mounted for it', async () => {
+    // The "Saved ✓" pill enters the DOM already populated, which reads as page
+    // content, and focus stays on Save, whose label does not change.
+    const wrapper = mountForm({ schema: [field({ name: 'path' })], values: { path: 'x' } })
+    const region = wrapper.get('[data-testid="form-save-announcement"]')
+    expect(region.text()).toBe('')
+
+    await wrapper.setProps({ saveStatus: 'saved' })
+
+    expect(region.text()).toContain('saved')
+    expect(wrapper.get('[data-testid="form-save-status"]').attributes('role')).toBeUndefined()
+  })
+
   it('renders an error pill with message when saveStatus is "error"', () => {
     const wrapper = mountForm({
       schema: [field({ name: 'path' })],

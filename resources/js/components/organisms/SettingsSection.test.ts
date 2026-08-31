@@ -94,6 +94,60 @@ describe('SettingsSection', () => {
     expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'enrichment.providers.tmdb.language': 'de-DE' } })
   })
 
+  it('announces a landed save through the region already mounted for it', async () => {
+    // The "Saved ✓" pill enters the DOM already populated, which reads as page
+    // content: the write landed in silence, focus still on a button whose label
+    // reverted to what it was.
+    mockPut.mockResolvedValue({ sections: [] })
+    const wrapper = mountSection({
+      section: 'enrichment',
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
+    })
+    const region = wrapper.get('p.sr-only')
+    expect(region.text()).toBe('')
+
+    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
+    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+    await flushPromises()
+
+    expect(region.text()).toContain('saved')
+    expect(
+      wrapper.get('[data-testid="save-status-enrichment"]').attributes('role'),
+    ).toBeUndefined()
+  })
+
+  it('announces a second save of the section, whose wording repeats the first', async () => {
+    mockPut.mockResolvedValue({ sections: [] })
+    const wrapper = mountSection({
+      section: 'enrichment',
+      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
+    })
+    const region = wrapper.get('p.sr-only')
+    const changes: string[] = []
+    new MutationObserver(() => changes.push(region.text())).observe(region.element, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    })
+    async function save(language: string): Promise<void> {
+      await wrapper
+        .find('[data-testid="setting-enrichment.providers.tmdb.language"]')
+        .setValue(language)
+      await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
+      await flushPromises()
+    }
+
+    await save('de-DE')
+    // Writing a value a node already holds mutates nothing, which is what makes
+    // the second save's identical sentence silent unless the region is blanked.
+    expect(changes).not.toContain('')
+    changes.length = 0
+    await save('fr-FR')
+
+    expect(changes.length).toBeGreaterThan(0)
+    expect(region.text()).toContain('saved')
+  })
+
   it('maps a 422 to the offending field and moves focus to it', async () => {
     mockPut.mockRejectedValue(
       new MockApiError(422, 'Unprocessable Entity', {
