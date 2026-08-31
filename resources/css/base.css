@@ -198,9 +198,10 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
-  /* The page colour as the unfilled track: a border token sits too near the
-     accent that fills it, hiding where the value ends (1.4.11). */
+  /* The page colour as the unfilled track, edged rather than refilled: no token
+     clears 3:1 against both the accent and the card behind it (1.4.11). */
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--bg-primary) var(--value-percent));
+  border: 1px solid var(--border-default);
   border-radius: 3px;
 }
 
@@ -909,13 +910,6 @@ button.btn[aria-disabled='true'] {
   border-color: var(--border-focus);
 }
 
-/* On the edge, never a fade: aria-disabled keeps the control focusable, so it
-   is not exempt from 4.5:1 the way a native disabled one is (WCAG 1.4.3). */
-.toolbar-select[aria-disabled='true'] {
-  border-style: dashed;
-  cursor: not-allowed;
-}
-
 .pref-section {
   margin-bottom: var(--space-6);
 }
@@ -1308,6 +1302,7 @@ button.btn[aria-disabled='true'] {
   flex: 1;
   height: 6px;
   background: var(--bg-primary);
+  border: 1px solid var(--border-default);
   border-radius: 3px;
   overflow: hidden;
 }

@@ -81,6 +81,7 @@ want to change. Anything unset keeps its dark-theme default.
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
 | `--text-muted` | `#b3c7da` | Muted/label text |
 | `--text-inverse` | `#2e3440` | Text on accent backgrounds |
+| `--text-on-dark-fill` | `#ffffff` | Labels on the Delete and Enable fills, dark in either theme |
 
 `--text-muted` carries help text, hints and empty states at 12-13px, so keep it
 at 4.5:1 or better against `--bg-primary`, `--bg-card`, `--bg-sidebar`,

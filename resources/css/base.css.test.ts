@@ -44,7 +44,8 @@ describe('the type scale', () => {
   it('sizes every rule off it, so a text-only zoom moves all the text', () => {
     // An absolute font-size ignores the text size the browser was set to
     // (WCAG 1.4.4), and the scale itself is declared in rem.
-    const fixed = styledFiles('resources').flatMap((path) =>
+    const scanned = styledFiles('resources')
+    const fixed = scanned.flatMap((path) =>
       [
         ...readFileSync(`${process.cwd()}/${path}`, 'utf8')
           .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -52,7 +53,24 @@ describe('the type scale', () => {
       ].flatMap(([, value]) => (/\d(px|pt)\b/.test(value) ? [`${path}: ${value.trim()}`] : [])),
     )
 
+    expect(scanned.length).toBeGreaterThan(0)
     expect(fixed).toEqual([])
+  })
+})
+
+const WCAG_FLOORS = new Set(['3:1', '4.5:1', '7:1'])
+
+describe('ratios written into the stylesheets', () => {
+  it('names a WCAG floor, never a measurement that goes stale when a theme moves', () => {
+    const scanned = styledFiles('resources')
+    const measured = scanned.flatMap((path) =>
+      [
+        ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(/\d+(?:\.\d+)?:1(?![\d.])/g),
+      ].flatMap(([ratio]) => (WCAG_FLOORS.has(ratio) ? [] : [`${path}: ${ratio}`])),
+    )
+
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(measured).toEqual([])
   })
 })
 
@@ -96,7 +114,7 @@ describe('inactive button styling', () => {
 
 describe('error text token', () => {
   it('derives error text from the active palette, not the fill colour', () => {
-    // --color-error is sized for fills: 2.46:1 as text on --bg-card.
+    // --color-error is sized for fills and falls short of 4.5:1 as text.
     const source = readBase()
     const match = source.match(/--color-error-text:([^;]*);/)
     if (!match) throw new Error('--color-error-text declaration not found in base.css')

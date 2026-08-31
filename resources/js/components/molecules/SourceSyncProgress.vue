@@ -102,14 +102,15 @@ const announcement = computed<string>(() => {
   padding: 0 var(--space-4) var(--space-2);
 }
 
-/* The page colour, for the reason input[type="range"] carries it: no border
-   token clears 3:1 against the accent that fills this (WCAG 1.4.11). */
+/* The page colour and an edge, for the reason input[type="range"] carries both:
+   no token clears 3:1 against the accent and the card at once (WCAG 1.4.11). */
 .source-progress-bar {
   position: relative;
   display: inline-block;
   width: 80px;
   height: 6px;
   background: var(--bg-primary);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   overflow: hidden;
   vertical-align: middle;
