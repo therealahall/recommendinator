@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
+import { focusStranded } from '@/utils/focus'
 import { domId } from '@/utils/format'
 import type { TraktPollResponse } from '@/types/api'
 
@@ -52,6 +53,21 @@ let pollHandle: number | null = null
 const codePanel = ref<HTMLElement | null>(null)
 const resultPanel = ref<HTMLElement | null>(null)
 
+/** True when nobody holds focus: it is at <body>, or in the code panel the
+ *  caller is about to hide. The poll lands from a timer, so a user who tabbed
+ *  away meanwhile keeps their field (2.4.3). */
+function focusRescuable(): boolean {
+  return focusStranded() || (codePanel.value?.contains(document.activeElement) ?? false)
+}
+
+async function failFlow(said: string): Promise<void> {
+  const rescuing = focusRescuable()
+  state.value = 'error'
+  message.value = said
+  await nextTick()
+  if (rescuing) resultPanel.value?.focus()
+}
+
 function clearPoll(): void {
   if (pollHandle !== null) {
     props.clearTimer(pollHandle)
@@ -75,12 +91,10 @@ async function startFlow(): Promise<void> {
     codePanel.value?.focus()
     schedulePoll(intervalMs)
   } catch {
-    state.value = 'error'
-    message.value =
+    await failFlow(
       'Could not start the Trakt connection. Check that the Trakt client ' +
-      'credentials are configured, then try again.'
-    await nextTick()
-    resultPanel.value?.focus()
+        'credentials are configured, then try again.',
+    )
   }
 }
 
@@ -97,19 +111,14 @@ async function poll(): Promise<void> {
   try {
     result = await data.pollTraktApproval(props.sourceId, deviceCode)
   } catch {
-    state.value = 'error'
-    message.value = 'Connection check failed. Try connecting again.'
-    await nextTick()
-    resultPanel.value?.focus()
+    await failFlow('Connection check failed. Try connecting again.')
     return
   }
 
   if (result.connected) {
     // Read before the state change hides the code panel: in a browser that
-    // blurs its occupant to <body>, and rescuing THAT focus is the only reason
-    // to move any.
-    const rescuingFocus =
-      codePanel.value?.contains(document.activeElement) ?? false
+    // blurs its occupant to <body>, too late to tell it from a user's own.
+    const rescuingFocus = focusRescuable()
     state.value = 'connected'
     // The confirmation belongs to the panel's region, since the status flip
     // unmounts this component.
@@ -121,8 +130,6 @@ async function poll(): Promise<void> {
       resultText.value =
         'Connected to Trakt, but the status could not be re-read. Reload the page to confirm.'
       await nextTick()
-      // poll() fires from a timer, so a user who tabbed into the settings while
-      // waiting must keep the field they are typing in (2.4.3).
       if (rescuingFocus) resultPanel.value?.focus()
     }
     return
@@ -135,16 +142,10 @@ async function poll(): Promise<void> {
       schedulePoll(intervalMs)
       break
     case 'expired':
-      state.value = 'error'
-      message.value = 'The code expired before it was approved. Try again.'
-      await nextTick()
-      resultPanel.value?.focus()
+      await failFlow('The code expired before it was approved. Try again.')
       break
     case 'denied':
-      state.value = 'error'
-      message.value = 'The connection was denied on Trakt. Try again.'
-      await nextTick()
-      resultPanel.value?.focus()
+      await failFlow('The connection was denied on Trakt. Try again.')
       break
     default:
       message.value = 'Waiting for you to approve the code on Trakt…'

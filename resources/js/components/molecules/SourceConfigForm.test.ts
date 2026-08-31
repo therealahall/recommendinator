@@ -276,10 +276,12 @@ describe('SourceConfigForm', () => {
       expect(wrapper.find('input[name="api_key"]').exists()).toBe(true)
     })
 
-    it('reports a refused store in the row and puts focus on it', async () => {
+    it('reports a refused store in the row and rescues the focus it dropped', async () => {
       const wrapper = mountForm({ schema: apiKey, secretStatus: { api_key: false } })
 
       await typeSecret(wrapper)
+      // Where a mouse user who clicked Save and then clicked the page stands.
+      ;(document.activeElement as HTMLElement).blur()
       await wrapper.setProps({
         secretSave: { api_key: 'error' },
         secretSaveError: { api_key: 'Key rejected' },
@@ -290,6 +292,25 @@ describe('SourceConfigForm', () => {
       expect(alert.text()).toContain('Key rejected')
       expect(wrapper.find('input[name="api_key"]').exists()).toBe(true)
       expect(document.activeElement).toBe(alert.element)
+    })
+
+    it('leaves focus where the operator tabbed to when the store is refused', async () => {
+      const wrapper = mountForm({ schema: apiKey, secretStatus: { api_key: false } })
+
+      await typeSecret(wrapper)
+      const elsewhere = wrapper.get('[data-testid="form-save"]').element as HTMLButtonElement
+      elsewhere.focus()
+      await wrapper.setProps({
+        secretSave: { api_key: 'error' },
+        secretSaveError: { api_key: 'Key rejected' },
+      })
+      await flushPromises()
+
+      // role="alert" reads the refusal wherever the keyboard is.
+      expect(wrapper.get('[data-testid="secret-error-api_key"]').text()).toContain(
+        'Key rejected',
+      )
+      expect(document.activeElement).toBe(elsewhere)
     })
 
     it('confirms a stored key only once the request resolved, and closes the row', async () => {

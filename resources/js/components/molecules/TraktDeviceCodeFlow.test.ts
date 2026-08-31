@@ -183,6 +183,37 @@ describe('TraktDeviceCodeFlow', () => {
     expect(wrapper.get('.trakt-flow-status--error').text()).toContain('expired')
     expect(wrapper.find('[data-testid="trakt-retry-btn"]').exists()).toBe(true)
     expect(timer.hasPending()).toBe(false)
+    // Hiding the code panel strands whoever was reading it, so this is the one
+    // transition that may claim the keyboard.
+    expect(document.activeElement).toBe(
+      wrapper.get('[data-testid="trakt-result-panel"]').element,
+    )
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['expires', () => mockPost.mockResolvedValueOnce({ connected: false, status: 'expired' })],
+    ['is denied', () => mockPost.mockResolvedValueOnce({ connected: false, status: 'denied' })],
+    ['cannot be checked', () => mockPost.mockRejectedValueOnce(new Error('offline'))],
+  ])('leaves the keyboard alone when the code %s under a user typing elsewhere', async (_name, answerPoll) => {
+    mockPost.mockResolvedValueOnce(FLOW)
+    answerPoll()
+    const timer = makeTimer()
+    const wrapper = mountFlow(timer)
+    await wrapper.get('[data-testid="trakt-connect-btn"]').trigger('click')
+    await flushPromises()
+    // The poll fires from a timer, and the wait is long enough to go and edit
+    // another source's fields on the same page.
+    const elsewhere = document.createElement('input')
+    document.body.appendChild(elsewhere)
+    elsewhere.focus()
+
+    await timer.fire()
+
+    expect(wrapper.get('.trakt-flow-status--error').text()).not.toBe('')
+    expect(document.activeElement).toBe(elsewhere)
+    elsewhere.remove()
+    wrapper.unmount()
   })
 
   it('shows an error when the device flow cannot start', async () => {

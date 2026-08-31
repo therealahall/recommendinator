@@ -2,6 +2,7 @@
 import { computed, ref, nextTick } from 'vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
 import { useDataStore } from '@/stores/data'
+import { rescueFocus } from '@/utils/focus'
 import { formatContentType } from '@/utils/format'
 import type { ItemEditRequest } from '@/types/api'
 import RecControls from '@/components/organisms/RecControls.vue'
@@ -83,7 +84,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
   } catch (err) {
     ignoreError.value = err instanceof Error ? err.message : 'Failed to save'
     await nextTick()
-    recList.value?.querySelector<HTMLElement>('#rec-ignore-error')?.focus()
+    rescueFocus(recList.value?.querySelector<HTMLElement>('#rec-ignore-error'))
     return
   }
   announcement.value = value
@@ -91,7 +92,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
     : `Restored “${title}”.`
   await nextTick()
   const testid = value ? `undo-ignore-${dbId}` : `ignore-btn-${dbId}`
-  recList.value?.querySelector<HTMLElement>(`[data-testid="${testid}"]`)?.focus()
+  rescueFocus(recList.value?.querySelector<HTMLElement>(`[data-testid="${testid}"]`))
 }
 </script>
 

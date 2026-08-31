@@ -161,6 +161,9 @@ describe('EditModal', () => {
       props: { item: manual, saving: false, saveError: '' },
       attachTo: document.body,
     })
+    // Let the trap settle on the dialog first: the operator reaches Restore by
+    // tabbing from there, not while the opening focus is still pending.
+    await vi.runAllTimersAsync()
     const said = wrapper.get('[role="status"]')
     const whileManual = said.text()
     const restore = wrapper.findAll('button')
@@ -417,7 +420,7 @@ describe('EditModal', () => {
     }
   })
 
-  it('says a refused save inside the dialog, and puts focus on it', async () => {
+  it('says a refused save inside the dialog, without taking the keyboard off Save', async () => {
     // The page banner it used to land on renders behind this overlay and
     // outside the aria-modal subtree, so nobody saving ever saw the reason.
     const wrapper = mount(EditModal, {
@@ -425,6 +428,9 @@ describe('EditModal', () => {
       attachTo: document.body,
     })
     expect(complaints(wrapper.findAll('[role="alert"]'))).toEqual([])
+    await vi.runAllTimersAsync()
+    const save = wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!
+    ;(save.element as HTMLElement).focus()
 
     await wrapper.setProps({ saveError: 'Review must be at most 10000 characters.' })
     await vi.runAllTimersAsync()
@@ -432,7 +438,7 @@ describe('EditModal', () => {
     const said = wrapper.get('[role="alert"]')
     expect(said.text()).toBe('Review must be at most 10000 characters.')
     expect(wrapper.get('[aria-modal="true"]').element.contains(said.element)).toBe(true)
-    expect(document.activeElement).toBe(said.element)
+    expect(document.activeElement).toBe(save.element)
     wrapper.unmount()
   })
 

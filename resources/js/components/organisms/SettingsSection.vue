@@ -14,6 +14,7 @@ import Accordion from '@/components/atoms/Accordion.vue'
 import SettingControl from '@/components/molecules/SettingControl.vue'
 import SettingSecret from '@/components/molecules/SettingSecret.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { rescueFocus } from '@/utils/focus'
 import { humanizeSection } from '@/utils/format'
 import type {
   SettingsSection,
@@ -184,11 +185,10 @@ async function onReset(key: string): Promise<void> {
   } finally {
     resetting[key] = false
   }
-  // Focus moves on BOTH paths: on success the Reset button unmounts with the
-  // override, and on failure it is briefly disabled — either way focus would
-  // otherwise fall to <body> (WCAG 2.4.3).
+  // Both paths lose the button: on success it unmounts with the override, on
+  // failure it is disabled for the length of the request (WCAG 2.4.3).
   await nextTick()
-  document.getElementById(`setting-${key}`)?.focus()
+  rescueFocus(document.getElementById(`setting-${key}`))
 }
 
 async function onSetSecret(key: string, value: string): Promise<void> {

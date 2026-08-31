@@ -6,6 +6,13 @@ export function focusStranded(): boolean {
   return active === null || active === document.body
 }
 
+/** Only out of <body>: a decision landing after the press — a watcher, a
+ *  request, a timer — rescues focus, never takes it. Its refusal is a live
+ *  region, and reads wherever focus sits. */
+export function rescueFocus(target: HTMLElement | null | undefined): void {
+  if (focusStranded()) target?.focus()
+}
+
 /** Sends focus where a decision left something to read (WCAG 2.4.3): the
  *  *refusal* it drew, else, where it unmounted the row, *preferred* if that
  *  survived and the nearest row below if not. Read after the run. */

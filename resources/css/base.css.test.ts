@@ -249,6 +249,24 @@ describe('stacking order', () => {
   })
 })
 
+describe('the bypass link', () => {
+  // Equal z-index breaks on tree order, and the link is first in the tree
+  // precisely so Tab reaches it before the toggle — which puts it underneath.
+  it('is not painted under the drawer toggle it shares a corner with', () => {
+    const source = readBase()
+    const toggle = ruleBlock(source, '.sidebar-toggle')
+    const link = ruleBlock(source, '.skip-link')
+    const corner = (top: string, left: string) => `${top} ${left}`
+    const covered =
+      corner(declaration(ruleBlock(source, '.skip-link:focus'), 'top'), declaration(link, 'left')) ===
+        corner(declaration(toggle, 'top'), declaration(toggle, 'left')) &&
+      step(scale(source), declaration(link, 'z-index')) <=
+        step(scale(source), declaration(toggle, 'z-index'))
+
+    expect(covered, 'the focused bypass link is drawn under the drawer toggle').toBe(false)
+  })
+})
+
 const APP = 'resources/js/App.vue'
 
 function drawerBreakpoints(): string[] {
