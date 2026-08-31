@@ -62,7 +62,7 @@ const WCAG_FLOORS = new Set(['3:1', '4.5:1', '7:1'])
 
 describe('ratios written into the stylesheets', () => {
   it('names a WCAG floor, never a measurement that goes stale when a theme moves', () => {
-    const scanned = styledFiles('resources')
+    const scanned = styledFiles('resources', /\.(css|vue|ts)$/)
     const measured = scanned.flatMap((path) =>
       [
         ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(/\d+(?:\.\d+)?:1(?![\d.])/g),
@@ -220,11 +220,11 @@ describe('.sr-only utility', () => {
 
 const DIALOG = 'resources/js/components/atoms/ModalDialog.vue'
 
-function styledFiles(directory: string): string[] {
+function styledFiles(directory: string, kinds = /\.(css|vue)$/): string[] {
   return readdirSync(`${process.cwd()}/${directory}`, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory()
-      ? styledFiles(`${directory}/${entry.name}`)
-      : /\.(css|vue)$/.test(entry.name)
+      ? styledFiles(`${directory}/${entry.name}`, kinds)
+      : kinds.test(entry.name)
         ? [`${directory}/${entry.name}`]
         : [],
   )

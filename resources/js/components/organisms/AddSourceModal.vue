@@ -363,8 +363,6 @@ async function submit(): Promise<void> {
         id="add-source-missing-fields"
         class="add-source-hint"
         data-testid="add-source-missing-fields"
-        role="status"
-        aria-live="polite"
       >
         Required to create:
         {{ blockers.join(', ') }}.
