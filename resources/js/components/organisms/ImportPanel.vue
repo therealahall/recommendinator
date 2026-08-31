@@ -321,7 +321,7 @@ async function submit(): Promise<void> {
 
 .import-field :deep(select) {
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-md);
   background: var(--bg-input);
   color: var(--text-primary);

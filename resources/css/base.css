@@ -22,15 +22,16 @@
   --text-muted: #b3c7da;
   --text-inverse: #2e3440;
 
-  --border-default: #4c566a;
+  /* Pulled toward the text colour because this edge is what identifies the
+     secondary button, the accordion, the drop zone and the spinner, so it owes
+     3:1 on every surface it lands on (WCAG 1.4.11). */
+  --border-default: color-mix(in srgb, #4c566a 45%, var(--text-primary));
   --border-subtle: #434c5e;
   --border-focus: var(--accent);
 
-  /* The edge of an editable control, where --border-default's 1.4:1 leaves a
-     white field and the white card behind it undivided in Snowstorm (WCAG
-     1.4.11). Derived, so a theme inherits it by overriding nothing.
-     --border-default stays for decorative dividers. */
-  --border-interactive: color-mix(in srgb, var(--border-default) 50%, var(--text-primary));
+  /* The retune above already clears a control edge, and re-deriving from it
+     lands at near-text weight, so a field's edge is the same colour. */
+  --border-interactive: var(--border-default);
 
   --color-success: #a3be8c;
   --color-warning: #ebcb8b;
@@ -196,7 +197,9 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
-  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--border-default) var(--value-percent));
+  /* The page colour as the unfilled track: every border token sits within
+     1.3:1 of the accent that fills it, hiding where the value ends (1.4.11). */
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--bg-primary) var(--value-percent));
   border-radius: 3px;
 }
 
@@ -707,9 +710,11 @@ input[type="checkbox"] {
   font-size: var(--text-xs);
 }
 
+/* The fill is a dark error mix in every theme, so the label cannot follow
+   --text-primary: in a light theme that is dark-on-dark at 1.53:1. */
 .btn-danger {
   background: color-mix(in srgb, var(--color-error) 75%, black);
-  color: var(--text-primary);
+  color: #ffffff;
   border-color: color-mix(in srgb, var(--color-error) 75%, black);
 }
 
@@ -718,14 +723,18 @@ input[type="checkbox"] {
   border-color: color-mix(in srgb, var(--color-error) 60%, black);
 }
 
-/* Inactive buttons, both spellings.
-   `:disabled` is the pre-interaction lock (an incomplete form); `aria-disabled`
-   is the in-flight lock, used where native disabled would blur the element the
-   user just activated (WCAG 2.4.3). */
+/* `:disabled` is the pre-interaction lock (an incomplete form), which 1.4.3
+   exempts from contrast. */
 .btn:disabled,
-.btn[aria-disabled='true'],
 .toggle-switch:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* `aria-disabled` is the in-flight lock, used where native disabled would blur
+   the element the user just activated (WCAG 2.4.3). It stays focusable and
+   announced, so it earns no fade: the label it keeps still owes 4.5:1. */
+.btn[aria-disabled='true'] {
   cursor: not-allowed;
 }
 
@@ -1252,10 +1261,11 @@ input[type="checkbox"] {
   flex-shrink: 0;
 }
 
+/* The page colour, for the reason input[type="range"] carries it. */
 .score-bar-bg {
   flex: 1;
   height: 6px;
-  background: var(--border-default);
+  background: var(--bg-primary);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -1487,9 +1497,11 @@ input[type="checkbox"] {
   border-color: var(--border-focus);
 }
 
+/* The text mix, not the fill colour: --color-error reaches only 2.46:1 against
+   the field it outlines, so the refusal has no visible edge (WCAG 1.4.11). */
 .edit-field input[aria-invalid='true'],
 .edit-field textarea[aria-invalid='true'] {
-  border-color: var(--color-error);
+  border-color: var(--color-error-text);
 }
 
 .edit-save-error {
@@ -1601,16 +1613,11 @@ input[type="checkbox"] {
 .profile-tag.anti { background: transparent; color: var(--color-error-text); border-color: color-mix(in srgb, var(--color-error) 30%, transparent); }
 .profile-status { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
 .profile-status.failed { color: var(--color-error-text); }
-.sync-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-4); }
-.sync-card { background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: var(--space-5); text-align: center; }
-.sync-card h3 { font-size: var(--text-md); font-weight: 600; margin-bottom: var(--space-1); color: var(--text-primary); }
 .sync-plugin-name { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }
 .sync-status-message { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); margin-bottom: var(--space-3); font-size: var(--text-sm); }
 .sync-status-info { background: color-mix(in srgb, var(--color-info) 10%, transparent); color: var(--color-info-text); border: 1px solid color-mix(in srgb, var(--color-info) 30%, transparent); }
 .sync-status-success { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success-text); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
 .sync-status-error { background: transparent; color: var(--color-error-text); border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent); }
-.sync-progress-bar { height: 4px; background: var(--border-default); border-radius: 2px; margin-bottom: var(--space-3); overflow: hidden; }
-.sync-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; }
 .gog-connect-flow, .epic-connect-flow { text-align: left; }
 .gog-input-row, .epic-input-row, .oauth-input-row { display: flex; gap: var(--space-2); }
 .oauth-connect-hint { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }

@@ -41,16 +41,17 @@ function mediaBlock(source: string, maxWidth: string): string {
 }
 
 describe('inactive button styling', () => {
-  // Regression: the project had NO `.btn:disabled` rule at all.
-  it('dims and re-cursors both inactive spellings', () => {
+  // Regression: the project had NO `.btn:disabled` rule at all. The fade is
+  // the pre-interaction lock's alone; contrast.test.ts measures why.
+  it('re-cursors both inactive spellings and dims the exempt one', () => {
     const source = readBase()
-    const match = source.match(
-      /\.btn:disabled,\s*\.btn\[aria-disabled='true'\],\s*\.toggle-switch:disabled\s*\{([^}]*)\}/,
-    )
-    if (!match) throw new Error('shared inactive-button rule not found in base.css')
+    const locked = source.match(/\.btn:disabled,\s*\.toggle-switch:disabled\s*\{([^}]*)\}/)
+    const inFlight = source.match(/\.btn\[aria-disabled='true'\]\s*\{([^}]*)\}/)
+    if (!locked || !inFlight) throw new Error('inactive-button rules not found in base.css')
 
-    expect(match[1]).toMatch(/opacity:/)
-    expect(match[1]).toMatch(/cursor:\s*not-allowed/)
+    expect(locked[1]).toMatch(/opacity:/)
+    expect(locked[1]).toMatch(/cursor:\s*not-allowed/)
+    expect(inFlight[1]).toMatch(/cursor:\s*not-allowed/)
   })
 
   it('never brightens an inactive button on hover', () => {

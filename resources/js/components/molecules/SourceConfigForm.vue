@@ -702,20 +702,19 @@ function isSecretSet(name: string): boolean {
   }
 }
 
-/* btn-success keeps the Enable button visually distinct from Save
-   (primary blue) without leaning on btn-primary. The Nord palette
-   ships a light green (`--color-success`) — pair it with dark text
-   (`--bg-primary`) so the contrast clears WCAG AA easily. */
+/* Enable stays distinct from Save without leaning on btn-primary. It mixes
+   toward black under a white label, as btn-danger does: --bg-primary on the raw
+   success colour is a light label on a light fill in a light theme. */
 :deep(.btn-success) {
-  background: var(--color-success);
-  color: var(--bg-primary);
-  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 60%, black);
+  color: #ffffff;
+  border-color: color-mix(in srgb, var(--color-success) 60%, black);
   font-weight: 600;
 }
 
 :deep(.btn-success:hover:not(:disabled):not([aria-disabled='true'])) {
-  background: color-mix(in srgb, var(--color-success) 88%, black);
-  border-color: color-mix(in srgb, var(--color-success) 88%, black);
+  background: color-mix(in srgb, var(--color-success) 50%, black);
+  border-color: color-mix(in srgb, var(--color-success) 50%, black);
 }
 
 :deep(.btn-success:focus-visible) {

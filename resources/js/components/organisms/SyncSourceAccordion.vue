@@ -322,14 +322,9 @@ const intervalLabel = computed(
   font-weight: 500;
 }
 
-/* Convey the disabled state via a softer border + secondary text colour
-   on the muted parts. ``opacity`` is avoided because it composites against
-   the surface and would push every text element below the WCAG 1.4.3 4.5:1
-   contrast threshold. */
-.source-accordion--disabled :deep(.accordion) {
-  border-color: var(--border-subtle);
-}
-
+/* Secondary text on the muted parts, and nothing softer than that: opacity
+   composites against the surface, and a softer border would leave the panel
+   without the 3:1 edge that says where it is (WCAG 1.4.3, 1.4.11). */
 .source-accordion--disabled :deep(.accordion-trigger) {
   color: var(--text-secondary);
 }

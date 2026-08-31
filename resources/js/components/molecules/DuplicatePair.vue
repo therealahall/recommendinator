@@ -155,7 +155,7 @@ function onDecline(copyId: number, otherIds: number[]): void {
 .dup-badge-loose {
   background: transparent;
   color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
+  border-color: var(--color-warning);
 }
 
 .dup-pair-caution {

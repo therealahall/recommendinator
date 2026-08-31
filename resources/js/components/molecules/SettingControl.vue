@@ -292,15 +292,17 @@ function onFloatBlur(event: Event): void {
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+/* The text mix, not the fill colour: --color-error reaches only 2.46:1 against
+   the field it outlines and 2.09:1 on the tint beside it (WCAG 1.4.11). */
 .setting-input--invalid {
-  border-color: var(--color-error) !important;
+  border-color: var(--color-error-text) !important;
 }
 
 .setting-error {
   font-size: var(--text-sm);
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 20%, transparent);
-  border-left: 3px solid var(--color-error);
+  border-left: 3px solid var(--color-error-text);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   margin: 0;
