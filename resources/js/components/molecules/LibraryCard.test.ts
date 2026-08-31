@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LibraryCard from './LibraryCard.vue'
+import RecCard from './RecCard.vue'
 
 const baseItem = {
   external_ids: [{ source: 'goodreads', external_id: 'test-1' }],
@@ -56,6 +57,32 @@ describe('LibraryCard', () => {
       props: { item: { ...baseItem, content_type: 'movie', status: 'unread' } },
     })
     expect(wrapper.find('.badge-status').text()).toBe('Unwatched')
+  })
+
+  it('titles a card at the level a recommendation of the same work is titled', () => {
+    // A page of twenty recommendations offered one heading to jump between: the
+    // rec title was a div while the same work here was a heading (WCAG 1.3.1).
+    const library = mount(LibraryCard, { props: { item: baseItem } })
+    const rec = mount(RecCard, {
+      props: {
+        rank: 1,
+        rec: {
+          db_id: 1,
+          title: baseItem.title,
+          author: baseItem.author,
+          series: null,
+          series_index: null,
+          score: 0.5,
+          reasoning: '',
+          score_breakdown: {},
+          variety_penalty: 0,
+        },
+      },
+    })
+
+    const heading = library.get('h1, h2, h3, h4, h5, h6').element
+    expect(heading.textContent).toContain(baseItem.title)
+    expect(rec.get('.rec-title').element.tagName).toBe(heading.tagName)
   })
 
   it.each<[number | null, string]>([

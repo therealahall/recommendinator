@@ -562,7 +562,7 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a sync still running', BASE, '.sync-status-info', '--bg-card'],
   ['a sync that finished', BASE, '.sync-status-success', '--bg-card'],
   ['the page the sidebar is on', BASE, '.nav-item.active', '--bg-sidebar'],
-  ['the app name over the nav', BASE, '.sidebar-header h1', '--bg-sidebar'],
+  ['the app name over the nav', BASE, '.app-banner h1', '--bg-sidebar'],
   ['a scorer weight', BASE, '.slider-value', '--bg-card'],
   ['a content-type badge', BASE, '.badge-type', '--bg-card'],
   ['a score badge', BASE, '.badge-score', '--bg-card'],

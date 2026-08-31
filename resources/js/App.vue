@@ -160,7 +160,15 @@ watch(
     />
 
     <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
-      <AppSidebar :user="auth.user" :offscreen="sidebarOffscreen" @navigate="closeSidebar" />
+      <div class="sidebar-column">
+        <!-- Outside the drawer: the drawer goes inert and aria-hidden when it is
+             off screen, which would leave a phone with no h1 at all. -->
+        <header class="app-banner">
+          <h1>{{ APP_NAME }}</h1>
+          <span v-if="app.version" class="version-label">v{{ app.version }}</span>
+        </header>
+        <AppSidebar :user="auth.user" :offscreen="sidebarOffscreen" @navigate="closeSidebar" />
+      </div>
       <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
         <UpdateBanner />
         <StatusBar />
@@ -176,7 +184,7 @@ watch(
          that enters the tree already populated is skipped as page content. -->
     <div class="card auth-card">
       <header class="auth-head">
-        <h1 class="auth-title">Recommendinator</h1>
+        <h1 class="auth-title">{{ APP_NAME }}</h1>
       </header>
       <p class="auth-status" data-testid="session-pending">Checking your session…</p>
     </div>

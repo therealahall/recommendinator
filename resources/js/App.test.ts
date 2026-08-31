@@ -327,6 +327,37 @@ describe('App', () => {
     expect(toggle.attributes('aria-expanded')).toBe(narrow ? String(open) : undefined)
   })
 
+  // Every routed page opens on an h2 inside .page-header, so this stands in for
+  // whichever one the router lands on.
+  const PAGE = { template: '<div class="page-header"><h2>Library</h2></div>' }
+
+  function outline(wrapper: ReturnType<typeof mount>): number[] {
+    return wrapper
+      .findAll('h1, h2, h3, h4, h5, h6')
+      .filter((heading) => !heading.element.closest('[aria-hidden="true"], [inert]'))
+      .map((heading) => Number(heading.element.tagName.slice(1)))
+  }
+
+  // Regression: the only h1 was inside the sidebar, which takes inert and
+  // aria-hidden off screen — so a phone had none, and the page opened on an h2
+  // skipped from nothing (WCAG 1.3.1).
+  it.each(VIEWPORTS)('carries one h1, and no level skipped under it, on $screen', async ({ narrow, open }) => {
+    stubViewport(narrow)
+    spyOnLoad()
+    answerSession(true, true, AARON)
+    const wrapper = mount(App, { global: { plugins: [router], stubs: { RouterView: PAGE } } })
+    await flushPromises()
+
+    if (open) await wrapper.find('.sidebar-toggle').trigger('click')
+
+    const levels = outline(wrapper)
+    expect(levels.filter((level) => level === 1)).toHaveLength(1)
+    levels.reduce((above, level) => {
+      expect(level).toBeLessThanOrEqual(above + 1)
+      return level
+    }, 0)
+  })
+
   // The sign-in, setup and session screens render outside RouterView, so the
   // title named a page nobody could see (WCAG 2.4.2).
   it.each([

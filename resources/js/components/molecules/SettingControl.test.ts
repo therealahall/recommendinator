@@ -73,10 +73,37 @@ describe('SettingControl widget mapping', () => {
 })
 
 describe('SettingControl badges and reset', () => {
-  it('emits reset when the Reset button is clicked', async () => {
-    const wrapper = mountControl(value({ db_overridden: true }), 8000)
-    await wrapper.find('[data-testid="reset-enrichment.batch_size"]').trigger('click')
+  it('keeps Reset in the tab order while its request is in flight, and drops the second press', async () => {
+    // `disabled` closed on the button the user had just pressed, blurring them
+    // to <body> for the length of the request (WCAG 2.4.3).
+    const wrapper = mount(SettingControl, {
+      props: { setting: value({ db_overridden: true }), modelValue: 8000 },
+      attachTo: document.body,
+    })
+    const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
+    const element = button.element as HTMLButtonElement
+    element.focus()
+
+    await button.trigger('click')
+    await wrapper.setProps({ resetting: true })
+    await button.trigger('click')
+
     expect(wrapper.emitted('reset')).toHaveLength(1)
+    expect(document.activeElement).toBe(element)
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('aria-disabled')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('says why a Reset locked by a section save cannot be used', async () => {
+    const wrapper = mountControl(value({ db_overridden: true }), 8000, { disabled: true })
+    const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
+
+    await button.trigger('click')
+
+    expect(wrapper.emitted('reset')).toBeUndefined()
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(wrapper.get(`[id="${button.attributes('aria-describedby')}"]`).text()).not.toBe('')
   })
 })
 

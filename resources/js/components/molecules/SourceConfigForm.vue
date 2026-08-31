@@ -476,7 +476,6 @@ function isSecretSet(name: string): boolean {
         :class="enabled ? 'btn-danger' : 'btn-success'"
         data-testid="form-toggle-enabled"
         :aria-disabled="enableBusy || verbsLocked || undefined"
-        :aria-pressed="enabled"
         @click="onToggleEnabled"
       >{{
         enableBusy

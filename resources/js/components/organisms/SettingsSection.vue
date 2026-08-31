@@ -185,8 +185,9 @@ async function onReset(key: string): Promise<void> {
   } finally {
     resetting[key] = false
   }
-  // Both paths lose the button: on success it unmounts with the override, on
-  // failure it is disabled for the length of the request (WCAG 2.4.3).
+  // Only a landed reset strands anyone: its button unmounts with the override it
+  // removed. A refused one is aria-disabled, so it keeps both its place and the
+  // operator's focus, and the seam declines (WCAG 2.4.3).
   await nextTick()
   rescueFocus(document.getElementById(`setting-${key}`))
 }

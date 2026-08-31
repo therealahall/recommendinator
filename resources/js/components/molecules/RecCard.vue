@@ -21,10 +21,10 @@ const emit = defineEmits<{
   <div class="rec-card">
     <div class="rec-header">
       <div class="rec-heading">
-        <div class="rec-title">
+        <h3 class="rec-title">
           <span class="rec-rank">{{ rank }}.</span>
           {{ rec.title }}
-        </div>
+        </h3>
         <div v-if="series.shown" class="rec-series">
           <span aria-hidden="true">{{ series.shown }}</span>
           <span class="sr-only">{{ series.spoken }}</span>

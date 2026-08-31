@@ -44,6 +44,7 @@ const control = computed<
 
 const invalid = computed(() => Boolean(props.error))
 const inputId = computed(() => `setting-${props.setting.key}`)
+const resetLockId = computed(() => `reset-locked-${props.setting.key}`)
 const helpId = computed(() => (props.setting.help ? `help-${props.setting.key}` : ''))
 const errId = computed(() => `err-${props.setting.key}`)
 const describedBy = computed(() => {
@@ -68,6 +69,14 @@ const selectChoices = computed(() => {
 })
 
 const validation = computed(() => props.setting.validation)
+
+// aria-disabled, not disabled: the lock closes on the button the user has just
+// activated, and a disabled button is blurred and unreachable by Tab, so the
+// reason it refuses is never read out (WCAG 2.4.3).
+function onReset(): void {
+  if (props.disabled || props.resetting) return
+  emit('reset')
+}
 
 function onFloatInput(event: Event): void {
   const parsedNumber = parseFloat((event.target as HTMLInputElement).value)
@@ -221,10 +230,14 @@ function onFloatBlur(event: Event): void {
         type="button"
         class="btn btn-secondary btn-small"
         :aria-label="`Reset ${setting.label} to default`"
-        :disabled="disabled || resetting"
+        :aria-disabled="disabled || resetting || undefined"
+        :aria-describedby="disabled && !resetting ? resetLockId : undefined"
         :data-testid="`reset-${setting.key}`"
-        @click="emit('reset')"
+        @click="onReset"
       >{{ resetting ? 'Resetting…' : 'Reset to default' }}</button>
+      <span v-if="disabled && !resetting" :id="resetLockId" class="sr-only"
+        >Unavailable while this section is saving.</span
+      >
     </div>
   </div>
 </template>

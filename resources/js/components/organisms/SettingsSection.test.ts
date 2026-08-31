@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { reactive } from 'vue'
 import SettingsSection from './SettingsSection.vue'
-import type { SettingsSection as SettingsSectionType, SettingView } from '@/types/api'
+import type {
+  SettingsSection as SettingsSectionType,
+  SettingView,
+  SettingViewValue,
+} from '@/types/api'
 
 const mockGet = vi.fn()
 const mockPut = vi.fn()
@@ -202,6 +207,33 @@ describe('SettingsSection', () => {
     expect(mockDelete).toHaveBeenCalledWith('/settings/enrichment.providers.tmdb.language')
   })
 
+  it('catches the focus the Reset button takes with it when the override is gone', async () => {
+    // The refusal path keeps focus by leaving the button standing, so nothing
+    // else covers the path where the button unmounts (WCAG 2.4.3).
+    const overridden = reactive(
+      textSetting('enrichment.providers.tmdb.language', 'en-US', {
+        db_overridden: true,
+      }) as SettingViewValue,
+    )
+    mockDelete.mockImplementation(async () => {
+      overridden.db_overridden = false
+      return { sections: [] }
+    })
+    const wrapper = mountSection({ section: 'enrichment', settings: [overridden] })
+    const reset = wrapper.get('[data-testid="reset-enrichment.providers.tmdb.language"]')
+    ;(reset.element as HTMLButtonElement).focus()
+
+    await reset.trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').exists(),
+    ).toBe(false)
+    expect(document.activeElement).toBe(
+      wrapper.get('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
+    )
+  })
+
   it('renders secrets in a Secrets fieldset and saves them out of band', async () => {
     mockPut.mockResolvedValue(undefined)
     mockGet.mockResolvedValue({ sections: [] })
@@ -294,19 +326,18 @@ describe('SettingsSection', () => {
       mockDelete.mockRejectedValue(new MockApiError(503, 'Service Unavailable'))
       const wrapper = mountSection(OVERRIDDEN)
 
-      await wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').trigger('click')
+      const reset = wrapper.get('[data-testid="reset-enrichment.providers.tmdb.language"]')
+      const pressed = reset.element as HTMLButtonElement
+      pressed.focus()
+
+      await reset.trigger('click')
       await flushPromises()
 
       expect(wrapper.find('p.sr-only').text()).toContain('Reset failed.')
-      // The control is still there and still focused — the user has not been
-      // dumped at <body> with no explanation.
-      expect(document.activeElement).toBe(
-        wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').element,
-      )
-      // And the button is usable again for a retry.
-      expect(
-        wrapper.find('[data-testid="reset-enrichment.providers.tmdb.language"]').attributes('disabled'),
-      ).toBeUndefined()
+      // A refusal leaves the button standing, so the user is neither dumped at
+      // <body> nor moved off the control they pressed — and can press it again.
+      expect(document.activeElement).toBe(pressed)
+      expect(reset.attributes('disabled')).toBeUndefined()
     })
 
     it('announces a failed secret save instead of doing nothing', async () => {

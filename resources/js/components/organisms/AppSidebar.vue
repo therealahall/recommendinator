@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAppStore } from '@/stores/app'
 import type { UserResponse } from '@/types/api'
 
 const props = defineProps<{
@@ -15,7 +14,6 @@ const props = defineProps<{
 
 const router = useRouter()
 const route = useRoute()
-const app = useAppStore()
 
 const emit = defineEmits<{
   navigate: []
@@ -44,10 +42,6 @@ function isActive(name: string): boolean {
     :inert="offscreen || undefined"
     :aria-hidden="offscreen || undefined"
   >
-    <div class="sidebar-header">
-      <h1>Recommendinator</h1>
-      <span v-if="app.version" class="version-label">v{{ app.version }}</span>
-    </div>
     <nav class="sidebar-nav">
       <!-- Recommendations -->
       <button class="nav-item" :class="{ active: isActive('recommendations') }" :aria-current="isActive('recommendations') ? 'page' : undefined" @click="navigate('recommendations')">
