@@ -128,6 +128,18 @@ export function boundSyncErrors(
   return { shown, total, hidden: total - shown.length }
 }
 
+/** Poll-driven progress coarsened to the crossings worth speaking. Announcing
+ *  every tick queues a sentence behind every other one, and a screen reader
+ *  hears nothing else on the page for the length of the run (WCAG 4.1.3). */
+const ANNOUNCE_STEP_PERCENT = 25
+
+export function progressMilestone(percent: number): number {
+  return Math.min(
+    100,
+    Math.floor(Math.max(0, percent) / ANNOUNCE_STEP_PERCENT) * ANNOUNCE_STEP_PERCENT,
+  )
+}
+
 export function truncate(str: string, maxLen: number): string {
   return str.length <= maxLen ? str : str.substring(0, maxLen - 3) + '...'
 }

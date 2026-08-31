@@ -50,6 +50,10 @@ const nonSensitiveFields = computed(() =>
 
 const sensitiveFields = computed(() => props.schema.filter((f) => f.sensitive))
 
+const saveAnnouncement = computed(() =>
+  props.saveStatus === 'saved' ? `${props.sourceName} settings saved.` : '',
+)
+
 function zeroFor(field: SourceFieldSchema): FormValue {
   if (field.field_type === 'bool') return false
   if (field.field_type === 'int' || field.field_type === 'float') return 0
@@ -480,16 +484,15 @@ function isSecretSet(name: string): boolean {
           ? (enabled ? 'Disabling…' : 'Enabling…')
           : (enabled ? 'Disable' : 'Enable')
       }}</button>
-      <!-- Deliberately NOT a live region: the spans below carry role="status"/
-           role="alert", which are implicit live regions already. Nesting them
-           inside another one double-announces, and aria-atomic here would drag
-           the button label into every announcement. -->
+      <!-- Deliberately NOT a live region: the error span below is one already,
+           and aria-atomic here would drag the button label into every
+           announcement. The saved pill is visible text; the region below the
+           actions speaks for it. -->
       <div class="source-form-save-group">
         <span
           v-if="saveStatus === 'saved'"
           class="source-form-save-status source-form-save-status--ok"
           data-testid="form-save-status"
-          role="status"
         >Saved ✓</span>
         <span
           v-else-if="saveStatus === 'error'"
@@ -506,6 +509,16 @@ function isSecretSet(name: string): boolean {
         >{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
     </div>
+
+    <!-- Mounted while silent: inserted populated it reads as content (4.1.3),
+         and nothing else says the write landed — focus stays on Save. -->
+    <p
+      class="sr-only"
+      data-testid="form-save-announcement"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ saveAnnouncement }}</p>
   </form>
 </template>
 

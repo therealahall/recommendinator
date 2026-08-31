@@ -152,6 +152,9 @@ async function onSave(): Promise<void> {
   }
   const ok = await store.saveSection(sectionKey.value, updates)
   if (ok) {
+    // Focus stays on Save, whose label reverts to what it was: without this the
+    // write lands in silence.
+    await announce(`${title.value} saved.`)
     saveStatusTimer = setTimeout(() => {
       store.clearSaveStatus(sectionKey.value)
       saveStatusTimer = null
@@ -270,16 +273,15 @@ onBeforeUnmount(clearSaveTimer)
     </div>
 
     <div v-if="valueSettings.length > 0" class="settings-section-actions">
-      <!-- Deliberately NOT a live region. role="status"/role="alert" on the
-           spans below are already implicit live regions; wrapping them in
-           another one nests live regions, and aria-atomic on the wrapper drags
-           the button's own label into every announcement. -->
+      <!-- Deliberately NOT a live region: the error span below is one already,
+           and aria-atomic here drags the button's own label into every
+           announcement. The saved pill is visible text; the region at the foot
+           of the card speaks for it. -->
       <div class="settings-section-save-group">
         <span
           v-if="saveStatus === 'saved'"
           class="settings-save-status settings-save-status--ok"
           :data-testid="`save-status-${sectionKey}`"
-          role="status"
         >Saved ✓</span>
         <span
           v-else-if="saveStatus === 'error'"
@@ -300,7 +302,7 @@ onBeforeUnmount(clearSaveTimer)
       </div>
     </div>
 
-    <!-- Persistent live region so reset/secret confirmations are announced. -->
+    <!-- Persistent live region: every save, reset and secret outcome lands here. -->
     <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ actionMessage }}</p>
   </div>
 </template>

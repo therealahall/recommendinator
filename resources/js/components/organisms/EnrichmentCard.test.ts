@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import EnrichmentCard from './EnrichmentCard.vue'
 import { useDataStore } from '@/stores/data'
 import type { EnrichmentStatsResponse, EnrichmentJobStatusResponse } from '@/types/api'
@@ -78,9 +79,57 @@ describe('EnrichmentCard', () => {
   it('mounts the progress region before the first tick, not along with it', () => {
     const wrapper = mountWithEnrichment()
 
-    const region = wrapper.get('.enrichment-status')
+    const region = wrapper.get('[data-testid="enrichment-progress-status"]')
     expect(region.attributes('aria-live')).toBe('polite')
     expect(region.text()).toBe('')
+    // The visible detail is the sighted operator's; a live copy of it reads the
+    // title and counts aloud again on every poll.
+    expect(wrapper.get('.enrichment-status').attributes('aria-live')).toBeUndefined()
+  })
+
+  it('says nothing across polls that cross no milestone, and speaks once when one does', async () => {
+    const wrapper = mountWithEnrichment({
+      enrichmentJob: makeRunningJob({ progress_percent: 30 }),
+    })
+    const data = useDataStore()
+    const region = wrapper.get('[data-testid="enrichment-progress-status"]')
+    const inside = region.text()
+
+    for (const progress_percent of [31, 32, 33, 34, 35]) {
+      data.enrichmentJob = makeRunningJob({
+        progress_percent,
+        current_item: `Item ${progress_percent}`,
+      })
+      await nextTick()
+      expect(region.text()).toBe(inside)
+    }
+
+    data.enrichmentJob = makeRunningJob({ progress_percent: 60 })
+    await nextTick()
+    const crossed = region.text()
+    expect(crossed).not.toBe(inside)
+
+    data.enrichmentJob = makeRunningJob({ progress_percent: 61 })
+    await nextTick()
+    expect(region.text()).toBe(crossed)
+  })
+
+  it('announces the end of a run it saw, not a result stored by one it did not', async () => {
+    // The job row keeps `completed` set indefinitely, so every later visit to
+    // the page would otherwise report last week's run as news.
+    const wrapper = mountWithEnrichment({
+      enrichmentJob: makeRunningJob({ running: false, completed: true }),
+    })
+    const data = useDataStore()
+    const region = wrapper.get('[data-testid="enrichment-progress-status"]')
+    expect(region.text()).toBe('')
+
+    data.enrichmentJob = makeRunningJob()
+    await nextTick()
+    data.enrichmentJob = makeRunningJob({ running: false, completed: true })
+    await nextTick()
+
+    expect(region.text()).toContain('finished')
   })
 
   it('shows job progress when enrichment is running', () => {

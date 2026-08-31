@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { progressMilestone } from '@/utils/format'
 import type { SyncJobResponse, SyncSourceProgressResponse } from '@/types/api'
 
 const props = defineProps<{
@@ -36,6 +37,19 @@ const label = computed<string>(() => {
   }
   return `${entry.items_processed} items`
 })
+
+// Every configured source keeps one of these mounted, so a per-poll region is
+// one sentence per source per tick. The end of the run is the page's own sync
+// banner to announce; this one falls silent, which says nothing.
+const announcement = computed<string>(() => {
+  const entry = progress.value
+  if (!entry) return ''
+  const reached =
+    entry.progress_percent == null ? 0 : progressMilestone(entry.progress_percent)
+  return reached === 0
+    ? `${props.sourceName} sync running.`
+    : `${props.sourceName} sync ${reached}% complete.`
+})
 </script>
 
 <template>
@@ -59,13 +73,18 @@ const label = computed<string>(() => {
     </span>
     <span
       class="source-progress-counts"
-      aria-live="polite"
-      aria-atomic="true"
     ><span v-if="label" class="sr-only">{{ sourceName }}: </span>{{ label }}</span>
     <span
       v-if="progress?.current_item"
       class="source-progress-item"
     >{{ progress.current_item }}</span>
+    <span
+      class="sr-only"
+      data-testid="sync-progress-status"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >{{ announcement }}</span>
   </span>
 </template>
 

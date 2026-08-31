@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useProfileStore } from '@/stores/profile'
 
 const profileStore = useProfileStore()
@@ -8,16 +8,22 @@ onMounted(() => {
   profileStore.load()
 })
 
+const regenerated = ref(false)
+
 // Bound to a computed on a persistently mounted region, because one inserted
-// with v-if once it has content is read as page content and skipped.
+// with v-if once it has content is read as page content and skipped. Clearing
+// it announces nothing, so a finished run needs words of its own.
 const announcement = computed(() => {
   if (profileStore.error) return profileStore.error
-  return profileStore.regenerating ? 'Generating…' : ''
+  if (profileStore.regenerating) return 'Generating…'
+  return regenerated.value ? 'Profile regenerated.' : ''
 })
 
-function regenerate(): void {
+async function regenerate(): Promise<void> {
   if (profileStore.regenerating) return
-  profileStore.regenerate()
+  regenerated.value = false
+  await profileStore.regenerate()
+  regenerated.value = true
 }
 </script>
 
