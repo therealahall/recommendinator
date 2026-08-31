@@ -83,12 +83,14 @@ const label = computed<string>(() => {
   padding: 0 var(--space-4) var(--space-2);
 }
 
+/* The page colour, for the reason input[type="range"] carries it: no border
+   token clears 3:1 against the accent that fills this (WCAG 1.4.11). */
 .source-progress-bar {
   position: relative;
   display: inline-block;
   width: 80px;
   height: 6px;
-  background: var(--border-default);
+  background: var(--bg-primary);
   border-radius: var(--radius-sm);
   overflow: hidden;
   vertical-align: middle;

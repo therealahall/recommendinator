@@ -5,8 +5,10 @@
 :root {
     color-scheme: light;
 
-    /* Frost accents — deeper for contrast on white */
-    --accent: #5e81ac;
+    /* Frost accents — deeper for contrast on white. --accent carries a white
+       label on a primary button and an active pill, which #5e81ac missed at
+       4.03:1 (WCAG 1.4.3). */
+    --accent: #4c6f96;
     --accent-light: #47798a;
     --accent-teal: #6ea0a0;
 
@@ -26,7 +28,7 @@
     --text-inverse: #ffffff;
 
     /* Borders */
-    --border-default: #c0c8d4;
+    --border-default: color-mix(in srgb, #c0c8d4 45%, var(--text-primary));
     --border-subtle: #d8dee9;
     --border-focus: var(--accent);
 

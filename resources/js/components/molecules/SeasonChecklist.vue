@@ -112,7 +112,7 @@ function deselectAll() {
   gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
   background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--text-secondary);

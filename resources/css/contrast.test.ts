@@ -1,28 +1,43 @@
-import { readFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, it, expect } from 'vitest'
 
-// Measured from the real CSS in both themes, because a theme overrides only
-// tokens and a token move is what breaks a floor silently (WCAG 1.4.3).
+// Measured from the real CSS in every installed theme, because a theme
+// overrides only tokens and a token move is what breaks a floor silently.
 
 const AA_NORMAL_TEXT = 4.5
+const BASE = 'resources/css/base.css'
+const THEME_ROOT = 'src/web/static/themes'
 
-const THEMES: [string, string][] = [
-  ['Nord', 'src/web/static/themes/nord/colors.css'],
-  ['Snowstorm', 'src/web/static/themes/snowstorm/colors.css'],
-]
+/** Every theme folder that ships a palette, so one dropped in is measured
+ *  against every floor below without this file being edited. */
+function themesIn(root: string): [string, string][] {
+  return readdirSync(resolve(process.cwd(), root), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry): [string, string] => [entry.name, join(root, entry.name, 'colors.css')])
+    .filter(([, palette]) => existsSync(resolve(process.cwd(), palette)))
+}
+
+const THEMES = themesIn(THEME_ROOT)
 
 const TAGS = ['.profile-tag', '.profile-tag.anti']
 
-/** What the tags carried before, and what each reached on the same card. */
-const REJECTED: Record<string, Record<string, [string, string]>> = {
-  Nord: {
-    '4.06': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
-    '2.28': ['var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
-  },
-  Snowstorm: {
-    '4.05': ['var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
-  },
-}
+/** Theme, what a tag carried before, and what it reached on the same card. A
+ *  flat table so a theme with no such history simply has no row here. */
+const REJECTED: [string, string, string, string][] = [
+  ['nord', '4.06', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+  ['nord', '2.28', 'var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
+  ['snowstorm', '3.95', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+]
 
 interface Rgba {
   r: number
@@ -32,9 +47,10 @@ interface Rgba {
 }
 
 const TRANSPARENT: Rgba = { r: 0, g: 0, b: 0, a: 0 }
+const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 1 }
 
 function read(relativePath: string): string {
-  return readFileSync(`${process.cwd()}/${relativePath}`, 'utf8')
+  return readFileSync(resolve(process.cwd(), relativePath), 'utf8')
 }
 
 function customProperties(source: string): [string, string][] {
@@ -45,6 +61,11 @@ function customProperties(source: string): [string, string][] {
   ])
 }
 
+/** The palette a theme paints with: the defaults, overridden by its own. */
+function tokens(themePath: string): Map<string, string> {
+  return new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+}
+
 /** Finds the rule the selector opens, whether or not it shares it with others.
  *  Anchored so `.pill` never resolves to `.pill-group`. */
 function ruleBody(source: string, selector: string): string {
@@ -52,12 +73,12 @@ function ruleBody(source: string, selector: string): string {
   const pattern = new RegExp(`^${escaped}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, 'm')
   const match = source.match(pattern)
   if (!match) throw new Error(`${selector} rule not found`)
-  return match[1]
+  return match[1].replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
 function optional(body: string, property: string): string | null {
   const match = body.match(new RegExp(`(?:^|;)\\s*${property}:\\s*([^;]+)`))
-  return match ? match[1].trim() : null
+  return match ? match[1].trim().replace(/\s*!important$/, '') : null
 }
 
 function declaration(body: string, property: string): string {
@@ -96,6 +117,7 @@ function mixSrgb(first: Rgba, share: number, second: Rgba): Rgba {
 function toRgba(value: string, vars: Map<string, string>): Rgba {
   const text = value.trim()
   if (text === 'transparent') return TRANSPARENT
+  if (text === 'black') return BLACK
 
   const hex = text.match(/^#([0-9a-f]{6})$/i)
   if (hex) {
@@ -165,8 +187,8 @@ const IMPORT_SURFACES: [string, string, string, string][] = [
 const DRAGGED_OVER = ['.drop-zone-hint', '.drop-zone-selection']
 
 describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
-  const base = read('resources/css/base.css')
-  const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
+  const base = read(BASE)
+  const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
   it.each(IMPORT_SURFACES)(
@@ -195,35 +217,38 @@ describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
   })
 })
 
-describe.each(THEMES)('profile tags on the Preferences card in %s', (theme, themePath) => {
-  const base = read('resources/css/base.css')
-  const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
+describe.each(THEMES)('profile tags on the Preferences card in %s', (_theme, themePath) => {
+  const base = read(BASE)
+  const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
-
-  const ratio = (text: string, fill: string): number =>
-    contrast(toRgba(text, vars), over(toRgba(fill, vars), card))
 
   it.each(TAGS)('%s carries readable text', (selector) => {
     const body = ruleBody(base, selector)
 
-    expect(ratio(declaration(body, 'color'), declaration(body, 'background'))).toBeGreaterThanOrEqual(
-      AA_NORMAL_TEXT,
-    )
+    expect(
+      contrast(
+        toRgba(declaration(body, 'color'), vars),
+        over(toRgba(declaration(body, 'background'), vars), card),
+      ),
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
-
-  it.each(Object.entries(REJECTED[theme]))(
-    'rejects the %s:1 pairing it used to carry',
-    (expected, [text, fill]) => {
-      // Without this the checker could return anything and still pass above.
-      const measured = ratio(text, fill)
-
-      expect(measured).toBeCloseTo(Number(expected), 1)
-      expect(measured).toBeLessThan(AA_NORMAL_TEXT)
-    },
-  )
 })
 
-const BASE = 'resources/css/base.css'
+it.each(REJECTED)(
+  '%s rejects the %s:1 profile-tag pairing it used to carry',
+  (theme, expected, text, fill) => {
+    // Without this the checker could return anything and still pass above.
+    const vars = tokens(join(THEME_ROOT, theme, 'colors.css'))
+    const measured = contrast(
+      toRgba(text, vars),
+      over(toRgba(fill, vars), toRgba('var(--bg-card)', vars)),
+    )
+
+    expect(measured).toBeCloseTo(Number(expected), 1)
+    expect(measured).toBeLessThan(AA_NORMAL_TEXT)
+  },
+)
+
 const LIBRARY_FILTERS = 'resources/js/components/organisms/LibraryFilters.vue'
 const CONFIRM_PANEL = 'resources/js/components/molecules/ConfirmPanel.vue'
 const MODAL_DIALOG = 'resources/js/components/atoms/ModalDialog.vue'
@@ -237,7 +262,7 @@ const EDIT_SURFACES: [string, string, string, string, string][] = [
 ]
 
 describe.each(THEMES)('edit dialog surfaces in %s', (_theme, themePath) => {
-  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const vars = tokens(themePath)
 
   it.each(EDIT_SURFACES)(
     '%s carries readable text',
@@ -272,8 +297,8 @@ const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
 ]
 
 describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) => {
-  const base = read('resources/css/base.css')
-  const vars = new Map([...customProperties(base), ...customProperties(read(themePath))])
+  const base = read(BASE)
+  const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
   function stacked(component: string, selectors: string[]): Rgba {
@@ -332,6 +357,14 @@ const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
+const EDGE_SURFACES = [
+  '--bg-primary',
+  '--bg-card',
+  '--bg-sidebar',
+  '--bg-elevated',
+  '--bg-input',
+  '--bg-hover',
+]
 const RING_SURFACES = [
   '--bg-card',
   '--bg-input',
@@ -351,7 +384,7 @@ const ACCENT_LIGHT_FILLS: [string, string, string][] = [
 ]
 
 describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
-  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const vars = tokens(themePath)
   const ratio = (token: string, surface: string): number =>
     contrast(toRgba(`var(${token})`, vars), toRgba(`var(${surface})`, vars))
 
@@ -365,6 +398,12 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   // edge is the only thing saying where the field is (WCAG 1.4.11).
   it.each(CONTROL_SURFACES)('--border-interactive divides a control from %s', (surface) => {
     expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  // The edge of every control that is not a field reads this token: the
+  // secondary button, the accordion, the drop zone, the menu, the spinner.
+  it.each(EDGE_SURFACES)('--border-default divides a control from %s', (surface) => {
+    expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
   // The app's one focus indicator, and the measurement THEME_DEVELOPMENT.md
@@ -431,13 +470,40 @@ const LOCKED_FIELDS: [string, string, string, string][] = [
   ],
 ]
 
-/** The colour out of a `border: <width> <style> <colour>` shorthand. */
+const BORDER_STYLES = new Set(['solid', 'dashed', 'dotted', 'double'])
+
+/** The colour out of a `<width> <style> <colour>` shorthand, or a value that is
+ *  already only a colour. */
+function colourIn(value: string): string {
+  const parts = value.split(/\s+/)
+  const style = parts.findIndex((part) => BORDER_STYLES.has(part))
+  return (style === -1 ? parts : parts.slice(style + 1)).join(' ')
+}
+
 function borderColour(body: string): string {
-  return declaration(body, 'border').split(/\s+/).slice(2).join(' ')
+  return colourIn(declaration(body, 'border'))
+}
+
+/** The colours a gradient paints, dropping its angle and each stop position.
+ *  A stop's position can itself be a var(), so the colour is the first token. */
+function gradientColours(value: string): string[] {
+  const gradient = value.match(/^linear-gradient\((.*)\)$/)
+  if (!gradient) return [value]
+  return commaSeparated(gradient[1])
+    .filter((stop) => !/^-?[\d.]+deg$/.test(stop))
+    .map((stop) => {
+      let depth = 0
+      for (let i = 0; i < stop.length; i += 1) {
+        if (stop[i] === '(') depth += 1
+        else if (stop[i] === ')') depth -= 1
+        else if (stop[i] === ' ' && depth === 0) return stop.slice(0, i)
+      }
+      return stop
+    })
 }
 
 describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
-  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const vars = tokens(themePath)
 
   const edgeAgainst = (edge: string, fill: string): number =>
     contrast(toRgba(edge, vars), toRgba(fill, vars))
@@ -515,7 +581,7 @@ const TINTED_TEXT: [string, string, string, string][] = [
 ]
 
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
-  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const vars = tokens(themePath)
 
   // opacity is folded into the measurement rather than forbidden, because a
   // faded token reads as its blend and a rule is free to earn the ratio anyway.
@@ -546,7 +612,7 @@ const RESTORED_SURFACES: [string, string, string, string, string][] = [
 ]
 
 describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, themePath) => {
-  const vars = new Map([...customProperties(read(BASE)), ...customProperties(read(themePath))])
+  const vars = tokens(themePath)
 
   it.each(RESTORED_SURFACES)(
     '%s reads against the background that now paints',
@@ -559,4 +625,237 @@ describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, the
       )
     },
   )
+})
+
+const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
+
+/** A label, and the rule painting the fill it sits on. */
+const BUTTON_LABELS: [string, string, string, string][] = [
+  ['Delete', BASE, '.btn-danger', '.btn-danger'],
+  [
+    'a hovered Delete',
+    BASE,
+    '.btn-danger',
+    ".btn-danger:hover:not(:disabled):not([aria-disabled='true'])",
+  ],
+  ['a primary action', BASE, '.btn-primary', '.btn-primary'],
+  ['the content type being shown', BASE, '.pill.active', '.pill.active'],
+  ['Enable', SOURCE_CONFIG_FORM, ':deep(.btn-success)', ':deep(.btn-success)'],
+  [
+    'a hovered Enable',
+    SOURCE_CONFIG_FORM,
+    ':deep(.btn-success)',
+    ":deep(.btn-success:hover:not(:disabled):not([aria-disabled='true']))",
+  ],
+]
+
+/** Buttons the in-flight lock keeps focusable and announced, so 1.4.3's
+ *  inactive-component exemption does not reach them. */
+const INACTIVE_BUTTONS = ['.btn-primary', '.btn-secondary', '.btn-danger']
+
+describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, themePath) => {
+  const vars = tokens(themePath)
+
+  it.each(BUTTON_LABELS)('%s stays readable', (_label, path, labelSelector, fillSelector) => {
+    const source = read(path)
+    const text = declaration(ruleBody(source, labelSelector), 'color')
+    const fill = declaration(ruleBody(source, fillSelector), 'background')
+
+    expect(contrast(toRgba(text, vars), toRgba(fill, vars))).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+
+  // opacity fades the whole button, so the label and the fill both composite
+  // over the card and the pair loses contrast twice over.
+  it.each(INACTIVE_BUTTONS)('%s stays readable while its action is in flight', (selector) => {
+    const base = read(BASE)
+    const body = ruleBody(base, selector)
+    const fade = Number(optional(ruleBody(base, ".btn[aria-disabled='true']"), 'opacity') ?? 1)
+    const card = toRgba('var(--bg-card)', vars)
+    const faded = (value: string): Rgba => over({ ...toRgba(value, vars), a: fade }, card)
+
+    expect(
+      contrast(faded(declaration(body, 'color')), faded(declaration(body, 'background'))),
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+})
+
+/** The track a bar fills, and the rule painting the fill. */
+const BARS: [string, string, string, string][] = [
+  ['a scorer contribution', BASE, '.score-bar-bg', '.score-bar-fill'],
+  ['a variety penalty', BASE, '.score-bar-bg', '.score-bar-fill-penalty'],
+  ['a source sync', SOURCE_SYNC_PROGRESS, '.source-progress-bar', '.source-progress-fill'],
+]
+
+describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
+  const vars = tokens(themePath)
+  const card = toRgba('var(--bg-card)', vars)
+
+  // No token clears 3:1 against --accent, so each track is a rule-local choice
+  // measured against the fill that sits on it (WCAG 1.4.11).
+  const boundedBy = (fills: string[], track: Rgba): void => {
+    for (const fill of fills) {
+      expect(contrast(toRgba(fill, vars), track)).toBeGreaterThanOrEqual(NON_TEXT)
+      expect(contrast(toRgba(fill, vars), card)).toBeGreaterThanOrEqual(NON_TEXT)
+    }
+  }
+
+  it.each(BARS)('%s is bounded by its track', (_label, path, trackSelector, fillSelector) => {
+    const source = read(path)
+    const track = declaration(ruleBody(source, trackSelector), 'background')
+    const fill = declaration(ruleBody(source, fillSelector), 'background')
+
+    boundedBy(gradientColours(fill), toRgba(track, vars))
+  })
+
+  // The range paints fill and track as one gradient, the track its last stop.
+  it('a scorer weight is bounded by its track', () => {
+    const stops = gradientColours(
+      declaration(ruleBody(read(BASE), 'input[type="range"]'), 'background'),
+    )
+
+    boundedBy(stops.slice(0, -1), toRgba(stops[stops.length - 1], vars))
+  })
+})
+
+/** An edge that identifies a control, the property declaring it, and the fill
+ *  or surface it has to divide itself from (WCAG 1.4.11). */
+const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
+  ['a secondary button', BASE, '.btn-secondary', 'border-color', 'var(--bg-elevated)'],
+  ['a secondary button on the page', BASE, '.btn-secondary', 'border-color', 'var(--bg-primary)'],
+  ['Ignore, which has no fill', BASE, '.btn-ignore', 'border-color', 'var(--bg-card)'],
+  ['the export menu', BASE, '.dropdown-menu', 'border', 'var(--bg-elevated)'],
+  ['the sidebar toggle', BASE, '.sidebar-toggle', 'border', 'var(--bg-card)'],
+  ['a spinner on a card', BASE, '.spinner', 'border', 'var(--bg-card)'],
+  ['a spinner on the page', BASE, '.spinner', 'border', 'var(--bg-primary)'],
+  ['a spinner in a field', BASE, '.spinner', 'border', 'var(--bg-input)'],
+  ['the scrollbar thumb', BASE, '::-webkit-scrollbar-thumb', 'background', 'var(--bg-primary)'],
+  [
+    'the scrollbar thumb on a card',
+    BASE,
+    '::-webkit-scrollbar-thumb',
+    'background',
+    'var(--bg-card)',
+  ],
+  [
+    'a rejected edit field',
+    BASE,
+    ".edit-field input[aria-invalid='true']",
+    'border-color',
+    'var(--bg-input)',
+  ],
+  [
+    'a rejected sign-in field',
+    AUTH_FIELD,
+    ".auth-field input[aria-invalid='true']",
+    'border-color',
+    'var(--bg-input)',
+  ],
+  [
+    'a rejected setting',
+    SETTING_CONTROL,
+    '.setting-input--invalid',
+    'border-color',
+    'var(--bg-input)',
+  ],
+  [
+    'an import-format select',
+    IMPORT_PANEL,
+    '.import-field :deep(select)',
+    'border',
+    'var(--bg-input)',
+  ],
+  ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
+  ['the clear-rating button', STAR_RATING, '.btn-clear-rating', 'border', 'var(--bg-card)'],
+  ['a source accordion', ACCORDION, '.accordion', 'border', 'var(--bg-card)'],
+  ['the CSV drop zone', DROP_ZONE, '.drop-zone', 'border', 'var(--bg-elevated)'],
+  [
+    'a stepper decrement',
+    NUMBER_STEPPER,
+    '.stepper-decrement',
+    'border-right',
+    'var(--bg-elevated)',
+  ],
+  [
+    'a stepper increment',
+    NUMBER_STEPPER,
+    '.stepper-increment',
+    'border-left',
+    'var(--bg-elevated)',
+  ],
+  ['a looser-key badge', DUP_PAIR, '.dup-badge-loose', 'border-color', 'var(--bg-elevated)'],
+]
+
+/** Bars a secondary button lands on, each painting its own tint over the page. */
+const TINTED_BANNERS = ['.update-banner', '.status-bar.error']
+
+describe.each(THEMES)('edges that say where a control is in %s', (_theme, themePath) => {
+  const vars = tokens(themePath)
+
+  const divides = (edge: string, surface: Rgba): number => contrast(toRgba(edge, vars), surface)
+
+  it.each(CONTROL_BOUNDARIES)(
+    '%s is visible against what it encloses',
+    (_label, path, selector, property, surface) => {
+      const edge = colourIn(declaration(ruleBody(read(path), selector), property))
+
+      expect(divides(edge, toRgba(surface, vars))).toBeGreaterThanOrEqual(NON_TEXT)
+    },
+  )
+
+  it.each(TINTED_BANNERS)('a secondary button keeps an edge on %s', (selector) => {
+    const base = read(BASE)
+    const tint = declaration(ruleBody(base, selector), 'background')
+    const banner = over(toRgba(tint, vars), toRgba('var(--bg-primary)', vars))
+    const edge = colourIn(declaration(ruleBody(base, '.btn-secondary'), 'border-color'))
+
+    expect(divides(edge, banner)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  // The ring reads --border-default and the turning segment --accent, so the
+  // one token move that clears the ring against a card can flatten the pair.
+  it('a spinner shows which of its segments is turning', () => {
+    const body = ruleBody(read(BASE), '.spinner')
+    const ring = toRgba(colourIn(declaration(body, 'border')), vars)
+
+    expect(divides(declaration(body, 'border-top-color'), ring)).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  it('a refused setting is marked by a rule visible on its own tint', () => {
+    const body = ruleBody(read(SETTING_CONTROL), '.setting-error')
+    const tint = over(toRgba(declaration(body, 'background'), vars), toRgba('var(--bg-card)', vars))
+
+    expect(divides(colourIn(declaration(body, 'border-left')), tint)).toBeGreaterThanOrEqual(
+      NON_TEXT,
+    )
+  })
+})
+
+describe('the theme scan', () => {
+  it('measures every theme installed, not a list kept in this file', () => {
+    const installed = readdirSync(resolve(process.cwd(), THEME_ROOT), {
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+
+    expect(THEMES.map(([theme]) => theme)).toEqual(installed)
+  })
+
+  it('measures a theme it has never seen, against the palette that theme paints', () => {
+    const root = mkdtempSync(join(tmpdir(), 'contrast-'))
+    mkdirSync(join(root, 'unreadable'))
+    writeFileSync(join(root, 'unreadable', 'colors.css'), ':root {\n  --text-muted: #3b4252;\n}\n')
+
+    try {
+      const found = themesIn(root)
+      expect(found.map(([theme]) => theme)).toEqual(['unreadable'])
+
+      const vars = tokens(found[0][1])
+      expect(
+        contrast(toRgba('var(--text-muted)', vars), toRgba('var(--bg-card)', vars)),
+      ).toBeLessThan(AA_NORMAL_TEXT)
+    } finally {
+      rmSync(root, { recursive: true })
+    }
+  })
 })

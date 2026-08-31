@@ -103,23 +103,21 @@ keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
 
 Both accents are also fills under `--text-inverse`: `--accent` on a primary
 button or active pill at rest, `--accent-light` on the same two hovered. Each
-owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter. The
-shipped Snowstorm misses it at 4.03:1; the suite measures the hovered pair
-only, so check `--accent` by hand.
+owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter.
 
 ### Borders
 
 | Variable | Default | Used for |
 |----------|---------|-------------|
-| `--border-default` | `#4c566a` | Dividers and decorative edges |
+| `--border-default` | `color-mix(in srgb, #4c566a 45%, var(--text-primary))` | The edge of a button, accordion, menu or drop zone |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
 | `--border-focus` | `var(--accent)` | Border of a focused field |
-| `--border-interactive` | `color-mix(in srgb, var(--border-default) 50%, var(--text-primary))` | The edge of every field, select, pill and toggle |
+| `--border-interactive` | `var(--border-default)` | The edge of every field, select, pill and toggle |
 
-`--border-interactive` is what separates an editable control from its own fill
-and from the surface behind it, so it owes 3:1 against `--bg-card`, `--bg-input`
-and `--bg-elevated` (WCAG 1.4.11). It is derived from the two tokens it sits
-between, so a theme that sets those inherits it and need not override it.
+Both separate a control from its own fill and from the surface behind it, so
+each owes 3:1 against every background a control lands on (WCAG 1.4.11).
+`--border-default` is pulled toward `--text-primary` to earn that, so a theme
+setting its text colour inherits an edge and need not override either.
 
 ### Semantic
 
@@ -182,7 +180,7 @@ variants yourself.
 4. Start the server, select the theme from the Preferences tab or with
    `theme set`, and check every page for text readability, badge contrast and
    button visibility. `resources/css/contrast.test.ts` measures every floor
-   above for each shipped theme, except the resting `--accent` one named there.
+   above for each theme in `src/web/static/themes/`, yours included.
 5. Optionally add a `README.md` describing your design choices.
 
 ## What themes cannot override

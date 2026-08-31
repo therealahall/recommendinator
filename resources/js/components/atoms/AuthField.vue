@@ -103,7 +103,7 @@ onMounted(() => {
 }
 
 .auth-field input[aria-invalid='true'] {
-  border-color: var(--color-error);
+  border-color: var(--color-error-text);
 }
 
 .auth-field-hint {

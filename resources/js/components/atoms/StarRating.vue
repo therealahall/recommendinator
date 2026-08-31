@@ -69,6 +69,6 @@ function clear() {
 .btn-clear-rating {
   background: transparent;
   color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-interactive);
 }
 </style>
