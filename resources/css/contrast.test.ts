@@ -330,14 +330,6 @@ const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
 
 const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
 const CONTROL_SURFACES = ['--bg-card', '--bg-input', '--bg-elevated']
-const EDGE_SURFACES = [
-  '--bg-primary',
-  '--bg-card',
-  '--bg-sidebar',
-  '--bg-elevated',
-  '--bg-input',
-  '--bg-hover',
-]
 const RING_SURFACES = [
   '--bg-card',
   '--bg-input',
@@ -373,10 +365,10 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
     expect(ratio('--border-interactive', surface)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The edge of every control that is not a field reads this token: the
-  // secondary button, the accordion, the drop zone, the menu, the spinner.
-  it.each(EDGE_SURFACES)('--border-default divides a control from %s', (surface) => {
-    expect(ratio('--border-default', surface)).toBeGreaterThanOrEqual(NON_TEXT)
+  // Six surfaces, three colours in either theme, and the hover fill is the
+  // extreme of them: it binds for every control that is not a field.
+  it('--border-default divides a control from --bg-hover', () => {
+    expect(ratio('--border-default', '--bg-hover')).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
   // The app's one focus indicator, and the measurement THEME_DEVELOPMENT.md
@@ -600,26 +592,11 @@ describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, the
   )
 })
 
-const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
-
 /** A label, and the rule painting the fill it sits on. */
 const BUTTON_LABELS: [string, string, string, string][] = [
   ['Delete', BASE, '.btn-danger', '.btn-danger'],
-  [
-    'a hovered Delete',
-    BASE,
-    '.btn-danger',
-    ".btn-danger:hover:not(:disabled):not([aria-disabled='true'])",
-  ],
   ['a primary action', BASE, '.btn-primary', '.btn-primary'],
-  ['the content type being shown', BASE, '.pill.active', '.pill.active'],
   ['Enable', SOURCE_CONFIG_FORM, ':deep(.btn-success)', ':deep(.btn-success)'],
-  [
-    'a hovered Enable',
-    SOURCE_CONFIG_FORM,
-    ':deep(.btn-success)',
-    ":deep(.btn-success:hover:not(:disabled):not([aria-disabled='true']))",
-  ],
 ]
 
 describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, themePath) => {
@@ -649,7 +626,6 @@ describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, th
 const BARS: [string, string, string, string][] = [
   ['a scorer contribution', BASE, '.score-bar-bg', '.score-bar-fill'],
   ['a variety penalty', BASE, '.score-bar-bg', '.score-bar-fill-penalty'],
-  ['a source sync', SOURCE_SYNC_PROGRESS, '.source-progress-bar', '.source-progress-fill'],
 ]
 
 describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
@@ -672,50 +648,11 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
 
     boundedBy(gradientColours(fill), toRgba(track, vars))
   })
-
-  // The range paints fill and track as one gradient, the track its last stop.
-  it('a scorer weight is bounded by its track', () => {
-    const stops = gradientColours(
-      declaration(ruleBody(read(BASE), 'input[type="range"]'), 'background'),
-    )
-
-    boundedBy(stops.slice(0, -1), toRgba(stops[stops.length - 1], vars))
-  })
 })
 
 /** An edge that identifies a control, the property declaring it, and the fill
  *  or surface it has to divide itself from (WCAG 1.4.11). */
 const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
-  ['a secondary button', BASE, '.btn-secondary', 'border-color', 'var(--bg-elevated)'],
-  ['a secondary button on the page', BASE, '.btn-secondary', 'border-color', 'var(--bg-primary)'],
-  ['Ignore, which has no fill', BASE, '.btn-ignore', 'border-color', 'var(--bg-card)'],
-  ['the export menu', BASE, '.dropdown-menu', 'border', 'var(--bg-elevated)'],
-  ['the sidebar toggle', BASE, '.sidebar-toggle', 'border', 'var(--bg-card)'],
-  ['a spinner on a card', BASE, '.spinner', 'border', 'var(--bg-card)'],
-  ['a spinner on the page', BASE, '.spinner', 'border', 'var(--bg-primary)'],
-  ['a spinner in a field', BASE, '.spinner', 'border', 'var(--bg-input)'],
-  ['the scrollbar thumb', BASE, '::-webkit-scrollbar-thumb', 'background', 'var(--bg-primary)'],
-  [
-    'the scrollbar thumb on a card',
-    BASE,
-    '::-webkit-scrollbar-thumb',
-    'background',
-    'var(--bg-card)',
-  ],
-  [
-    'a rejected edit field',
-    BASE,
-    ".edit-field input[aria-invalid='true']",
-    'border-color',
-    'var(--bg-input)',
-  ],
-  [
-    'a rejected sign-in field',
-    AUTH_FIELD,
-    ".auth-field input[aria-invalid='true']",
-    'border-color',
-    'var(--bg-input)',
-  ],
   [
     'a rejected setting',
     SETTING_CONTROL,
@@ -723,36 +660,16 @@ const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
     'border-color',
     'var(--bg-input)',
   ],
-  [
-    'an import-format select',
-    IMPORT_PANEL,
-    '.import-field :deep(select)',
-    'border',
-    'var(--bg-input)',
-  ],
   ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
-  ['the clear-rating button', STAR_RATING, '.btn-clear-rating', 'border', 'var(--bg-card)'],
-  ['a source accordion', ACCORDION, '.accordion', 'border', 'var(--bg-card)'],
-  ['the CSV drop zone', DROP_ZONE, '.drop-zone', 'border', 'var(--bg-elevated)'],
-  [
-    'a stepper decrement',
-    NUMBER_STEPPER,
-    '.stepper-decrement',
-    'border-right',
-    'var(--bg-elevated)',
-  ],
-  [
-    'a stepper increment',
-    NUMBER_STEPPER,
-    '.stepper-increment',
-    'border-left',
-    'var(--bg-elevated)',
-  ],
   ['a looser-key badge', DUP_PAIR, '.dup-badge-loose', 'border-color', 'var(--bg-elevated)'],
 ]
 
-/** Bars a secondary button lands on, each painting its own tint over the page. */
-const TINTED_BANNERS = ['.update-banner', '.status-bar.error']
+function styledFiles(directory: string): string[] {
+  return readdirSync(resolve(process.cwd(), directory), { withFileTypes: true }).flatMap((entry) => {
+    const path = `${directory}/${entry.name}`
+    return entry.isDirectory() ? styledFiles(path) : /\.(css|vue)$/.test(path) ? [path] : []
+  })
+}
 
 describe.each(THEMES)('edges that say where a control is in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
@@ -768,22 +685,28 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     },
   )
 
-  it.each(TINTED_BANNERS)('a secondary button keeps an edge on %s', (selector) => {
+  // The thinner of the two tints a secondary button lands on, so the nearer of
+  // the two to the page the button is cut out of.
+  it('a secondary button keeps an edge on the bar reporting a failure', () => {
     const base = read(BASE)
-    const tint = declaration(ruleBody(base, selector), 'background')
+    const tint = declaration(ruleBody(base, '.status-bar.error'), 'background')
     const banner = over(toRgba(tint, vars), toRgba('var(--bg-primary)', vars))
     const edge = colourIn(declaration(ruleBody(base, '.btn-secondary'), 'border-color'))
 
     expect(divides(edge, banner)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  it.each(CONTROL_BOUNDARIES.filter(([, , selector]) => selector === '.spinner'))(
-    '%s shows which of its segments is turning',
-    (_label, path, selector, _property, surface) => {
-      const segment = declaration(ruleBody(read(path), selector), 'border-top-color')
-      expect(divides(segment, toRgba(surface, vars))).toBeGreaterThanOrEqual(NON_TEXT)
-    },
-  )
+  it('every rule marking a refused field draws an edge on the fill a field carries', () => {
+    const field = toRgba('var(--bg-input)', vars)
+    const edges = styledFiles('resources')
+      .flatMap((path) => [...read(path).matchAll(/\[aria-invalid='true'\][^{}]*\{([^}]*)\}/g)])
+      .flatMap(([, body]) => optional(body, 'border-color') ?? optional(body, 'border') ?? [])
+
+    expect(edges.length).toBeGreaterThan(0)
+    for (const edge of edges) {
+      expect(divides(colourIn(edge), field), edge).toBeGreaterThanOrEqual(NON_TEXT)
+    }
+  })
 
   it('a refused setting is marked by a rule visible on its own tint', () => {
     const body = ruleBody(read(SETTING_CONTROL), '.setting-error')

@@ -99,29 +99,10 @@ describe('SettingsSection', () => {
     expect(mockPut).toHaveBeenCalledWith('/settings', { updates: { 'enrichment.providers.tmdb.language': 'de-DE' } })
   })
 
-  it('announces a landed save through the region already mounted for it', async () => {
+  it('announces each landed save through the region already mounted for it', async () => {
     // The "Saved ✓" pill enters the DOM already populated, which reads as page
-    // content: the write landed in silence, focus still on a button whose label
-    // reverted to what it was.
-    mockPut.mockResolvedValue({ sections: [] })
-    const wrapper = mountSection({
-      section: 'enrichment',
-      settings: [textSetting('enrichment.providers.tmdb.language', 'en-US')],
-    })
-    const region = wrapper.get('p.sr-only')
-    expect(region.text()).toBe('')
-
-    await wrapper.find('[data-testid="setting-enrichment.providers.tmdb.language"]').setValue('de-DE')
-    await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
-    await flushPromises()
-
-    expect(region.text()).toContain('saved')
-    expect(
-      wrapper.get('[data-testid="save-status-enrichment"]').attributes('role'),
-    ).toBeUndefined()
-  })
-
-  it('announces a second save of the section, whose wording repeats the first', async () => {
+    // content, and a second save writes the sentence the first left in place:
+    // silence either way unless the region mounts empty and is blanked between.
     mockPut.mockResolvedValue({ sections: [] })
     const wrapper = mountSection({
       section: 'enrichment',
@@ -141,12 +122,17 @@ describe('SettingsSection', () => {
       await wrapper.find('[data-testid="save-enrichment"]').trigger('click')
       await flushPromises()
     }
+    expect(region.text()).toBe('')
 
     await save('de-DE')
-    // Writing a value a node already holds mutates nothing, which is what makes
-    // the second save's identical sentence silent unless the region is blanked.
+
+    expect(region.text()).toContain('saved')
+    expect(
+      wrapper.get('[data-testid="save-status-enrichment"]').attributes('role'),
+    ).toBeUndefined()
     expect(changes).not.toContain('')
     changes.length = 0
+
     await save('fr-FR')
 
     expect(changes.length).toBeGreaterThan(0)

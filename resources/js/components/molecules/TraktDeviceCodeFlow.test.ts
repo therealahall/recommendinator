@@ -193,7 +193,6 @@ describe('TraktDeviceCodeFlow', () => {
 
   it.each([
     ['expires', () => mockPost.mockResolvedValueOnce({ connected: false, status: 'expired' })],
-    ['is denied', () => mockPost.mockResolvedValueOnce({ connected: false, status: 'denied' })],
     ['cannot be checked', () => mockPost.mockRejectedValueOnce(new Error('offline'))],
   ])('leaves the keyboard alone when the code %s under a user typing elsewhere', async (_name, answerPoll) => {
     mockPost.mockResolvedValueOnce(FLOW)

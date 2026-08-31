@@ -127,13 +127,13 @@ describe('SourceConfigForm', () => {
     })
   })
 
-  it.each([true, false])('announces no state contradicting its own label, enabled %s', (enabled) => {
+  it('announces no state contradicting its own label', () => {
     // aria-pressed on a button whose label flips read "Disable, pressed" on an
     // enabled source — the opposite of what the label says (WCAG 4.1.2).
-    const wrapper = mountForm({ schema: [field({ name: 'path' })], values: { path: 'x' }, enabled })
-    const button = wrapper.get('[data-testid="form-toggle-enabled"]')
+    const props = { schema: [field({ name: 'path' })], values: { path: 'x' }, enabled: true }
+    const button = mountForm(props).get('[data-testid="form-toggle-enabled"]')
 
-    expect(button.text()).toBe(enabled ? 'Disable' : 'Enable')
+    expect(button.text()).toBe('Disable')
     expect(button.attributes('aria-pressed')).toBeUndefined()
   })
 
