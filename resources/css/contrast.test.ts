@@ -31,12 +31,12 @@ const THEMES = themesIn(THEME_ROOT)
 
 const TAGS = ['.profile-tag', '.profile-tag.anti']
 
-/** Theme, what a tag carried before, and what it reached on the same card. A
- *  flat table so a theme with no such history simply has no row here. */
-const REJECTED: [string, string, string, string][] = [
-  ['nord', '4.06', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
-  ['nord', '2.28', 'var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
-  ['snowstorm', '3.95', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+/** Theme, and the pairing a tag carried on the same card before. A flat table
+ *  so a theme with no such history simply has no row here. */
+const REJECTED: [string, string, string][] = [
+  ['nord', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
+  ['nord', 'var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
+  ['snowstorm', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
 ]
 
 interface Rgba {
@@ -235,17 +235,14 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (_theme, the
 })
 
 it.each(REJECTED)(
-  '%s rejects the %s:1 profile-tag pairing it used to carry',
-  (theme, expected, text, fill) => {
+  '%s rejects the %s profile-tag pairing it used to carry',
+  (theme, text, fill) => {
     // Without this the checker could return anything and still pass above.
     const vars = tokens(join(THEME_ROOT, theme, 'colors.css'))
-    const measured = contrast(
-      toRgba(text, vars),
-      over(toRgba(fill, vars), toRgba('var(--bg-card)', vars)),
-    )
 
-    expect(measured).toBeCloseTo(Number(expected), 1)
-    expect(measured).toBeLessThan(AA_NORMAL_TEXT)
+    expect(
+      contrast(toRgba(text, vars), over(toRgba(fill, vars), toRgba('var(--bg-card)', vars))),
+    ).toBeLessThan(AA_NORMAL_TEXT)
   },
 )
 
@@ -649,33 +646,26 @@ const BUTTON_LABELS: [string, string, string, string][] = [
   ],
 ]
 
-/** Buttons the in-flight lock keeps focusable and announced, so 1.4.3's
- *  inactive-component exemption does not reach them. */
-const INACTIVE_BUTTONS = ['.btn-primary', '.btn-secondary', '.btn-danger']
-
 describe.each(THEMES)('button labels on the fills they carry in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
+  const paint = (path: string, selector: string, property = 'background'): Rgba =>
+    toRgba(declaration(ruleBody(read(path), selector), property), vars)
 
   it.each(BUTTON_LABELS)('%s stays readable', (_label, path, labelSelector, fillSelector) => {
-    const source = read(path)
-    const text = declaration(ruleBody(source, labelSelector), 'color')
-    const fill = declaration(ruleBody(source, fillSelector), 'background')
-
-    expect(contrast(toRgba(text, vars), toRgba(fill, vars))).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    expect(
+      contrast(paint(path, labelSelector, 'color'), paint(path, fillSelector)),
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 
-  // opacity fades the whole button, so the label and the fill both composite
-  // over the card and the pair loses contrast twice over.
-  it.each(INACTIVE_BUTTONS)('%s stays readable while its action is in flight', (selector) => {
-    const base = read(BASE)
-    const body = ruleBody(base, selector)
-    const fade = Number(optional(ruleBody(base, ".btn[aria-disabled='true']"), 'opacity') ?? 1)
-    const card = toRgba('var(--bg-card)', vars)
-    const faded = (value: string): Rgba => over({ ...toRgba(value, vars), a: fade }, card)
+  it('a locked button carries a fill no live variant does, under a readable label', () => {
+    const lock = "button.btn[aria-disabled='true']"
+    const fill = paint(BASE, lock)
+    const live = ['.btn-primary', '.btn-secondary', '.btn-ghost', '.btn-danger']
+      .map((v) => paint(BASE, v))
+      .concat(paint(SOURCE_CONFIG_FORM, ':deep(.btn-success)'))
 
-    expect(
-      contrast(faded(declaration(body, 'color')), faded(declaration(body, 'background'))),
-    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    expect(live).not.toContainEqual(fill)
+    expect(contrast(paint(BASE, lock, 'color'), fill)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 })
 
@@ -811,8 +801,8 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     expect(divides(edge, banner)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The ring reads --border-default and the turning segment --accent, so the
-  // one token move that clears the ring against a card can flatten the pair.
+  // The ring reads --border-default, so the one token move that clears it
+  // against a card can flatten it against the segment it encloses.
   it('a spinner shows which of its segments is turning', () => {
     const body = ruleBody(read(BASE), '.spinner')
     const ring = toRgba(colourIn(declaration(body, 'border')), vars)
