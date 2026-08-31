@@ -20,9 +20,12 @@ const THEME_ROOT = 'src/web/static/themes'
 /** Every installed theme folder, so one dropped in is measured without this
  *  file being edited, and one with no colors.css fails on the missing path. */
 function themesIn(root: string): [string, string][] {
-  return readdirSync(resolve(process.cwd(), root), { withFileTypes: true })
+  const resolved = resolve(process.cwd(), root)
+  const themes = readdirSync(resolved, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry): [string, string] => [entry.name, join(root, entry.name, 'colors.css')])
+  if (themes.length === 0) throw new Error(`no theme folders under ${resolved}`)
+  return themes
 }
 
 const THEMES = themesIn(THEME_ROOT)
@@ -482,7 +485,7 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
   })
 
   // `readonly` is not exempt from 1.4.3 the way `disabled` is. Folding opacity
-  // is what CONTROL_EDGES never did, which is how a 3.69:1 fade shipped.
+  // is what CONTROL_EDGES never did, which is how an unreadable fade shipped.
   it.each(LOCKED_FIELDS)(
     '%s keeps the value being typed readable',
     (_label, path, editable, locked) => {
@@ -635,21 +638,28 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
   const card = toRgba('var(--bg-card)', vars)
 
   // No token clears 3:1 against --accent; a track is rule-local (1.4.11).
-  const boundedBy = (fills: string[], track: Rgba): void => {
+  const boundedBy = (fills: string[], track: Rgba, edge: string | null): void => {
     expect(fills, 'flat bar measures nothing').not.toEqual([])
     for (const fill of fills) {
       expect(contrast(toRgba(fill, vars), track)).toBeGreaterThanOrEqual(NON_TEXT)
       expect(contrast(toRgba(fill, vars), card)).toBeGreaterThanOrEqual(NON_TEXT)
     }
+    const outline = edge === null ? track : toRgba(colourIn(edge), vars)
+    expect(contrast(outline, card), 'track lost on the card').toBeGreaterThanOrEqual(NON_TEXT)
   }
 
   it.each(BARS)('%s is bounded by its track', (_label, path, trackSelector, fillSelector) => {
     const source = read(path)
-    const stops = gradientColours(declaration(ruleBody(source, trackSelector), 'background'))
+    const body = ruleBody(source, trackSelector)
+    const stops = gradientColours(declaration(body, 'background'))
     const track = stops[stops.length - 1]
     const fills = gradientColours(declaration(ruleBody(source, fillSelector), 'background'))
 
-    boundedBy(fills.filter((colour) => colour !== track), toRgba(track, vars))
+    boundedBy(
+      fills.filter((colour) => colour !== track),
+      toRgba(track, vars),
+      optional(body, 'border'),
+    )
   })
 })
 
@@ -666,6 +676,12 @@ const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
   ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
   ['a looser-key badge', DUP_PAIR, '.dup-badge-loose', 'border-color', 'var(--bg-elevated)'],
 ]
+
+function invalidEdges(source: string): string[] {
+  return [...source.matchAll(/\[aria-invalid=['"]true['"]\][^{}]*\{([^}]*)\}/g)].flatMap(
+    ([, body]) => optional(body, 'border-color') ?? optional(body, 'border') ?? [],
+  )
+}
 
 function styledFiles(directory: string): string[] {
   return readdirSync(resolve(process.cwd(), directory), { withFileTypes: true }).flatMap((entry) => {
@@ -710,9 +726,7 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
 
   it('every rule marking a refused field draws an edge on the fill a field carries', () => {
     const field = toRgba('var(--bg-input)', vars)
-    const edges = styledFiles('resources')
-      .flatMap((path) => [...read(path).matchAll(/\[aria-invalid='true'\][^{}]*\{([^}]*)\}/g)])
-      .flatMap(([, body]) => optional(body, 'border-color') ?? optional(body, 'border') ?? [])
+    const edges = styledFiles('resources').flatMap((path) => invalidEdges(read(path)))
 
     expect(edges.length).toBeGreaterThan(0)
     for (const edge of edges) {
@@ -727,6 +741,12 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     expect(divides(colourIn(declaration(body, 'border-left')), tint)).toBeGreaterThanOrEqual(
       NON_TEXT,
     )
+  })
+})
+
+describe('the refused-field sweep', () => {
+  it('reads the double-quoted attribute a formatter emits, not the single one alone', () => {
+    expect(invalidEdges('[aria-invalid="true"] {\n  border-color: red;\n}')).toEqual(['red'])
   })
 })
 
@@ -747,6 +767,16 @@ describe('the theme scan', () => {
       expect(
         contrast(toRgba('var(--text-muted)', vars), toRgba('var(--bg-card)', vars)),
       ).toBeLessThan(AA_NORMAL_TEXT)
+    } finally {
+      rmSync(root, { recursive: true })
+    }
+  })
+
+  it('names an empty root and throws, rather than registering zero tests', () => {
+    const root = mkdtempSync(join(tmpdir(), 'contrast-'))
+
+    try {
+      expect(() => themesIn(root)).toThrow(root)
     } finally {
       rmSync(root, { recursive: true })
     }

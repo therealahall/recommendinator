@@ -302,7 +302,7 @@ onBeforeUnmount(clearPoll)
   margin-top: 0;
 }
 
-/* --color-error on this card reaches only ~2.5:1, so the readable text stays
+/* --color-error on this card falls short as text, so the readable text stays
    --text-primary (WCAG 1.4.3) and the tint carries "error"; the message already
    states it, so colour is not the sole signal. */
 .trakt-flow-status--error {
