@@ -51,24 +51,21 @@ describe('LibraryFilters', () => {
     expect(unreadOption.text()).toBe('Unplayed')
   })
 
-  it('keeps the locked Status filter reachable, and ignores what it is set to', async () => {
+  it('withdraws the Status filter Needs rating overrides, and says so on screen', async () => {
+    // Offered but ignoring what it was given, the select explained the refusal
+    // to a screen reader alone; the sighted operator saw the value snap back.
     const wrapper = mount(LibraryFilters, {
       props: { ...defaultProps, needsRating: true, statusFilter: '' },
     })
 
-    const select = wrapper.find('select[aria-label="Status"]')
-    // A natively disabled select cannot be tabbed to, so the hint saying why it
-    // went dead was unreachable in focus mode.
-    expect(select.attributes('disabled')).toBeUndefined()
-    expect(select.attributes('aria-disabled')).toBe('true')
-    expect(select.attributes('aria-describedby')).toBe('status-locked-hint')
-    expect(wrapper.find('#status-locked-hint').classes()).toContain('sr-only')
+    expect(wrapper.find('select[aria-label="Status"]').exists()).toBe(false)
+    const note = wrapper.get('.lib-filter-row .help-text')
+    expect(note.classes()).not.toContain('sr-only')
+    expect(note.text()).toContain('Completed')
 
-    await select.setValue('unread')
+    await wrapper.setProps({ needsRating: false })
 
-    expect(wrapper.emitted('filterChange')).toBeUndefined()
-    // Display-only: the select shows Completed even though statusFilter is ''.
-    expect((select.element as HTMLSelectElement).value).toBe('completed')
+    expect(wrapper.find('select[aria-label="Status"]').exists()).toBe(true)
   })
 
   it('emits export with csv and closes menu', async () => {

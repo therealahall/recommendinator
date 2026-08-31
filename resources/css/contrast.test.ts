@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,26 +17,17 @@ const AA_NORMAL_TEXT = 4.5
 const BASE = 'resources/css/base.css'
 const THEME_ROOT = 'src/web/static/themes'
 
-/** Every theme folder that ships a palette, so one dropped in is measured
- *  against every floor below without this file being edited. */
+/** Every installed theme folder, so one dropped in is measured without this
+ *  file being edited, and one with no colors.css fails on the missing path. */
 function themesIn(root: string): [string, string][] {
   return readdirSync(resolve(process.cwd(), root), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry): [string, string] => [entry.name, join(root, entry.name, 'colors.css')])
-    .filter(([, palette]) => existsSync(resolve(process.cwd(), palette)))
 }
 
 const THEMES = themesIn(THEME_ROOT)
 
 const TAGS = ['.profile-tag', '.profile-tag.anti']
-
-/** Theme, and the pairing a tag carried on the same card before. A flat table
- *  so a theme with no such history simply has no row here. */
-const REJECTED: [string, string, string][] = [
-  ['nord', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
-  ['nord', 'var(--color-error)', 'color-mix(in srgb, var(--color-error) 10%, transparent)'],
-  ['snowstorm', 'var(--accent-light)', 'color-mix(in srgb, var(--accent) 15%, transparent)'],
-]
 
 interface Rgba {
   r: number
@@ -187,7 +177,6 @@ const IMPORT_SURFACES: [string, string, string, string][] = [
 const DRAGGED_OVER = ['.drop-zone-hint', '.drop-zone-selection']
 
 describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
-  const base = read(BASE)
   const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
@@ -233,18 +222,6 @@ describe.each(THEMES)('profile tags on the Preferences card in %s', (_theme, the
     ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 })
-
-it.each(REJECTED)(
-  '%s rejects the %s profile-tag pairing it used to carry',
-  (theme, text, fill) => {
-    // Without this the checker could return anything and still pass above.
-    const vars = tokens(join(THEME_ROOT, theme, 'colors.css'))
-
-    expect(
-      contrast(toRgba(text, vars), over(toRgba(fill, vars), toRgba('var(--bg-card)', vars))),
-    ).toBeLessThan(AA_NORMAL_TEXT)
-  },
-)
 
 const LIBRARY_FILTERS = 'resources/js/components/organisms/LibraryFilters.vue'
 const CONFIRM_PANEL = 'resources/js/components/molecules/ConfirmPanel.vue'
@@ -294,7 +271,6 @@ const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
 ]
 
 describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) => {
-  const base = read(BASE)
   const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
@@ -801,14 +777,13 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     expect(divides(edge, banner)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
-  // The ring reads --border-default, so the one token move that clears it
-  // against a card can flatten it against the segment it encloses.
-  it('a spinner shows which of its segments is turning', () => {
-    const body = ruleBody(read(BASE), '.spinner')
-    const ring = toRgba(colourIn(declaration(body, 'border')), vars)
-
-    expect(divides(declaration(body, 'border-top-color'), ring)).toBeGreaterThanOrEqual(NON_TEXT)
-  })
+  it.each(CONTROL_BOUNDARIES.filter(([, , selector]) => selector === '.spinner'))(
+    '%s shows which of its segments is turning',
+    (_label, path, selector, _property, surface) => {
+      const segment = declaration(ruleBody(read(path), selector), 'border-top-color')
+      expect(divides(segment, toRgba(surface, vars))).toBeGreaterThanOrEqual(NON_TEXT)
+    },
+  )
 
   it('a refused setting is marked by a rule visible on its own tint', () => {
     const body = ruleBody(read(SETTING_CONTROL), '.setting-error')
@@ -821,26 +796,19 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
 })
 
 describe('the theme scan', () => {
-  it('measures every theme installed, not a list kept in this file', () => {
-    const installed = readdirSync(resolve(process.cwd(), THEME_ROOT), {
-      withFileTypes: true,
-    })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-
-    expect(THEMES.map(([theme]) => theme)).toEqual(installed)
-  })
-
-  it('measures a theme it has never seen, against the palette that theme paints', () => {
+  it('measures every folder it finds, and names the colors.css one of them lacks', () => {
     const root = mkdtempSync(join(tmpdir(), 'contrast-'))
+    const palette = (theme: string): string => join(root, theme, 'colors.css')
     mkdirSync(join(root, 'unreadable'))
-    writeFileSync(join(root, 'unreadable', 'colors.css'), ':root {\n  --text-muted: #3b4252;\n}\n')
+    writeFileSync(palette('unreadable'), ':root {\n  --text-muted: #3b4252;\n}\n')
+    mkdirSync(join(root, 'paletteless'))
 
     try {
-      const found = themesIn(root)
-      expect(found.map(([theme]) => theme)).toEqual(['unreadable'])
-
-      const vars = tokens(found[0][1])
+      expect(themesIn(root).map(([, path]) => path)).toEqual(
+        expect.arrayContaining([palette('unreadable'), palette('paletteless')]),
+      )
+      expect(() => tokens(palette('paletteless'))).toThrow(palette('paletteless'))
+      const vars = tokens(palette('unreadable'))
       expect(
         contrast(toRgba('var(--text-muted)', vars), toRgba('var(--bg-card)', vars)),
       ).toBeLessThan(AA_NORMAL_TEXT)

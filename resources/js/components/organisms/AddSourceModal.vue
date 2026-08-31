@@ -135,8 +135,8 @@ function onCancel(): void {
 }
 
 async function submit(): Promise<void> {
-  errorMessage.value = ''
   if (!canSubmit.value) return
+  errorMessage.value = ''
   const values: Record<string, unknown> = {}
   for (const field of visibleFields.value) {
     const raw = fieldValues.value[field.name]

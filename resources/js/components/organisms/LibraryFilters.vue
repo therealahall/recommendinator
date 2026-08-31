@@ -68,17 +68,6 @@ function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') closeExport()
 }
 
-// aria-disabled, not disabled: a disabled select cannot be tabbed to, so the
-// hint saying why it went dead never reaches the user it was written for.
-function onStatusChange(e: Event) {
-  const select = e.target as HTMLSelectElement
-  if (props.needsRating) {
-    select.value = 'completed'
-    return
-  }
-  emit('filterChange', 'status', select.value)
-}
-
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
   document.addEventListener('keydown', onKeyDown)
@@ -119,19 +108,18 @@ onUnmounted(() => {
           @update:model-value="emit('filterChange', 'type', $event)"
         />
         <select
+          v-if="!needsRating"
           class="toolbar-select"
           aria-label="Status"
-          :value="needsRating ? 'completed' : statusFilter"
-          :aria-disabled="needsRating || undefined"
-          :aria-describedby="needsRating ? 'status-locked-hint' : undefined"
-          @change="onStatusChange"
+          :value="statusFilter"
+          @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)"
         >
           <option value="">All Statuses</option>
           <option value="unread">{{ unreadLabel }}</option>
           <option value="currently_consuming">In Progress</option>
           <option value="completed">Completed</option>
         </select>
-        <span v-if="needsRating" id="status-locked-hint" class="sr-only">Locked to Completed while Needs rating is on.</span>
+        <span v-else class="help-text">Status: Completed while Needs rating is on.</span>
         <select class="toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
           <option value="">All Items</option>
           <option value="enriched">Enriched</option>
@@ -206,6 +194,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+.lib-filter-row .help-text {
+  margin: 0;
 }
 
 .lib-type-select {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { rescueFocus } from '@/utils/focus'
 
 withDefaults(
   defineProps<{
@@ -35,13 +36,8 @@ onMounted(() => {
 // four had it.
 onBeforeUnmount(() => {
   const back = opener
-  void nextTick(() => {
-    // Skipped when the caller has already placed focus itself, and when the
-    // answer took the opener away with it.
-    const settled = document.activeElement
-    if (settled !== null && settled !== document.body) return
-    if (back?.isConnected) back.focus()
-  })
+  // Not back to an opener the answer took away with it.
+  void nextTick(() => rescueFocus(back?.isConnected ? back : null))
 })
 </script>
 
