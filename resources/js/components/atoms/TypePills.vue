@@ -40,7 +40,10 @@ const KEY_MOVES: Record<string, (from: number, last: number) => number> = {
   End: (_from, last) => last,
 }
 
+const isBrowserShortcut = (e: KeyboardEvent) => e.altKey || e.ctrlKey || e.metaKey
+
 function onKeydown(e: KeyboardEvent) {
+  if (isBrowserShortcut(e)) return
   const move = KEY_MOVES[e.key]
   if (!move) return
   const from = pills.value.indexOf(e.target as HTMLButtonElement)

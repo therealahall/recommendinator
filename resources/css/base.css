@@ -92,6 +92,7 @@
   --z-overlay: 900;
   --z-drawer: 910;
   --z-drawer-toggle: 920;
+  --z-skip-link: 930;
   --z-modal: 1000;
 }
 
@@ -481,14 +482,14 @@ input[type="checkbox"] {
   display: none;
 }
 
-/* Off screen until focused, so the bypass costs the layout nothing. Declared
-   after the toggle it shares a corner and a stacking step with, to land on
-   top of it while focused. */
+/* Off screen until focused, so the bypass costs the layout nothing. Its own
+   step above the toggle it shares a corner with: an equal z-index breaks on
+   tree order, and this link comes first so Tab reaches it first. */
 .skip-link {
   position: fixed;
   top: -100%;
   left: var(--space-3);
-  z-index: var(--z-drawer-toggle);
+  z-index: var(--z-skip-link);
   padding: var(--space-2) var(--space-3);
   background: var(--bg-elevated);
   color: var(--text-primary);
@@ -758,10 +759,13 @@ input[type="checkbox"] {
   cursor: not-allowed;
 }
 
-/* `aria-disabled` is the in-flight lock, used where native disabled would blur
-   the element the user just activated (WCAG 2.4.3). It stays focusable and
-   announced, so it earns no fade: the label it keeps still owes 4.5:1. */
-.btn[aria-disabled='true'] {
+/* The lock used where native disabled would blur the element the user just
+   activated (WCAG 2.4.3). Its own fill, never a fade: opacity dims the label
+   with it, under 4.5:1. Element-qualified to outrank a scoped variant fill. */
+button.btn[aria-disabled='true'] {
+  background: var(--bg-primary);
+  border-color: var(--border-default);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -1476,7 +1480,7 @@ input[type="checkbox"] {
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-default);
-  border-top-color: var(--accent);
+  border-top-color: var(--text-inverse);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
