@@ -86,14 +86,93 @@ describe('TypePills', () => {
     expect(wrapper.find('[role="radiogroup"]').attributes('aria-label')).toBe('Enrichment type')
   })
 
-  it('emits on click even when clicking the already-active pill', async () => {
+  it('keeps only the checked pill in the tab order', () => {
     const wrapper = mount(TypePills, {
-      props: { modelValue: 'book' },
+      props: { modelValue: 'movie' },
     })
 
-    const bookPill = wrapper.findAll('.pill').find(p => p.text() === 'Book')!
-    await bookPill.trigger('click')
+    const tabbable = wrapper.findAll('.pill').filter(p => p.attributes('tabindex') === '0')
+    expect(tabbable.map(p => p.text())).toEqual(['Movie'])
+  })
 
-    expect(wrapper.emitted('update:modelValue')).toEqual([['book']])
+  it('puts the first pill in the tab order when nothing is checked', () => {
+    const wrapper = mount(TypePills, {
+      props: { modelValue: '', includeAll: false },
+    })
+
+    const tabbable = wrapper.findAll('.pill').filter(p => p.attributes('tabindex') === '0')
+    expect(tabbable.map(p => p.text())).toEqual(['Book'])
+  })
+
+  it.each([
+    ['ArrowRight', 'movie', 'tv_show', 'TV Show'],
+    ['ArrowDown', 'movie', 'tv_show', 'TV Show'],
+    ['ArrowLeft', 'movie', 'book', 'Book'],
+    ['ArrowUp', 'movie', 'book', 'Book'],
+    ['Home', 'movie', '', 'All'],
+    ['End', 'movie', 'video_game', 'Game'],
+    ['ArrowLeft', '', 'video_game', 'Game'],
+    ['ArrowRight', 'video_game', '', 'All'],
+  ])('%s on the %s pill selects and focuses %s', async (key, checked, emitted, label) => {
+    const wrapper = mount(TypePills, {
+      props: { modelValue: checked },
+      attachTo: document.body,
+    })
+
+    const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
+    ;(start.element as HTMLElement).focus()
+    start.element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([[emitted]])
+    expect(document.activeElement?.textContent).toBe(label)
+    wrapper.unmount()
+  })
+
+  it('End reaches the last option of the shortened group when All is hidden', () => {
+    const wrapper = mount(TypePills, {
+      props: { modelValue: 'book', includeAll: false },
+    })
+
+    const start = wrapper.findAll('.pill')[0]
+    start.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([['video_game']])
+  })
+
+  it.each([
+    ['altKey', 'ArrowLeft'],
+    ['metaKey', 'ArrowLeft'],
+    ['ctrlKey', 'Home'],
+  ])('leaves %s+%s to the browser shortcut', (modifier, key) => {
+    const wrapper = mount(TypePills, {
+      props: { modelValue: 'movie' },
+    })
+
+    const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      [modifier]: true,
+    })
+    start.element.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it.each(['Enter', ' '])('leaves %s to the button so Tab then activate still selects', key => {
+    const wrapper = mount(TypePills, {
+      props: { modelValue: 'movie' },
+      attachTo: document.body,
+    })
+
+    const pill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    pill.element.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    wrapper.unmount()
   })
 })
