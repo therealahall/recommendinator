@@ -188,6 +188,21 @@ describe('AddSourceModal', () => {
     }
   })
 
+  it('keeps the reason plugins are missing on screen when Create is pressed anyway', async () => {
+    const store = useDataStore()
+    vi.spyOn(store, 'loadAvailablePlugins').mockRejectedValue(new Error('plugin scan failed'))
+    const wrapper = mount(AddSourceModal)
+    await flushPromises()
+
+    const submit = wrapper.get('[data-testid="add-source-submit"]')
+    expect(submit.attributes('aria-disabled')).toBe('true')
+
+    await submit.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.add-source-error').text()).toContain('plugin scan failed')
+  })
+
   it('calls createSource without the secret, then setSourceSecret for it', async () => {
     const { wrapper, store } = await mountWithPlugins()
     const create = vi

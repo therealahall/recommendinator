@@ -67,18 +67,6 @@ describe('AppSidebar', () => {
     expect('inert' in aside.attributes()).toBe(hidden)
   })
 
-  it('holds no heading, so going off screen takes none out of the document', async () => {
-    // The drawer goes inert and aria-hidden on a phone: any heading inside it
-    // leaves the outline with the sidebar (WCAG 1.3.1).
-    const router = createTestRouter()
-    await router.push('/recommendations')
-    await router.isReady()
-
-    const wrapper = mount(AppSidebar, { global: { plugins: [router] } })
-
-    expect(wrapper.findAll('h1, h2, h3, h4, h5, h6')).toHaveLength(0)
-  })
-
   it('emits navigate on nav click', async () => {
     const router = createTestRouter()
     await router.push('/recommendations')

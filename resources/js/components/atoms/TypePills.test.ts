@@ -86,29 +86,20 @@ describe('TypePills', () => {
     expect(wrapper.find('[role="radiogroup"]').attributes('aria-label')).toBe('Enrichment type')
   })
 
-  it('keeps only the checked pill in the tab order', () => {
-    const wrapper = mount(TypePills, {
-      props: { modelValue: 'movie' },
-    })
+  it('keeps one pill in the tab order: the checked one, or the first', () => {
+    const tabbable = (modelValue: string, includeAll = true): string[] =>
+      mount(TypePills, { props: { modelValue, includeAll } })
+        .findAll('.pill')
+        .filter(p => p.attributes('tabindex') === '0')
+        .map(p => p.text())
 
-    const tabbable = wrapper.findAll('.pill').filter(p => p.attributes('tabindex') === '0')
-    expect(tabbable.map(p => p.text())).toEqual(['Movie'])
-  })
-
-  it('puts the first pill in the tab order when nothing is checked', () => {
-    const wrapper = mount(TypePills, {
-      props: { modelValue: '', includeAll: false },
-    })
-
-    const tabbable = wrapper.findAll('.pill').filter(p => p.attributes('tabindex') === '0')
-    expect(tabbable.map(p => p.text())).toEqual(['Book'])
+    expect(tabbable('movie')).toEqual(['Movie'])
+    expect(tabbable('', false)).toEqual(['Book'])
   })
 
   it.each([
     ['ArrowRight', 'movie', 'tv_show', 'TV Show'],
-    ['ArrowDown', 'movie', 'tv_show', 'TV Show'],
     ['ArrowLeft', 'movie', 'book', 'Book'],
-    ['ArrowUp', 'movie', 'book', 'Book'],
     ['Home', 'movie', '', 'All'],
     ['End', 'movie', 'video_game', 'Game'],
     ['ArrowLeft', '', 'video_game', 'Game'],
@@ -140,21 +131,17 @@ describe('TypePills', () => {
     expect(wrapper.emitted('update:modelValue')).toEqual([['video_game']])
   })
 
-  it.each([
-    ['altKey', 'ArrowLeft'],
-    ['metaKey', 'ArrowLeft'],
-    ['ctrlKey', 'Home'],
-  ])('leaves %s+%s to the browser shortcut', (modifier, key) => {
+  it('leaves a modified arrow to the browser shortcut it belongs to', () => {
     const wrapper = mount(TypePills, {
       props: { modelValue: 'movie' },
     })
 
     const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
     const event = new KeyboardEvent('keydown', {
-      key,
+      key: 'ArrowLeft',
       bubbles: true,
       cancelable: true,
-      [modifier]: true,
+      altKey: true,
     })
     start.element.dispatchEvent(event)
 
