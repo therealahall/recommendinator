@@ -61,6 +61,7 @@ describe('the scorer tooltip', () => {
     // 260px centred on its trigger hung half the box past the left edge of the
     // page, and nothing about it could shrink (WCAG 1.4.10).
     expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'transform')).toBe('none')
+    expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'max-width')).toContain('100vw')
   })
 })
 
