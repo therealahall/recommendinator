@@ -39,8 +39,7 @@
   --color-error: #bf616a;
   --color-info: var(--accent);
 
-  /* Semantic colours are sized for fills and fall under 4.5:1 as text (error
-     reaches 2.46:1 on --bg-card, info 3.24:1 on its own tint). Mixing toward
+  /* Semantic colours are sized for fills and fall short as text. Mixing toward
      --text-primary tracks whichever palette is active. */
   --color-error-text: color-mix(in srgb, var(--color-error) 50%, var(--text-primary));
   --color-info-text: color-mix(in srgb, var(--color-info) 50%, var(--text-primary));
@@ -199,8 +198,8 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
-  /* The page colour as the unfilled track: every border token sits within
-     1.3:1 of the accent that fills it, hiding where the value ends (1.4.11). */
+  /* The page colour as the unfilled track: a border token sits too near the
+     accent that fills it, hiding where the value ends (1.4.11). */
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) var(--value-percent), var(--bg-primary) var(--value-percent));
   border-radius: 3px;
 }
@@ -1540,8 +1539,8 @@ button.btn[aria-disabled='true'] {
   border-color: var(--border-focus);
 }
 
-/* The text mix, not the fill colour: --color-error reaches only 2.46:1 against
-   the field it outlines, so the refusal has no visible edge (WCAG 1.4.11). */
+/* The text mix, not the fill colour: --color-error is too near the field it
+   outlines, so the refusal has no visible edge (WCAG 1.4.11). */
 .edit-field input[aria-invalid='true'],
 .edit-field textarea[aria-invalid='true'] {
   border-color: var(--color-error-text);
