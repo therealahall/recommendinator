@@ -106,6 +106,13 @@ const missingRequiredFields = computed(() =>
     .map((field) => field.name),
 )
 
+const blockers = computed(() => {
+  const missing: string[] = []
+  if (!pluginName.value) missing.push('a plugin')
+  if (sourceId.value === '') missing.push('a source id')
+  return [...missing, ...missingRequiredFields.value]
+})
+
 const isValid = computed(
   () =>
     !!pluginName.value &&
@@ -122,8 +129,8 @@ const canSubmit = computed(() => isValid.value && !submitting.value)
 const blockedBy = computed(() => {
   if (isValid.value) return undefined
   const ids: string[] = []
-  if (!idIsValid.value) ids.push(sourceIdDescribedBy.value)
-  if (missingRequiredFields.value.length > 0) ids.push('add-source-missing-fields')
+  if (idError.value !== '') ids.push('add-source-id-error')
+  if (blockers.value.length > 0) ids.push('add-source-missing-fields')
   return ids.join(' ') || undefined
 })
 
@@ -352,7 +359,7 @@ async function submit(): Promise<void> {
       </div>
 
       <p
-        v-if="missingRequiredFields.length > 0"
+        v-if="blockers.length > 0"
         id="add-source-missing-fields"
         class="add-source-hint"
         data-testid="add-source-missing-fields"
@@ -360,7 +367,7 @@ async function submit(): Promise<void> {
         aria-live="polite"
       >
         Required to create:
-        {{ missingRequiredFields.join(', ') }}.
+        {{ blockers.join(', ') }}.
       </p>
 
       <label class="add-source-toggle">

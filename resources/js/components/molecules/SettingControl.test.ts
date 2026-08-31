@@ -95,6 +95,15 @@ describe('SettingControl badges and reset', () => {
     wrapper.unmount()
   })
 
+  it('keeps the words on the Reset button inside the name voice control matches', () => {
+    const wrapper = mountControl(value({ db_overridden: true }), 8000)
+    const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
+    const name = button.attributes('aria-label') ?? button.text()
+
+    expect(name).toContain('Reset to default')
+    expect(name).toContain('Batch size')
+  })
+
   it('says why a Reset locked by a section save cannot be used', async () => {
     const wrapper = mountControl(value({ db_overridden: true }), 8000, { disabled: true })
     const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')

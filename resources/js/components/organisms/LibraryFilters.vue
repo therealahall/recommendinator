@@ -38,6 +38,12 @@ const unreadLabel = computed(() =>
   statusLabels.unread[props.typeFilter] ?? statusLabels.unread.default
 )
 
+const statusLockNotice = computed(() =>
+  props.needsRating
+    ? 'Status filter removed. Status is locked to Completed while Needs rating is on.'
+    : ''
+)
+
 const exportScope = computed(() =>
   props.typeFilter
     ? 'Exports every item of this type. Your other filters do not apply.'
@@ -131,6 +137,14 @@ onUnmounted(() => {
           </option>
         </select>
       </div>
+
+      <p
+        class="sr-only"
+        data-testid="status-lock-announcement"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ statusLockNotice }}</p>
 
       <div class="toolbar-divider" />
 

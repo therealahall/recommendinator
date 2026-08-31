@@ -51,21 +51,28 @@ describe('LibraryFilters', () => {
     expect(unreadOption.text()).toBe('Unplayed')
   })
 
-  it('withdraws the Status filter Needs rating overrides, and says so on screen', async () => {
+  it('withdraws the Status filter Needs rating overrides, announcing it, and hands both back when it goes off', async () => {
     // Offered but ignoring what it was given, the select explained the refusal
     // to a screen reader alone; the sighted operator saw the value snap back.
     const wrapper = mount(LibraryFilters, {
-      props: { ...defaultProps, needsRating: true, statusFilter: '' },
+      props: { ...defaultProps, needsRating: false, statusFilter: '' },
     })
+    const announcement = wrapper.get('[data-testid="status-lock-announcement"]')
+    expect(announcement.text()).toBe('')
+
+    await wrapper.setProps({ needsRating: true })
 
     expect(wrapper.find('select[aria-label="Status"]').exists()).toBe(false)
     const note = wrapper.get('.lib-filter-row .help-text')
     expect(note.classes()).not.toContain('sr-only')
     expect(note.text()).toContain('Completed')
+    expect(announcement.text()).toContain('removed')
+    expect(announcement.text()).toContain('Completed')
 
     await wrapper.setProps({ needsRating: false })
 
     expect(wrapper.find('select[aria-label="Status"]').exists()).toBe(true)
+    expect(announcement.text()).toBe('')
   })
 
   it('emits export with csv and closes menu', async () => {
