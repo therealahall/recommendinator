@@ -165,15 +165,27 @@ describe('AddSourceModal', () => {
     wrapper.unmount()
   })
 
-  it('shows an inline error and disables Create for an invalid id', async () => {
-    const { wrapper } = await mountWithPlugins()
+  it('refuses Create for an invalid id, and says why where Tab reaches it', async () => {
+    // A natively disabled Create is not focusable, so the paragraph explaining
+    // what it is waiting for was reachable only by browse-mode arrowing.
+    const { wrapper, store } = await mountWithPlugins()
+    const create = vi.spyOn(store, 'createSource')
     await wrapper.find('#add-source-id').setValue('Bad ID')
     const error = wrapper.find('[data-testid="add-source-id-error"]')
     expect(error.exists()).toBe(true)
     expect(error.text()).toContain('lowercase')
-    expect(
-      wrapper.find('[data-testid="add-source-submit"]').attributes('disabled'),
-    ).toBeDefined()
+
+    const submit = wrapper.get('[data-testid="add-source-submit"]')
+    await submit.trigger('click')
+
+    expect(create).not.toHaveBeenCalled()
+    expect(submit.attributes('disabled')).toBeUndefined()
+    expect(submit.attributes('aria-disabled')).toBe('true')
+    const reasons = (submit.attributes('aria-describedby') ?? '').split(' ').filter(Boolean)
+    expect(reasons.length).toBeGreaterThan(0)
+    for (const id of reasons) {
+      expect(wrapper.get(`[id="${id}"]`).text()).not.toBe('')
+    }
   })
 
   it('calls createSource without the secret, then setSourceSecret for it', async () => {

@@ -106,8 +106,6 @@ const missingRequiredFields = computed(() =>
     .map((field) => field.name),
 )
 
-// Split deliberately from `canSubmit`. Validity can only change on input, so
-// gating native `disabled` on it never steals focus from the user.
 const isValid = computed(
   () =>
     !!pluginName.value &&
@@ -116,10 +114,18 @@ const isValid = computed(
     missingRequiredFields.value.length === 0,
 )
 
-// In-flight state is different: `submitting` flips the instant Create is
-// activated, and natively disabling the button under the user's own focus drops
-// them to <body> (WCAG 2.4.3).
+// Never natively disabled: `submitting` flips under the user's own focus, and a
+// disabled Create is unreachable by Tab, so the reason it refuses goes unread.
 const canSubmit = computed(() => isValid.value && !submitting.value)
+
+// Whichever guidance is on screen explaining what Create is still waiting for.
+const blockedBy = computed(() => {
+  if (isValid.value) return undefined
+  const ids: string[] = []
+  if (!idIsValid.value) ids.push(sourceIdDescribedBy.value)
+  if (missingRequiredFields.value.length > 0) ids.push('add-source-missing-fields')
+  return ids.join(' ') || undefined
+})
 
 // aria-disabled does not block activation the way native disabled does, so
 // Cancel has to drop the click itself rather than closing mid-request.
@@ -347,6 +353,7 @@ async function submit(): Promise<void> {
 
       <p
         v-if="missingRequiredFields.length > 0"
+        id="add-source-missing-fields"
         class="add-source-hint"
         data-testid="add-source-missing-fields"
         role="status"
@@ -394,8 +401,8 @@ async function submit(): Promise<void> {
         type="button"
         class="btn btn-primary"
         data-testid="add-source-submit"
-        :disabled="!isValid"
-        :aria-disabled="submitting || undefined"
+        :aria-disabled="!canSubmit || undefined"
+        :aria-describedby="blockedBy"
         @click="submit"
       >{{ submitting ? 'Creating…' : 'Create' }}</button>
     </template>
