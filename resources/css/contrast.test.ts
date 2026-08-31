@@ -634,9 +634,9 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
   const card = toRgba('var(--bg-card)', vars)
 
-  // No token clears 3:1 against --accent, so each track is a rule-local choice
-  // measured against the fill that sits on it (WCAG 1.4.11).
+  // No token clears 3:1 against --accent; a track is rule-local (1.4.11).
   const boundedBy = (fills: string[], track: Rgba): void => {
+    expect(fills, 'flat bar measures nothing').not.toEqual([])
     for (const fill of fills) {
       expect(contrast(toRgba(fill, vars), track)).toBeGreaterThanOrEqual(NON_TEXT)
       expect(contrast(toRgba(fill, vars), card)).toBeGreaterThanOrEqual(NON_TEXT)
