@@ -8,7 +8,6 @@ import SetupForm from '@/components/organisms/SetupForm.vue'
 import StatusBar from '@/components/organisms/StatusBar.vue'
 import UpdateBanner from '@/components/organisms/UpdateBanner.vue'
 import { useSubmission } from '@/composables/useSubmission'
-import { APP_NAME } from '@/constants/app'
 import { useAppStore } from '@/stores/app'
 import { SESSION_ENDED, useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
@@ -92,7 +91,7 @@ onMounted(async () => {
 // behind them titles a page that is not on screen (WCAG 2.4.2).
 watchEffect(() => {
   const page = auth.isAuthenticated ? router.currentRoute.value.meta.title : ''
-  document.title = page ? `${page} · ${APP_NAME}` : APP_NAME
+  document.title = page ? `${page} · Recommendinator` : 'Recommendinator'
 })
 
 watch(
@@ -164,7 +163,7 @@ watch(
         <!-- Outside the drawer: the drawer goes inert and aria-hidden when it is
              off screen, which would leave a phone with no h1 at all. -->
         <header class="app-banner">
-          <h1>{{ APP_NAME }}</h1>
+          <h1>Recommendinator</h1>
           <span v-if="app.version" class="version-label">v{{ app.version }}</span>
         </header>
         <AppSidebar :user="auth.user" :offscreen="sidebarOffscreen" @navigate="closeSidebar" />
@@ -184,7 +183,7 @@ watch(
          that enters the tree already populated is skipped as page content. -->
     <div class="card auth-card">
       <header class="auth-head">
-        <h1 class="auth-title">{{ APP_NAME }}</h1>
+        <h1 class="auth-title">Recommendinator</h1>
       </header>
       <p class="auth-status" data-testid="session-pending">Checking your session…</p>
     </div>
