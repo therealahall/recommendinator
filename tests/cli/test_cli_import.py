@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from src.ingestion.import_templates import TEMPLATES_DIR
 from src.ingestion.importers.registry import IMPORTERS
 from src.storage.manager import StorageManager
-from src.web.api import (
+from src.web.api._import import (
     ImporterResponse,
     ImportResponse,
     ImportTemplateResponse,

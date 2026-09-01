@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from src.recommendations.profile import ProfileGenerator
-from src.web.api import ProfileResponse
+from src.web.api._profile import ProfileResponse
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks

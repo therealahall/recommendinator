@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import src.web.api
 from src.auth.epic import EpicAuthError
 from src.auth.gog import GogAuthError
 from src.auth.trakt import DevicePollResult, DevicePollStatus, TraktAuthError
@@ -67,7 +66,8 @@ from src.utils.item_serialization import ignore_result_to_dict
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
 from src.utils.text import LINE_BREAKS
-from src.web.api import APP_VERSION, CompletionRequest
+from src.web.api._library import CompletionRequest
+from src.web.api._status import APP_VERSION
 from src.web.app import (
     _raised_refusal_json_can_carry,
 )
@@ -629,7 +629,7 @@ def test_update_endpoint_steam(client, mock_components):
     sync_manager.is_running.return_value = False
     sync_manager.start_sync.return_value = None
 
-    with patch("src.web.api.get_sync_manager", return_value=sync_manager):
+    with patch("src.web.api._sync.get_sync_manager", return_value=sync_manager):
         response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 200
@@ -664,7 +664,7 @@ def test_update_endpoint_steam_missing_api_key(client, mock_components, caplog):
         "enabled": True,
     }
 
-    with caplog.at_level(logging.WARNING, logger="src.web.api"):
+    with caplog.at_level(logging.WARNING, logger="src.web.api._sync"):
         response = client.post("/api/update", json={"source": "steam"})
 
     assert response.status_code == 400
@@ -746,7 +746,7 @@ def test_update_all_excludes_a_misconfigured_source_and_names_it(
     sync_manager.start_sync.return_value = None
 
     with (
-        patch("src.web.api.get_sync_manager", return_value=sync_manager),
+        patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
         patch(
             "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
             return_value=[],
@@ -768,7 +768,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
 
     def test_an_unknown_source_id_is_logged_not_echoed(self, client, caplog):
         """The id is unbounded caller input, so it stays out of the body."""
-        with caplog.at_level(logging.INFO, logger="src.web.api"):
+        with caplog.at_level(logging.INFO, logger="src.web.api._sync"):
             response = client.post("/api/update", json={"source": "probe-me-42"})
 
         assert response.status_code == 400
@@ -789,7 +789,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
             "enabled": True,
         }
 
-        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        with caplog.at_level(logging.WARNING, logger="src.web.api._sync"):
             response = client.post("/api/update", json={"source": "probe_me_42"})
 
         assert response.status_code == 400
@@ -841,7 +841,7 @@ class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
 
     def test_a_newline_in_the_source_id_cannot_forge_a_log_line(self, client, caplog):
         """CR/LF is escaped before the id reaches the log (CWE-117)."""
-        with caplog.at_level(logging.INFO, logger="src.web.api"):
+        with caplog.at_level(logging.INFO, logger="src.web.api._sync"):
             response = client.post(
                 "/api/update", json={"source": "ok\nWARNING forged line"}
             )
@@ -876,8 +876,8 @@ class TestUpdateResolvesTheSourceOnceRegression:
             return entries
 
         with (
-            patch("src.web.api.get_sync_manager", return_value=sync_manager),
-            patch("src.web.api.resolve_inputs", side_effect=resolve_then_delete),
+            patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
+            patch("src.web.api._sync.resolve_inputs", side_effect=resolve_then_delete),
         ):
             response = client.post("/api/update", json={"source": "probe_me_42"})
 
@@ -901,7 +901,7 @@ def _sync_a_source_typed(client, content_type):
     enrichment_manager.start_enrichment.return_value = True
 
     with (
-        patch("src.web.api.get_sync_manager", return_value=sync_manager),
+        patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
         patch(
             "src.web.sync_dispatch.EnrichmentManager",
             return_value=enrichment_manager,
@@ -2019,15 +2019,15 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
-            patch("src.web.api.extract_gog_code", return_value="valid_code"),
+            patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_gog_tokens",
+                "src.web.api._oauth.exchange_gog_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch("src.web.api.save_gog_token") as mock_save,
+            patch("src.web.api._oauth.save_gog_token") as mock_save,
         ):
             response = client.post(
                 "/api/gog/exchange", json={"code_or_url": "valid_code"}
@@ -2050,15 +2050,15 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with (
-            patch("src.web.api.extract_gog_code", return_value="valid_code"),
+            patch("src.web.api._oauth.extract_gog_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_gog_tokens",
+                "src.web.api._oauth.exchange_gog_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch("src.web.api.save_gog_token"),
+            patch("src.web.api._oauth.save_gog_token"),
         ):
             response = client.post(
                 "/api/gog/exchange", json={"code_or_url": "valid_code"}
@@ -2075,7 +2075,7 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
-            "src.web.api.extract_gog_code",
+            "src.web.api._oauth.extract_gog_code",
             side_effect=GogAuthError("Internal details that must not leak"),
         ):
             response = client.post("/api/gog/exchange", json={"code_or_url": "bad"})
@@ -2091,7 +2091,7 @@ class TestExchangeGogTokenEndpoint:
         app_state.config["inputs"]["gog"] = {"plugin": "gog", "enabled": True}
 
         with patch(
-            "src.web.api.extract_gog_code",
+            "src.web.api._oauth.extract_gog_code",
             side_effect=RuntimeError("Internal database state is corrupt"),
         ):
             response = client.post("/api/gog/exchange", json={"code_or_url": "any"})
@@ -2363,7 +2363,7 @@ class TestUpdateEndpoint409Conflict:
     def test_update_returns_409_when_same_source_already_running(
         self, client: TestClient, mock_components: dict
     ) -> None:
-        with patch("src.web.api.get_sync_manager") as mock_get_sync_manager:
+        with patch("src.web.api._sync.get_sync_manager") as mock_get_sync_manager:
             mock_manager = Mock(spec=SyncManager)
             mock_manager.is_running.return_value = False
             mock_manager.start_sync.return_value = "Sync already in progress"
@@ -2761,14 +2761,14 @@ class TestUpdateEndpointRecordsTheRun:
 
 class TestConfigReload:
     def test_reload_success(self, client, mock_components):
-        with patch("src.web.api.reload_config", return_value=True):
+        with patch("src.web.api._status.reload_config", return_value=True):
             response = client.post("/api/config/reload")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
 
     def test_reload_failure(self, client, mock_components):
-        with patch("src.web.api.reload_config", return_value=False):
+        with patch("src.web.api._status.reload_config", return_value=False):
             response = client.post("/api/config/reload")
         assert response.status_code == 500
 
@@ -2783,15 +2783,15 @@ class TestExchangeEpicTokenEndpoint:
         }
 
         with (
-            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_epic_tokens",
+                "src.web.api._oauth.exchange_epic_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch("src.web.api.save_epic_token") as mock_save,
+            patch("src.web.api._oauth.save_epic_token") as mock_save,
         ):
             response = client.post(
                 "/api/epic/exchange", json={"code_or_json": "valid_code"}
@@ -2816,7 +2816,7 @@ class TestExchangeEpicTokenEndpoint:
         }
 
         with patch(
-            "src.web.api.extract_epic_code",
+            "src.web.api._oauth.extract_epic_code",
             side_effect=EpicAuthError("Internal details that must not leak"),
         ):
             response = client.post("/api/epic/exchange", json={"code_or_json": "bad"})
@@ -2851,9 +2851,9 @@ class TestExchangeEpicTokenEndpoint:
         }
 
         with (
-            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_epic_tokens",
+                "src.web.api._oauth.exchange_epic_tokens",
                 side_effect=RuntimeError("unexpected"),
             ),
         ):
@@ -2870,10 +2870,10 @@ class TestExchangeEpicTokenEndpoint:
 class TestEpicStatus:
     def test_epic_enabled_connected(self, client, mock_components):
         with (
-            patch("src.web.api.is_epic_enabled", return_value=True),
-            patch("src.web.api.has_epic_token", return_value=True),
+            patch("src.web.api._oauth.is_epic_enabled", return_value=True),
+            patch("src.web.api._oauth.has_epic_token", return_value=True),
             patch(
-                "src.web.api.get_epic_auth_url",
+                "src.web.api._oauth.get_epic_auth_url",
                 return_value="https://www.epicgames.com/id/login?test",
             ),
         ):
@@ -2886,8 +2886,8 @@ class TestEpicStatus:
 
     def test_epic_disabled(self, client, mock_components):
         with (
-            patch("src.web.api.is_epic_enabled", return_value=False),
-            patch("src.web.api.has_epic_token", return_value=False),
+            patch("src.web.api._oauth.is_epic_enabled", return_value=False),
+            patch("src.web.api._oauth.has_epic_token", return_value=False),
         ):
             response = client.get("/api/epic/status")
         assert response.status_code == 200
@@ -2898,10 +2898,10 @@ class TestEpicStatus:
 
     def test_epic_enabled_auth_url_failure_returns_null(self, client, mock_components):
         with (
-            patch("src.web.api.is_epic_enabled", return_value=True),
-            patch("src.web.api.has_epic_token", return_value=False),
+            patch("src.web.api._oauth.is_epic_enabled", return_value=True),
+            patch("src.web.api._oauth.has_epic_token", return_value=False),
             patch(
-                "src.web.api.get_epic_auth_url",
+                "src.web.api._oauth.get_epic_auth_url",
                 side_effect=RuntimeError("EPCAPI broken"),
             ),
         ):
@@ -2924,15 +2924,15 @@ class TestExchangeEpicTokenEndpointRegression:
         }
 
         with (
-            patch("src.web.api.extract_epic_code", return_value="valid_code"),
+            patch("src.web.api._oauth.extract_epic_code", return_value="valid_code"),
             patch(
-                "src.web.api.exchange_epic_tokens",
+                "src.web.api._oauth.exchange_epic_tokens",
                 return_value={
                     "access_token": "access123",
                     "refresh_token": "super_secret_token",
                 },
             ),
-            patch("src.web.api.save_epic_token") as mock_save,
+            patch("src.web.api._oauth.save_epic_token") as mock_save,
         ):
             response = client.post(
                 "/api/epic/exchange", json={"code_or_json": "valid_code"}
@@ -3004,11 +3004,11 @@ class TestTraktStartDeviceFlow:
     def test_returns_user_code_and_url(self, client, mock_components) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.start_device_auth_flow",
+                "src.web.api._oauth.start_device_auth_flow",
                 return_value={
                     "device_code": "dev123",
                     "user_code": "ABCD1234",
@@ -3035,7 +3035,7 @@ class TestTraktStartDeviceFlow:
         """The raw resolver error (which can name config internals) must never reach
         the client; only the generic message is surfaced."""
         with patch(
-            "src.web.api.resolve_trakt_client_credentials",
+            "src.web.api._oauth.resolve_trakt_client_credentials",
             side_effect=TraktAuthError("Trakt is not configured."),
         ):
             response = client.post("/api/trakt/start-device-flow")
@@ -3048,14 +3048,14 @@ class TestTraktPollDeviceApproval:
     def test_success_saves_token(self, client, mock_components) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.poll_device_token",
+                "src.web.api._oauth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.SUCCESS, "refresh-xyz"),
             ),
-            patch("src.web.api.save_trakt_token") as mock_save,
+            patch("src.web.api._oauth.save_trakt_token") as mock_save,
         ):
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
@@ -3070,14 +3070,14 @@ class TestTraktPollDeviceApproval:
     def test_pending_returns_status(self, client, mock_components) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.poll_device_token",
+                "src.web.api._oauth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.PENDING),
             ),
-            patch("src.web.api.save_trakt_token") as mock_save,
+            patch("src.web.api._oauth.save_trakt_token") as mock_save,
         ):
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
@@ -3102,14 +3102,14 @@ class TestTraktPollDeviceApproval:
     ) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.poll_device_token",
+                "src.web.api._oauth.poll_device_token",
                 return_value=DevicePollResult(status),
             ),
-            patch("src.web.api.save_trakt_token") as mock_save,
+            patch("src.web.api._oauth.save_trakt_token") as mock_save,
         ):
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
@@ -3127,14 +3127,14 @@ class TestTraktPollDeviceApproval:
     ) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.poll_device_token",
+                "src.web.api._oauth.poll_device_token",
                 return_value=DevicePollResult(DevicePollStatus.SUCCESS, None),
             ),
-            patch("src.web.api.save_trakt_token") as mock_save,
+            patch("src.web.api._oauth.save_trakt_token") as mock_save,
         ):
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "dev1234567"}
@@ -3147,11 +3147,11 @@ class TestTraktPollDeviceApproval:
     def test_poll_error_message_is_generic(self, client, mock_components) -> None:
         with (
             patch(
-                "src.web.api.resolve_trakt_client_credentials",
+                "src.web.api._oauth.resolve_trakt_client_credentials",
                 return_value=("cid", "secret"),
             ),
             patch(
-                "src.web.api.poll_device_token",
+                "src.web.api._oauth.poll_device_token",
                 side_effect=TraktAuthError("invalid device code 0xdeadbeef"),
             ),
         ):
@@ -3163,7 +3163,7 @@ class TestTraktPollDeviceApproval:
         assert response.json()["detail"] == "Trakt authentication failed"
 
     def test_short_device_code_rejected(self, client, mock_components) -> None:
-        with patch("src.web.api.poll_device_token") as mock_poll:
+        with patch("src.web.api._oauth.poll_device_token") as mock_poll:
             response = client.post(
                 "/api/trakt/poll-device-approval", json={"device_code": "short"}
             )
@@ -4323,7 +4323,10 @@ class TestConfigReloadRacingASettingsSaveRegression:
             return build_settings_view(config, settings_storage)
 
         with (
-            patch("src.web.api.build_settings_view", park_inside_the_locked_block),
+            patch(
+                "src.web.api._settings.build_settings_view",
+                park_inside_the_locked_block,
+            ),
             patch("src.web.state.load_config", wraps=load_config) as reload_read_yaml,
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
@@ -4461,9 +4464,11 @@ class TestLazySingletonsAreBuiltOnceRegression:
 
 
 def _api_log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Only the api.py records: booting the app logs from four other modules."""
+    """Only the api package's records: booting the app logs from four other modules."""
     return [
-        record.getMessage() for record in caplog.records if record.name == "src.web.api"
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("src.web.api.")
     ]
 
 
@@ -4484,7 +4489,7 @@ class TestExoticBreaksCannotForgeAnApiLogLine:
 
         with (
             booted_web_app(storage, {}) as app,
-            caplog.at_level(logging.ERROR, logger="src.web.api"),
+            caplog.at_level(logging.ERROR, logger="src.web.api._recommendations"),
         ):
             app_state.engine = engine
             authenticated_client(app).get(
@@ -4509,7 +4514,7 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
     ) -> None:
         mock_components["engine"].generate_recommendations.side_effect = TimeoutError()
 
-        with caplog.at_level(logging.ERROR, logger="src.web.api"):
+        with caplog.at_level(logging.ERROR, logger="src.web.api._recommendations"):
             response = client.get("/api/recommendations?type=book&count=1")
 
         assert response.status_code == 500
@@ -4527,7 +4532,7 @@ class TestACatchAllHandlerStillNamesItsExceptionClassRegression:
     ) -> None:
         mock_components["storage"].complete_content_item.side_effect = TimeoutError()
 
-        with caplog.at_level(logging.ERROR, logger="src.web.api"):
+        with caplog.at_level(logging.ERROR, logger="src.web.api._library"):
             response = client.post(
                 "/api/complete", json={"content_type": "book", "title": "Dune"}
             )
@@ -4610,7 +4615,7 @@ class TestNoLogEscapeReachesAResponseBodyRegression:
         """``json.loads`` accepts an unpaired ``\\ud800`` escape, and the model
         bound is the only thing keeping one out of a stored title."""
         with pytest.raises(ValidationError):
-            src.web.api.CompletionRequest(content_type="book", title=f"Dune{surrogate}")
+            CompletionRequest(content_type="book", title=f"Dune{surrogate}")
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udcff", "\udfff"])
     def test_the_refusal_itself_renders(self, surrogate: str, mock_components) -> None:

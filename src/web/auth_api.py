@@ -16,7 +16,7 @@ from src.storage.accounts import (
     AccountAlreadyClaimedError,
     PasswordTooShortError,
 )
-from src.web.api import (
+from src.web.api._shared import (
     AccountDisplayName,
     AccountUsername,
     UserResponse,

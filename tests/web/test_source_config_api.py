@@ -925,7 +925,7 @@ class TestSyncLogsTheReasonItRefused:
         )
         readable.rmdir()
 
-        with caplog.at_level(logging.WARNING, logger="src.web.api"):
+        with caplog.at_level(logging.WARNING, logger="src.web.api._sync"):
             sync = client.post("/api/update", json={"source": "games"})
 
         assert created.status_code == 201
@@ -961,7 +961,7 @@ class TestSyncLogsTheReasonItRefused:
                 "src.ingestion.sources.steam.SteamPlugin.validate_config",
                 return_value=["'api_key' super-secret-key was rejected"],
             ),
-            caplog.at_level(logging.WARNING, logger="src.web.api"),
+            caplog.at_level(logging.WARNING, logger="src.web.api._sync"),
         ):
             sync = client.post("/api/update", json={"source": "games"})
 
@@ -997,7 +997,7 @@ class TestSyncLogsTheReasonItRefused:
                 "src.ingestion.sources.steam.SteamPlugin.validate_config",
                 return_value=["not found: /srv/a\nWARNING  | forged | line"],
             ),
-            caplog.at_level(logging.WARNING, logger="src.web.api"),
+            caplog.at_level(logging.WARNING, logger="src.web.api._sync"),
         ):
             sync = client.post("/api/update", json={"source": "games"})
 

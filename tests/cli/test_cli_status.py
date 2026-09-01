@@ -88,7 +88,7 @@ class TestStatusParity:
         with (
             patch("src.utils.dependencies.dependency_drift", return_value=(drift,)),
             patch("src.cli.commands._status.dependency_drift", return_value=(drift,)),
-            patch("src.web.api.dependency_drift", return_value=(drift,)),
+            patch("src.web.api._status.dependency_drift", return_value=(drift,)),
             caplog.at_level(logging.WARNING, logger="src"),
         ):
             tabled = _status_invoke(cli_runner)
