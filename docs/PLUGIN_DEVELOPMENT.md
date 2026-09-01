@@ -121,8 +121,8 @@ except PathNotAllowed as error:
 
 **A field naming the host the stored credentials are sent to** — a base `url` —
 takes `credential_bound=True`. Validate the URL's shape with
-`src.ingestion.urls.source_url_error` in both `validate_config` and `fetch`: a
-sync of *every* source never calls `validate_config`.
+`src.ingestion.urls.source_url_error` in both `validate_config` and `fetch`: the
+scheduler dispatches a due source without ever calling `validate_config`.
 
 ## ContentItem
 

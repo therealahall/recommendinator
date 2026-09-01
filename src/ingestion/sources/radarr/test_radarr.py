@@ -117,8 +117,10 @@ class TestRadarrUrlValidation:
 
         assert errors == [f"'url' is not a valid URL: {url}"]
 
-    def test_fetch_refuses_before_any_request(self, plugin: RadarrPlugin) -> None:
-        """A sync of every source never calls validate_config."""
+    def test_a_scheduled_fetch_refuses_before_any_request(
+        self, plugin: RadarrPlugin
+    ) -> None:
+        """The scheduler dispatches a due source without calling validate_config."""
         with patch("src.ingestion.sources.arr_base.requests.get") as get:
             with pytest.raises(SourceError, match="http:// or https://"):
                 list(plugin.fetch({"url": "file:///etc/passwd", "api_key": "abc123"}))

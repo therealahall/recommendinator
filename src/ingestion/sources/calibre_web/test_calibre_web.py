@@ -559,8 +559,10 @@ class TestCalibreWebUrlValidation:
         errors = plugin.validate_config({"url": url, "username": "u", "password": "p"})
         assert errors == [expected]
 
-    def test_fetch_refuses_before_any_request(self, plugin: CalibreWebPlugin) -> None:
-        """A sync of every source never calls validate_config."""
+    def test_a_scheduled_fetch_refuses_before_any_request(
+        self, plugin: CalibreWebPlugin
+    ) -> None:
+        """The scheduler dispatches a due source without calling validate_config."""
         with patch("requests.get") as get:
             with pytest.raises(SourceError, match="http:// or https://"):
                 list(

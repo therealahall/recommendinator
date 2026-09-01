@@ -163,7 +163,7 @@ class CalibreWebPlugin(SourcePlugin):
         verify_ssl = config.get("verify_ssl", True)
         auth = (username, password)
 
-        # A sync of every source skips validate_config, so the basic-auth
+        # A scheduled sync skips validate_config, so the basic-auth
         # password would otherwise reach whatever host the config now names.
         url_error = source_url_error(base_url)
         if url_error is not None:
