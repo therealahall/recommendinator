@@ -161,7 +161,7 @@ class ArrPlugin(SourcePlugin):
         api_key = config.get("api_key", "").strip()
         verify_ssl = config.get("verify_ssl", True)
 
-        # A sync of every source skips validate_config, so the api key would
+        # A scheduled sync skips validate_config, so the api key would
         # otherwise reach whatever scheme and host the config now names.
         url_error = source_url_error(base_url)
         if url_error is not None:
