@@ -96,6 +96,7 @@ from src.settings.service import (
 )
 from src.sources.service import (
     SOURCE_ID_PATTERN,
+    ResolvedInput,
     SourceConfigError,
     build_config_view,
     build_plugins_view,
@@ -1632,6 +1633,18 @@ def mark_complete(
     return CompletionResponse.model_validate(completion_to_dict(request.title, db_id))
 
 
+def _refusal(entry: ResolvedInput, errors: list[str]) -> str:
+    """Name the settings, as the CLI does; log the plugin's own reason."""
+    logger.warning(
+        "Sync config validation failed for %s: %s",
+        sanitize_for_log(entry.source_id),
+        sanitize_for_log(
+            redact_credentials("; ".join(errors), entry.plugin, entry.config)
+        ),
+    )
+    return misconfigured_detail(entry.plugin, errors)
+
+
 @router.post("/update")
 def update_data(
     request: UpdateRequest, storage: RequiredStorage, config: RequiredConfig
@@ -1651,12 +1664,27 @@ def update_data(
     # DB-backed ``source_configs``, injects ``_source_id``, and layers decrypted
     # credentials — so it covers sources created via the Add-source modal that live
     # only in the database.
+    misconfigured: list[str] = []
     if source == "all":
         # Overlapping whatever single run is already going would fetch and save
         # that source twice.
         if sync_manager.is_running():
             raise HTTPException(status_code=409, detail="A sync is already in progress")
-        resolved = resolve_inputs(config, storage=storage)
+        # Validating the entries resolved here, rather than resolving each id
+        # again, keeps the run to one credential decrypt per source. Excluding a
+        # failing source and naming it mirrors the CLI's all-sources run.
+        resolved: list[ResolvedInput] = []
+        for entry in resolve_inputs(config, storage=storage):
+            validation_errors = entry.plugin.validate_config(
+                entry.config, storage=storage
+            )
+            if validation_errors:
+                misconfigured.append(
+                    f"{humanize_source_id(entry.source_id)}: "
+                    f"{_refusal(entry, validation_errors)}"
+                )
+                continue
+            resolved.append(entry)
     else:
         if sync_manager.is_running(ALL_SOURCES_KEY):
             raise HTTPException(status_code=409, detail="A sync is already in progress")
@@ -1691,24 +1719,21 @@ def update_data(
             source_entry.config, storage=storage
         )
         if validation_errors:
-            logger.warning(
-                "Sync config validation failed for %s: %s",
-                sanitize_for_log(source),
-                sanitize_for_log(
-                    redact_credentials(
-                        "; ".join(validation_errors),
-                        source_entry.plugin,
-                        source_entry.config,
-                    )
-                ),
-            )
             raise HTTPException(
-                status_code=400,
-                detail=misconfigured_detail(source_entry.plugin, validation_errors),
+                status_code=400, detail=_refusal(source_entry, validation_errors)
             )
 
     if not resolved:
-        return {"message": "No sources enabled or configured for sync", "count": 0}
+        # A run where every source was excluded is not a run with nothing
+        # configured, so the refusals are what the operator needs to read.
+        return {
+            "message": (
+                " ".join(misconfigured)
+                if misconfigured
+                else "No sources enabled or configured for sync"
+            ),
+            "count": 0,
+        }
 
     claimed, refused = claim_sources(storage, [entry.source_id for entry in resolved])
     if not claimed:
@@ -1743,14 +1768,13 @@ def update_data(
         "[SYNC] Started background sync for: %s", sanitize_for_log(source_label)
     )
     started = f"Sync started for {source_label}. Use GET /api/sync/status to monitor progress."
-    return {
-        # The CLI names a source it could not claim and syncs the rest; dropping
-        # `refused` here would read to the operator as "all of them synced".
-        "message": (
-            f"{already_syncing_detail(refused)} {started}" if refused else started
-        ),
-        "sources": sources_to_sync,
-    }
+    # The CLI names a source it could not claim or could not validate and syncs
+    # the rest; dropping those would read to the operator as "all of them synced".
+    details = [*misconfigured]
+    if refused:
+        details.append(already_syncing_detail(refused))
+    details.append(started)
+    return {"message": " ".join(details), "sources": sources_to_sync}
 
 
 @router.get("/status", response_model=StatusResponse)

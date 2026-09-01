@@ -730,6 +730,38 @@ def test_update_endpoint_all_sources(client, mock_components):
         assert "steam" in data["sources"]
 
 
+def test_update_all_excludes_a_misconfigured_source_and_names_it(
+    client, mock_components
+):
+    """Reported: Sync All validated nothing, so a misconfigured source was
+    dispatched and failed inside ``fetch`` instead of being refused."""
+    app_state.config["inputs"]["steam"] = {
+        "plugin": "steam",
+        "api_key": "",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+    sync_manager = Mock(spec=SyncManager)
+    sync_manager.is_running.return_value = False
+    sync_manager.start_sync.return_value = None
+
+    with (
+        patch("src.web.api.get_sync_manager", return_value=sync_manager),
+        patch(
+            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            return_value=[],
+        ),
+    ):
+        response = client.post("/api/update", json={"source": "all"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sources"] == ["goodreads_rss"]
+    assert data["message"].startswith(
+        "Steam: Source is not properly configured — check its 'api_key' setting."
+    )
+
+
 class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     """Reported: ``POST /api/update`` echoed the caller's source id and the
     plugin's validation text."""
