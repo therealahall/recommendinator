@@ -14,6 +14,7 @@ from src.sources.service import resolve_inputs
 from src.storage.manager import StorageManager
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import make_storage_mock
+from tests.fakes.source_plugins import FakeApiPlugin
 
 
 def test_a_source_named_goodreads_keeps_its_items_across_boots(
@@ -168,6 +169,35 @@ class TestUpdateDbOnlySourceRegression:
         assert "calibre-web" in result.output
         assert "enabled" in result.output
         assert "cadence=daily" in result.output
+
+
+@pytest.mark.usefixtures("registry_with_source_fakes")
+def test_update_all_aborts_when_validation_refuses_every_source_regression(
+    cli_runner: CliRunner,
+) -> None:
+    config: dict[str, Any] = {
+        "inputs": {
+            "books": {"plugin": "fake_file", "enabled": True},
+            "games": {"plugin": "fake_api", "enabled": True},
+        }
+    }
+
+    with patch.object(
+        FakeApiPlugin, "validate_config", return_value=["'api_key' is required"]
+    ):
+        result = _invoke_with_mocks(
+            cli_runner,
+            ["update", "--source", "all"],
+            make_storage_mock(),
+            config=config,
+        )
+
+    assert result.exit_code != 0
+    for display_name, field in (("Fake File", "'path'"), ("Fake API", "'api_key'")):
+        assert (
+            f"{display_name}: Error: Source is not properly configured "
+            f"— check its {field} setting." in result.stderr
+        )
 
 
 @pytest.mark.usefixtures("registry_with_source_fakes")

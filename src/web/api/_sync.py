@@ -221,15 +221,11 @@ def update_data(
 
     if not resolved:
         # A run where every source was excluded is not a run with nothing
-        # configured, so the refusals are what the operator needs to read.
-        return {
-            "message": (
-                " ".join(misconfigured)
-                if misconfigured
-                else "No sources enabled or configured for sync"
-            ),
-            "count": 0,
-        }
+        # configured, so the refusals are what the operator needs to read — and
+        # they carry a 4xx for the reason the single-source branch above does.
+        if misconfigured:
+            raise HTTPException(status_code=400, detail=" ".join(misconfigured))
+        return {"message": "No sources enabled or configured for sync", "count": 0}
 
     claimed, refused = claim_sources(storage, [entry.source_id for entry in resolved])
     if not claimed:

@@ -25,12 +25,21 @@ from src.sources.service import (
     update_source_config_values,
 )
 from src.utils.text import sanitize_for_log
-from src.web.api._shared import PluginImportErrorResponse, SourceFieldSchema
+from src.web.api._shared import PluginImportErrorResponse
 from src.web.guards import RequiredConfig, RequiredStorage
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class SourceFieldSchema(BaseModel):
+    name: str
+    field_type: str
+    required: bool
+    default: Any = None
+    description: str = ""
+    sensitive: bool = False
 
 
 class SyncIntervalOption(BaseModel):

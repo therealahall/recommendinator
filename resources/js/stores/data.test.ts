@@ -73,7 +73,7 @@ describe('useDataStore', () => {
   }
 
   it('triggerSync marks the source label as syncing', async () => {
-    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
+    mockPost.mockResolvedValue({ message: 'Sync started for Steam', sources: ['steam'] })
 
     const store = useDataStore()
     store.$patch({ syncSources: [steamSource()] })
@@ -117,7 +117,7 @@ describe('useDataStore', () => {
   })
 
   it('triggerSync keeps the optimistic flag and starts polling on a successful start', async () => {
-    mockPost.mockResolvedValue({ message: 'Sync started for Steam' })
+    mockPost.mockResolvedValue({ message: 'Sync started for Steam', sources: ['steam'] })
     mockGet.mockResolvedValue({ status: 'idle', jobs: [] })
 
     const store = useDataStore()
@@ -132,6 +132,23 @@ describe('useDataStore', () => {
     expect(mockGet).toHaveBeenLastCalledWith('/sync/status')
 
     store.cleanup()
+  })
+
+  it('triggerSync releases the button when the response started no job', async () => {
+    // 200 with no `sources` means no SyncJob exists, so no poll could ever
+    // clear the optimistic flag — Sync All read "Syncing…" until a reload.
+    mockPost.mockResolvedValue({ message: 'No sources enabled or configured for sync' })
+
+    const store = useDataStore()
+    store.$patch({ syncSources: [steamSource()] })
+    await store.triggerSync('all')
+
+    expect(store.isSourceIdSyncing('all')).toBe(false)
+    expect(store.anySyncRunning).toBe(false)
+    expect(store.syncMessage).toBe('No sources enabled or configured for sync')
+    const callsBefore = mockGet.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockGet.mock.calls.length).toBe(callsBefore)
   })
 
   it('checkSyncStatus matches the "all" source ID to the "All Sources" job', async () => {

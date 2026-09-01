@@ -201,6 +201,16 @@ export const useDataStore = defineStore('data', () => {
         umbrellaSourceIds.value = new Set(data.sources ?? [])
       }
       syncMessage.value = data.message
+      // No resolved sources means no SyncJob, and nothing a poll could ever see
+      // would clear the optimistic flag — the button would read "Syncing…"
+      // until a reload.
+      if (!data.sources?.length) {
+        const next = new Set(optimisticTriggers.value)
+        next.delete(label)
+        optimisticTriggers.value = next
+        if (next.size === 0) syncStatus.value = 'idle'
+        return
+      }
       startSyncPolling()
     } catch (err) {
       console.error('Sync trigger failed:', err)
