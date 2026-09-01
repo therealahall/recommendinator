@@ -7,7 +7,6 @@ import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
 import { ApiError, useApi } from '@/composables/useApi'
-import { APP_NAME } from '@/constants/app'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { useAppStore } from '@/stores/app'
 import { SESSION_ENDED, useAuthStore } from '@/stores/auth'
@@ -373,7 +372,7 @@ describe('App', () => {
 
     const page = String(router.currentRoute.value.meta.title)
     expect(document.title.includes(page)).toBe(authenticated)
-    expect(document.title).toContain(APP_NAME)
+    expect(document.title).toContain('Recommendinator')
   })
 
   it('opens the shell on a bypass that lands the keyboard on the page', async () => {
