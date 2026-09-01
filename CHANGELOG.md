@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.49.2 (2026-09-01)
+
+### Bug Fixes
+
+- **sync**: Refuse a run where every source was excluded
+  ([`59ec0e6`](https://github.com/therealahall/recommendinator/commit/59ec0e6ac53eac2a0e89b324829dcf05fc5f9b42))
+
+- **web**: Validate every source before a Sync All dispatches it
+  ([`efcdfd2`](https://github.com/therealahall/recommendinator/commit/efcdfd293a5c1f93f27803fd952cce3e6c987c00))
+
+### Documentation
+
+- Name the scheduler as the dispatcher that skips validate_config
+  ([`d3bcdf9`](https://github.com/therealahall/recommendinator/commit/d3bcdf9664d132dd9ff13fc446226cf31163a91d))
+
+- Point the endpoint patterns at the api package
+  ([`345fec8`](https://github.com/therealahall/recommendinator/commit/345fec843f464384c117a8970fbf66128b024dd0))
+
+- Repoint the enrichment parity pointer at its module
+  ([`ee4dcb1`](https://github.com/therealahall/recommendinator/commit/ee4dcb1df02f470110e4e636d39fdddeeb26cc85))
+
+### Refactoring
+
+- **web**: Split the api module into one router per capability
+  ([`b8dae90`](https://github.com/therealahall/recommendinator/commit/b8dae90fc0d61a8eb7a78e026903ecfbaf5f24ee))
+
+
 ## v0.49.1 (2026-09-01)
 
 ### Bug Fixes
