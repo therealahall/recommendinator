@@ -56,8 +56,9 @@ for the patterns it names.
 
 1. **Grep for a sibling that already does this.** New CLI subcommand? Read the
    group's module in `src/cli/commands/` end to end, and `src/cli/_shared.py`
-   for the helpers every group uses. New endpoint? Read a sibling in
-   `src/web/api.py`. New test file? Read its nearest neighbour. Match structure
+   for the helpers every group uses. New endpoint? Read a sibling in that
+   capability's module under `src/web/api/`, and `_shared.py` beside it.
+   New test file? Read its nearest neighbour. Match structure
    exactly: import order, helper usage, naming, error handling, output branching.
 2. **Search `src/utils/` and module-local helpers before writing a helper.** If
    two sites would use it, it exists already or belongs there.
@@ -109,7 +110,7 @@ for the patterns it names.
   the data channel, and a progress line printed ahead of the `--format json`
   branch breaks every piped caller.
 - **The JSON field set must match the web Pydantic response exactly.** Diff the
-  key sets against the matching `*Response` model in `src/web/api.py`. Missing or
+  key sets against the matching `*Response` model in `src/web/api/`. Missing or
   extra fields are blocking drift.
 - **Every CLI command needs `--format json` if the web API returns JSON**, and
   every web API param needs a matching CLI option. No exceptions.
