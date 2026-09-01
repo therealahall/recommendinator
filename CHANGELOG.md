@@ -1,6 +1,94 @@
 # CHANGELOG
 
 
+## v0.49.1 (2026-09-01)
+
+### Bug Fixes
+
+- **a11y**: Announce what a save landed, and stop announcing every poll
+  ([`0af893a`](https://github.com/therealahall/recommendinator/commit/0af893a40976b7aa9488da726c18132e6ebc5be5))
+
+- **a11y**: Give every width one h1, and name the states controls announce
+  ([`10ba303`](https://github.com/therealahall/recommendinator/commit/10ba30389327107f9ccf5ed03b575ca6a4966c1f))
+
+- **a11y**: Keep a locked button and a turning spinner legible
+  ([`8c90e63`](https://github.com/therealahall/recommendinator/commit/8c90e63eb906e451953a93a53e0f7b778e6ceb95))
+
+- **a11y**: Measure contrast in every installed theme and clear the floors
+  ([`3b04590`](https://github.com/therealahall/recommendinator/commit/3b0459046a23019af8d7201a3b295d0a1ea7cbbc))
+
+- **a11y**: Refuse an empty theme scan, and edge the bar tracks
+  ([`7646ad9`](https://github.com/therealahall/recommendinator/commit/7646ad92235182b2b6ba2bb4ad89a54be31f3cb9))
+
+- **a11y**: Restore the floors, and let the spinner turn a gap
+  ([`c968928`](https://github.com/therealahall/recommendinator/commit/c968928e63e5a1cf48919655cc53ec1afa71467e))
+
+- **a11y**: Say why a control went away, and why a button is unavailable
+  ([`ba329e7`](https://github.com/therealahall/recommendinator/commit/ba329e7e841c94d27c2358966435fcab67bbdcee))
+
+- **a11y**: Stop taking focus from the operator, and add a bypass
+  ([`de0a2fa`](https://github.com/therealahall/recommendinator/commit/de0a2fa5bc4383e4567000f4545e2d391db95497))
+
+- **a11y**: Sweep the files the stale ratios were in, and quiet a hint
+  ([`00bfb02`](https://github.com/therealahall/recommendinator/commit/00bfb02957ffc865536bc592e50a3352887fff5f))
+
+- **a11y**: The content-type filter delivers the interaction it announces
+  ([`b39b575`](https://github.com/therealahall/recommendinator/commit/b39b575b22db7069866869917242c1d4df0645f4))
+
+- **a11y**: Withdraw a locked control instead of ignoring it, and name two colours
+  ([`c9c1a77`](https://github.com/therealahall/recommendinator/commit/c9c1a776e472c96e2add8cef15c5c93d90e98391))
+
+### Build System
+
+- Make an unsupported Node fail rather than warn
+  ([`010f7e6`](https://github.com/therealahall/recommendinator/commit/010f7e62544cede27c5d03063b39ef1fa758f1bb))
+
+### Documentation
+
+- Cut documentation prose, and correct three claims main got wrong
+  ([`22ed727`](https://github.com/therealahall/recommendinator/commit/22ed72771ca5b56754ec65c7dfe8ff0bbf7efaef))
+
+### Refactoring
+
+- Cut comments in the frontend to the constraint they name
+  ([`393fef1`](https://github.com/therealahall/recommendinator/commit/393fef1642d1ef362f2438bcbb57896c2be5e090))
+
+- Cut docstrings in ingestion and enrichment
+  ([`0d604af`](https://github.com/therealahall/recommendinator/commit/0d604af9587e8e3f7fc0c52f30e59e9d7553cf17))
+
+- Cut docstrings in sources, models, config, settings and auth
+  ([`676f326`](https://github.com/therealahall/recommendinator/commit/676f3269919f67171ad4b2dba92351a061397a77))
+
+- Cut docstrings in storage to the constraint they name
+  ([`1a6f110`](https://github.com/therealahall/recommendinator/commit/1a6f110c69e401d4b3035f2a8270a21c1fc1ed06))
+
+- Cut docstrings in the CLI, utils and scoring
+  ([`5474f68`](https://github.com/therealahall/recommendinator/commit/5474f687e999eacfcdebc4de52aace5c86ea63f4))
+
+- Cut docstrings in the web layer
+  ([`c9cda66`](https://github.com/therealahall/recommendinator/commit/c9cda66b383b58116015cc9e9e2ad568454c0d75))
+
+- Hardcode the app name
+  ([`25502e5`](https://github.com/therealahall/recommendinator/commit/25502e5d6614be05a6218595b2fefb2cd854e673))
+
+### Testing
+
+- Delete docstrings the test names already carry
+  ([`78dd65c`](https://github.com/therealahall/recommendinator/commit/78dd65c9d71efc8677499c7f0e8b9cdd7819f425))
+
+- Pin three guarantees that only prose had held
+  ([`2358230`](https://github.com/therealahall/recommendinator/commit/235823076e982f8a5d51d36d26a7131979b33b63))
+
+- **a11y**: Cut enumeration, and pin the sync progress region
+  ([`655d49e`](https://github.com/therealahall/recommendinator/commit/655d49ed96379fd74634059b29583f40e19845b5))
+
+- **a11y**: Hold both border tokens to the same six surfaces
+  ([`fe2c8a1`](https://github.com/therealahall/recommendinator/commit/fe2c8a168763cf8ce958eece6ff134961b23184b))
+
+- **a11y**: Refuse a bar that measures nothing, and drop stale ratios
+  ([`8e0add6`](https://github.com/therealahall/recommendinator/commit/8e0add66cfcaa7648762ecdd486811d57b3bb518))
+
+
 ## v0.49.0 (2026-08-27)
 
 ### Bug Fixes
