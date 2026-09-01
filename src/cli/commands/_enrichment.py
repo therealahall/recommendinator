@@ -162,7 +162,7 @@ def enrichment_start(
         raise click.Abort()
 
 
-#: Matches ``EnrichmentJobStatusResponse`` in src/web/api.py key for key; the
+#: Matches ``EnrichmentJobStatusResponse`` in src/web/api/_enrichment.py key for key; the
 #: parity reviewer blocks on any drift between the two.
 def _job_payload(status: EnrichmentJobStatus) -> dict[str, object]:
     return {
