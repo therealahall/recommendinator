@@ -24,7 +24,8 @@ from src.models.user_preferences import UserPreferenceConfig
 from src.recommendations.engine import RecommendationEngine
 from src.recommendations.record import Recommendation
 from src.storage.manager import StorageManager
-from src.web.api import CompletionResponse, SyncStatusResponse
+from src.web.api._library import CompletionResponse
+from src.web.api._sync import SyncStatusResponse
 from tests.cli.conftest import _invoke_with_mocks
 from tests.factories import (
     back_mock_preference_store,

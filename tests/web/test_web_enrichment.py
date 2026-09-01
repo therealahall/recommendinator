@@ -76,7 +76,7 @@ class TestEnrichmentStart:
     ) -> None:
         with (
             _client(make_storage_mock(), mock_config) as client,
-            patch("src.web.api.EnrichmentManager") as mock_manager_cls,
+            patch("src.web.api._enrichment.EnrichmentManager") as mock_manager_cls,
         ):
             mock_manager = MagicMock(spec=EnrichmentManager)
             mock_manager.start_enrichment.return_value = True

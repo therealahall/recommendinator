@@ -22,7 +22,7 @@ from src.settings.metadata import get_entry
 from src.settings.service import apply_settings
 from src.storage.manager import StorageManager
 from src.storage.settings_migration import migrate_config_settings
-from src.web.api import _get_recommendations_config
+from src.web.api._shared import _get_recommendations_config
 from src.web.app import create_app
 from src.web.state import app_state, get_config, get_engine, get_storage
 from tests.factories import authenticated_client, make_storage_mock

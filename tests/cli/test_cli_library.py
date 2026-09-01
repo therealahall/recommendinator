@@ -38,7 +38,7 @@ from src.utils.duplicate_serialization import (
 )
 from src.utils.series import MAX_SEASONS
 from src.utils.sorting import MAX_SEARCH_LENGTH
-from src.web.api import ContentItemResponse, IgnoreItemResponse
+from src.web.api._library import ContentItemResponse, IgnoreItemResponse
 from tests.factories import make_storage_mock
 
 from .conftest import _invoke_with_mocks

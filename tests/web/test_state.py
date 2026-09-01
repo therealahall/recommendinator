@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from src.storage.manager import StorageManager
-from src.web.api import SettingsUpdateRequest, update_settings
+from src.web.api._settings import SettingsUpdateRequest, update_settings
 from src.web.app import create_app
 from src.web.state import (
     AppState,

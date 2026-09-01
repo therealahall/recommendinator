@@ -15,14 +15,14 @@ from src.utils.duplicate_serialization import (
     suggestion_to_dict,
 )
 from src.utils.item_serialization import item_to_dict
-from src.web.api import (
-    ContentItemResponse,
+from src.web.api._duplicates import (
     DeclinedPairResponse,
     DuplicateSideResponse,
     DuplicateSuggestionPageResponse,
     DuplicateSuggestionResponse,
     MergeResponse,
 )
+from src.web.api._library import ContentItemResponse
 from tests.factories import make_item
 
 _A_SIDE = DuplicateSide(

@@ -62,22 +62,22 @@ WRITE_ROUTES: list[tuple[str, dict[str, str] | None, str]] = [
     (
         "/api/gog/exchange",
         {"code_or_url": "an-authorization-code-long-enough"},
-        "src.web.api.exchange_gog_tokens",
+        "src.web.api._oauth.exchange_gog_tokens",
     ),
     (
         "/api/epic/exchange",
         {"code_or_json": "an-authorization-code-long-enough"},
-        "src.web.api.exchange_epic_tokens",
+        "src.web.api._oauth.exchange_epic_tokens",
     ),
     (
         "/api/trakt/start-device-flow",
         None,
-        "src.web.api.start_device_auth_flow",
+        "src.web.api._oauth.start_device_auth_flow",
     ),
     (
         "/api/trakt/poll-device-approval",
         {"device_code": "dev1234567"},
-        "src.web.api.poll_device_token",
+        "src.web.api._oauth.poll_device_token",
     ),
 ]
 
@@ -105,9 +105,9 @@ class TestOAuthConnectSourceBindingRegression:
         self, client: TestClient, storage: StorageManager, config: dict[str, Any]
     ) -> None:
         with (
-            patch("src.web.api.extract_gog_code", return_value="code"),
+            patch("src.web.api._oauth.extract_gog_code", return_value="code"),
             patch(
-                "src.web.api.exchange_gog_tokens",
+                "src.web.api._oauth.exchange_gog_tokens",
                 return_value={"refresh_token": "gog-work-token"},
             ),
         ):
@@ -134,7 +134,7 @@ class TestOAuthConnectSourceBindingRegression:
         storage.credentials.save(USER_ID, "trakt_work", "client_secret", "secret")
 
         with patch(
-            "src.web.api.poll_device_token",
+            "src.web.api._oauth.poll_device_token",
             return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-work-token"),
         ):
             response = client.post(
@@ -189,7 +189,7 @@ class TestDatabaseBackedSourceCanConnectRegression:
         }
 
         with patch(
-            "src.web.api.poll_device_token",
+            "src.web.api._oauth.poll_device_token",
             return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-db-token"),
         ):
             response = db_only_client.post(
@@ -209,9 +209,9 @@ class TestDatabaseBackedSourceCanConnectRegression:
         assert db_only_client.get("/api/gog/status?source_id=gog_db").json()["enabled"]
 
         with (
-            patch("src.web.api.extract_gog_code", return_value="code"),
+            patch("src.web.api._oauth.extract_gog_code", return_value="code"),
             patch(
-                "src.web.api.exchange_gog_tokens",
+                "src.web.api._oauth.exchange_gog_tokens",
                 return_value={"refresh_token": "gog-db-token"},
             ),
         ):
@@ -330,14 +330,14 @@ class TestRouteRefusesASourceRunningAnotherPlugin:
         [
             (
                 "/api/gog/exchange",
-                "src.web.api.extract_gog_code",
-                "src.web.api.exchange_gog_tokens",
+                "src.web.api._oauth.extract_gog_code",
+                "src.web.api._oauth.exchange_gog_tokens",
                 {"code_or_url": "code"},
             ),
             (
                 "/api/epic/exchange",
-                "src.web.api.extract_epic_code",
-                "src.web.api.exchange_epic_tokens",
+                "src.web.api._oauth.extract_epic_code",
+                "src.web.api._oauth.exchange_epic_tokens",
                 {"code_or_json": "code"},
             ),
         ],
@@ -453,15 +453,15 @@ CONNECT_EXCHANGES = [
     (
         "/api/gog/exchange",
         "gog_work",
-        "src.web.api.extract_gog_code",
-        "src.web.api.exchange_gog_tokens",
+        "src.web.api._oauth.extract_gog_code",
+        "src.web.api._oauth.exchange_gog_tokens",
         {"code_or_url": "code"},
     ),
     (
         "/api/epic/exchange",
         "epic_work",
-        "src.web.api.extract_epic_code",
-        "src.web.api.exchange_epic_tokens",
+        "src.web.api._oauth.extract_epic_code",
+        "src.web.api._oauth.exchange_epic_tokens",
         {"code_or_json": "code"},
     ),
 ]
@@ -504,7 +504,7 @@ class TestConnectingADisabledSourceIsRefused:
         storage.sources.set_enabled(USER_ID, "trakt_work", enabled)
 
         with patch(
-            "src.web.api.poll_device_token",
+            "src.web.api._oauth.poll_device_token",
             return_value=DevicePollResult(DevicePollStatus.SUCCESS, "trakt-token"),
         ):
             response = client.post(
