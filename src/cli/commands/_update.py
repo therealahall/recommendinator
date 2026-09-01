@@ -243,10 +243,10 @@ def update(
         valid = resolved
 
     if not valid:
-        report_nothing_ran(
-            "No items were updated. Check your configuration and source settings."
-        )
-        return
+        # Only reachable with every resolved source refused above, which the
+        # single-source branch and the sync endpoint both answer non-zero.
+        report_nothing_ran()
+        raise click.Abort()
 
     claimed, refused = claim_sources(storage, [entry.source_id for entry in valid])
     if refused:

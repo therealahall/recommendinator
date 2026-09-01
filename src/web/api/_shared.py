@@ -69,15 +69,6 @@ class RecommendationsConfig(BaseModel):
     default_count: int = 5
 
 
-class SourceFieldSchema(BaseModel):
-    name: str
-    field_type: str
-    required: bool
-    default: Any = None
-    description: str = ""
-    sensitive: bool = False
-
-
 def _get_recommendations_config(config: dict[str, Any] | None) -> RecommendationsConfig:
     rec_section = config.get("recommendations", {}) if config else {}
     return RecommendationsConfig(

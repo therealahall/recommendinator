@@ -762,6 +762,42 @@ def test_update_all_excludes_a_misconfigured_source_and_names_it(
     )
 
 
+def test_update_all_refuses_with_a_4xx_when_every_source_is_misconfigured(
+    client, mock_components
+):
+    """A 200 carrying the refusals started no job for the frontend's poll to
+    ever see, leaving Sync All stuck on "Syncing…" until a reload."""
+    app_state.config["inputs"]["steam"] = {
+        "plugin": "steam",
+        "api_key": "",
+        "steam_id": "76561198000000000",
+        "enabled": True,
+    }
+    sync_manager = Mock(spec=SyncManager)
+    sync_manager.is_running.return_value = False
+
+    with (
+        patch("src.web.api._sync.get_sync_manager", return_value=sync_manager),
+        patch(
+            "src.ingestion.sources.goodreads_rss.GoodreadsRssPlugin.validate_config",
+            return_value=["'user_id' is empty"],
+        ),
+    ):
+        response = client.post("/api/update", json={"source": "all"})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert (
+        "Goodreads Rss: Source is not properly configured — "
+        "check its 'user_id' setting." in detail
+    )
+    assert (
+        "Steam: Source is not properly configured — check its 'api_key' setting."
+        in detail
+    )
+    sync_manager.start_sync.assert_not_called()
+
+
 class TestUpdateDetailKeepsCallerInputOffTheWireRegression:
     """Reported: ``POST /api/update`` echoed the caller's source id and the
     plugin's validation text."""
