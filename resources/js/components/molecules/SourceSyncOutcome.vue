@@ -53,7 +53,7 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
   <p v-if="resultLabel" class="source-outcome-result" data-testid="source-sync-result">
     {{ resultLabel }}
   </p>
-  <div v-if="bounded.shown.length" class="source-outcome-errors">
+  <div v-if="bounded.shown.length" class="state state--error source-outcome-errors">
     <p :id="titleId" class="source-outcome-title" data-testid="source-sync-errors-title">
       {{ title }}
     </p>
@@ -81,10 +81,8 @@ const titleId = computed<string>(() => domId('sync-errors-title', props.sourceId
 }
 
 .source-outcome-errors {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  display: block;
+  margin: 0 var(--space-4) var(--space-2);
 }
 
 .source-outcome-title {

@@ -281,12 +281,14 @@ onBeforeUnmount(clearSaveTimer)
       <div class="settings-section-save-group">
         <span
           v-if="saveStatus === 'saved'"
-          class="settings-save-status settings-save-status--ok"
+          class="badge"
+          data-tone="success"
           :data-testid="`save-status-${sectionKey}`"
         >Saved ✓</span>
         <span
           v-else-if="saveStatus === 'error'"
-          class="settings-save-status settings-save-status--err"
+          class="badge badge--wrap"
+          data-tone="error"
           :data-testid="`save-status-${sectionKey}`"
           role="alert"
         >Error: {{ saveErrorText }}</span>
@@ -344,20 +346,4 @@ onBeforeUnmount(clearSaveTimer)
   margin-left: auto;
 }
 
-.settings-save-status {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-
-.settings-save-status--ok {
-  background: color-mix(in srgb, var(--color-success) 35%, transparent);
-}
-
-.settings-save-status--err {
-  background: color-mix(in srgb, var(--color-error) 35%, transparent);
-}
 </style>

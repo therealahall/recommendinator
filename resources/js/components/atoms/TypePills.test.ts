@@ -8,7 +8,7 @@ describe('TypePills', () => {
       props: { modelValue: '' },
     })
 
-    const pills = wrapper.findAll('.pill')
+    const pills = wrapper.findAll('[role="radio"]')
     expect(pills.map(p => p.text())).toEqual(['All', 'Book', 'Movie', 'TV Show', 'Game'])
   })
 
@@ -17,30 +17,17 @@ describe('TypePills', () => {
       props: { modelValue: 'book', includeAll: false },
     })
 
-    const pills = wrapper.findAll('.pill')
+    const pills = wrapper.findAll('[role="radio"]')
     expect(pills.map(p => p.text())).toEqual(['Book', 'Movie', 'TV Show', 'Game'])
   })
 
-  it('marks the active pill', () => {
-    const wrapper = mount(TypePills, {
-      props: { modelValue: 'movie' },
-    })
-
-    const pills = wrapper.findAll('.pill')
-    const moviePill = pills.find(p => p.text() === 'Movie')!
-    expect(moviePill.classes()).toContain('active')
-
-    const bookPill = pills.find(p => p.text() === 'Book')!
-    expect(bookPill.classes()).not.toContain('active')
-  })
-
-  it('marks All pill as active when modelValue is empty string', () => {
+  it('marks the empty filter checked, so All is a chosen option and not a gap', () => {
     const wrapper = mount(TypePills, {
       props: { modelValue: '' },
     })
 
-    const allPill = wrapper.findAll('.pill').find(p => p.text() === 'All')!
-    expect(allPill.classes()).toContain('active')
+    const allPill = wrapper.findAll('[role="radio"]').find(p => p.text() === 'All')!
+    expect(allPill.attributes('aria-checked')).toBe('true')
   })
 
   it('emits update:modelValue on click', async () => {
@@ -48,7 +35,7 @@ describe('TypePills', () => {
       props: { modelValue: '' },
     })
 
-    const bookPill = wrapper.findAll('.pill').find(p => p.text() === 'Book')!
+    const bookPill = wrapper.findAll('[role="radio"]').find(p => p.text() === 'Book')!
     await bookPill.trigger('click')
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['book']])
@@ -89,7 +76,7 @@ describe('TypePills', () => {
   it('keeps one pill in the tab order: the checked one, or the first', () => {
     const tabbable = (modelValue: string, includeAll = true): string[] =>
       mount(TypePills, { props: { modelValue, includeAll } })
-        .findAll('.pill')
+        .findAll('[role="radio"]')
         .filter(p => p.attributes('tabindex') === '0')
         .map(p => p.text())
 
@@ -112,7 +99,7 @@ describe('TypePills', () => {
       attachTo: document.body,
     })
 
-    const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
+    const start = wrapper.findAll('[role="radio"]').find(p => p.attributes('aria-checked') === 'true')!
     ;(start.element as HTMLElement).focus()
     start.element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
     await wrapper.vm.$nextTick()
@@ -127,7 +114,7 @@ describe('TypePills', () => {
       props: { modelValue: 'book', includeAll: false },
     })
 
-    const start = wrapper.findAll('.pill')[0]
+    const start = wrapper.findAll('[role="radio"]')[0]
     start.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
 
     expect(wrapper.emitted('update:modelValue')).toEqual([['video_game']])
@@ -138,7 +125,7 @@ describe('TypePills', () => {
       props: { modelValue: 'movie' },
     })
 
-    const start = wrapper.findAll('.pill').find(p => p.attributes('aria-checked') === 'true')!
+    const start = wrapper.findAll('[role="radio"]').find(p => p.attributes('aria-checked') === 'true')!
     const event = new KeyboardEvent('keydown', {
       key,
       bubbles: true,
@@ -157,7 +144,7 @@ describe('TypePills', () => {
       attachTo: document.body,
     })
 
-    const pill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
+    const pill = wrapper.findAll('[role="radio"]').find(p => p.text() === 'Movie')!
     const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
     pill.element.dispatchEvent(event)
 

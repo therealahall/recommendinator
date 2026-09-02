@@ -23,7 +23,7 @@ describe('RecControls', () => {
     const recs = useRecommendationsStore()
     const wrapper = mount(RecControls)
 
-    const moviePill = wrapper.findAll('.pill').find(p => p.text() === 'Movie')!
+    const moviePill = wrapper.findAll('[role="radio"]').find(p => p.text() === 'Movie')!
     await moviePill.trigger('click')
 
     expect(recs.contentType).toBe('movie')

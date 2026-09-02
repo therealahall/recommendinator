@@ -36,19 +36,19 @@ async function regenerate(): Promise<void> {
         <div v-if="Object.keys(profileStore.profile.genre_affinities).length > 0" class="profile-section">
           <h4>Genres You Love</h4>
           <div class="profile-tags">
-            <span v-for="g in Object.keys(profileStore.profile.genre_affinities).slice(0, 6)" :key="g" class="profile-tag">{{ g }}</span>
+            <span v-for="g in Object.keys(profileStore.profile.genre_affinities).slice(0, 6)" :key="g" class="badge" data-tone="accent">{{ g }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.theme_preferences.length > 0" class="profile-section">
           <h4>Themes You Enjoy</h4>
           <div class="profile-tags">
-            <span v-for="t in profileStore.profile.theme_preferences.slice(0, 6)" :key="t" class="profile-tag">{{ t }}</span>
+            <span v-for="t in profileStore.profile.theme_preferences.slice(0, 6)" :key="t" class="badge" data-tone="accent">{{ t }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.anti_preferences.length > 0" class="profile-section">
           <h4>Not Your Style</h4>
           <div class="profile-tags">
-            <span v-for="p in profileStore.profile.anti_preferences.slice(0, 6)" :key="p" class="profile-tag anti">{{ p }}</span>
+            <span v-for="p in profileStore.profile.anti_preferences.slice(0, 6)" :key="p" class="badge" data-tone="error">{{ p }}</span>
           </div>
         </div>
         <div v-if="profileStore.profile.cross_media_patterns.length > 0" class="profile-section">
@@ -56,7 +56,7 @@ async function regenerate(): Promise<void> {
           <p v-for="p in profileStore.profile.cross_media_patterns.slice(0, 3)" :key="p" class="text-muted profile-pattern">{{ p }}</p>
         </div>
       </template>
-      <div v-else class="empty-state">No profile generated</div>
+      <div v-else class="state state--empty">No profile generated</div>
     </div>
     <p
       class="profile-status"

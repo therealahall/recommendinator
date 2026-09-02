@@ -100,7 +100,7 @@ async function onRetry(): Promise<void> {
       <!-- The failure branch outlives the retry it started: replacing it would
            unmount the button holding focus and drop the user to <body>
            (WCAG 2.4.3). -->
-      <div v-if="prefs.loadError || retrying" class="empty-state">
+      <div v-if="prefs.loadError || retrying" class="state state--error">
         <!-- The Retry button sits OUTSIDE the alert: alert content is announced
              as one chunk, which buries the control's affordance. -->
         <span role="alert">Couldn't load preferences.</span>
@@ -112,7 +112,7 @@ async function onRetry(): Promise<void> {
           @click="onRetry"
         >{{ retrying ? 'Retrying…' : 'Retry' }}</button>
       </div>
-      <div v-else class="empty-state">Loading preferences...</div>
+      <div v-else class="state state--loading">Loading preferences…</div>
     </div>
 
     <div v-else class="card">

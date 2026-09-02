@@ -21,7 +21,7 @@ function setLength(type: string, value: string) {
       <label :for="`length-pref-${type}`" class="dropdown-label">{{ formatContentType(type) }}</label>
       <select
         :id="`length-pref-${type}`"
-        class="length-select"
+        class="field"
         :value="getLength(type)"
         @change="setLength(type, ($event.target as HTMLSelectElement).value)"
       >

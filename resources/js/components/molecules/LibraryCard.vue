@@ -14,9 +14,16 @@ const emit = defineEmits<{
   toggleIgnore: [dbId: number, ignored: boolean]
 }>()
 
-function statusClass(status: string): string {
-  const valid = ['unread', 'currently_consuming', 'completed']
-  return valid.includes(status) ? status : 'unknown'
+// A status the API has not taught this build about gets the neutral tone rather
+// than the "completed" green the old fallthrough painted it.
+const STATUS_TONES: Record<string, string> = {
+  unread: 'warning',
+  currently_consuming: 'accent',
+  completed: 'success',
+}
+
+function statusTone(status: string): string | undefined {
+  return STATUS_TONES[status]
 }
 </script>
 
@@ -29,11 +36,11 @@ function statusClass(status: string): string {
     </div>
     <div v-if="item.author" class="item-author">{{ item.author }}</div>
     <div class="library-meta">
-      <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
-      <span class="badge badge-status" :class="statusClass(item.status)">
+      <span class="badge" data-tone="accent">{{ formatContentType(item.content_type) }}</span>
+      <span class="badge" :data-tone="statusTone(item.status)">
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>
-      <span v-if="!item.enriched" class="badge badge-enrichment">Not enriched</span>
+      <span v-if="!item.enriched" class="badge">Not enriched</span>
     </div>
     <div v-if="item.rating !== null || item.ignored" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">
@@ -48,7 +55,7 @@ function statusClass(status: string): string {
         <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
         <span class="sr-only">Rated {{ item.rating }} out of 5</span>
       </span>
-      <span v-if="item.ignored" class="badge badge-ignored">Ignored</span>
+      <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
       <button class="btn btn-small btn-secondary" @click="emit('edit', item.db_id!)">Edit</button>

@@ -153,7 +153,7 @@ describe('EnrichmentCard', () => {
     const data = useDataStore()
     data.startEnrichment = vi.fn().mockResolvedValue('Enrichment started.')
 
-    const moviePill = wrapper.findAll('.pill').find((p) => p.text() === 'Movie')!
+    const moviePill = wrapper.findAll('[role="radio"]').find((p) => p.text() === 'Movie')!
     await moviePill.trigger('click')
     await wrapper.find('.toggle-switch').trigger('click')
     await wrapper.find('[data-testid="enrichment-start"]').trigger('click')
@@ -323,7 +323,7 @@ describe('EnrichmentCard', () => {
       const data = useDataStore()
       data.resetEnrichment = vi.fn().mockResolvedValue('Reset 12 item(s).')
 
-      await wrapper.findAll('.pill').find((p) => p.text() === 'Movie')!.trigger('click')
+      await wrapper.findAll('[role="radio"]').find((p) => p.text() === 'Movie')!.trigger('click')
       await wrapper.find('[data-testid="reset-provider"]').setValue('rawg')
       await wrapper.find('[data-testid="reset-btn"]').trigger('click')
       await wrapper.find('[data-testid="confirm-panel-confirm"]').trigger('click')

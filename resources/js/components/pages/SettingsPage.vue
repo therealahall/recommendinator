@@ -41,9 +41,9 @@ function changePassword(change: PasswordChangeRequest) {
       v-if="store.loading || store.loadError || store.sections.length === 0"
       class="card"
     >
-      <div v-if="store.loading" class="empty-state">Loading settings…</div>
+      <div v-if="store.loading" class="state state--loading">Loading settings…</div>
 
-      <div v-else-if="store.loadError" class="empty-state">
+      <div v-else-if="store.loadError" class="state state--error">
         <!-- The Retry button sits OUTSIDE the alert: alert content is announced
              as one chunk, which buries the control's affordance. -->
         <span role="alert">Couldn't load settings.</span>
@@ -55,7 +55,7 @@ function changePassword(change: PasswordChangeRequest) {
         >Retry</button>
       </div>
 
-      <div v-else class="empty-state">No configurable settings.</div>
+      <div v-else class="state state--empty">No configurable settings.</div>
     </div>
 
     <template v-else>

@@ -87,9 +87,9 @@ function onKeypress(event: KeyboardEvent) {
 <template>
   <div class="tag-input">
     <label :for="inputId">{{ label }}</label>
-    <div v-if="modelValue.length === 0" class="empty-rules">{{ emptyText }}</div>
+    <div v-if="modelValue.length === 0" class="state">{{ emptyText }}</div>
     <div v-else ref="chipList" class="tag-input-chips">
-      <span v-for="(tag, index) in modelValue" :key="tag" class="profile-tag tag-input-chip">
+      <span v-for="(tag, index) in modelValue" :key="tag" class="badge" data-tone="accent">
         {{ tag }}
         <button
           type="button"
@@ -105,6 +105,7 @@ function onKeypress(event: KeyboardEvent) {
         :id="inputId"
         ref="draftInput"
         type="text"
+        class="field"
         v-model="draft"
         :placeholder="placeholder"
         :maxlength="MAX_LENGTH"
@@ -135,12 +136,6 @@ function onKeypress(event: KeyboardEvent) {
 .tag-input-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.tag-input-chip {
-  display: inline-flex;
-  align-items: center;
   gap: var(--space-1);
 }
 

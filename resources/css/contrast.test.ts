@@ -30,7 +30,18 @@ function themesIn(root: string): [string, string][] {
 
 const THEMES = themesIn(THEME_ROOT)
 
-const TAGS = ['.profile-tag', '.profile-tag.anti']
+/** Every tone the one badge offers, including the untoned default. */
+const BADGE_TONES = [
+  '.badge',
+  ".badge[data-tone='accent']",
+  ".badge[data-tone='success']",
+  ".badge[data-tone='warning']",
+  ".badge[data-tone='error']",
+]
+
+/** The three surfaces a badge is placed on: a card, a dialog or duplicate row,
+ *  and the page itself. */
+const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary']
 
 interface Rgba {
   r: number
@@ -161,12 +172,10 @@ function contrast(text: Rgba, backdrop: Rgba): number {
 
 const DROP_ZONE = 'resources/js/components/atoms/FileDropZone.vue'
 const RESULT_SUMMARY = 'resources/js/components/molecules/ImportResultSummary.vue'
-const IMPORT_PANEL = 'resources/js/components/organisms/ImportPanel.vue'
 
 /** The import panel's own surfaces, none of them the plain card: text, the rule
  *  that colours it, and the rule declaring what it sits on. */
 const IMPORT_SURFACES: [string, string, string, string][] = [
-  ['the refusal notice', IMPORT_PANEL, '.import-error', '.import-error'],
   ['a count', RESULT_SUMMARY, '.import-count dd', '.import-counts'],
   ['a count label', RESULT_SUMMARY, '.import-count dt', '.import-counts'],
   ['a skipped line', RESULT_SUMMARY, '.import-misses-list', '.import-callout'],
@@ -209,20 +218,34 @@ describe.each(THEMES)('import panel surfaces in %s', (_theme, themePath) => {
   })
 })
 
-describe.each(THEMES)('profile tags on the Preferences card in %s', (_theme, themePath) => {
+describe.each(THEMES)('every badge tone in %s', (_theme, themePath) => {
   const base = read(BASE)
   const vars = tokens(themePath)
-  const card = toRgba('var(--bg-card)', vars)
 
-  it.each(TAGS)('%s carries readable text', (selector) => {
+  // One rule now paints ten former names, so a tone that fails is unreadable
+  // everywhere at once — and a tone is placed on all three surfaces.
+  it.each(
+    BADGE_TONES.flatMap((tone) =>
+      BADGE_SURFACES.map((surface): [string, string] => [tone, surface]),
+    ),
+  )('%s carries readable text on %s', (selector, surface) => {
     const body = ruleBody(base, selector)
+    const beneath = toRgba(`var(${surface})`, vars)
+    const tint = optional(body, 'background') ?? optional(ruleBody(base, '.badge'), 'background')
+    const text = optional(body, 'color') ?? declaration(ruleBody(base, '.badge'), 'color')
 
     expect(
-      contrast(
-        toRgba(declaration(body, 'color'), vars),
-        over(toRgba(declaration(body, 'background'), vars), card),
-      ),
+      contrast(toRgba(text, vars), over(toRgba(tint!, vars), beneath)),
     ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  })
+
+  // The one edge every tone shares, which is what says where a badge stops.
+  it.each(BADGE_SURFACES)('a badge keeps an edge on %s', (surface) => {
+    const edge = colourIn(declaration(ruleBody(base, '.badge'), 'border'))
+
+    expect(
+      contrast(toRgba(edge, vars), toRgba(`var(${surface})`, vars)),
+    ).toBeGreaterThanOrEqual(NON_TEXT)
   })
 })
 
@@ -257,14 +280,10 @@ describe.each(THEMES)('edit dialog surfaces in %s', (_theme, themePath) => {
 const DUP_PAIR = 'resources/js/components/molecules/DuplicatePair.vue'
 const DUP_HISTORY = 'resources/js/components/organisms/DuplicateHistory.vue'
 const DUP_QUEUE = 'resources/js/components/organisms/DuplicateQueue.vue'
-const DUP_PAGE = 'resources/js/components/pages/DuplicatesPage.vue'
 
 /** A pair card sits on the plain card and its two rows sit on the pair card,
  *  so the backdrops stack: measuring against the card alone measures wrong. */
 const DUPLICATE_SURFACES: [string, string, string, string[]][] = [
-  ['the save-door-key badge', DUP_PAIR, '.dup-badge-exact', ['.dup-badge-exact', '.dup-pair']],
-  ['the looser-key badge', DUP_PAIR, '.dup-badge-loose', ['.dup-badge-loose', '.dup-pair']],
-  ['the content-type badge', DUP_PAIR, '.dup-badge-type', ['.dup-badge-type', '.dup-pair']],
   ['a copy offered twice', DUP_PAIR, '.dup-side-elsewhere', ['.dup-side', '.dup-pair']],
   ['the looser-key caution', DUP_PAIR, '.dup-pair-caution', ['.dup-pair']],
   ['a row title', DUP_PAIR, '.dup-side-title', ['.dup-side', '.dup-pair']],
@@ -305,28 +324,16 @@ describe.each(THEMES)('duplicates review surfaces in %s', (_theme, themePath) =>
     expect(contrast(toRgba(text, vars), card)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 
-  it('a refused merge is readable where it lands, off any card', () => {
-    const text = declaration(ruleBody(read(DUP_PAGE), '.dup-alert'), 'color')
-
-    expect(
-      contrast(toRgba(text, vars), toRgba('var(--bg-primary)', vars)),
-    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
-  })
 })
 
 const NON_TEXT = 3
 
 const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
-const ADD_SOURCE_MODAL = 'resources/js/components/organisms/AddSourceModal.vue'
-const AUTH_FIELD = 'resources/js/components/atoms/AuthField.vue'
 const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
 const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
 const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
 const RECOMMENDATIONS_PAGE = 'resources/js/components/pages/RecommendationsPage.vue'
-const SEARCH_INPUT = 'resources/js/components/atoms/SearchInput.vue'
 const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
-const SETTING_CONTROL = 'resources/js/components/molecules/SettingControl.vue'
-const SETTING_SECRET = 'resources/js/components/molecules/SettingSecret.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
 const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
 const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
@@ -349,7 +356,11 @@ const ACCENT_LIGHT_FILLS: [string, string, string][] = [
     ".btn-primary:hover:not(:disabled):not([aria-disabled='true'])",
     '.btn-primary',
   ],
-  ['a hovered active pill', '.pill.active:hover', '.pill.active'],
+  [
+    'a hovered chosen type filter',
+    "button.badge[aria-checked='true']:hover",
+    "button.badge[aria-checked='true']",
+  ],
 ]
 
 describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
@@ -400,41 +411,18 @@ describe.each(THEMES)('the token layer in %s', (_theme, themePath) => {
   )
 })
 
-/** Controls that declare both their edge and the fill it encloses. */
+/** Controls that declare both their edge and the fill it encloses. Every text
+ *  entry in the app is one rule now, so the field appears here once. */
 const CONTROL_EDGES: [string, string, string][] = [
-  ['a preferences field', BASE, '.form-group select'],
-  ['a library filter select', BASE, '.toolbar-select'],
-  ['a content-type pill', BASE, '.pill'],
+  ['every text entry', BASE, '.field'],
   ['a settings toggle', BASE, '.toggle-switch'],
-  ['the theme select', BASE, '.length-select'],
-  ['the add-rule field', BASE, '.add-rule-form input[type="text"]'],
-  ['an edit-modal field', BASE, '.edit-field input'],
-  ['an OAuth code field', BASE, '.gog-input-row input'],
-  ['the library search field', SEARCH_INPUT, '.search-input'],
-  ['a source-config field', SOURCE_CONFIG_FORM, '.source-form-field input[type="text"]'],
-  ['a source-config chips field', SOURCE_CONFIG_FORM, '.chips-field'],
-  ['an add-source field', ADD_SOURCE_MODAL, '.add-source-field input[type="text"]'],
-  ['a settings field', SETTING_CONTROL, ".setting-control input[type='text']"],
-  ['a settings secret field', SETTING_SECRET, ".secret-edit-row input[type='password']"],
-  ['a sign-in field', AUTH_FIELD, '.auth-field input'],
   ['the file picker button', DROP_ZONE, '.drop-zone-input::file-selector-button'],
 ]
 
 /** Secret fields that go `readonly` mid-write: the rule painting one open, then
  *  the rule painting it locked. */
 const LOCKED_FIELDS: [string, string, string, string][] = [
-  [
-    'a source secret',
-    SOURCE_CONFIG_FORM,
-    '.source-form-field input[type="text"]',
-    '.source-form-field input[readonly]',
-  ],
-  [
-    'a settings secret',
-    SETTING_SECRET,
-    ".secret-edit-row input[type='password']",
-    '.secret-edit-row input[readonly]',
-  ],
+  ['a secret being typed', BASE, '.field', '.field[readonly]'],
 ]
 
 const BORDER_STYLES = new Set(['solid', 'dashed', 'dotted', 'double'])
@@ -507,13 +495,13 @@ describe.each(THEMES)('editable control edges in %s', (_theme, themePath) => {
     expect(edgeAgainst(colour, 'var(--bg-card)')).toBeGreaterThanOrEqual(NON_TEXT)
   })
 
+  // The stepper takes its edge from .field and paints its own interior, so the
+  // pair that has to divide is declared in two files.
   it('the number stepper frames the value rather than blending into it', () => {
-    const source = read(NUMBER_STEPPER)
-    const edge = borderColour(ruleBody(source, '.number-stepper'))
+    const edge = borderColour(ruleBody(read(BASE), '.field'))
+    const fill = declaration(ruleBody(read(NUMBER_STEPPER), '.stepper-input'), 'background')
 
-    expect(
-      edgeAgainst(edge, declaration(ruleBody(source, '.stepper-input'), 'background')),
-    ).toBeGreaterThanOrEqual(NON_TEXT)
+    expect(edgeAgainst(edge, fill)).toBeGreaterThanOrEqual(NON_TEXT)
   })
 })
 
@@ -531,13 +519,8 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['the page the sidebar is on', BASE, '.nav-item.active', '--bg-sidebar'],
   ['the app name over the nav', BASE, '.app-banner h1', '--bg-sidebar'],
   ['a scorer weight', BASE, '.slider-value', '--bg-card'],
-  ['a content-type badge', BASE, '.badge-type', '--bg-card'],
-  ['a score badge', BASE, '.badge-score', '--bg-card'],
-  ['a finished-status badge', BASE, '.badge-status', '--bg-card'],
-  ['an unstarted-status badge', BASE, '.badge-status.unread', '--bg-card'],
-  ['an in-progress badge', BASE, '.badge-status.currently_consuming', '--bg-card'],
-  ['an ignored badge', BASE, '.badge-ignored', '--bg-card'],
-  ['an unenriched badge', BASE, '.badge-enrichment', '--bg-card'],
+  ['a page, panel or field that refused', BASE, '.state--error', '--bg-card'],
+  ['the same refusal off any card', BASE, '.state--error', '--bg-primary'],
   ['a new version being available', BASE, '.update-banner', '--bg-primary'],
   ['the Reload button on it', BASE, '.btn-secondary', '--bg-primary'],
   ['a score breakdown', BASE, '.score-details summary', '--bg-card'],
@@ -665,15 +648,8 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
 /** An edge that identifies a control, the property declaring it, and the fill
  *  or surface it has to divide itself from (WCAG 1.4.11). */
 const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
-  [
-    'a rejected setting',
-    SETTING_CONTROL,
-    '.setting-input--invalid',
-    'border-color',
-    'var(--bg-input)',
-  ],
+  ['a refused field', BASE, ".field[aria-invalid='true']", 'border-color', 'var(--bg-input)'],
   ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
-  ['a looser-key badge', DUP_PAIR, '.dup-badge-loose', 'border-color', 'var(--bg-elevated)'],
 ]
 
 function invalidEdges(source: string): string[] {
@@ -733,8 +709,8 @@ describe.each(THEMES)('edges that say where a control is in %s', (_theme, themeP
     }
   })
 
-  it('a refused setting is marked by a rule visible on its own tint', () => {
-    const body = ruleBody(read(SETTING_CONTROL), '.setting-error')
+  it('a refusal is marked by a rule visible on its own tint', () => {
+    const body = ruleBody(read(BASE), '.state--error')
     const tint = over(toRgba(declaration(body, 'background'), vars), toRgba('var(--bg-card)', vars))
 
     expect(divides(colourIn(declaration(body, 'border-left')), tint)).toBeGreaterThanOrEqual(

@@ -25,7 +25,7 @@ onMounted(() => {
     <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
     <p
       :id="REFUSAL_ALERT_ID"
-      class="dup-alert focus-fallback"
+      class="state state--error dup-alert focus-fallback"
       role="alert"
       tabindex="-1"
     >{{ store.error }}</p>
@@ -37,12 +37,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.dup-alert {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-error-text);
-}
-
 .dup-alert:not(:empty) {
   margin-bottom: var(--space-4);
 }

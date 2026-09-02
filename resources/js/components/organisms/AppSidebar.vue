@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import type { UserResponse } from '@/types/api'
+
+const SECTIONS = [
+  { route: 'recommendations', label: 'Recommendations', icon: 'star' },
+  { route: 'library', label: 'Library', icon: 'book' },
+  { route: 'duplicates', label: 'Duplicates', icon: 'copy' },
+  { route: 'data', label: 'Data', icon: 'activity' },
+  { route: 'preferences', label: 'Preferences', icon: 'cog' },
+  { route: 'settings', label: 'Settings', icon: 'sliders' },
+] as const
 
 const props = defineProps<{
   /** Absent until the session is resolved; the footer waits rather than
@@ -43,55 +53,16 @@ function isActive(name: string): boolean {
     :aria-hidden="offscreen || undefined"
   >
     <nav class="sidebar-nav">
-      <!-- Recommendations -->
-      <button class="nav-item" :class="{ active: isActive('recommendations') }" :aria-current="isActive('recommendations') ? 'page' : undefined" @click="navigate('recommendations')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-        </svg>
-        Recommendations
-      </button>
-      <!-- Library -->
-      <button class="nav-item" :class="{ active: isActive('library') }" :aria-current="isActive('library') ? 'page' : undefined" @click="navigate('library')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-        </svg>
-        Library
-      </button>
-      <!-- Duplicates -->
-      <button class="nav-item" :class="{ active: isActive('duplicates') }" :aria-current="isActive('duplicates') ? 'page' : undefined" @click="navigate('duplicates')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="9" width="12" height="12" rx="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-        Duplicates
-      </button>
-      <!-- Data -->
-      <button class="nav-item" :class="{ active: isActive('data') }" :aria-current="isActive('data') ? 'page' : undefined" @click="navigate('data')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-        </svg>
-        Data
-      </button>
-      <!-- Preferences -->
-      <button class="nav-item" :class="{ active: isActive('preferences') }" :aria-current="isActive('preferences') ? 'page' : undefined" @click="navigate('preferences')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-        Preferences
-      </button>
-      <!-- Settings -->
-      <button class="nav-item" :class="{ active: isActive('settings') }" :aria-current="isActive('settings') ? 'page' : undefined" @click="navigate('settings')">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="4" y1="6" x2="20" y2="6" />
-          <circle cx="9" cy="6" r="2" />
-          <line x1="4" y1="12" x2="20" y2="12" />
-          <circle cx="15" cy="12" r="2" />
-          <line x1="4" y1="18" x2="20" y2="18" />
-          <circle cx="9" cy="18" r="2" />
-        </svg>
-        Settings
+      <button
+        v-for="section in SECTIONS"
+        :key="section.route"
+        class="nav-item"
+        :class="{ active: isActive(section.route) }"
+        :aria-current="isActive(section.route) ? 'page' : undefined"
+        @click="navigate(section.route)"
+      >
+        <AppIcon :name="section.icon" :size="20" />
+        {{ section.label }}
       </button>
     </nav>
     <div v-if="userLabel" class="sidebar-footer">

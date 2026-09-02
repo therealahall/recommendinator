@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -52,21 +53,9 @@ function onEscape(e: KeyboardEvent) {
 
 <template>
   <div class="search-input-wrap" role="search">
-    <div class="search-input">
+    <div class="search-input field">
       <label :for="id" class="sr-only">{{ label }}</label>
-      <svg
-        class="search-input-icon"
-        aria-hidden="true"
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <circle cx="11" cy="11" r="8" />
-        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      </svg>
+      <AppIcon name="search" class="search-input-icon" />
       <input
         :id="id"
         ref="input"
@@ -91,10 +80,7 @@ function onEscape(e: KeyboardEvent) {
           aria-label="Clear search"
           @click="onClear"
         >
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
+          <AppIcon name="close" />
         </button>
       </span>
     </div>
@@ -123,14 +109,12 @@ function onEscape(e: KeyboardEvent) {
   color: var(--text-secondary);
 }
 
+/* The box is .field; this is the row inside it holding the glyph, the entry and
+   the clear button, none of which draws an edge of its own. */
 .search-input {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-input);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-md);
   transition: border-color var(--transition-fast);
 }
 
@@ -144,7 +128,6 @@ function onEscape(e: KeyboardEvent) {
 }
 
 .search-input-icon {
-  flex-shrink: 0;
   color: var(--text-muted);
 }
 

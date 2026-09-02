@@ -10,7 +10,7 @@ describe('SeasonChecklist watched marker', () => {
 
     const marked = wrapper
       .findAll('.season-checkbox')
-      .filter((label) => label.find('.season-check').exists())
+      .filter((label) => label.find('svg').exists())
       .map((label) => label.text())
 
     expect(marked.sort()).toEqual(['2', '3'])
@@ -26,6 +26,6 @@ describe('SeasonChecklist watched marker', () => {
 
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([[2]])
     await wrapper.setProps({ modelValue: [2] })
-    expect(seasonTwo().find('.season-check').exists()).toBe(true)
+    expect(seasonTwo().find('svg').exists()).toBe(true)
   })
 })

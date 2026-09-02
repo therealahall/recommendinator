@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 
 const props = defineProps<{
   totalSeasons: number
@@ -66,19 +67,7 @@ function deselectAll() {
           :checked="watchedSet.has(season)"
           @change="toggle(season)"
         >
-        <svg
-          v-if="watchedSet.has(season)"
-          class="season-check"
-          aria-hidden="true"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="3"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        <AppIcon v-if="watchedSet.has(season)" name="check" />
         {{ season }}
       </label>
     </div>
@@ -134,7 +123,4 @@ function deselectAll() {
   color: var(--text-primary);
 }
 
-.season-check {
-  flex-shrink: 0;
-}
 </style>

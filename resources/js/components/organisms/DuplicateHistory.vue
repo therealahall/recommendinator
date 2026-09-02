@@ -74,7 +74,7 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
       Newest first, which is the order they come back off in. The row that was
       folded in keeps everything it had.
     </p>
-    <p v-if="mergeRows.length === 0" class="empty-state">No merges yet.</p>
+    <p v-if="mergeRows.length === 0" class="state state--empty">No merges yet.</p>
     <ul
       v-else
       ref="mergesEl"
@@ -103,7 +103,7 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
     </ul>
 
     <h4 id="dup-declined-heading" class="dup-subheading">Dismissed pairs</h4>
-    <p v-if="declinedRows.length === 0" class="empty-state">
+    <p v-if="declinedRows.length === 0" class="state state--empty">
       No pairs dismissed.
     </p>
     <ul

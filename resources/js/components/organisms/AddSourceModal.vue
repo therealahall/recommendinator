@@ -220,6 +220,7 @@ async function submit(): Promise<void> {
         <select
           id="add-source-plugin"
           v-model="pluginName"
+          class="field"
           :disabled="submitting"
           :aria-describedby="
             data.pluginImportErrors.length ? 'add-source-import-errors' : undefined
@@ -243,7 +244,7 @@ async function submit(): Promise<void> {
         <ul
           v-if="data.pluginImportErrors.length"
           id="add-source-import-errors"
-          class="add-source-import-errors"
+          class="state state--error add-source-import-errors"
           data-testid="add-source-import-errors"
           role="list"
         >
@@ -263,6 +264,7 @@ async function submit(): Promise<void> {
           id="add-source-id"
           :value="sourceId"
           type="text"
+          class="field"
           placeholder="e.g. my_books"
           required
           :disabled="submitting"
@@ -298,6 +300,7 @@ async function submit(): Promise<void> {
           v-if="field.field_type === 'bool'"
           :id="`add-source-field-${field.name}`"
           v-model="fieldValues[field.name]"
+          class="field"
           :required="field.required"
           :disabled="submitting"
         >
@@ -309,6 +312,7 @@ async function submit(): Promise<void> {
           v-else
           :id="`add-source-field-${field.name}`"
           v-model="fieldValues[field.name]"
+          class="field"
           :type="
             field.field_type === 'int' || field.field_type === 'float'
               ? 'number'
@@ -338,6 +342,7 @@ async function submit(): Promise<void> {
           v-model="fieldValues[field.name]"
           :data-testid="`add-source-secret-${field.name}`"
           type="password"
+          class="field"
           autocomplete="new-password"
           :required="field.required"
           :disabled="submitting"
@@ -379,7 +384,7 @@ async function submit(): Promise<void> {
 
       <p
         v-if="errorMessage"
-        class="add-source-error"
+        class="state state--error"
         role="alert"
       >{{ errorMessage }}</p>
 
@@ -434,33 +439,10 @@ async function submit(): Promise<void> {
   letter-spacing: 0.04em;
 }
 
-.add-source-field input[type="text"],
-.add-source-field input[type="number"],
-.add-source-field input[type="password"],
-.add-source-field select {
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-card);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font: inherit;
-}
-
 .add-source-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--text-sm);
-}
-
-.add-source-error {
-  margin: 0;
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  /* --text-primary on a 35% error tint clears WCAG 1.4.3 4.5:1 against
-     --bg-card; semantic colour reads through the background. */
-  background: color-mix(in srgb, var(--color-error) 35%, transparent);
-  color: var(--text-primary);
   font-size: var(--text-sm);
 }
 
@@ -478,13 +460,8 @@ async function submit(): Promise<void> {
 }
 
 .add-source-import-errors {
-  margin: 0;
-  padding: var(--space-2);
+  display: block;
   list-style: none;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-error) 35%, transparent);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
 }
 
 .add-source-import-errors li + li {

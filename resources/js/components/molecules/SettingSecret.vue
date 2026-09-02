@@ -72,7 +72,7 @@ watch(
   <div class="source-form-field">
     <div class="secret-status-row">
       <span class="source-form-label">{{ setting.label }}</span>
-      <span class="secret-status-badge" :data-testid="`secret-status-${setting.key}`">
+      <span class="badge" :data-testid="`secret-status-${setting.key}`">
         {{ setting.has_secret ? 'Set' : 'Not set' }}
       </span>
       <button
@@ -103,6 +103,7 @@ watch(
         :id="`secret-input-${setting.key}`"
         ref="draftInput"
         type="password"
+        class="field"
         autocomplete="new-password"
         :aria-label="`New value for ${setting.label}`"
         :value="draft"
@@ -130,39 +131,10 @@ watch(
 </template>
 
 <style scoped>
-/* .source-form-field/-label/-help and .secret-status-row/.secret-edit-row are
-   shared primitives defined in base.css. */
-.secret-status-badge {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  /* --text-primary on the tinted surface keeps the badge legible; the "Set" /
-     "Not set" text conveys the state without relying on colour. */
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-}
-
-.secret-edit-row input[type='password'] {
+/* .badge, .field, .source-form-field/-label/-help and
+   .secret-status-row/.secret-edit-row are shared primitives in base.css. */
+.secret-edit-row .field {
   flex: 1;
   min-width: 12rem;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-input);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font: inherit;
-  transition: border-color 0.15s ease;
-}
-
-.secret-edit-row input[type='password']:hover:not([readonly]) {
-  border-color: var(--accent);
-}
-
-.secret-edit-row input[readonly] {
-  border-style: dashed;
-  background: var(--bg-elevated);
-  cursor: not-allowed;
 }
 </style>

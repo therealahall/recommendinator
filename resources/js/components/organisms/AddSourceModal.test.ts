@@ -207,7 +207,7 @@ describe('AddSourceModal', () => {
     await submit.trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.add-source-error').text()).toContain('plugin scan failed')
+    expect(wrapper.get('[role="alert"]').text()).toContain('plugin scan failed')
   })
 
   it('calls createSource without the secret, then setSourceSecret for it', async () => {
@@ -261,7 +261,7 @@ describe('AddSourceModal', () => {
 
     expect(wrapper.emitted('created')).toEqual([['calibre-web']])
     expect(wrapper.emitted('close')).toBeFalsy()
-    const alert = wrapper.find('.add-source-error')
+    const alert = wrapper.find('[role="alert"]')
     expect(alert.exists()).toBe(true)
     expect(alert.text()).toContain('was created')
     expect(alert.text()).toContain('password')

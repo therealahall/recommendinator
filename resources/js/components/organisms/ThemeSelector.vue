@@ -24,7 +24,7 @@ function onChange(event: Event) {
       <label for="theme-select" class="dropdown-label">Theme</label>
       <select
         id="theme-select"
-        class="theme-select"
+        class="field"
         :value="modelValue"
         @change="onChange"
       >

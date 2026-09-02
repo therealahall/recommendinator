@@ -32,7 +32,7 @@ const emit = defineEmits<{
         <div v-if="rec.author" class="rec-author">by {{ rec.author }}</div>
       </div>
       <div class="rec-actions">
-        <span class="badge badge-score">{{ rec.score.toFixed(2) }}</span>
+        <span class="badge" data-tone="accent">{{ rec.score.toFixed(2) }}</span>
         <button
           v-if="rec.db_id"
           class="btn btn-small btn-complete"

@@ -25,7 +25,7 @@ function onKeypress(event: KeyboardEvent) {
       add or remove here are kept until you press Save Preferences.
     </p>
     <div>
-      <div v-if="prefs.customRules.length === 0" class="empty-rules">
+      <div v-if="prefs.customRules.length === 0" class="state">
         No custom rules defined
       </div>
       <ul v-else class="rule-list" role="list">
@@ -44,6 +44,7 @@ function onKeypress(event: KeyboardEvent) {
       <input
         id="new-rule-input"
         type="text"
+        class="field"
         v-model="newRule"
         placeholder='e.g., avoid horror, prefer sci-fi'
         @keypress="onKeypress"

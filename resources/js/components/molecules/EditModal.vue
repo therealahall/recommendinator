@@ -173,7 +173,7 @@ function save() {
     <h3 id="edit-modal-title" class="edit-modal-title">{{ item.title }}</h3>
     <div class="edit-modal-subtitle">
       <span v-if="item.author">{{ item.author }} </span>
-      <span class="badge badge-type">{{ formatContentType(item.content_type) }}</span>
+      <span class="badge" data-tone="accent">{{ formatContentType(item.content_type) }}</span>
     </div>
 
     <div class="edit-field">
@@ -182,6 +182,7 @@ function save() {
         id="edit-creator"
         v-model="creator"
         type="text"
+        class="field"
         :maxlength="MAX_CREATOR_LENGTH"
         placeholder="Author, director or developer..."
         v-bind="refusalFor('edit-creator')"
@@ -196,6 +197,7 @@ function save() {
         id="edit-release-year"
         v-model="releaseYear"
         type="text"
+        class="field"
         inputmode="numeric"
         v-bind="refusalFor('edit-release-year')"
       >
@@ -203,7 +205,7 @@ function save() {
 
     <div class="edit-field">
       <label for="edit-status">Status</label>
-      <select id="edit-status" :value="status" @change="onStatusChange">
+      <select id="edit-status" class="field" :value="status" @change="onStatusChange">
         <option value="unread">{{ formatStatusForContentType('unread', item.content_type) }}</option>
         <option value="currently_consuming">In Progress</option>
         <option value="completed">Completed</option>
@@ -220,6 +222,7 @@ function save() {
       <textarea
         id="edit-review"
         v-model="review"
+        class="field"
         placeholder="Write a review..."
         v-bind="refusalFor('edit-review')"
       />
@@ -274,11 +277,17 @@ function save() {
 
     <div class="edit-field">
       <label for="edit-description">Description</label>
-      <textarea id="edit-description" v-model="description" maxlength="10000" placeholder="Add a description..." />
+      <textarea id="edit-description" v-model="description" class="field" maxlength="10000" placeholder="Add a description..." />
     </div>
 
     <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
-    <p id="edit-save-error" ref="refusal" class="edit-save-error focus-fallback" role="alert" tabindex="-1">{{ saveError }}</p>
+    <p
+      id="edit-save-error"
+      ref="refusal"
+      class="state state--error edit-save-error focus-fallback"
+      role="alert"
+      tabindex="-1"
+    >{{ saveError }}</p>
 
     <ConfirmPanel
       v-if="confirming"
