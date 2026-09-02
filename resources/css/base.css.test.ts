@@ -81,6 +81,22 @@ describe('the scorer tooltip', () => {
     expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'transform')).toBe('none')
     expect(declaration(ruleBlock(readBase(), '.scorer-tooltip-text'), 'max-width')).toContain('100vw')
   })
+
+  it('opens down and back inside the weights panel, which scrolls its rows', () => {
+    // Above the trigger or right of it, the box lands in overflow that scroll
+    // box cannot reach, and the row at the top of it loses its help entirely.
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/organisms/WeightsDialog.vue`,
+      'utf8',
+    )
+    const match = source.match(/\.weights-body :deep\(\.scorer-tooltip-text\)\s*\{([^}]*)\}/)
+    if (!match) throw new Error('weights-body tooltip rule not found')
+
+    expect(declaration(match[1], 'top')).toContain('100%')
+    expect(declaration(match[1], 'bottom')).toBe('auto')
+    expect(declaration(match[1], 'left')).toBe('auto')
+    expect(declaration(match[1], 'max-width')).toContain('100vw')
+  })
 })
 
 describe('inactive button styling', () => {
@@ -271,10 +287,10 @@ describe('one-handed reach on a phone', () => {
   })
 })
 
-describe('the tag entry inside a bordered field', () => {
-  // The ring is offset outward and the entry is full-bleed, so a clipping
-  // parent leaves it with no focus indicator at all (WCAG 2.4.7).
-  it('lets the shared focus ring paint outside the field that holds it', () => {
+describe('full-bleed controls inside a bordered field', () => {
+  // The ring is offset outward and the controls are full-bleed, so a clipping
+  // parent leaves them with no focus indicator at all (WCAG 2.4.7).
+  it('lets the shared focus ring paint outside the field that holds the tag entry', () => {
     const source = readFileSync(
       `${process.cwd()}/resources/js/components/molecules/SourceConfigForm.vue`,
       'utf8',
@@ -282,6 +298,17 @@ describe('the tag entry inside a bordered field', () => {
 
     expect(declaration(ruleBlock(readBase(), ':focus-visible'), 'outline-offset')).not.toMatch(/^-/)
     expect(ruleBlock(source, '.chips-field')).not.toMatch(/overflow:\s*hidden/)
+  })
+
+  it('draws every focusable in the clipping stepper a ring the clip keeps', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/atoms/NumberStepper.vue`,
+      'utf8',
+    )
+
+    for (const selector of ['.stepper-btn:focus-visible', '.stepper-input:focus-visible']) {
+      expect(declaration(ruleBlock(source, selector), 'outline-offset')).toMatch(/^-/)
+    }
   })
 })
 

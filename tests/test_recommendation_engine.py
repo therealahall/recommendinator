@@ -20,7 +20,7 @@ from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
 from src.recommendations.record import Recommendation
 from src.recommendations.reference_index import SignalIndex, _shuffle_close_scores
 from src.recommendations.scorers import SCORER_NAME_MAP
-from src.recommendations.scoring_pipeline import ScoredCandidate
+from src.recommendations.scoring_pipeline import ScoredCandidate, tiebreaker_key
 from src.recommendations.variety import (
     VARIETY_LADDER_STEPS,
     VARIETY_SERIES_CONTINUATION_FACTOR,
@@ -2992,6 +2992,41 @@ class TestCrossTypeRun:
 
         assert recommendations
         assert all("continuation" not in rec.score_breakdown for rec in recommendations)
+
+    def _one_each(self):
+        return lambda content_type: [
+            self._candidate(
+                f"{content_type.value} pick", content_type, "Science Fiction"
+            )
+        ]
+
+    def test_an_exact_cross_type_tie_breaks_on_the_pipelines_tiebreaker(
+        self, engine, mock_storage
+    ):
+        """Score alone left the tie to ContentType order, so books always won."""
+        self._back_storage(mock_storage, self._one_each())
+
+        recommendations = engine.generate_recommendations(count=4)
+
+        assert len({rec.score for rec in recommendations}) == 1
+        titles = [rec.item.title for rec in recommendations]
+        assert titles == [
+            item.title
+            for item in sorted(
+                (rec.item for rec in recommendations), key=tiebreaker_key
+            )
+        ]
+        assert titles != [f"{one_type.value} pick" for one_type in ContentType]
+
+    def test_a_merged_run_reads_the_signal_set_once_not_once_per_type(
+        self, engine, mock_storage
+    ):
+        """Five reads of the whole set per press of Rank, where a typed run does one."""
+        self._back_storage(mock_storage, self._one_each())
+
+        engine.generate_recommendations(count=4)
+
+        assert mock_storage.get_signal_items.call_count == 1
 
     def test_naming_a_type_still_ranks_that_type_alone(self, engine, mock_storage):
         self._back_storage(

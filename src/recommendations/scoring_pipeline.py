@@ -18,7 +18,7 @@ _CLASS_TO_NAME: dict[type[Scorer], str] = {
 }
 
 
-def _tiebreaker_key(item: ContentItem) -> tuple[int, str]:
+def tiebreaker_key(item: ContentItem) -> tuple[int, str]:
     is_first = is_first_item_in_series(item=item)
     # Hash the title for stable pseudo-random ordering (avoids pure alphabetical).
     # MD5 chosen for speed; this is not a security context (usedforsecurity=False).
@@ -73,6 +73,6 @@ class ScoringPipeline:
             )
 
         results.sort(
-            key=lambda scored: (-scored.aggregate_score, _tiebreaker_key(scored.item)),
+            key=lambda scored: (-scored.aggregate_score, tiebreaker_key(scored.item)),
         )
         return results

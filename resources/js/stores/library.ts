@@ -165,7 +165,6 @@ export const useLibraryStore = defineStore('library', () => {
     typeFilter.value = ''
     statusFilter.value = ''
     enrichmentFilter.value = ''
-    showIgnored.value = false
     needsRating.value = false
     return resetAndLoad()
   }

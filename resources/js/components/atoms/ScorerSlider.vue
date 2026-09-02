@@ -26,6 +26,14 @@ function onInput(event: Event) {
   const input = event.target as HTMLInputElement
   emit('update:modelValue', parseFloat(input.value))
 }
+
+// Swallowed only with a tooltip to dismiss, so Escape still reaches the dialog.
+function onEscape(event: KeyboardEvent) {
+  if (dismissed.value) return
+  dismissed.value = true
+  event.stopPropagation()
+  event.preventDefault()
+}
 </script>
 
 <template>
@@ -38,7 +46,7 @@ function onInput(event: Event) {
       :class="{ 'tooltip-dismissed': dismissed }"
       :aria-label="`${label} info`"
       :aria-describedby="`${labelId}-tip`"
-      @keydown.esc.stop.prevent="dismissed = true"
+      @keydown.esc="onEscape"
       @mouseleave="dismissed = false"
       @blur="dismissed = false"
     >

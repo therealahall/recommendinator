@@ -71,7 +71,7 @@ function tokens(themePath: string): Map<string, string> {
 }
 
 /** Finds the rule the selector opens, whether or not it shares it with others.
- *  Anchored so `.pill` never resolves to `.pill-group`. */
+ *  Anchored so `.badge` never resolves to `.badge-group`. */
 function ruleBody(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const pattern = new RegExp(`^${escaped}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, 'm')

@@ -864,10 +864,6 @@ button.btn[aria-disabled='true'] {
   white-space: nowrap;
 }
 
-button.badge {
-  min-height: 44px;
-}
-
 /* A tone moves the fill and the label only; every consumer says what it means
    in words as well, so hue never carries it alone (WCAG 1.4.1). */
 .badge[data-tone='accent'] {
@@ -901,6 +897,7 @@ button.badge {
 }
 
 button.badge {
+  min-height: 44px;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }

@@ -9,11 +9,9 @@ const props = withDefaults(defineProps<{
   min?: number
   max?: number
   step?: number
-  /** id/aria hooks so a wrapping control can wire the input to help/error text. */
   id?: string
   describedBy?: string
   invalid?: boolean
-  /** Locks the control while a save is in flight, matching the other controls. */
   disabled?: boolean
 }>(), {
   step: 1,
@@ -144,6 +142,12 @@ function onInput(event: Event) {
 .stepper-btn[aria-disabled='true'] {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Inset: the clip above cuts the shared outward ring off a full-bleed button. */
+.stepper-btn:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: -2px;
 }
 
 .stepper-decrement {
