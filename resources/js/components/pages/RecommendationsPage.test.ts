@@ -249,6 +249,18 @@ describe('RecommendationsPage', () => {
     })
   })
 
+  // The rank was an aria-hidden number in a plain div: sighted readers only.
+  it('is a ranked list whose items carry the run rank, not their page position', async () => {
+    const { wrapper, store } = await mountWithItems()
+    expect(wrapper.findAll('ol > li').map((li) => li.attributes('value'))).toEqual(['1', '2'])
+
+    store.items[0].content_type = 'movie'
+    store.contentType = 'book'
+    await flushPromises()
+
+    expect(wrapper.findAll('ol > li').map((li) => li.attributes('value'))).toEqual(['2'])
+  })
+
   // The selector filters what came back; only the Rank button runs anything.
   it('narrows the list to one type without asking for another run', async () => {
     wrapper = mount(RecommendationsPage, {

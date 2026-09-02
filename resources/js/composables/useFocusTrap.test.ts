@@ -87,6 +87,23 @@ describe('useFocusTrap', () => {
     expect(document.activeElement?.id).toBe('last')
   })
 
+  it('holds Shift+Tab in from the container the trap parks focus on', async () => {
+    // Unguarded, the trigger behind the scrim took focus (WCAG 2.4.3).
+    const onEscape = vi.fn()
+    createWrapper(
+      '<div ref="containerRef" tabindex="-1"><button id="first">A</button><button id="last">B</button></div>',
+      onEscape,
+    )
+    await vi.runAllTimersAsync()
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+    const prevented = vi.spyOn(event, 'preventDefault')
+    document.dispatchEvent(event)
+
+    expect(prevented).toHaveBeenCalled()
+    expect(document.activeElement?.id).toBe('last')
+  })
+
   it('does not throw when container has no focusable elements', async () => {
     const onEscape = vi.fn()
     createWrapper(

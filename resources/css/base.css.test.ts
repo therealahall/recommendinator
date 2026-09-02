@@ -579,6 +579,42 @@ describe('a page sticking a row of its own under the chrome', () => {
       step(scale(source), declaration(ruleBlock(filters, '.card'), 'z-index')),
     )
   })
+
+  // A px constant does not move when the strip itself grows with the text.
+  it('grows that height with the text the strip is set in (WCAG 1.4.4)', () => {
+    const match = readBase().match(/--topbar-h:\s*([^;]+);/)
+    if (!match) throw new Error('--topbar-h declaration not found in base.css')
+
+    expect(match[1]).toContain('var(--text-xl)')
+  })
+})
+
+describe('a page sticking a row of its own over the tab bar', () => {
+  // The tab bar is fixed there and outranks the page: it eats the clicks.
+  it('clears the tab bar by the height the tab bar is held to', () => {
+    const page = readFileSync(
+      `${process.cwd()}/resources/js/components/pages/PreferencesPage.vue`,
+      'utf8',
+    )
+    const parked = declaration(ruleBlock(page, '.pref-actions'), 'bottom')
+    const cleared = declaration(ruleBlock(mediaBlock(page, '768px'), '.pref-actions'), 'bottom')
+
+    expect(cleared).toContain('var(--tabbar-h)')
+    expect(cleared).not.toBe(parked)
+  })
+})
+
+describe('the score spine', () => {
+  // On hue alone the penalty reads as more of the score it came off.
+  it('separates its tones by a channel that is not colour (WCAG 1.4.11)', () => {
+    const source = readBase()
+    const lead = ruleBlock(source, '.rec-spine-segment')
+    const rest = ruleBlock(source, '.rec-spine-segment--rest')
+    const penalty = ruleBlock(source, '.rec-spine-segment--penalty')
+
+    expect(declaration(rest, 'height')).not.toBe(declaration(lead, 'height'))
+    expect(declaration(penalty, 'background-image')).toContain('repeating-linear-gradient')
+  })
 })
 
 describe('the rail becoming a tab bar', () => {

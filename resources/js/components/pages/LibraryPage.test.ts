@@ -157,4 +157,13 @@ describe('LibraryPage search behaviour', () => {
       wrapper.findAll('a').some((link) => link.attributes('href') === '/data'),
     ).toBe(true)
   })
+
+  // Showing ignored items only ever adds rows, so it never emptied the list.
+  it('still sends an empty library to sync when Show ignored is on', async () => {
+    const { wrapper } = mountPage({ items: [], loading: false, showIgnored: true })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="library-clear-filters"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="library-empty"]').text()).toContain('Your library is empty')
+  })
 })

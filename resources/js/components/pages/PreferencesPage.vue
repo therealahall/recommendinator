@@ -189,4 +189,11 @@ async function onRetry(): Promise<void> {
 .text-error {
   color: var(--color-error-text);
 }
+
+@media (max-width: 768px) {
+  /* The tab bar is fixed over the bottom edge and outranks this. */
+  .pref-actions {
+    bottom: calc(var(--tabbar-h) + var(--space-4));
+  }
+}
 </style>

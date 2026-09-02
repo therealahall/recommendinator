@@ -64,9 +64,10 @@ const evidence = computed(() => {
 const shownEvidence = computed(() => evidence.value.slice(0, MAX_PILLS))
 const hiddenEvidence = computed(() => evidence.value.length - shownEvidence.value.length)
 
+// Leads on the visible words, so speech input reaches it (WCAG 2.5.3).
 const scoreLabel = computed(() =>
   hasBreakdown.value
-    ? `${percent.value} percent match. ${expanded.value ? 'Hide' : 'Show'} the score breakdown.`
+    ? `Why this: ${percent.value} percent match. ${expanded.value ? 'Hide' : 'Show'} the score breakdown.`
     : `${percent.value} percent match`,
 )
 

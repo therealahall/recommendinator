@@ -39,7 +39,7 @@ function current(section: (typeof SECTIONS)[number]): 'page' | 'true' | undefine
 
 <template>
   <nav class="app-nav" aria-label="Sections">
-    <ul class="nav-list">
+    <ul class="nav-list" role="list">
       <li v-for="section in SECTIONS" :key="section.route">
         <RouterLink v-slot="{ href, navigate }" :to="{ name: section.route }" custom>
           <a :href="href" class="nav-item" :aria-current="current(section)" @click="navigate">

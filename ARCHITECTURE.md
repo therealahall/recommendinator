@@ -372,7 +372,8 @@ framework stays in the package it serves: `fastapi` and `starlette` only under
 **Web** (`src/web/` + `resources/`): a FastAPI REST backend and a Vue 3 SPA,
 built by Vite from `resources/js/` and `resources/css/` into
 `src/web/static/dist/` with content-hashed filenames. Tabs are Recommendations,
-Library, Duplicates, Data, Preferences and Settings. Internal network only.
+Library, Data, Preferences and Settings, with Duplicates a Library sub-route.
+Internal network only.
 
 - The **Settings** page is the UI peer of the `settings` CLI group, over the
   shared `src/settings/service.py`.

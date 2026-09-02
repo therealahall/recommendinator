@@ -101,6 +101,28 @@ class _ConfiguredScoring:
     custom_preference_weight: float
 
 
+@dataclass(frozen=True)
+class _SignalFlags:
+    """Dropping a scorer shrinks the weight every score divides by, so a merged
+    run resolves these once for all four types."""
+
+    has_active: bool
+    has_adaptations: bool
+
+
+def _signals_in(
+    unconsumed_items: list[ContentItem],
+    adaptations: dict[str, list[ContentItem]],
+) -> _SignalFlags:
+    return _SignalFlags(
+        has_active=any(
+            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
+            for item in unconsumed_items
+        ),
+        has_adaptations=bool(adaptations),
+    )
+
+
 def _weights_in(section: dict[str, Any]) -> dict[str, float]:
     weights = section.get("scorer_weights")
     if not isinstance(weights, dict):
@@ -173,20 +195,28 @@ class RecommendationEngine:
     ) -> list[Recommendation]:
         if content_type is None:
             return self._generate_across_types(count, user_preference_config)
+        return self._rank_one_type(
+            content_type,
+            count,
+            user_preference_config,
+            self._configured_scoring(),
+            None,
+        )
 
-        # The configuration this request runs on, fixed here.  A settings save
-        # landing while it scores changes what the next request resolves, and
-        # nothing about this one.
-        scoring = self._configured_scoring()
-
-        # Taste-signal items (completed, rated, not ignored) shape every
-        # recommendation: preference analysis, scoring, similarity seeds, and
-        # explanation references (issue #99).
+    def _rank_one_type(
+        self,
+        content_type: ContentType,
+        count: int,
+        user_preference_config: UserPreferenceConfig | None,
+        scoring: _ConfiguredScoring,
+        signals: _SignalFlags | None,
+    ) -> list[Recommendation]:
+        # Taste-signal items (completed, rated, not ignored) shape preference
+        # analysis, scoring, similarity seeds and references alike (issue #99).
         all_consumed_items = self.storage.get_signal_items(content_type=None)
 
-        # Deliberately NOT the signal set: whether the user consumed an earlier
-        # series entry is a consumption fact independent of rating or ignore
-        # state, so an ignored/unrated earlier entry must still block a later one.
+        # Deliberately NOT the signal set: an ignored or unrated earlier entry
+        # is still consumed, and must still block a later one.
         consumed_items_of_type = self.storage.get_completed_items(
             content_type=content_type, min_rating=None
         )
@@ -199,10 +229,8 @@ class RecommendationEngine:
             )
             return []
 
-        # We need the full list for accurate series ordering checks - a limit
-        # would break series detection when earlier entries sort after later ones
-        # (e.g., "The Black Unicorn #2" sorts before "Magic Kingdom... #1" when
-        # ignoring articles).
+        # Unlimited: series detection breaks when an earlier entry sorts after a
+        # later one, as "The Black Unicorn #2" does before "Magic Kingdom... #1".
         unconsumed_items = self.storage.get_unconsumed_items(
             content_type=content_type, limit=None, include_ignored=False
         )
@@ -295,8 +323,11 @@ class RecommendationEngine:
             scoring,
             user_preference_config,
             interpreted_prefs,
-            unconsumed_items,
-            has_adaptations=bool(adaptations),
+            (
+                signals
+                if signals is not None
+                else _signals_in(unconsumed_items, adaptations)
+            ),
         )
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
@@ -352,41 +383,45 @@ class RecommendationEngine:
             ranked_items, lambda entry: entry[0].db_id
         )
 
-        top_recommendations = ranked_items[:count]
-
-        recommendations = self._format_recommendations(
-            top_recommendations,
+        return self._format_recommendations(
+            ranked_items[:count],
             breakdown_by_key,
             adaptations,
             signal_index,
             preferences,
         )
 
-        if not recommendations and unconsumed_items:
-            logger.info("Using fallback: returning unconsumed items as recommendations")
-            recommendations = self._build_fallback_recommendations(
-                unconsumed_items, series_tracking, count
-            )
-
-        return recommendations
-
     def _generate_across_types(
         self,
         count: int,
         user_preference_config: UserPreferenceConfig | None,
     ) -> list[Recommendation]:
+        # Once, above the loop: a settings save landing mid-run would otherwise
+        # score books on the old weights and games on the new ones.
+        scoring = self._configured_scoring()
+        signals = self._signals_across_types()
+
         # One type-scoped run each, because season expansion and series tracking
         # only mean anything inside a type. No type can hold more than `count` of
         # the merged top `count`, so its own top `count` is all that can matter.
         candidates = [
             recommendation
             for content_type in ContentType
-            for recommendation in self.generate_recommendations(
-                content_type, count, user_preference_config
+            for recommendation in self._rank_one_type(
+                content_type, count, user_preference_config, scoring, signals
             )
         ]
         candidates.sort(key=lambda recommendation: recommendation.score, reverse=True)
         return candidates[:count]
+
+    def _signals_across_types(self) -> _SignalFlags:
+        unconsumed_items = self.storage.get_unconsumed_items(
+            content_type=None, limit=None, include_ignored=False
+        )
+        signal_index = SignalIndex(self.storage.get_signal_items(content_type=None))
+        return _signals_in(
+            unconsumed_items, self._build_adaptations(unconsumed_items, signal_index)
+        )
 
     def _apply_series_filtering(
         self,
@@ -472,9 +507,7 @@ class RecommendationEngine:
         scoring: _ConfiguredScoring,
         user_preference_config: UserPreferenceConfig | None,
         interpreted_prefs: InterpretedPreference | None,
-        unconsumed_items: list[ContentItem],
-        *,
-        has_adaptations: bool,
+        signals: _SignalFlags,
     ) -> ScoringPipeline:
         scorers = list(scoring.pipeline.scorers)
 
@@ -492,15 +525,11 @@ class RecommendationEngine:
                 scorers, user_preference_config.scorer_weights
             )
 
-        has_active = any(
-            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
-            for item in unconsumed_items
-        )
         inert: tuple[type[Scorer], ...] = tuple(
             scorer_class
             for scorer_class, has_signal in (
-                (ContinuationScorer, has_active),
-                (AdaptationScorer, has_adaptations),
+                (ContinuationScorer, signals.has_active),
+                (AdaptationScorer, signals.has_adaptations),
             )
             if not has_signal
         )
@@ -569,31 +598,6 @@ class RecommendationEngine:
             )
 
         return recommendations
-
-    def _build_fallback_recommendations(
-        self,
-        unconsumed_items: list[ContentItem],
-        series_tracking: dict[str, set[float]],
-        count: int,
-    ) -> list[Recommendation]:
-        # Collect ALL qualifying candidates before collapsing — do not early-exit
-        # at ``count``.
-        recommendations: list[Recommendation] = []
-        for item in unconsumed_items:
-            if should_recommend_item(
-                item, series_tracking, unconsumed_items=unconsumed_items
-            ):
-                recommendations.append(
-                    Recommendation(
-                        item=item,
-                        score=0.5,
-                        reasoning="Available in your library",
-                    )
-                )
-        recommendations = _collapse_duplicate_db_ids(
-            recommendations, lambda rec: rec.item.db_id
-        )
-        return recommendations[:count]
 
     def _generate_reasoning(
         self,

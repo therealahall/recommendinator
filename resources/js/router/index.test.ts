@@ -23,6 +23,12 @@ describe('router', () => {
     expect(router.currentRoute.value.meta.title).toBeTruthy()
   })
 
+  it('lands a bookmark of the old duplicates path on the page that replaced it', async () => {
+    await navigate('/duplicates')
+
+    expect(router.currentRoute.value.name).toBe('duplicates')
+  })
+
   it('still moves focus to the main landmark after navigating', async () => {
     await navigate({ name: 'settings' })
     document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>'

@@ -176,6 +176,15 @@ describe('RecCard', () => {
     expect(wrapper.get('.score-details').attributes('hidden')).toBeUndefined()
   })
 
+  it('leads the score control\'s accessible name with its visible words (WCAG 2.5.3)', () => {
+    const wrapper = mount(RecCard, {
+      props: { rec: makeRec({ score: 0.78, score_breakdown: { genre_match: 0.8 } }), rank: 1 },
+    })
+
+    expect(wrapper.get('.rec-score').text()).toContain('Why this')
+    expect(wrapper.get('.rec-score .sr-only').text()).toMatch(/^Why this/)
+  })
+
   it('offers no disclosure when there is no breakdown behind it', () => {
     const wrapper = mount(RecCard, {
       props: { rec: makeRec({ score_breakdown: {}, variety_penalty: 0 }), rank: 1 },

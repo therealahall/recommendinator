@@ -566,46 +566,6 @@ class TestTvRecommendationCarriesDbIdRegression:
         db_ids = sorted(rec.item.db_id for rec in recommendations)
         assert db_ids == [42, 99]
 
-    def test_fallback_collapses_entries_sharing_db_id_regression(self, engine) -> None:
-        """For TV the fallback builds recs directly from the expanded season items,
-        which share their parent show's ``db_id``."""
-        season_one = ContentItem(
-            id="tvdb:280619:s1",
-            db_id=42,
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Drama", "Sci-Fi"]},
-        )
-        season_two = ContentItem(
-            id="tvdb:280619:s2",
-            db_id=42,
-            title="The Expanse",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Drama", "Sci-Fi"]},
-        )
-        other_show = ContentItem(
-            id="tvdb:355567:s1",
-            db_id=99,
-            title="Foundation",
-            content_type=ContentType.TV_SHOW,
-            status=ConsumptionStatus.UNREAD,
-            metadata={"genres": ["Drama", "Sci-Fi"]},
-        )
-
-        recommendations = engine._build_fallback_recommendations(
-            [season_one, season_two, other_show],
-            series_tracking={},
-            count=5,
-        )
-
-        # The two seasons of one show collapse to its first occurrence; the
-        # distinct show is preserved.
-        db_ids = [rec.item.db_id for rec in recommendations]
-        assert db_ids == [42, 99]
-        assert recommendations[0].item.id == "tvdb:280619:s1"
-
 
 class TestCollapseDuplicateDbIds:
     """The engine calls it on the already-ranked (descending) list, so "first" means
@@ -2935,9 +2895,17 @@ class TestCrossTypeRun:
                 if content_type is None or item.content_type == content_type
             ]
         )
+        # content_type=None means every type, as the real accessor does: the
+        # merged run reads the whole pool once to fix one denominator.
         mock_storage.get_unconsumed_items = Mock(
-            side_effect=lambda content_type=None, **kwargs: per_type_candidates(
-                content_type
+            side_effect=lambda content_type=None, **kwargs: (
+                [
+                    item
+                    for one_type in ContentType
+                    for item in per_type_candidates(one_type)
+                ]
+                if content_type is None
+                else per_type_candidates(content_type)
             )
         )
 
@@ -2977,6 +2945,53 @@ class TestCrossTypeRun:
         recommendations = engine.generate_recommendations(count=2)
 
         assert len(recommendations) == 2
+
+    def _in_progress(self, content_type):
+        return ContentItem(
+            id=f"active-{content_type.value}",
+            title=f"Active {content_type.value}",
+            content_type=content_type,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"genre": "Science Fiction"},
+        )
+
+    def _mixed_progress(self, in_progress_type):
+        return lambda content_type: [
+            self._candidate(
+                f"{content_type.value} pick", content_type, "Science Fiction"
+            )
+        ] + (
+            [self._in_progress(content_type)]
+            if content_type is in_progress_type
+            else []
+        )
+
+    def test_every_type_in_a_merged_run_divides_by_the_same_weight(
+        self, engine, mock_storage
+    ):
+        """A book read halfway dropped ContinuationScorer from the other three
+        types, shrinking their divisor until a worse game outranked a book."""
+        self._back_storage(mock_storage, self._mixed_progress(ContentType.BOOK))
+
+        recommendations = engine.generate_recommendations(count=8)
+
+        scored_by = {frozenset(rec.score_breakdown) for rec in recommendations}
+        assert len(scored_by) == 1
+        assert "continuation" in scored_by.pop()
+
+    def test_naming_a_type_scores_on_that_type_s_own_signals(
+        self, engine, mock_storage
+    ):
+        """The shared denominator is for one merged list. Threading it into a
+        named run would put an all-zero continuation row on every game."""
+        self._back_storage(mock_storage, self._mixed_progress(ContentType.BOOK))
+
+        recommendations = engine.generate_recommendations(
+            content_type=ContentType.VIDEO_GAME, count=4
+        )
+
+        assert recommendations
+        assert all("continuation" not in rec.score_breakdown for rec in recommendations)
 
     def test_naming_a_type_still_ranks_that_type_alone(self, engine, mock_storage):
         self._back_storage(

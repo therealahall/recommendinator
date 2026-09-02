@@ -28,6 +28,18 @@ describe('UpdateBanner', () => {
     expect(wrapper.find('button').exists()).toBe(false)
   })
 
+  it('keeps the recovery message in one flex item, so it reflows at 320px', () => {
+    const app = useAppStore()
+    app.showUpdateBanner = true
+    app.staleBundle = true
+
+    const wrapper = mount(UpdateBanner)
+
+    // A nowrap flex row: loose <code> children each become their own item and
+    // set a min-content floor the viewport cannot meet.
+    expect(wrapper.find('.update-banner').element.children).toHaveLength(1)
+  })
+
   it('offers the reload that does fix a version deployed mid-session', () => {
     const app = useAppStore()
     app.showUpdateBanner = true

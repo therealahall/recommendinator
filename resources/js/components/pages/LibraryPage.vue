@@ -13,8 +13,9 @@ const data = useDataStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
 
-const filtered = computed(
-  () => Boolean(lib.typeFilter || lib.statusFilter || lib.enrichmentFilter) || lib.showIgnored,
+// Not showIgnored: it only ever adds rows, so it cannot be what emptied the list.
+const filtered = computed(() =>
+  Boolean(lib.typeFilter || lib.statusFilter || lib.enrichmentFilter),
 )
 
 const emptyTitle = computed(() => {

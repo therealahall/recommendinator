@@ -197,7 +197,28 @@ def library_list(
         return
 
     if not items:
-        click.echo("No items found.")
+        # Worded as the web empty states: one sentence for all four causes
+        # names the wrong first action for three of them.
+        if search:
+            click.echo(
+                f'No items match "{search}". Try a different title, or check '
+                "your spelling."
+            )
+        elif needs_rating:
+            click.echo(
+                "Nothing needs a rating. Every item you have finished already "
+                "carries one."
+            )
+        elif content_type or consumption_status or enrichment:
+            click.echo(
+                "Nothing matches these filters. Widen them, or drop them to "
+                "see the whole library."
+            )
+        else:
+            click.echo(
+                "Your library is empty. Sync a source or import a file, and "
+                "what it brings back lands here."
+            )
         return
 
     table_data = []

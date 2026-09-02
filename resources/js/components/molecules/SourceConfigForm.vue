@@ -543,7 +543,7 @@ function isSecretSet(name: string): boolean {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .chips-field:focus-within {
@@ -579,14 +579,9 @@ function isSecretSet(name: string): boolean {
 }
 
 .chip-input:focus:not(:focus-visible) {
-  /* Mouse focus stays subtle — the .chips-field:focus-within halo on the
-     parent already conveys focus position. */
+  /* Mouse focus stays subtle — the parent's :focus-within edge already says
+     where focus is. */
   outline: none;
-}
-
-.chip-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .chip-input::placeholder {
@@ -641,10 +636,5 @@ function isSecretSet(name: string): boolean {
 :deep(.btn-success:hover:not(:disabled):not([aria-disabled='true'])) {
   background: color-mix(in srgb, var(--color-success) 50%, black);
   border-color: color-mix(in srgb, var(--color-success) 50%, black);
-}
-
-:deep(.btn-success:focus-visible) {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 </style>

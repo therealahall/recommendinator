@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import WeightsPanel from './WeightsPanel.vue'
-import { DEFAULT_WEIGHTS } from '@/stores/preferences'
+import { DEFAULT_WEIGHTS, usePreferencesStore } from '@/stores/preferences'
 import type { UserPreferenceResponse } from '@/types/api'
 
 const get = vi.fn()
@@ -83,6 +83,31 @@ describe('WeightsPanel', () => {
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(document.activeElement).toBe(trigger(wrapper).element)
+    wrapper.unmount()
+  })
+
+  const DISMISSALS: Array<[string, (wrapper: Awaited<ReturnType<typeof panel>>) => unknown]> = [
+    ['Escape', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))],
+    ['the scrim behind it', (wrapper) => wrapper.get('.weights-scrim').trigger('click')],
+    ['its close button', (wrapper) => wrapper.get('.weights-close').trigger('click')],
+  ]
+
+  // The sliders write to the shared store, so an abandoned weight rode along
+  // with the next save made anywhere else.
+  it.each(DISMISSALS)('puts back the weights it opened on when dismissed by %s', async (_label, dismiss) => {
+    const wrapper = await panel(stored({ genre_match: 3 }))
+    await trigger(wrapper).trigger('click')
+    await flushPromises()
+    const prefs = usePreferencesStore()
+    prefs.setWeight('genre_match', 5)
+    prefs.varietyPenalty = 4
+
+    await dismiss(wrapper)
+    await flushPromises()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(prefs.getWeight('genre_match')).toBe(3)
+    expect(prefs.varietyPenalty).toBe(0)
     wrapper.unmount()
   })
 
