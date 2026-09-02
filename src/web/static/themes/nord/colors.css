@@ -1,7 +1,36 @@
-/* Nord Theme — Default
-   Every color variable is already declared in :root in resources/css/base.css,
-   so this file overrides none of them. */
-
 :root {
     color-scheme: dark;
+
+    --accent: #81a1c1;
+    --accent-light: #88c0d0;
+    --accent-teal: #8fbcbb;
+
+    --bg-primary: #2e3440;
+    --bg-card: #3b4252;
+    --bg-sidebar: #2e3440;
+    --bg-elevated: #434c5e;
+    --bg-input: #2e3440;
+    --bg-hover: #434c5e;
+    --bg-secondary: #3b4252;
+
+    --text-primary: #eceff4;
+    --text-secondary: #d8dee9;
+    --text-muted: #b3c7da;
+    --text-inverse: #2e3440;
+    --text-on-dark-fill: #ffffff;
+
+    --border-default: color-mix(in srgb, #4c566a 45%, var(--text-primary));
+    --border-subtle: #434c5e;
+
+    --color-success: #a3be8c;
+    --color-warning: #ebcb8b;
+    --color-error: #bf616a;
+
+    --overlay-dark: rgba(0, 0, 0, 0.6);
+    --overlay-medium: rgba(0, 0, 0, 0.5);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.25);
 }

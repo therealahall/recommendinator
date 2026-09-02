@@ -96,6 +96,19 @@ describe('useThemeStore', () => {
     expect(store.currentThemeId).toBe('snowstorm')
   })
 
+  it('keeps the theme the shell resolved from the OS when nothing was picked', async () => {
+    // Regression: boot repainted the config default over the theme the
+    // pre-paint script had chosen from prefers-color-scheme.
+    const rendered = renderedShellLink('snowstorm')
+    answerBoot('nord', '')
+
+    const store = useThemeStore()
+    await store.fetchThemes()
+
+    expect(store.currentThemeId).toBe('snowstorm')
+    expect(rendered.href).toContain('/static/themes/snowstorm/colors.css')
+  })
+
   it('falls back to the default when the stored theme is gone', async () => {
     // Regression: boot resolves the theme from the stored preference, and a
     // theme folder removed after it was picked left that preference naming

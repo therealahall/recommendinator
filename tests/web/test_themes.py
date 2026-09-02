@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import html
 import json
+import re
 from collections.abc import Generator
 from dataclasses import fields
 from pathlib import Path
@@ -196,8 +200,36 @@ class TestTheShellArrivesAlreadyThemed:
 
         html = themed_shell(SHELL, hostile)
 
-        assert "<script>" not in html
+        assert "alert(1)" not in html
+        assert hostile not in html
         assert f'data-theme="{DEFAULT_THEME_ID}"' in html
+
+
+def _theme_choices(document: str) -> dict[str, dict[str, str]]:
+    match = re.search(r'data-theme-choices="([^"]*)"', document)
+    assert match is not None
+    parsed = json.loads(html.unescape(match.group(1)))
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+class TestTheOsPreferenceOnlyDecidesAnUnpickedTheme:
+    def test_a_pick_is_marked_stored_so_the_os_never_overrides_it(self) -> None:
+        assert 'data-theme-source="stored"' in themed_shell(SHELL, "snowstorm")
+
+    def test_no_pick_is_marked_defaulted(self) -> None:
+        assert 'data-theme-source="default"' in themed_shell(SHELL, "")
+
+    def test_the_shell_names_one_installed_theme_of_each_kind_to_switch_to(
+        self,
+    ) -> None:
+        choices = _theme_choices(themed_shell(SHELL, ""))
+        by_id = {theme.id: theme for theme in installed_themes()}
+
+        assert set(choices) == {"dark", "light"}
+        for kind, choice in choices.items():
+            assert by_id[choice["id"]].theme_type == kind
+            assert choice["href"] == by_id[choice["id"]].css_url
 
 
 class TestShellRoute:
@@ -277,6 +309,22 @@ class TestShellRoute:
         assert "unsafe-inline" not in policy
         assert "nonce-" not in policy
         assert "<style" not in served.text
+
+    def test_the_pre_paint_script_is_the_one_the_policy_admits_by_hash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.web.app.STATIC_DIR", _dist_holding(tmp_path))
+        storage = StorageManager(sqlite_path=tmp_path / "theme.db")
+
+        with booted_web_app(storage, {}) as app:
+            served = TestClient(app).get("/")
+
+        script = re.search(r"<script>(.*?)</script>", served.text, re.DOTALL)
+        assert script is not None
+        assert served.text.index("<script>") < served.text.index("</head>")
+        digest = hashlib.sha256(script.group(1).encode("utf-8")).digest()
+        expected = base64.b64encode(digest).decode("ascii")
+        assert f"'sha256-{expected}'" in served.headers["Content-Security-Policy"]
 
     def test_a_foreign_working_directory_never_swaps_the_shell_for_the_api_stub(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

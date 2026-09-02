@@ -5,8 +5,16 @@ you do not want in the repo, that overrides CSS color variables.
 
 ## How theming works
 
-- **`:root` variables** in `resources/css/base.css` are the source of truth.
-- **A theme's `colors.css`** overrides the `:root` variables through a `<link>`.
+- **A theme's `colors.css` is the palette**, declaring the whole colour contract
+  on `:root` through a `<link>`.
+- **`resources/css/base.css` is a fallback, not a theme.** Its `:root` holds
+  unbranded greys, so a `colors.css` that omits a token degrades to something
+  legible rather than to half of another palette.
+- Base tokens sit in `@layer tokens`; a theme arrives unlayered and so outranks
+  them whichever order the two stylesheets land in.
+- Both blocks must be on `:root`. A token whose value holds `var()` is
+  substituted on the element declaring it, so a base block on an ancestor would
+  freeze every derived token at the fallback greys.
 - Themes are **not part of the Vite build**. The server renders the stored
   theme's `<link>` into the page it serves, after the bundle it overrides, so
   the first paint is already themed. A `<link>` and not an inline `<style>`,
@@ -57,12 +65,13 @@ Every field is required.
 
 ## Color variables
 
-Override these in `colors.css` under a `:root` selector. Override only what you
-want to change. Anything unset keeps its dark-theme default.
+Declare these in `colors.css` under a `:root` selector. The Nord column is what
+the default theme sets; a token you leave out falls back to base.css's unbranded
+grey, not to Nord, so declare the whole set.
 
 ### Backgrounds
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--bg-primary` | `#2e3440` | Page background |
 | `--bg-card` | `#3b4252` | Card backgrounds |
@@ -75,7 +84,7 @@ want to change. Anything unset keeps its dark-theme default.
 
 ### Text
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--text-primary` | `#eceff4` | Primary text |
 | `--text-secondary` | `#d8dee9` | Secondary/dimmer text |
@@ -90,7 +99,7 @@ theme, and the darkest in a light one, is the one that binds.
 
 ### Accents
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--accent` | `#81a1c1` | Buttons, links, active states |
 | `--accent-light` | `#88c0d0` | Highlights, and the keyboard focus ring |
@@ -108,7 +117,7 @@ owes that pairing 4.5:1 (WCAG 1.4.3), and the resting one binds tighter.
 
 ### Borders
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--border-default` | `color-mix(in srgb, #4c566a 45%, var(--text-primary))` | The edge of a button, accordion, menu or drop zone |
 | `--border-subtle` | `#434c5e` | Subtle/secondary borders |
@@ -124,7 +133,7 @@ menus that keep `--border-default`.
 
 ### Semantic
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--color-success` | `#a3be8c` | Completed, unignore |
 | `--color-warning` | `#ebcb8b` | Unread badge, rating stars, ignored badge |
@@ -138,7 +147,7 @@ and the text colour follows.
 
 ### Overlays and shadows
 
-| Variable | Default | Used for |
+| Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
 | `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | Sidebar mobile overlay |
@@ -166,8 +175,10 @@ variants yourself.
 
 1. `mkdir src/web/static/themes/my-theme`, or `private/themes/my-theme`.
 2. Write `theme.json`, per the schema above.
-3. Write `colors.css`, declaring `color-scheme` so the browser paints native
-   controls and scrollbars to match:
+3. Write `colors.css`. Copy `themes/nord/colors.css` and retune it: that file is
+   the whole contract, and anything you drop paints an unbranded grey. Keep its
+   `color-scheme`, which is what makes the browser paint native controls to
+   match:
 
    ```css
    :root {
@@ -186,11 +197,15 @@ variants yourself.
    above for each theme in `src/web/static/themes/`.
 5. Optionally add a `README.md` describing your design choices.
 
-## What themes cannot override
+## What a theme may and may not set
 
-Color variables only. Spacing (`--space-*`), typography (`--font-*`, `--text-*`),
-radius (`--radius-*`), transitions (`--transition-*`) and layout dimensions
-(`--sidebar-width`) are fixed.
+A theme owns colour, the two font families (`--font-ui`, `--font-display`),
+radius (`--radius-*`) and depth (`--shadow-*`).
+
+Everything else is core, declared only in `base.css`: spacing (`--space-*`), the
+type scale (`--text-*`), line height, weight, tracking, `--font-mono`,
+transitions, `--sidebar-width`, `--rail-w` and `--measure`. That fence stops a
+palette undoing a target size or the width text is set to.
 
 ## Persistence
 
@@ -199,4 +214,7 @@ across browsers and `preferences reset` leaves it alone. Both interfaces reach
 it: `theme show` / `theme set` and `GET` / `PUT /api/users/{id}/theme`. The
 server reads the row before serving the page, so no request decides the first
 paint; `localStorage` still caches it for the Vite dev server. A user who has
-picked nothing is stored empty and painted `nord`.
+picked nothing is painted in the default theme, and the shell swaps to the first
+installed theme matching the OS `prefers-color-scheme` only when the default is
+of the other kind — before first paint, so there is no flash. A stored pick is
+never overridden.

@@ -114,6 +114,8 @@ describe('App', () => {
 
   afterEach(() => {
     document.getElementById('theme-stylesheet')?.remove()
+    delete document.documentElement.dataset.theme
+    delete document.documentElement.dataset.themeType
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
