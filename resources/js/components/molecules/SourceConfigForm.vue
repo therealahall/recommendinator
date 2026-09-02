@@ -536,13 +536,12 @@ function isSecretSet(name: string): boolean {
   width: 100%;
 }
 
-/* The chip rows and the entry meet the edge, so the shared field padding would
-   leave a strip of --bg-input around them. */
+/* Padding would leave a strip of --bg-input around the flush rows, and clipping
+   the overflow would take the entry's outward focus ring with it. */
 .chips-field {
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: hidden;
   transition: border-color 0.15s ease;
 }
 
@@ -560,11 +559,16 @@ function isSecretSet(name: string): boolean {
 }
 
 .chip-remove {
+  align-items: center;
   background: transparent;
   border: 0;
   cursor: pointer;
+  display: inline-flex;
   font-size: 1.1em;
+  justify-content: center;
   line-height: 1;
+  min-height: 24px;
+  min-width: 24px;
   padding: 0 0 0 var(--space-1);
   color: inherit;
 }

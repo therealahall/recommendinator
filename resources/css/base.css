@@ -149,9 +149,10 @@
     --transition-base: 200ms ease;
 
     --rail-w: 84px;
-    --tabbar-h: 68px;
-    /* What a page's own sticky row has to clear to stay on screen under the top
-       strip. In the strip's own units, or a text-only zoom slides it under. */
+    /* What a page's own sticky row clears to stay between the chrome, in the
+       chrome's own units: a text-only zoom slides it under a px constant. The
+       tab bar's fixed part is padding, a 20px icon and its gap. */
+    --tabbar-h: max(4.25rem, calc(3 * var(--space-1) + 2 * var(--space-2) + 20px + 2 * var(--text-xs) * 1.2));
     --topbar-h: max(3.5rem, calc(2 * var(--space-4) + var(--text-xl) * 1.5));
     --measure: 940px;
 
@@ -861,6 +862,10 @@ button.btn[aria-disabled='true'] {
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+button.badge {
+  min-height: 44px;
 }
 
 /* A tone moves the fill and the label only; every consumer says what it means

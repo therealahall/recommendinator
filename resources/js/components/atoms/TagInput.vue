@@ -140,11 +140,16 @@ function onKeypress(event: KeyboardEvent) {
 }
 
 .tag-input-remove {
+  align-items: center;
   border: none;
   background: none;
   color: inherit;
+  display: inline-flex;
   font-size: var(--text-md);
+  justify-content: center;
   line-height: 1;
+  min-height: 24px;
+  min-width: 24px;
   padding: 0;
   cursor: pointer;
 }

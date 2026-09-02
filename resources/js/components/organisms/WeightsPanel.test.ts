@@ -6,9 +6,10 @@ import { DEFAULT_WEIGHTS, usePreferencesStore } from '@/stores/preferences'
 import type { UserPreferenceResponse } from '@/types/api'
 
 const get = vi.fn()
+const put = vi.fn()
 
 vi.mock('@/composables/useApi', () => ({
-  useApi: () => ({ get, put: vi.fn(), delete: vi.fn() }),
+  useApi: () => ({ get, put, delete: vi.fn() }),
 }))
 
 function stored(weights: Record<string, number> = {}, variety = 0): UserPreferenceResponse {
@@ -36,6 +37,8 @@ describe('WeightsPanel', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     get.mockReset()
+    put.mockReset()
+    put.mockResolvedValue(undefined)
   })
 
   const CLOSED: Array<{ state: string; weights: Record<string, number>; variety: number; says: string }> = [
@@ -108,6 +111,27 @@ describe('WeightsPanel', () => {
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(prefs.getWeight('genre_match')).toBe(3)
     expect(prefs.varietyPenalty).toBe(0)
+    wrapper.unmount()
+  })
+
+  it.each(DISMISSALS)('keeps a weight that was saved before being dismissed by %s', async (_label, dismiss) => {
+    const wrapper = await panel(stored({ genre_match: 3 }))
+    await trigger(wrapper).trigger('click')
+    await flushPromises()
+    const prefs = usePreferencesStore()
+    prefs.setWeight('genre_match', 4)
+    await wrapper.get('.weights-actions .btn-primary').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ scorer_weights: expect.objectContaining({ genre_match: 4 }) }),
+    )
+
+    await dismiss(wrapper)
+    await flushPromises()
+
+    expect(prefs.getWeight('genre_match')).toBe(4)
+    expect(prefs.isDirty).toBe(false)
     wrapper.unmount()
   })
 

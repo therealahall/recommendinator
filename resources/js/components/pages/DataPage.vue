@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
+import { rescueFocus } from '@/utils/focus'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
@@ -26,9 +27,8 @@ async function onRetrySources(): Promise<void> {
     ? "Still couldn't load sync sources. Try again in a moment."
     : 'Sync sources loaded.'
   await nextTick()
-  // Success unmounts the failure branch, Retry included, dropping the keyboard
-  // user to <body> (WCAG 2.4.3). Restored only when focus actually fell there:
-  // someone who Tabbed away mid-request must not be yanked back.
+  // Success unmounts the failure branch, Retry included (WCAG 2.4.3). Only from
+  // <body>: someone who Tabbed away mid-request must not be yanked back.
   if (
     focused instanceof HTMLElement &&
     !focused.isConnected &&
@@ -36,6 +36,12 @@ async function onRetrySources(): Promise<void> {
   ) {
     sourcesPanel.value?.focus()
   }
+}
+
+async function onSourceCreated(): Promise<void> {
+  showAddSourceModal.value = false
+  await nextTick()
+  rescueFocus(sourcesPanel.value)
 }
 
 function onSyncAll(): void {
@@ -141,11 +147,8 @@ const orderedSources = computed(() => {
         >{{ retryingSources ? 'Retrying…' : 'Retry' }}</button>
       </div>
       <template v-else>
-        <!--
-          Plain content, not a live region: it is already populated on first
-          render, and a region that arrives that way is read as page content
-          rather than a status change (WCAG 4.1.3).
-        -->
+        <!-- Plain content, not a live region: populated on first render, it
+             would be read as content rather than announced (WCAG 4.1.3). -->
         <div
           v-if="unusableSources.length"
           class="state state--error unusable-sources"
@@ -216,8 +219,8 @@ const orderedSources = computed(() => {
         </div>
       </template>
 
-      <!-- Outside the branches above, so it is already in the accessibility
-           tree when a retry finally gives it something to say (WCAG 4.1.3). -->
+      <!-- Outside the branches above, so a retry finds it already in the
+           accessibility tree (WCAG 4.1.3). -->
       <p
         class="retry-status"
         data-testid="sync-sources-retry-status"
@@ -232,7 +235,7 @@ const orderedSources = computed(() => {
     <AddSourceModal
       v-if="showAddSourceModal"
       @close="showAddSourceModal = false"
-      @created="() => (showAddSourceModal = false)"
+      @created="onSourceCreated"
     />
   </div>
 </template>
