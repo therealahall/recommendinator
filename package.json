@@ -13,8 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "type-check": "vue-tsc --noEmit",
-    "lint": "eslint src/"
+    "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
     "pinia": "^4.0.3",
