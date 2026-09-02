@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, nextTick } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useRecommendationsStore } from '@/stores/recommendations'
 import { useDataStore } from '@/stores/data'
 import { rescueFocus } from '@/utils/focus'
 import { formatContentType } from '@/utils/format'
 import type { ItemEditRequest } from '@/types/api'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import RecControls from '@/components/organisms/RecControls.vue'
 import RecCard from '@/components/molecules/RecCard.vue'
 import RecSetAside from '@/components/molecules/RecSetAside.vue'
@@ -19,12 +21,13 @@ const announcement = ref('')
 const ignoreError = ref('')
 
 const typeLabel = computed(() => formatContentType(recs.contentType).toLowerCase())
-const emptyState = computed(() =>
-  recs.hasRun
-    ? `No ${typeLabel.value} recommendations. They come from items you have not ` +
-      'consumed yet — try syncing a source, or adding items to your library.'
-    : 'No recommendations yet. Click Generate to get started.',
-)
+const ranLabel = computed(() => formatContentType(recs.ranType).toLowerCase())
+const scopeMoved = computed(() => recs.ranType !== '' && recs.ranType !== recs.contentType)
+
+function onRun() {
+  if (recs.loading) return
+  recs.fetch()
+}
 
 function onComplete(dbId: number) {
   const active = document.activeElement
@@ -118,7 +121,44 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       v-if="recs.items.length === 0 && !recs.loading && !recs.error"
       class="state state--empty"
       data-testid="recs-empty"
-    >{{ emptyState }}</div>
+    >
+      <span class="state-mark"><AppIcon :name="recs.hasRun ? 'search' : 'star'" :size="20" /></span>
+      <p class="state-title">
+        {{ recs.hasRun ? `No ${typeLabel} left to rank` : 'Nothing ranked yet' }}
+      </p>
+      <p class="state-hint">
+        <template v-if="recs.hasRun">
+          Every {{ typeLabel }} in the pool is finished, in progress or set
+          aside. Recommendations come from what you have not consumed yet, so
+          syncing a source or adding items is what gives the next run something
+          to rank.
+        </template>
+        <template v-else>
+          A run scores the items you have not consumed against the library you
+          have already rated, and shows the signals behind every score.
+        </template>
+      </p>
+      <div class="state-actions">
+        <button
+          type="button"
+          class="btn btn-primary"
+          data-testid="recs-empty-run"
+          :aria-disabled="recs.loading || undefined"
+          @click="onRun"
+        >{{ recs.hasRun ? 'Rank again' : 'Rank my library' }}</button>
+        <RouterLink v-if="recs.hasRun" class="btn btn-secondary" :to="{ name: 'data' }">
+          Sync a source
+        </RouterLink>
+      </div>
+    </div>
+
+    <p v-if="recs.items.length > 0" class="run-line">
+      <span><b>{{ recs.items.length }}</b> ranked · {{ ranLabel }}</span>
+      <template v-if="scopeMoved">
+        <span class="run-sep" aria-hidden="true">·</span>
+        <span>the filter above scopes the next run</span>
+      </template>
+    </p>
 
     <div v-if="recs.items.length > 0" ref="recList">
       <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
@@ -162,6 +202,26 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
 </template>
 
 <style scoped>
+.run-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.run-line b {
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-sep {
+  opacity: 0.6;
+}
+
 .rec-ignore-error {
   margin: 0;
   font-size: var(--text-sm);

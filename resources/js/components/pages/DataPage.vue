@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useDataStore } from '@/stores/data'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import SyncSourceAccordion from '@/components/organisms/SyncSourceAccordion.vue'
 import AddSourceModal from '@/components/organisms/AddSourceModal.vue'
 import EnrichmentCard from '@/components/organisms/EnrichmentCard.vue'
@@ -96,7 +97,7 @@ const orderedSources = computed(() => {
       tabindex="-1"
     >
       <div class="sync-sources-header">
-        <h3 id="sync-sources-heading">Sync Sources</h3>
+        <h3 id="sync-sources-heading" class="section-title">Sync sources</h3>
         <button
           type="button"
           class="btn btn-primary"
@@ -178,8 +179,8 @@ const orderedSources = computed(() => {
           />
           <div v-if="orderedSources.length > 1" class="sync-all-card">
             <div>
-              <h3>All Sources</h3>
-              <p class="sync-plugin-name">Sync all enabled sources at once</p>
+              <h3 class="section-subtitle">All sources</h3>
+              <p class="sync-plugin-name">Sync every enabled source at once</p>
             </div>
             <button
               type="button"
@@ -197,7 +198,21 @@ const orderedSources = computed(() => {
           </div>
         </div>
         <div v-else-if="unusableSources.length === 0" class="state state--empty">
-          No sync sources configured yet.
+          <span class="state-mark"><AppIcon name="activity" :size="20" /></span>
+          <p class="state-title">No sources configured</p>
+          <p class="state-hint">
+            A source is an account or a file feed this instance pulls from on a
+            cadence. Add one and its runs, its schedule and its last outcome
+            appear here.
+          </p>
+          <div class="state-actions">
+            <button
+              type="button"
+              class="btn btn-primary"
+              data-testid="add-first-source-btn"
+              @click="showAddSourceModal = true"
+            >Add a source</button>
+          </div>
         </div>
       </template>
 
@@ -244,7 +259,7 @@ const orderedSources = computed(() => {
 
 .unusable-sources-title {
   margin: 0 0 var(--space-1);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .unusable-sources-list {
@@ -263,10 +278,10 @@ const orderedSources = computed(() => {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border: 2px solid var(--border-default);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--elevation-1);
 }
 
 </style>

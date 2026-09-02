@@ -27,7 +27,7 @@ const opened = ref<{ weights: Record<string, number>; variety: number } | null>(
 const status = computed(() => {
   if (prefs.saveStatus === 'error') return prefs.saveError
   if (prefs.saveStatus === 'saving') return 'Saving…'
-  if (prefs.saveStatus === 'saved') return 'Saved. Generate again to rank with them.'
+  if (prefs.saveStatus === 'saved') return 'Saved. Rank again to use them.'
   return ''
 })
 

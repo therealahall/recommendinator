@@ -97,9 +97,9 @@ const selection = computed(() =>
 
 .drop-zone-label {
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
   color: var(--text-primary);
 }
 
@@ -136,7 +136,7 @@ const selection = computed(() =>
 .drop-zone-selection {
   margin: 0;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }

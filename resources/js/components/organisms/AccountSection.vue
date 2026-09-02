@@ -37,7 +37,7 @@ const emit = defineEmits<{
 
 <template>
   <section class="card" aria-labelledby="account-heading">
-    <h3 id="account-heading">Account</h3>
+    <h3 id="account-heading" class="section-title">Account</h3>
     <p class="auth-lede account-intro">How you sign in to this instance.</p>
 
     <AccountProfileForm

@@ -65,28 +65,21 @@ function toggle(): void {
 
 <style scoped>
 .accordion {
-  border: 2px solid var(--border-default);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  overflow: hidden;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  box-shadow: var(--elevation-1);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
 }
 
 .accordion:hover {
   border-color: var(--accent);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--elevation-2);
 }
 
 .accordion--expanded {
   border-color: var(--accent);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .accordion {
-    transition: none;
-  }
+  box-shadow: var(--elevation-2);
 }
 
 .accordion-row {
@@ -94,18 +87,12 @@ function toggle(): void {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) 0;
-  transition: background 0.15s ease;
+  transition: background var(--transition-fast);
 }
 
 .accordion-row:hover,
 .accordion-row:focus-within {
   background: var(--bg-hover);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .accordion-row {
-    transition: none;
-  }
 }
 
 .accordion-heading {
@@ -137,13 +124,8 @@ function toggle(): void {
   gap: var(--space-3);
 }
 
-.accordion-trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
 .accordion-chevron {
-  transition: transform 0.2s ease;
+  transition: transform var(--transition-base);
   flex-shrink: 0;
 }
 
@@ -154,11 +136,5 @@ function toggle(): void {
 .accordion-panel-inner {
   padding: var(--space-3) var(--space-4) var(--space-4);
   border-top: 1px solid var(--border-default);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .accordion-chevron {
-    transition: none;
-  }
 }
 </style>

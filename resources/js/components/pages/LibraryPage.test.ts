@@ -25,6 +25,7 @@ function testRouter() {
     routes: [
       { path: '/library', name: 'library', component: { template: '<div />' } },
       { path: '/library/duplicates', name: 'duplicates', component: { template: '<div />' } },
+      { path: '/data', name: 'data', component: { template: '<div />' } },
     ],
   })
 }
@@ -133,6 +134,27 @@ describe('LibraryPage search behaviour', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.findAll('button').some((b) => b.text() === 'Clear search')).toBe(false)
-    expect(wrapper.text()).toContain('No items found')
+    expect(wrapper.find('[data-testid="library-empty"]').exists()).toBe(true)
+  })
+
+  // A filter hiding everything and a library holding nothing need different
+  // first actions, and one sentence for both sends the user to the wrong one.
+  it('offers to widen a filter that emptied the list, not to go and sync', async () => {
+    const { wrapper, lib } = mountPage({ items: [], loading: false, statusFilter: 'completed' })
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get('[data-testid="library-clear-filters"]').trigger('click')
+
+    expect(lib.clearFilters).toHaveBeenCalled()
+  })
+
+  it('sends an empty library to the sources that would fill it', async () => {
+    const { wrapper } = mountPage({ items: [], loading: false })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="library-clear-filters"]').exists()).toBe(false)
+    expect(
+      wrapper.findAll('a').some((link) => link.attributes('href') === '/data'),
+    ).toBe(true)
   })
 })

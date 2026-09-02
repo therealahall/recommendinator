@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import AccountSection from '@/components/organisms/AccountSection.vue'
 import SettingsSection from '@/components/organisms/SettingsSection.vue'
 import { useSubmission } from '@/composables/useSubmission'
@@ -55,7 +56,13 @@ function changePassword(change: PasswordChangeRequest) {
         >Retry</button>
       </div>
 
-      <div v-else class="state state--empty">No configurable settings.</div>
+      <div v-else class="state state--empty">
+        <span class="state-mark"><AppIcon name="sliders" :size="20" /></span>
+        <p class="state-title">Nothing to configure</p>
+        <p class="state-hint">
+          This instance exposes no settings beyond the ones in its config file.
+        </p>
+      </div>
     </div>
 
     <template v-else>

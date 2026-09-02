@@ -78,11 +78,9 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
-    --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.25);
 
     --font-ui: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     --font-display: 'Newsreader', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
-    --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 
     --radius-sm: 4px;
     --radius-md: 6px;
@@ -237,7 +235,7 @@ body {
   font-size: var(--text-base);
   color: var(--text-primary);
   background-color: var(--bg-primary);
-  line-height: 1.5;
+  line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -517,14 +515,19 @@ input[type="checkbox"] {
 }
 
 .page-header h2 {
+  font-family: var(--font-display);
   font-size: var(--text-2xl);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
   margin-bottom: var(--space-1);
 }
 
 .page-description {
+  max-width: 60ch;
   font-size: var(--text-sm);
+  line-height: var(--leading-snug);
   color: var(--text-muted);
 }
 
@@ -534,11 +537,9 @@ input[type="checkbox"] {
   border-radius: var(--radius-lg);
   padding: var(--space-5);
   margin-bottom: var(--space-5);
+  box-shadow: var(--elevation-1);
 }
 
-/* Off screen until focused, so the bypass costs the layout nothing. Its own
-   step above the chrome it opens over: an equal z-index falls back to tree
-   order, which puts this first link under the rail. */
 .skip-link {
   position: fixed;
   top: -100%;
@@ -602,11 +603,11 @@ textarea.field {
 }
 
 .source-form-label {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   font-size: var(--text-sm);
   color: var(--text-primary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .source-form-help {
@@ -628,9 +629,9 @@ textarea.field {
 .source-form-secrets legend {
   padding: 0 var(--space-2);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .secret-status-row,
@@ -680,9 +681,9 @@ textarea.field {
 .auth-eyebrow {
   margin: 0;
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tracking-widest);
   color: var(--text-secondary);
 }
 
@@ -727,7 +728,7 @@ textarea.field {
 
 .account-form-heading {
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
   margin-bottom: var(--space-3);
 }
@@ -762,7 +763,7 @@ textarea.field {
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
@@ -857,7 +858,7 @@ button.btn[aria-disabled='true'] {
   color: var(--text-secondary);
   font-family: inherit;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -910,7 +911,7 @@ button.badge[aria-checked='true'] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--text-inverse);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 button.badge[aria-checked='true']:hover {
@@ -976,7 +977,7 @@ button.badge[aria-checked='true']:hover {
   background: var(--bg-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--elevation-2);
   z-index: var(--z-dropdown);
   padding: var(--space-1) 0;
 }
@@ -1016,17 +1017,37 @@ button.badge[aria-checked='true']:hover {
   margin-bottom: var(--space-6);
 }
 
+.pref-section:last-child {
+  margin-bottom: 0;
+}
+
+/* One step under the page title in the same face. The heading reset leaves an
+   unclassed h3 at body size and weight, so a section without this is invisible
+   as a section. */
+.section-title,
 .pref-section h3 {
-  font-size: var(--text-md);
-  font-weight: 600;
-  margin-bottom: var(--space-3);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
 }
 
+.pref-section h3 {
+  margin-bottom: var(--space-3);
+}
+
+.section-subtitle,
 .pref-section h4 {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pref-section h4 {
   margin-top: var(--space-5);
   margin-bottom: var(--space-3);
 }
@@ -1046,8 +1067,6 @@ button.badge[aria-checked='true']:hover {
   white-space: nowrap;
 }
 
-/* The help trigger is a chrome-less button so the "?" icon renders identically
-   to a plain glyph. */
 .scorer-tooltip-wrap {
   position: relative;
   display: inline-flex;
@@ -1070,10 +1089,10 @@ button.badge[aria-checked='true']:hover {
   border: 1.5px solid var(--text-secondary);
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  font-weight: 600;
-  line-height: 1;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-none);
   flex-shrink: 0;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .scorer-tooltip-wrap:hover .scorer-tooltip-icon,
@@ -1101,9 +1120,9 @@ button.badge[aria-checked='true']:hover {
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-size: var(--text-xs);
-  font-weight: 400;
-  line-height: 1.45;
-  box-shadow: var(--shadow-tooltip);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-snug);
+  box-shadow: var(--elevation-2);
   z-index: var(--z-tooltip);
   white-space: normal;
 }
@@ -1223,8 +1242,6 @@ button.badge[aria-checked='true']:hover {
   flex: 1;
 }
 
-/* One 2:3 box for every type, wider key art centre-sliced into it: a per-type
-   box makes the rank column ragged down the one mixed list this app has. */
 .cover-art {
   position: relative;
   flex: 0 0 auto;
@@ -1251,7 +1268,7 @@ button.badge[aria-checked='true']:hover {
   border-style: dashed;
   background: var(--bg-primary);
   color: var(--text-muted);
-  box-shadow: none;
+  box-shadow: var(--elevation-0);
 }
 
 .kind-line {
@@ -1570,16 +1587,18 @@ button.rec-score {
 
 .library-item {
   background: var(--bg-card);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: var(--space-4);
-  transition: border-color var(--transition-base);
+  box-shadow: var(--elevation-1);
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
   display: flex;
   flex-direction: column;
 }
 
 .library-item:hover {
-  border-color: var(--border-focus);
+  border-color: var(--border-default);
+  box-shadow: var(--elevation-2);
 }
 
 .library-item-head {
@@ -1626,8 +1645,6 @@ button.rec-score {
   margin-bottom: var(--space-1);
 }
 
-/* Ignored pinned right via margin-left:auto so it stays right-aligned with or
-   without a rating. */
 .library-meta-secondary {
   display: flex;
   align-items: center;
@@ -1645,7 +1662,7 @@ button.rec-score {
   display: inline-flex;
   align-items: baseline;
   font-size: var(--text-sm);
-  letter-spacing: 0.05em;
+  letter-spacing: var(--tracking-wider);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1684,7 +1701,6 @@ button.rec-score {
   border-color: var(--text-muted);
 }
 
-/* Ignored cards keep their de-emphasized read on hover (no accent-border highlight). */
 .library-item.ignored:hover {
   border-color: var(--text-muted);
 }
@@ -1735,7 +1751,7 @@ button.rec-score {
 .edit-field label {
   display: block;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-secondary);
   margin-bottom: var(--space-1);
 }
@@ -1756,9 +1772,9 @@ button.rec-score {
 
 .edit-modal-section {
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--tracking-wider);
   color: var(--text-secondary);
   margin: 0 0 var(--space-4) 0;
 }
@@ -1795,10 +1811,12 @@ button.rec-score {
 .state--empty {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-8) var(--space-4);
-  text-align: center;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: 780px;
+  padding: var(--space-6);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-lg);
 }
 
 .state--loading {
@@ -1844,22 +1862,37 @@ button.rec-score {
   border-radius: var(--radius-lg);
   background: var(--bg-card);
   color: var(--text-secondary);
+  box-shadow: var(--elevation-1);
 }
 
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.state-actions .btn {
+  min-height: 44px;
+}
+
+/* A step under .section-title: an empty state sits inside a section as often as
+   it stands for a whole page, and must never outrank the heading above it. */
 .state-title {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
 }
 
 .state-hint {
+  max-width: 58ch;
   font-size: var(--text-sm);
+  line-height: var(--leading-snug);
   color: var(--text-muted);
-  margin-bottom: var(--space-3);
 }
 
-/* 16 for a control's own glyph, 20 for navigation, 40 for an empty state.
-   Twelve hand-authored SVGs sized themselves five different ways. */
 .icon {
   width: 16px;
   height: 16px;
@@ -1898,7 +1931,7 @@ button.rec-score {
 
 .profile-summary { font-size: var(--text-sm); }
 .profile-section { margin-bottom: var(--space-3); }
-.profile-section h4 { font-size: var(--text-xs); font-weight: 600; margin: 0 0 var(--space-2) 0; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.profile-section h4 { font-size: var(--text-xs); font-weight: var(--weight-semibold); margin: 0 0 var(--space-2) 0; color: var(--text-muted); text-transform: uppercase; letter-spacing: var(--tracking-wider); }
 .profile-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .profile-status { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
 .profile-status.failed { color: var(--color-error-text); }

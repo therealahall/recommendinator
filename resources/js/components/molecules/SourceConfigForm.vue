@@ -635,7 +635,7 @@ function isSecretSet(name: string): boolean {
   background: color-mix(in srgb, var(--color-success) 60%, black);
   color: var(--text-on-dark-fill);
   border-color: color-mix(in srgb, var(--color-success) 60%, black);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 :deep(.btn-success:hover:not(:disabled):not([aria-disabled='true'])) {

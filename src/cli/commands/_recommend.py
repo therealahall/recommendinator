@@ -108,9 +108,11 @@ def recommend(
                 # read identically otherwise.
                 label = content_type_str.replace("_", " ")
                 click.echo(
-                    f"No {label} recommendations. They come from items you have "
-                    "not consumed yet — try syncing a source, or adding items "
-                    "to your library."
+                    f"No {label} left to rank. Every {label} in the pool is "
+                    "finished, in progress or set aside. Recommendations come "
+                    "from what you have not consumed yet, so syncing a source "
+                    "or adding items is what gives the next run something to "
+                    "rank."
                 )
             return
 

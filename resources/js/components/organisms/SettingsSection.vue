@@ -221,7 +221,7 @@ onBeforeUnmount(clearSaveTimer)
 
 <template>
   <div class="card">
-    <h3 :id="headingId">{{ title }}</h3>
+    <h3 :id="headingId" class="section-title">{{ title }}</h3>
 
     <div :id="groupId" role="group" :aria-labelledby="headingId">
       <SettingControl

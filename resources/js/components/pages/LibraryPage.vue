@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch, onUnmounted } from 'vue'
+import { computed, onMounted, ref, watch, onUnmounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
@@ -12,6 +12,23 @@ const lib = useLibraryStore()
 const data = useDataStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
+
+const filtered = computed(
+  () => Boolean(lib.typeFilter || lib.statusFilter || lib.enrichmentFilter) || lib.showIgnored,
+)
+
+const emptyTitle = computed(() => {
+  if (lib.needsRating) return 'Nothing needs a rating'
+  return filtered.value ? 'Nothing matches these filters' : 'Your library is empty'
+})
+
+const emptyHint = computed(() => {
+  if (lib.needsRating) return 'Every item you have finished already carries one.'
+  return filtered.value
+    ? 'Widen the filters above, or clear them to see the whole library.'
+    : 'Sync a source or import a file, and what it brings back lands here.'
+})
+
 
 async function onRestoreEnrichment(dbId: number) {
   lib.editError = ''
@@ -102,12 +119,33 @@ onUnmounted(() => {
         <span class="state-mark"><AppIcon name="search" :size="20" /></span>
         <p class="state-title">No items match “{{ lib.searchQuery }}”</p>
         <p class="state-hint">Try a different title, or check your spelling.</p>
-        <button class="btn btn-secondary" @click="lib.setFilter('search', '')">Clear search</button>
+        <div class="state-actions">
+          <button class="btn btn-primary" @click="lib.setFilter('search', '')">Clear search</button>
+        </div>
       </div>
 
-      <div v-else-if="lib.items.length === 0 && !lib.loading" class="state state--empty">
-        <template v-if="lib.needsRating">Nothing needs a rating. All your completed items are rated.</template>
-        <template v-else>No items found. Try syncing your sources.</template>
+      <div
+        v-else-if="lib.items.length === 0 && !lib.loading"
+        class="state state--empty"
+        data-testid="library-empty"
+      >
+        <span class="state-mark">
+          <AppIcon :name="lib.needsRating ? 'star' : filtered ? 'search' : 'book'" :size="20" />
+        </span>
+        <p class="state-title">{{ emptyTitle }}</p>
+        <p class="state-hint">{{ emptyHint }}</p>
+        <div class="state-actions">
+          <button
+            v-if="lib.needsRating || filtered"
+            type="button"
+            class="btn btn-primary"
+            data-testid="library-clear-filters"
+            @click="lib.clearFilters"
+          >Show everything</button>
+          <RouterLink v-else class="btn btn-primary" :to="{ name: 'data' }">
+            Sync a source
+          </RouterLink>
+        </div>
       </div>
     </div>
 

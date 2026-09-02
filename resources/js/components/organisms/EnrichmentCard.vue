@@ -99,9 +99,9 @@ const onReset = (provider: string) =>
 
 <template>
   <div class="card">
-    <h3>Metadata Enrichment</h3>
+    <h3 class="section-title">Metadata enrichment</h3>
     <p class="help-text">
-      Enrichment adds genres, tags, and descriptions from external APIs (TMDB,
+      Enrichment adds genres, tags and descriptions from external APIs (TMDB,
       OpenLibrary, RAWG).
     </p>
 
@@ -124,7 +124,11 @@ const onReset = (provider: string) =>
       </p>
       <div v-else-if="stats">
         <div v-if="stats.total === 0" class="state state--empty">
-          No items to enrich. Sync some content first.
+          <p class="state-title">Nothing to enrich</p>
+          <p class="state-hint">
+            Sync a source or import a file first; enrichment fills in what those
+            leave out.
+          </p>
         </div>
         <div v-else class="enrichment-summary">
           <span>{{ stats.enriched }}/{{ stats.total }}
@@ -259,7 +263,7 @@ const onReset = (provider: string) =>
 
 .enrichment-errors-title {
   margin: 0 0 var(--space-1);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .enrichment-errors-list {

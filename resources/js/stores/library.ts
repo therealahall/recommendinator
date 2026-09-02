@@ -159,6 +159,17 @@ export const useLibraryStore = defineStore('library', () => {
     return resetAndLoad()
   }
 
+  /** One reload, not one per field: setFilter reloads on every call, so
+   *  clearing five of them in a row would fire five requests. */
+  function clearFilters() {
+    typeFilter.value = ''
+    statusFilter.value = ''
+    enrichmentFilter.value = ''
+    showIgnored.value = false
+    needsRating.value = false
+    return resetAndLoad()
+  }
+
   function syncRow(dbId: number, fields: Partial<ContentItemResponse>) {
     const index = items.value.findIndex((i) => i.db_id === dbId)
     if (index >= 0) items.value[index] = { ...items.value[index], ...fields }
@@ -256,6 +267,7 @@ export const useLibraryStore = defineStore('library', () => {
     loadMore,
     cleanup,
     setFilter,
+    clearFilters,
     openEdit,
     closeEdit,
     saveEdit,

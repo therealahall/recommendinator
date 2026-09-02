@@ -60,6 +60,7 @@ defineExpose({ surface })
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-3);
 }
 
 .dialog-surface-wide {

@@ -67,14 +67,14 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
     aria-labelledby="dup-history-heading"
     tabindex="-1"
   >
-    <h3 id="dup-history-heading" class="dup-heading">What you have decided</h3>
+    <h3 id="dup-history-heading" class="section-title">What you have decided</h3>
 
-    <h4 id="dup-merges-heading" class="dup-subheading">Merges</h4>
+    <h4 id="dup-merges-heading" class="section-subtitle dup-subheading">Merges</h4>
     <p class="help-text">
       Newest first, which is the order they come back off in. The row that was
       folded in keeps everything it had.
     </p>
-    <p v-if="mergeRows.length === 0" class="state state--empty">No merges yet.</p>
+    <p v-if="mergeRows.length === 0" class="state">No merges yet.</p>
     <ul
       v-else
       ref="mergesEl"
@@ -102,10 +102,8 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
       </li>
     </ul>
 
-    <h4 id="dup-declined-heading" class="dup-subheading">Dismissed pairs</h4>
-    <p v-if="declinedRows.length === 0" class="state state--empty">
-      No pairs dismissed.
-    </p>
+    <h4 id="dup-declined-heading" class="section-subtitle dup-subheading">Dismissed pairs</h4>
+    <p v-if="declinedRows.length === 0" class="state">No pairs dismissed.</p>
     <ul
       v-else
       ref="declinedEl"
@@ -131,16 +129,9 @@ function offerAgain(index: number, oneId: number, otherId: number): Promise<void
 </template>
 
 <style scoped>
-.dup-heading {
-  font-size: var(--text-lg);
-  font-weight: 600;
-}
-
 .dup-subheading {
   margin-top: var(--space-5);
   margin-bottom: var(--space-1);
-  font-size: var(--text-md);
-  font-weight: 600;
 }
 
 .dup-log {

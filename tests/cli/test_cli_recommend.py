@@ -27,7 +27,7 @@ class TestRecommendEmptyResultsRegression:
         assert result.exit_code == 0
         assert "have not consumed yet" in result.output
         assert "add more consumed content" not in result.output
-        assert "No video game recommendations" in result.output
+        assert "No video game left to rank" in result.output
 
 
 class TestRecommendCountMaxEnforcement:
