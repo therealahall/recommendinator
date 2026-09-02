@@ -395,6 +395,24 @@ uv run python -m src.cli theme set snowstorm
 The theme is not a scoring preference: `preferences reset` leaves it alone, and
 only an installed theme id is accepted. `show` and `set` take `--user`.
 
+## Covers
+
+```bash
+uv run python -m src.cli covers backfill               # cache every uncached cover
+uv run python -m src.cli covers status                 # the live walk, whoever started it
+uv run python -m src.cli covers stop                   # end the walk, whoever started it
+uv run python -m src.cli covers show 42                # where one item's art is cached
+```
+
+Art is fetched once and served from this app's own origin, so a page load never
+tells a metadata CDN which titles the library holds. A cover that is permanently
+gone is remembered as dead, so no later sync re-offers it, and the item is
+re-queued for enrichment so the next source or provider can name another.
+
+One walk runs at a time across both interfaces. A stop takes effect after the
+item the walk is on, and is not a failure: `backfill` exits non-zero only when
+the walk stopped on an error.
+
 ## Enrichment
 
 Enrichment is critical for recommendation quality. See

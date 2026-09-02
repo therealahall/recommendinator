@@ -3611,6 +3611,14 @@ _GUARDED_ENDPOINTS = [
         body={"content_type": "book", "title": "Dune"},
     ),
     _Endpoint("POST", "/api/update", ("storage", "config"), body={"source": "all"}),
+    _Endpoint("POST", "/api/covers/backfill", ("storage", "config")),
+    _Endpoint("POST", "/api/covers/backfill/stop", ("storage",)),
+    _Endpoint(
+        "GET",
+        "/api/covers/{item_id}",
+        ("storage", "config"),
+        url="/api/covers/1",
+    ),
     _Endpoint("GET", "/api/sync/sources", ("config", "storage")),
     # Both read both halves: creating refuses an id YAML already holds, and
     # deleting decides off the sources left whether a credential stranded
@@ -3755,6 +3763,7 @@ _DEPENDENCY_FREE_ENDPOINTS = [
         url="/api/import/templates/download?importer=csv_import&content_type=book",
     ),
     _Endpoint("GET", "/api/sync/status"),
+    _Endpoint("GET", "/api/covers/backfill/status"),
     _Endpoint("GET", "/api/themes"),
     _Endpoint("GET", "/api/themes/default"),
 ]

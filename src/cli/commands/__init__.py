@@ -5,6 +5,7 @@ it here: ``commands.auth`` has to be the group, not the module holding it.
 from src.cli.commands._account import account
 from src.cli.commands._auth import auth
 from src.cli.commands._complete import complete
+from src.cli.commands._covers import covers
 from src.cli.commands._enrichment import enrichment
 from src.cli.commands._import import import_command, import_formats, import_template
 from src.cli.commands._library import library
@@ -21,6 +22,7 @@ __all__ = [
     "account",
     "auth",
     "complete",
+    "covers",
     "enrichment",
     "import_command",
     "import_formats",

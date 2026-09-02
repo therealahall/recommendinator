@@ -9,6 +9,7 @@ from src.cli.commands import (
     account,
     auth,
     complete,
+    covers,
     enrichment,
     import_command,
     import_formats,
@@ -146,6 +147,7 @@ cli.add_command(import_command)
 cli.add_command(import_formats)
 cli.add_command(import_template)
 cli.add_command(complete)
+cli.add_command(covers)
 cli.add_command(preferences)
 cli.add_command(enrichment)
 cli.add_command(library)

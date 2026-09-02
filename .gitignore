@@ -58,6 +58,11 @@ dmypy.json
 *.db-wal
 *.sqlite
 *.sqlite3
+# Cached cover art: the images name every title the library holds. Broad
+# because the cache follows `database_path` wherever it points, so the
+# source package has to be exempted by name.
+**/covers/
+!src/covers/
 # Written by releases before the AI removal, and still sitting in installs
 # that ran one. Un-ignoring it would sweep a personal library into a commit.
 chroma_db/
