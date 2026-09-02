@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from '@/components/atoms/AppIcon.vue'
 import ScorerSlider from '@/components/atoms/ScorerSlider.vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
@@ -40,9 +40,7 @@ function revert() {
   prefs.varietyPenalty = opened.value.variety
 }
 
-/** Every way out but Save: the sliders write straight to the shared store. */
 function dismiss() {
-  revert()
   emit('close')
 }
 
@@ -55,6 +53,10 @@ onMounted(async () => {
   if (!prefs.hasLoaded) await prefs.load()
   take()
 })
+
+/** The sliders write straight to the shared store, and every way out — the
+ *  close button, Escape, the scrim, a route change — ends here. */
+onUnmounted(revert)
 </script>
 
 <template>

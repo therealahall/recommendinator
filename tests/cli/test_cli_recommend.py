@@ -164,6 +164,7 @@ class TestRecommendJsonOutput:
                 score=0.9,
                 reasoning="Great match",
                 score_breakdown={"genre": 0.5, "theme": 0.4},
+                scorer_weights={"genre": 2.0, "theme": 1.0},
             )
         )
 
@@ -187,12 +188,14 @@ class TestRecommendJsonOutput:
             "score",
             "reasoning",
             "score_breakdown",
+            "scorer_weights",
             "variety_penalty",
             "contributing_items",
             "adaptations",
         }
         assert rec["db_id"] == 42
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
+        assert rec["scorer_weights"] == {"genre": 2.0, "theme": 1.0}
         assert (rec["series"], rec["series_index"]) == ("The Expanse", 2.0)
 
     def test_json_output_names_every_item_behind_a_pick(self) -> None:
@@ -300,6 +303,7 @@ class TestRecommendProgressLineOnStdoutRegression:
                 "score": 0.9,
                 "reasoning": "Great match",
                 "score_breakdown": {},
+                "scorer_weights": {},
                 "variety_penalty": 0.0,
                 "contributing_items": [],
                 "adaptations": [],

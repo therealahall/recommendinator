@@ -110,6 +110,7 @@ describe('WeightsPanel', () => {
     ['Escape', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))],
     ['the scrim behind it', (wrapper) => wrapper.get('.weights-scrim').trigger('click')],
     ['its close button', (wrapper) => wrapper.get('.weights-close').trigger('click')],
+    ['a route change taking it off the page', (wrapper) => wrapper.unmount()],
   ]
 
   // The sliders write to the shared store, so an abandoned weight rode along
@@ -125,7 +126,7 @@ describe('WeightsPanel', () => {
     await dismiss(wrapper)
     await flushPromises()
 
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(prefs.getWeight('genre_match')).toBe(3)
     expect(prefs.varietyPenalty).toBe(0)
     wrapper.unmount()

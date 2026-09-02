@@ -31,25 +31,40 @@ export interface ScoreSegment {
   tone: 'lead' | 'rest' | 'penalty'
 }
 
+export interface ScoreShare {
+  key: string
+  points: number
+}
+
+/** Each signal's points of the final percentage: a raw value ranks the
+ *  1.0-weighted scorer over the 2.0-weighted one that moved the score twice. */
+export function scoreShares(
+  breakdown: Record<string, number>,
+  weights: Record<string, number>,
+): ScoreShare[] {
+  const weightOf = (key: string) => weights[key] ?? 1
+  const total = Object.keys(breakdown).reduce((sum, key) => sum + weightOf(key), 0)
+  if (total === 0) return []
+  return Object.entries(breakdown)
+    .map(([key, value]) => ({ key, points: (value * weightOf(key) * 100) / total }))
+    .sort((one, two) => two.points - one.points)
+}
+
+export function penaltyPoints(shares: ScoreShare[], varietyPenalty: number): number {
+  return shares.reduce((sum, share) => sum + share.points, 0) * varietyPenalty
+}
+
 const SPINE_LEADS = 4
 
-/** The expanded rows' own scorers in their own order: a closed bar built from
- *  anything else is a second summary that can disagree with the open one. */
-export function scoreSpine(
-  breakdown: Record<string, number>,
-  varietyPenalty: number,
-): ScoreSegment[] {
-  const ranked = Object.entries(breakdown)
-    .filter(([, value]) => value > 0)
-    .sort(([, one], [, two]) => two - one)
+export function scoreSpine(shares: ScoreShare[], varietyPenalty: number): ScoreSegment[] {
+  const ranked = shares.filter((share) => share.points > 0)
   const parts: ScoreSegment[] = ranked
     .slice(0, SPINE_LEADS)
-    .map(([key, value]) => ({ key, percent: value, tone: 'lead' as const }))
-  const tail = ranked.slice(SPINE_LEADS).reduce((sum, [, value]) => sum + value, 0)
+    .map(({ key, points }) => ({ key, percent: points, tone: 'lead' as const }))
+  const tail = ranked.slice(SPINE_LEADS).reduce((sum, share) => sum + share.points, 0)
   if (tail > 0) parts.push({ key: 'rest', percent: tail, tone: 'rest' })
-  if (varietyPenalty > 0) {
-    parts.push({ key: 'penalty', percent: varietyPenalty, tone: 'penalty' })
-  }
+  const lost = penaltyPoints(shares, varietyPenalty)
+  if (lost > 0) parts.push({ key: 'penalty', percent: lost, tone: 'penalty' })
 
   const total = parts.reduce((sum, part) => sum + part.percent, 0)
   if (total === 0) return []

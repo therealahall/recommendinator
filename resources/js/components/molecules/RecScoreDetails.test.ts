@@ -15,6 +15,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     score: 0.5,
     reasoning: 'Because',
     score_breakdown: { genre_match: 0.8 },
+    scorer_weights: {},
     variety_penalty: 0,
     contributing_items: [],
     adaptations: [],
@@ -23,15 +24,15 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
 }
 
 describe('RecScoreDetails', () => {
-  it('renders the variety penalty row with a negative percentage label', () => {
+  it('takes off the points the variety penalty cost, not the fraction it is', () => {
     const wrapper = mount(RecScoreDetails, {
-      props: { rec: makeRec({ variety_penalty: 0.64 }), open: true },
+      props: { rec: makeRec({ variety_penalty: 0.25 }), open: true },
     })
     const penaltyRow = wrapper.find('.score-row-penalty')
     expect(penaltyRow.exists()).toBe(true)
     expect(penaltyRow.text()).toContain('Variety penalty')
-    // Minus sign (U+2212) plus the rounded percentage.
-    expect(penaltyRow.text()).toContain('−64%')
+    // Minus sign (U+2212): a quarter off the 80 points the one scorer put in.
+    expect(penaltyRow.text()).toContain('−20%')
   })
 
   it('omits the variety penalty row when there is no penalty', () => {
@@ -62,6 +63,26 @@ describe('RecScoreDetails', () => {
     expect(wrapper.get('.score-value').text()).toBe('88%')
     expect(wrapper.text()).toContain('How 88% was reached')
     expect(wrapper.text()).not.toContain('0.88')
+  })
+
+  it('weights each signal the way the run did, and accounts for the total it names', () => {
+    const wrapper = mount(RecScoreDetails, {
+      props: {
+        rec: makeRec({
+          score: 0.7,
+          score_breakdown: { tag_overlap: 0.9, continuation: 0.6 },
+          scorer_weights: { tag_overlap: 1, continuation: 2 },
+        }),
+        open: true,
+      },
+    })
+
+    expect(wrapper.text()).toContain('How 70% was reached')
+    expect(wrapper.findAll('.score-label').map((cell) => cell.text())).toEqual([
+      'Continuation',
+      'Tag Overlap',
+    ])
+    expect(wrapper.findAll('.score-value').map((cell) => cell.text())).toEqual(['40%', '30%'])
   })
 
   it('is hidden from everyone, not just from sight, while collapsed', () => {

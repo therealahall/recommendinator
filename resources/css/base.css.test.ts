@@ -669,6 +669,15 @@ describe('the score spine', () => {
   })
 })
 
+describe('the rail at a text size taller than the viewport', () => {
+  it('scrolls the tabs it cannot fit rather than stranding them below the edge', () => {
+    const rail = ruleBlock(readBase(), '.app-nav')
+
+    expect(declaration(rail, 'height')).toMatch(/^100/)
+    expect(declaration(rail, 'overflow-y')).toBe('auto')
+  })
+})
+
 describe('the rail becoming a tab bar', () => {
   // Two queries and a script watching a third let an 800px tablet have the nav
   // off screen at a width nothing called narrow, so it stayed tabbable while

@@ -34,8 +34,8 @@ class RecommendationResponse(BaseModel):
     score: float
     reasoning: str
     score_breakdown: dict[str, float] = Field(default_factory=dict)
-    # Stepped genre-fatigue penalty applied when the variety_penalty preference
-    # is set (0.0 when off or the item's genre was not recently finished).
+    scorer_weights: dict[str, float] = Field(default_factory=dict)
+    # 0.0 when the preference is off, or the item's genre was not just finished.
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
     contributing_items: list[RelatedItemResponse] = Field(default_factory=list)
     adaptations: list[RelatedItemResponse] = Field(default_factory=list)

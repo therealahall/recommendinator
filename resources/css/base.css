@@ -346,6 +346,7 @@ input[type="checkbox"] {
   z-index: var(--z-chrome);
   height: 100vh;
   height: 100dvh;
+  overflow-y: auto;
   padding: var(--space-4) var(--space-1) var(--space-3);
   background: var(--chrome);
   box-shadow: inset -1px 0 0 var(--border-default);

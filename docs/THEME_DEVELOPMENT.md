@@ -167,9 +167,9 @@ The stylesheet derives them with `color-mix()`:
 
 ```css
 /* resources/css/base.css */
-.badge-status {
-    background: color-mix(in srgb, var(--color-success) 10%, transparent);
-    border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
+.badge[data-tone='success'] {
+    background: color-mix(in srgb, var(--color-success) 20%, transparent);
+    color: var(--text-primary);
 }
 ```
 

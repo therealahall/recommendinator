@@ -402,6 +402,7 @@ class RecommendationEngine:
         return self._format_recommendations(
             ranked_items[:count],
             breakdown_by_key,
+            active_pipeline.weights,
             adaptations,
             taste.index,
             taste.preferences,
@@ -589,6 +590,7 @@ class RecommendationEngine:
         self,
         ranked_items: list[_RankedCandidate],
         breakdown_by_key: dict[str, dict[str, float]],
+        scorer_weights: dict[str, float],
         adaptations: dict[str, list[ContentItem]],
         signal_index: SignalIndex,
         preferences: UserPreferences,
@@ -610,6 +612,7 @@ class RecommendationEngine:
                         contributing_items,
                     ),
                     score_breakdown=breakdown_by_key[key],
+                    scorer_weights=scorer_weights,
                     variety_penalty=variety_penalty,
                     contributing_items=contributing_items,
                     adaptations=item_adaptations,

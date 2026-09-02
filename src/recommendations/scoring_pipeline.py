@@ -10,7 +10,6 @@ from src.utils.series import is_first_item_in_series
 
 logger = logging.getLogger(__name__)
 
-# Build reverse map: scorer class -> config key.
 # Derived from SCORER_NAME_MAP at import time — if SCORER_NAME_MAP is extended,
 # this must be rebuilt (or the new scorer won't appear in breakdowns).
 _CLASS_TO_NAME: dict[type[Scorer], str] = {
@@ -36,6 +35,14 @@ class ScoredCandidate:
 class ScoringPipeline:
     def __init__(self, scorers: list[Scorer]) -> None:
         self.scorers = scorers
+
+    @property
+    def weights(self) -> dict[str, float]:
+        return {
+            name: scorer.weight
+            for scorer in self.scorers
+            if (name := _CLASS_TO_NAME.get(type(scorer))) is not None
+        }
 
     def score_candidates_with_breakdown(
         self,

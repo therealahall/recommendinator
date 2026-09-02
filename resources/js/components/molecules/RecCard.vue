@@ -5,7 +5,13 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 import ItemCover from '@/components/atoms/ItemCover.vue'
 import RecScoreDetails from '@/components/molecules/RecScoreDetails.vue'
 import { contentTypeGlyph } from '@/constants/contentTypes'
-import { formatContentType, formatScore, formatSeries, scoreSpine } from '@/utils/format'
+import {
+  formatContentType,
+  formatScore,
+  formatSeries,
+  scoreShares,
+  scoreSpine,
+} from '@/utils/format'
 
 const props = defineProps<{
   rec: RecommendationResponse
@@ -36,7 +42,12 @@ const series = computed(() => formatSeries(props.rec.series, props.rec.series_in
 const typeLabel = computed(() => formatContentType(props.rec.content_type))
 const glyph = computed(() => contentTypeGlyph(props.rec.content_type))
 const percent = computed(() => formatScore(props.rec.score))
-const spine = computed(() => scoreSpine(props.rec.score_breakdown, props.rec.variety_penalty))
+const spine = computed(() =>
+  scoreSpine(
+    scoreShares(props.rec.score_breakdown, props.rec.scorer_weights),
+    props.rec.variety_penalty,
+  ),
+)
 const hasBreakdown = computed(
   () => Object.keys(props.rec.score_breakdown).length > 0 || props.rec.variety_penalty > 0,
 )

@@ -1,8 +1,11 @@
+import re
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from src.models.content import ContentType
 from src.recommendations.engine import RecommendationEngine
-from src.recommendations.record import Recommendation
+from src.recommendations.record import Recommendation, RecommendationPayload
+from src.web.api._recommendations import RecommendationResponse
 from src.web.state import app_state
 from tests.factories import (
     authenticated_client,
@@ -10,6 +13,28 @@ from tests.factories import (
     make_item,
     make_storage_mock,
 )
+
+#: The SPA reads the response through this, so a field it does not declare is
+#: one the browser drops on the floor however faithfully the API sends it.
+_MIRROR = Path("resources/js/types/api.ts")
+
+
+def _mirrored_fields(interface: str) -> set[str]:
+    body = re.search(
+        rf"export interface {interface} \{{(.*?)^\}}",
+        _MIRROR.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert body is not None, f"{interface} is declared nowhere in {_MIRROR}"
+    return set(re.findall(r"^  (\w+)\??:", body.group(1), re.MULTILINE))
+
+
+class TestRecommendationFieldParity:
+    def test_a_field_reaches_the_cli_the_api_and_the_spa_or_none_of_them(self) -> None:
+        fields = set(RecommendationPayload.__annotations__)
+
+        assert fields == set(RecommendationResponse.model_fields)
+        assert fields == _mirrored_fields("RecommendationResponse")
 
 
 class TestEmptyRecommendationsRegression:
