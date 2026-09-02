@@ -2902,6 +2902,99 @@ class TestContentTypeExclusions:
         assert {rec.item.id for rec in recommendations} == {"b1", "m1"}
 
 
+class TestCrossTypeRun:
+    """Naming no type once meant no run at all, so one ranked list across the
+    four types was unreachable from either interface."""
+
+    @staticmethod
+    def _candidate(title, content_type, genre):
+        return ContentItem(
+            id=title,
+            title=title,
+            content_type=content_type,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genre": genre},
+        )
+
+    def _back_storage(self, mock_storage, per_type_candidates):
+        loved = [
+            ContentItem(
+                id=f"loved-{content_type.value}",
+                title=f"Loved {content_type.value}",
+                content_type=content_type,
+                status=ConsumptionStatus.COMPLETED,
+                rating=5,
+                metadata={"genre": "Science Fiction"},
+            )
+            for content_type in ContentType
+        ]
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [
+                item
+                for item in loved
+                if content_type is None or item.content_type == content_type
+            ]
+        )
+        mock_storage.get_unconsumed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: per_type_candidates(
+                content_type
+            )
+        )
+
+    def test_a_run_naming_no_type_ranks_all_four_in_one_list(
+        self, engine, mock_storage
+    ):
+        self._back_storage(
+            mock_storage,
+            lambda content_type: [
+                self._candidate(
+                    f"{content_type.value} pick", content_type, "Science Fiction"
+                )
+            ],
+        )
+
+        recommendations = engine.generate_recommendations(count=4)
+
+        assert {get_enum_value(rec.item.content_type) for rec in recommendations} == {
+            content_type.value for content_type in ContentType
+        }
+        scores = [rec.score for rec in recommendations]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_count_is_the_size_of_the_merged_list_not_a_count_per_type(
+        self, engine, mock_storage
+    ):
+        self._back_storage(
+            mock_storage,
+            lambda content_type: [
+                self._candidate(
+                    f"{content_type.value} {rank}", content_type, "Science Fiction"
+                )
+                for rank in range(3)
+            ],
+        )
+
+        recommendations = engine.generate_recommendations(count=2)
+
+        assert len(recommendations) == 2
+
+    def test_naming_a_type_still_ranks_that_type_alone(self, engine, mock_storage):
+        self._back_storage(
+            mock_storage,
+            lambda content_type: [
+                self._candidate(
+                    f"{content_type.value} pick", content_type, "Science Fiction"
+                )
+            ],
+        )
+
+        recommendations = engine.generate_recommendations(
+            content_type=ContentType.MOVIE, count=4
+        )
+
+        assert [rec.item.title for rec in recommendations] == ["movie pick"]
+
+
 class TestObjectShapedGenresFromStorage:
     """A genre column filled with TMDB's objects must not break a run."""
 

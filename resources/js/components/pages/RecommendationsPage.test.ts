@@ -218,7 +218,7 @@ describe('RecommendationsPage', () => {
       await wrapper.find('[data-testid="ignore-btn-1"]').trigger('click')
       await flushPromises()
 
-      expect(wrapper.get('[role="status"]').text()).toContain('Ignored “A”')
+      expect(wrapper.get('[data-testid="recs-announce"]').text()).toContain('Ignored “A”')
     })
 
     it('brings the card back on Undo, with focus on the Ignore that returned', async () => {
@@ -249,14 +249,30 @@ describe('RecommendationsPage', () => {
     })
   })
 
-  // A run is scoped to one type, so changing the selector leaves the previous
-  // type's list under a pill that names a different one.
-  it('names the type the list on screen was ranked for, not the one selected', async () => {
-    const { wrapper, store } = await mountWithItems()
-    store.contentType = 'movie'
-    await wrapper.vm.$nextTick()
+  // The selector filters what came back; only the Rank button runs anything.
+  it('narrows the list to one type without asking for another run', async () => {
+    wrapper = mount(RecommendationsPage, {
+      global: { stubs, plugins: [router] },
+      attachTo: document.body,
+    })
+    const store = useRecommendationsStore()
+    mockGet.mockResolvedValue([
+      makeRec({ db_id: 1, title: 'Hyperion', content_type: 'book' }),
+      makeRec({ db_id: 2, title: 'Arrival', content_type: 'movie', score: 0.8 }),
+    ])
+    await store.fetch()
+    await flushPromises()
 
-    expect(wrapper.get('.run-line').text()).toContain('book')
+    store.contentType = 'movie'
+    await flushPromises()
+
+    expect(mockGet).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Arrival')
+    expect(wrapper.text()).not.toContain('Hyperion')
+    // Nothing takes focus on a filter, so the count is how a screen reader
+    // learns the list moved (WCAG 4.1.3).
+    expect(wrapper.get('.run-line').attributes('role')).toBe('status')
+    expect(wrapper.get('.run-line').text()).toContain('1 of 2 ranked')
   })
 
   describe('the empty state', () => {
@@ -292,6 +308,34 @@ describe('RecommendationsPage', () => {
       const page = await emptyAfterRun('tv_show')
 
       expect(page.get('[data-testid="recs-empty"]').text()).toContain('tv show')
+    })
+
+    it('names no type when the run that came back empty ranked all four', async () => {
+      const page = await emptyAfterRun('')
+
+      expect(page.get('[data-testid="recs-empty"]').text()).toContain('Nothing left to rank')
+    })
+
+    it('offers the rest of the run back when the filter empties the list', async () => {
+      wrapper = mount(RecommendationsPage, {
+        global: { stubs, plugins: [router] },
+        attachTo: document.body,
+      })
+      const store = useRecommendationsStore()
+      mockGet.mockResolvedValue([makeRec({ db_id: 1, content_type: 'book' })])
+      await store.fetch()
+      await flushPromises()
+
+      store.contentType = 'movie'
+      await flushPromises()
+      expect(wrapper.get('[data-testid="recs-empty"]').text()).toContain('No movie in this run')
+
+      await wrapper.get('[data-testid="recs-show-all"]').trigger('click')
+      await flushPromises()
+
+      expect(store.contentType).toBe('')
+      expect(mockGet).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-testid="recs-empty"]').exists()).toBe(false)
     })
 
     it('says a run has happened differently from one that has not', async () => {

@@ -79,7 +79,6 @@ _CONTENT_TYPE_LABEL: dict[str, str] = {
     "video_game": "Video Game",
 }
 
-# Natural-language labels for single-item reasoning (e.g. "the book Dune").
 _CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
     "book": "the book",
     "movie": "the movie",
@@ -168,10 +167,13 @@ class RecommendationEngine:
 
     def generate_recommendations(
         self,
-        content_type: ContentType,
+        content_type: ContentType | None = None,
         count: int = 5,
         user_preference_config: UserPreferenceConfig | None = None,
     ) -> list[Recommendation]:
+        if content_type is None:
+            return self._generate_across_types(count, user_preference_config)
+
         # The configuration this request runs on, fixed here.  A settings save
         # landing while it scores changes what the next request resolves, and
         # nothing about this one.
@@ -209,12 +211,10 @@ class RecommendationEngine:
             logger.warning("No unconsumed items found for %s", content_type.value)
             return []
 
-        # Build series tracking (content-type specific) — before TV expansion
-        # so that inject_seasons_watched_tracking can use the show-level items
+        # Before TV expansion: inject_seasons_watched_tracking needs show-level items.
         series_tracking = build_series_tracking(consumed_items_of_type)
 
-        # Expand TV shows to season-level for granular recommendations
-        # (library stays show-level; expansion is for scoring only)
+        # The library stays show-level; season expansion is for scoring only.
         if content_type == ContentType.TV_SHOW:
             series_tracking = inject_seasons_watched_tracking(
                 unconsumed_items, series_tracking
@@ -369,6 +369,24 @@ class RecommendationEngine:
             )
 
         return recommendations
+
+    def _generate_across_types(
+        self,
+        count: int,
+        user_preference_config: UserPreferenceConfig | None,
+    ) -> list[Recommendation]:
+        # One type-scoped run each, because season expansion and series tracking
+        # only mean anything inside a type. No type can hold more than `count` of
+        # the merged top `count`, so its own top `count` is all that can matter.
+        candidates = [
+            recommendation
+            for content_type in ContentType
+            for recommendation in self.generate_recommendations(
+                content_type, count, user_preference_config
+            )
+        ]
+        candidates.sort(key=lambda recommendation: recommendation.score, reverse=True)
+        return candidates[:count]
 
     def _apply_series_filtering(
         self,

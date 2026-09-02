@@ -20,9 +20,14 @@ const heading = ref<HTMLElement | null>(null)
 const announcement = ref('')
 const ignoreError = ref('')
 
-const typeLabel = computed(() => formatContentType(recs.contentType).toLowerCase())
-const ranLabel = computed(() => formatContentType(recs.ranType).toLowerCase())
-const scopeMoved = computed(() => recs.ranType !== '' && recs.ranType !== recs.contentType)
+const filterLabel = computed(() => formatContentType(recs.contentType).toLowerCase())
+const runScope = computed(() => formatContentType(recs.ranType).toLowerCase())
+
+const emptyTitle = computed(() => {
+  if (recs.items.length > 0) return `No ${filterLabel.value} in this run`
+  if (!recs.hasRun) return 'Nothing ranked yet'
+  return runScope.value ? `No ${runScope.value} left to rank` : 'Nothing left to rank'
+})
 
 function onRun() {
   if (recs.loading) return
@@ -118,18 +123,19 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
     </div>
 
     <div
-      v-if="recs.items.length === 0 && !recs.loading && !recs.error"
+      v-if="recs.visibleItems.length === 0 && !recs.loading && !recs.error"
       class="state state--empty"
       data-testid="recs-empty"
     >
       <span class="state-mark"><AppIcon :name="recs.hasRun ? 'search' : 'star'" :size="20" /></span>
-      <p class="state-title">
-        {{ recs.hasRun ? `No ${typeLabel} left to rank` : 'Nothing ranked yet' }}
-      </p>
+      <p class="state-title">{{ emptyTitle }}</p>
       <p class="state-hint">
-        <template v-if="recs.hasRun">
-          Every {{ typeLabel }} in the pool is finished, in progress or set
-          aside. Recommendations come from what you have not consumed yet, so
+        <template v-if="recs.items.length > 0">
+          The run ranked {{ recs.items.length }} across the other types.
+        </template>
+        <template v-else-if="recs.hasRun">
+          Every {{ runScope || 'item' }} in the pool is finished, in progress or
+          set aside. Recommendations come from what you have not consumed yet, so
           syncing a source or adding items is what gives the next run something
           to rank.
         </template>
@@ -140,27 +146,35 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       </p>
       <div class="state-actions">
         <button
+          v-if="recs.items.length > 0"
           type="button"
           class="btn btn-primary"
-          data-testid="recs-empty-run"
-          :aria-disabled="recs.loading || undefined"
-          @click="onRun"
-        >{{ recs.hasRun ? 'Rank again' : 'Rank my library' }}</button>
-        <RouterLink v-if="recs.hasRun" class="btn btn-secondary" :to="{ name: 'data' }">
-          Sync a source
-        </RouterLink>
+          data-testid="recs-show-all"
+          @click="recs.contentType = ''"
+        >Show everything</button>
+        <template v-else>
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="recs-empty-run"
+            :aria-disabled="recs.loading || undefined"
+            @click="onRun"
+          >{{ recs.hasRun ? 'Rank again' : 'Rank my library' }}</button>
+          <RouterLink v-if="recs.hasRun" class="btn btn-secondary" :to="{ name: 'data' }">
+            Sync a source
+          </RouterLink>
+        </template>
       </div>
     </div>
 
-    <p v-if="recs.items.length > 0" class="run-line">
-      <span><b>{{ recs.items.length }}</b> ranked · {{ ranLabel }}</span>
-      <template v-if="scopeMoved">
-        <span class="run-sep" aria-hidden="true">·</span>
-        <span>the filter above scopes the next run</span>
-      </template>
+    <p v-if="recs.visibleItems.length > 0" class="run-line" role="status" aria-live="polite">
+      <span v-if="recs.contentType">
+        <b>{{ recs.visibleItems.length }}</b> of <b>{{ recs.items.length }}</b> ranked · {{ filterLabel }}
+      </span>
+      <span v-else><b>{{ recs.items.length }}</b> ranked · {{ runScope || 'all types' }}</span>
     </p>
 
-    <div v-if="recs.items.length > 0" ref="recList">
+    <div v-if="recs.visibleItems.length > 0" ref="recList">
       <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
       <p
         id="rec-ignore-error"
@@ -168,20 +182,20 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
         role="alert"
         tabindex="-1"
       >{{ ignoreError }}</p>
-      <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>
+      <p class="sr-only" role="status" aria-live="polite" data-testid="recs-announce">{{ announcement }}</p>
 
-      <template v-for="(rec, index) in recs.items" :key="rec.db_id ?? index">
+      <template v-for="{ rec, rank } in recs.visibleItems" :key="rec.db_id ?? rank">
         <RecSetAside
           v-if="rec.db_id && recs.ignored.has(rec.db_id)"
           :db-id="rec.db_id"
           :title="rec.title"
-          :rank="index + 1"
+          :rank="rank"
           @undo="setIgnored($event, rec.title, false)"
         />
         <RecCard
           v-else
           :rec="rec"
-          :rank="index + 1"
+          :rank="rank"
           @ignore="setIgnored($event, rec.title, true)"
           @complete="onComplete"
         />
@@ -216,10 +230,6 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
   color: var(--text-secondary);
   font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
-}
-
-.run-sep {
-  opacity: 0.6;
 }
 
 .rec-ignore-error {

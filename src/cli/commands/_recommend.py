@@ -38,8 +38,8 @@ def _related_titles(items: list[ContentItem]) -> str:
     "--type",
     "content_type_str",
     type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
-    required=True,
-    help="Content type to get recommendations for",
+    default=None,
+    help="Content type to rank (default: all four together)",
 )
 @click.option(
     "--count",
@@ -64,13 +64,15 @@ def _related_titles(items: list[ContentItem]) -> str:
 @click.pass_context
 def recommend(
     ctx: click.Context,
-    content_type_str: str,
+    content_type_str: str | None,
     count: int,
     output_format: str,
     user_id: int,
 ) -> None:
     """Get personalized recommendations."""
-    content_type = ContentType.from_string(content_type_str)
+    content_type = (
+        ContentType.from_string(content_type_str) if content_type_str else None
+    )
 
     # Enforce config-driven max_count (matches web API /api/recommendations).
     max_count = ctx.obj["config"].get("recommendations", {}).get("max_count", 20)
@@ -84,10 +86,11 @@ def recommend(
     engine = ctx.obj["engine"]
     storage = ctx.obj["storage"]
 
+    scope = f"{content_type_str} " if content_type_str else ""
     # Chatter goes to stderr because stdout is the data channel: this line ran
     # ahead of the format branch, so `--format json` piped into a parser broke
     # on it.
-    click.echo(f"Generating {count} {content_type_str} recommendations...", err=True)
+    click.echo(f"Generating {count} {scope}recommendations...", err=True)
 
     try:
         user_preference_config = storage.get_user_preference_config(user_id)
@@ -106,9 +109,12 @@ def recommend(
                 # Worded exactly as the web zero-result state, which names the
                 # type for the same reason: an empty run and an empty library
                 # read identically otherwise.
-                label = content_type_str.replace("_", " ")
+                label = content_type_str.replace("_", " ") if content_type_str else ""
+                headline = (
+                    f"No {label} left to rank" if label else "Nothing left to rank"
+                )
                 click.echo(
-                    f"No {label} left to rank. Every {label} in the pool is "
+                    f"{headline}. Every {label or 'item'} in the pool is "
                     "finished, in progress or set aside. Recommendations come "
                     "from what you have not consumed yet, so syncing a source "
                     "or adding items is what gives the next run something to "
@@ -136,6 +142,7 @@ def recommend(
                 table_data.append(
                     [
                         rank,
+                        get_enum_value(item.content_type),
                         item.title,
                         series_label(item.metadata),
                         author,
@@ -145,14 +152,19 @@ def recommend(
                     ]
                 )
 
-            # Every row is the one requested type, so the column is labelled
-            # the way that type names its creator: "Director" for a movie.
-            creator = DETAIL_FIELDS[get_enum_value(content_type)].creator_column
+            # One type names its own creator — "Director" for a movie — while a
+            # mixed run takes the name they share, as the library listing does.
+            creator = (
+                DETAIL_FIELDS[get_enum_value(content_type)].creator_column.title()
+                if content_type is not None
+                else "Creator"
+            )
             headers = [
                 "#",
+                "Type",
                 "Title",
                 "Series",
-                creator.title(),
+                creator,
                 "Score",
                 "Reasoning",
                 "Because Of",

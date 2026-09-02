@@ -29,6 +29,29 @@ class TestEmptyRecommendationsRegression:
         assert response.json() == []
 
 
+class TestCrossTypeRequest:
+    def test_omitting_the_type_ranks_all_four_rather_than_refusing(self) -> None:
+        mock_engine = MagicMock(spec=RecommendationEngine)
+        mock_engine.generate_recommendations.return_value = [
+            Recommendation(
+                item=make_item(title="Pentiment", content_type=ContentType.VIDEO_GAME),
+                score=0.8,
+                reasoning="Because",
+            )
+        ]
+        mock_storage = make_storage_mock()
+        mock_storage.get_user_preference_config.return_value = None
+
+        with booted_web_app(mock_storage, {}) as app:
+            app_state.engine = mock_engine
+            response = authenticated_client(app).get("/api/recommendations?count=5")
+
+        assert response.status_code == 200
+        assert [rec["content_type"] for rec in response.json()] == ["video_game"]
+        call = mock_engine.generate_recommendations.call_args
+        assert call.kwargs["content_type"] is None
+
+
 class TestRecommendationEvidence:
     def test_the_items_behind_a_pick_reach_the_response(self) -> None:
         mock_engine = MagicMock(spec=RecommendationEngine)

@@ -29,6 +29,18 @@ describe('RecControls', () => {
     expect(recs.contentType).toBe('movie')
   })
 
+  // Without it a list narrowed to one type could never be widened again.
+  it('offers the every-type scope alongside the four', async () => {
+    const recs = useRecommendationsStore()
+    recs.contentType = 'movie'
+    const wrapper = mount(RecControls)
+
+    const all = wrapper.findAll('[role="radio"]').find(p => p.text() === 'All')!
+    await all.trigger('click')
+
+    expect(recs.contentType).toBe('')
+  })
+
   it('updates recs.count when input changes', async () => {
     const recs = useRecommendationsStore()
     const wrapper = mount(RecControls)
