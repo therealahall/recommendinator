@@ -1,99 +1,163 @@
-/* Theme colors.css files override these via dynamic <link>. */
+/* A font CDN is handed the reader's IP on every page load. */
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../fonts/instrument-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
-:root {
-  --accent: #81a1c1;
-  --accent-light: #88c0d0;
-  --accent-teal: #8fbcbb;
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../fonts/instrument-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
-  --bg-primary: #2e3440;
-  --bg-card: #3b4252;
-  --bg-sidebar: #2e3440;
-  --bg-elevated: #434c5e;
-  --bg-input: #2e3440;
-  --bg-hover: #434c5e;
-  --bg-secondary: #3b4252;
-  --bg-active: color-mix(in srgb, var(--accent) 20%, transparent);
+@font-face {
+  font-family: 'Newsreader';
+  font-style: normal;
+  font-weight: 300 600;
+  font-display: swap;
+  src: url('../fonts/newsreader-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
-  /* --text-muted carries help text and hints at 12-13px, so it owes 4.5:1 on
-     all five backgrounds; --bg-elevated, the nearest one to it in either theme,
-     is what binds (WCAG 1.4.3). */
-  --text-primary: #eceff4;
-  --text-secondary: #d8dee9;
-  --text-muted: #b3c7da;
-  --text-inverse: #2e3440;
-  --text-on-dark-fill: #ffffff;
+@font-face {
+  font-family: 'Newsreader';
+  font-style: normal;
+  font-weight: 300 600;
+  font-display: swap;
+  src: url('../fonts/newsreader-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
-  /* Pulled toward the text colour because this edge is what identifies the
-     secondary button, the accordion, the drop zone and the spinner, so it owes
-     3:1 on every surface it lands on (WCAG 1.4.11). */
-  --border-default: color-mix(in srgb, #4c566a 45%, var(--text-primary));
-  --border-subtle: #434c5e;
-  --border-focus: var(--accent);
+/* A theme's colors.css is unlayered, so it outranks this whatever the order. */
+@layer tokens {
+  /* On :root, never an ancestor: a token holding var() resolves where declared. */
+  :root {
+    color-scheme: dark;
 
-  /* The retune above already clears a control edge, and re-deriving from it
-     lands at near-text weight, so a field's edge is the same colour. */
-  --border-interactive: var(--border-default);
+    /* Fallback, not a theme: an omitted token degrades to legible, not to Nord. */
+    --accent: #8c8c8c;
+    --accent-light: #a6a6a6;
+    --accent-teal: #999999;
 
-  --color-success: #a3be8c;
-  --color-warning: #ebcb8b;
-  --color-error: #bf616a;
-  --color-info: var(--accent);
+    --bg-primary: #1c1c1c;
+    --bg-card: #262626;
+    --bg-sidebar: #1c1c1c;
+    --bg-elevated: #333333;
+    --bg-input: #1c1c1c;
+    --bg-hover: #333333;
+    --bg-secondary: #262626;
 
-  /* Semantic colours are sized for fills and fall short as text. Mixing toward
-     --text-primary tracks whichever palette is active. */
-  --color-error-text: color-mix(in srgb, var(--color-error) 50%, var(--text-primary));
-  --color-info-text: color-mix(in srgb, var(--color-info) 50%, var(--text-primary));
-  --color-success-text: color-mix(in srgb, var(--color-success) 50%, var(--text-primary));
-  --color-warning-text: color-mix(in srgb, var(--color-warning) 50%, var(--text-primary));
+    /* --text-muted carries 12-13px help text, so every palette owes it 4.5:1
+       on all five backgrounds; --bg-elevated binds (WCAG 1.4.3). */
+    --text-primary: #f2f2f2;
+    --text-secondary: #d9d9d9;
+    --text-muted: #b3b3b3;
+    --text-inverse: #1c1c1c;
+    --text-on-dark-fill: #ffffff;
 
-  --overlay-dark: rgba(0, 0, 0, 0.6);
-  --overlay-medium: rgba(0, 0, 0, 0.5);
+    /* Pulled toward the text colour because this edge is what identifies the
+       secondary button, the accordion, the drop zone and the spinner, so it
+       owes 3:1 on every surface it lands on (WCAG 1.4.11). */
+    --border-default: color-mix(in srgb, #595959 45%, var(--text-primary));
+    --border-subtle: #333333;
 
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
+    --color-success: #8c8c8c;
+    --color-warning: #a6a6a6;
+    --color-error: #737373;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --overlay-dark: rgba(0, 0, 0, 0.6);
+    --overlay-medium: rgba(0, 0, 0, 0.5);
 
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.875rem;
-  --text-md: 0.9375rem;
-  --text-lg: 1rem;
-  --text-xl: 1.125rem;
-  --text-2xl: 1.375rem;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.25);
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
+    --font-ui: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-display: 'Newsreader', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+    --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.25);
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
 
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
+    --bg-active: color-mix(in srgb, var(--accent) 20%, transparent);
+    --border-focus: var(--accent);
+    --color-info: var(--accent);
 
-  --sidebar-width: 240px;
-  --sidebar-collapsed: 60px;
+    /* The retune above already clears a control edge, and re-deriving from it
+       lands at near-text weight, so a field's edge is the same colour. */
+    --border-interactive: var(--border-default);
 
-  --z-sticky: 20;
-  --z-dropdown: 50;
-  --z-tooltip: 100;
-  --z-overlay: 900;
-  --z-drawer: 910;
-  --z-drawer-toggle: 920;
-  --z-skip-link: 930;
-  --z-modal: 1000;
+    /* Semantic colours are sized for fills and fall short as text. Mixing
+       toward --text-primary tracks whichever palette is active. */
+    --color-error-text: color-mix(in srgb, var(--color-error) 50%, var(--text-primary));
+    --color-info-text: color-mix(in srgb, var(--color-info) 50%, var(--text-primary));
+    --color-success-text: color-mix(in srgb, var(--color-success) 50%, var(--text-primary));
+    --color-warning-text: color-mix(in srgb, var(--color-warning) 50%, var(--text-primary));
+
+    --elevation-0: none;
+    --elevation-1: var(--shadow-sm);
+    --elevation-2: var(--shadow-md);
+    --elevation-3: var(--shadow-lg);
+
+    --space-05: 2px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+
+    --text-xs: 0.75rem;
+    --text-sm: 0.8125rem;
+    --text-base: 0.875rem;
+    --text-md: 0.9375rem;
+    --text-lg: 1rem;
+    --text-xl: 1.125rem;
+    --text-2xl: 1.375rem;
+
+    --leading-none: 1;
+    --leading-tight: 1.2;
+    --leading-snug: 1.45;
+    --leading-normal: 1.5;
+
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
+
+    --tracking-tight: -0.01em;
+    --tracking-wide: 0.04em;
+    --tracking-wider: 0.05em;
+    --tracking-widest: 0.12em;
+
+    --transition-fast: 150ms ease;
+    --transition-base: 200ms ease;
+
+    --sidebar-width: 240px;
+    --rail-w: 84px;
+    --measure: 940px;
+
+    --z-sticky: 20;
+    --z-dropdown: 50;
+    --z-tooltip: 100;
+    --z-overlay: 900;
+    --z-drawer: 910;
+    --z-drawer-toggle: 920;
+    --z-skip-link: 930;
+    --z-modal: 1000;
+  }
 }
 
 *,
@@ -134,7 +198,7 @@ svg {
    barely differs from a resting edge, so no component replaces this. */
 :focus-visible {
   outline: 2px solid var(--accent-light);
-  outline-offset: 2px;
+  outline-offset: var(--space-05);
 }
 
 button:focus:not(:focus-visible),
@@ -161,7 +225,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: var(--text-base);
   color: var(--text-primary);
   background-color: var(--bg-primary);
@@ -368,7 +432,7 @@ input[type="checkbox"] {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-05);
 }
 
 .sidebar-user-label {
@@ -1159,7 +1223,7 @@ button.btn[aria-disabled='true'] {
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: var(--space-05) var(--space-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   font-weight: 500;
@@ -1209,7 +1273,7 @@ button.btn[aria-disabled='true'] {
   font-weight: 600;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  padding: 2px 10px;
+  padding: var(--space-05) 10px;
 }
 
 .rec-card {
@@ -1249,7 +1313,7 @@ button.btn[aria-disabled='true'] {
 .rec-author {
   font-size: var(--text-sm);
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: var(--space-05);
 }
 
 .rec-actions {
@@ -1358,7 +1422,7 @@ button.btn[aria-disabled='true'] {
   font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-05);
 }
 
 .library-item .item-series,
@@ -1385,7 +1449,7 @@ button.btn[aria-disabled='true'] {
 .library-meta .badge {
   flex-shrink: 0;
   white-space: nowrap;
-  padding: 2px 6px;
+  padding: var(--space-05) 6px;
   font-size: var(--text-xs);
 }
 
@@ -1643,7 +1707,7 @@ button.btn[aria-disabled='true'] {
 .profile-section { margin-bottom: var(--space-3); }
 .profile-section h4 { font-size: var(--text-xs); font-weight: 600; margin: 0 0 var(--space-2) 0; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .profile-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.profile-tag { padding: 2px 8px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--text-primary); border-radius: var(--radius-sm); font-size: var(--text-xs); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.profile-tag { padding: var(--space-05) var(--space-2); background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--text-primary); border-radius: var(--radius-sm); font-size: var(--text-xs); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* No fill on the anti tag: --color-error-text clears 4.5:1 on --bg-card with
    nothing to spare, and a 10% error wash under it took that below the floor.
    The border carries the distinction instead. */
@@ -1746,5 +1810,17 @@ button.btn[aria-disabled='true'] {
 
   .rec-actions {
     width: 100%;
+  }
+}
+
+/* Near-zero, not `none`, so a transitionend still fires (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -41,7 +41,8 @@ export const useThemeStore = defineStore('theme', () => {
 
       const picked = stored?.theme
       const installed = themes.value.length === 0 || themes.value.some((t) => t.id === picked)
-      applyTheme(picked && installed ? picked : defaultThemeId.value)
+      // Nothing picked: the shell already resolved the OS preference here.
+      applyTheme(picked && installed ? picked : (serverPaintedThemeId ?? defaultThemeId.value))
     } catch {
       // Nothing to decide with: the browser keeps the theme it painted from cache.
     }

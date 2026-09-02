@@ -47,7 +47,7 @@ function read(relativePath: string): string {
 }
 
 function customProperties(source: string): [string, string][] {
-  const root = source.match(/:root\s*\{([\s\S]*?)\n\}/)
+  const root = source.match(/:root\s*\{([\s\S]*?)\n\s*\}/)
   return [...(root?.[1] ?? '').matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [
     name,
     value.trim(),

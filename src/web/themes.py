@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import html
 import json
 import logging
 from pathlib import Path
@@ -23,6 +26,26 @@ DEFAULT_THEME_ID = "nord"
 
 #: Longest theme id a door accepts, so a refusal comes before the disk scan.
 MAX_THEME_ID_LENGTH = 64
+
+#: Inline and synchronous because a fetched script paints the wrong theme first;
+#: the CSP admits this one by hash, so 'unsafe-inline' stays off.
+THEME_PREFERENCE_SCRIPT = """(function () {
+  var root = document.documentElement
+  if (root.dataset.themeSource !== 'default') return
+  var choices = JSON.parse(root.dataset.themeChoices || '{}')
+  var kind = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  var choice = choices[kind]
+  if (!choice || root.dataset.themeType === kind) return
+  var link = document.getElementById('theme-stylesheet')
+  if (link) link.setAttribute('href', choice.href)
+  root.dataset.theme = choice.id
+  root.dataset.themeType = kind
+})()"""
+
+
+def theme_preference_script_hash() -> str:
+    digest = hashlib.sha256(THEME_PREFERENCE_SCRIPT.encode("utf-8")).digest()
+    return f"'sha256-{base64.b64encode(digest).decode('ascii')}'"
 
 
 class ThemeResponse(BaseModel):
@@ -96,14 +119,30 @@ def installed_themes() -> list[ThemeResponse]:
     return sorted(themes, key=lambda theme: theme.id)
 
 
+def _os_theme_choices(themes: list[ThemeResponse]) -> str:
+    """The first installed theme of each kind, for the script to pick between."""
+    choices: dict[str, dict[str, str]] = {}
+    for theme in themes:
+        choices.setdefault(theme.theme_type, {"id": theme.id, "href": theme.css_url})
+    return html.escape(json.dumps(choices), quote=True)
+
+
 def themed_shell(document: str, stored_theme_id: str) -> str:
-    by_id = {theme.id: theme for theme in installed_themes()}
-    theme = by_id.get(stored_theme_id) or by_id.get(DEFAULT_THEME_ID)
+    installed = installed_themes()
+    by_id = {theme.id: theme for theme in installed}
+    stored = by_id.get(stored_theme_id)
+    theme = stored or by_id.get(DEFAULT_THEME_ID)
     if theme is None:
         return document
 
-    attributes = f' data-theme="{theme.id}" data-theme-type="{theme.theme_type}"'
+    attributes = (
+        f' data-theme="{theme.id}"'
+        f' data-theme-type="{theme.theme_type}"'
+        f' data-theme-source="{"stored" if stored else "default"}"'
+        f' data-theme-choices="{_os_theme_choices(installed)}"'
+    )
     link = f'<link id="theme-stylesheet" rel="stylesheet" href="{theme.css_url}">'
+    script = f"<script>{THEME_PREFERENCE_SCRIPT}</script>"
     return document.replace("<html", f"<html{attributes}", 1).replace(
-        "</head>", f"{link}</head>", 1
+        "</head>", f"{link}{script}</head>", 1
     )

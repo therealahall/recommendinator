@@ -322,6 +322,119 @@ function drawerBreakpoints(): string[] {
   )
 }
 
+function fontFaceBlocks(source: string): string[] {
+  return [...source.matchAll(/@font-face\s*\{([^}]*)\}/g)].map(([, body]) => body)
+}
+
+describe('the faces the app paints with', () => {
+  it('fetches every one from this origin, so no page load reaches a font CDN', () => {
+    const faces = styledFiles('resources').flatMap((path) =>
+      fontFaceBlocks(readFileSync(`${process.cwd()}/${path}`, 'utf8')),
+    )
+    const remote = faces.flatMap((body) =>
+      [...body.matchAll(/url\(\s*['"]?([^'")]+)/g)].flatMap(([, href]) =>
+        /^(https?:)?\/\//.test(href) ? [href] : [],
+      ),
+    )
+
+    expect(faces.length).toBeGreaterThan(0)
+    expect(remote).toEqual([])
+    expect(readFileSync(`${process.cwd()}/index.html`, 'utf8')).not.toMatch(
+      /<link[^>]+href=['"](https?:)?\/\//,
+    )
+  })
+
+  it('declares every face it swaps in, so no text waits on a blocking fetch', () => {
+    for (const body of fontFaceBlocks(readBase())) {
+      expect(body).toMatch(/font-display:\s*swap/)
+    }
+  })
+})
+
+describe('motion the reader asked not to see', () => {
+  it('stops every animation and transition in the stylesheet, the spinner included', () => {
+    // Per-rule opt-outs are what rot: the next transition added is covered by
+    // this or by nobody (WCAG 2.3.3).
+    const block = readBase().match(
+      /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/,
+    )
+    if (!block) throw new Error('no prefers-reduced-motion block in base.css')
+
+    expect(declaration(ruleBlock(readBase(), '.spinner'), 'animation')).toContain('spin')
+    expect(block[1]).toMatch(/^\s*\*,/m)
+    expect(block[1]).toMatch(/animation-duration:[^;]*!important/)
+    expect(block[1]).toMatch(/transition-duration:[^;]*!important/)
+  })
+})
+
+function tokenDeclarations(paths: string[]): Set<string> {
+  return new Set(
+    paths.flatMap((path) => [
+      ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(
+        /(--[\w-]+)['"]?\s*:/g,
+      ),
+    ]).map(([, name]) => name),
+  )
+}
+
+function shippedThemes(): string[] {
+  return readdirSync(`${process.cwd()}/src/web/static/themes`, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+}
+
+function themePalette(theme: string): Set<string> {
+  return tokenDeclarations([`src/web/static/themes/${theme}/colors.css`])
+}
+
+describe('the token contract', () => {
+  it('declares every token a stylesheet asks for, so none resolves to nothing', () => {
+    const scanned = styledFiles('resources')
+    const themes = shippedThemes().map((name) => `src/web/static/themes/${name}/colors.css`)
+    const declared = tokenDeclarations([...scanned, ...themes])
+    const orphaned = scanned.flatMap((path) =>
+      [
+        ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(/var\((--[\w-]+)/g),
+      ].flatMap(([, name]) => (declared.has(name) ? [] : [`${path}: ${name}`])),
+    )
+
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(orphaned).toEqual([])
+  })
+
+  it('lets no theme reach past colour into a size the layout depends on', () => {
+    // The contract is what nord declares, plus the non-colour tokens a theme
+    // is allowed. --elevation-* is core because it derives from --shadow-*,
+    // and a theme setting both leaves two knobs for one depth.
+    const contract = themePalette('nord')
+    const allowed = /^--(font-(ui|display)|radius-|shadow-)/
+
+    expect(contract.size).toBeGreaterThan(0)
+    for (const theme of shippedThemes()) {
+      expect(
+        [...themePalette(theme)].filter((name) => !contract.has(name) && !allowed.test(name)),
+        theme,
+      ).toEqual([])
+    }
+  })
+
+  it('is overridden in full by every shipped theme, so no grey shows through one', () => {
+    // The fallback greys exist for a colors.css that declares half a palette.
+    // A shipped theme that leaves one showing is a grey patch nothing reports.
+    const root = readBase().match(/:root\s*\{([\s\S]*?)\n\s*\}/)
+    if (!root) throw new Error('no :root block in base.css')
+    const unbranded = [...root[1].matchAll(/(--[\w-]+):\s*([^;]+);/g)]
+      .filter(([, , value]) => !value.includes('var(--') && /#[0-9a-f]{6}|rgba?\(/i.test(value))
+      .map(([, name]) => name)
+
+    expect(unbranded.length).toBeGreaterThan(0)
+    for (const theme of shippedThemes()) {
+      const declared = themePalette(theme)
+      expect(unbranded.filter((name) => !declared.has(name)), theme).toEqual([])
+    }
+  })
+})
+
 describe('the mobile sidebar drawer', () => {
   // Widen the CSS alone and an 800px tablet has the sidebar off screen with
   // isNarrow false, so it never goes inert and Tab walks six invisible buttons.
