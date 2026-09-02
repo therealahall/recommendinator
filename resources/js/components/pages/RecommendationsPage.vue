@@ -41,8 +41,8 @@ function onComplete(dbId: number) {
   recs.openEdit(dbId)
 }
 
-// A saved card is removed, leaving a detached trigger: focus then lands on the
-// next card's action or the heading, never at <body>.
+// A saved card takes its trigger with it, so focus falls to the next card's
+// action or the heading, never to <body>.
 function restoreFocus() {
   const trigger = editTrigger.value
   editTrigger.value = null
@@ -75,16 +75,15 @@ async function onSave(dbId: number, edits: ItemEditRequest) {
   try {
     await recs.markComplete(dbId, edits)
   } catch {
-    // The dialog stays open on the refusal it now shows; swallowed here only
-    // to avoid an unhandled rejection.
+    // Swallowed only to avoid an unhandled rejection; the dialog shows it.
     return
   }
   await nextTick()
   restoreFocus()
 }
 
-// The button that was pressed is replaced by its opposite in the same slot, so
-// the keyboard follows it rather than dropping to <body> (WCAG 2.4.3).
+// The pressed button is replaced by its opposite in the same slot, so the
+// keyboard follows it rather than dropping to <body> (WCAG 2.4.3).
 async function setIgnored(dbId: number, title: string, value: boolean) {
   announcement.value = ''
   ignoreError.value = ''
@@ -184,22 +183,25 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       >{{ ignoreError }}</p>
       <p class="sr-only" role="status" aria-live="polite" data-testid="recs-announce">{{ announcement }}</p>
 
-      <template v-for="{ rec, rank } in recs.visibleItems" :key="rec.db_id ?? rank">
-        <RecSetAside
-          v-if="rec.db_id && recs.ignored.has(rec.db_id)"
-          :db-id="rec.db_id"
-          :title="rec.title"
-          :rank="rank"
-          @undo="setIgnored($event, rec.title, false)"
-        />
-        <RecCard
-          v-else
-          :rec="rec"
-          :rank="rank"
-          @ignore="setIgnored($event, rec.title, true)"
-          @complete="onComplete"
-        />
-      </template>
+      <!-- `value`, not document position: a filter leaves ranks non-contiguous. -->
+      <ol class="rec-list" role="list">
+        <li v-for="{ rec, rank } in recs.visibleItems" :key="rec.db_id ?? rank" :value="rank">
+          <RecSetAside
+            v-if="rec.db_id && recs.ignored.has(rec.db_id)"
+            :db-id="rec.db_id"
+            :title="rec.title"
+            :rank="rank"
+            @undo="setIgnored($event, rec.title, false)"
+          />
+          <RecCard
+            v-else
+            :rec="rec"
+            :rank="rank"
+            @ignore="setIgnored($event, rec.title, true)"
+            @complete="onComplete"
+          />
+        </li>
+      </ol>
     </div>
 
     <EditModal

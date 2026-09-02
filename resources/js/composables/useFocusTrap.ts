@@ -20,7 +20,11 @@ export function useFocusTrap(
       if (!focusable || focusable.length === 0) return
       const first = focusable[0]
       const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      // The container too: it holds focus on open but is not in the selector.
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === containerRef.value)
+      ) {
         event.preventDefault()
         last.focus()
       } else if (!event.shiftKey && document.activeElement === last) {

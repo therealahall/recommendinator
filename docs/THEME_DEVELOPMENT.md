@@ -152,7 +152,7 @@ and the text colour follows.
 | Variable | Nord | Used for |
 |----------|---------|-------------|
 | `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
-| `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | Sidebar mobile overlay |
+| `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | The scoring weights scrim |
 | `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Rung 1: a surface resting on the stage |
 | `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Rung 2: a surface summoned over it |
 | `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Rung 3: a modal surface |

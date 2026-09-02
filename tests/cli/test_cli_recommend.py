@@ -379,6 +379,26 @@ class TestRecommendTableOutput:
         assert "From your library: Dune (book), Neuromancer (book)" in result.stdout
         assert "Adaptations: Blade Runner (movie)" in result.stdout
 
+    def test_an_adaptation_that_also_contributed_is_named_once(self) -> None:
+        dune = _book("Dune", db_id=2)
+        result = _invoke_recommend_with_engine(
+            CliRunner(),
+            ["recommend", "--type", "movie"],
+            _engine_returning(
+                Recommendation(
+                    item=_movie("Dune"),
+                    score=0.9,
+                    reasoning="Great match",
+                    contributing_items=[dune, _book("Neuromancer", db_id=3)],
+                    adaptations=[dune],
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert "From your library: Neuromancer (book)" in result.stdout
+        assert "Adaptations: Dune (book)" in result.stdout
+
     def test_an_unknown_author_renders_a_placeholder(self) -> None:
         result = _invoke_recommend_with_engine(
             CliRunner(),

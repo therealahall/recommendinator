@@ -122,11 +122,6 @@ const selection = computed(() =>
   cursor: pointer;
 }
 
-.drop-zone-input:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
 .drop-zone-hint {
   margin: 0;
   font-size: var(--text-sm);

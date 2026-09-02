@@ -18,10 +18,9 @@ const emit = defineEmits<{ close: [] }>()
 const prefs = usePreferencesStore()
 const panel = ref<HTMLElement | null>(null)
 
-useFocusTrap(panel, () => emit('close'))
+useFocusTrap(panel, dismiss)
 
-/** What the sliders held when the panel opened, so Revert undoes this visit
- *  rather than restoring the shipped defaults. */
+/** What the panel opened on, so Revert undoes this visit, not every visit. */
 const opened = ref<{ weights: Record<string, number>; variety: number } | null>(null)
 
 const status = computed(() => {
@@ -41,6 +40,12 @@ function revert() {
   prefs.varietyPenalty = opened.value.variety
 }
 
+/** Every way out but Save: the sliders write straight to the shared store. */
+function dismiss() {
+  revert()
+  emit('close')
+}
+
 onMounted(async () => {
   if (!prefs.hasLoaded) await prefs.load()
   take()
@@ -48,7 +53,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="weights-scrim" @click="emit('close')" />
+  <div class="weights-scrim" @click="dismiss" />
   <aside
     id="weights-panel"
     ref="panel"
@@ -65,7 +70,7 @@ onMounted(async () => {
         type="button"
         class="btn btn-ghost weights-close"
         aria-label="Close scoring weights"
-        @click="emit('close')"
+        @click="dismiss"
       >
         <AppIcon name="close" />
       </button>

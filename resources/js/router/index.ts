@@ -34,6 +34,7 @@ const router = createRouter({
       meta: { title: 'Duplicates' },
       component: () => import('@/components/pages/DuplicatesPage.vue'),
     },
+    { path: '/duplicates', redirect: '/library/duplicates' },
     {
       path: '/data',
       name: 'data',

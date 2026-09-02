@@ -150,9 +150,9 @@
 
     --rail-w: 84px;
     --tabbar-h: 68px;
-    /* What a page's own sticky row has to clear to stay on screen under the
-       top strip, so the two are not two guesses at one height. */
-    --topbar-h: 56px;
+    /* What a page's own sticky row has to clear to stay on screen under the top
+       strip. In the strip's own units, or a text-only zoom slides it under. */
+    --topbar-h: max(3.5rem, calc(2 * var(--space-4) + var(--text-xl) * 1.5));
     --measure: 940px;
 
     --z-sticky: 20;
@@ -176,7 +176,7 @@
 
 /* Kept from Tailwind's Preflight, which the app was built against: `.card h3`
    is sized by no rule, `.scorer-tooltip-text` declares no font family, and an
-   inline icon would sit on a text baseline and grow the sidebar toggle. */
+   inline icon would sit on a text baseline and grow the nav tab holding it. */
 h1,
 h2,
 h3,
@@ -1282,6 +1282,10 @@ button.badge[aria-checked='true']:hover {
   color: var(--text-muted);
 }
 
+.rec-list {
+  list-style: none;
+}
+
 .rec-card {
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr);
@@ -1418,12 +1422,19 @@ button.rec-score {
   background: var(--accent);
 }
 
+/* Near-indistinguishable by hue in Snowstorm, so thinner and hatched (1.4.11). */
 .rec-spine-segment--rest {
+  height: 3px;
   background: var(--text-muted);
 }
 
 .rec-spine-segment--penalty {
   background: var(--color-warning);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 2px,
+    var(--bg-card) 2px 4px
+  );
 }
 
 .rec-score-cue {

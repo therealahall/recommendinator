@@ -16,9 +16,16 @@ RECOMMEND_FAILED = "Failed to generate recommendations"
 
 
 def _evidence_cell(rec: Recommendation) -> str:
+    # An adaptation is also a direct signal; the web card cites it once.
+    adapted = {item.db_id for item in rec.adaptations if item.db_id is not None}
+    direct_only = [
+        item
+        for item in rec.contributing_items
+        if item.db_id is None or item.db_id not in adapted
+    ]
     sections = []
     for label, items in (
-        ("From your library", rec.contributing_items),
+        ("From your library", direct_only),
         ("Adaptations", rec.adaptations),
     ):
         if items:

@@ -138,14 +138,27 @@ class TestLibraryList:
         assert item["seasons_watched"] is None
         assert item["total_seasons"] is None
 
-    def test_list_empty_results(self, cli_runner: CliRunner) -> None:
+    EMPTY_CAUSES = [
+        ([], "Your library is empty"),
+        (["--search", "Dune"], 'No items match "Dune"'),
+        (["--needs-rating"], "Nothing needs a rating"),
+        (["--status", "completed"], "Nothing matches these filters"),
+        (["--show-ignored"], "Your library is empty"),
+    ]
+
+    @pytest.mark.parametrize("options,expected", EMPTY_CAUSES)
+    def test_list_names_the_cause_of_an_empty_result(
+        self, cli_runner: CliRunner, options: list[str], expected: str
+    ) -> None:
         mock_storage = make_storage_mock()
         mock_storage.get_content_items.return_value = []
 
-        result = _invoke_with_mocks(cli_runner, ["library", "list"], mock_storage)
+        result = _invoke_with_mocks(
+            cli_runner, ["library", "list", *options], mock_storage
+        )
 
         assert result.exit_code == 0
-        assert "No items found" in result.output
+        assert expected in result.output
 
     def test_list_search_filters_results(self, cli_runner: CliRunner) -> None:
         items = [_make_item(db_id=1, title="Dune", author="Frank Herbert")]

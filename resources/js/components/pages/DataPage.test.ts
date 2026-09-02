@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import DataPage from './DataPage.vue'
+import ImportPanel from '@/components/organisms/ImportPanel.vue'
 import { useDataStore } from '@/stores/data'
 import type { SyncJobResponse } from '@/types/api'
 
@@ -122,6 +123,22 @@ describe('DataPage rows during a Sync All', () => {
     expect(mockPost.mock.calls.filter(([path]) => path === '/update')).toEqual([
       ['/update', { source: 'all' }],
     ])
+    wrapper.unmount()
+  })
+
+  /** The only route to importing a file anywhere in the UI. */
+  it('reaches importing a file from the Data page', async () => {
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') return Promise.resolve([enabledSource])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent(ImportPanel).exists()).toBe(true)
     wrapper.unmount()
   })
 
