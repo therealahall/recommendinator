@@ -146,6 +146,28 @@ def _record_external_id(
     )
 
 
+def _drop_the_cover_url_column(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("ALTER TABLE content_items DROP COLUMN cover_url")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _cover_urls(db_path: Path) -> list[Any]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return [
+            row[0]
+            for row in conn.execute(
+                "SELECT cover_url FROM content_items ORDER BY id"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
 def _drop_the_declines_table(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
@@ -315,6 +337,23 @@ class TestWhatAnOpenThatRaisedLeavesBehind:
 
         assert _repair_runs_of_one_open(db_path) == 1
         assert _content_rows(db_path) == _THE_PAIR_RENORMALIZED
+        assert _user_version(db_path) == _SCHEMA_VERSION
+
+
+class TestTheCoverArtColumn:
+    def test_a_library_from_before_it_keeps_every_row_and_gains_an_empty_column(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "before-cover-art.db"
+        _open(db_path)
+        _seed_the_duplicate_pair(db_path)
+        _drop_the_cover_url_column(db_path)
+        _rewind_to(db_path, 19)
+
+        _open(db_path)
+
+        assert _content_rows(db_path) == _THE_PAIR_UNTOUCHED
+        assert _cover_urls(db_path) == [None, None]
         assert _user_version(db_path) == _SCHEMA_VERSION
 
 

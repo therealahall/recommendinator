@@ -49,6 +49,7 @@ _SURVIVOR_COLUMNS = (
     "rating",
     "review",
     "date_completed",
+    "cover_url",
     "updated_at",
 )
 
@@ -104,6 +105,7 @@ def absorb_item(
     merge_enrichment_status(cursor, survivor_id, absorbed_id)
     write_derived_columns(cursor, survivor_id)
     restore = _what_this_merge_wrote(before, _survivor_state(cursor, survivor_id))
+    restore["dead_covers"] = _carry_dead_covers(cursor, survivor_id, absorbed_id)
     # What it absorbed comes with it: no row may hide behind a hidden row.
     restore["repointed"] = _absorbed_by(cursor, absorbed_id)
     cursor.execute(
@@ -171,6 +173,7 @@ def unmerge_item(
     _send_back(
         cursor, row["survivor_id"], row["absorbed_id"], state.get("repointed", [])
     )
+    _drop_carried_dead_covers(cursor, row["survivor_id"], state.get("dead_covers", []))
     cursor.execute("DELETE FROM content_item_merges WHERE id = ?", (merge_id,))
     return _to_record(row)
 
@@ -260,6 +263,40 @@ def _send_back(
         "UPDATE content_items SET merged_into = ?"
         f" WHERE merged_into = ? AND id IN ({placeholders})",
         (absorbed_id, survivor_id, *repointed),
+    )
+
+
+def _carry_dead_covers(
+    cursor: sqlite3.Cursor, survivor_id: int, absorbed_id: int
+) -> list[str]:
+    """One work knows what either row proved dead. Returns what this merge added,
+    so an undo takes back that and leaves the survivor's own knowledge standing.
+    """
+    cursor.execute(
+        "SELECT cover_url FROM content_item_dead_covers WHERE content_item_id = ?"
+        " AND cover_url NOT IN (SELECT cover_url FROM content_item_dead_covers"
+        " WHERE content_item_id = ?)",
+        (absorbed_id, survivor_id),
+    )
+    carried = [str(row["cover_url"]) for row in cursor.fetchall()]
+    cursor.executemany(
+        "INSERT INTO content_item_dead_covers (content_item_id, cover_url)"
+        " VALUES (?, ?)",
+        [(survivor_id, cover_url) for cover_url in carried],
+    )
+    return carried
+
+
+def _drop_carried_dead_covers(
+    cursor: sqlite3.Cursor, survivor_id: int, carried: list[str]
+) -> None:
+    if not carried:
+        return
+    placeholders = ", ".join("?" for _ in carried)
+    cursor.execute(
+        "DELETE FROM content_item_dead_covers WHERE content_item_id = ?"
+        f" AND cover_url IN ({placeholders})",
+        (survivor_id, *carried),
     )
 
 

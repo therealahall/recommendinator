@@ -4186,3 +4186,101 @@ class TestCorrectingWhatAMatchIsVetoedOn:
 
         with pytest.raises(ValueError, match="release year"):
             temp_db.update_item_from_ui(db_id=db_id, release_year=1965)
+
+
+class TestCoverArtOnAnItem:
+    @staticmethod
+    def _portal(cover_url: str | None) -> ContentItem:
+        return ContentItem(
+            id="620",
+            title="Portal 2",
+            content_type=ContentType.VIDEO_GAME,
+            status=ConsumptionStatus.UNREAD,
+            source="steam",
+            cover_url=cover_url,
+        )
+
+    def test_a_saved_cover_comes_back_on_the_item(self, temp_db: SQLiteDB) -> None:
+        db_id = temp_db.save_content_item(self._portal("https://art/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.cover_url == "https://art/620.jpg"
+
+    def test_a_blank_cover_is_stored_as_no_cover(self, temp_db: SQLiteDB) -> None:
+        """A stored ``""`` would read as art forever, and refuse every later fill."""
+        db_id = temp_db.save_content_item(self._portal(""))
+
+        stored = temp_db.get_content_item(db_id)
+
+        assert stored is not None
+        assert stored.cover_url is None
+
+    def test_a_later_sync_fills_a_missing_cover_and_keeps_the_stored_one(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._portal(None))
+
+        temp_db.save_content_item(self._portal("https://steam/620.jpg"))
+        temp_db.save_content_item(self._portal("https://later/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url == "https://steam/620.jpg"
+
+    def test_enrichment_fills_a_cover_no_source_named(self, temp_db: SQLiteDB) -> None:
+        db_id = temp_db.save_content_item(self._portal(None))
+
+        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url == "https://rawg/620.jpg"
+
+    def test_enrichment_leaves_the_cover_the_source_already_named(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._portal("https://steam/620.jpg"))
+
+        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url == "https://steam/620.jpg"
+
+    def test_a_cleared_cover_is_not_re_offered_by_the_next_sync(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._portal("https://steam/620.jpg"))
+        temp_db.clear_cover_url(db_id)
+
+        temp_db.save_content_item(self._portal("https://steam/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url is None
+
+    def test_a_cleared_cover_is_not_re_offered_by_the_provider_that_named_it(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._portal("https://rawg/620.jpg"))
+        temp_db.clear_cover_url(db_id)
+
+        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url is None
+
+    def test_a_clear_buries_one_url_rather_than_closing_the_column(
+        self, temp_db: SQLiteDB
+    ) -> None:
+        db_id = temp_db.save_content_item(self._portal("https://steam/620.jpg"))
+        temp_db.clear_cover_url(db_id)
+
+        temp_db.save_enrichment_metadata(db_id, self._portal("https://rawg/620.jpg"))
+
+        stored = temp_db.get_content_item(db_id)
+        assert stored is not None
+        assert stored.cover_url == "https://rawg/620.jpg"

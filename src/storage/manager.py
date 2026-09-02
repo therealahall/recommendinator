@@ -15,6 +15,7 @@ from src.models.content import (
 )
 from src.models.user_preferences import UserPreferenceConfig
 from src.storage.accounts import AccountStore, normalize_account_name
+from src.storage.cover_jobs import CoverBackfillStore
 from src.storage.credentials import CredentialStore
 from src.storage.duplicates import MAX_DECLINE_OTHERS as MAX_DECLINE_OTHERS
 from src.storage.duplicates import SUGGESTION_PAGE_DEFAULT as SUGGESTION_PAGE_DEFAULT
@@ -95,6 +96,10 @@ class StorageManager:
         return EnrichmentJobStore(self.sqlite_db)
 
     @functools.cached_property
+    def cover_jobs(self) -> CoverBackfillStore:
+        return CoverBackfillStore(self.sqlite_db)
+
+    @functools.cached_property
     def settings(self) -> SettingsStore:
         return SettingsStore(self.sqlite_db)
 
@@ -131,6 +136,10 @@ class StorageManager:
     def save_enrichment_metadata(self, db_id: int, item: ContentItem) -> None:
         with self._save_lock:
             self.sqlite_db.save_enrichment_metadata(db_id, item)
+
+    def clear_cover_url(self, db_id: int) -> bool:
+        with self._save_lock:
+            return self.sqlite_db.clear_cover_url(db_id)
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None
