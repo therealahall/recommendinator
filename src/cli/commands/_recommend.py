@@ -6,12 +6,31 @@ import click
 from tabulate import tabulate
 
 from src.cli._shared import abort_after_failure, series_label
-from src.models.content import ContentType, get_enum_value
+from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.detail_fields import DETAIL_FIELDS
+from src.recommendations.record import Recommendation
 
 #: What ``GET /api/recommendations`` answers with. The engine walks the
 #: library, so its faults quote item titles.
 RECOMMEND_FAILED = "Failed to generate recommendations"
+
+
+def _evidence_cell(rec: Recommendation) -> str:
+    sections = []
+    for label, items in (
+        ("From your library", rec.contributing_items),
+        ("Adaptations", rec.adaptations),
+    ):
+        if items:
+            sections.append(f"{label}: {_related_titles(items)}")
+    return "\n".join(sections)
+
+
+def _related_titles(items: list[ContentItem]) -> str:
+    return ", ".join(
+        f"{item.title} ({get_enum_value(item.content_type).replace('_', ' ')})"
+        for item in items
+    )
 
 
 @click.command()
@@ -120,13 +139,22 @@ def recommend(
                         author,
                         f"{rec.score:.2f}",
                         reasoning,
+                        _evidence_cell(rec),
                     ]
                 )
 
             # Every row is the one requested type, so the column is labelled
             # the way that type names its creator: "Director" for a movie.
             creator = DETAIL_FIELDS[get_enum_value(content_type)].creator_column
-            headers = ["#", "Title", "Series", creator.title(), "Score", "Reasoning"]
+            headers = [
+                "#",
+                "Title",
+                "Series",
+                creator.title(),
+                "Score",
+                "Reasoning",
+                "Because Of",
+            ]
             click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     except Exception as error:

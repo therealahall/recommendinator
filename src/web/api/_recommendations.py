@@ -15,10 +15,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class RelatedItemResponse(BaseModel):
+    db_id: int | None = None
+    title: str
+    author: str | None = None
+    content_type: str
+    cover_url: str | None = None
+
+
 class RecommendationResponse(BaseModel):
     db_id: int | None = None  # Database ID for actions like ignore
     title: str
     author: str | None
+    content_type: str
+    cover_url: str | None = None
     series: str | None = None
     series_index: float | None = None
     score: float
@@ -27,6 +37,8 @@ class RecommendationResponse(BaseModel):
     # Stepped genre-fatigue penalty applied when the variety_penalty preference
     # is set (0.0 when off or the item's genre was not recently finished).
     variety_penalty: float = Field(0.0, ge=0.0, le=1.0)
+    contributing_items: list[RelatedItemResponse] = Field(default_factory=list)
+    adaptations: list[RelatedItemResponse] = Field(default_factory=list)
 
 
 @router.get("/recommendations", response_model=list[RecommendationResponse])

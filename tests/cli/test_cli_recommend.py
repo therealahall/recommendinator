@@ -75,6 +75,18 @@ def _book(
     )
 
 
+def _movie(title: str, db_id: int = 9) -> ContentItem:
+    return ContentItem(
+        id=f"ext-{db_id}",
+        db_id=db_id,
+        title=title,
+        author="Director A",
+        content_type=ContentType.MOVIE,
+        status=ConsumptionStatus.COMPLETED,
+        cover_url="https://1.2.3.4/blade.jpg",
+    )
+
+
 def _engine_returning(*recommendations: Recommendation) -> MagicMock:
     engine = MagicMock(spec=RecommendationEngine)
     engine.generate_recommendations.return_value = list(recommendations)
@@ -116,16 +128,66 @@ class TestRecommendJsonOutput:
             "db_id",
             "title",
             "author",
+            "content_type",
+            "cover_url",
             "series",
             "series_index",
             "score",
             "reasoning",
             "score_breakdown",
             "variety_penalty",
+            "contributing_items",
+            "adaptations",
         }
         assert rec["db_id"] == 42
         assert rec["score_breakdown"] == {"genre": 0.5, "theme": 0.4}
         assert (rec["series"], rec["series_index"]) == ("The Expanse", 2.0)
+
+    def test_json_output_names_every_item_behind_a_pick(self) -> None:
+        result = _invoke_recommend_with_engine(
+            CliRunner(),
+            ["recommend", "--type", "book", "--format", "json"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion", db_id=1),
+                    score=0.9,
+                    reasoning="Great match",
+                    contributing_items=[
+                        _book("Dune", db_id=2),
+                        _book("Neuromancer", db_id=3),
+                    ],
+                    adaptations=[_movie("Blade Runner")],
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        rec = json.loads(result.stdout)[0]
+        assert rec["contributing_items"] == [
+            {
+                "db_id": 2,
+                "title": "Dune",
+                "author": "Author A",
+                "content_type": "book",
+                "cover_url": None,
+            },
+            {
+                "db_id": 3,
+                "title": "Neuromancer",
+                "author": "Author A",
+                "content_type": "book",
+                "cover_url": None,
+            },
+        ]
+        assert rec["adaptations"] == [
+            {
+                "db_id": 9,
+                "title": "Blade Runner",
+                "author": "Director A",
+                "content_type": "movie",
+                "cover_url": "/api/covers/9",
+            }
+        ]
 
     def test_zero_results_emit_an_empty_array_and_no_prose(self) -> None:
         result = _invoke_recommend_with_engine(
@@ -179,12 +241,16 @@ class TestRecommendProgressLineOnStdoutRegression:
                 "db_id": 42,
                 "title": "Hyperion",
                 "author": "Dan Simmons",
+                "content_type": "book",
+                "cover_url": None,
                 "series": None,
                 "series_index": None,
                 "score": 0.9,
                 "reasoning": "Great match",
                 "score_breakdown": {},
                 "variety_penalty": 0.0,
+                "contributing_items": [],
+                "adaptations": [],
             }
         ]
         assert self.PROGRESS in result.stderr
@@ -196,7 +262,7 @@ class TestRecommendProgressLineOnStdoutRegression:
         assert self.PROGRESS in result.stderr
         assert self.PROGRESS not in result.stdout
         assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match"]
+            ["1", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match", ""]
         ]
 
 
@@ -233,9 +299,32 @@ class TestRecommendTableOutput:
                 "Dan Simmons",
                 "0.9",
                 "Great match",
+                "",
             ],
-            ["2", "Dune", "N/A", "Frank Herbert", "0.42", "Also good"],
+            ["2", "Dune", "N/A", "Frank Herbert", "0.42", "Also good", ""],
         ]
+
+    def test_every_item_behind_a_pick_is_named_in_the_table(self) -> None:
+        result = _invoke_recommend_with_engine(
+            CliRunner(),
+            ["recommend", "--type", "book"],
+            _engine_returning(
+                Recommendation(
+                    item=_book("Hyperion", db_id=1),
+                    score=0.9,
+                    reasoning="Great match",
+                    contributing_items=[
+                        _book("Dune", db_id=2),
+                        _book("Neuromancer", db_id=3),
+                    ],
+                    adaptations=[_movie("Blade Runner")],
+                )
+            ),
+        )
+
+        assert result.exit_code == 0
+        assert "From your library: Dune (book), Neuromancer (book)" in result.stdout
+        assert "Adaptations: Blade Runner (movie)" in result.stdout
 
     def test_an_unknown_author_renders_a_placeholder(self) -> None:
         result = _invoke_recommend_with_engine(
@@ -252,7 +341,7 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert _data_rows(result.stdout) == [
-            ["1", "Nowhere Man", "N/A", "N/A", "0.5", "Pipeline line"]
+            ["1", "Nowhere Man", "N/A", "N/A", "0.5", "Pipeline line", ""]
         ]
         assert "None" not in result.stdout
 
