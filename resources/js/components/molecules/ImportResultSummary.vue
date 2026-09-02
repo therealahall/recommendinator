@@ -70,7 +70,7 @@ const missed = computed(() => props.result.skipped + props.result.failed)
 .import-result-file {
   margin: 0;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
@@ -93,15 +93,16 @@ const missed = computed(() => props.result.skipped + props.result.failed)
 
 .import-count dt {
   font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--tracking-widest);
   color: var(--text-secondary);
 }
 
 .import-count dd {
   margin: 0;
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
@@ -125,7 +126,7 @@ const missed = computed(() => props.result.skipped + props.result.failed)
 .import-misses-title {
   margin: 0 0 var(--space-2);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 

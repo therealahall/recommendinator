@@ -305,7 +305,7 @@ const intervalLabel = computed(
 }
 
 .source-accordion-name {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 /* Secondary text on the muted parts, and nothing softer than that: opacity

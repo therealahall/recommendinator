@@ -274,7 +274,7 @@ async function submit(): Promise<void> {
 }
 
 .import-panel-name {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .import-panel-lede {
@@ -315,9 +315,9 @@ async function submit(): Promise<void> {
 
 .import-field label {
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
   color: var(--text-primary);
 }
 

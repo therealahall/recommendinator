@@ -163,7 +163,7 @@ const statusText = computed(() => {
 }
 
 .sync-schedule-cadence {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 

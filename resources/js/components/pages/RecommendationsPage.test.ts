@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 import RecommendationsPage from './RecommendationsPage.vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
 import type { ContentItemResponse, RecommendationResponse } from '@/types/api'
@@ -69,11 +70,23 @@ const stubs = {
   SeasonChecklist: true,
 }
 
+function testRouter(): Router {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'recommendations', component: { template: '<div />' } },
+      { path: '/data', name: 'data', component: { template: '<div />' } },
+    ],
+  })
+}
+
 describe('RecommendationsPage', () => {
   let wrapper: VueWrapper | null = null
+  let router: Router
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    router = testRouter()
     mockGet.mockReset()
     mockPatch.mockReset()
   })
@@ -84,7 +97,10 @@ describe('RecommendationsPage', () => {
   })
 
   async function mountWithItems() {
-    wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
+    wrapper = mount(RecommendationsPage, {
+      global: { stubs, plugins: [router] },
+      attachTo: document.body,
+    })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
       makeRec({ db_id: 1, title: 'A', score: 0.9 }),
@@ -233,25 +249,62 @@ describe('RecommendationsPage', () => {
     })
   })
 
+  // A run is scoped to one type, so changing the selector leaves the previous
+  // type's list under a pill that names a different one.
+  it('names the type the list on screen was ranked for, not the one selected', async () => {
+    const { wrapper, store } = await mountWithItems()
+    store.contentType = 'movie'
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.get('.run-line').text()).toContain('book')
+  })
+
   describe('the empty state', () => {
-    it('invites a first Generate before one has run', () => {
-      wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
-
-      expect(wrapper.get('[data-testid="recs-empty"]').text()).toContain('Click Generate')
-    })
-
-    it('names the type and the next step once a Generate returned nothing', async () => {
-      wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
+    // Two causes read identically otherwise: a library nothing has been run
+    // against, and a run that came back with nothing left of this type.
+    async function emptyAfterRun(type: string) {
+      wrapper = mount(RecommendationsPage, {
+        global: { stubs, plugins: [router] },
+        attachTo: document.body,
+      })
       const store = useRecommendationsStore()
-      store.contentType = 'tv_show'
+      store.contentType = type
       mockGet.mockResolvedValue([])
       await store.fetch()
       await flushPromises()
+      return wrapper
+    }
 
-      const empty = wrapper.get('[data-testid="recs-empty"]').text()
-      expect(empty).not.toContain('Click Generate')
-      expect(empty).toContain('No tv show recommendations')
-      expect(empty).toContain('syncing a source')
+    it('offers a first run before one has happened', async () => {
+      wrapper = mount(RecommendationsPage, {
+        global: { stubs, plugins: [router] },
+        attachTo: document.body,
+      })
+      mockGet.mockResolvedValue([])
+
+      await wrapper.get('[data-testid="recs-empty-run"]').trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalled()
+    })
+
+    it('names the type nothing was left of, once a run returned nothing', async () => {
+      const page = await emptyAfterRun('tv_show')
+
+      expect(page.get('[data-testid="recs-empty"]').text()).toContain('tv show')
+    })
+
+    it('says a run has happened differently from one that has not', async () => {
+      const before = mount(RecommendationsPage, {
+        global: { stubs, plugins: [router] },
+        attachTo: document.body,
+      })
+      const said = before.get('[data-testid="recs-empty"]').text()
+      before.unmount()
+
+      const after = await emptyAfterRun('book')
+
+      expect(after.get('[data-testid="recs-empty"]').text()).not.toBe(said)
     })
   })
 })

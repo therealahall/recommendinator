@@ -15,10 +15,10 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   // Kept per item rather than dropping the row: the undo has to sit where the
   // card was, and a re-inserted row would come back at the wrong rank.
   const ignored = ref<Set<number>>(new Set())
-  /** Whether a generate finished for the selected type, which tells "nothing
-   *  yet" from "nothing matched" — fetch() empties the list before it asks.
-   *  Carried across a type change, it names a type nothing ran against. */
+  /** Tells "nothing yet" from "nothing matched"; fetch() empties before it asks. */
   const hasRun = ref(false)
+  /** What the list on screen was ranked for; the selector scopes the NEXT run. */
+  const ranType = ref('')
   watch(contentType, () => {
     hasRun.value = false
   })
@@ -43,6 +43,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
         user_id: app.currentUserId,
       })
       items.value = result
+      ranType.value = contentType.value
       hasRun.value = true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load recommendations'
@@ -114,6 +115,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
     count,
     ignored,
     hasRun,
+    ranType,
     editingItem,
     editSaving,
     editError,

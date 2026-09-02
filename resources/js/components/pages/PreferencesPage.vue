@@ -115,15 +115,23 @@ async function onRetry(): Promise<void> {
       <div v-else class="state state--loading">Loading preferences…</div>
     </div>
 
-    <div v-else class="card">
-      <ThemeSelector
-        :model-value="theme.currentThemeId ?? theme.defaultThemeId"
-        @update:model-value="prefs.selectTheme"
-      />
-      <ScoringPrefs />
-      <RulesPrefs />
-      <ProfilePanel />
-      <div class="pref-actions">
+    <template v-else>
+      <div class="card">
+        <ThemeSelector
+          :model-value="theme.currentThemeId ?? theme.defaultThemeId"
+          @update:model-value="prefs.selectTheme"
+        />
+      </div>
+      <div class="card">
+        <ScoringPrefs />
+      </div>
+      <div class="card">
+        <RulesPrefs />
+      </div>
+      <div class="card">
+        <ProfilePanel />
+      </div>
+      <div class="card pref-actions">
         <button
           class="btn btn-primary"
           data-testid="preferences-save"
@@ -153,15 +161,21 @@ async function onRetry(): Promise<void> {
           >Error: {{ prefs.saveError }}</span>
         </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
+/* Sticky, because the sections above it run past a screen and the control that
+   commits them must not be a scroll away from the one being changed. */
 .pref-actions {
+  position: sticky;
+  bottom: var(--space-4);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
+  box-shadow: var(--elevation-2);
 }
 
 .save-status {

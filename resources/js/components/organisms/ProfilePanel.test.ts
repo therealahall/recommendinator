@@ -56,7 +56,7 @@ describe('ProfilePanel', () => {
     const wrapper = mount(ProfilePanel)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('No profile generated')
+    expect(wrapper.find('[data-testid="profile-empty"]').exists()).toBe(true)
   })
 
   it('still says no profile has been generated right after an empty regenerate', async () => {
@@ -70,7 +70,7 @@ describe('ProfilePanel', () => {
     await wrapper.find('button').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('No profile generated')
+    expect(wrapper.find('[data-testid="profile-empty"]').exists()).toBe(true)
   })
 
   it('renders a profile carrying nothing but themes', async () => {

@@ -418,6 +418,65 @@ describe('the faces the app paints with', () => {
       expect(body).toMatch(/font-display:\s*swap/)
     }
   })
+
+  // The app vendors no mono face, so a rule asking for one lands on whatever
+  // the reader's OS calls monospace.
+  it('asks for no monospace anywhere, so a value is tabular sans or nothing', () => {
+    const scanned = styledFiles('resources')
+    const asking = scanned.flatMap((path) =>
+      /monospace|--font-mono/.test(readFileSync(`${process.cwd()}/${path}`, 'utf8'))
+        ? [path]
+        : [],
+    )
+
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(asking).toEqual([])
+  })
+})
+
+/** Every depth a stylesheet paints. An `inset` shadow is a hairline rule
+ *  rather than a lift, so it names an edge token and no rung. */
+function depths(): [string, string][] {
+  return styledFiles('resources').flatMap((path) =>
+    [
+      ...readFileSync(`${process.cwd()}/${path}`, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .matchAll(/(?<![-\w])box-shadow:\s*([^;}]+)/g),
+    ].map(([, value]): [string, string] => [path, value.trim()]),
+  )
+}
+
+const RUNG = /^var\(--elevation-[0-3]\)$/
+
+describe('the elevation ladder', () => {
+  it('leaves no surface picking a depth of its own', () => {
+    const painted = depths()
+    const offLadder = painted.filter(
+      ([, value]) =>
+        !RUNG.test(value) &&
+        !value.split(',').every((layer) => layer.trim().startsWith('inset')),
+    )
+
+    expect(painted.length).toBeGreaterThan(0)
+    expect(offLadder).toEqual([])
+  })
+
+  it('leaves every lifted rung retunable by the palette that paints it', () => {
+    const root = readBase().match(/:root\s*\{([\s\S]*?)\n\s*\}/)
+    if (!root) throw new Error('no :root block in base.css')
+    const palette = themePalette('nord')
+    const rungs = [...root[1].matchAll(/--elevation-\d+:\s*([^;]+);/g)].map(([, value]) =>
+      value.trim(),
+    )
+
+    expect(rungs.length).toBeGreaterThan(0)
+    expect(
+      rungs.filter((rung) => {
+        const alias = rung.match(/^var\((--shadow-[\w-]+)\)$/)
+        return alias === null ? rung !== 'none' : !palette.has(alias[1])
+      }),
+    ).toEqual([])
+  })
 })
 
 describe('motion the reader asked not to see', () => {

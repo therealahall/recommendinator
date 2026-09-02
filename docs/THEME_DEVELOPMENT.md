@@ -153,10 +153,13 @@ and the text colour follows.
 |----------|---------|-------------|
 | `--overlay-dark` | `rgba(0, 0, 0, 0.6)` | Modal backdrops |
 | `--overlay-medium` | `rgba(0, 0, 0, 0.5)` | Sidebar mobile overlay |
-| `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Small shadow |
-| `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Medium shadow |
-| `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Large shadow |
-| `--shadow-tooltip` | `0 4px 12px rgba(0, 0, 0, 0.25)` | Tooltip shadow |
+| `--shadow-sm` | `0 1px 2px rgba(0, 0, 0, 0.3)` | Rung 1: a surface resting on the stage |
+| `--shadow-md` | `0 2px 8px rgba(0, 0, 0, 0.3)` | Rung 2: a surface summoned over it |
+| `--shadow-lg` | `0 4px 16px rgba(0, 0, 0, 0.4)` | Rung 3: a modal surface |
+
+`base.css` aliases these to `--elevation-1`, `--elevation-2` and `--elevation-3`,
+and no rule outside that alias names a shadow. Retuning one moves every surface
+on its rung together.
 
 ## Transparent variants come free
 
@@ -205,9 +208,10 @@ A theme owns colour, the two font families (`--font-ui`, `--font-display`),
 radius (`--radius-*`) and depth (`--shadow-*`).
 
 Everything else is core, declared only in `base.css`: spacing (`--space-*`), the
-type scale (`--text-*`), line height, weight, tracking, `--font-mono`,
-transitions, `--rail-w`, `--tabbar-h`, `--topbar-h` and `--measure`. That fence stops a
-palette undoing a target size or the width text is set to.
+type scale (`--text-*`), line height, weight, tracking, the elevation rungs
+(`--elevation-*`), transitions, `--rail-w`, `--tabbar-h`, `--topbar-h` and
+`--measure`. That fence stops a palette undoing a target size or the width text
+is set to.
 
 ## Persistence
 

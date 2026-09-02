@@ -163,7 +163,7 @@ function onDecline(copyId: number, otherIds: number[]): void {
 
 .dup-side-title {
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import DuplicatesPage from './DuplicatesPage.vue'
 import type { DuplicateSuggestion } from '@/types/api'
 
@@ -43,7 +44,14 @@ function block(...ids: number[]): DuplicateSuggestion {
 }
 
 function mountPage() {
-  return mount(DuplicatesPage, { attachTo: document.body })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/library', name: 'library', component: { template: '<div />' } },
+      { path: '/library/duplicates', name: 'duplicates', component: { template: '<div />' } },
+    ],
+  })
+  return mount(DuplicatesPage, { global: { plugins: [router] }, attachTo: document.body })
 }
 
 function alertOf(wrapper: ReturnType<typeof mountPage>) {
@@ -132,6 +140,18 @@ describe('DuplicatesPage', () => {
 
     expect(wrapper.text()).toContain(note)
     expect(wrapper.text()).not.toContain('Nothing looks like the same work twice.')
+  })
+
+  // The rail marks Library while this screen is up and links nowhere here, so
+  // without this link the only way back is the browser's own Back.
+  it('offers the way back to the section the rail says it is in', async () => {
+    mockGet.mockImplementation(async (url: string) => (url === '/duplicates' ? page([]) : []))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.findAll('a').some((link) => link.attributes('href') === '/library')).toBe(
+      true,
+    )
   })
 
   it('keeps the alert in the tree while silent, so a refusal reads as a change', async () => {

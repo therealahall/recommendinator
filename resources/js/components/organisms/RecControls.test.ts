@@ -39,19 +39,18 @@ describe('RecControls', () => {
     expect(recs.count).toBe(10)
   })
 
-  it('calls fetch on Generate click', async () => {
+  it('runs a ranking when the primary action is pressed', async () => {
     const recs = useRecommendationsStore()
     recs.fetch = vi.fn()
 
     const wrapper = mount(RecControls)
 
-    const genBtn = wrapper.findAll('.btn').find(b => b.text() === 'Generate')!
-    await genBtn.trigger('click')
+    await wrapper.get('[data-testid="generate-btn"]').trigger('click')
 
     expect(recs.fetch).toHaveBeenCalled()
   })
 
-  it('says a generation is running from the Generate button the keyboard is still on', async () => {
+  it('says a run is in flight from the button the keyboard is still on', async () => {
     mockGet.mockImplementation(() => new Promise(() => {}))
     const wrapper = mount(RecControls, { attachTo: document.body })
     const button = wrapper.get('[data-testid="generate-btn"]')
@@ -67,7 +66,7 @@ describe('RecControls', () => {
     wrapper.unmount()
   })
 
-  it('asks for one set of recommendations when Generate is activated twice in flight', async () => {
+  it('asks for one set of recommendations when the run is started twice in flight', async () => {
     mockGet.mockImplementation(() => new Promise(() => {}))
     const wrapper = mount(RecControls)
     const button = wrapper.get('[data-testid="generate-btn"]')

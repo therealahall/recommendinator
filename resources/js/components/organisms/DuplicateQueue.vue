@@ -65,7 +65,7 @@ function blockHolding(copyId: number): string {
     aria-labelledby="dup-queue-heading"
     tabindex="-1"
   >
-    <h3 id="dup-queue-heading" class="dup-heading">Suspected duplicates</h3>
+    <h3 id="dup-queue-heading" class="section-title dup-heading">Suspected duplicates</h3>
     <p class="help-text">
       Merging keeps one copy and folds the rest into it. Nothing is deleted, and
       every merge can be undone. Dismissing a copy keeps it off this work until
@@ -96,8 +96,12 @@ function blockHolding(copyId: number): string {
     <div v-if="store.loading && rows.length === 0" class="state state--loading">
       <span class="spinner" /> Loading…
     </div>
-    <div v-else-if="rows.length === 0 && emptyMessage" class="state state--empty">
-      {{ emptyMessage }}
+    <div
+      v-else-if="rows.length === 0 && emptyMessage"
+      class="state state--empty"
+      data-testid="dup-queue-empty"
+    >
+      <p class="state-title">{{ emptyMessage }}</p>
     </div>
     <ul v-else-if="rows.length" ref="listEl" class="dup-list" role="list">
       <DuplicatePair
@@ -123,8 +127,6 @@ function blockHolding(copyId: number): string {
 
 <style scoped>
 .dup-heading {
-  font-size: var(--text-lg);
-  font-weight: 600;
   margin-bottom: var(--space-2);
 }
 

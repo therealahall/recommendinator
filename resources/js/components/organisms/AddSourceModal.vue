@@ -433,10 +433,10 @@ async function submit(): Promise<void> {
 }
 
 .add-source-field label {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   font-size: var(--text-sm);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .add-source-toggle {
@@ -450,7 +450,7 @@ async function submit(): Promise<void> {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .add-source-hint {

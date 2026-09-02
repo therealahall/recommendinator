@@ -37,7 +37,7 @@ function onGenerate(): void {
           data-testid="generate-btn"
           :aria-disabled="recs.loading || undefined"
           @click="onGenerate"
-        >{{ recs.loading ? 'Generating…' : 'Generate' }}</button>
+        >{{ recs.loading ? 'Ranking…' : 'Rank' }}</button>
       </div>
     </div>
   </div>

@@ -279,10 +279,10 @@ onBeforeUnmount(clearPoll)
 
 .trakt-flow-code-value {
   display: inline-block;
-  font-family: var(--font-mono);
   font-size: var(--text-2xl);
-  letter-spacing: 0.15em;
-  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-widest);
+  font-weight: var(--weight-semibold);
   color: var(--text-primary);
   background: var(--bg-elevated);
   border: 1px solid var(--border-default);

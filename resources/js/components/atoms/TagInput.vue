@@ -128,7 +128,7 @@ function onKeypress(event: KeyboardEvent) {
 .tag-input label {
   display: block;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-secondary);
   margin-bottom: var(--space-1);
 }
