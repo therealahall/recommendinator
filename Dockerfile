@@ -7,7 +7,7 @@
 # =============================================================================
 # Frontend builder (Vue 3 + Vite)
 # =============================================================================
-FROM node:24-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS frontend-builder
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS frontend-builder
 
 # Node dropped corepack from the distribution at 25, so pnpm installs directly.
 RUN npm install -g pnpm@9.7.0
@@ -30,7 +30,7 @@ RUN pnpm build
 # =============================================================================
 # Builder
 # =============================================================================
-FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS builder
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.10.7@sha256:edd1fd89f3e5b005814cc8f777610445d7b7e3ed05361f9ddfae67bebfe8456a /uv /bin/uv
 
@@ -57,7 +57,7 @@ RUN uv sync --locked
 # =============================================================================
 # Same digest as the builder: the venv copied in below was built against that
 # interpreter and its shared libraries.
-FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff AS runtime
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS runtime
 
 WORKDIR /app
 
