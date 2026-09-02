@@ -39,9 +39,9 @@ const BADGE_TONES = [
   ".badge[data-tone='error']",
 ]
 
-/** The three surfaces a badge is placed on: a card, a dialog or duplicate row,
- *  and the page itself. */
-const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary']
+/** The four surfaces a badge is placed on: a card, a dialog or duplicate row,
+ *  the page itself, and the top strip that carries the version. */
+const BADGE_SURFACES = ['--bg-card', '--bg-elevated', '--bg-primary', '--chrome']
 
 interface Rgba {
   r: number
@@ -332,14 +332,23 @@ const ACCORDION = 'resources/js/components/atoms/Accordion.vue'
 const DATA_PAGE = 'resources/js/components/pages/DataPage.vue'
 const NUMBER_STEPPER = 'resources/js/components/atoms/NumberStepper.vue'
 const PREFERENCES_PAGE = 'resources/js/components/pages/PreferencesPage.vue'
-const RECOMMENDATIONS_PAGE = 'resources/js/components/pages/RecommendationsPage.vue'
 const SEASON_CHECKLIST = 'resources/js/components/molecules/SeasonChecklist.vue'
 const SOURCE_CONFIG_FORM = 'resources/js/components/molecules/SourceConfigForm.vue'
 const SOURCE_SYNC_PROGRESS = 'resources/js/components/molecules/SourceSyncProgress.vue'
 const STAR_RATING = 'resources/js/components/atoms/StarRating.vue'
 const TRAKT_FLOW = 'resources/js/components/molecules/TraktDeviceCodeFlow.vue'
+const WEIGHTS = 'resources/js/components/organisms/WeightsDialog.vue'
 
-const MUTED_SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
+const MUTED_SURFACES = [
+  '--bg-primary',
+  '--bg-card',
+  '--bg-sidebar',
+  '--bg-elevated',
+  '--bg-input',
+  // The rail, the tab bar and the top strip are one material, and it is derived
+  // rather than declared, so a palette moves it without naming it.
+  '--chrome',
+]
 const EDGE_SURFACES = [...MUTED_SURFACES, '--bg-hover']
 const RING_SURFACES = [
   '--bg-card',
@@ -348,6 +357,8 @@ const RING_SURFACES = [
   // The CSV drop zone and the export menu, both of which a Tab reaches.
   '--bg-elevated',
   '--bg-sidebar',
+  // Every rail item and tab, which is where a Tab starts.
+  '--chrome',
 ]
 
 const ACCENT_LIGHT_FILLS: [string, string, string][] = [
@@ -512,23 +523,35 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a preferences save that failed', PREFERENCES_PAGE, '.text-error', '--bg-card'],
   ['a preferences save that landed', PREFERENCES_PAGE, '.text-success', '--bg-card'],
   ['the number of a watched season', SEASON_CHECKLIST, '.season-checkbox.checked', '--bg-card'],
-  ['the version under the app name', BASE, '.version-label', '--bg-sidebar'],
   ['a sync that failed', BASE, '.sync-status-error', '--bg-card'],
   ['a sync still running', BASE, '.sync-status-info', '--bg-card'],
   ['a sync that finished', BASE, '.sync-status-success', '--bg-card'],
-  ['the page the sidebar is on', BASE, '.nav-item.active', '--bg-sidebar'],
-  ['the app name over the nav', BASE, '.app-banner h1', '--bg-sidebar'],
+  ['a section the rail is not on', BASE, '.nav-item', '--chrome'],
+  ['the section the rail marks', BASE, ".nav-item[aria-current]", '--chrome'],
+  ['the account the rail names', BASE, '.nav-user', '--chrome'],
+  ['the app name on the top strip', BASE, '.app-name', '--chrome'],
+  ['the weights panel saying what it is for', WEIGHTS, '.weights-lede', '--bg-card'],
+  ['a weights save that failed', WEIGHTS, '.weights-status.failed', '--bg-card'],
   ['a scorer weight', BASE, '.slider-value', '--bg-card'],
   ['a page, panel or field that refused', BASE, '.state--error', '--bg-card'],
   ['the same refusal off any card', BASE, '.state--error', '--bg-primary'],
   ['a new version being available', BASE, '.update-banner', '--bg-primary'],
   ['the Reload button on it', BASE, '.btn-secondary', '--bg-primary'],
-  ['a score breakdown', BASE, '.score-details summary', '--bg-card'],
-  ['a hovered score breakdown', BASE, '.score-details summary:hover', '--bg-card'],
+  ['the type glyph standing in for a missing cover', BASE, '.cover-art--none', '--bg-card'],
+  ['the content type a card names', BASE, '.kind-line', '--bg-card'],
+  ['the rank of a recommendation', BASE, '.rec-rank', '--bg-card'],
+  ['the same rank once that one is set aside', BASE, '.rec-rank', '--bg-primary'],
+  ['a recommendation set aside', BASE, '.rec-aside-body', '--bg-primary'],
+  ['the heading over a breakdown', BASE, '.score-details-title', '--bg-primary'],
+  ['a scorer in a breakdown', BASE, '.score-label', '--bg-primary'],
+  ['how far that scorer reached', BASE, '.score-value', '--bg-primary'],
+  ['the points variety took off', BASE, '.score-row-penalty .score-value', '--bg-primary'],
   ['a hovered scorer tooltip', BASE, '.scorer-tooltip-wrap:hover .scorer-tooltip-icon', '--bg-card'],
   ['the Trakt activation link', TRAKT_FLOW, '.trakt-flow-link', '--bg-card'],
   ['a Trakt connect failure', TRAKT_FLOW, '.trakt-flow-status--error', '--bg-card'],
 ]
+
+const SCORE_BUTTON_TEXT = ['.rec-score-caption', '.rec-score-cue']
 
 describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themePath) => {
   const vars = tokens(themePath)
@@ -545,6 +568,18 @@ describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themeP
 
     expect(contrast({ ...text, a: text.a * fade }, behind)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
+
+  // The score control paints itself while hovered and while expanded, so its
+  // own labels are read on that fill and not on the card behind it.
+  it.each(SCORE_BUTTON_TEXT)('%s stays readable on the fill the score takes', (selector) => {
+    const base = read(BASE)
+    const fill = declaration(ruleBody(base, '.rec-score:hover'), 'background')
+    const text = declaration(ruleBody(base, selector), 'color')
+
+    expect(contrast(toRgba(text, vars), toRgba(fill, vars))).toBeGreaterThanOrEqual(
+      AA_NORMAL_TEXT,
+    )
+  })
 })
 
 /** Backgrounds that named an undefined token, so they painted nothing and the
@@ -552,13 +587,6 @@ describe.each(THEMES)('text over the surface it lands on in %s', (_theme, themeP
 const RESTORED_SURFACES: [string, string, string, string, string][] = [
   ['an accordion header', ACCORDION, '.accordion-trigger', ACCORDION, '.accordion'],
   ['the All Sources hint', BASE, '.sync-plugin-name', DATA_PAGE, '.sync-all-card'],
-  [
-    'an ignored recommendation',
-    RECOMMENDATIONS_PAGE,
-    '.rec-ignored',
-    RECOMMENDATIONS_PAGE,
-    '.rec-ignored',
-  ],
 ]
 
 describe.each(THEMES)('surfaces restored to a defined token in %s', (_theme, themePath) => {
@@ -650,6 +678,22 @@ describe.each(THEMES)('how far a bar has filled in %s', (_theme, themePath) => {
 const CONTROL_BOUNDARIES: [string, string, string, string, string][] = [
   ['a refused field', BASE, ".field[aria-invalid='true']", 'border-color', 'var(--bg-input)'],
   ['a season checkbox', SEASON_CHECKLIST, '.season-checkbox', 'border', 'var(--bg-elevated)'],
+  ['a leading score segment', BASE, '.rec-spine-segment', 'background', 'var(--bg-card)'],
+  [
+    'the rest of the score',
+    BASE,
+    '.rec-spine-segment--rest',
+    'background',
+    'var(--bg-card)',
+  ],
+  [
+    'the variety penalty in it',
+    BASE,
+    '.rec-spine-segment--penalty',
+    'background',
+    'var(--bg-card)',
+  ],
+  ['the box a cover sits in', BASE, '.cover-art', 'border', 'var(--bg-card)'],
 ]
 
 function invalidEdges(source: string): string[] {

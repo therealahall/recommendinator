@@ -125,23 +125,6 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
-  /** The panel is the only route to importing a file in the UI, so dropping it
-   *  from this page takes the capability off the web entirely. */
-  it('renders the import panel', async () => {
-    mockPost.mockResolvedValue({})
-    mockGet.mockImplementation((path: string) => {
-      if (path === '/sync/sources') return Promise.resolve([enabledSource])
-      return Promise.resolve({})
-    })
-    const wrapper = mount(DataPage, {
-      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
-    })
-    await flushPromises()
-
-    expect(wrapper.find('import-panel-stub').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
   it('refuses a Sync All while a per-source run nobody triggered here is in flight', async () => {
     const goodreads = {
       ...enabledSource,

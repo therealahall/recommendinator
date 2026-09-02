@@ -25,7 +25,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
 describe('RecScoreDetails', () => {
   it('renders the variety penalty row with a negative percentage label', () => {
     const wrapper = mount(RecScoreDetails, {
-      props: { rec: makeRec({ variety_penalty: 0.64 }), defaultOpen: true },
+      props: { rec: makeRec({ variety_penalty: 0.64 }), open: true },
     })
     const penaltyRow = wrapper.find('.score-row-penalty')
     expect(penaltyRow.exists()).toBe(true)
@@ -36,7 +36,7 @@ describe('RecScoreDetails', () => {
 
   it('omits the variety penalty row when there is no penalty', () => {
     const wrapper = mount(RecScoreDetails, {
-      props: { rec: makeRec({ variety_penalty: 0 }), defaultOpen: true },
+      props: { rec: makeRec({ variety_penalty: 0 }), open: true },
     })
     expect(wrapper.find('.score-row-penalty').exists()).toBe(false)
   })
@@ -45,10 +45,28 @@ describe('RecScoreDetails', () => {
     const wrapper = mount(RecScoreDetails, {
       props: {
         rec: makeRec({ score_breakdown: {}, variety_penalty: 0.8 }),
-        defaultOpen: true,
+        open: true,
       },
     })
     expect(wrapper.find('.score-details').exists()).toBe(true)
     expect(wrapper.find('.score-row-penalty').exists()).toBe(true)
+  })
+
+  it('reads every scorer as a percentage, never as a decimal out of one', () => {
+    const wrapper = mount(RecScoreDetails, {
+      props: {
+        rec: makeRec({ score: 0.88, score_breakdown: { genre_match: 0.88 } }),
+        open: true,
+      },
+    })
+    expect(wrapper.get('.score-value').text()).toBe('88%')
+    expect(wrapper.text()).toContain('How 88% was reached')
+    expect(wrapper.text()).not.toContain('0.88')
+  })
+
+  it('is hidden from everyone, not just from sight, while collapsed', () => {
+    const wrapper = mount(RecScoreDetails, { props: { rec: makeRec(), open: false } })
+
+    expect(wrapper.get('.score-details').attributes('hidden')).toBeDefined()
   })
 })

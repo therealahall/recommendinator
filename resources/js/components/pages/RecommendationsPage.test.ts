@@ -3,7 +3,26 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import RecommendationsPage from './RecommendationsPage.vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
-import type { ContentItemResponse } from '@/types/api'
+import type { ContentItemResponse, RecommendationResponse } from '@/types/api'
+
+function makeRec(overrides: Partial<RecommendationResponse> = {}): RecommendationResponse {
+  return {
+    db_id: 1,
+    title: 'A',
+    author: null,
+    content_type: 'book',
+    cover_url: null,
+    series: null,
+    series_index: null,
+    score: 0.9,
+    reasoning: '',
+    score_breakdown: {},
+    variety_penalty: 0,
+    contributing_items: [],
+    adaptations: [],
+    ...overrides,
+  }
+}
 
 function makeFullItem(overrides: Partial<ContentItemResponse> = {}): ContentItemResponse {
   return {
@@ -68,8 +87,8 @@ describe('RecommendationsPage', () => {
     wrapper = mount(RecommendationsPage, { global: { stubs }, attachTo: document.body })
     const store = useRecommendationsStore()
     mockGet.mockResolvedValue([
-      { db_id: 1, title: 'A', score: 0.9, reasoning: '', score_breakdown: {}, variety_penalty: 0 },
-      { db_id: 2, title: 'B', score: 0.8, reasoning: '', score_breakdown: {}, variety_penalty: 0 },
+      makeRec({ db_id: 1, title: 'A', score: 0.9 }),
+      makeRec({ db_id: 2, title: 'B', score: 0.8 }),
     ])
     await store.fetch()
     await flushPromises()

@@ -90,7 +90,14 @@ function ratio(token: string, surface: string): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
-const SURFACES = ['--bg-primary', '--bg-card', '--bg-sidebar', '--bg-elevated', '--bg-input']
+const SURFACES = [
+  '--bg-primary',
+  '--bg-card',
+  '--bg-sidebar',
+  '--bg-elevated',
+  '--bg-input',
+  '--chrome',
+]
 const EDGE_SURFACES = [...SURFACES, '--bg-hover']
 const TEXT = ['--text-primary', '--text-secondary', '--text-muted']
 const SEMANTIC_TEXT = [

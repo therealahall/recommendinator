@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, onUnmounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
@@ -63,9 +64,15 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <div class="page-header">
-      <h2>Library</h2>
-      <p class="page-description">Browse and manage your content collection.</p>
+    <div class="page-header library-header">
+      <div class="library-heading">
+        <h2>Library</h2>
+        <p class="page-description">Browse and manage your content collection.</p>
+      </div>
+      <RouterLink class="btn btn-secondary library-duplicates" :to="{ name: 'duplicates' }">
+        <AppIcon name="copy" />
+        Review duplicates
+      </RouterLink>
     </div>
 
     <LibraryFilters
@@ -135,3 +142,21 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.library-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.library-heading {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.library-duplicates {
+  min-height: 44px;
+}
+</style>

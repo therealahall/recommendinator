@@ -2,12 +2,12 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterView } from 'vue-router'
 import router from '@/router'
-import AppIcon from '@/components/atoms/AppIcon.vue'
-import AppSidebar from '@/components/organisms/AppSidebar.vue'
+import AppNav from '@/components/organisms/AppNav.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
 import StatusBar from '@/components/organisms/StatusBar.vue'
 import UpdateBanner from '@/components/organisms/UpdateBanner.vue'
+import WeightsPanel from '@/components/organisms/WeightsPanel.vue'
 import { useSubmission } from '@/composables/useSubmission'
 import { useAppStore } from '@/stores/app'
 import { SESSION_ENDED, useAuthStore } from '@/stores/auth'
@@ -20,27 +20,19 @@ const theme = useThemeStore()
 // Setup and sign-in are never on screen together, so they share one report.
 const gate = useSubmission()
 
-const sidebarOpen = ref(false)
-const narrowViewport = window.matchMedia('(max-width: 768px)')
-const isNarrow = ref(narrowViewport.matches)
-const sidebarOffscreen = computed(() => isNarrow.value && !sidebarOpen.value)
 const mainContent = ref<HTMLElement | null>(null)
 /** Why the sign-in form is on screen, as opposed to a refusal of what was typed
  *  into it: marking an untouched field invalid announces "invalid entry". */
 const notice = ref('')
 
-function closeSidebar() {
-  sidebarOpen.value = false
-}
+// The weights only change what a ranking run produces, so they are summonable
+// from the screen that shows one and nowhere else.
+const ranking = computed(() => router.currentRoute.value.name === 'recommendations')
 
 // Prevented rather than followed: the router owns the fragment, so navigating to
 // #main-content would throw the route away.
 function skipToMain() {
   mainContent.value?.focus()
-}
-
-function trackViewport(change: MediaQueryListEvent) {
-  isNarrow.value = change.matches
 }
 
 function load() {
@@ -69,10 +61,7 @@ function signIn(credentials: LoginRequest) {
   gate.submit(() => auth.signIn(credentials))
 }
 
-onMounted(() => narrowViewport.addEventListener('change', trackViewport))
-
 onUnmounted(() => {
-  narrowViewport.removeEventListener('change', trackViewport)
   app.stopPolling()
 })
 
@@ -114,7 +103,7 @@ watch(
     }
     load()
     // The sign-in screen took the focused input with it, so focus would sit on
-    // <body> and the next Tab would restart from the sidebar.
+    // <body> and the next Tab would restart from the nav.
     await nextTick()
     mainContent.value?.focus()
   },
@@ -140,36 +129,27 @@ watch(
 
   <template v-else-if="auth.isAuthenticated">
     <a class="skip-link" href="#main-content" @click.prevent="skipToMain">Skip to main content</a>
-    <button
-      class="sidebar-toggle"
-      aria-label="Toggle navigation"
-      aria-controls="sidebar"
-      :aria-expanded="isNarrow ? sidebarOpen : undefined"
-      @click="sidebarOpen = !sidebarOpen"
-    >
-      <AppIcon name="menu" :size="20" />
-    </button>
-    <div
-      class="sidebar-overlay"
-      :class="{ visible: sidebarOpen }"
-      @click="closeSidebar"
-    />
 
-    <div class="app-layout" :class="{ 'sidebar-open': sidebarOpen }">
-      <div class="sidebar-column">
-        <!-- Outside the drawer: the drawer goes inert and aria-hidden when it is
-             off screen, which would leave a phone with no h1 at all. -->
-        <header class="app-banner">
-          <h1>Recommendinator</h1>
-          <span v-if="app.version" class="version-label">v{{ app.version }}</span>
+    <div class="app-shell">
+      <AppNav :user="auth.user" />
+      <div class="app-column">
+        <!-- The h1 lives here rather than in the nav: the nav is a row of tabs
+             on a phone, with no room for a name the page still owes a heading. -->
+        <header class="app-topbar">
+          <h1 class="app-name">Recommendinator</h1>
+          <span v-if="app.version" class="badge">v{{ app.version }}</span>
+          <div v-if="ranking" class="app-topbar-actions">
+            <WeightsPanel />
+          </div>
         </header>
-        <AppSidebar :user="auth.user" :offscreen="sidebarOffscreen" @navigate="closeSidebar" />
+        <main id="main-content" ref="mainContent" class="app-stage" tabindex="-1">
+          <div class="app-stage-inner">
+            <UpdateBanner />
+            <StatusBar />
+            <RouterView />
+          </div>
+        </main>
       </div>
-      <main id="main-content" ref="mainContent" class="main-content" tabindex="-1">
-        <UpdateBanner />
-        <StatusBar />
-        <RouterView />
-      </main>
     </div>
   </template>
 
@@ -180,17 +160,12 @@ watch(
          that enters the tree already populated is skipped as page content. -->
     <div class="card auth-card">
       <header class="auth-head">
-        <h1 class="auth-title">Recommendinator</h1>
+        <p class="auth-eyebrow">Recommendinator</p>
+        <h1 class="auth-title">Just a moment</h1>
       </header>
-      <p class="auth-status" data-testid="session-pending">Checking your session…</p>
+      <p class="state state--loading" data-testid="session-pending">
+        <span class="spinner" aria-hidden="true" /> Checking your session…
+      </p>
     </div>
   </main>
 </template>
-
-<style>
-@media (max-width: 768px) {
-  .sidebar-open .sidebar {
-    left: 0;
-  }
-}
-</style>

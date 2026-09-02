@@ -210,16 +210,39 @@ describe('library card divider (issue #108)', () => {
   })
 })
 
+describe('the one cover box', () => {
+  // 16:9 key art and square art arrive in the same 2:3 box as a poster, so
+  // anything but `cover` renders them stretched or letterboxed.
+  it('slices art of any source ratio rather than distorting it', () => {
+    const source = readBase()
+
+    expect(declaration(ruleBlock(source, '.cover-art img'), 'object-fit')).toBe('cover')
+    expect(declaration(ruleBlock(source, '.cover-art img'), 'object-position')).toBe('center')
+  })
+
+  // Slicing to a box off the poster ratio crops the art every source ships,
+  // rather than only the wider key art it is there for.
+  it('holds the 2:3 the covers themselves are, at whatever size', () => {
+    const box = ruleBlock(readBase(), '.cover-art')
+    const px = (property: string): number => parseFloat(declaration(box, property))
+
+    expect(px('height')).toBeCloseTo(px('width') * 1.5)
+  })
+})
+
 describe('recommendation card header (issue #98)', () => {
-  // 1.4.10: at 375px the score badge and buttons squeezed the title until the
-  // card scrolled sideways.
-  it('gives the heading its own row before the actions crowd it', () => {
+  // 1.4.10: at 375px the score and the 78px rank column squeezed the title
+  // until the card scrolled sideways. Every fixed-width neighbour of the
+  // heading has to give up its column.
+  it('gives the heading its own row before the score crowds it', () => {
     const mobile = mediaBlock(readBase(), '640px')
 
+    expect(declaration(ruleBlock(mobile, '.rec-card'), 'grid-template-columns')).toBe(
+      'minmax(0, 1fr)',
+    )
     expect(declaration(ruleBlock(mobile, '.rec-header'), 'flex-wrap')).toBe('wrap')
     expect(declaration(ruleBlock(mobile, '.rec-heading'), 'flex')).toBe('1 1 100%')
-    expect(declaration(ruleBlock(mobile, '.rec-heading'), 'min-width')).toBe('0')
-    expect(declaration(ruleBlock(mobile, '.rec-actions'), 'width')).toBe('100%')
+    expect(declaration(ruleBlock(mobile, '.rec-score'), 'width')).toBe('100%')
   })
 })
 
@@ -329,31 +352,42 @@ describe('stacking order', () => {
 
 describe('the bypass link', () => {
   // Equal z-index breaks on tree order, and the link is first in the tree
-  // precisely so Tab reaches it before the toggle — which puts it underneath.
-  it('is not painted under the drawer toggle it shares a corner with', () => {
+  // precisely so Tab reaches it first — which puts it under the chrome it
+  // opens on top of.
+  it('is painted over the rail and the top strip it lands on', () => {
     const source = readBase()
-    const toggle = ruleBlock(source, '.sidebar-toggle')
-    const link = ruleBlock(source, '.skip-link')
-    const corner = (top: string, left: string) => `${top} ${left}`
-    const covered =
-      corner(declaration(ruleBlock(source, '.skip-link:focus'), 'top'), declaration(link, 'left')) ===
-        corner(declaration(toggle, 'top'), declaration(toggle, 'left')) &&
-      step(scale(source), declaration(link, 'z-index')) <=
-        step(scale(source), declaration(toggle, 'z-index'))
+    const steps = scale(source)
+    const link = step(steps, declaration(ruleBlock(source, '.skip-link'), 'z-index'))
 
-    expect(covered, 'the focused bypass link is drawn under the drawer toggle').toBe(false)
+    for (const chrome of ['.app-nav', '.app-topbar']) {
+      expect(link, `${chrome} is drawn over the focused bypass link`).toBeGreaterThan(
+        step(steps, declaration(ruleBlock(source, chrome), 'z-index')),
+      )
+    }
   })
 })
 
 const APP = 'resources/js/App.vue'
 
-function drawerBreakpoints(): string[] {
-  return ['resources/css/base.css', APP].flatMap((path) =>
-    [
-      ...readFileSync(`${process.cwd()}/${path}`, 'utf8').matchAll(
-        /@media \(max-width: ([^)]+)\)\s*\{([\s\S]*?)\n\}/g,
-      ),
-    ].flatMap(([, width, body]) => (/\.sidebar\s*\{[^}]*left:/.test(body) ? [width] : [])),
+const SHELL_RULES = [
+  '.app-shell',
+  '.app-nav',
+  '.nav-list',
+  '.nav-item',
+  '.nav-user',
+  '.app-topbar',
+  '.app-stage',
+]
+
+function restyles(body: string, selector: string): boolean {
+  return new RegExp(`^\\s*${selector.replace(/\./g, '\\.')}[\\s{[]`, 'm').test(body)
+}
+
+function shellBreakpoints(): [string, string][] {
+  return [
+    ...readBase().matchAll(/@media \(max-width: ([^)]+)\)\s*\{([\s\S]*?)\n\}/g),
+  ].flatMap(([, width, body]): [string, string][] =>
+    SHELL_RULES.some((rule) => restyles(body, rule)) ? [[width, body]] : [],
   )
 }
 
@@ -470,17 +504,55 @@ describe('the token contract', () => {
   })
 })
 
-describe('the mobile sidebar drawer', () => {
-  // Widen the CSS alone and an 800px tablet has the sidebar off screen with
-  // isNarrow false, so it never goes inert and Tab walks six invisible buttons.
-  it('goes inert at the width the CSS slides it off screen', () => {
-    const watched = readFileSync(`${process.cwd()}/${APP}`, 'utf8').match(
-      /matchMedia\('\(max-width: ([^)]+)\)'\)/,
+describe('a page sticking a row of its own under the chrome', () => {
+  // The top strip is sticky and outranks it, so a filter row parked at the
+  // viewport edge is a control the phone user cannot see or reach.
+  it('clears the strip by the height the strip is held to', () => {
+    const source = readBase()
+    const filters = readFileSync(
+      `${process.cwd()}/resources/js/components/organisms/LibraryFilters.vue`,
+      'utf8',
     )
-    if (!watched) throw new Error('App.vue watches no viewport width')
-    const breakpoints = drawerBreakpoints()
+    const offset = declaration(ruleBlock(mediaBlock(filters, '640px'), '.card'), 'top')
 
-    expect(breakpoints.length).toBeGreaterThan(0)
-    expect([...new Set(breakpoints)]).toEqual([watched[1]])
+    expect(offset).toBe(declaration(ruleBlock(source, '.app-topbar'), 'min-height'))
+    expect(step(scale(source), declaration(ruleBlock(source, '.app-topbar'), 'z-index'))).toBeGreaterThan(
+      step(scale(source), declaration(ruleBlock(filters, '.card'), 'z-index')),
+    )
+  })
+})
+
+describe('the rail becoming a tab bar', () => {
+  // Two queries and a script watching a third let an 800px tablet have the nav
+  // off screen at a width nothing called narrow, so it stayed tabbable while
+  // invisible. One query, and no script, is what makes that unreachable.
+  it('turns the shell over at one width, decided by the stylesheet alone', () => {
+    const widths = shellBreakpoints().map(([width]) => width)
+
+    expect(widths.length).toBeGreaterThan(0)
+    expect([...new Set(widths)]).toEqual(widths.slice(0, 1))
+    expect(readFileSync(`${process.cwd()}/${APP}`, 'utf8')).not.toMatch(/@media|matchMedia/)
+  })
+
+  // The drawer had to go inert because it was on screen and hidden at once.
+  // The tab bar owes the same promise by never being hidden at all.
+  it('leaves the nav and every tab on screen at that width', () => {
+    const [[, narrow]] = shellBreakpoints()
+
+    for (const rule of ['.app-nav', '.nav-list', '.nav-item']) {
+      expect(narrow, `${rule} is hidden on a phone`).not.toMatch(
+        new RegExp(`${rule.replace(/\./g, '\\.')}\\s*\\{[^}]*display:\\s*none`),
+      )
+    }
+  })
+
+  // Sticky would scroll the tabs away; taking them out of the flow instead
+  // costs the shell the height back, or every page ends under them.
+  it('pays back the height a detached tab bar stops occupying', () => {
+    const [[, narrow]] = shellBreakpoints()
+    const detached = /position:\s*(?:fixed|absolute)/.test(ruleBlock(narrow, '.app-nav'))
+    const reserved = /padding-bottom:|margin-bottom:/.test(ruleBlock(narrow, '.app-shell'))
+
+    expect(reserved || !detached, 'the tab bar covers the bottom of every page').toBe(true)
   })
 })

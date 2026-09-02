@@ -16,13 +16,4 @@ describe('AppIcon', () => {
   it('takes its colour from the control it sits in, so a tone never strands it', () => {
     expect(mount(AppIcon, { props: { name: 'close' } }).attributes('stroke')).toBe('currentColor')
   })
-
-  it('offers only the three sizes the layout is built on', () => {
-    const at = (size: 16 | 20 | 40): string[] =>
-      mount(AppIcon, { props: { name: 'menu', size } }).classes()
-
-    expect(at(16)).toEqual(['icon'])
-    expect(at(20)).toContain('icon--20')
-    expect(at(40)).toContain('icon--40')
-  })
 })

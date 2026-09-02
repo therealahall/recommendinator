@@ -534,3 +534,35 @@ class TestAnEmptySignalSet:
 
         assert index.references_for(self._candidate(), random.Random(7)) == []
         assert index.adaptations_of(self._candidate()) == []
+
+
+class TestOneSignalItemCitedTwoWays:
+    """``_generate_reasoning`` dedupes the two lists by db_id because they
+    overlap; anything else naming both owes the same dedup."""
+
+    def test_the_book_a_film_adapts_is_also_a_contributing_reference(self) -> None:
+        book = make_item(
+            item_id="dune-book",
+            db_id=1,
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        film = make_item(
+            item_id="dune-film",
+            db_id=2,
+            title="Dune",
+            author="Frank Herbert",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        index = SignalIndex([book])
+
+        assert [item.id for item in index.adaptations_of(film)] == ["dune-book"]
+        assert "dune-book" in [
+            item.id for item in index.references_for(film, random.Random(7))
+        ]

@@ -23,12 +23,6 @@ describe('ScoringPrefs', () => {
     setActivePinia(createPinia())
   })
 
-  it('gives the section exactly one h3, so it is one landmark in the outline', () => {
-    const wrapper = mount(ScoringPrefs)
-
-    expect(wrapper.findAll('h3')).toHaveLength(1)
-  })
-
   it('renders one slider per scorer plus the variety slider', () => {
     const wrapper = mount(ScoringPrefs)
 

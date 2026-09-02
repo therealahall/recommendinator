@@ -26,8 +26,10 @@ const router = createRouter({
       meta: { title: 'Library' },
       component: () => import('@/components/pages/LibraryPage.vue'),
     },
+    // A Library function rather than a section of its own: it is reached from
+    // the Library screen, and the nav marks Library while it is open.
     {
-      path: '/duplicates',
+      path: '/library/duplicates',
       name: 'duplicates',
       meta: { title: 'Duplicates' },
       component: () => import('@/components/pages/DuplicatesPage.vue'),
