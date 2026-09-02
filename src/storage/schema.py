@@ -83,7 +83,7 @@ class SyncRunDict(TypedDict):
 # Changing ``normalize_title_for_matching``, ``get_sort_title`` or
 # ``build_search_text`` needs a bump and a step to rewrite what the old one
 # stored, or dedup lookups stop matching and duplicates accumulate in silence.
-_SCHEMA_VERSION = 19
+_SCHEMA_VERSION = 21
 
 # Rows for these keys are unreachable from the app but would still
 # be overlaid onto config, so they are pruned once on upgrade.
@@ -117,6 +117,7 @@ _CONTENT_ITEMS_TABLE = """
         rating INTEGER CHECK (rating >= 1 AND rating <= 5),
         review TEXT,
         date_completed DATE,
+        cover_url TEXT,
         ignored BOOLEAN DEFAULT 0,
         -- Source id, never a plugin name: two sources on one plugin must
         -- stay tellable apart.
@@ -215,6 +216,16 @@ _CONTENT_ITEM_CHILDREN: dict[str, str] = {
             -- What the merge overwrote on the survivor, as JSON. The absorbed
             -- row needs no such record: nothing writes it.
             restore_json TEXT NOT NULL
+        )
+    """,
+    "content_item_dead_covers": """
+        CREATE TABLE IF NOT EXISTS content_item_dead_covers (
+            -- A cleared cover_url is NULL, which reads as "never tried", so
+            -- without this the next sync re-offers the dead url for ever.
+            content_item_id INTEGER NOT NULL
+                REFERENCES content_items(id) ON DELETE CASCADE,
+            cover_url TEXT NOT NULL,
+            PRIMARY KEY (content_item_id, cover_url)
         )
     """,
     "content_item_duplicate_declines": """
@@ -362,6 +373,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     _add_column_if_not_exists(cursor, "content_items", "ignored", "BOOLEAN DEFAULT 0")
     _add_column_if_not_exists(cursor, "content_items", "normalized_title", "TEXT")
+    _add_column_if_not_exists(cursor, "content_items", "cover_url", "TEXT")
 
     # Columns derived from the title, the creator and the series, so the
     # library list is ordered and searched in SQL (see src/storage/derived.py).
@@ -478,6 +490,31 @@ def create_schema(conn: sqlite3.Connection) -> None:
             heartbeat_at TIMESTAMP
         )
         """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cover_backfill_job (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            running INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            total_items INTEGER NOT NULL DEFAULT 0,
+            items_processed INTEGER NOT NULL DEFAULT 0,
+            items_cached INTEGER NOT NULL DEFAULT 0,
+            items_cleared INTEGER NOT NULL DEFAULT 0,
+            items_failed INTEGER NOT NULL DEFAULT 0,
+            stop_requested INTEGER NOT NULL DEFAULT 0,
+            current_item TEXT NOT NULL DEFAULT '',
+            errors_json TEXT NOT NULL DEFAULT '[]',
+            started_at TIMESTAMP,
+            heartbeat_at TIMESTAMP
+        )
+        """)
+    _add_column_if_not_exists(
+        cursor, "cover_backfill_job", "stop_requested", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_not_exists(
+        cursor, "cover_backfill_job", "cancelled", "INTEGER NOT NULL DEFAULT 0"
+    )
 
     # Nothing is seeded here on boot; a stored leaf wins over YAML and the
     # registry const default.

@@ -83,6 +83,9 @@ class ContentItem(BaseModel):
     review: str | None = None
     date_completed: date | None = None
 
+    # Here rather than in DETAIL_FIELDS: all four content types have cover art.
+    cover_url: str | None = None
+
     source: str | None = None  # e.g., "goodreads_csv", "steam", "manual"
 
     # Runtime-only: every source's id for this item, populated on read. Empty

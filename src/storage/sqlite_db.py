@@ -55,6 +55,7 @@ from src.storage.merge import (
     MERGEABLE_DETAIL_COLUMNS,
     MONOTONIC_DETAIL_COLUMNS,
     assert_known_detail_table,
+    cover_url_is_dead,
     detail_join,
     normalize_title_for_matching,
     parse_json_list,
@@ -413,7 +414,7 @@ class SQLiteDB:
         with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT content_type FROM content_items"
+                "SELECT content_type, cover_url FROM content_items"
                 " WHERE id = ? AND merged_into IS NULL",
                 (db_id,),
             )
@@ -421,6 +422,15 @@ class SQLiteDB:
             if row is None:
                 return
             content_type = row["content_type"]
+            if (
+                row["cover_url"] is None
+                and item.cover_url
+                and not cover_url_is_dead(cursor, db_id, item.cover_url)
+            ):
+                cursor.execute(
+                    "UPDATE content_items SET cover_url = ? WHERE id = ?",
+                    (item.cover_url, db_id),
+                )
             # SQLite refuses to bind the lone surrogate an undecodable byte leaves.
             self._save_detail_table(cursor, db_id, _surrogate_free(item), content_type)
             # Both read what was stored: a creator this filled belongs in the
@@ -429,6 +439,27 @@ class SQLiteDB:
             if content_type == "tv_show":
                 self._handle_tv_season_change(cursor, db_id)
             conn.commit()
+
+    def clear_cover_url(self, db_id: int) -> bool:
+        """The url is buried before the clear, so the fill-only writes that would
+        otherwise re-offer a Steam guess that 404s refuse it instead.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT cover_url FROM content_items WHERE id = ?", (db_id,))
+            row = cursor.fetchone()
+            if row is None or row["cover_url"] is None:
+                return False
+            cursor.execute(
+                "INSERT OR IGNORE INTO content_item_dead_covers"
+                " (content_item_id, cover_url) VALUES (?, ?)",
+                (db_id, row["cover_url"]),
+            )
+            cursor.execute(
+                "UPDATE content_items SET cover_url = NULL WHERE id = ?", (db_id,)
+            )
+            conn.commit()
+            return True
 
     def complete_content_item(
         self, item: ContentItem, user_id: int | None = None
@@ -512,6 +543,7 @@ class SQLiteDB:
         # is indistinguishable from something the user wrote, so filling with
         # one would refuse every later value and block the field for good.
         incoming_review = item.review if item.review and item.review.strip() else None
+        incoming_cover = item.cover_url or None
 
         existing_id: int | None = None
         if item.id and item.source:
@@ -550,7 +582,7 @@ class SQLiteDB:
             # nothing to fill from.
             cursor.execute(
                 "SELECT title, normalized_title, source, status, rating, review,"
-                " date_completed, ignored FROM content_items WHERE id = ?",
+                " date_completed, ignored, cover_url FROM content_items WHERE id = ?",
                 (existing_id,),
             )
             existing_row = cursor.fetchone()
@@ -575,6 +607,15 @@ class SQLiteDB:
                 offered["rating"] = item.rating
             if existing_row["review"] is None and incoming_review is not None:
                 offered["review"] = incoming_review
+
+            # Fill-only: the first source to name a cover keeps it, and a url a
+            # clear buried is never offered again.
+            if (
+                existing_row["cover_url"] is None
+                and incoming_cover is not None
+                and not cover_url_is_dead(cursor, existing_id, incoming_cover)
+            ):
+                offered["cover_url"] = incoming_cover
 
             # Date completed: fill only from a later incoming date.
             if item.date_completed is not None:
@@ -610,8 +651,8 @@ class SQLiteDB:
             cursor.execute(
                 "INSERT INTO content_items "
                 "(user_id, title, normalized_title, content_type, "
-                "status, rating, review, date_completed, source, ignored) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, rating, review, date_completed, source, ignored, cover_url) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     effective_user_id,
                     item.title,
@@ -623,6 +664,7 @@ class SQLiteDB:
                     (item.date_completed.isoformat() if item.date_completed else None),
                     item.source,
                     1 if item.ignored else 0,
+                    incoming_cover,
                 ),
             )
             lastrowid = cursor.lastrowid
@@ -1169,6 +1211,7 @@ class SQLiteDB:
             review=row["review"],
             status=ConsumptionStatus(row["status"]),
             date_completed=date_completed,
+            cover_url=row["cover_url"],
             source=row["source"],
             ignored=bool(row["ignored"]),
             enriched=self._row_is_enriched(row),

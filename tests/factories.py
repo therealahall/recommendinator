@@ -212,6 +212,7 @@ def make_item(
     metadata: dict[str, Any] | None = None,
     genres: str | None = None,
     source: str | None = None,
+    cover_url: str | None = None,
 ) -> ContentItem:
     effective_metadata: dict[str, Any] = metadata.copy() if metadata else {}
     if genres:
@@ -228,4 +229,5 @@ def make_item(
         review=review,
         metadata=effective_metadata,
         source=source,
+        cover_url=cover_url,
     )

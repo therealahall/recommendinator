@@ -25,6 +25,7 @@ __all__ = [
     "StatedYear",
     "assert_known_detail_table",
     "bare_title_key",
+    "cover_url_is_dead",
     "creators_conflict",
     "detail_columns",
     "detail_join",
@@ -41,6 +42,15 @@ __all__ = [
     "stated_release_year",
     "years_conflict",
 ]
+
+
+def cover_url_is_dead(cursor: sqlite3.Cursor, db_id: int, cover_url: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM content_item_dead_covers"
+        " WHERE content_item_id = ? AND cover_url = ?",
+        (db_id, cover_url),
+    )
+    return cursor.fetchone() is not None
 
 
 def parse_json_list(raw: str | None) -> list[str]:
@@ -387,7 +397,8 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
     # Skipped entirely when no column moves, so a merge that changes nothing
     # leaves updated_at — a user-facing sort key — alone.
     select_sql = (
-        "SELECT status, rating, review, date_completed FROM content_items WHERE id = ?"
+        "SELECT status, rating, review, date_completed, cover_url"
+        " FROM content_items WHERE id = ?"
     )
     cursor.execute(select_sql, (keep_id,))
     keep_row = cursor.fetchone()
@@ -404,10 +415,16 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
         keep_row["date_completed"] is None
         or dup_row["date_completed"] > keep_row["date_completed"]
     )
+    will_change_cover = (
+        keep_row["cover_url"] is None
+        and dup_row["cover_url"] is not None
+        and not cover_url_is_dead(cursor, keep_id, dup_row["cover_url"])
+    )
     if not (
         will_change_rating
         or will_change_review
         or will_change_date
+        or will_change_cover
         or merged_status != keep_row["status"]
     ):
         return
@@ -423,6 +440,13 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
                    WHEN ? IS NOT NULL AND ? > date_completed THEN ?
                    ELSE date_completed
                END,
+               cover_url = CASE
+                   WHEN cover_url IS NULL AND NOT EXISTS (
+                       SELECT 1 FROM content_item_dead_covers
+                        WHERE content_item_id = ? AND cover_url = ?
+                   ) THEN ?
+                   ELSE cover_url
+               END,
                status = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?""",
@@ -433,6 +457,9 @@ def merge_scalar_columns(cursor: sqlite3.Cursor, keep_id: int, delete_id: int) -
             dup_row["date_completed"],
             dup_row["date_completed"],
             dup_row["date_completed"],
+            keep_id,
+            dup_row["cover_url"],
+            dup_row["cover_url"],
             merged_status,
             keep_id,
         ),

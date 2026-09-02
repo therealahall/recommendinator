@@ -19,12 +19,14 @@ from src.storage.sqlite_db import SQLiteDB
 from src.utils.series import get_series_item_number, get_series_name
 
 PINNED_UPDATE = "2020-01-01 00:00:00"
+DEAD = "https://art/gone.jpg"
 
 _ROW_TABLES = (
     ("content_items", "id"),
     ("video_game_details", "content_item_id"),
     ("enrichment_status", "content_item_id"),
     ("content_item_external_ids", "content_item_id"),
+    ("content_item_dead_covers", "content_item_id"),
 )
 
 
@@ -76,6 +78,12 @@ def _enrichment_provider(db: SQLiteDB, db_id: int) -> str | None:
             (db_id,),
         ).fetchone()
     return None if row is None else str(row["enrichment_provider"])
+
+
+def _cover(db: SQLiteDB, db_id: int) -> str | None:
+    item = db.get_content_item(db_id)
+    assert item is not None
+    return item.cover_url
 
 
 def _merged_into(db: SQLiteDB, db_id: int) -> int | None:
@@ -140,6 +148,84 @@ def test_merging_a_rated_item_into_an_unrated_one_and_unmerging_restores_both(
 
     after = {db_id: _snapshot(db, db_id) for db_id in (survivor_id, absorbed_id)}
     assert after == before
+
+
+def test_merging_a_row_with_art_onto_one_without_carries_the_cover_and_gives_it_back(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(
+        db, "gog", "1207658961", title="Portal Two", cover_url="https://art/two.jpg"
+    )
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.cover_url == "https://art/two.jpg"
+
+    db.unmerge_content_items(record.id)
+
+    unmerged = db.get_content_item(survivor_id)
+    assert unmerged is not None
+    assert unmerged.cover_url is None
+
+
+def test_a_merge_leaves_the_survivors_own_cover_in_place(db: SQLiteDB) -> None:
+    survivor_id = _save(
+        db, "steam", "620", title="Portal 2", cover_url="https://art/kept.jpg"
+    )
+    absorbed_id = _save(
+        db, "gog", "1207658961", title="Portal Two", cover_url="https://art/two.jpg"
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert survivor.cover_url == "https://art/kept.jpg"
+
+
+def test_a_merge_does_not_refill_a_cover_the_survivor_proved_dead(db: SQLiteDB) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2", cover_url=DEAD)
+    assert db.clear_cover_url(survivor_id) is True
+    absorbed_id = _save(
+        db, "gog", "1207658961", title="Portal Two", cover_url=DEAD, rating=5
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    survivor = db.get_content_item(survivor_id)
+    assert survivor is not None
+    assert (survivor.cover_url, survivor.rating) == (None, 5)
+
+
+def test_a_merge_fills_a_cover_the_survivor_never_buried(db: SQLiteDB) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2", cover_url=DEAD)
+    assert db.clear_cover_url(survivor_id) is True
+    absorbed_id = _save(
+        db, "gog", "1207658961", title="Portal Two", cover_url="https://art/two.jpg"
+    )
+
+    db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+
+    assert _cover(db, survivor_id) == "https://art/two.jpg"
+
+
+def test_a_merge_carries_what_the_absorbed_row_buried_and_an_undo_takes_it_back(
+    db: SQLiteDB,
+) -> None:
+    survivor_id = _save(db, "steam", "620", title="Portal 2")
+    absorbed_id = _save(db, "gog", "1207658961", title="Portal Two", cover_url=DEAD)
+    assert db.clear_cover_url(absorbed_id) is True
+
+    record = db.merge_content_items(survivor_id, absorbed_id, MergeEvidence.MANUAL)
+    _save(db, "steam", "620", title="Portal 2", cover_url=DEAD)
+    assert _cover(db, survivor_id) is None
+
+    db.unmerge_content_items(record.id)
+    _save(db, "steam", "620", title="Portal 2", cover_url=DEAD)
+    assert _cover(db, survivor_id) == DEAD
 
 
 def test_an_ignored_absorbed_row_does_not_hide_the_survivor(db: SQLiteDB) -> None:
