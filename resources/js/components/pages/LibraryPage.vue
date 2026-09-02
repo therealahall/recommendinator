@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, onUnmounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useLibraryStore } from '@/stores/library'
 import { useDataStore } from '@/stores/data'
+import { rescueFocus } from '@/utils/focus'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
@@ -12,6 +13,7 @@ const lib = useLibraryStore()
 const data = useDataStore()
 const sentinel = ref<HTMLDivElement | null>(null)
 const editTrigger = ref<HTMLElement | null>(null)
+const heading = ref<HTMLElement | null>(null)
 
 // Not showIgnored: it only ever adds rows, so it cannot be what emptied the list.
 const filtered = computed(() =>
@@ -30,6 +32,19 @@ const emptyHint = computed(() => {
     : 'Sync a source or import a file, and what it brings back lands here.'
 })
 
+// Each empty-state action destroys the block that holds it, so the keyboard
+// lands on the heading rather than <body> (WCAG 2.4.3).
+async function onClearSearch() {
+  lib.setFilter('search', '')
+  await nextTick()
+  rescueFocus(heading.value)
+}
+
+async function onClearFilters() {
+  await lib.clearFilters()
+  await nextTick()
+  rescueFocus(heading.value)
+}
 
 async function onRestoreEnrichment(dbId: number) {
   lib.editError = ''
@@ -84,7 +99,7 @@ onUnmounted(() => {
   <div>
     <div class="page-header library-header">
       <div class="library-heading">
-        <h2>Library</h2>
+        <h2 ref="heading" tabindex="-1">Library</h2>
         <p class="page-description">Browse and manage your content collection.</p>
       </div>
       <RouterLink class="btn btn-secondary library-duplicates" :to="{ name: 'duplicates' }">
@@ -121,7 +136,12 @@ onUnmounted(() => {
         <p class="state-title">No items match “{{ lib.searchQuery }}”</p>
         <p class="state-hint">Try a different title, or check your spelling.</p>
         <div class="state-actions">
-          <button class="btn btn-primary" @click="lib.setFilter('search', '')">Clear search</button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="library-clear-search"
+            @click="onClearSearch"
+          >Clear search</button>
         </div>
       </div>
 
@@ -141,7 +161,7 @@ onUnmounted(() => {
             type="button"
             class="btn btn-primary"
             data-testid="library-clear-filters"
-            @click="lib.clearFilters"
+            @click="onClearFilters"
           >Show everything</button>
           <RouterLink v-else class="btn btn-primary" :to="{ name: 'data' }">
             Sync a source

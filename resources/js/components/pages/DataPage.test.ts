@@ -217,6 +217,35 @@ describe('DataPage rows during a Sync All', () => {
     wrapper.unmount()
   })
 
+  it('lands the keyboard in the sources panel when the first source unmounts Add', async () => {
+    let sources: unknown[] = []
+    mockPost.mockResolvedValue({})
+    mockGet.mockImplementation((path: string) => {
+      if (path === '/sync/sources') return Promise.resolve(sources)
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(DataPage, {
+      global: { stubs: { AddSourceModal: true, EnrichmentCard: true, ImportPanel: true } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const add = wrapper.get('[data-testid="add-first-source-btn"]')
+    ;(add.element as HTMLButtonElement).focus()
+    await add.trigger('click')
+    sources = [enabledSource]
+    await useDataStore().loadSyncSources()
+    wrapper.findComponent({ name: 'AddSourceModal' }).vm.$emit('created', 'steam')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="add-first-source-btn"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(
+      wrapper.get('[data-testid="sync-sources-panel"]').element,
+    )
+    wrapper.unmount()
+  })
+
   /** Symptom: Retry had no perceivable outcome. Success unmounted the focused
    *  button silently; a repeat failure left the alert text unchanged. Root
    *  cause: no live region, no focus fallback. */

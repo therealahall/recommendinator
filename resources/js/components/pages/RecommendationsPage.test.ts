@@ -165,16 +165,14 @@ describe('RecommendationsPage', () => {
   })
 
   it('says a refused save in the dialog, never on the page, and clears it on retry', async () => {
-    // End-to-end through the page: the load banner renders behind the overlay
-    // and calls every failure a failure to load, so a refused save was invisible
-    // and misdescribed. The card and the modal stay until a save is accepted.
+    // The load banner renders behind the overlay and calls every failure a
+    // failure to load, so a refused save was invisible and misdescribed.
     const { wrapper, store } = await mountWithItems()
 
     mockGet.mockResolvedValue(makeFullItem())
     await wrapper.find('.btn-complete').trigger('click')
     await flushPromises()
 
-    // First attempt fails.
     mockPatch.mockRejectedValueOnce(new Error('Server error'))
     await wrapper
       .findComponent({ name: 'EditModal' })
@@ -250,6 +248,7 @@ describe('RecommendationsPage', () => {
   })
 
   // The rank was an aria-hidden number in a plain div: sighted readers only.
+  // Firefox maps no `value` onto posinset, so it announced "1 of 1" on #2.
   it('is a ranked list whose items carry the run rank, not their page position', async () => {
     const { wrapper, store } = await mountWithItems()
     expect(wrapper.findAll('ol > li').map((li) => li.attributes('value'))).toEqual(['1', '2'])
@@ -258,7 +257,29 @@ describe('RecommendationsPage', () => {
     store.contentType = 'book'
     await flushPromises()
 
-    expect(wrapper.findAll('ol > li').map((li) => li.attributes('value'))).toEqual(['2'])
+    const rows = wrapper.findAll('ol > li')
+    expect(rows.map((li) => li.attributes('value'))).toEqual(['2'])
+    expect(rows.map((li) => li.attributes('aria-posinset'))).toEqual(['2'])
+    expect(rows.map((li) => li.attributes('aria-setsize'))).toEqual(['2'])
+  })
+
+  it('mounts the run line silent and keeps it mounted through an emptying filter', async () => {
+    wrapper = mount(RecommendationsPage, {
+      global: { stubs, plugins: [router] },
+      attachTo: document.body,
+    })
+    expect(wrapper.get('.run-line').text()).toBe('')
+
+    const store = useRecommendationsStore()
+    mockGet.mockResolvedValue([makeRec({ db_id: 1, content_type: 'book' })])
+    await store.fetch()
+    await flushPromises()
+    store.contentType = 'movie'
+    await flushPromises()
+
+    const line = wrapper.get('.run-line')
+    expect(line.attributes('role')).toBe('status')
+    expect(line.text()).toContain('0 of 1 ranked')
   })
 
   // The selector filters what came back; only the Rank button runs anything.
@@ -282,14 +303,14 @@ describe('RecommendationsPage', () => {
     expect(wrapper.text()).toContain('Arrival')
     expect(wrapper.text()).not.toContain('Hyperion')
     // Nothing takes focus on a filter, so the count is how a screen reader
-    // learns the list moved (WCAG 4.1.3).
+    // learns the list moved (WCAG 4.1.3). It must survive one emptying it.
     expect(wrapper.get('.run-line').attributes('role')).toBe('status')
     expect(wrapper.get('.run-line').text()).toContain('1 of 2 ranked')
   })
 
   describe('the empty state', () => {
-    // Two causes read identically otherwise: a library nothing has been run
-    // against, and a run that came back with nothing left of this type.
+    // Two causes read identically otherwise: no run yet, and a run with nothing
+    // of this type left.
     async function emptyAfterRun(type: string) {
       wrapper = mount(RecommendationsPage, {
         global: { stubs, plugins: [router] },
@@ -303,17 +324,20 @@ describe('RecommendationsPage', () => {
       return wrapper
     }
 
-    it('offers a first run before one has happened', async () => {
+    it('offers a first run, and hands the keyboard the heading rather than <body>', async () => {
       wrapper = mount(RecommendationsPage, {
         global: { stubs, plugins: [router] },
         attachTo: document.body,
       })
-      mockGet.mockResolvedValue([])
+      mockGet.mockResolvedValue([makeRec({ db_id: 1 })])
+      const run = wrapper.get('[data-testid="recs-empty-run"]')
+      ;(run.element as HTMLElement).focus()
 
-      await wrapper.get('[data-testid="recs-empty-run"]').trigger('click')
+      await run.trigger('click')
       await flushPromises()
 
       expect(mockGet).toHaveBeenCalled()
+      expect(document.activeElement).toBe(wrapper.get('h2').element)
     })
 
     it('names the type nothing was left of, once a run returned nothing', async () => {
@@ -328,7 +352,7 @@ describe('RecommendationsPage', () => {
       expect(page.get('[data-testid="recs-empty"]').text()).toContain('Nothing left to rank')
     })
 
-    it('offers the rest of the run back when the filter empties the list', async () => {
+    it('offers the rest of the run back, and keeps the keyboard off <body>', async () => {
       wrapper = mount(RecommendationsPage, {
         global: { stubs, plugins: [router] },
         attachTo: document.body,
@@ -342,12 +366,15 @@ describe('RecommendationsPage', () => {
       await flushPromises()
       expect(wrapper.get('[data-testid="recs-empty"]').text()).toContain('No movie in this run')
 
-      await wrapper.get('[data-testid="recs-show-all"]').trigger('click')
+      const showAll = wrapper.get('[data-testid="recs-show-all"]')
+      ;(showAll.element as HTMLElement).focus()
+      await showAll.trigger('click')
       await flushPromises()
 
       expect(store.contentType).toBe('')
       expect(mockGet).toHaveBeenCalledTimes(1)
       expect(wrapper.find('[data-testid="recs-empty"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(wrapper.get('h2').element)
     })
 
     it('says a run has happened differently from one that has not', async () => {

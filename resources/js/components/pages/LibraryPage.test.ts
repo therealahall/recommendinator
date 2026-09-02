@@ -30,8 +30,9 @@ function testRouter() {
   })
 }
 
-function mountPage(overrides: Record<string, unknown> = {}) {
+function mountPage(overrides: Record<string, unknown> = {}, attachTo?: HTMLElement) {
   const wrapper = mount(LibraryPage, {
+    attachTo,
     global: {
       plugins: [createTestingPinia({ createSpy: vi.fn }), testRouter()],
       stubs: {
@@ -157,6 +158,46 @@ describe('LibraryPage search behaviour', () => {
       wrapper.findAll('a').some((link) => link.attributes('href') === '/data'),
     ).toBe(true)
   })
+
+  const EMPTIED_BY: Array<
+    [string, Record<string, unknown>, (lib: ReturnType<typeof useLibraryStore>) => void]
+  > = [
+    [
+      'library-clear-search',
+      { searchQuery: 'dune' },
+      (lib) =>
+        vi.mocked(lib.setFilter).mockImplementation(() => {
+          lib.searchQuery = ''
+          return undefined
+        }),
+    ],
+    [
+      'library-clear-filters',
+      { statusFilter: 'completed' },
+      (lib) =>
+        vi.mocked(lib.clearFilters).mockImplementation(async () => {
+          lib.statusFilter = ''
+        }),
+    ],
+  ]
+
+  it.each(EMPTIED_BY)(
+    'lands the keyboard on the heading when %s destroys its own block',
+    async (testid, state, settle) => {
+      const { wrapper, lib } = mountPage({ items: [], loading: false, ...state }, document.body)
+      await wrapper.vm.$nextTick()
+      settle(lib)
+      const action = wrapper.get(`[data-testid="${testid}"]`)
+      ;(action.element as HTMLElement).focus()
+
+      await action.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find(`[data-testid="${testid}"]`).exists()).toBe(false)
+      expect(document.activeElement).toBe(wrapper.get('h2').element)
+      wrapper.unmount()
+    },
+  )
 
   // Showing ignored items only ever adds rows, so it never emptied the list.
   it('still sends an empty library to sync when Show ignored is on', async () => {

@@ -29,9 +29,22 @@ const emptyTitle = computed(() => {
   return runScope.value ? `No ${runScope.value} left to rank` : 'Nothing left to rank'
 })
 
-function onRun() {
+/** A run has landed and is not being replaced: what the run line may speak of. */
+const ranked = computed(() => recs.hasRun && !recs.loading && !recs.error)
+
+// Both empty-state actions destroy the block that holds them, so the keyboard
+// lands on the heading rather than <body> (WCAG 2.4.3).
+async function onRun() {
   if (recs.loading) return
-  recs.fetch()
+  await recs.fetch()
+  await nextTick()
+  rescueFocus(heading.value)
+}
+
+async function onShowAll() {
+  recs.contentType = ''
+  await nextTick()
+  rescueFocus(heading.value)
 }
 
 function onComplete(dbId: number) {
@@ -149,7 +162,7 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
           type="button"
           class="btn btn-primary"
           data-testid="recs-show-all"
-          @click="recs.contentType = ''"
+          @click="onShowAll"
         >Show everything</button>
         <template v-else>
           <button
@@ -166,11 +179,11 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       </div>
     </div>
 
-    <p v-if="recs.visibleItems.length > 0" class="run-line" role="status" aria-live="polite">
-      <span v-if="recs.contentType">
+    <p class="run-line" role="status" aria-live="polite">
+      <span v-if="ranked && recs.contentType">
         <b>{{ recs.visibleItems.length }}</b> of <b>{{ recs.items.length }}</b> ranked · {{ filterLabel }}
       </span>
-      <span v-else><b>{{ recs.items.length }}</b> ranked · {{ runScope || 'all types' }}</span>
+      <span v-else-if="ranked"><b>{{ recs.items.length }}</b> ranked · {{ runScope || 'all types' }}</span>
     </p>
 
     <div v-if="recs.visibleItems.length > 0" ref="recList">
@@ -183,9 +196,16 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       >{{ ignoreError }}</p>
       <p class="sr-only" role="status" aria-live="polite" data-testid="recs-announce">{{ announcement }}</p>
 
-      <!-- `value`, not document position: a filter leaves ranks non-contiguous. -->
+      <!-- Run position, not document position: a filter leaves it non-contiguous,
+           and Firefox maps no `value` onto the set a screen reader counts. -->
       <ol class="rec-list" role="list">
-        <li v-for="{ rec, rank } in recs.visibleItems" :key="rec.db_id ?? rank" :value="rank">
+        <li
+          v-for="{ rec, rank } in recs.visibleItems"
+          :key="rec.db_id ?? rank"
+          :value="rank"
+          :aria-posinset="rank"
+          :aria-setsize="recs.items.length"
+        >
           <RecSetAside
             v-if="rec.db_id && recs.ignored.has(rec.db_id)"
             :db-id="rec.db_id"
@@ -223,9 +243,12 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
   align-items: baseline;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
-  margin-bottom: var(--space-4);
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+.run-line:not(:empty) {
+  margin-bottom: var(--space-4);
 }
 
 .run-line b {

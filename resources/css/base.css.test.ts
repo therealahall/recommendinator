@@ -254,12 +254,34 @@ describe('one-handed reach on a phone', () => {
     expect(match[1]).toMatch(/min-height:\s*44px/)
   })
 
+  it('gives a badge a thumb-sized target once it is a button (WCAG 2.5.8)', () => {
+    // 20px tall in a group gapped 4px reaches no spacing exception either.
+    const source = readBase()
+
+    expect(declaration(ruleBlock(source, 'button.badge'), 'min-height')).toBe('44px')
+    expect(ruleBlock(source, '.badge')).not.toMatch(/min-height:/)
+  })
+
   it('sizes the standalone screens to the visible viewport, not the tallest one', () => {
     // 100vh alone strands the submit button under a collapsing mobile toolbar.
     const match = readBase().match(/\.auth-screen\s*\{([^}]*)\}/)
     if (!match) throw new Error('.auth-screen rule not found in base.css')
 
     expect(match[1]).toMatch(/min-height:\s*100dvh/)
+  })
+})
+
+describe('the tag entry inside a bordered field', () => {
+  // The ring is offset outward and the entry is full-bleed, so a clipping
+  // parent leaves it with no focus indicator at all (WCAG 2.4.7).
+  it('lets the shared focus ring paint outside the field that holds it', () => {
+    const source = readFileSync(
+      `${process.cwd()}/resources/js/components/molecules/SourceConfigForm.vue`,
+      'utf8',
+    )
+
+    expect(declaration(ruleBlock(readBase(), ':focus-visible'), 'outline-offset')).not.toMatch(/^-/)
+    expect(ruleBlock(source, '.chips-field')).not.toMatch(/overflow:\s*hidden/)
   })
 })
 
@@ -580,12 +602,15 @@ describe('a page sticking a row of its own under the chrome', () => {
     )
   })
 
-  // A px constant does not move when the strip itself grows with the text.
-  it('grows that height with the text the strip is set in (WCAG 1.4.4)', () => {
-    const match = readBase().match(/--topbar-h:\s*([^;]+);/)
-    if (!match) throw new Error('--topbar-h declaration not found in base.css')
+  // A px constant does not move when the chrome itself grows with the text, and
+  // both reservations are read by a page parking a row against that chrome.
+  it('grows every reserved chrome height with the text in it (WCAG 1.4.4)', () => {
+    const reserved = [...readBase().matchAll(/(--[\w-]+-h):\s*([^;]+);/g)]
 
-    expect(match[1]).toContain('var(--text-xl)')
+    expect(reserved.length).toBeGreaterThanOrEqual(2)
+    expect(
+      reserved.flatMap(([, name, value]) => (/var\(--text-/.test(value) ? [] : [name])),
+    ).toEqual([])
   })
 })
 

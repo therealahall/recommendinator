@@ -20,7 +20,7 @@ const panel = ref<HTMLElement | null>(null)
 
 useFocusTrap(panel, dismiss)
 
-/** What the panel opened on, so Revert undoes this visit, not every visit. */
+/** What Revert goes back to: this visit's opening values, or the last save. */
 const opened = ref<{ weights: Record<string, number>; variety: number } | null>(null)
 
 const status = computed(() => {
@@ -44,6 +44,11 @@ function revert() {
 function dismiss() {
   revert()
   emit('close')
+}
+
+async function save() {
+  await prefs.save()
+  if (prefs.saveStatus !== 'error') take()
 }
 
 onMounted(async () => {
@@ -122,7 +127,7 @@ onMounted(async () => {
           type="button"
           class="btn btn-primary"
           :aria-disabled="prefs.saving || !prefs.hasLoaded || undefined"
-          @click="prefs.save()"
+          @click="save"
         >Save</button>
       </div>
     </footer>
