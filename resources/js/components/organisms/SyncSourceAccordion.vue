@@ -325,10 +325,6 @@ const intervalLabel = computed(
   margin-top: var(--space-3);
 }
 
-.state--error p {
-  margin: 0;
-}
-
 .source-accordion-details-message {
   margin: 0;
   font-size: var(--text-sm);

@@ -193,6 +193,20 @@ describe('useLibraryStore', () => {
     expect(params.status).toBe('unread')
   })
 
+  it('clearFilters keeps Show ignored on, since it only ever adds rows', async () => {
+    // The button reads "Show everything", and it was turning a filter back off.
+    mockGet.mockResolvedValue([])
+    const store = useLibraryStore()
+    await store.setFilter('showIgnored', true)
+    await store.setFilter('status', 'completed')
+
+    await store.clearFilters()
+
+    expect(store.showIgnored).toBe(true)
+    expect(store.statusFilter).toBe('')
+    expect(mockGet.mock.lastCall![1].include_ignored).toBe(true)
+  })
+
   it('exports the whole library when no content type is selected', () => {
     // Regression: exportLibrary returned early without a type filter, so the
     // default view's Export menu picked a format and downloaded nothing.

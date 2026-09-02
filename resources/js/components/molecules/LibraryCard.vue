@@ -71,10 +71,15 @@ function statusTone(status: string): string | undefined {
       <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
-      <button class="btn btn-small btn-secondary" @click="emit('edit', item.db_id!)">Edit</button>
+      <button
+        class="btn btn-small btn-secondary"
+        :aria-label="`Edit: ${item.title}`"
+        @click="emit('edit', item.db_id!)"
+      >Edit</button>
       <button
         class="btn btn-small"
         :class="item.ignored ? 'btn-unignore' : 'btn-ignore'"
+        :aria-label="`${item.ignored ? 'Unignore' : 'Ignore'}: ${item.title}`"
         @click="emit('toggleIgnore', item.db_id!, !item.ignored)"
       >
         {{ item.ignored ? 'Unignore' : 'Ignore' }}

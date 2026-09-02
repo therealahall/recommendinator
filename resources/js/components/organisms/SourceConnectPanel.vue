@@ -260,10 +260,6 @@ async function onRetryStatus(): Promise<void> {
   color: var(--text-secondary);
 }
 
-.state--error p {
-  margin: 0;
-}
-
 .source-connect-message {
   margin: 0;
   font-size: var(--text-sm);

@@ -46,6 +46,18 @@ describe('LibraryCard', () => {
     expect(wrapper.emitted('toggleIgnore')).toEqual([[1, true]])
   })
 
+  it.each([false, true])('names the item in every action, ignored: %s', (ignored) => {
+    // Fifty cards offered a hundred buttons with two names between them (2.4.6).
+    const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, ignored } } })
+
+    const labels = wrapper
+      .findAll('.library-item-actions button')
+      .map((button) => button.attributes('aria-label') ?? '')
+
+    expect(labels).toHaveLength(2)
+    expect(labels.filter((label) => label.includes(baseItem.title))).toEqual(labels)
+  })
+
   it('renders no action buttons when the item has no db_id', () => {
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, db_id: null } } })
     expect(wrapper.find('.library-item-actions').exists()).toBe(false)

@@ -29,7 +29,11 @@ from src.recommendations.scorers import (
     ScoringContext,
     build_scorers_with_overrides,
 )
-from src.recommendations.scoring_pipeline import ScoredCandidate, ScoringPipeline
+from src.recommendations.scoring_pipeline import (
+    ScoredCandidate,
+    ScoringPipeline,
+    tiebreaker_key,
+)
 from src.recommendations.variety import (
     PenaltyFraction,
     build_variety_ladder,
@@ -110,15 +114,25 @@ class _SignalFlags:
     has_adaptations: bool
 
 
+@dataclass(frozen=True)
+class _TasteSignals:
+    """Type-independent, so one run resolves them once however many it ranks."""
+
+    items: list[ContentItem]
+    index: SignalIndex
+    preferences: UserPreferences
+
+
+def _any_active(items: list[ContentItem]) -> bool:
+    return any(item.status == ConsumptionStatus.CURRENTLY_CONSUMING for item in items)
+
+
 def _signals_in(
     unconsumed_items: list[ContentItem],
     adaptations: dict[str, list[ContentItem]],
 ) -> _SignalFlags:
     return _SignalFlags(
-        has_active=any(
-            item.status == ConsumptionStatus.CURRENTLY_CONSUMING
-            for item in unconsumed_items
-        ),
+        has_active=_any_active(unconsumed_items),
         has_adaptations=bool(adaptations),
     )
 
@@ -193,14 +207,26 @@ class RecommendationEngine:
         count: int = 5,
         user_preference_config: UserPreferenceConfig | None = None,
     ) -> list[Recommendation]:
+        # Once, above any per-type loop: a settings save landing mid-run would
+        # otherwise score books on the old weights and games on the new ones.
+        scoring = self._configured_scoring()
+        taste = self._taste_signals(scoring)
         if content_type is None:
-            return self._generate_across_types(count, user_preference_config)
+            return self._generate_across_types(
+                count, user_preference_config, scoring, taste
+            )
         return self._rank_one_type(
-            content_type,
-            count,
-            user_preference_config,
-            self._configured_scoring(),
-            None,
+            content_type, count, user_preference_config, scoring, taste, None
+        )
+
+    def _taste_signals(self, scoring: _ConfiguredScoring) -> _TasteSignals:
+        # Taste-signal items (completed, rated, not ignored) shape preference
+        # analysis, scoring, similarity seeds and references alike (issue #99).
+        items = self.storage.get_signal_items(content_type=None)
+        return _TasteSignals(
+            items=items,
+            index=SignalIndex(items),
+            preferences=scoring.preference_analyzer.analyze(items),
         )
 
     def _rank_one_type(
@@ -209,19 +235,16 @@ class RecommendationEngine:
         count: int,
         user_preference_config: UserPreferenceConfig | None,
         scoring: _ConfiguredScoring,
+        taste: _TasteSignals,
         signals: _SignalFlags | None,
     ) -> list[Recommendation]:
-        # Taste-signal items (completed, rated, not ignored) shape preference
-        # analysis, scoring, similarity seeds and references alike (issue #99).
-        all_consumed_items = self.storage.get_signal_items(content_type=None)
-
         # Deliberately NOT the signal set: an ignored or unrated earlier entry
         # is still consumed, and must still block a later one.
         consumed_items_of_type = self.storage.get_completed_items(
             content_type=content_type, min_rating=None
         )
 
-        if not all_consumed_items:
+        if not taste.items:
             logger.warning(
                 "No consumed items found across any content type. "
                 "Cannot generate recommendations for %s.",
@@ -285,23 +308,16 @@ class RecommendationEngine:
                         "this shouldn't happen for same-type recommendations"
                     )
 
-        preferences = scoring.preference_analyzer.analyze(all_consumed_items)
-
         logger.info(
             "Analyzed preferences from %d consumed items "
             "across all content types to recommend %ss",
-            len(all_consumed_items),
+            len(taste.items),
             content_type.value,
         )
 
-        # One index over the signal set answers both the adaptation lookup
-        # below and the reference lookup after filtering, so neither re-derives
-        # a consumed item's title, genres, creator or series per candidate.
-        signal_index = SignalIndex(all_consumed_items)
-
         # Detect cross-media adaptations before scoring: AdaptationScorer reads
         # them from the context, and the formatted output cites them as reasons.
-        adaptations = self._build_adaptations(unconsumed_items, signal_index)
+        adaptations = self._build_adaptations(unconsumed_items, taste.index)
 
         content_length_preferences = (
             user_preference_config.content_length_preferences
@@ -310,8 +326,8 @@ class RecommendationEngine:
         )
 
         scoring_context = ScoringContext(
-            preferences=preferences,
-            consumed_items=all_consumed_items,
+            preferences=taste.preferences,
+            consumed_items=taste.items,
             series_tracking=series_tracking,
             content_type=content_type,
             all_unconsumed_items=unconsumed_items,
@@ -387,19 +403,18 @@ class RecommendationEngine:
             ranked_items[:count],
             breakdown_by_key,
             adaptations,
-            signal_index,
-            preferences,
+            taste.index,
+            taste.preferences,
         )
 
     def _generate_across_types(
         self,
         count: int,
         user_preference_config: UserPreferenceConfig | None,
+        scoring: _ConfiguredScoring,
+        taste: _TasteSignals,
     ) -> list[Recommendation]:
-        # Once, above the loop: a settings save landing mid-run would otherwise
-        # score books on the old weights and games on the new ones.
-        scoring = self._configured_scoring()
-        signals = self._signals_across_types()
+        signals = self._signals_across_types(taste.index)
 
         # One type-scoped run each, because season expansion and series tracking
         # only mean anything inside a type. No type can hold more than `count` of
@@ -408,19 +423,23 @@ class RecommendationEngine:
             recommendation
             for content_type in ContentType
             for recommendation in self._rank_one_type(
-                content_type, count, user_preference_config, scoring, signals
+                content_type, count, user_preference_config, scoring, taste, signals
             )
         ]
-        candidates.sort(key=lambda recommendation: recommendation.score, reverse=True)
+        # The pipeline's own tiebreaker: on score alone an exact tie falls to
+        # ContentType declaration order, where books always come first.
+        candidates.sort(key=lambda rec: (-rec.score, tiebreaker_key(rec.item)))
         return candidates[:count]
 
-    def _signals_across_types(self) -> _SignalFlags:
+    def _signals_across_types(self, signal_index: SignalIndex) -> _SignalFlags:
         unconsumed_items = self.storage.get_unconsumed_items(
             content_type=None, limit=None, include_ignored=False
         )
-        signal_index = SignalIndex(self.storage.get_signal_items(content_type=None))
-        return _signals_in(
-            unconsumed_items, self._build_adaptations(unconsumed_items, signal_index)
+        return _SignalFlags(
+            has_active=_any_active(unconsumed_items),
+            has_adaptations=any(
+                signal_index.adaptations_of(item) for item in unconsumed_items
+            ),
         )
 
     def _apply_series_filtering(

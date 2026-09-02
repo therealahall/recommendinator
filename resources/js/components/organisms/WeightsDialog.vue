@@ -213,6 +213,43 @@ onMounted(async () => {
   flex: 1 1 100%;
 }
 
+/* The body is a scroll container: above the trigger, or right of it, the tooltip
+   lands in overflow no scroll reaches. Flat while hidden, so the last row's
+   leaves no empty scroll under itself. */
+.weights-body :deep(.scorer-tooltip-text) {
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: auto;
+  right: 0;
+  /* Running back from the trigger, it has the value column less room than the
+     shared cap assumes, and a 320px viewport would clip the far edge (1.4.10). */
+  max-width: min(16.25rem, calc(100vw - var(--space-12) * 2));
+  max-height: 0;
+  overflow: hidden;
+}
+
+.weights-body :deep(.scorer-tooltip-text::before) {
+  top: auto;
+  bottom: 100%;
+}
+
+.weights-body :deep(.scorer-tooltip-text::after) {
+  top: auto;
+  bottom: 100%;
+  left: auto;
+  right: var(--space-2);
+  transform: translateX(50%);
+  border-top-color: transparent;
+  border-bottom-color: var(--bg-elevated);
+}
+
+.weights-body :deep(.scorer-tooltip-wrap:hover .scorer-tooltip-text),
+.weights-body :deep(.scorer-tooltip-wrap:focus-within .scorer-tooltip-text),
+.weights-body :deep(.scorer-tooltip-text:hover) {
+  max-height: none;
+  overflow: visible;
+}
+
 .weights-foot {
   display: flex;
   align-items: center;

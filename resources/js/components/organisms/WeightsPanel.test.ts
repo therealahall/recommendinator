@@ -89,6 +89,23 @@ describe('WeightsPanel', () => {
     wrapper.unmount()
   })
 
+  // The tooltip button swallowed Escape unconditionally, so the dialog behind
+  // it never saw one, however many times the key was pressed.
+  it('closes on a second Escape from a tooltip button, once its tooltip is gone', async () => {
+    const wrapper = await panel(stored())
+    await trigger(wrapper).trigger('click')
+    await flushPromises()
+    const tip = wrapper.get('.scorer-tooltip-wrap')
+
+    await tip.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    await tip.trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   const DISMISSALS: Array<[string, (wrapper: Awaited<ReturnType<typeof panel>>) => unknown]> = [
     ['Escape', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))],
     ['the scrim behind it', (wrapper) => wrapper.get('.weights-scrim').trigger('click')],
