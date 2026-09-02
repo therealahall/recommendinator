@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
 
   <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
   <p
-    class="source-settings-error focus-fallback"
+    class="state state--error source-settings-error focus-fallback"
     :data-testid="`remove-error-${source.id}`"
     role="alert"
     tabindex="-1"
@@ -182,12 +182,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.source-settings-error {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-error-text);
-}
-
 .source-settings-error:not(:empty) {
   margin-top: var(--space-3);
 }

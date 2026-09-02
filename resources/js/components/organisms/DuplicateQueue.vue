@@ -74,12 +74,12 @@ function blockHolding(copyId: number): string {
 
     <div class="dup-filters">
       <TypeSelect
-        class="toolbar-select"
+        class="field toolbar-select"
         :model-value="store.typeFilter"
         @update:model-value="store.setFilter('type', $event)"
       />
       <select
-        class="toolbar-select"
+        class="field toolbar-select"
         aria-label="Works to offer at once"
         :value="String(store.limit)"
         @change="store.setFilter('limit', ($event.target as HTMLSelectElement).value)"
@@ -93,10 +93,10 @@ function blockHolding(copyId: number): string {
     <p class="dup-summary">{{ store.summary }}</p>
 
     <!-- Blanked only with nothing to keep: a reload unmounts the tabbed row. -->
-    <div v-if="store.loading && rows.length === 0" class="empty-state">
+    <div v-if="store.loading && rows.length === 0" class="state state--loading">
       <span class="spinner" /> Loading…
     </div>
-    <div v-else-if="rows.length === 0 && emptyMessage" class="empty-state">
+    <div v-else-if="rows.length === 0 && emptyMessage" class="state state--empty">
       {{ emptyMessage }}
     </div>
     <ul v-else-if="rows.length" ref="listEl" class="dup-list" role="list">

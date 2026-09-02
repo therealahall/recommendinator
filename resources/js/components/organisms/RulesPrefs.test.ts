@@ -39,7 +39,7 @@ describe('RulesPrefs', () => {
   it('renders the Length dropdowns and Custom rules form', () => {
     const wrapper = mount(RulesPrefs)
 
-    expect(wrapper.findAll('.length-select')).toHaveLength(4)
+    expect(wrapper.findAll('select[id^="length-pref-"]')).toHaveLength(4)
     expect(wrapper.find('#new-rule-input').exists()).toBe(true)
   })
 

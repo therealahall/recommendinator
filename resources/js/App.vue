@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterView } from 'vue-router'
 import router from '@/router'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 import AppSidebar from '@/components/organisms/AppSidebar.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
@@ -146,11 +147,7 @@ watch(
       :aria-expanded="isNarrow ? sidebarOpen : undefined"
       @click="sidebarOpen = !sidebarOpen"
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="3" y1="6" x2="21" y2="6" />
-        <line x1="3" y1="12" x2="21" y2="12" />
-        <line x1="3" y1="18" x2="21" y2="18" />
-      </svg>
+      <AppIcon name="menu" :size="20" />
     </button>
     <div
       class="sidebar-overlay"

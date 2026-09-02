@@ -401,6 +401,8 @@ describe('SourceConfigForm', () => {
       secretStatus: { api_key: true },
     })
 
-    expect(wrapper.get('.secret-status-badge').text()).toBe('api_key secret is set')
+    expect(wrapper.get('[data-testid="secret-status-api_key"]').text()).toBe(
+      'api_key secret is set',
+    )
   })
 })

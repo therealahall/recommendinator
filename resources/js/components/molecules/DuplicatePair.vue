@@ -76,10 +76,10 @@ function onDecline(copyId: number, otherIds: number[]): void {
 <template>
   <li class="dup-pair" :aria-busy="busy || undefined">
     <p class="dup-pair-evidence">
-      <span class="badge" :class="loose ? 'dup-badge-loose' : 'dup-badge-exact'">
+      <span class="badge" :data-tone="loose ? 'warning' : undefined">
         {{ suggestion.evidence_label }}
       </span>
-      <span class="badge dup-badge-type">{{ typeLabel }}</span>
+      <span class="badge">{{ typeLabel }}</span>
     </p>
 
     <p v-if="loose" class="dup-pair-caution">
@@ -136,26 +136,6 @@ function onDecline(copyId: number, otherIds: number[]): void {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.dup-badge-type {
-  background: transparent;
-  color: var(--text-secondary);
-  border-color: var(--border-default);
-}
-
-.dup-badge-exact {
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  border-color: var(--border-default);
-}
-
-/* The looser key is a weaker claim, so it reads as one before it is acted on.
-   The wording carries the difference on its own; the colour only echoes it. */
-.dup-badge-loose {
-  background: transparent;
-  color: var(--color-warning);
-  border-color: var(--color-warning);
 }
 
 .dup-pair-caution {

@@ -148,10 +148,7 @@ const intervalLabel = computed(
     <template #header>
       <span class="source-accordion-header-text">
         <span class="source-accordion-name">{{ source.display_name }}</span>
-        <span
-          v-if="!props.source.enabled"
-          class="source-accordion-status-badge"
-        >Disabled</span>
+        <span v-if="!props.source.enabled" class="badge">Disabled</span>
       </span>
     </template>
 
@@ -198,7 +195,7 @@ const intervalLabel = computed(
       />
     </template>
 
-    <div v-if="detailsLoading && !detailsLoaded" class="empty-state">
+    <div v-if="detailsLoading && !detailsLoaded" class="state state--loading">
       <span class="spinner" /> Loading…
     </div>
 
@@ -207,7 +204,7 @@ const intervalLabel = computed(
       renders, where an alert arrives already populated and is read as page
       content.
     -->
-    <div v-else-if="detailsError" class="source-accordion-details-error">
+    <div v-else-if="detailsError" class="state state--error">
       <p :data-testid="`details-error-${source.id}`">
         Could not load these settings: {{ detailsError }}
       </p>
@@ -240,7 +237,7 @@ const intervalLabel = computed(
           @click="onMigrate"
         >{{ migrating ? 'Migrating…' : 'Migrate to DB' }}</button>
         <p
-          class="source-accordion-error focus-fallback"
+          class="state state--error source-accordion-error focus-fallback"
           :data-testid="`migrate-error-${source.id}`"
           role="alert"
           tabindex="-1"
@@ -311,18 +308,6 @@ const intervalLabel = computed(
   font-weight: 600;
 }
 
-.source-accordion-status-badge {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  /* --text-primary on the tinted background passes WCAG AA at 12px. */
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
 /* Secondary text on the muted parts, and nothing softer than that: opacity
    composites against the surface, and a softer border would leave the panel
    without the 3:1 edge that says where it is (WCAG 1.4.3, 1.4.11). */
@@ -336,25 +321,11 @@ const intervalLabel = computed(
   margin-bottom: var(--space-3);
 }
 
-.source-accordion-error {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-error-text);
-}
-
 .source-accordion-error:not(:empty) {
   margin-top: var(--space-3);
 }
 
-.source-accordion-details-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
-.source-accordion-details-error p {
+.state--error p {
   margin: 0;
 }
 

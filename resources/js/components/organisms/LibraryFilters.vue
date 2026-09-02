@@ -109,13 +109,13 @@ onUnmounted(() => {
       <!-- Type select + Status select (mobile: row 1; desktop: inline in toolbar) -->
       <div class="lib-filter-row">
         <TypeSelect
-          class="toolbar-select lib-type-select"
+          class="field toolbar-select lib-type-select"
           :model-value="typeFilter"
           @update:model-value="emit('filterChange', 'type', $event)"
         />
         <select
           v-if="!needsRating"
-          class="toolbar-select"
+          class="field toolbar-select"
           aria-label="Status"
           :value="statusFilter"
           @change="emit('filterChange', 'status', ($event.target as HTMLSelectElement).value)"
@@ -126,12 +126,12 @@ onUnmounted(() => {
           <option value="completed">Completed</option>
         </select>
         <span v-else class="help-text">Status: Completed while Needs rating is on.</span>
-        <select class="toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
+        <select class="field toolbar-select" aria-label="Enrichment" :value="enrichmentFilter" @change="emit('filterChange', 'enrichment', ($event.target as HTMLSelectElement).value)">
           <option value="">All Items</option>
           <option value="enriched">Enriched</option>
           <option value="not_enriched">Not enriched</option>
         </select>
-        <select class="toolbar-select" aria-label="Sort" :value="sortBy" @change="emit('filterChange', 'sort', ($event.target as HTMLSelectElement).value)">
+        <select class="field toolbar-select" aria-label="Sort" :value="sortBy" @change="emit('filterChange', 'sort', ($event.target as HTMLSelectElement).value)">
           <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">
             Sort: {{ option.label }}
           </option>

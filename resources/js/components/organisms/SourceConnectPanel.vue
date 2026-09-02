@@ -207,7 +207,7 @@ async function onRetryStatus(): Promise<void> {
         renders, where an alert arrives already populated and is read as page
         content. The retry outcome goes to the region below.
       -->
-      <div v-if="gate.failed.value" class="source-connect-error">
+      <div v-if="gate.failed.value" class="state state--error">
         <p data-testid="oauth-status-error">
           Could not read this source's connection status.
         </p>
@@ -260,15 +260,7 @@ async function onRetryStatus(): Promise<void> {
   color: var(--text-secondary);
 }
 
-.source-connect-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
-.source-connect-error p {
+.state--error p {
   margin: 0;
 }
 

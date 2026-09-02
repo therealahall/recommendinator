@@ -122,12 +122,12 @@ const orderedSources = computed(() => {
 
       <div
         v-if="data.syncLoading && !retryingSources"
-        class="empty-state"
-      ><span class="spinner" /> Loading sync sources...</div>
+        class="state state--loading"
+      ><span class="spinner" /> Loading sync sources…</div>
       <!-- The failure branch outlives the retry it started: replacing it would
            unmount the button holding focus and drop the user to <body>
            (WCAG 2.4.3). -->
-      <div v-else-if="data.syncSourcesError || retryingSources" class="empty-state">
+      <div v-else-if="data.syncSourcesError || retryingSources" class="state state--error">
         <!-- The Retry button sits OUTSIDE the alert: alert content is announced
              as one chunk, which buries the control's affordance. -->
         <span role="alert">Couldn't load sync sources.</span>
@@ -147,7 +147,7 @@ const orderedSources = computed(() => {
         -->
         <div
           v-if="unusableSources.length"
-          class="unusable-sources"
+          class="state state--error unusable-sources"
           data-testid="unusable-sources"
         >
           <p class="unusable-sources-title">
@@ -196,7 +196,7 @@ const orderedSources = computed(() => {
             >{{ syncAllLabel }}</button>
           </div>
         </div>
-        <div v-else-if="unusableSources.length === 0" class="empty-state">
+        <div v-else-if="unusableSources.length === 0" class="state state--empty">
           No sync sources configured yet.
         </div>
       </template>
@@ -238,12 +238,8 @@ const orderedSources = computed(() => {
 }
 
 .unusable-sources {
-  padding: var(--space-3) var(--space-4);
+  display: block;
   margin-bottom: var(--space-3);
-  border-radius: var(--radius-lg);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 
 .unusable-sources-title {

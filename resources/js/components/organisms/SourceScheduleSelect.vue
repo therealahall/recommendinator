@@ -100,7 +100,7 @@ const statusText = computed(() => {
     <label :for="selectId" class="source-form-label">{{ label }}</label>
     <select
       :id="selectId"
-      class="toolbar-select cadence-select"
+      class="field toolbar-select cadence-select"
       :data-testid="`cadence-select-${sourceId}`"
       :value="selected"
       :aria-describedby="statusText ? statusId : undefined"

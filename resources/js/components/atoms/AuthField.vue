@@ -57,6 +57,7 @@ onMounted(() => {
     <input
       :id="id"
       ref="input"
+      class="field"
       :type="type"
       :value="modelValue"
       :autocomplete="autocomplete"
@@ -87,23 +88,13 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
-.auth-field input {
+.auth-field .field {
   width: 100%;
   /* 44px so the field is a thumb-sized target, and 1rem because anything under
      16px makes iOS Safari zoom the page on focus and strand the rest of the
      form off-screen. */
   min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-input);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-family: inherit;
   font-size: 1rem;
-}
-
-.auth-field input[aria-invalid='true'] {
-  border-color: var(--color-error-text);
 }
 
 .auth-field-hint {

@@ -184,6 +184,7 @@ async function submit(): Promise<void> {
               <select
                 id="import-format"
                 v-model="importerName"
+                class="field"
                 :aria-describedby="formatDescribedBy"
               >
                 <option
@@ -195,7 +196,7 @@ async function submit(): Promise<void> {
               <p
                 v-if="formatsError"
                 id="import-format-error"
-                class="import-error"
+                class="state state--error"
                 data-testid="import-format-error"
               >{{ formatsError }}</p>
             </div>
@@ -205,6 +206,7 @@ async function submit(): Promise<void> {
               <TypeSelect
                 id="import-content-type"
                 v-model="contentType"
+                class="field"
                 :include-all="false"
               />
             </div>
@@ -246,7 +248,7 @@ async function submit(): Promise<void> {
         </div>
       </div>
 
-      <p v-if="errorMessage" class="import-error" data-testid="import-error">
+      <p v-if="errorMessage" class="state state--error import-error" data-testid="import-error">
         {{ errorMessage }}
       </p>
 
@@ -319,21 +321,6 @@ async function submit(): Promise<void> {
   color: var(--text-primary);
 }
 
-.import-field :deep(select) {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-sm);
-}
-
-.import-field :deep(select:focus-visible) {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 1px;
-}
-
 .import-controls .help-text {
   margin: 0;
 }
@@ -350,18 +337,7 @@ async function submit(): Promise<void> {
 }
 
 .import-error {
-  margin: var(--space-4) 0 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-error) 35%, transparent);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-}
-
-/* The same notice class beside the picker, where the field's own gap already
-   separates it. */
-.import-field .import-error {
-  margin: 0;
+  margin-top: var(--space-4);
 }
 
 .import-panel :deep(.import-result) {

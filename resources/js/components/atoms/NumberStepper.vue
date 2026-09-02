@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -66,7 +67,7 @@ function onInput(event: Event) {
 </script>
 
 <template>
-  <div class="number-stepper" v-bind="filteredAttrs">
+  <div class="number-stepper field" v-bind="filteredAttrs">
     <button
       type="button"
       class="stepper-btn stepper-decrement"
@@ -75,9 +76,7 @@ function onInput(event: Event) {
       :aria-label="`Decrease ${resolvedLabel}`"
       @click="decrement"
     >
-      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="5" y1="12" x2="19" y2="12" />
-      </svg>
+      <AppIcon name="minus" />
     </button>
     <input
       :id="id"
@@ -101,20 +100,18 @@ function onInput(event: Event) {
       :aria-label="`Increase ${resolvedLabel}`"
       @click="increment"
     >
-      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <line x1="5" y1="12" x2="19" y2="12" />
-      </svg>
+      <AppIcon name="plus" />
     </button>
   </div>
 </template>
 
 <style scoped>
+/* The two buttons and the entry meet the edge, so the shared field padding
+   would leave a strip of --bg-input around them. */
 .number-stepper {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-md);
+  padding: 0;
   overflow: hidden;
   /* min-height, not height: font-size is rem-derived, so under text-only zoom
      the line box outgrows a fixed 34px and `overflow: hidden` would clip the
@@ -168,7 +165,7 @@ function onInput(event: Event) {
   border: none;
   color: var(--text-primary);
   font-size: var(--text-sm);
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   padding: 0 var(--space-1);
   -moz-appearance: textfield;
 }

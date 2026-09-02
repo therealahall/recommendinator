@@ -5,6 +5,7 @@ import { useDataStore } from '@/stores/data'
 import LibraryFilters from '@/components/organisms/LibraryFilters.vue'
 import LibraryCard from '@/components/molecules/LibraryCard.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
+import AppIcon from '@/components/atoms/AppIcon.vue'
 
 const lib = useLibraryStore()
 const data = useDataStore()
@@ -89,18 +90,15 @@ onUnmounted(() => {
     <div aria-live="polite" aria-atomic="true">
       <div
         v-if="lib.items.length === 0 && !lib.loading && lib.searchQuery"
-        class="empty-state empty-state-search"
+        class="state state--empty"
       >
-        <svg class="empty-state-icon" aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <p class="empty-state-title">No items match “{{ lib.searchQuery }}”</p>
-        <p class="empty-state-hint">Try a different title, or check your spelling.</p>
+        <span class="state-mark"><AppIcon name="search" :size="20" /></span>
+        <p class="state-title">No items match “{{ lib.searchQuery }}”</p>
+        <p class="state-hint">Try a different title, or check your spelling.</p>
         <button class="btn btn-secondary" @click="lib.setFilter('search', '')">Clear search</button>
       </div>
 
-      <div v-else-if="lib.items.length === 0 && !lib.loading" class="empty-state">
+      <div v-else-if="lib.items.length === 0 && !lib.loading" class="state state--empty">
         <template v-if="lib.needsRating">Nothing needs a rating. All your completed items are rated.</template>
         <template v-else>No items found. Try syncing your sources.</template>
       </div>
@@ -116,8 +114,8 @@ onUnmounted(() => {
       />
     </div>
 
-    <div v-if="lib.loading" class="library-load-more">
-      <span class="spinner" /> Loading...
+    <div v-if="lib.loading" class="state state--loading">
+      <span class="spinner" /> Loading…
     </div>
 
     <div v-if="!lib.hasMore && lib.items.length > 0" class="library-end">

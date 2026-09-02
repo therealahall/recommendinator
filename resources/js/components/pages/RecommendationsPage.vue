@@ -109,21 +109,24 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       Failed to load recommendations: {{ recs.error }}
     </div>
 
-    <div v-if="recs.loading && recs.items.length === 0" class="empty-state">
-      <span class="spinner" /> Loading recommendations...
+    <div v-if="recs.loading && recs.items.length === 0" class="state state--loading">
+      <span class="spinner" /> Loading recommendations…
     </div>
 
     <div
       v-if="recs.items.length === 0 && !recs.loading && !recs.error"
-      class="empty-state"
+      class="state state--empty"
       data-testid="recs-empty"
     >{{ emptyState }}</div>
 
     <div v-if="recs.items.length > 0" ref="recList">
       <!-- Mounted while silent: inserted populated they read as content (4.1.3). -->
-      <p id="rec-ignore-error" class="rec-ignore-error focus-fallback" role="alert" tabindex="-1">
-        {{ ignoreError }}
-      </p>
+      <p
+        id="rec-ignore-error"
+        class="state state--error rec-ignore-error focus-fallback"
+        role="alert"
+        tabindex="-1"
+      >{{ ignoreError }}</p>
       <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>
 
       <template v-for="(rec, index) in recs.items" :key="rec.db_id ?? index">

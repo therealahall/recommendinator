@@ -119,11 +119,11 @@ const onReset = (provider: string) =>
     </template>
 
     <template v-else>
-      <p v-if="data.enrichmentStatsError" class="enrichment-stats-error">
+      <p v-if="data.enrichmentStatsError" class="state state--error">
         Could not read the enrichment counts: {{ data.enrichmentStatsError }}
       </p>
       <div v-else-if="stats">
-        <div v-if="stats.total === 0" class="empty-state">
+        <div v-if="stats.total === 0" class="state state--empty">
           No items to enrich. Sync some content first.
         </div>
         <div v-else class="enrichment-summary">
@@ -180,7 +180,7 @@ const onReset = (provider: string) =>
         </div>
       </div>
 
-      <div v-if="jobErrors.length" class="enrichment-errors">
+      <div v-if="jobErrors.length" class="state state--error enrichment-errors">
         <p id="enrichment-errors-title" class="enrichment-errors-title">
           Errors reported by this run
         </p>
@@ -198,7 +198,7 @@ const onReset = (provider: string) =>
     <!-- Mounted while silent: inserted populated they read as content (4.1.3).
          The last is all a poll-delivered result has; nothing else announces it. -->
     <p
-      class="enrichment-error focus-fallback"
+      class="state state--error enrichment-error focus-fallback"
       data-testid="enrichment-error"
       role="alert"
       tabindex="-1"
@@ -253,9 +253,8 @@ const onReset = (provider: string) =>
 }
 
 .enrichment-errors {
+  display: block;
   margin-top: var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
 }
 
 .enrichment-errors-title {
@@ -280,13 +279,6 @@ const onReset = (provider: string) =>
 .enrichment-setup {
   font-size: var(--text-sm);
   color: var(--text-secondary);
-}
-
-.enrichment-stats-error,
-.enrichment-error {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-error-text);
 }
 
 .enrichment-error:not(:empty) {

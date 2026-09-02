@@ -19,7 +19,7 @@ function onGenerate(): void {
     <div class="rec-toolbar">
       <TypePills v-model="recs.contentType" :include-all="false" class="rec-pills" />
 
-      <TypeSelect v-model="recs.contentType" :include-all="false" class="toolbar-select rec-type-select" />
+      <TypeSelect v-model="recs.contentType" :include-all="false" class="field toolbar-select rec-type-select" />
 
       <NumberStepper
         v-model="recs.count"

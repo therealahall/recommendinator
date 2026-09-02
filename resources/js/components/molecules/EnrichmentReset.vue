@@ -49,7 +49,7 @@ function answer(reset: boolean): void {
 <template>
   <div class="enrichment-reset">
     <label :for="selectId" class="sr-only">Reset which provider's matches</label>
-    <select :id="selectId" v-model="provider" class="toolbar-select" data-testid="reset-provider">
+    <select :id="selectId" v-model="provider" class="field toolbar-select" data-testid="reset-provider">
       <option v-for="key in ENRICHMENT_PROVIDERS" :key="key" :value="key">
         {{ PROVIDER_LABELS[key] }}
       </option>

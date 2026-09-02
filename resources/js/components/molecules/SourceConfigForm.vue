@@ -281,6 +281,7 @@ function isSecretSet(name: string): boolean {
         :id="`field-${field.name}`"
         :name="field.name"
         type="text"
+        class="field"
         :required="field.required"
         :value="formValues[field.name] as string"
         @input="formValues[field.name] = ($event.target as HTMLInputElement).value"
@@ -292,6 +293,7 @@ function isSecretSet(name: string): boolean {
         :name="field.name"
         type="number"
         step="1"
+        class="field"
         :required="field.required"
         :value="formValues[field.name] as number"
         @input="onIntInput(field.name, ($event.target as HTMLInputElement).value)"
@@ -303,6 +305,7 @@ function isSecretSet(name: string): boolean {
         :name="field.name"
         type="number"
         step="any"
+        class="field"
         :required="field.required"
         :value="formValues[field.name] as number"
         @input="onFloatInput(field.name, ($event.target as HTMLInputElement).value)"
@@ -318,7 +321,7 @@ function isSecretSet(name: string): boolean {
         @change="formValues[field.name] = ($event.target as HTMLInputElement).checked"
       />
 
-      <div v-else-if="field.field_type === 'list'" class="chips-field">
+      <div v-else-if="field.field_type === 'list'" class="chips-field field">
         <div
           v-if="getList(field.name).length > 0"
           class="chips-list"
@@ -327,7 +330,8 @@ function isSecretSet(name: string): boolean {
             v-for="(chip, index) in getList(field.name)"
             :key="`${field.name}-${index}`"
             data-testid="chip"
-            class="chip"
+            class="badge"
+            data-tone="accent"
           >
             {{ chip }}
             <button
@@ -368,7 +372,7 @@ function isSecretSet(name: string): boolean {
       >
         <div class="secret-status-row">
           <span class="source-form-label">{{ field.name }}</span>
-          <span class="secret-status-badge">
+          <span class="badge" :data-testid="`secret-status-${field.name}`">
             <span class="sr-only">{{ field.name }} secret is</span>
             {{ isSecretSet(field.name) ? 'set' : 'unset' }}
           </span>
@@ -395,10 +399,8 @@ function isSecretSet(name: string): boolean {
                focus goes to Replace, whose name does not change. -->
           <span
             class="secret-saved"
-            :class="{
-              'source-form-save-status source-form-save-status--ok':
-                secretSaveStatus(field.name) === 'saved',
-            }"
+            :class="{ badge: secretSaveStatus(field.name) === 'saved' }"
+            :data-tone="secretSaveStatus(field.name) === 'saved' ? 'success' : undefined"
             :data-testid="`secret-saved-${field.name}`"
             role="status"
           >{{
@@ -426,6 +428,7 @@ function isSecretSet(name: string): boolean {
             :id="`secret-input-${field.name}`"
             :name="field.name"
             type="password"
+            class="field"
             autocomplete="new-password"
             :aria-label="`New value for ${field.name}`"
             :data-testid="`secret-input-${field.name}`"
@@ -455,7 +458,7 @@ function isSecretSet(name: string): boolean {
 
         <!-- Mounted while silent: inserted populated it reads as content (4.1.3). -->
         <p
-          class="secret-error focus-fallback"
+          class="state state--error secret-error focus-fallback"
           :data-testid="`secret-error-${field.name}`"
           role="alert"
           tabindex="-1"
@@ -489,12 +492,14 @@ function isSecretSet(name: string): boolean {
       <div class="source-form-save-group">
         <span
           v-if="saveStatus === 'saved'"
-          class="source-form-save-status source-form-save-status--ok"
+          class="badge"
+          data-tone="success"
           data-testid="form-save-status"
         >Saved ✓</span>
         <span
           v-else-if="saveStatus === 'error'"
-          class="source-form-save-status source-form-save-status--err"
+          class="badge badge--wrap"
+          data-tone="error"
           data-testid="form-save-status"
           role="alert"
         >Error: {{ saveError || 'failed to save' }}</span>
@@ -527,59 +532,22 @@ function isSecretSet(name: string): boolean {
   gap: var(--space-4);
 }
 
-.source-form-field input[type="text"],
-.source-form-field input[type="number"],
-.source-form-field input[type="password"] {
+.source-form-field .field {
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-card);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font: inherit;
-  transition: border-color 0.15s ease;
 }
 
-.source-form-field input[type="text"]:hover,
-.source-form-field input[type="number"]:hover,
-.source-form-field input[type="password"]:hover:not([readonly]) {
-  border-color: var(--accent);
-}
-
-/* On the edge and the fill, never a fade: a `readonly` control is not exempt
-   from 4.5:1 the way the `disabled` it replaced was (WCAG 1.4.3). */
-.source-form-field input[readonly] {
-  border-style: dashed;
-  background: var(--bg-elevated);
-  cursor: not-allowed;
-}
-
-.secret-status-badge {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  background: var(--bg-elevated);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-}
-
+/* The chip rows and the entry meet the edge, so the shared field padding would
+   leave a strip of --bg-input around them. */
 .chips-field {
   display: flex;
   flex-direction: column;
-  background: var(--bg-card);
-  border: 1px solid var(--border-interactive);
-  border-radius: var(--radius-sm);
+  padding: 0;
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.chips-field:hover {
-  border-color: var(--accent);
-}
-
 .chips-field:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--border-focus);
 }
 
 .chips-list {
@@ -589,17 +557,6 @@ function isSecretSet(name: string): boolean {
   align-items: center;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-default);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
-  color: var(--text-primary);
-  padding: 0 var(--space-2);
-  border-radius: 999px;
-  font-size: var(--text-sm);
 }
 
 .chip-remove {
@@ -667,50 +624,8 @@ function isSecretSet(name: string): boolean {
   border-width: 0;
 }
 
-.secret-error {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--color-error-text);
-}
-
 .secret-error:not(:empty) {
   margin-top: var(--space-2);
-}
-
-.source-form-save-status {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  animation: source-form-save-status-fade 0.2s ease-out;
-}
-
-/* Use --text-primary on a tinted background so the pill clears WCAG
-   1.4.3 4.5:1 contrast at the small (13px) pill size. The semantic
-   colour shows through the background tint and a leading icon. */
-.source-form-save-status--ok {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-success) 35%, transparent);
-}
-
-/* Wraps where the "Saved ✓" pill does not: a refusal names the remedy, which
-   runs to a sentence or three, and nowrap would run it off the form. */
-.source-form-save-status--err {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--color-error) 35%, transparent);
-  white-space: normal;
-}
-
-@keyframes source-form-save-status-fade {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .source-form-save-status {
-    animation: none;
-  }
 }
 
 /* Enable stays distinct from Save without leaning on btn-primary. It mixes

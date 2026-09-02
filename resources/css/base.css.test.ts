@@ -112,6 +112,41 @@ describe('inactive button styling', () => {
   })
 })
 
+describe('the one text-entry field', () => {
+  // Both are (0,2,0), so order alone decides. Declared the other way round the
+  // focus ring repainted the edge and the refusal vanished under the cursor —
+  // which is what the `!important` this replaced existed to fight.
+  it('keeps a refused edge while the field is focused', () => {
+    const source = readBase()
+
+    expect(source.indexOf(".field[aria-invalid='true'] {")).toBeGreaterThan(
+      source.indexOf('.field:focus {'),
+    )
+  })
+
+  // aria-invalid is what the rule keys off, so the assistive-tech signal and
+  // the visible one cannot drift apart.
+  it('draws its refusal off the same attribute assistive tech reads', () => {
+    const match = readBase().match(/\.field\[aria-invalid='true'\]\s*\{([^}]*)\}/)
+    if (!match) throw new Error('no refused-field rule in base.css')
+
+    expect(declaration(match[1], 'border-color')).toBe('var(--color-error-text)')
+  })
+})
+
+describe('a status region with nothing to say', () => {
+  // It stays in the accessibility tree so a later message is announced rather
+  // than read as inserted content (WCAG 4.1.3) — which means it must not paint
+  // an empty tinted block on every screen that mounts one.
+  it('takes no space while it is silent', () => {
+    const empty = ruleBlock(readBase(), '.state--error:empty')
+
+    expect(declaration(empty, 'padding')).toBe('0')
+    expect(declaration(empty, 'border-left-width')).toBe('0')
+    expect(declaration(empty, 'background')).toBe('none')
+  })
+})
+
 describe('error text token', () => {
   it('derives error text from the active palette, not the fill colour', () => {
     // --color-error is sized for fills and falls short of 4.5:1 as text.

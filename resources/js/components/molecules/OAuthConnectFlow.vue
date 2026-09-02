@@ -99,7 +99,7 @@ function submitCode() {
       <p class="help-text my-2">{{ helpText }}</p>
       <div class="oauth-input-row">
         <label :for="codeInputId" class="sr-only">{{ codeLabel }}</label>
-        <input :id="codeInputId" type="text" v-model="codeInput" placeholder="Paste authorization code...">
+        <input :id="codeInputId" type="text" class="field" v-model="codeInput" placeholder="Paste authorization code...">
         <button class="btn btn-primary" :aria-label="submitLabel" @click="submitCode">Connect</button>
       </div>
       <!--

@@ -35,22 +35,19 @@ function mountPage(overrides: Record<string, unknown> = {}) {
 }
 
 describe('LibraryPage search behaviour', () => {
-  it('renders the search empty state with the query and a Clear search button', async () => {
+  it('names the query that matched nothing, so the way out is on screen', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: 'dune' })
     await wrapper.vm.$nextTick()
 
-    const empty = wrapper.find('.empty-state-search')
-    expect(empty.exists()).toBe(true)
-    expect(empty.text()).toContain('dune')
-    const clearBtn = empty.findAll('button').find((b) => b.text() === 'Clear search')
-    expect(clearBtn).toBeDefined()
+    expect(wrapper.text()).toContain('dune')
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Clear search')).toBe(true)
   })
 
   it('clicking Clear search calls setFilter with an empty search', async () => {
     const { wrapper, lib } = mountPage({ items: [], loading: false, searchQuery: 'dune' })
     await wrapper.vm.$nextTick()
 
-    const clearBtn = wrapper.find('.empty-state-search').findAll('button').find((b) => b.text() === 'Clear search')!
+    const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear search')!
     await clearBtn.trigger('click')
 
     expect(lib.setFilter).toHaveBeenCalledWith('search', '')
@@ -114,9 +111,7 @@ describe('LibraryPage search behaviour', () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: '' })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('.empty-state-search').exists()).toBe(false)
-    const generic = wrapper.find('.empty-state')
-    expect(generic.exists()).toBe(true)
-    expect(generic.text()).toContain('No items found')
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Clear search')).toBe(false)
+    expect(wrapper.text()).toContain('No items found')
   })
 })

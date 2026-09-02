@@ -56,7 +56,7 @@ describe('LibraryCard', () => {
     const wrapper = mount(LibraryCard, {
       props: { item: { ...baseItem, content_type: 'movie', status: 'unread' } },
     })
-    expect(wrapper.find('.badge-status').text()).toBe('Unwatched')
+    expect(wrapper.text()).toContain('Unwatched')
   })
 
   it('titles a card at the level a recommendation of the same work is titled', () => {
