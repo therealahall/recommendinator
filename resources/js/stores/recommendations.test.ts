@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRecommendationsStore } from './recommendations'
 
@@ -36,9 +35,36 @@ describe('useRecommendationsStore', () => {
     expect(store.items).toEqual(recs)
     expect(store.loading).toBe(false)
     expect(mockGet).toHaveBeenCalledWith('/recommendations', expect.objectContaining({
-      type: 'book',
+      type: undefined,
       count: 5,
     }))
+  })
+
+  it('scopes the run to a named type, which stays a per-type run', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useRecommendationsStore()
+    store.contentType = 'movie'
+    await store.fetch()
+
+    expect(mockGet).toHaveBeenLastCalledWith('/recommendations', expect.objectContaining({
+      type: 'movie',
+    }))
+    expect(store.ranType).toBe('movie')
+  })
+
+  it('narrows the list in place, keeping each row its rank in the run', async () => {
+    mockGet.mockResolvedValue([
+      { db_id: 1, title: 'A', content_type: 'book', score: 0.9, score_breakdown: {} },
+      { db_id: 2, title: 'B', content_type: 'movie', score: 0.8, score_breakdown: {} },
+    ])
+    const store = useRecommendationsStore()
+    await store.fetch()
+
+    store.contentType = 'movie'
+
+    expect(mockGet).toHaveBeenCalledTimes(1)
+    expect(store.visibleItems.map((v) => [v.rec.db_id, v.rank])).toEqual([[2, 2]])
+    expect(store.hasRun).toBe(true)
   })
 
   it('fetch sets error on failure', async () => {
@@ -91,17 +117,6 @@ describe('useRecommendationsStore', () => {
     expect(store.hasRun).toBe(false)
     await store.fetch()
     expect(store.hasRun).toBe(true)
-  })
-
-  it('forgets the run when the type changes, so the copy names one that ran', async () => {
-    mockGet.mockResolvedValue([])
-    const store = useRecommendationsStore()
-    await store.fetch()
-
-    store.contentType = 'movie'
-    await nextTick()
-
-    expect(store.hasRun).toBe(false)
   })
 
   it('markComplete PATCHes /items/{dbId} and removes the card on success', async () => {

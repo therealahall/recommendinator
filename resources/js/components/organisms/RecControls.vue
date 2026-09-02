@@ -17,9 +17,9 @@ function onGenerate(): void {
 <template>
   <div class="card">
     <div class="rec-toolbar">
-      <TypePills v-model="recs.contentType" :include-all="false" class="rec-pills" />
+      <TypePills v-model="recs.contentType" class="rec-pills" />
 
-      <TypeSelect v-model="recs.contentType" :include-all="false" class="field toolbar-select rec-type-select" />
+      <TypeSelect v-model="recs.contentType" class="field toolbar-select rec-type-select" />
 
       <NumberStepper
         v-model="recs.count"

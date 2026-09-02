@@ -80,7 +80,11 @@ uv run python -m src.cli import movies.csv --importer csv_import --content-type 
 
 ### `recommend`
 
+Omit `--type` for one list ranked across all four types, which is what the
+web page shows by default.
+
 ```bash
+uv run python -m src.cli recommend --count 10
 uv run python -m src.cli recommend --type book --count 10
 ```
 

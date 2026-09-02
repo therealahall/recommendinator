@@ -44,8 +44,12 @@ class RecommendationResponse(BaseModel):
 @router.get("/recommendations", response_model=list[RecommendationResponse])
 def get_recommendations(
     engine: RequiredEngine,
-    type: str = Query(
-        ..., description="Content type (book, movie, tv_show, video_game)"
+    type: str | None = Query(
+        None,
+        description=(
+            "Content type (book, movie, tv_show, video_game). "
+            "Omit to rank all four together."
+        ),
     ),
     count: int = Query(5, ge=1, description="Number of recommendations"),
     user_id: int = Query(1, ge=1, description="User ID for personalized preferences"),
@@ -60,13 +64,15 @@ def get_recommendations(
             detail="Requested count exceeds the maximum allowed",
         )
 
-    try:
-        content_type = ContentType.from_string(type)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
-        ) from None
+    content_type: ContentType | None = None
+    if type is not None:
+        try:
+            content_type = ContentType.from_string(type)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid content type. Valid options: book, movie, tv_show, video_game",
+            ) from None
 
     try:
         user_preference_config: UserPreferenceConfig | None = None

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useAppStore } from '@/stores/app'
 import type { ContentItemResponse, ItemEditRequest, RecommendationResponse } from '@/types/api'
@@ -10,18 +10,22 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
   const items = ref<RecommendationResponse[]>([])
   const loading = ref(false)
   const error = ref('')
-  const contentType = ref('book')
+  const contentType = ref('')
   const count = ref(5)
   // Kept per item rather than dropping the row: the undo has to sit where the
   // card was, and a re-inserted row would come back at the wrong rank.
   const ignored = ref<Set<number>>(new Set())
   /** Tells "nothing yet" from "nothing matched"; fetch() empties before it asks. */
   const hasRun = ref(false)
-  /** What the list on screen was ranked for; the selector scopes the NEXT run. */
+  /** What the run on screen was scoped to; '' when it ranked all four types. */
   const ranType = ref('')
-  watch(contentType, () => {
-    hasRun.value = false
-  })
+
+  /** Rank is the position in the run, so narrowing never renumbers the list. */
+  const visibleItems = computed(() =>
+    items.value
+      .map((rec, index) => ({ rec, rank: index + 1 }))
+      .filter(({ rec }) => !contentType.value || rec.content_type === contentType.value),
+  )
 
   // Edit modal (reused from the library to mark recommendations complete). A
   // refused save is the dialog's own: the page banner sits behind the overlay.
@@ -38,7 +42,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
 
     try {
       const result = await api.get<RecommendationResponse[]>('/recommendations', {
-        type: contentType.value,
+        type: contentType.value || undefined,
         count: count.value,
         user_id: app.currentUserId,
       })
@@ -99,8 +103,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
       closeEdit()
     } catch (err) {
       // Leave the list unchanged and keep the modal open so the user can retry,
-      // then re-throw so the page can react (it skips moving focus out of the
-      // form).
+      // then re-throw so the page keeps focus inside the form.
       editError.value = err instanceof Error ? err.message : 'Failed to save'
       editSaving.value = false
       throw err
@@ -109,6 +112,7 @@ export const useRecommendationsStore = defineStore('recommendations', () => {
 
   return {
     items,
+    visibleItems,
     loading,
     error,
     contentType,

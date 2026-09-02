@@ -30,6 +30,58 @@ class TestRecommendEmptyResultsRegression:
         assert "No video game left to rank" in result.output
 
 
+class TestRecommendCrossTypeRun:
+    """`--type` was required, so the one ranked list across all four types the
+    web now serves had no CLI equivalent."""
+
+    def test_no_type_ranks_all_four_and_every_row_names_its_own(
+        self, cli_runner: CliRunner
+    ) -> None:
+        mock_engine = _engine_returning(
+            Recommendation(
+                item=_book("Hyperion", author="Dan Simmons", db_id=1),
+                score=0.9,
+                reasoning="Great match",
+            ),
+            Recommendation(
+                item=_movie("Blade Runner"),
+                score=0.8,
+                reasoning="Also good",
+            ),
+        )
+
+        result = _invoke_recommend_with_engine(cli_runner, ["recommend"], mock_engine)
+
+        assert result.exit_code == 0
+        call = mock_engine.generate_recommendations.call_args
+        assert call.kwargs["content_type"] is None
+        assert _data_rows(result.stdout) == [
+            ["1", "book", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match", ""],
+            [
+                "2",
+                "movie",
+                "Blade Runner",
+                "N/A",
+                "Director A",
+                "0.8",
+                "Also good",
+                "",
+            ],
+        ]
+        assert "Creator" in result.stdout
+
+    def test_a_mixed_run_with_nothing_left_names_no_type(
+        self, cli_runner: CliRunner
+    ) -> None:
+        result = _invoke_recommend_with_engine(
+            cli_runner, ["recommend"], _engine_returning()
+        )
+
+        assert result.exit_code == 0
+        assert "Nothing left to rank" in result.output
+        assert "Every item in the pool" in result.output
+
+
 class TestRecommendCountMaxEnforcement:
     def test_count_exceeds_max_count_aborts(self, cli_runner: CliRunner) -> None:
         mock_storage = make_storage_mock()
@@ -262,7 +314,7 @@ class TestRecommendProgressLineOnStdoutRegression:
         assert self.PROGRESS in result.stderr
         assert self.PROGRESS not in result.stdout
         assert _data_rows(result.stdout) == [
-            ["1", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match", ""]
+            ["1", "book", "Hyperion", "N/A", "Dan Simmons", "0.9", "Great match", ""]
         ]
 
 
@@ -294,6 +346,7 @@ class TestRecommendTableOutput:
         assert _data_rows(result.stdout) == [
             [
                 "1",
+                "book",
                 "Hyperion",
                 "Hyperion Cantos #1",
                 "Dan Simmons",
@@ -301,7 +354,7 @@ class TestRecommendTableOutput:
                 "Great match",
                 "",
             ],
-            ["2", "Dune", "N/A", "Frank Herbert", "0.42", "Also good", ""],
+            ["2", "book", "Dune", "N/A", "Frank Herbert", "0.42", "Also good", ""],
         ]
 
     def test_every_item_behind_a_pick_is_named_in_the_table(self) -> None:
@@ -341,7 +394,7 @@ class TestRecommendTableOutput:
 
         assert result.exit_code == 0
         assert _data_rows(result.stdout) == [
-            ["1", "Nowhere Man", "N/A", "N/A", "0.5", "Pipeline line", ""]
+            ["1", "book", "Nowhere Man", "N/A", "N/A", "0.5", "Pipeline line", ""]
         ]
         assert "None" not in result.stdout
 
