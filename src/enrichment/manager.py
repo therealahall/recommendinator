@@ -673,7 +673,10 @@ class EnrichmentManager:
         self.storage_manager.save_enrichment_metadata(
             db_id,
             item.model_copy(
-                update={"metadata": merge_enrichment(item.metadata, result)}
+                update={
+                    "metadata": merge_enrichment(item.metadata, result),
+                    "cover_url": item.cover_url or result.cover_url,
+                }
             ),
         )
 

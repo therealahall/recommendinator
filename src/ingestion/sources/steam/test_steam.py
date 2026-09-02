@@ -53,6 +53,27 @@ class TestParseSteamGames:
         assert item.metadata["playtime_hours"] == 2.0
         assert item.metadata["playtime_minutes"] == 120
 
+    @patch("src.ingestion.sources.steam.steam.requests.get")
+    def test_cover_art_is_derived_from_the_app_id_and_costs_no_request(
+        self, mock_get: Mock
+    ) -> None:
+        mock_response = Mock(spec=requests.Response)
+        mock_response.json.return_value = {
+            "response": {
+                "games": [{"appid": 620, "name": "Portal 2", "playtime_forever": 60}]
+            }
+        }
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+
+        items = list(_fetch_steam_games("test_key", steam_id="76561198000000000"))
+
+        assert items[0].cover_url == (
+            "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"
+            "620/library_600x900_2x.jpg"
+        )
+        assert mock_get.call_count == 1
+
     @patch("src.ingestion.sources.steam.steam.get_owned_games")
     def test__fetch_steam_games_min_playtime_filter(self, mock_get_games):
         mock_get_games.return_value = [

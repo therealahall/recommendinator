@@ -53,6 +53,7 @@ class TestOpenLibraryProviderISBNLookup:
             "subjects": ["Dystopia", "Science fiction", "Political fiction"],
             "description": "A dystopian novel about totalitarianism.",
             "first_publish_date": "1949",
+            "covers": [8231856, -1],
         }
 
         with patch(
@@ -77,6 +78,7 @@ class TestOpenLibraryProviderISBNLookup:
         assert "Dystopia" in result.tags
         assert "dystopian" in result.description.lower()
         assert result.match_quality == "high"
+        assert result.cover_url == "https://covers.openlibrary.org/b/id/8231856-L.jpg"
 
     def test_isbn_not_found(self, provider: OpenLibraryProvider) -> None:
         item = ContentItem(
@@ -139,6 +141,7 @@ class TestOpenLibraryProviderSearch:
             "key": "/works/OL1234W",
             "subjects": ["Romance", "Classic literature"],
             "description": "A classic romance novel.",
+            "covers": [-1],
         }
 
         with patch(
@@ -158,6 +161,32 @@ class TestOpenLibraryProviderSearch:
         assert result is not None
         assert result.match_quality == "high"
         assert "Romance" in result.genres
+        assert result.cover_url is None
+
+    @pytest.mark.parametrize(
+        ("cover_i", "expected"),
+        [(8231856, "https://covers.openlibrary.org/b/id/8231856-L.jpg"), (-1, None)],
+    )
+    def test_a_doc_with_no_work_key_takes_its_cover_from_cover_i(
+        self,
+        provider: OpenLibraryProvider,
+        book_item: ContentItem,
+        cover_i: int,
+        expected: str | None,
+    ) -> None:
+        mock_search = {"docs": [{"title": "Pride and Prejudice", "cover_i": cover_i}]}
+
+        with patch(
+            "src.enrichment.providers.openlibrary.openlibrary.requests.get"
+        ) as mock_get:
+            mock_get.return_value = MagicMock(
+                spec=requests.Response, status_code=200, json=lambda: mock_search
+            )
+
+            result = provider.enrich(book_item, {})
+
+        assert result is not None
+        assert result.cover_url == expected
 
     def test_search_fallback_to_title_only(self, provider: OpenLibraryProvider) -> None:
         item = ContentItem(

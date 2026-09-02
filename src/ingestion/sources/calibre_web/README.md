@@ -52,7 +52,7 @@ uv run python -m src.cli source set-secret calibre_web password
 - **Rating**: not imported. Calibre's star rating is a community average written by its "download metadata" feature, not your own rating, so syncing it would pollute recommendations. Ratings are left for you to set in Recommendinator. A rating-scheme `<category>` is still recognised so its star label is kept out of the book's tags; bare numeric category labels with no rating scheme (e.g. a publication year like `2008`) are preserved as tags.
 - **Series**: read from the schema.org `<schema:Series schema:name="..." schema:position="..."/>` element Calibre-Web emits (position may also appear as a `<schema:position>` child). Bare `<series>` / `<series_index>` children are read as a fallback for non-standard feeds.
 - **External id**: derived from the OPDS entry `<id>` (a `urn:uuid:` or `urn:calibre:` value), stripped of its `urn:` prefix and namespaced as `calibre:<id>` so it is stable across syncs and unique to this source.
-- **Metadata**: populated from whatever the OPDS entry provides — isbn, series + series index, tags/categories, language, publisher, published date, cover/thumbnail URL, and summary.
+- **Metadata**: populated from whatever the OPDS entry provides — isbn, series + series index, tags/categories, language, publisher, published date, cover URL, and summary.
 
 ## Development
 - Implementation: [`calibre_web.py`](calibre_web.py)

@@ -43,7 +43,6 @@ _NS = {
 }
 
 _IMAGE_REL = "http://opds-spec.org/image"
-_THUMBNAIL_REL = "http://opds-spec.org/image/thumbnail"
 
 
 class CalibreWebPlugin(SourcePlugin):
@@ -178,7 +177,7 @@ class CalibreWebPlugin(SourcePlugin):
 
             entries = root.findall("atom:entry", _NS)
             for entry in entries:
-                item = self._parse_entry(entry, read_ids)
+                item = self._parse_entry(entry, read_ids, base_url, feed_url)
                 if item is None:
                     continue
                 processed += 1
@@ -186,7 +185,9 @@ class CalibreWebPlugin(SourcePlugin):
                     progress_callback(processed, None, item.title)
                 yield item
 
-            feed_url = _resolve_next_url(feed_url, _find_next_link(root), base_url)
+            feed_url = _resolve_feed_url(
+                feed_url, _find_next_link(root), base_url, "rel=next"
+            )
 
         logger.info("Imported %d books from Calibre-Web", processed)
 
@@ -228,7 +229,9 @@ class CalibreWebPlugin(SourcePlugin):
                 if external_id:
                     read_ids.add(external_id)
 
-            feed_url = _resolve_next_url(feed_url, _find_next_link(root), base_url)
+            feed_url = _resolve_feed_url(
+                feed_url, _find_next_link(root), base_url, "rel=next"
+            )
             is_first_page = False
 
         return read_ids
@@ -273,6 +276,8 @@ class CalibreWebPlugin(SourcePlugin):
         self,
         entry: ElementTree.Element,
         read_ids: set[str],
+        base_url: str,
+        feed_url: str,
     ) -> ContentItem | None:
         title = _text(entry.find("atom:title", _NS))
         if not title:
@@ -299,6 +304,9 @@ class CalibreWebPlugin(SourcePlugin):
             # rating, so it is never imported; ratings are left for the user.
             rating=None,
             status=status,
+            cover_url=_resolve_feed_url(
+                feed_url, _find_link_href(entry, _IMAGE_REL), base_url, "cover"
+            ),
             metadata=metadata,
         )
 
@@ -391,13 +399,6 @@ def _build_metadata(entry: ElementTree.Element) -> dict[str, Any]:
     if tags:
         metadata["tags"] = tags
 
-    cover_url = _find_link_href(entry, _IMAGE_REL)
-    if cover_url:
-        metadata["cover_url"] = cover_url
-    thumbnail_url = _find_link_href(entry, _THUMBNAIL_REL)
-    if thumbnail_url:
-        metadata["thumbnail_url"] = thumbnail_url
-
     return metadata
 
 
@@ -463,24 +464,23 @@ def _find_next_link(root: ElementTree.Element) -> str | None:
     return None
 
 
-def _resolve_next_url(
-    current_url: str, next_href: str | None, base_url: str
+def _resolve_feed_url(
+    document_url: str, href: str | None, base_url: str, kind: str
 ) -> str | None:
-    """The next-page URL is fetched with the user's basic-auth credentials, so a
-    malicious or compromised feed could point ``rel="next"`` at an internal
-    service (cloud metadata, localhost, etc.) to exfiltrate those credentials
-    or perform SSRF.
+    """An off-origin href is refused whatever it is for: the next page is fetched
+    with the user's basic-auth credentials (SSRF onto cloud metadata, localhost),
+    and a cover lands on a fill-only column no later source can replace.
     """
-    if not next_href:
+    if not href:
         return None
-    next_parts = urlparse(urljoin(current_url, next_href))
+    parts = urlparse(urljoin(document_url, href))
     base_parts = urlparse(base_url)
-    if next_parts.netloc != base_parts.netloc or next_parts.scheme != base_parts.scheme:
+    if parts.netloc != base_parts.netloc or parts.scheme != base_parts.scheme:
         logger.warning(
-            "Refusing to follow Calibre-Web rel=next link to a different "
-            "origin (%s://%s); stopping pagination",
-            sanitize_for_log(next_parts.scheme),
-            sanitize_for_log(next_parts.netloc),
+            "Refusing a Calibre-Web %s link to a different origin (%s://%s)",
+            kind,
+            sanitize_for_log(parts.scheme),
+            sanitize_for_log(parts.netloc),
         )
         return None
-    return next_parts.geturl()
+    return parts.geturl()

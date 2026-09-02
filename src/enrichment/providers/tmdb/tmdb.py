@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 TMDB_API_BASE = "https://api.themoviedb.org/3"
 
+_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
+
 # Year in parentheses: (2022), (1999)
 YEAR_PATTERN = re.compile(r"\s*\(\d{4}\)\s*$")
 # Country codes: (US), (UK), (JP), etc.
@@ -29,6 +31,11 @@ def clean_media_title_for_search(title: str) -> str:
     cleaned = YEAR_PATTERN.sub("", cleaned).strip()
     cleaned = COUNTRY_PATTERN.sub("", cleaned).strip()
     return cleaned if cleaned else title
+
+
+def _poster_url(payload: dict[str, Any]) -> str | None:
+    poster_path = payload.get("poster_path")
+    return f"{_POSTER_BASE}{poster_path}" if poster_path else None
 
 
 # The provider's own defaults, consumed by BOTH get_config_schema() and enrich()
@@ -308,6 +315,7 @@ class TMDBProvider(EnrichmentProvider):
                 genres=genres if genres else None,
                 tags=tags,
                 description=movie.get("overview"),
+                cover_url=_poster_url(movie),
                 extra_metadata=extra_metadata,
                 match_quality="high",
                 provider=self.name,
@@ -377,6 +385,7 @@ class TMDBProvider(EnrichmentProvider):
                 genres=genres if genres else None,
                 tags=tags,
                 description=show.get("overview"),
+                cover_url=_poster_url(show),
                 extra_metadata=extra_metadata,
                 match_quality="high",
                 provider=self.name,

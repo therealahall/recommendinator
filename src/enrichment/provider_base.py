@@ -34,6 +34,9 @@ class EnrichmentResult:
     tags: list[str] | None = None
     description: str | None = None
 
+    # Its own field: ``extra_metadata`` reaches only the detail tables.
+    cover_url: str | None = None
+
     extra_metadata: dict[str, Any] = field(default_factory=dict)
 
     # "high" = matched by ID or exact title+year

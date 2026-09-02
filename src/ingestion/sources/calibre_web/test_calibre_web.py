@@ -166,8 +166,29 @@ class TestCalibreWebFetch:
         assert item.metadata["series"] == "Middle-earth"
         assert item.metadata["series_index"] == 1.0
         assert item.metadata["tags"] == ["Fantasy"]
-        assert item.metadata["cover_url"] == "/cover/1.jpg"
-        assert item.metadata["thumbnail_url"] == "/thumb/1.jpg"
+        assert "cover_url" not in item.metadata
+
+    def test_a_relative_cover_href_is_resolved_against_the_configured_url(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        entry = _entry(
+            extra='<link rel="http://opds-spec.org/image" href="/opds/cover/1"/>'
+        )
+        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
+        with patch("requests.get", side_effect=responses):
+            items = list(plugin.fetch(config))
+
+        assert items[0].cover_url == "http://localhost:8083/opds/cover/1"
+
+    def test_a_path_relative_cover_href_is_resolved_against_the_feed_it_came_on(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        entry = _entry(extra='<link rel="http://opds-spec.org/image" href="cover/1"/>')
+        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
+        with patch("requests.get", side_effect=responses):
+            items = list(plugin.fetch(config))
+
+        assert items[0].cover_url == "http://localhost:8083/opds/cover/1"
 
     def test_pagination_follows_next_links(
         self, plugin: CalibreWebPlugin, config: dict[str, object]
@@ -358,6 +379,21 @@ class TestCalibreWebEdgeCases:
         assert mock_get.call_count == 2
         requested_hosts = [call.args[0] for call in mock_get.call_args_list]
         assert all("169.254.169.254" not in url for url in requested_hosts)
+
+    def test_off_origin_cover_href_is_not_stored(
+        self, plugin: CalibreWebPlugin, config: dict[str, object]
+    ) -> None:
+        entry = _entry(
+            extra=(
+                '<link rel="http://opds-spec.org/image" '
+                'href="http://attacker.example/cover.jpg"/>'
+            )
+        )
+        responses = [_empty_read_feed(), _xml_response(_feed(entry))]
+        with patch("requests.get", side_effect=responses):
+            items = list(plugin.fetch(config))
+
+        assert items[0].cover_url is None
 
     def test_scheme_downgrade_next_link_not_followed(
         self, plugin: CalibreWebPlugin

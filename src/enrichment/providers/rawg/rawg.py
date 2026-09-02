@@ -61,6 +61,13 @@ DLC_SUFFIX_PATTERN = re.compile(r"\s*\+\s*.+?\s*\(DLC\)\s*$", re.IGNORECASE)
 TRADEMARK_PATTERN = re.compile(r"[™®©]")
 
 
+def _https_cover(background_image: Any) -> str | None:
+    """The one cover URL a third party chooses freely, so it is narrowed here."""
+    if isinstance(background_image, str) and background_image.startswith("https://"):
+        return background_image
+    return None
+
+
 def _longest_common_prefix(titles: list[str]) -> str:
     if not titles:
         return ""
@@ -305,6 +312,7 @@ class RAWGProvider(EnrichmentProvider):
                 genres=genres if genres else None,
                 tags=tags if tags else None,
                 description=description,
+                cover_url=_https_cover(game.get("background_image")),
                 extra_metadata=extra_metadata,
                 match_quality="high",
                 provider=self.name,
