@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { RecommendationResponse } from '@/types/api'
-import { formatScore, formatScorerName } from '@/utils/format'
+import { formatScore, formatScorerName, penaltyPoints, scoreShares } from '@/utils/format'
 
 const props = defineProps<{
   rec: RecommendationResponse
   open?: boolean
 }>()
 
+const shares = computed(() => scoreShares(props.rec.score_breakdown, props.rec.scorer_weights))
 const rows = computed(() =>
-  Object.entries(props.rec.score_breakdown)
-    .sort(([, one], [, two]) => two - one)
-    .map(([key, value]) => ({ key, label: formatScorerName(key), percent: formatScore(value) })),
+  shares.value.map(({ key, points }) => ({
+    key,
+    label: formatScorerName(key),
+    percent: points.toFixed(0),
+  })),
 )
 const varietyPenalty = computed(() => props.rec.variety_penalty ?? 0)
-const varietyPenaltyPct = computed(() => formatScore(varietyPenalty.value))
+const varietyPenaltyPct = computed(() =>
+  penaltyPoints(shares.value, varietyPenalty.value).toFixed(0),
+)
 const total = computed(() => formatScore(props.rec.score))
 </script>
 

@@ -18,6 +18,7 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     score: 0.9,
     reasoning: '',
     score_breakdown: {},
+    scorer_weights: {},
     variety_penalty: 0,
     contributing_items: [],
     adaptations: [],

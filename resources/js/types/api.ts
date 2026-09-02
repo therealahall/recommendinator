@@ -50,6 +50,7 @@ export interface RecommendationResponse {
   score: number
   reasoning: string
   score_breakdown: Record<string, number>
+  scorer_weights: Record<string, number>
   variety_penalty: number
   contributing_items: RelatedItemResponse[]
   adaptations: RelatedItemResponse[]

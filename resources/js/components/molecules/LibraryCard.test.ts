@@ -98,6 +98,7 @@ describe('LibraryCard', () => {
           score: 0.5,
           reasoning: '',
           score_breakdown: {},
+          scorer_weights: {},
           variety_penalty: 0,
           contributing_items: [],
           adaptations: [],

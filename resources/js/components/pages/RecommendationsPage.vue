@@ -260,7 +260,6 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
 .rec-ignore-error {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--color-error-text);
 }
 
 .rec-ignore-error:not(:empty) {

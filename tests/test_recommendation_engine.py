@@ -120,6 +120,35 @@ def _save_book(
     return db_id
 
 
+class TestBreakdownAccountsForItsScore:
+    def test_the_breakdown_and_the_weights_beside_it_reproduce_the_score(
+        self, engine, mock_storage
+    ):
+        loved = make_item(title="Arrival", content_type=ContentType.MOVIE, rating=5)
+        candidate = make_item(
+            title="Solaris",
+            content_type=ContentType.MOVIE,
+            status=ConsumptionStatus.UNREAD,
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [loved]
+        )
+        mock_storage.get_unconsumed_items = Mock(return_value=[candidate])
+
+        (rec,) = engine.generate_recommendations(
+            content_type=ContentType.MOVIE, count=1
+        )
+
+        assert set(rec.scorer_weights) == set(rec.score_breakdown)
+        assert rec.score == pytest.approx(
+            sum(
+                value * rec.scorer_weights[name]
+                for name, value in rec.score_breakdown.items()
+            )
+            / sum(rec.scorer_weights.values())
+        )
+
+
 class TestSingleWeightingStageRegression:
     """Bug reported: turning genre or creator matching down left the signal partly
     on, and a preferred director never lifted a film the way a preferred author
@@ -2747,6 +2776,7 @@ class TestSeasonSiblingsStayDistinctInEveryMap:
                 candidate_key(first): {"series_order": 0.8},
                 candidate_key(second): {"series_order": 0.2},
             },
+            {"series_order": 1.5},
             {candidate_key(second): [knives_out]},
             SignalIndex([]),
             PreferenceAnalyzer(min_rating=4).analyze([]),

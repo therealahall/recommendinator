@@ -25,6 +25,7 @@ class RecommendationPayload(TypedDict):
     score: float
     reasoning: str
     score_breakdown: dict[str, float]
+    scorer_weights: dict[str, float]
     variety_penalty: float
     contributing_items: list[RelatedItemPayload]
     adaptations: list[RelatedItemPayload]
@@ -36,6 +37,7 @@ class Recommendation:
     score: float
     reasoning: str
     score_breakdown: dict[str, float] = field(default_factory=dict)
+    scorer_weights: dict[str, float] = field(default_factory=dict)
     variety_penalty: float = 0.0
     contributing_items: list[ContentItem] = field(default_factory=list)
     adaptations: list[ContentItem] = field(default_factory=list)
@@ -52,6 +54,7 @@ class Recommendation:
             "score": self.score,
             "reasoning": self.reasoning,
             "score_breakdown": self.score_breakdown,
+            "scorer_weights": self.scorer_weights,
             "variety_penalty": self.variety_penalty,
             "contributing_items": [
                 related_item_to_dict(item) for item in self.contributing_items
