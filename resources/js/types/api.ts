@@ -14,6 +14,8 @@ export interface ContentItemResponse {
   rating: number | null
   review: string | null
   source: string | null
+  cover_url?: string | null
+  date_completed?: string | null
   ignored: boolean
   seasons_watched: number[] | null
   total_seasons: number | null
@@ -28,16 +30,29 @@ export interface ContentItemResponse {
   description: string | null
 }
 
+/** A library item named as the reason for another one. */
+export interface RelatedItemResponse {
+  db_id: number | null
+  title: string
+  author: string | null
+  content_type: string
+  cover_url: string | null
+}
+
 export interface RecommendationResponse {
   db_id: number | null
   title: string
   author: string | null
+  content_type: string
+  cover_url: string | null
   series: string | null
   series_index: number | null
   score: number
   reasoning: string
   score_breakdown: Record<string, number>
   variety_penalty: number
+  contributing_items: RelatedItemResponse[]
+  adaptations: RelatedItemResponse[]
 }
 
 export interface UserResponse {

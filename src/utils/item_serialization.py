@@ -2,12 +2,37 @@
 model without a line here is a field the CLI stops emitting.
 """
 
+from typing import TypedDict
+
+from src.covers import cover_payload_url
 from src.models.content import ContentItem, get_enum_value
 from src.models.detail_fields import to_int
 from src.utils.series import (
     get_series_name_from_metadata,
     get_series_position_from_metadata,
 )
+
+
+class RelatedItemPayload(TypedDict):
+    """A library item named as the reason for another one."""
+
+    db_id: int | None
+    title: str
+    author: str | None
+    content_type: str
+    cover_url: str | None
+
+
+def related_item_to_dict(item: ContentItem) -> RelatedItemPayload:
+    # A subset of ``item_to_dict``: a recommendation carries two lists of these,
+    # and every description and genre list on them would dwarf the pick itself.
+    return {
+        "db_id": item.db_id,
+        "title": item.title,
+        "author": item.author,
+        "content_type": get_enum_value(item.content_type),
+        "cover_url": cover_payload_url(item),
+    }
 
 
 def extract_tv_season_fields(
@@ -40,6 +65,7 @@ def item_to_dict(item: ContentItem) -> dict[str, object]:
         "rating": item.rating,
         "review": item.review,
         "source": item.source,
+        "cover_url": cover_payload_url(item),
         "date_completed": (
             item.date_completed.isoformat() if item.date_completed else None
         ),

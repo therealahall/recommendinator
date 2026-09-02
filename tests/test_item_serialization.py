@@ -1,5 +1,7 @@
 import pytest
 
+from src.models.content import ContentType
+from src.recommendations.record import Recommendation
 from src.storage.duplicates import (
     DeclinedPair,
     DuplicateSide,
@@ -23,6 +25,7 @@ from src.web.api._duplicates import (
     MergeResponse,
 )
 from src.web.api._library import ContentItemResponse
+from src.web.api._recommendations import RecommendationResponse, RelatedItemResponse
 from tests.factories import make_item
 
 _A_SIDE = DuplicateSide(
@@ -80,10 +83,38 @@ def test_a_series_the_title_no_longer_states_reaches_both_interfaces(
     assert serialized["series_index"] == expected
 
 
+def test_the_cover_reaches_both_interfaces_as_this_apps_own_route() -> None:
+    item = make_item(db_id=7, cover_url="https://covers.example/1.jpg")
+
+    assert item_to_dict(item)["cover_url"] == "/api/covers/7"
+
+
+def test_an_item_with_no_cover_says_so_rather_than_naming_a_url_that_will_fail() -> (
+    None
+):
+    assert item_to_dict(make_item(db_id=7))["cover_url"] is None
+
+
 def test_the_cli_json_and_the_web_response_carry_the_same_keys() -> None:
     """``--format json`` emits this dict as it stands while the web validates it into
     ContentItemResponse, which drops a key the model does not declare."""
     assert set(item_to_dict(make_item())) == set(ContentItemResponse.model_fields)
+
+
+def test_the_recommendation_payload_carries_the_web_response_model_s_keys() -> None:
+    """``--format json`` emits this dict as it stands, so a field the model declares
+    and the payload omits is a field only the web shows."""
+    payload = Recommendation(
+        item=make_item(),
+        score=0.5,
+        reasoning="Because",
+        contributing_items=[make_item(title="Hyperion")],
+        adaptations=[make_item(title="Dune", content_type=ContentType.MOVIE)],
+    ).to_payload()
+
+    assert set(payload) == set(RecommendationResponse.model_fields)
+    for related in (*payload["contributing_items"], *payload["adaptations"]):
+        assert set(related) == set(RelatedItemResponse.model_fields)
 
 
 def test_every_duplicates_payload_carries_the_web_response_model_s_keys() -> None:

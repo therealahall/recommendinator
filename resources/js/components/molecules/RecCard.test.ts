@@ -8,12 +8,16 @@ function makeRec(overrides: Partial<RecommendationResponse> = {}): Recommendatio
     db_id: 7,
     title: 'Test',
     author: 'Author',
+    content_type: 'book',
+    cover_url: null,
     series: null,
     series_index: null,
     score: 0.5,
     reasoning: 'Because',
     score_breakdown: {},
     variety_penalty: 0,
+    contributing_items: [],
+    adaptations: [],
     ...overrides,
   }
 }

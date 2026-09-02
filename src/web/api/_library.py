@@ -107,6 +107,7 @@ class ContentItemResponse(BaseModel):
     rating: int | None
     review: str | None
     source: str | None
+    cover_url: str | None = None
     date_completed: str | None = None
     ignored: bool = False
     seasons_watched: list[int] | None = None
