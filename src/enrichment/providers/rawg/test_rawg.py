@@ -111,6 +111,7 @@ class TestRAWGProviderEnrichment:
             "metacritic": 93,
             "playtime": 46,
             "esrb_rating": {"name": "Mature"},
+            "background_image": "https://media.rawg.io/media/games/witcher3.jpg",
         }
 
         mock_series = {"results": []}
@@ -139,6 +140,7 @@ class TestRAWGProviderEnrichment:
         assert result.extra_metadata.get("developer") == "CD Projekt Red"
         assert result.extra_metadata.get("metacritic") == 93
         assert result.extra_metadata.get("release_year") == 2015
+        assert result.cover_url == "https://media.rawg.io/media/games/witcher3.jpg"
         # Its own key, not the playtime_hours Steam fills with the user's hours
         assert result.extra_metadata.get("average_playtime_hours") == 46
         assert "playtime_hours" not in result.extra_metadata
@@ -177,6 +179,40 @@ class TestRAWGProviderEnrichment:
 
         assert result is not None
         assert "average_playtime_hours" not in result.extra_metadata
+        assert result.cover_url is None
+
+    def test_a_plaintext_cover_url_is_dropped_where_it_arrives(
+        self,
+        provider: RAWGProvider,
+        game_item: ContentItem,
+        config: dict[str, Any],
+    ) -> None:
+        mock_search = {"results": [{"id": 3328, "name": "The Witcher 3: Wild Hunt"}]}
+        mock_game = {
+            "id": 3328,
+            "name": "The Witcher 3: Wild Hunt",
+            "background_image": "http://media.rawg.io/media/games/witcher3.jpg",
+        }
+
+        with patch("src.enrichment.providers.rawg.rawg.requests.get") as mock_get:
+            mock_get.side_effect = [
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_search
+                ),
+                MagicMock(
+                    spec=requests.Response, status_code=200, json=lambda: mock_game
+                ),
+                MagicMock(
+                    spec=requests.Response,
+                    status_code=200,
+                    json=lambda: {"results": []},
+                ),
+            ]
+
+            result = provider.enrich(game_item, config)
+
+        assert result is not None
+        assert result.cover_url is None
 
     def test_enrich_game_not_found(
         self,

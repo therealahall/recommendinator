@@ -73,6 +73,7 @@ class TestTMDBProviderMovieEnrichment:
             "release_date": "1999-03-30",
             "original_language": "en",
             "production_companies": [{"name": "Warner Bros."}],
+            "poster_path": "/abc123.jpg",
         }
 
         mock_keywords_response = {
@@ -107,6 +108,7 @@ class TestTMDBProviderMovieEnrichment:
         assert result.provider == "tmdb"
         assert result.extra_metadata.get("runtime") == 136
         assert result.extra_metadata.get("release_year") == 1999
+        assert result.cover_url == "https://image.tmdb.org/t/p/w500/abc123.jpg"
         # Backward compat: a response without a 'credits' key degrades cleanly.
         assert "director" not in result.extra_metadata
 
@@ -150,6 +152,7 @@ class TestTMDBProviderMovieEnrichment:
         assert result is not None
         assert result.external_id == "tmdb:603"
         assert result.match_quality == "high"
+        assert result.cover_url is None
 
     def test_enrich_movie_not_found(
         self, provider: TMDBProvider, movie_item: ContentItem, config: dict[str, Any]
@@ -345,6 +348,7 @@ class TestTMDBProviderTVShowEnrichment:
             "networks": [{"name": "AMC"}],
             "created_by": [{"name": "Vince Gilligan"}],
             "status": "Ended",
+            "poster_path": "/bb.jpg",
         }
 
         mock_keywords_response = {
@@ -385,6 +389,7 @@ class TestTMDBProviderTVShowEnrichment:
         assert result.extra_metadata.get("episodes") == 62
         assert result.extra_metadata.get("network") == "AMC"
         assert "Vince Gilligan" in result.extra_metadata.get("creators", "")
+        assert result.cover_url == "https://image.tmdb.org/t/p/w500/bb.jpg"
 
 
 class TestTMDBProviderKeywords:

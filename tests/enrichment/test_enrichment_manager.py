@@ -1653,6 +1653,7 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
                 "genres": [{"name": "Action"}, {"name": "Science Fiction"}],
                 "runtime": 136,
                 "release_date": "1999-03-30",
+                "poster_path": "/matrix.jpg",
             },
         }
 
@@ -1674,5 +1675,6 @@ class TestARunReachesTMDBThroughTheGlobalRegistry:
         assert status["enrichment_quality"] == "high"
         enriched = storage_manager.get_content_item(db_id)
         assert enriched.metadata.get("genres") == ["Action", "Science Fiction"]
+        assert enriched.cover_url == "https://image.tmdb.org/t/p/w500/matrix.jpg"
         assert manager.get_status().items_enriched == 1
         assert queued_ids(storage_manager) == set()

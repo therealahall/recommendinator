@@ -26,9 +26,26 @@ SERIES_PATTERN = re.compile(r"\s*\([^)]*#\d+[^)]*\)\s*$")
 _MAX_SHORT_SUBJECT_LENGTH = 25
 
 
+_COVER_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+
+
 def clean_title_for_search(title: str) -> str:
     cleaned = SERIES_PATTERN.sub("", title).strip()
     return cleaned if cleaned else title
+
+
+def _cover_from_id(cover_id: Any) -> str | None:
+    """Open Library records "no cover known" as a negative id."""
+    if not isinstance(cover_id, int) or cover_id <= 0:
+        return None
+    return _COVER_URL.format(cover_id=cover_id)
+
+
+def _cover_url(payload: dict[str, Any]) -> str | None:
+    covers = payload.get("covers")
+    if not isinstance(covers, list):
+        return None
+    return next((url for url in map(_cover_from_id, covers) if url), None)
 
 
 class OpenLibraryProvider(EnrichmentProvider):
@@ -224,6 +241,7 @@ class OpenLibraryProvider(EnrichmentProvider):
                 genres=genres if genres else None,
                 tags=genres if genres else None,
                 description=description,
+                cover_url=_cover_url(work),
                 extra_metadata=extra_metadata,
                 match_quality="high",
                 provider=self.name,
@@ -256,6 +274,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             external_id=f"openlibrary:{edition_key}" if edition_key else None,
             genres=genres if genres else None,
             tags=genres if genres else None,
+            cover_url=_cover_url(edition),
             extra_metadata=extra_metadata,
             match_quality="medium",
             provider=self.name,
@@ -280,6 +299,7 @@ class OpenLibraryProvider(EnrichmentProvider):
             external_id=f"openlibrary:{work_key}" if work_key else None,
             genres=genres if genres else None,
             tags=genres if genres else None,
+            cover_url=_cover_from_id(doc.get("cover_i")),
             extra_metadata=extra_metadata,
             match_quality="medium",
             provider=self.name,

@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 STEAM_API_BASE = "https://api.steampowered.com"
 
+# Derived from the app id, so no second request: Steam names no cover in the
+# owned-games response. Absent for some titles, which reads as no cover.
+_LIBRARY_ART_URL = (
+    "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"
+    "{app_id}/library_600x900_2x.jpg"
+)
+
 
 class SteamAPIError(Exception):
     pass
@@ -255,5 +262,6 @@ def _fetch_steam_games(
             review=None,
             status=status,
             date_completed=None,
+            cover_url=_LIBRARY_ART_URL.format(app_id=app_id),
             metadata=metadata,
         )
