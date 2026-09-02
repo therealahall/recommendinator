@@ -1,6 +1,34 @@
 # CHANGELOG
 
 
+## v0.50.0 (2026-09-02)
+
+### Chores
+
+- Drop a lint script that lints nothing
+  ([`63fdb6a`](https://github.com/therealahall/recommendinator/commit/63fdb6aac64b6edb2a7355088ebe470960a96dbc))
+
+### Features
+
+- **covers**: Fetch cover art once and serve it same-origin
+  ([`b1de2ae`](https://github.com/therealahall/recommendinator/commit/b1de2aedc2a4eb6b1930283e98952d67e03fb5c7))
+
+- **ingestion**: Keep the cover art sources and providers already return
+  ([`bc1743e`](https://github.com/therealahall/recommendinator/commit/bc1743e2e46c4397c1152d695de5ff2bfd9925c7))
+
+- **recommendations**: Name the library items behind a pick
+  ([`dbd6293`](https://github.com/therealahall/recommendinator/commit/dbd62939767673aa14a29497f1fa54f7ae51cac5))
+
+- **storage**: Give every item a cover URL, and remember a dead one
+  ([`119ce36`](https://github.com/therealahall/recommendinator/commit/119ce3636205c57a2912b002a9f8e7c764176af6))
+
+- **web**: Make the palette a theme rather than the base layer
+  ([`4b3c45e`](https://github.com/therealahall/recommendinator/commit/4b3c45ec5c24684ef6c8eb73f84375b8b45a952f))
+
+- **web**: Vendor the UI and display faces as self-hosted woff2
+  ([`dc4a502`](https://github.com/therealahall/recommendinator/commit/dc4a502998a31d8e4573fea880ed1b717b4e36ea))
+
+
 ## v0.49.2 (2026-09-01)
 
 ### Bug Fixes
