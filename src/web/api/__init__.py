@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from src.web.api import (
+    _covers,
     _duplicates,
     _enrichment,
     _import,
@@ -27,6 +28,7 @@ router = APIRouter(
     dependencies=[Depends(require_session), Depends(refuse_cross_origin)],
 )
 
+router.include_router(_covers.router)
 router.include_router(_duplicates.router)
 router.include_router(_enrichment.router)
 router.include_router(_import.router)

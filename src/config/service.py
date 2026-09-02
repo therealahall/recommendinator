@@ -160,11 +160,18 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     return config
 
 
-def create_storage_manager(config: dict[str, Any]) -> StorageManager:
+def database_path(config: dict[str, Any]) -> Path:
     storage_config = config.get("storage", {})
-    db_path = Path(storage_config.get("database_path", "data/recommendations.db"))
+    return Path(storage_config.get("database_path", "data/recommendations.db"))
 
-    return StorageManager(sqlite_path=db_path)
+
+def create_storage_manager(config: dict[str, Any]) -> StorageManager:
+    return StorageManager(sqlite_path=database_path(config))
+
+
+def cover_cache_dir(config: dict[str, Any]) -> Path:
+    """Beside the database, so one bind mount carries the whole library state."""
+    return database_path(config).parent / "covers"
 
 
 def auto_enrich_enabled(config: dict[str, Any]) -> bool:

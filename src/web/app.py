@@ -44,6 +44,7 @@ from src.web.themes import (
     PRIVATE_THEMES_DIR,
     PRIVATE_THEMES_URL,
     STATIC_DIR,
+    theme_preference_script_hash,
     themed_shell,
 )
 
@@ -254,7 +255,7 @@ def create_app(config_path: Path | None = None) -> FastAPI:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self'; "
+                f"script-src 'self' {theme_preference_script_hash()}; "
                 "style-src 'self'; "
                 "font-src 'self' data:; "
                 "img-src 'self' data: https:; "

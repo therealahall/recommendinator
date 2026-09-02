@@ -44,11 +44,13 @@ SQLite holds everything.
 | `content_items` | Library items, scoped by `user_id` |
 | `content_item_external_ids` | The id each source knows an item by, unique per `(user_id, source, external_id, content_type)` |
 | `book_details`, `movie_details`, `tv_show_details`, `video_game_details` | Per-type detail |
+| `content_item_dead_covers` | A cover URL that permanently failed, so no fill door re-offers it |
 | `credentials` | Encrypted OAuth tokens and API keys, per-source and global |
 | `source_configs` | Non-sensitive per-source config |
 | `settings` | Global config, dotted leaf key to JSON value, only what a user set |
 | `enrichment_status` | Enrichment tracking |
 | `enrichment_job` | The live enrichment run, one row, so either interface can watch and stop it |
+| `cover_backfill_job` | The live cover backfill, one row, so either interface can watch and stop it |
 | `sync_runs` | One row per sync run: outcome, item counts and errors, pruned per source. An unfinished row claims its source, so no two processes sync it at once |
 | `preference_profiles` | The generated per-user taste profile |
 
@@ -350,7 +352,8 @@ The CLI and the web UI are **alternative interfaces to the same capabilities**,
 neither a subset of the other. Every service both call sits outside both
 packages: recommendation, ingestion, storage, settings,
 `src/config/service.py` (YAML loading, bootstrap resolution, component
-factories), `src/sources/service.py` (source config CRUD), `src/auth/` (GOG,
+factories), `src/sources/service.py` (source config CRUD), `src/covers/` (cover fetch guards,
+the disk cache and the backfill both claim), `src/auth/` (GOG,
 Epic and Trakt OAuth) and `src/utils/export.py`.
 
 Neither interface package imports the other, and each
