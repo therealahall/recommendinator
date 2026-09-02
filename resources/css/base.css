@@ -90,6 +90,10 @@
     --radius-pill: 9999px;
 
     --bg-active: color-mix(in srgb, var(--accent) 20%, transparent);
+
+    /* One material for the rail, the tab bar and the top strip, derived so a
+       theme swap keeps the chrome a plane apart from the stage it frames. */
+    --chrome: color-mix(in srgb, var(--text-primary) 5%, var(--bg-sidebar));
     --border-focus: var(--accent);
     --color-info: var(--accent);
 
@@ -146,16 +150,19 @@
     --transition-fast: 150ms ease;
     --transition-base: 200ms ease;
 
-    --sidebar-width: 240px;
     --rail-w: 84px;
+    --tabbar-h: 68px;
+    /* What a page's own sticky row has to clear to stay on screen under the
+       top strip, so the two are not two guesses at one height. */
+    --topbar-h: 56px;
     --measure: 940px;
 
     --z-sticky: 20;
+    --z-chrome: 30;
     --z-dropdown: 50;
     --z-tooltip: 100;
-    --z-overlay: 900;
-    --z-drawer: 910;
-    --z-drawer-toggle: 920;
+    --z-scrim: 900;
+    --z-panel: 910;
     --z-skip-link: 930;
     --z-modal: 1000;
   }
@@ -322,85 +329,54 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
-.app-layout {
+.app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
-.main-content {
-  padding: var(--space-8);
-  max-width: 1200px;
-  width: 100%;
-  overflow-y: auto;
-}
-
-.main-content:focus:not(:focus-visible) {
-  outline: none;
-}
-
-.sidebar-column {
-  background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-default);
+/* align-self, so the rail is its own height rather than stretched to the row's:
+   a stretched grid item has no slack to stick within. */
+.app-nav {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  align-self: start;
   position: sticky;
   top: 0;
+  z-index: var(--z-chrome);
+  height: 100vh;
+  height: 100dvh;
+  padding: var(--space-4) var(--space-1) var(--space-3);
+  background: var(--chrome);
+  box-shadow: inset -1px 0 0 var(--border-default);
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.app-banner {
-  padding: var(--space-5);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.app-banner h1 {
-  font-size: var(--text-md);
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
-}
-
-.version-label {
-  display: block;
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  font-weight: 400;
-  margin-top: var(--space-1);
-}
-
-.sidebar-nav {
-  flex: 1;
-  padding: var(--space-3);
+.nav-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  list-style: none;
 }
 
 .nav-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  min-height: 62px;
+  padding: var(--space-2) var(--space-05);
+  border-radius: var(--radius-lg);
   color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  text-align: center;
+  text-decoration: none;
+  /* A 76px column and a text-only zoom: the label breaks rather than widening
+     the rail past the viewport (WCAG 1.4.10). */
+  overflow-wrap: anywhere;
   transition: background var(--transition-fast), color var(--transition-fast);
-  text-align: left;
-  width: 100%;
 }
 
 .nav-item:hover {
@@ -408,44 +384,83 @@ input[type="checkbox"] {
   color: var(--text-primary);
 }
 
-.nav-item.active {
+/* The section in view is carried by a fill, a rule, a weight change and
+   aria-current at once, so hue is never the only channel (WCAG 1.4.1). */
+.nav-item[aria-current] {
   background: var(--bg-active);
   color: var(--text-primary);
+  font-weight: var(--weight-semibold);
 }
 
-.nav-item .icon {
-  opacity: 0.7;
+.nav-item[aria-current]::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-1) * -1);
+  top: var(--space-3);
+  bottom: var(--space-3);
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--text-primary);
 }
 
-.nav-item.active .icon {
-  opacity: 1;
+.nav-user {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  box-shadow: inset 0 1px 0 var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-.sidebar-footer {
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-}
-
-.sidebar-user {
-  margin: 0;
+.app-column {
   display: flex;
   flex-direction: column;
-  gap: var(--space-05);
+  min-width: 0;
 }
 
-.sidebar-user-label {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 500;
+.app-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-chrome);
+  min-height: var(--topbar-h);
+  padding: var(--space-4) var(--space-6);
+  background: var(--chrome);
+  box-shadow: inset 0 -1px 0 var(--border-default);
 }
 
-.sidebar-user-name {
-  font-size: var(--text-sm);
-  font-weight: 600;
+.app-name {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
-  overflow-wrap: anywhere;
+}
+
+.app-topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-stage {
+  padding: var(--space-6) var(--space-6) var(--space-12);
+}
+
+.app-stage:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* One measure for every routed page, centred rather than pinned to the rail:
+   left-aligned, a 940px column on a wide monitor reads as a broken layout. */
+.app-stage-inner {
+  max-width: var(--measure);
+  margin-inline: auto;
 }
 
 .update-banner {
@@ -521,28 +536,9 @@ input[type="checkbox"] {
   margin-bottom: var(--space-5);
 }
 
-.sidebar-toggle {
-  display: none;
-  position: fixed;
-  top: var(--space-3);
-  left: var(--space-3);
-  z-index: var(--z-drawer-toggle);
-  background: var(--bg-card);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  padding: var(--space-2);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.sidebar-overlay {
-  display: none;
-}
-
 /* Off screen until focused, so the bypass costs the layout nothing. Its own
-   step above the toggle it shares a corner with: an equal z-index breaks on
-   tree order, and this link comes first so Tab reaches it first. */
+   step above the chrome it opens over: an equal z-index falls back to tree
+   order, which puts this first link under the rail. */
 .skip-link {
   position: fixed;
   top: -100%;
@@ -657,6 +653,8 @@ textarea.field {
   padding: var(--space-4);
 }
 
+/* Lifted off the page rather than drawn on it, so the one surface a locked-out
+   user can reach reads as an object and not as the whole screen. */
 .auth-card {
   width: 100%;
   max-width: 26rem;
@@ -664,6 +662,8 @@ textarea.field {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  padding: var(--space-6);
+  box-shadow: var(--elevation-3);
 }
 
 /* The accent rule and the eyebrow carry the identity here; the accent tokens
@@ -686,11 +686,14 @@ textarea.field {
   color: var(--text-secondary);
 }
 
+/* The same display face the shell names itself in, so the screen before sign-in
+   and the one after it are recognisably one app. */
 .auth-title {
+  font-family: var(--font-display);
   font-size: var(--text-2xl);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   color: var(--text-primary);
-  letter-spacing: -0.01em;
+  letter-spacing: var(--tracking-tight);
 }
 
 .auth-lede {
@@ -764,6 +767,9 @@ textarea.field {
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
   white-space: nowrap;
+  /* An <a> wearing this is still a link, and a UA underline under a filled
+     button reads as a defect. */
+  text-decoration: none;
 }
 
 .btn-primary {
@@ -881,6 +887,11 @@ button.btn[aria-disabled='true'] {
 /* A refusal runs to a sentence where a "Saved ✓" runs to two words. */
 .badge--wrap {
   white-space: normal;
+}
+
+/* The pill says "inferred" in words too, so this is never the only carrier. */
+.badge--inferred {
+  border-style: dashed;
 }
 
 button.badge {
@@ -1142,7 +1153,7 @@ button.badge[aria-checked='true']:hover {
 .slider-value {
   width: 40px;
   text-align: right;
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--text-sm);
   color: var(--text-primary);
 }
@@ -1212,37 +1223,108 @@ button.badge[aria-checked='true']:hover {
   flex: 1;
 }
 
-.rec-card {
-  background: var(--bg-card);
+/* One 2:3 box for every type, wider key art centre-sliced into it: a per-type
+   box makes the rank column ragged down the one mixed list this app has. */
+.cover-art {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 69px;
+  overflow: hidden;
   border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--elevation-1);
+}
+
+.cover-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* Common enough that a hole in the column would be the usual look. */
+.cover-art--none {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.kind-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rec-card {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  padding: var(--space-5);
   margin-bottom: var(--space-4);
-  transition: border-color var(--transition-base);
+  box-shadow: var(--elevation-2);
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
 
 .rec-card:hover {
-  border-color: var(--border-focus);
+  border-color: var(--border-default);
+  box-shadow: var(--elevation-3);
+}
+
+.rec-card:focus-within {
+  border-color: var(--border-default);
+}
+
+/* Rank above the art, not beside it: two gutters cost 130px of the measure. */
+.rec-gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) 0 var(--space-5) var(--space-4);
+}
+
+.rec-rank {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-body {
+  min-width: 0;
+  padding: var(--space-5) var(--space-5) 0;
 }
 
 .rec-header {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
-  gap: var(--space-4);
-  margin-bottom: var(--space-3);
+  gap: var(--space-5);
+}
+
+.rec-heading {
+  flex: 1;
+  min-width: 0;
 }
 
 .rec-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
   color: var(--text-primary);
-}
-
-.rec-rank {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  margin-top: var(--space-1);
 }
 
 .rec-series,
@@ -1252,86 +1334,232 @@ button.badge[aria-checked='true']:hover {
   margin-top: var(--space-05);
 }
 
-.rec-actions {
+.rec-score {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+  min-width: 112px;
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: right;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+button.rec-score {
+  cursor: pointer;
+}
+
+.rec-score:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.rec-score[aria-expanded='true'] {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.rec-score-number {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.rec-score-number b {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-none);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Not --text-muted: on the --bg-hover this fills with, muted misses AA in Snowstorm. */
+.rec-score-caption {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.rec-spine {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
+  gap: var(--space-05);
+  width: 112px;
+}
+
+.rec-spine-segment {
+  display: block;
+  height: 7px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+}
+
+.rec-spine-segment--rest {
+  background: var(--text-muted);
+}
+
+.rec-spine-segment--penalty {
+  background: var(--color-warning);
+}
+
+.rec-score-cue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.rec-score-cue .icon {
+  transition: transform var(--transition-fast);
+}
+
+.rec-score[aria-expanded='true'] .rec-score-cue .icon {
+  transform: rotate(180deg);
 }
 
 .rec-reasoning {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  font-style: italic;
-  margin-bottom: var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: var(--leading-snug);
+  color: var(--text-primary);
+  margin-top: var(--space-4);
+  max-width: 60ch;
   white-space: pre-line;
 }
 
-.score-details summary {
-  font-size: var(--text-sm);
-  color: var(--color-info-text);
-  cursor: pointer;
-  font-weight: 500;
-  padding: var(--space-1) 0;
+.rec-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  list-style: none;
 }
 
-.score-details summary:hover {
+.rec-evidence-more {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.rec-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-5) calc(var(--space-5) * -1) 0;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.rec-actions-spacer {
+  flex: 1;
+}
+
+/* Keeps its rank so the list never silently renumbers under the undo. */
+.rec-aside {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  margin-bottom: var(--space-4);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+.rec-aside .rec-gutter {
+  padding: var(--space-3) 0 var(--space-3) var(--space-4);
+}
+
+.rec-aside-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.rec-aside-body b {
   color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.rec-aside-spacer {
+  flex: 1;
+}
+
+.score-details {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.score-details-title {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: var(--space-3);
 }
 
 .score-breakdown {
-  padding: var(--space-3) 0 var(--space-1) 0;
+  margin: 0;
 }
 
 .score-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr) 72px;
   align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
+  gap: var(--space-4);
+  padding: var(--space-05) 0;
 }
 
 .score-label {
-  width: 140px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
-  flex-shrink: 0;
 }
 
-/* The page colour, for the reason input[type="range"] carries it. */
 .score-bar-bg {
-  flex: 1;
-  height: 6px;
-  background: var(--bg-primary);
+  height: 8px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border-default);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .score-bar-fill {
   height: 100%;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  background: var(--accent);
   transition: width 0.3s ease;
 }
 
-/* Variety penalty row: a deduction, not a positive score. Rendered with the
-   warning colour and a leading minus sign so it does not read as a high score
-   (the "-NN%" text label conveys the meaning without relying on colour). */
+/* The leading minus in the value carries this too, so hue never carries it alone. */
 .score-bar-fill-penalty {
   background: var(--color-warning);
 }
 
 .score-row-penalty .score-value {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .score-value {
-  width: 40px;
   text-align: right;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  flex-shrink: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .library-grid {
@@ -1354,10 +1582,24 @@ button.badge[aria-checked='true']:hover {
   border-color: var(--border-focus);
 }
 
+.library-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.library-item-ident {
+  flex: 1;
+  min-width: 0;
+}
+
 .library-item h3 {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
   color: var(--text-primary);
+  margin-top: var(--space-05);
   margin-bottom: var(--space-05);
 }
 
@@ -1648,7 +1890,7 @@ button.badge[aria-checked='true']:hover {
 }
 
 /* Where focus lands when an outcome unmounts the control that held it. Pointer
-   focus draws no ring, mirroring .main-content; a keyboard activation
+   focus draws no ring, mirroring .app-stage; a keyboard activation
    propagates :focus-visible and keeps it (WCAG 2.4.7). */
 .focus-fallback:focus:not(:focus-visible) {
   outline: none;
@@ -1672,55 +1914,61 @@ button.badge[aria-checked='true']:hover {
 .mt-2 { margin-top: var(--space-2); }
 .text-muted { color: var(--text-muted); }
 
+/* The one width the shell turns over at: the rail becomes a bottom tab bar and
+   nothing is hidden on the way, so there is no drawer to open and no state to
+   keep in step with this query. */
 @media (max-width: 768px) {
-  .app-layout {
-    grid-template-columns: 1fr;
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding-bottom: var(--tabbar-h);
   }
 
-  .sidebar-column {
-    position: static;
+  /* Fixed rather than sticky, so a tab is one thumb away at any scroll depth;
+     .app-shell pays back the height it takes out of the flow. */
+  .app-nav {
+    position: fixed;
+    inset: auto 0 0 0;
+    flex-direction: row;
     height: auto;
-    border-right: none;
+    padding: var(--space-1);
+    padding-bottom: max(var(--space-1), env(safe-area-inset-bottom));
+    box-shadow: inset 0 1px 0 var(--border-default);
   }
 
-  /* The toggle is fixed over this bar rather than over the page content, so the
-     app name clears the width and height it takes. */
-  .app-banner {
-    padding: var(--space-3) var(--space-4);
-    padding-left: calc(var(--space-4) + 36px);
-    min-height: 60px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+  .nav-list {
+    flex: 1;
+    flex-direction: row;
+    gap: var(--space-05);
   }
 
-  .sidebar {
-    background: var(--bg-sidebar);
-    border-right: 1px solid var(--border-default);
-    position: fixed;
-    left: -100%;
+  .nav-list li {
+    flex: 1;
+  }
+
+  .nav-item {
+    min-height: 52px;
+  }
+
+  .nav-item[aria-current]::before {
+    left: 22%;
+    right: 22%;
     top: 0;
-    height: 100vh;
-    z-index: var(--z-drawer);
-    width: 260px;
-    transition: left var(--transition-base);
-    box-shadow: var(--shadow-lg);
+    bottom: auto;
+    width: auto;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
   }
 
-  .sidebar-toggle {
-    display: block;
+  .nav-user {
+    display: none;
   }
 
-  .sidebar-overlay.visible {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: var(--overlay-medium);
-    z-index: var(--z-overlay);
+  .app-topbar {
+    padding: var(--space-3) var(--space-4);
   }
 
-  .main-content {
-    padding: var(--space-4);
+  .app-stage {
+    padding: var(--space-4) var(--space-4) var(--space-8);
   }
 
   /* The wider desktop label column would crush the sliders on narrow screens,
@@ -1743,18 +1991,62 @@ button.badge[aria-checked='true']:hover {
 /* 640px, not 768px: the controls above these cards (RecControls) already
    restack there, so the whole recommendations page turns over at one width. */
 @media (max-width: 640px) {
+  /* A 78px column is a quarter of a 390px screen, so the gutter lies down. */
+  .rec-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rec-gutter {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-4) 0;
+  }
+
+  .rec-aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rec-body {
+    padding: var(--space-4) var(--space-4) 0;
+  }
+
   .rec-header {
     flex-wrap: wrap;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
 
   .rec-heading {
     flex: 1 1 100%;
-    min-width: 0;
+  }
+
+  .rec-score {
+    width: 100%;
+    justify-items: start;
+    text-align: left;
   }
 
   .rec-actions {
-    width: 100%;
+    margin: var(--space-4) calc(var(--space-4) * -1) 0;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .score-row {
+    grid-template-columns: minmax(0, 1fr) 72px;
+    grid-template-areas: 'label value' 'track track';
+    gap: var(--space-2);
+  }
+
+  .score-label {
+    grid-area: label;
+  }
+
+  .score-value {
+    grid-area: value;
+  }
+
+  .score-bar-bg {
+    grid-area: track;
   }
 }
 

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ContentItemResponse } from '@/types/api'
+import AppIcon from '@/components/atoms/AppIcon.vue'
+import ItemCover from '@/components/atoms/ItemCover.vue'
+import { contentTypeGlyph } from '@/constants/contentTypes'
 import { formatContentType, formatSeries, formatStatusForContentType } from '@/utils/format'
 
 const props = defineProps<{
@@ -8,6 +11,7 @@ const props = defineProps<{
 }>()
 
 const series = computed(() => formatSeries(props.item.series, props.item.series_index))
+const glyph = computed(() => contentTypeGlyph(props.item.content_type))
 
 const emit = defineEmits<{
   edit: [dbId: number]
@@ -29,14 +33,23 @@ function statusTone(status: string): string | undefined {
 
 <template>
   <div class="library-item" :class="{ ignored: item.ignored }">
-    <h3>{{ item.title }}</h3>
-    <div v-if="series.shown" class="item-series">
-      <span aria-hidden="true">{{ series.shown }}</span>
-      <span class="sr-only">{{ series.spoken }}</span>
+    <div class="library-item-head">
+      <ItemCover
+        :cover-url="item.cover_url"
+        :content-type="item.content_type"
+        :title="item.title"
+      />
+      <div class="library-item-ident">
+        <p class="kind-line"><AppIcon :name="glyph" />{{ formatContentType(item.content_type) }}</p>
+        <h3>{{ item.title }}</h3>
+        <div v-if="series.shown" class="item-series">
+          <span aria-hidden="true">{{ series.shown }}</span>
+          <span class="sr-only">{{ series.spoken }}</span>
+        </div>
+        <div v-if="item.author" class="item-author">{{ item.author }}</div>
+      </div>
     </div>
-    <div v-if="item.author" class="item-author">{{ item.author }}</div>
     <div class="library-meta">
-      <span class="badge" data-tone="accent">{{ formatContentType(item.content_type) }}</span>
       <span class="badge" :data-tone="statusTone(item.status)">
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>

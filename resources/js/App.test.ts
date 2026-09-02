@@ -3,9 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import App from './App.vue'
 import router from '@/router'
-import AppSidebar from '@/components/organisms/AppSidebar.vue'
+import AppNav from '@/components/organisms/AppNav.vue'
 import LoginForm from '@/components/organisms/LoginForm.vue'
 import SetupForm from '@/components/organisms/SetupForm.vue'
+import WeightsPanel from '@/components/organisms/WeightsPanel.vue'
 import { ApiError, useApi } from '@/composables/useApi'
 import { PASSWORD_MIN_LENGTH } from '@/constants/auth'
 import { useAppStore } from '@/stores/app'
@@ -72,26 +73,6 @@ function answerBoot(storedTheme: string) {
   })
 }
 
-/** jsdom implements no matchMedia at all, so every mount needs a viewport and a
- *  narrow one has to be played back by hand. */
-function stubViewport(narrow: boolean) {
-  const listeners = new Set<(change: MediaQueryListEvent) => void>()
-  const query = {
-    matches: narrow,
-    addEventListener: (_: string, listener: (change: MediaQueryListEvent) => void) =>
-      listeners.add(listener),
-    removeEventListener: (_: string, listener: (change: MediaQueryListEvent) => void) =>
-      listeners.delete(listener),
-  }
-  vi.stubGlobal('matchMedia', () => query)
-  return {
-    resizeTo(matches: boolean) {
-      for (const listener of listeners) listener({ matches } as MediaQueryListEvent)
-    },
-    watchers: () => listeners.size,
-  }
-}
-
 async function shell() {
   spyOnLoad()
   answerSession(true, true, AARON)
@@ -109,7 +90,6 @@ describe('App', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     vi.stubGlobal('fetch', vi.fn())
-    stubViewport(false)
   })
 
   afterEach(() => {
@@ -294,40 +274,6 @@ describe('App', () => {
     expect(sessionCalls()).toBe(1)
   })
 
-  const VIEWPORTS: Array<{ screen: string; narrow: boolean; open: boolean; offscreen: boolean }> = [
-    { screen: 'a phone with the sidebar shut', narrow: true, open: false, offscreen: true },
-    { screen: 'a phone with the sidebar pulled out', narrow: true, open: true, offscreen: false },
-    { screen: 'a desktop with the sidebar pulled out', narrow: false, open: true, offscreen: false },
-    // The default state of every desktop load, and the only row that fails if
-    // the viewport drops out of the condition and the whole sidebar goes inert.
-    { screen: 'a desktop with the toggle never touched', narrow: false, open: false, offscreen: false },
-  ]
-
-  // Regression: the shut mobile sidebar was only slid off screen, so Tab still
-  // walked through its nav buttons before reaching anything on the page.
-  it.each(VIEWPORTS)('hides the sidebar from the keyboard on $screen', async ({ narrow, open, offscreen }) => {
-    stubViewport(narrow)
-    const wrapper = await shell()
-
-    if (open) await wrapper.find('.sidebar-toggle').trigger('click')
-
-    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(offscreen)
-  })
-
-  // `inert` made the toggle a real disclosure control, with no state saying
-  // whether pressing it had brought the six nav buttons into being.
-  it.each(VIEWPORTS)('states what the toggle controls on $screen', async ({ narrow, open }) => {
-    stubViewport(narrow)
-    const wrapper = await shell()
-    const toggle = wrapper.find('.sidebar-toggle')
-
-    if (open) await toggle.trigger('click')
-
-    const sidebar = mount(AppSidebar, { global: { plugins: [router] } })
-    expect(toggle.attributes('aria-controls')).toBe(sidebar.find('aside').attributes('id'))
-    expect(toggle.attributes('aria-expanded')).toBe(narrow ? String(open) : undefined)
-  })
-
   // Every routed page opens on an h2 inside .page-header, so this stands in for
   // whichever one the router lands on.
   const PAGE = { template: '<div class="page-header"><h2>Library</h2></div>' }
@@ -339,17 +285,15 @@ describe('App', () => {
       .map((heading) => Number(heading.element.tagName.slice(1)))
   }
 
-  // Regression: the only h1 was inside the sidebar, which takes inert and
-  // aria-hidden off screen — so a phone had none, and the page opened on an h2
-  // skipped from nothing (WCAG 1.3.1).
-  it.each(VIEWPORTS)('carries one h1, and no level skipped under it, on $screen', async ({ narrow, open }) => {
-    stubViewport(narrow)
+  // Regression: the only h1 sat in a drawer that went inert off screen, so a
+  // phone had none and the page opened on an h2 skipped from nothing (1.3.1).
+  it('carries one h1, and no level skipped under it', async () => {
     spyOnLoad()
     answerSession(true, true, AARON)
-    const wrapper = mount(App, { global: { plugins: [router], stubs: { RouterView: PAGE } } })
+    const wrapper = mount(App, {
+      global: { plugins: [router], stubs: { RouterView: PAGE, WeightsPanel: true } },
+    })
     await flushPromises()
-
-    if (open) await wrapper.find('.sidebar-toggle').trigger('click')
 
     const levels = outline(wrapper)
     expect(levels.filter((level) => level === 1)).toHaveLength(1)
@@ -377,8 +321,22 @@ describe('App', () => {
     expect(document.title).toContain('Recommendinator')
   })
 
+  const SUMMONS: Array<{ screen: string; route: string; offered: boolean }> = [
+    { screen: 'the ranking they reorder', route: 'recommendations', offered: true },
+    { screen: 'a screen no ranking is on', route: 'library', offered: false },
+  ]
+
+  // WeightsPanel's own tests mount it directly, so nothing else says the shell
+  // ever puts it on screen, or keeps it off the screens it cannot change.
+  it.each(SUMMONS)('summons the scoring weights from $screen', async ({ route, offered }) => {
+    await router.push({ name: route })
+    const wrapper = await shell()
+
+    expect(wrapper.findComponent(WeightsPanel).exists()).toBe(offered)
+  })
+
   it('opens the shell on a bypass that lands the keyboard on the page', async () => {
-    // Regression: a hard reload or a Shift+Tab left the six sidebar nav buttons
+    // Regression: a hard reload or a Shift+Tab left the five nav destinations
     // between the keyboard and the first control on the page (WCAG 2.4.1).
     spyOnLoad()
     answerSession(true, true, AARON)
@@ -388,7 +346,7 @@ describe('App', () => {
     const bypass = wrapper.get('a.skip-link')
     expect(wrapper.findAll('a, button')[0].element).toBe(bypass.element)
     expect(
-      bypass.element.compareDocumentPosition(wrapper.getComponent(AppSidebar).element) &
+      bypass.element.compareDocumentPosition(wrapper.getComponent(AppNav).element) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
 
@@ -397,29 +355,6 @@ describe('App', () => {
 
     expect(document.activeElement).toBe(wrapper.get('#main-content').element)
     wrapper.unmount()
-  })
-
-  it('hides it again when the window itself narrows', async () => {
-    // The viewport can cross the breakpoint without the toggle being touched —
-    // a rotated tablet, a resized window — and the state has to follow it.
-    const viewport = stubViewport(false)
-    const wrapper = await shell()
-    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(false)
-
-    viewport.resizeTo(true)
-    await flushPromises()
-
-    expect(wrapper.findComponent(AppSidebar).props('offscreen')).toBe(true)
-  })
-
-  it('stops watching the viewport once the shell goes away', async () => {
-    const viewport = stubViewport(true)
-    const wrapper = await shell()
-    expect(viewport.watchers()).toBe(1)
-
-    wrapper.unmount()
-
-    expect(viewport.watchers()).toBe(0)
   })
 
   it('stops polling the server it can no longer ask when the session ends', async () => {

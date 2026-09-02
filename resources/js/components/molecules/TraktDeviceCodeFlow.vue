@@ -250,7 +250,7 @@ onBeforeUnmount(clearPoll)
 </template>
 
 <style scoped>
-/* Pointer focus only, mirroring .main-content in base.css. A keyboard-driven
+/* Pointer focus only, mirroring .app-stage in base.css. A keyboard-driven
    flow propagates :focus-visible through the programmatic focus() below, and
    the ring is the only thing telling that user where they now stand (2.4.7). */
 .trakt-flow-panel:focus:not(:focus-visible) {

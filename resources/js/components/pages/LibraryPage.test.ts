@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import LibraryPage from './LibraryPage.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 import { useLibraryStore } from '@/stores/library'
@@ -18,10 +19,20 @@ beforeEach(() => {
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 })
 
+function testRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/library', name: 'library', component: { template: '<div />' } },
+      { path: '/library/duplicates', name: 'duplicates', component: { template: '<div />' } },
+    ],
+  })
+}
+
 function mountPage(overrides: Record<string, unknown> = {}) {
   const wrapper = mount(LibraryPage, {
     global: {
-      plugins: [createTestingPinia({ createSpy: vi.fn })],
+      plugins: [createTestingPinia({ createSpy: vi.fn }), testRouter()],
       stubs: {
         LibraryFilters: true,
         LibraryCard: true,
@@ -35,6 +46,16 @@ function mountPage(overrides: Record<string, unknown> = {}) {
 }
 
 describe('LibraryPage search behaviour', () => {
+  // Duplicates review lost its nav destination, so this link is now the only
+  // way anyone reaches it.
+  it('offers the only route to duplicates review', async () => {
+    const { wrapper } = mountPage()
+    await wrapper.vm.$nextTick()
+
+    const entry = wrapper.findAll('a').find((link) => link.text().includes('duplicates'))
+    expect(entry?.attributes('href')).toBe('/library/duplicates')
+  })
+
   it('names the query that matched nothing, so the way out is on screen', async () => {
     const { wrapper } = mountPage({ items: [], loading: false, searchQuery: 'dune' })
     await wrapper.vm.$nextTick()

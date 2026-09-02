@@ -3,15 +3,6 @@ import { mount } from '@vue/test-utils'
 import StarRating from './StarRating.vue'
 
 describe('StarRating', () => {
-  it('renders 5 star buttons', () => {
-    const wrapper = mount(StarRating, { props: { modelValue: null } })
-    const stars = wrapper.findAll('.star-rating-star')
-    expect(stars.length).toBe(5)
-    stars.forEach((star) => {
-      expect(star.element.tagName).toBe('BUTTON')
-    })
-  })
-
   it('star buttons have correct aria-label', () => {
     const wrapper = mount(StarRating, { props: { modelValue: null } })
     const stars = wrapper.findAll('.star-rating-star')

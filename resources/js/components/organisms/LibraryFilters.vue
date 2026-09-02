@@ -223,9 +223,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  /* Under the top strip, not at the viewport edge: the strip is sticky too and
+     wins the stacking order, so top: 0 would park these filters behind it. */
   .card {
     position: sticky;
-    top: 0;
+    top: var(--topbar-h);
     z-index: var(--z-sticky);
   }
 

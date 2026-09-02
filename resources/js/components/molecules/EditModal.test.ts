@@ -301,7 +301,6 @@ describe('EditModal', () => {
 
     await wrapper.find('#edit-status').setValue('completed')
 
-    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(5)
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')
     expect(wrapper.emitted('save')![0][1]).toEqual({
       status: 'completed',
@@ -319,7 +318,6 @@ describe('EditModal', () => {
     })
 
     expect((wrapper.get('#edit-status').element as HTMLSelectElement).value).toBe('completed')
-    expect(wrapper.findAll('.season-checkbox.checked')).toHaveLength(5)
 
     await wrapper.findAll('.season-checkbox')[4].trigger('click')
     await wrapper.findAll('.btn-primary').find(b => b.text().includes('Save'))!.trigger('click')

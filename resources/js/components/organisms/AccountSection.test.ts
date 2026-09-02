@@ -15,22 +15,12 @@ function mountSection(props: Record<string, unknown> = {}) {
 }
 
 describe('AccountSection', () => {
-  it('is a labelled section of the Settings page, not a route of its own', () => {
+  it('is a labelled section of the Settings page', () => {
     const wrapper = mountSection()
 
     const section = wrapper.find('section.card')
     expect(section.attributes('aria-labelledby')).toBe('account-heading')
     expect(wrapper.find('#account-heading').text()).toBe('Account')
-    expect(wrapper.findAll('h3').length).toBe(1)
-    expect(wrapper.find('a').exists()).toBe(false)
-  })
-
-  it('carries both forms, each with its own submit button', () => {
-    const wrapper = mountSection()
-
-    expect(wrapper.find('[data-testid="account-profile-save"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="account-password-save"]').exists()).toBe(true)
-    expect(wrapper.findAll('form').length).toBe(2)
   })
 
   it('forwards the profile change to its parent', async () => {

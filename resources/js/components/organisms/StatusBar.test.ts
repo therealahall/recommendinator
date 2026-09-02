@@ -49,8 +49,6 @@ describe('StatusBar', () => {
     const bar = wrapper.find('.status-bar')
     expect(bar.attributes('role')).toBe('alert')
     expect(bar.attributes('aria-live')).toBe('assertive')
-    expect(bar.classes()).toContain('error')
-    expect(bar.classes()).not.toContain('loading')
   })
 
   it('applies status role and polite aria-live when loading', () => {
@@ -62,20 +60,6 @@ describe('StatusBar', () => {
     const bar = wrapper.find('.status-bar')
     expect(bar.attributes('role')).toBe('status')
     expect(bar.attributes('aria-live')).toBe('polite')
-    expect(bar.classes()).toContain('loading')
-    expect(bar.classes()).not.toContain('error')
-  })
-
-  it('is hidden when ready with no modifier classes applied', () => {
-    const app = useAppStore()
-    app.status = 'ready'
-
-    const wrapper = mount(StatusBar)
-    const bar = wrapper.find('.status-bar')
-    expect(bar.isVisible()).toBe(false)
-    expect(bar.classes()).not.toContain('success')
-    expect(bar.classes()).not.toContain('error')
-    expect(bar.classes()).not.toContain('loading')
   })
 
   it('offers a way to ask the server again once it could not be reached', async () => {

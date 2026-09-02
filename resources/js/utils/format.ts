@@ -25,6 +25,37 @@ export function formatScore(score: number): string {
   return (score * 100).toFixed(0)
 }
 
+export interface ScoreSegment {
+  key: string
+  percent: number
+  tone: 'lead' | 'rest' | 'penalty'
+}
+
+const SPINE_LEADS = 4
+
+/** The expanded rows' own scorers in their own order: a closed bar built from
+ *  anything else is a second summary that can disagree with the open one. */
+export function scoreSpine(
+  breakdown: Record<string, number>,
+  varietyPenalty: number,
+): ScoreSegment[] {
+  const ranked = Object.entries(breakdown)
+    .filter(([, value]) => value > 0)
+    .sort(([, one], [, two]) => two - one)
+  const parts: ScoreSegment[] = ranked
+    .slice(0, SPINE_LEADS)
+    .map(([key, value]) => ({ key, percent: value, tone: 'lead' as const }))
+  const tail = ranked.slice(SPINE_LEADS).reduce((sum, [, value]) => sum + value, 0)
+  if (tail > 0) parts.push({ key: 'rest', percent: tail, tone: 'rest' })
+  if (varietyPenalty > 0) {
+    parts.push({ key: 'penalty', percent: varietyPenalty, tone: 'penalty' })
+  }
+
+  const total = parts.reduce((sum, part) => sum + part.percent, 0)
+  if (total === 0) return []
+  return parts.map((part) => ({ ...part, percent: (part.percent / total) * 100 }))
+}
+
 export function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString()
 }

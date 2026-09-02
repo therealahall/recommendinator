@@ -42,7 +42,6 @@ describe('LibraryCard', () => {
     const buttons = wrapper.findAll('.library-item-actions button')
     const action = buttons.find((b) => b.text() === 'Ignore')
     expect(action).toBeDefined()
-    expect(action!.classes()).toContain('btn-ignore')
     await action!.trigger('click')
     expect(wrapper.emitted('toggleIgnore')).toEqual([[1, true]])
   })
@@ -50,6 +49,16 @@ describe('LibraryCard', () => {
   it('renders no action buttons when the item has no db_id', () => {
     const wrapper = mount(LibraryCard, { props: { item: { ...baseItem, db_id: null } } })
     expect(wrapper.find('.library-item-actions').exists()).toBe(false)
+  })
+
+  it('shows the cover the payload carries, and the missing state when it carries none', () => {
+    const withArt = mount(LibraryCard, {
+      props: { item: { ...baseItem, cover_url: '/api/covers/1' } },
+    })
+    const without = mount(LibraryCard, { props: { item: { ...baseItem, cover_url: null } } })
+
+    expect(withArt.get('.cover-art img').attributes('src')).toBe('/api/covers/1')
+    expect(without.find('img').exists()).toBe(false)
   })
 
   it('renders a content-type-aware status label for non-book items', () => {

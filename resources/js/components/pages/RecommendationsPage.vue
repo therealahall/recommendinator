@@ -7,6 +7,7 @@ import { formatContentType } from '@/utils/format'
 import type { ItemEditRequest } from '@/types/api'
 import RecControls from '@/components/organisms/RecControls.vue'
 import RecCard from '@/components/molecules/RecCard.vue'
+import RecSetAside from '@/components/molecules/RecSetAside.vue'
 import EditModal from '@/components/molecules/EditModal.vue'
 
 const recs = useRecommendationsStore()
@@ -130,20 +131,13 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
       <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>
 
       <template v-for="(rec, index) in recs.items" :key="rec.db_id ?? index">
-        <div
+        <RecSetAside
           v-if="rec.db_id && recs.ignored.has(rec.db_id)"
-          class="rec-ignored"
-          :data-testid="`ignored-row-${rec.db_id}`"
-        >
-          <span>Ignored “{{ rec.title }}”.</span>
-          <button
-            type="button"
-            class="btn btn-small"
-            :data-testid="`undo-ignore-${rec.db_id}`"
-            :aria-label="`Undo ignoring ${rec.title}`"
-            @click="setIgnored(rec.db_id, rec.title, false)"
-          >Undo</button>
-        </div>
+          :db-id="rec.db_id"
+          :title="rec.title"
+          :rank="index + 1"
+          @undo="setIgnored($event, rec.title, false)"
+        />
         <RecCard
           v-else
           :rec="rec"
@@ -168,20 +162,6 @@ async function setIgnored(dbId: number, title: string, value: boolean) {
 </template>
 
 <style scoped>
-.rec-ignored {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
 .rec-ignore-error {
   margin: 0;
   font-size: var(--text-sm);

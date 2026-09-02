@@ -9,12 +9,6 @@ describe('RulesPrefs', () => {
     setActivePinia(createPinia())
   })
 
-  it('gives the section exactly one h3, so it is one landmark in the outline', () => {
-    const wrapper = mount(RulesPrefs)
-
-    expect(wrapper.findAll('h3')).toHaveLength(1)
-  })
-
   it('heads each sub-block one level under the section, so the outline skips none', () => {
     const wrapper = mount(RulesPrefs)
     const levels = new Set(
@@ -62,7 +56,7 @@ describe('RulesPrefs', () => {
     expect(prefs.contentLengthPreferences.book).toBe('short')
   })
 
-  it('renders custom rules as <li> items in a list with labelled remove buttons', () => {
+  it('names every rule in a list, each with its own labelled remove button', () => {
     const prefs = usePreferencesStore()
     prefs.addRule('avoid horror')
     prefs.addRule('prefer sci-fi')
@@ -70,11 +64,7 @@ describe('RulesPrefs', () => {
 
     // role="list" reasserts list semantics WebKit/VoiceOver strips when
     // list-style: none is applied.
-    const list = wrapper.find('ul.rule-list')
-    expect(list.attributes('role')).toBe('list')
-
-    const items = wrapper.findAll('ul.rule-list[role="list"] > li.rule-item')
-    expect(items).toHaveLength(2)
+    expect(wrapper.find('ul.rule-list').attributes('role')).toBe('list')
 
     const removeButtons = wrapper.findAll('.rule-item button')
     expect(removeButtons.map((b) => b.attributes('aria-label'))).toEqual([

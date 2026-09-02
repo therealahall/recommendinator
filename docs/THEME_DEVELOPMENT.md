@@ -75,7 +75,7 @@ grey, not to Nord, so declare the whole set.
 |----------|---------|-------------|
 | `--bg-primary` | `#2e3440` | Page background |
 | `--bg-card` | `#3b4252` | Card backgrounds |
-| `--bg-sidebar` | `#2e3440` | Sidebar |
+| `--bg-sidebar` | `#2e3440` | The rail, the tab bar and the top strip are mixed from this |
 | `--bg-elevated` | `#434c5e` | Elevated surfaces |
 | `--bg-input` | `#2e3440` | Input fields |
 | `--bg-hover` | `#434c5e` | Hover states |
@@ -94,8 +94,9 @@ grey, not to Nord, so declare the whole set.
 
 `--text-muted` carries help text, hints and empty states at 12-13px, so keep it
 at 4.5:1 or better against `--bg-primary`, `--bg-card`, `--bg-sidebar`,
-`--bg-elevated` and `--bg-input` (WCAG 1.4.3). The lightest of those in a dark
-theme, and the darkest in a light one, is the one that binds.
+`--bg-elevated`, `--bg-input` and `--chrome`, the rail material mixed from
+`--bg-sidebar` (WCAG 1.4.3). The lightest of those in a dark theme, and the
+darkest in a light one, is the one that binds.
 
 ### Accents
 
@@ -108,7 +109,8 @@ theme, and the darkest in a light one, is the one that binds.
 `--accent-light` is the one focus indicator the whole app uses, drawn just
 outside the control. Keep it at 3:1 or better against every surface a ring can
 land on — `--bg-card`, `--bg-input`, `--bg-primary`, `--bg-elevated`,
-`--bg-sidebar` and the error status bar's tint, where Try again sits — or
+`--bg-sidebar`, `--chrome` and the error status bar's tint, where Try again
+sits — or
 keyboard users lose the only cue telling them where they are (WCAG 1.4.11).
 
 Both accents are also fills under `--text-inverse`: `--accent` on a primary
@@ -204,7 +206,7 @@ radius (`--radius-*`) and depth (`--shadow-*`).
 
 Everything else is core, declared only in `base.css`: spacing (`--space-*`), the
 type scale (`--text-*`), line height, weight, tracking, `--font-mono`,
-transitions, `--sidebar-width`, `--rail-w` and `--measure`. That fence stops a
+transitions, `--rail-w`, `--tabbar-h`, `--topbar-h` and `--measure`. That fence stops a
 palette undoing a target size or the width text is set to.
 
 ## Persistence
