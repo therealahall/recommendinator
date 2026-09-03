@@ -52,25 +52,27 @@ class ScoringPipeline:
         if not candidates:
             return []
 
-        total_weight = sum(scorer.weight for scorer in self.scorers)
-        if total_weight == 0:
-            return [
-                ScoredCandidate(item=candidate, aggregate_score=0.0)
-                for candidate in candidates
-            ]
-
         results: list[ScoredCandidate] = []
         for candidate in candidates:
             weighted_sum = 0.0
+            applicable_weight = 0.0
             breakdown: dict[str, float] = {}
             for scorer in self.scorers:
+                if not scorer.applies(candidate, context):
+                    continue
                 raw_score = scorer.score(candidate, context)
                 clamped = max(0.0, min(1.0, raw_score))
                 weighted_sum += clamped * scorer.weight
+                applicable_weight += scorer.weight
                 config_key = _CLASS_TO_NAME.get(type(scorer))
                 if config_key:
                     breakdown[config_key] = clamped
-            aggregate = max(0.0, min(1.0, weighted_sum / total_weight))
+            # Every applicable weight can be set to 0, leaving nothing to divide by.
+            aggregate = (
+                max(0.0, min(1.0, weighted_sum / applicable_weight))
+                if applicable_weight > 0
+                else 0.0
+            )
             results.append(
                 ScoredCandidate(
                     item=candidate,

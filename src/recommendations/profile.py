@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -54,6 +55,9 @@ def profile_payload(
     }
 
 
+# Themes only. Length, player mode, structure and complexity describe the
+# artifact rather than what is in it, and length is already its own dimension
+# in content_length.py.
 THEME_KEYWORDS = {
     "exploration",
     "narrative depth",
@@ -65,20 +69,19 @@ THEME_KEYWORDS = {
     "relaxing",
     "thought-provoking",
     "immersive",
-    "replayable",
-    "short",
-    "long",
-    "complex",
-    "simple",
-    "multiplayer",
-    "single-player",
-    "cooperative",
-    "competitive",
     "story-rich",
     "choice-driven",
-    "linear",
-    "open-ended",
 }
+
+# Whole words only: a prefix inverts the term it is attached to, so a review
+# calling a book unemotional must not credit it with "emotional".
+_THEME_KEYWORD_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(
+        re.escape(keyword) for keyword in sorted(THEME_KEYWORDS, key=len, reverse=True)
+    )
+    + r")\b"
+)
 
 # Broad genre/subgenre categories for user-facing profile display.
 # Excludes themes, moods, settings, character archetypes, and game mechanics
@@ -366,10 +369,7 @@ class ProfileGenerator:
                         themes.append(value.lower())
 
         if item.review:
-            review_lower = item.review.lower()
-            for keyword in THEME_KEYWORDS:
-                if keyword in review_lower:
-                    themes.append(keyword)
+            themes.extend(_THEME_KEYWORD_PATTERN.findall(item.review.lower()))
 
         known_themes = [t for t in themes if t in THEME_KEYWORDS]
         return list(set(known_themes))

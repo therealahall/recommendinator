@@ -1,7 +1,11 @@
+import pytest
+
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.identity import candidate_key
 from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
+    AdaptationScorer,
     GenreMatchScorer,
     Scorer,
     ScoringContext,
@@ -74,6 +78,28 @@ class TestScoringPipeline:
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 0.0
 
+    def test_a_scorer_that_cannot_fire_is_left_out_of_the_divisor(self) -> None:
+        class StrongScorer(Scorer):
+            def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+                return 0.8
+
+        class InapplicableScorer(Scorer):
+            def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
+                return False
+
+            def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+                raise AssertionError("a scorer that cannot fire must not be asked")
+
+        context = _build_context()
+        pipeline = ScoringPipeline(
+            [StrongScorer(weight=1.0), InapplicableScorer(weight=3.0)]
+        )
+
+        result = pipeline.score_candidates_with_breakdown([make_item()], context)
+
+        # Averaged in as a zero it would be 0.2.
+        assert result[0].aggregate_score == pytest.approx(0.8)
+
     def test_zero_total_weight(self) -> None:
         context = _build_context()
         candidate = make_item()
@@ -82,6 +108,31 @@ class TestScoringPipeline:
         )
         result = pipeline.score_candidates_with_breakdown([candidate], context)
         assert result[0].aggregate_score == 0.0
+
+
+class TestAdaptationCannotDemoteRegression:
+    def test_an_adaptation_of_a_well_rated_work_never_ranks_below_no_adaptation(
+        self,
+    ) -> None:
+        class WellLikedScorer(Scorer):
+            def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+                return 0.9
+
+        context = _build_context()
+        candidate = make_item(title="Dune", content_type=ContentType.MOVIE)
+        pipeline = ScoringPipeline([WellLikedScorer(weight=2.0), AdaptationScorer()])
+
+        alone = pipeline.score_candidates_with_breakdown([candidate], context)[0]
+        context.adaptations = {
+            candidate_key(candidate): [
+                make_item(item_id="source", title="Dune", rating=4)
+            ]
+        }
+        adapting = pipeline.score_candidates_with_breakdown([candidate], context)[0]
+
+        assert "adaptation" not in alone.score_breakdown
+        assert "adaptation" in adapting.score_breakdown
+        assert adapting.aggregate_score >= alone.aggregate_score
 
 
 class TestTiebreakerRegression:

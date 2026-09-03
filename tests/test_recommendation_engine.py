@@ -16,7 +16,7 @@ from src.recommendations.engine import (
     _collapse_duplicate_db_ids,
 )
 from src.recommendations.identity import candidate_key
-from src.recommendations.preferences import PreferenceAnalyzer, UserPreferences
+from src.recommendations.preferences import PreferenceAnalyzer
 from src.recommendations.record import Recommendation
 from src.recommendations.reference_index import SignalIndex, _shuffle_close_scores
 from src.recommendations.scorers import SCORER_NAME_MAP
@@ -139,13 +139,13 @@ class TestBreakdownAccountsForItsScore:
             content_type=ContentType.MOVIE, count=1
         )
 
-        assert set(rec.scorer_weights) == set(rec.score_breakdown)
+        assert set(rec.score_breakdown) <= set(rec.scorer_weights)
         assert rec.score == pytest.approx(
             sum(
                 value * rec.scorer_weights[name]
                 for name, value in rec.score_breakdown.items()
             )
-            / sum(rec.scorer_weights.values())
+            / sum(rec.scorer_weights[name] for name in rec.score_breakdown)
         )
 
 
@@ -774,17 +774,54 @@ class TestCrossTypeClusterOverlapRegression:
         assert "The Crown" not in reference_titles
 
 
-class TestReasoningFormatting:
-    """Every reference the engine credited is named in the reasoning."""
+class TestReasoningIntroducesTheCitation:
+    """The line and the cited items are rendered together, so a title named in
+    both is printed twice."""
 
-    def _make_engine(self) -> RecommendationEngine:
-        return _engine_for_helpers()
+    @staticmethod
+    def _reference(item_id: str, title: str, content_type: ContentType) -> ContentItem:
+        return ContentItem(
+            id=item_id,
+            title=title,
+            content_type=content_type,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+        )
 
-    def _make_empty_preferences(self) -> UserPreferences:
-        return PreferenceAnalyzer(min_rating=4).analyze([])
+    def test_a_cited_pick_leads_the_citation_without_naming_its_titles(self) -> None:
+        engine = _engine_for_helpers()
+        preferences = PreferenceAnalyzer(min_rating=4).analyze([])
+        candidate = ContentItem(
+            id="candidate",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+        )
 
-    def test_a_lone_reference_is_named(self) -> None:
-        engine = self._make_engine()
+        reasoning = engine._generate_reasoning(
+            item=candidate,
+            preferences=preferences,
+            adaptations=[self._reference("film", "Dune", ContentType.MOVIE)],
+            contributing_items=[
+                self._reference("book", "Foundation", ContentType.BOOK)
+            ],
+        )
+
+        assert reasoning != engine._generate_reasoning(
+            item=candidate,
+            preferences=preferences,
+            adaptations=[],
+            contributing_items=[],
+        )
+        assert "Dune" not in reasoning
+        assert "Foundation" not in reasoning
+        # The per-type breakdown this replaced was one indented line per type.
+        assert "\n" not in reasoning
+
+    def test_the_citation_line_is_whole_where_the_cited_items_are_a_column_away(
+        self,
+    ) -> None:
+        engine = _engine_for_helpers()
 
         reasoning = engine._generate_reasoning(
             item=ContentItem(
@@ -793,58 +830,14 @@ class TestReasoningFormatting:
                 content_type=ContentType.BOOK,
                 status=ConsumptionStatus.UNREAD,
             ),
-            preferences=self._make_empty_preferences(),
+            preferences=PreferenceAnalyzer(min_rating=4).analyze([]),
             adaptations=[],
             contributing_items=[
-                ContentItem(
-                    id="ref",
-                    title="Dune",
-                    content_type=ContentType.BOOK,
-                    status=ConsumptionStatus.COMPLETED,
-                    rating=5,
-                )
+                self._reference("book", "Foundation", ContentType.BOOK)
             ],
         )
 
-        assert "Dune" in reasoning
-        # The grouped fallback names the same title, so only its shape tells
-        # the branches apart: grouped is always multi-line, lone always one.
-        assert "\n" not in reasoning
-
-    def test_multiple_items_still_use_grouped_format(self) -> None:
-        engine = self._make_engine()
-        preferences = self._make_empty_preferences()
-
-        item = ContentItem(
-            id="candidate",
-            title="Hyperion",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.UNREAD,
-        )
-        ref_a = ContentItem(
-            id="ref_a",
-            title="Dune",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-        ref_b = ContentItem(
-            id="ref_b",
-            title="Foundation",
-            content_type=ContentType.BOOK,
-            status=ConsumptionStatus.COMPLETED,
-            rating=5,
-        )
-
-        reasoning = engine._generate_reasoning(
-            item=item,
-            preferences=preferences,
-            adaptations=[],
-            contributing_items=[ref_a, ref_b],
-        )
-
-        assert "Dune" in reasoning
-        assert "Foundation" in reasoning
+        assert ":" not in reasoning
 
 
 class TestContributingReferenceRatingFloorRegression:
@@ -1723,7 +1716,48 @@ class TestContinuationScorerExclusion:
         breakdowns = {rec.item.title: rec.score_breakdown for rec in recommendations}
         assert "continuation" in breakdowns["Hyperion"]
         assert breakdowns["Hyperion"]["continuation"] == 1.0
-        assert breakdowns["Foundation"]["continuation"] == 0.0
+        assert "continuation" not in breakdowns["Foundation"]
+
+    def test_an_idle_book_scores_the_same_whether_or_not_anything_is_in_progress(
+        self, engine, mock_storage
+    ):
+        consumed = ContentItem(
+            id="c1",
+            title="Dune",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.COMPLETED,
+            rating=5,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        idle_book = ContentItem(
+            id="u2",
+            title="Foundation",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.UNREAD,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        active_book = ContentItem(
+            id="u1",
+            title="Hyperion",
+            content_type=ContentType.BOOK,
+            status=ConsumptionStatus.CURRENTLY_CONSUMING,
+            metadata={"genres": ["Science Fiction"]},
+        )
+        mock_storage.get_completed_items = Mock(
+            side_effect=lambda content_type=None, **kwargs: [consumed]
+        )
+
+        mock_storage.get_unconsumed_items = Mock(return_value=[idle_book])
+        alone = engine.generate_recommendations(content_type=ContentType.BOOK, count=5)
+
+        mock_storage.get_unconsumed_items = Mock(return_value=[idle_book, active_book])
+        beside_active = engine.generate_recommendations(
+            content_type=ContentType.BOOK, count=5
+        )
+
+        scored = {rec.item.title: rec.score for rec in beside_active}
+        assert alone[0].item.title == "Foundation"
+        assert scored["Foundation"] == pytest.approx(alone[0].score)
 
 
 class TestSameSeriesReferenceExclusionRegression:
@@ -2702,7 +2736,7 @@ class TestIdlessCandidateIdentityRegression:
         } == {"Knives Out"}
         # Only the in-progress book is a continuation, so the two breakdowns
         # differ and each card must carry its own.
-        assert by_title["Hyperion"].score_breakdown["continuation"] == 0.0
+        assert "continuation" not in by_title["Hyperion"].score_breakdown
         assert by_title["The Silent Patient"].score_breakdown["continuation"] == 1.0
 
 
@@ -2925,8 +2959,7 @@ class TestCrossTypeRun:
                 if content_type is None or item.content_type == content_type
             ]
         )
-        # content_type=None means every type, as the real accessor does: the
-        # merged run reads the whole pool once to fix one denominator.
+        # content_type=None means every type, as the real accessor does.
         mock_storage.get_unconsumed_items = Mock(
             side_effect=lambda content_type=None, **kwargs: (
                 [
@@ -2996,18 +3029,20 @@ class TestCrossTypeRun:
             else []
         )
 
-    def test_every_type_in_a_merged_run_divides_by_the_same_weight(
+    def test_a_book_in_progress_leaves_every_other_type_scored_on_the_same_signals(
         self, engine, mock_storage
     ):
-        """A book read halfway dropped ContinuationScorer from the other three
-        types, shrinking their divisor until a worse game outranked a book."""
+        """A book read halfway moved the other three types' divisor, until a
+        worse game outranked a better book on the merge."""
         self._back_storage(mock_storage, self._mixed_progress(ContentType.BOOK))
 
         recommendations = engine.generate_recommendations(count=8)
 
-        scored_by = {frozenset(rec.score_breakdown) for rec in recommendations}
-        assert len(scored_by) == 1
-        assert "continuation" in scored_by.pop()
+        idle = [rec for rec in recommendations if rec.item.title != "Active book"]
+        active = next(rec for rec in recommendations if rec.item.title == "Active book")
+        assert len({frozenset(rec.score_breakdown) for rec in idle}) == 1
+        assert all("continuation" not in rec.score_breakdown for rec in idle)
+        assert active.score_breakdown["continuation"] == 1.0
 
     def test_naming_a_type_scores_on_that_type_s_own_signals(
         self, engine, mock_storage

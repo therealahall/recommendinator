@@ -259,12 +259,15 @@ class TestCrossTypeReferencesReachedByCreator:
         assert [item.id for item in references] == [consumed.id]
 
 
-class TestReferenceGroupOrder:
-    """The candidate's own type leads, and the rest follow their best match."""
+class TestReferenceStrengthOrder:
+    """One order across every type, so a citation reads strongest first rather
+    than as a block per content type."""
 
-    def test_own_type_leads_and_other_types_follow_their_best_reference(self) -> None:
-        """The movie beats the show on a shared creator, so the groups must come out
-        books, movie, show even though the book scores lowest of the three."""
+    def test_a_stronger_other_type_reference_outranks_a_weaker_same_type_one(
+        self,
+    ) -> None:
+        """The movie shares the candidate's creator and the book only some genres,
+        so grouping by type would have put the weaker book first."""
         weak_book = make_item(
             item_id="weak-book",
             title="Four Genres",
@@ -300,11 +303,15 @@ class TestReferenceGroupOrder:
             metadata={"genres": ["Science Fiction"]},
         )
 
-        references = SignalIndex([show, movie, weak_book]).references_for(
-            candidate, random.Random(7)
-        )
+        cited = [
+            item.id
+            for item in SignalIndex([show, movie, weak_book]).references_for(
+                candidate, random.Random(7)
+            )
+        ]
 
-        assert [item.id for item in references] == ["weak-book", "movie", "show"]
+        assert set(cited) == {"movie", "show", "weak-book"}
+        assert cited.index("movie") < cited.index("weak-book")
 
 
 class TestAdaptationLookupEdges:
@@ -537,7 +544,7 @@ class TestAnEmptySignalSet:
 
 
 class TestOneSignalItemCitedTwoWays:
-    """``_generate_reasoning`` dedupes the two lists by db_id because they
+    """The card and the CLI cell dedupe the two lists by db_id because they
     overlap; anything else naming both owes the same dedup."""
 
     def test_the_book_a_film_adapts_is_also_a_contributing_reference(self) -> None:

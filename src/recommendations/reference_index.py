@@ -233,7 +233,8 @@ class SignalIndex:
     def references_for(
         self, candidate: ContentItem, rng: random.Random
     ) -> list[ContentItem]:
-        """Consumed items that explain *candidate*, grouped by content type."""
+        """Consumed items that explain *candidate*, strongest first whatever
+        their content type."""
         profile = _profile_of(candidate)
         excluded: set[int] = (
             self._excluded_by_series.get(profile.series_key, set())
@@ -241,26 +242,21 @@ class SignalIndex:
             else set()
         )
 
-        same_type_entries: list[tuple[ContentItem, float]] = []
-        other_types: list[tuple[float, int, list[tuple[ContentItem, float]]]] = []
+        scored: list[tuple[float, int, _SignalRecord]] = []
         for content_type, bucket in self._references_by_type.items():
-            same_type = content_type == profile.content_type
-            top = self._top_of_type(profile, bucket, excluded, same_type=same_type)
-            if not top:
-                continue
-            entries = [(record.item, score) for score, _, record in top]
-            if same_type:
-                same_type_entries = entries
-            else:
-                best_score, best_ordinal, _ = top[0]
-                other_types.append((-best_score, best_ordinal, entries))
+            scored.extend(
+                self._top_of_type(
+                    profile,
+                    bucket,
+                    excluded,
+                    same_type=content_type == profile.content_type,
+                )
+            )
 
-        other_types.sort(key=lambda group: (group[0], group[1]))
-
-        references = _shuffle_close_scores(same_type_entries, rng)
-        for _, _, entries in other_types:
-            references.extend(_shuffle_close_scores(entries, rng))
-        return references
+        scored.sort(key=lambda entry: (-entry[0], entry[1]))
+        return _shuffle_close_scores(
+            [(record.item, score) for score, _, record in scored], rng
+        )
 
     @staticmethod
     def _top_of_type(

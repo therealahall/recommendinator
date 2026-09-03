@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from src.models.content import (
-    ConsumptionStatus,
     ContentItem,
     ContentType,
     get_enum_value,
@@ -22,8 +21,6 @@ from src.recommendations.reference_index import SignalIndex
 from src.recommendations.scorers import (
     DEFAULT_SCORERS,
     SCORER_NAME_MAP,
-    AdaptationScorer,
-    ContinuationScorer,
     CustomPreferenceScorer,
     Scorer,
     ScoringContext,
@@ -49,7 +46,6 @@ from src.utils.series import (
     inject_seasons_watched_tracking,
     is_active_series_continuation,
     should_recommend_item,
-    strip_series_suffix_from_title,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,21 +72,6 @@ def _collapse_duplicate_db_ids(
     return collapsed
 
 
-_CONTENT_TYPE_LABEL: dict[str, str] = {
-    "book": "Book",
-    "movie": "Movie",
-    "tv_show": "TV Show",
-    "video_game": "Video Game",
-}
-
-_CONTENT_TYPE_NATURAL_LABEL: dict[str, str] = {
-    "book": "the book",
-    "movie": "the movie",
-    "tv_show": "the TV show",
-    "video_game": "the video game",
-}
-
-
 # Shuffle source for engines built without one.  Shared rather than per-engine
 # so seeding it seeds every engine that did not bring its own.
 _DEFAULT_RNG = random.Random()
@@ -106,35 +87,12 @@ class _ConfiguredScoring:
 
 
 @dataclass(frozen=True)
-class _SignalFlags:
-    """Dropping a scorer shrinks the weight every score divides by, so a merged
-    run resolves these once for all four types."""
-
-    has_active: bool
-    has_adaptations: bool
-
-
-@dataclass(frozen=True)
 class _TasteSignals:
     """Type-independent, so one run resolves them once however many it ranks."""
 
     items: list[ContentItem]
     index: SignalIndex
     preferences: UserPreferences
-
-
-def _any_active(items: list[ContentItem]) -> bool:
-    return any(item.status == ConsumptionStatus.CURRENTLY_CONSUMING for item in items)
-
-
-def _signals_in(
-    unconsumed_items: list[ContentItem],
-    adaptations: dict[str, list[ContentItem]],
-) -> _SignalFlags:
-    return _SignalFlags(
-        has_active=_any_active(unconsumed_items),
-        has_adaptations=bool(adaptations),
-    )
 
 
 def _weights_in(section: dict[str, Any]) -> dict[str, float]:
@@ -216,7 +174,7 @@ class RecommendationEngine:
                 count, user_preference_config, scoring, taste
             )
         return self._rank_one_type(
-            content_type, count, user_preference_config, scoring, taste, None
+            content_type, count, user_preference_config, scoring, taste
         )
 
     def _taste_signals(self, scoring: _ConfiguredScoring) -> _TasteSignals:
@@ -236,7 +194,6 @@ class RecommendationEngine:
         user_preference_config: UserPreferenceConfig | None,
         scoring: _ConfiguredScoring,
         taste: _TasteSignals,
-        signals: _SignalFlags | None,
     ) -> list[Recommendation]:
         # Deliberately NOT the signal set: an ignored or unrated earlier entry
         # is still consumed, and must still block a later one.
@@ -336,14 +293,7 @@ class RecommendationEngine:
         )
 
         active_pipeline = self._build_active_pipeline(
-            scoring,
-            user_preference_config,
-            interpreted_prefs,
-            (
-                signals
-                if signals is not None
-                else _signals_in(unconsumed_items, adaptations)
-            ),
+            scoring, user_preference_config, interpreted_prefs
         )
 
         pipeline_scored = active_pipeline.score_candidates_with_breakdown(
@@ -415,8 +365,6 @@ class RecommendationEngine:
         scoring: _ConfiguredScoring,
         taste: _TasteSignals,
     ) -> list[Recommendation]:
-        signals = self._signals_across_types(taste.index)
-
         # One type-scoped run each, because season expansion and series tracking
         # only mean anything inside a type. No type can hold more than `count` of
         # the merged top `count`, so its own top `count` is all that can matter.
@@ -424,24 +372,13 @@ class RecommendationEngine:
             recommendation
             for content_type in ContentType
             for recommendation in self._rank_one_type(
-                content_type, count, user_preference_config, scoring, taste, signals
+                content_type, count, user_preference_config, scoring, taste
             )
         ]
         # The pipeline's own tiebreaker: on score alone an exact tie falls to
         # ContentType declaration order, where books always come first.
         candidates.sort(key=lambda rec: (-rec.score, tiebreaker_key(rec.item)))
         return candidates[:count]
-
-    def _signals_across_types(self, signal_index: SignalIndex) -> _SignalFlags:
-        unconsumed_items = self.storage.get_unconsumed_items(
-            content_type=None, limit=None, include_ignored=False
-        )
-        return _SignalFlags(
-            has_active=_any_active(unconsumed_items),
-            has_adaptations=any(
-                signal_index.adaptations_of(item) for item in unconsumed_items
-            ),
-        )
 
     def _apply_series_filtering(
         self,
@@ -527,7 +464,6 @@ class RecommendationEngine:
         scoring: _ConfiguredScoring,
         user_preference_config: UserPreferenceConfig | None,
         interpreted_prefs: InterpretedPreference | None,
-        signals: _SignalFlags,
     ) -> ScoringPipeline:
         scorers = list(scoring.pipeline.scorers)
 
@@ -545,18 +481,7 @@ class RecommendationEngine:
                 scorers, user_preference_config.scorer_weights
             )
 
-        inert: tuple[type[Scorer], ...] = tuple(
-            scorer_class
-            for scorer_class, has_signal in (
-                (ContinuationScorer, signals.has_active),
-                (AdaptationScorer, signals.has_adaptations),
-            )
-            if not has_signal
-        )
-
-        return ScoringPipeline(
-            [scorer for scorer in scorers if not isinstance(scorer, inert)]
-        )
+        return ScoringPipeline(scorers)
 
     @staticmethod
     def _apply_variety_penalty(
@@ -628,55 +553,10 @@ class RecommendationEngine:
         adaptations: list[ContentItem],
         contributing_items: list[ContentItem],
     ) -> str:
-        influencing_items: list[ContentItem] = []
-
-        if adaptations:
-            influencing_items.extend(adaptations)
-
-        if contributing_items:
-            seen_db_ids = {
-                item.db_id for item in influencing_items if item.db_id is not None
-            }
-            for contrib in contributing_items:
-                if contrib.db_id not in seen_db_ids:
-                    influencing_items.append(contrib)
-                    if contrib.db_id is not None:
-                        seen_db_ids.add(contrib.db_id)
-
-        if influencing_items:
-            grouped: dict[str, list[str]] = {}
-            for ref in influencing_items:
-                type_label = _CONTENT_TYPE_LABEL.get(
-                    get_enum_value(ref.content_type), "Item"
-                )
-                label_key = type_label + "s"
-                titles = grouped.setdefault(label_key, [])
-                titles.append(strip_series_suffix_from_title(ref.title))
-
-            if len(grouped) == 1 and sum(len(v) for v in grouped.values()) == 1:
-                ref_item = influencing_items[0]
-                ref_type_value = get_enum_value(ref_item.content_type)
-                natural_label = _CONTENT_TYPE_NATURAL_LABEL.get(
-                    ref_type_value, "the item"
-                )
-                title = next(iter(grouped.values()))[0]
-                return f"Recommended because you liked {natural_label} {title}"
-
-            # Candidate's own content type always listed first
-            candidate_label = (
-                _CONTENT_TYPE_LABEL.get(get_enum_value(item.content_type), "Item") + "s"
-            )
-            ordered_keys = []
-            if candidate_label in grouped:
-                ordered_keys.append(candidate_label)
-            for key in grouped:
-                if key != candidate_label:
-                    ordered_keys.append(key)
-
-            lines = ["Recommended because you liked the following:"]
-            for type_label in ordered_keys:
-                lines.append(f"  - {type_label}: {', '.join(grouped[type_label])}")
-            return "\n".join(lines)
+        # The cited items are carried alongside this line and listed by both
+        # interfaces, so naming them here prints every title twice.
+        if adaptations or contributing_items:
+            return "Recommended because you liked related items"
 
         if item.author and preferences.get_author_score(item.author) > 0.5:
             return f"Recommended because you enjoy works by {item.author}"
