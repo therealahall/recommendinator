@@ -19,6 +19,7 @@ function value(overrides: Partial<SettingViewValue> = {}): SettingViewValue {
     sensitive: false,
     value: 8000,
     db_overridden: false,
+    has_stored_value: false,
     ...overrides,
   }
 }
@@ -77,7 +78,10 @@ describe('SettingControl badges and reset', () => {
     // `disabled` closed on the button the user had just pressed, blurring them
     // to <body> for the length of the request (WCAG 2.4.3).
     const wrapper = mount(SettingControl, {
-      props: { setting: value({ db_overridden: true }), modelValue: 8000 },
+      props: {
+        setting: value({ db_overridden: true, has_stored_value: true }),
+        modelValue: 8000,
+      },
       attachTo: document.body,
     })
     const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
@@ -96,7 +100,7 @@ describe('SettingControl badges and reset', () => {
   })
 
   it('keeps the words on the Reset button inside the name voice control matches', () => {
-    const wrapper = mountControl(value({ db_overridden: true }), 8000)
+    const wrapper = mountControl(value({ db_overridden: true, has_stored_value: true }), 8000)
     const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
     const name = button.attributes('aria-label') ?? button.text()
 
@@ -104,8 +108,25 @@ describe('SettingControl badges and reset', () => {
     expect(name).toContain('Batch size')
   })
 
+  it('offers Reset for a stored value equal to the built-in default, which still shadows the config file', () => {
+    const wrapper = mountControl(value({ db_overridden: false, has_stored_value: true }), 8000)
+
+    expect(wrapper.find('[data-testid="reset-enrichment.batch_size"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="overridden-badge-enrichment.batch_size"]').exists()).toBe(
+      false,
+    )
+  })
+
+  it('offers no Reset when nothing is stored to delete', () => {
+    const wrapper = mountControl(value(), 8000)
+
+    expect(wrapper.find('[data-testid="reset-enrichment.batch_size"]').exists()).toBe(false)
+  })
+
   it('says why a Reset locked by a section save cannot be used', async () => {
-    const wrapper = mountControl(value({ db_overridden: true }), 8000, { disabled: true })
+    const wrapper = mountControl(value({ db_overridden: true, has_stored_value: true }), 8000, {
+      disabled: true,
+    })
     const button = wrapper.get('[data-testid="reset-enrichment.batch_size"]')
 
     await button.trigger('click')

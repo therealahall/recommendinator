@@ -87,11 +87,9 @@ const orderedSources = computed(() => {
     <div class="page-header">
       <h2>Data</h2>
       <p class="page-description">
-        Import a file, sync sources, and enrich metadata from external APIs.
+        Sync sources, import a file, and enrich metadata from external APIs.
       </p>
     </div>
-
-    <ImportPanel />
 
     <!-- Named and focusable, because a successful retry sends focus here. -->
     <div
@@ -172,17 +170,10 @@ const orderedSources = computed(() => {
           </ul>
         </div>
         <div v-if="orderedSources.length" class="sync-accordion-list">
-          <SyncSourceAccordion
-            v-for="source in orderedSources"
-            :key="source.id"
-            :source="source"
-            :syncing="data.isSourceIdSyncing(source.id)"
-            :job="data.jobForSourceId(source.id)"
-            @sync="data.triggerSync($event)"
-          />
+          <!-- Labelled, not headed: a heading here would claim the sources under it. -->
           <div v-if="orderedSources.length > 1" class="sync-all-card">
             <div>
-              <h3 class="section-subtitle">All sources</h3>
+              <p class="section-subtitle">All sources</p>
               <p class="sync-plugin-name">Sync every enabled source at once</p>
             </div>
             <button
@@ -199,6 +190,14 @@ const orderedSources = computed(() => {
               @click="onSyncAll"
             >{{ syncAllLabel }}</button>
           </div>
+          <SyncSourceAccordion
+            v-for="source in orderedSources"
+            :key="source.id"
+            :source="source"
+            :syncing="data.isSourceIdSyncing(source.id)"
+            :job="data.jobForSourceId(source.id)"
+            @sync="data.triggerSync($event)"
+          />
         </div>
         <div v-else-if="unusableSources.length === 0" class="state state--empty">
           <span class="state-mark"><AppIcon name="activity" :size="20" /></span>
@@ -229,6 +228,8 @@ const orderedSources = computed(() => {
         aria-atomic="true"
       >{{ retryMessage }}</p>
     </div>
+
+    <ImportPanel />
 
     <EnrichmentCard />
 

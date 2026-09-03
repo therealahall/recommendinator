@@ -4,7 +4,6 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 defineProps<{
   dbId: number
   title: string
-  rank: number
 }>()
 
 const emit = defineEmits<{
@@ -14,9 +13,6 @@ const emit = defineEmits<{
 
 <template>
   <div class="rec-aside" :data-testid="`ignored-row-${dbId}`">
-    <div class="rec-gutter">
-      <span class="rec-rank" aria-hidden="true">{{ rank }}</span>
-    </div>
     <p class="rec-aside-body">
       <span class="badge"><AppIcon name="close" />Set aside</span>
       <span><b>{{ title }}</b> — you will not be shown this again.</span>

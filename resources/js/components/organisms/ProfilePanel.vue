@@ -80,3 +80,77 @@ async function regenerate(): Promise<void> {
     >Regenerate</button>
   </div>
 </template>
+
+<style scoped>
+.profile-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.profile-section + .profile-section {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.profile-section h4 {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* A theme phrase that cannot wrap sets the row's floor (WCAG 1.4.10). */
+.profile-tags .badge {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.profile-pattern {
+  line-height: var(--leading-snug);
+}
+
+.profile-status {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Mounted while silent (WCAG 4.1.3), so it earns its spacing only when it speaks. */
+.profile-status:not(:empty) {
+  margin-top: var(--space-4);
+}
+
+.profile-status.failed {
+  color: var(--color-error-text);
+}
+
+/* The panel's one action: the small variant leaves it under a thumb target. */
+.pref-section > .btn {
+  min-height: 44px;
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 768px) {
+  .pref-section > .btn {
+    width: 100%;
+  }
+}
+</style>

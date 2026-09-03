@@ -38,6 +38,15 @@ describe('NumberStepper', () => {
     })
   })
 
+  it('shows no number until the caller has one, and the first press names the minimum', async () => {
+    const wrapper = mountStepper({ modelValue: null, min: 3 })
+
+    expect(wrapper.find('input').element.value).toBe('')
+
+    await wrapper.find('.stepper-increment').trigger('click')
+    expect(wrapper.emitted('update:modelValue')![0]).toEqual([3])
+  })
+
   it('increments on + button click', async () => {
     const wrapper = mountStepper({ modelValue: 5 })
     await wrapper.find('.stepper-increment').trigger('click')

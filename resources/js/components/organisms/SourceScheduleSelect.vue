@@ -131,7 +131,7 @@ const statusText = computed(() => {
 
 .cadence-select {
   align-self: flex-start;
-  min-width: 12rem;
+  min-width: min(12rem, 100%);
 }
 
 .cadence-status {

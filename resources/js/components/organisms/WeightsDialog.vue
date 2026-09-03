@@ -26,7 +26,7 @@ const opened = ref<{ weights: Record<string, number>; variety: number } | null>(
 const status = computed(() => {
   if (prefs.saveStatus === 'error') return prefs.saveError
   if (prefs.saveStatus === 'saving') return 'Saving…'
-  if (prefs.saveStatus === 'saved') return 'Saved. Rank again to use them.'
+  if (prefs.saveStatus === 'saved') return 'Saved. Recommend again to use them.'
   return ''
 })
 
@@ -84,7 +84,7 @@ onUnmounted(revert)
     </header>
 
     <p class="weights-lede">
-      How much each signal counts when the list is ranked. Nothing is written until you save.
+      How much each signal counts when recommendations are made. Nothing is written until you save.
     </p>
 
     <div class="weights-body">

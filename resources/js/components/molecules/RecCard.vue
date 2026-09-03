@@ -31,12 +31,14 @@ interface EvidencePill {
   inferred: boolean
 }
 
-/** Three fits the measure; the rest are counted so the citation is not silently
- *  truncated to look like the whole reason. */
-const MAX_PILLS = 3
+/** A pill is as wide as the title in it, so no count is exactly two rows. Four
+ *  is about that at the card's measure, and the rest are one press away. */
+const COLLAPSED_PILLS = 4
 
 const expanded = ref(false)
+const evidenceOpen = ref(false)
 const detailsId = computed(() => `rec-breakdown-${props.rec.db_id ?? props.rank}`)
+const evidenceId = computed(() => `rec-evidence-${props.rec.db_id ?? props.rank}`)
 
 const series = computed(() => formatSeries(props.rec.series, props.rec.series_index))
 const typeLabel = computed(() => formatContentType(props.rec.content_type))
@@ -72,8 +74,14 @@ const evidence = computed(() => {
     ...pills(directOnly, 'contributed directly', false),
   ]
 })
-const shownEvidence = computed(() => evidence.value.slice(0, MAX_PILLS))
-const hiddenEvidence = computed(() => evidence.value.length - shownEvidence.value.length)
+const shownEvidence = computed(() =>
+  evidenceOpen.value ? evidence.value : evidence.value.slice(0, COLLAPSED_PILLS),
+)
+const hiddenEvidence = computed(() => Math.max(evidence.value.length - COLLAPSED_PILLS, 0))
+const hasInferred = computed(() => shownEvidence.value.some((pill) => pill.inferred))
+const evidenceToggleLabel = computed(() =>
+  evidenceOpen.value ? 'Show fewer' : `+${hiddenEvidence.value} more`,
+)
 
 // Leads on the visible words, so speech input reaches it (WCAG 2.5.3).
 const scoreLabel = computed(() =>
@@ -90,7 +98,6 @@ function toggleBreakdown() {
 <template>
   <article class="rec-card">
     <div class="rec-gutter">
-      <span class="rec-rank" aria-hidden="true">{{ rank }}</span>
       <ItemCover
         :cover-url="rec.cover_url"
         :content-type="rec.content_type"
@@ -100,9 +107,11 @@ function toggleBreakdown() {
 
     <div class="rec-body">
       <div class="rec-header">
-        <div class="rec-heading">
-          <p class="kind-line"><AppIcon :name="glyph" />{{ typeLabel }}</p>
-          <h3 class="rec-title">{{ rec.title }}</h3>
+        <div class="rec-identity">
+          <h3 class="rec-title">
+            <AppIcon :name="glyph" class="type-glyph" />
+            <span class="sr-only">{{ typeLabel }}. </span>{{ rec.title }}
+          </h3>
           <div v-if="series.shown" class="rec-series">
             <span aria-hidden="true">{{ series.shown }}</span>
             <span class="sr-only">{{ series.spoken }}</span>
@@ -135,26 +144,42 @@ function toggleBreakdown() {
             />
           </span>
           <span v-if="hasBreakdown" class="rec-score-cue" aria-hidden="true">
-            Why this<AppIcon name="chevron" />
+            <span class="rec-score-cue-label">Why this</span><AppIcon name="chevron" />
           </span>
           <span class="sr-only">{{ scoreLabel }}</span>
         </component>
       </div>
 
+      <!-- Directly under its trigger, so what the reader just opened cannot
+           land off the bottom of a tall card. -->
+      <RecScoreDetails :id="detailsId" :rec="rec" :open="expanded" />
+
       <p v-if="rec.reasoning" class="rec-reasoning">{{ rec.reasoning }}</p>
 
-      <ul v-if="shownEvidence.length > 0" class="rec-evidence" role="list">
-        <li v-for="pill in shownEvidence" :key="pill.key">
-          <span class="badge badge--wrap" :class="{ 'badge--inferred': pill.inferred }">
-            <AppIcon :name="pill.glyph" />
-            <b>{{ pill.title }}</b>
-            <span>{{ pill.relation }}</span>
-          </span>
-        </li>
-        <li v-if="hiddenEvidence > 0" class="rec-evidence-more">+{{ hiddenEvidence }} more</li>
-      </ul>
-
-      <RecScoreDetails :id="detailsId" :rec="rec" :open="expanded" />
+      <div v-if="evidence.length > 0" class="rec-citations">
+        <ul :id="evidenceId" class="rec-evidence" role="list">
+          <li v-for="pill in shownEvidence" :key="pill.key">
+            <span class="badge badge--wrap" :class="{ 'badge--inferred': pill.inferred }">
+              <AppIcon :name="pill.glyph" />
+              <b>{{ pill.title }}</b>
+              <span class="sr-only"> — {{ pill.relation }}</span>
+            </span>
+          </li>
+        </ul>
+        <p v-if="hasInferred" class="rec-evidence-legend" aria-hidden="true">
+          Dashed: a different version of the same story
+        </p>
+        <button
+          v-if="hiddenEvidence > 0"
+          type="button"
+          class="btn btn-ghost rec-evidence-toggle"
+          :aria-expanded="evidenceOpen"
+          :aria-controls="evidenceId"
+          @click="evidenceOpen = !evidenceOpen"
+        >
+          <AppIcon name="chevron" />{{ evidenceToggleLabel }}<span class="sr-only"> cited items</span>
+        </button>
+      </div>
 
       <div class="rec-actions">
         <button

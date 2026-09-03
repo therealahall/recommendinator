@@ -33,11 +33,13 @@ export interface ScoreSegment {
 
 export interface ScoreShare {
   key: string
+  value: number
+  weight: number
   points: number
 }
 
-/** Each signal's points of the final percentage: a raw value ranks the
- *  1.0-weighted scorer over the 2.0-weighted one that moved the score twice. */
+/** Heaviest signal first: a row states how well the item did, not how far that
+ *  moved the score, so order is the only thing left saying which counted more. */
 export function scoreShares(
   breakdown: Record<string, number>,
   weights: Record<string, number>,
@@ -46,18 +48,24 @@ export function scoreShares(
   const total = Object.keys(breakdown).reduce((sum, key) => sum + weightOf(key), 0)
   if (total === 0) return []
   return Object.entries(breakdown)
-    .map(([key, value]) => ({ key, points: (value * weightOf(key) * 100) / total }))
-    .sort((one, two) => two.points - one.points)
+    .map(([key, value]) => {
+      const weight = weightOf(key)
+      return { key, value, weight, points: (value * weight * 100) / total }
+    })
+    .sort((one, two) => two.weight - one.weight || two.value - one.value)
 }
 
-export function penaltyPoints(shares: ScoreShare[], varietyPenalty: number): number {
+function penaltyPoints(shares: ScoreShare[], varietyPenalty: number): number {
   return shares.reduce((sum, share) => sum + share.points, 0) * varietyPenalty
 }
 
 const SPINE_LEADS = 4
 
 export function scoreSpine(shares: ScoreShare[], varietyPenalty: number): ScoreSegment[] {
-  const ranked = shares.filter((share) => share.points > 0)
+  // Widest slice first, unlike the panel: this is one bar of the composite.
+  const ranked = shares
+    .filter((share) => share.points > 0)
+    .sort((one, two) => two.points - one.points)
   const parts: ScoreSegment[] = ranked
     .slice(0, SPINE_LEADS)
     .map(({ key, points }) => ({ key, percent: points, tone: 'lead' as const }))

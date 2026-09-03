@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import router from './index'
@@ -34,5 +34,25 @@ describe('router', () => {
     document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>'
     await navigate({ name: 'library' })
     expect(document.activeElement).toBe(document.getElementById('main-content'))
+  })
+
+  it('moves that focus without scrolling the page under the reader', async () => {
+    document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>'
+    const main = document.getElementById('main-content')
+    if (main === null) throw new Error('no main landmark to focus')
+    const focus = vi.spyOn(main, 'focus')
+
+    await navigate({ name: 'data' })
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+  })
+
+  it('opens a page at its top, and back at the offset it was left', () => {
+    const { scrollBehavior } = router.options
+    if (typeof scrollBehavior !== 'function') throw new Error('the router decides no scroll')
+    const here = router.currentRoute.value
+
+    expect(scrollBehavior(here, here, null)).toEqual({ top: 0 })
+    expect(scrollBehavior(here, here, { top: 240, left: 0 })).toEqual({ top: 240, left: 0 })
   })
 })

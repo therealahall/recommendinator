@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRecommendationsStore } from './recommendations'
+import { useAppStore } from './app'
 
 const mockGet = vi.fn()
 const mockPatch = vi.fn()
@@ -36,7 +37,6 @@ describe('useRecommendationsStore', () => {
     expect(store.loading).toBe(false)
     expect(mockGet).toHaveBeenCalledWith('/recommendations', expect.objectContaining({
       type: undefined,
-      count: 5,
     }))
   })
 
@@ -65,6 +65,53 @@ describe('useRecommendationsStore', () => {
     expect(mockGet).toHaveBeenCalledTimes(1)
     expect(store.visibleItems.map((v) => [v.rec.db_id, v.rank])).toEqual([[2, 2]])
     expect(store.hasRun).toBe(true)
+  })
+
+  it('asks for no count while /status is unanswered, so the run resolves the CLI default', async () => {
+    mockGet.mockResolvedValue([])
+    const store = useRecommendationsStore()
+
+    expect(store.count).toBeNull()
+    await store.fetch()
+
+    expect((mockGet.mock.lastCall![1] as Record<string, unknown>).count).toBeUndefined()
+
+    store.count = 7
+    await store.fetch()
+
+    expect(mockGet).toHaveBeenLastCalledWith('/recommendations', expect.objectContaining({
+      count: 7,
+    }))
+  })
+
+  it('asks for the configured default count until the reader picks another', async () => {
+    const app = useAppStore()
+    const configured = { default_count: 3, max_count: 20 }
+    app.recommendationsConfig = configured
+    mockGet.mockResolvedValue([])
+    const store = useRecommendationsStore()
+
+    await store.fetch()
+
+    expect(mockGet).toHaveBeenLastCalledWith('/recommendations', expect.objectContaining({
+      count: configured.default_count,
+    }))
+
+    store.count = 7
+    await store.fetch()
+
+    expect(mockGet).toHaveBeenLastCalledWith('/recommendations', expect.objectContaining({
+      count: 7,
+    }))
+  })
+
+  it('never offers a default above the maximum the run would refuse', async () => {
+    const app = useAppStore()
+    const configured = { default_count: 50, max_count: 6 }
+    app.recommendationsConfig = configured
+    const store = useRecommendationsStore()
+
+    expect(store.count).toBe(configured.max_count)
   })
 
   it('fetch sets error on failure', async () => {

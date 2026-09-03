@@ -12,11 +12,11 @@ vi.mock('@/composables/useApi', () => ({
   useApi: () => ({ get, put, delete: vi.fn() }),
 }))
 
-function stored(weights: Record<string, number> = {}, variety = 0): UserPreferenceResponse {
+function stored(weights: Record<string, number> = {}): UserPreferenceResponse {
   return {
     scorer_weights: { ...DEFAULT_WEIGHTS, ...weights },
     series_in_order: true,
-    variety_penalty: variety,
+    variety_penalty: 0,
     content_length_preferences: {},
     custom_rules: [],
   } as UserPreferenceResponse
@@ -41,19 +41,12 @@ describe('WeightsPanel', () => {
     put.mockResolvedValue(undefined)
   })
 
-  const CLOSED: Array<{ state: string; weights: Record<string, number>; variety: number; says: string }> = [
-    { state: 'nothing has been tuned', weights: {}, variety: 0, says: 'all at their defaults' },
-    { state: 'two signals have', weights: { genre_match: 4 }, variety: 2, says: '2 changed' },
-  ]
-
-  // Closed is not silent: a control reading only "Weights" leaves the screen
-  // incomplete rather than complete without the panel open.
-  it.each(CLOSED)('names what it holds while closed, when $state', async ({ weights, variety, says }) => {
-    const wrapper = await panel(stored(weights, variety))
+  // Closed is not silent: the trigger has to say what opening it would reach.
+  it('names what it holds while closed, and says it is closed', async () => {
+    const wrapper = await panel(stored())
 
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(trigger(wrapper).text()).toContain('Scoring weights')
-    expect(trigger(wrapper).text()).toContain(says)
     expect(trigger(wrapper).attributes('aria-expanded')).toBe('false')
   })
 

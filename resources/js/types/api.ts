@@ -436,8 +436,8 @@ export interface SettingValidation {
   pattern: string | null
 }
 
-// Discriminated by `sensitive`. Non-sensitive carry `value` + `db_overridden`;
-// sensitive carry `has_secret` and no value.
+// Discriminated by `sensitive`. Non-sensitive carry `value`, `db_overridden` and
+// `has_stored_value`; sensitive carry `has_secret` and no value.
 interface SettingViewBase {
   key: string
   section: string
@@ -455,7 +455,10 @@ interface SettingViewBase {
 export interface SettingViewValue extends SettingViewBase {
   sensitive: false
   value: string | number | boolean | string[] | null
+  /** Differs from the built-in default. */
   db_overridden: boolean
+  /** A database row exists, which shadows any config.yaml value for this leaf. */
+  has_stored_value: boolean
 }
 
 export interface SettingViewSecret extends SettingViewBase {

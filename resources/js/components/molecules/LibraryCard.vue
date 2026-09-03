@@ -40,8 +40,10 @@ function statusTone(status: string): string | undefined {
         :title="item.title"
       />
       <div class="library-item-ident">
-        <p class="kind-line"><AppIcon :name="glyph" />{{ formatContentType(item.content_type) }}</p>
-        <h3>{{ item.title }}</h3>
+        <h3>
+          <AppIcon :name="glyph" class="type-glyph" />
+          <span class="sr-only">{{ formatContentType(item.content_type) }}. </span>{{ item.title }}
+        </h3>
         <div v-if="series.shown" class="item-series">
           <span aria-hidden="true">{{ series.shown }}</span>
           <span class="sr-only">{{ series.spoken }}</span>
@@ -54,8 +56,9 @@ function statusTone(status: string): string | undefined {
         {{ formatStatusForContentType(item.status, item.content_type) }}
       </span>
       <span v-if="!item.enriched" class="badge">Not enriched</span>
+      <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
     </div>
-    <div v-if="item.rating !== null || item.ignored" class="library-meta-secondary">
+    <div v-if="item.rating !== null" class="library-meta-secondary">
       <span v-if="item.rating !== null" class="rating-stars">
         <span aria-hidden="true">
           <span
@@ -68,7 +71,6 @@ function statusTone(status: string): string | undefined {
         <span class="value" aria-hidden="true">{{ item.rating }}/5</span>
         <span class="sr-only">Rated {{ item.rating }} out of 5</span>
       </span>
-      <span v-if="item.ignored" class="badge" data-tone="warning">Ignored</span>
     </div>
     <div v-if="item.db_id" class="library-item-actions">
       <button

@@ -25,10 +25,9 @@ export const useAppStore = defineStore('app', () => {
   const showUpdateBanner = ref(false)
   const staleBundle = ref(false)
   const dependencyDrift = ref<PackageDrift[]>([])
-  const recommendationsConfig = ref<RecommendationsConfig>({
-    max_count: 20,
-    default_count: 5,
-  })
+  // Null until /status answers: a placeholder here is a third copy of the
+  // registry's defaults, and the two before it both drifted.
+  const recommendationsConfig = ref<RecommendationsConfig | null>(null)
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let polling = false

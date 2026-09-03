@@ -3,6 +3,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 import RecommendationsPage from './RecommendationsPage.vue'
+import LoadingRows from '@/components/molecules/LoadingRows.vue'
 import { useRecommendationsStore } from '@/stores/recommendations'
 import type { ContentItemResponse, RecommendationResponse } from '@/types/api'
 
@@ -111,6 +112,17 @@ describe('RecommendationsPage', () => {
     await flushPromises()
     return { wrapper, store }
   }
+
+  it('draws placeholder rows while a run is in flight, and says so out loud', async () => {
+    wrapper = mount(RecommendationsPage, { global: { stubs, plugins: [router] } })
+    useRecommendationsStore().loading = true
+    await wrapper.vm.$nextTick()
+
+    const placeholders = wrapper.findComponent(LoadingRows)
+    expect(placeholders.exists()).toBe(true)
+    expect(placeholders.attributes('aria-hidden')).toBe('true')
+    expect(wrapper.get('[role="status"]').text()).toContain('Recommending')
+  })
 
   it('opens the edit modal when a card is marked complete', async () => {
     const { wrapper } = await mountWithItems()
@@ -248,7 +260,6 @@ describe('RecommendationsPage', () => {
     })
   })
 
-  // The rank was an aria-hidden number in a plain div: sighted readers only.
   // Firefox maps no `value` onto posinset, so it announced "1 of 1" on #2.
   it('is a ranked list whose items carry the run rank, not their page position', async () => {
     const { wrapper, store } = await mountWithItems()
@@ -280,10 +291,10 @@ describe('RecommendationsPage', () => {
 
     const line = wrapper.get('.run-line')
     expect(line.attributes('role')).toBe('status')
-    expect(line.text()).toContain('0 of 1 ranked')
+    expect(line.text()).toContain('0 of 1')
   })
 
-  // The selector filters what came back; only the Rank button runs anything.
+  // The selector filters what came back; only the Recommend button runs anything.
   it('narrows the list to one type without asking for another run', async () => {
     wrapper = mount(RecommendationsPage, {
       global: { stubs, plugins: [router] },
@@ -306,7 +317,7 @@ describe('RecommendationsPage', () => {
     // Nothing takes focus on a filter, so the count is how a screen reader
     // learns the list moved (WCAG 4.1.3). It must survive one emptying it.
     expect(wrapper.get('.run-line').attributes('role')).toBe('status')
-    expect(wrapper.get('.run-line').text()).toContain('1 of 2 ranked')
+    expect(wrapper.get('.run-line').text()).toContain('1 of 2')
   })
 
   describe('the empty state', () => {
@@ -347,10 +358,12 @@ describe('RecommendationsPage', () => {
       expect(page.get('[data-testid="recs-empty"]').text()).toContain('tv show')
     })
 
-    it('names no type when the run that came back empty ranked all four', async () => {
+    it('names no type when the run that came back empty covered all four', async () => {
       const page = await emptyAfterRun('')
 
-      expect(page.get('[data-testid="recs-empty"]').text()).toContain('Nothing left to rank')
+      const empty = page.get('[data-testid="recs-empty"]').text()
+      expect(empty).toContain('Nothing left')
+      expect(empty).not.toContain('tv show')
     })
 
     it('offers the rest of the run back, and keeps the keyboard off <body>', async () => {

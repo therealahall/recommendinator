@@ -53,6 +53,7 @@ function section(name: string) {
         sensitive: false,
         value: 'x',
         db_overridden: false,
+        has_stored_value: false,
       },
     ],
   }

@@ -30,14 +30,16 @@ function themesIn(root: string): [string, string][] {
 
 const THEMES = themesIn(THEME_ROOT)
 
-/** Every tone the one badge offers, including the untoned default. */
-const BADGE_TONES = [
-  '.badge',
+const TONED_BADGES = [
   ".badge[data-tone='accent']",
   ".badge[data-tone='success']",
   ".badge[data-tone='warning']",
   ".badge[data-tone='error']",
 ]
+
+const BADGE_TONES = ['.badge', ...TONED_BADGES]
+
+const TONE_CHROMA = 0.1
 
 /** The four surfaces a badge is placed on: a card, a dialog or duplicate row,
  *  the page itself, and the top strip that carries the version. */
@@ -155,6 +157,11 @@ function over(top: Rgba, backdrop: Rgba): Rgba {
   }
 }
 
+function chroma(colour: Rgba): number {
+  const channels = [colour.r, colour.g, colour.b]
+  return (Math.max(...channels) - Math.min(...channels)) / 255
+}
+
 function luminance(colour: Rgba): number {
   const channel = (value: number): number => {
     const scaled = value / 255
@@ -222,8 +229,6 @@ describe.each(THEMES)('every badge tone in %s', (_theme, themePath) => {
   const base = read(BASE)
   const vars = tokens(themePath)
 
-  // One rule now paints ten former names, so a tone that fails is unreadable
-  // everywhere at once — and a tone is placed on all three surfaces.
   it.each(
     BADGE_TONES.flatMap((tone) =>
       BADGE_SURFACES.map((surface): [string, string] => [tone, surface]),
@@ -239,13 +244,29 @@ describe.each(THEMES)('every badge tone in %s', (_theme, themePath) => {
     ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
   })
 
-  // The one edge every tone shares, which is what says where a badge stops.
-  it.each(BADGE_SURFACES)('a badge keeps an edge on %s', (surface) => {
-    const edge = colourIn(declaration(ruleBody(base, '.badge'), 'border'))
+  const edgeOf = (selector: string): Rgba =>
+    toRgba(
+      colourIn(
+        optional(ruleBody(base, selector), 'border-color') ??
+          declaration(ruleBody(base, '.badge'), 'border'),
+      ),
+      vars,
+    )
 
+  it.each(
+    BADGE_TONES.flatMap((tone) =>
+      BADGE_SURFACES.map((surface): [string, string] => [tone, surface]),
+    ),
+  )('%s keeps an edge on %s', (selector, surface) => {
     expect(
-      contrast(toRgba(edge, vars), toRgba(`var(${surface})`, vars)),
+      contrast(edgeOf(selector), toRgba(`var(${surface})`, vars)),
     ).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  // Reported on Nord: --color-warning at 20% over the card composited to
+  // rgb(94, 93, 93), so the badge read as chrome rather than as its tone.
+  it.each(TONED_BADGES)('%s carries its own hue rather than a grey', (selector) => {
+    expect(chroma(edgeOf(selector))).toBeGreaterThanOrEqual(TONE_CHROMA)
   })
 })
 
@@ -538,9 +559,6 @@ const TINTED_TEXT: [string, string, string, string][] = [
   ['a new version being available', BASE, '.update-banner', '--bg-primary'],
   ['the Reload button on it', BASE, '.btn-secondary', '--bg-primary'],
   ['the type glyph standing in for a missing cover', BASE, '.cover-art--none', '--bg-card'],
-  ['the content type a card names', BASE, '.kind-line', '--bg-card'],
-  ['the rank of a recommendation', BASE, '.rec-rank', '--bg-card'],
-  ['the same rank once that one is set aside', BASE, '.rec-rank', '--bg-primary'],
   ['a recommendation set aside', BASE, '.rec-aside-body', '--bg-primary'],
   ['the heading over a breakdown', BASE, '.score-details-title', '--bg-primary'],
   ['a scorer in a breakdown', BASE, '.score-label', '--bg-primary'],

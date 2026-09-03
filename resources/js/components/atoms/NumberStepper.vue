@@ -5,7 +5,7 @@ import AppIcon from '@/components/atoms/AppIcon.vue'
 defineOptions({ inheritAttrs: false })
 
 const props = withDefaults(defineProps<{
-  modelValue: number
+  modelValue: number | null
   min?: number
   max?: number
   step?: number
@@ -17,8 +17,8 @@ const props = withDefaults(defineProps<{
   step: 1,
   disabled: false,
 })
-// Neither `min` nor `max` has a default: a control must never report or enforce a
-// bound its registry entry does not declare.
+// Neither `min` nor `max` has a default, and `null` is "no value yet": a control must
+// never name a bound or a number its caller has not declared, so a press names `min`.
 
 const attrs = useAttrs()
 const resolvedLabel = computed(() =>
@@ -42,17 +42,26 @@ function clamp(value: number): number {
 // Bound state uses aria-disabled, NOT native disabled: stepping down to `min`
 // while the Decrease button has focus would blur the element the user is
 // operating and drop focus to <body> mid-interaction (WCAG 2.4.3).
-const atMin = computed(() => props.min != null && props.modelValue <= props.min)
-const atMax = computed(() => props.max != null && props.modelValue >= props.max)
+const atMin = computed(
+  () => props.min != null && props.modelValue != null && props.modelValue <= props.min,
+)
+const atMax = computed(
+  () => props.max != null && props.modelValue != null && props.modelValue >= props.max,
+)
+
+function stepped(delta: number): number {
+  if (props.modelValue == null) return clamp(props.min ?? 0)
+  return clamp(props.modelValue + delta)
+}
 
 function decrement() {
   if (props.disabled || atMin.value) return
-  emit('update:modelValue', clamp(props.modelValue - props.step))
+  emit('update:modelValue', stepped(-props.step))
 }
 
 function increment() {
   if (props.disabled || atMax.value) return
-  emit('update:modelValue', clamp(props.modelValue + props.step))
+  emit('update:modelValue', stepped(props.step))
 }
 
 function onInput(event: Event) {
@@ -104,17 +113,17 @@ function onInput(event: Event) {
 </template>
 
 <style scoped>
-/* The two buttons and the entry meet the edge, so the shared field padding
-   would leave a strip of --bg-input around them. */
+/* The buttons meet the edge, so the shared field padding would strand a strip
+   of --bg-input; an auto width would stretch to the column, not to the digits. */
 .number-stepper {
   display: inline-flex;
   align-items: stretch;
+  width: min(var(--field-num-w), 100%);
   padding: 0;
   overflow: hidden;
-  /* min-height, not height: font-size is rem-derived, so under text-only zoom
-     the line box outgrows a fixed 34px and `overflow: hidden` would clip the
-     digits — the same 1.4.4 concern the width above is sized for. */
-  min-height: 34px;
+  /* min-height, not height: under text-only zoom the line box outgrows the
+     floor and `overflow: hidden` would clip the digits (WCAG 1.4.4). */
+  min-height: 44px;
 }
 
 .stepper-btn {
@@ -159,34 +168,16 @@ function onInput(event: Event) {
 }
 
 .stepper-input {
-  /* 7ch sizes a six-digit value; one registry int leaf declares a max, of 5.
-     ch, not px: it scales with font size (1.4.4). The base.css
-     `box-sizing: border-box` reset makes `width` include the horizontal
-     padding, so it is added back. */
-  width: calc(7ch + var(--space-1) * 2);
+  flex: 1;
+  min-width: 0;
   text-align: center;
   background: var(--bg-input);
   border: none;
   color: var(--text-primary);
-  font-size: var(--text-sm);
+  font-size: var(--control-text);
   font-variant-numeric: tabular-nums;
   padding: 0 var(--space-1);
   -moz-appearance: textfield;
-}
-
-/* The @supports gate matters — without field-sizing, `width: auto` on a
-   number input resolves to the intrinsic ~20-character width and the stepper
-   balloons instead. */
-@supports (field-sizing: content) {
-  .stepper-input {
-    width: auto;
-    min-width: calc(4ch + var(--space-1) * 2);
-    /* Bounded: min-only leaves (e.g. recommendations.max_count) clamp against
-       +Infinity, so an over-long paste would otherwise grow the stepper past a
-       320px viewport and break reflow. */
-    max-width: calc(12ch + var(--space-1) * 2);
-    field-sizing: content;
-  }
 }
 
 .stepper-input:disabled {

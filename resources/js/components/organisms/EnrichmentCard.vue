@@ -4,6 +4,7 @@ import { useDataStore } from '@/stores/data'
 import { formatContentType, progressMilestone, truncate } from '@/utils/format'
 import EnrichmentReset from '@/components/molecules/EnrichmentReset.vue'
 import TypePills from '@/components/atoms/TypePills.vue'
+import TypeSelect from '@/components/atoms/TypeSelect.vue'
 import ToggleSwitch from '@/components/atoms/ToggleSwitch.vue'
 
 const data = useDataStore()
@@ -150,8 +151,10 @@ const onReset = (provider: string) =>
         </template>
       </div>
 
-      <div class="enrichment-toolbar">
-        <TypePills v-model="enrichType" />
+      <div class="toolbar enrichment-toolbar">
+        <TypePills v-model="enrichType" class="enrich-pills" />
+
+        <TypeSelect v-model="enrichType" class="field toolbar-select enrich-type-select" />
 
         <div class="toolbar-divider" />
 
@@ -233,18 +236,43 @@ const onReset = (provider: string) =>
 
 <style scoped>
 .enrichment-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
   margin-top: var(--space-4);
 }
 
+.enrich-type-select {
+  display: none;
+}
+
+/* Four controls do not fit a phone on one line, and margin-left: auto pins the
+   group to the right edge as it overflows. */
 .toolbar-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .enrich-pills,
+  .enrichment-toolbar > .toolbar-divider {
+    display: none;
+  }
+
+  .enrich-type-select {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .toolbar-right {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .toolbar-right > * {
+    flex: 1 1 auto;
+  }
 }
 
 .enrichment-status {

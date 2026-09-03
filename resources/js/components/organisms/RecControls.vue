@@ -16,7 +16,7 @@ function onGenerate(): void {
 
 <template>
   <div class="card">
-    <div class="rec-toolbar">
+    <div class="toolbar rec-toolbar">
       <TypePills v-model="recs.contentType" class="rec-pills" />
 
       <TypeSelect v-model="recs.contentType" class="field toolbar-select rec-type-select" />
@@ -24,7 +24,7 @@ function onGenerate(): void {
       <NumberStepper
         v-model="recs.count"
         :min="1"
-        :max="app.recommendationsConfig.max_count"
+        :max="app.recommendationsConfig?.max_count"
         class="rec-stepper"
         aria-label="Number of recommendations"
       />
@@ -37,20 +37,13 @@ function onGenerate(): void {
           data-testid="generate-btn"
           :aria-disabled="recs.loading || undefined"
           @click="onGenerate"
-        >{{ recs.loading ? 'Ranking…' : 'Rank' }}</button>
+        >{{ recs.loading ? 'Recommending…' : 'Recommend' }}</button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.rec-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
 .toolbar-zone {
   display: flex;
   align-items: center;
