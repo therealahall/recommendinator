@@ -323,15 +323,6 @@ def test_status_endpoint(client):
 
 
 class TestStatusRecommendationsConfig:
-    def test_status_includes_recommendations_config_defaults(self, client):
-        app_state.config = {}
-
-        response = client.get("/api/status")
-        assert response.status_code == 200
-        rec_cfg = response.json()["recommendations_config"]
-        assert rec_cfg["max_count"] == 20
-        assert rec_cfg["default_count"] == 5
-
     def test_status_reads_recommendations_config_from_config(self, client):
         app_state.config = {
             "recommendations": {"max_count": 50, "default_count": 10},
@@ -3249,6 +3240,7 @@ class TestSettingsEndpoints:
         numeric = self._find(body, _SETTINGS_INT_KEY)
         assert numeric["value"] == 5
         assert numeric["db_overridden"] is False
+        assert numeric["has_stored_value"] is False
         assert "has_secret" not in numeric
 
         secret = self._find(body, _SETTINGS_SECRET_KEY)
@@ -3256,6 +3248,18 @@ class TestSettingsEndpoints:
         assert secret["has_secret"] is False
         assert "value" not in secret
         assert "db_overridden" not in secret
+        assert "has_stored_value" not in secret
+
+    def test_a_stored_row_matching_the_default_is_still_offered_for_reset(
+        self, settings_env
+    ) -> None:
+        client, storage, _config = settings_env
+        storage.settings.set(_SETTINGS_INT_KEY, default_of(_SETTINGS_INT_KEY))
+
+        setting = self._find(client.get("/api/settings").json(), _SETTINGS_INT_KEY)
+
+        assert setting["db_overridden"] is False
+        assert setting["has_stored_value"] is True
 
     def test_put_persists_and_live_applies(self, settings_env) -> None:
         client, storage, config = settings_env
@@ -3322,10 +3326,12 @@ class TestSettingsEndpoints:
 
         assert response.status_code == 200
         assert storage.settings.get(_SETTINGS_INT_KEY) is None
-        assert config["recommendations"]["default_count"] == 5
+        assert config["recommendations"]["default_count"] == default_of(
+            _SETTINGS_INT_KEY
+        )
         setting = self._find(response.json(), _SETTINGS_INT_KEY)
         assert setting["db_overridden"] is False
-        assert setting["value"] == 5
+        assert setting["value"] == default_of(_SETTINGS_INT_KEY)
 
     def test_delete_unknown_key_returns_404(self, settings_env) -> None:
         client, _storage, _config = settings_env

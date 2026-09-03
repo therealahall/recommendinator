@@ -9,6 +9,7 @@ from src.cli._shared import abort_after_failure, series_label
 from src.models.content import ContentItem, ContentType, get_enum_value
 from src.models.detail_fields import DETAIL_FIELDS
 from src.recommendations.record import Recommendation
+from src.settings.service import effective_value
 
 #: What ``GET /api/recommendations`` answers with. The engine walks the
 #: library, so its faults quote item titles.
@@ -46,13 +47,14 @@ def _related_titles(items: list[ContentItem]) -> str:
     "content_type_str",
     type=click.Choice(["book", "movie", "tv_show", "video_game"], case_sensitive=False),
     default=None,
-    help="Content type to rank (default: all four together)",
+    help="Content type to recommend (default: all four together)",
 )
 @click.option(
     "--count",
     type=click.IntRange(min=1),
-    default=5,
-    help="Number of recommendations to generate (capped by config 'recommendations.max_count').",
+    default=None,
+    help="Number of recommendations to generate (default: the "
+    "'recommendations.default_count' setting, capped by 'recommendations.max_count').",
 )
 @click.option(
     "--format",
@@ -72,7 +74,7 @@ def _related_titles(items: list[ContentItem]) -> str:
 def recommend(
     ctx: click.Context,
     content_type_str: str | None,
-    count: int,
+    count: int | None,
     output_format: str,
     user_id: int,
 ) -> None:
@@ -82,8 +84,12 @@ def recommend(
     )
 
     # Enforce config-driven max_count (matches web API /api/recommendations).
-    max_count = ctx.obj["config"].get("recommendations", {}).get("max_count", 20)
-    if count > max_count:
+    config = ctx.obj["config"]
+    max_count: int = effective_value(config, "recommendations.max_count")
+    if count is None:
+        default_count: int = effective_value(config, "recommendations.default_count")
+        count = min(default_count, max_count)
+    elif count > max_count:
         click.echo(
             f"Error: --count {count} exceeds configured max_count={max_count}.",
             err=True,
@@ -118,14 +124,16 @@ def recommend(
                 # read identically otherwise.
                 label = content_type_str.replace("_", " ") if content_type_str else ""
                 headline = (
-                    f"No {label} left to rank" if label else "Nothing left to rank"
+                    f"No {label} left to recommend"
+                    if label
+                    else "Nothing left to recommend"
                 )
                 click.echo(
                     f"{headline}. Every {label or 'item'} in the pool is "
                     "finished, in progress or set aside. Recommendations come "
                     "from what you have not consumed yet, so syncing a source "
                     "or adding items is what gives the next run something to "
-                    "rank."
+                    "recommend."
                 )
             return
 

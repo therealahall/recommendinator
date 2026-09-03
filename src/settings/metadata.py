@@ -93,7 +93,8 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         label="Default count",
         help="Number of recommendations returned by default.",
         type="int",
-        default=5,
+        # A run spans all four content types, so twenty is five of each.
+        default=20,
         validation=Validation(min=1),
     ),
     _entry(
@@ -101,7 +102,8 @@ _REGISTRY: tuple[SettingMetadata, ...] = (
         label="Maximum count",
         help="Upper limit on recommendations returned per request.",
         type="int",
-        default=20,
+        # Headroom over the default, or the stepper opens pinned at its ceiling.
+        default=50,
         validation=Validation(min=1),
     ),
     _entry(

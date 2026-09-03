@@ -35,9 +35,9 @@ class SettingValidationView(BaseModel):
 
 
 class SettingView(BaseModel):
-    """``value`` and ``db_overridden`` are present only for non-sensitive
-    settings; ``has_secret`` is present only for sensitive ones. The omitted
-    fields are dropped from the response via ``response_model_exclude_unset``.
+    """``value``, ``db_overridden`` and ``has_stored_value`` are present only for
+    non-sensitive settings; ``has_secret`` is present only for sensitive ones.
+    The omitted fields are dropped via ``response_model_exclude_unset``.
     """
 
     key: str
@@ -53,6 +53,7 @@ class SettingView(BaseModel):
     sensitive: bool
     value: Any = None
     db_overridden: bool | None = None
+    has_stored_value: bool | None = None
     has_secret: bool | None = None
 
 

@@ -72,6 +72,8 @@ def _echo_restart_advisory(keys: Iterable[str], output_format: str) -> None:
 
 def _setting_flags(view: dict[str, Any]) -> str:
     flags = []
+    if view.get("has_stored_value"):
+        flags.append("stored")
     if view.get("db_overridden"):
         flags.append("overridden")
     if view["restart_required"]:
