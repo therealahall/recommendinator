@@ -147,7 +147,7 @@ private/              # Gitignored — private plugins NOT in the open source re
 
 ## Private Plugins (gitignored)
 
-**IMPORTANT:** The `private/` directory is in `.gitignore` and invisible to Glob/Grep tools (which respect gitignore). Always check it explicitly with `Read` or `ls` when investigating plugin issues.
+**IMPORTANT:** The `private/` directory is in `.gitignore` and invisible to Glob/Grep tools (which respect gitignore). Reach it with `rg -u`, `Read` or `ls` when investigating plugin issues.
 
 - Private plugins follow the same `SourcePlugin` interface as `src/ingestion/sources/` plugins. A private enrichment provider goes in the same directory and implements `EnrichmentProvider`; each registry keeps the subclasses it recognises.
 - Tests for private plugins live alongside them or in a local test runner — they are NOT in the `tests/` directory.

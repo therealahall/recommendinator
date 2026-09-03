@@ -413,6 +413,15 @@ tells a metadata CDN which titles the library holds. A cover that is permanently
 gone is remembered as dead, so no later sync re-offers it, and the item is
 re-queued for enrichment so the next source or provider can name another.
 
+`backfill` only fetches covers the library already holds a URL for. An item
+whose enrichment settled before providers were asked for art has no URL, so
+`backfill` counts it and leaves it: reaching it means a full re-enrichment pass,
+which is yours to start with `enrichment reset` then `enrichment start`.
+
+Not counted: an item settled `not_found`, whose door is `enrichment start
+--retry-not-found`, and one whose URL is recorded dead, which clearing already
+re-queued.
+
 One walk runs at a time across both interfaces. A stop takes effect after the
 item the walk is on, and is not a failure: `backfill` exits non-zero only when
 the walk stopped on an error.

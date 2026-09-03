@@ -12,18 +12,23 @@ The engine scores every candidate through weighted factors. Setting a weight to
 | `series_order` | Prioritises the next entry in a series you are partway through | 1.5 |
 | `rating_pattern` | Learns from your rating history within a genre | 1.0 |
 | `content_length` | Soft penalty for a length mismatch | 1.0 |
-| `continuation` | Boosts items you are actively consuming. Dropped from the pipeline when you have none | 2.0 |
+| `continuation` | Boosts items you are actively consuming. Counts only while an item is in progress | 2.0 |
 | `series_affinity` | Boosts franchises you have rated well | 1.0 |
-| `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Dropped from the pipeline when nothing adapts anything | 1.5 |
+| `adaptation` | Boosts a film, show or game adapting something you rated well, and the source behind an adaptation you loved. Counts only for an item that adapts something | 1.5 |
 | `custom_preference` | Applies your natural language rules, "avoid X" and "prefer Y". Only in the pipeline when you have rules | 1.0 |
 
 ## One score, fully explained
 
-The score a recommendation shows **is** the weighted mean of the table above.
-Every contribution is a scorer with a weight you can set and a row in the web
-**Score Details** panel, so the rows and their weights reproduce the number
-beside them. Nothing is added outside that budget, and there is no second
-combination stage.
+The score a recommendation shows **is** the weighted mean of the rows the web
+**Score Details** panel lists for it, so those rows and their weights reproduce
+the number beside them. Nothing is added outside that budget, and there is no
+second combination stage.
+
+A scorer that structurally cannot fire for an item is left out of both the panel
+and the weight the mean divides by: `continuation` on something not in progress,
+`adaptation` on something that adapts nothing. Neither can cost an item
+score it had no way to earn. A neutral `0.5` for want of evidence is a real
+contribution and keeps its weight.
 
 A candidate the engine knows nothing about scores near `0.5`, because most
 scorers return a neutral `0.5` with no evidence either way. Genre and creator
