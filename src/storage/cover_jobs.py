@@ -13,8 +13,8 @@ from src.storage.sqlite_db import SQLiteDB
 
 _COLUMNS = (
     "running, completed, cancelled, total_items, items_processed, items_cached, "
-    "items_cleared, items_failed, current_item, errors_json, started_at, "
-    "heartbeat_at"
+    "items_cleared, items_failed, items_without_cover, current_item, errors_json, "
+    "started_at, heartbeat_at"
 )
 
 _CLAIM = (
@@ -22,6 +22,7 @@ _CLAIM = (
     " SET running = 1, completed = 0, cancelled = 0, total_items = 0,"
     " items_processed = 0,"
     " items_cached = 0, items_cleared = 0, items_failed = 0, stop_requested = 0,"
+    " items_without_cover = 0,"
     " current_item = '', errors_json = '[]', started_at = ?, heartbeat_at = ?"
     " WHERE id = 1"
     " AND (running = 0 OR heartbeat_at IS NULL OR heartbeat_at < ?)"
@@ -43,6 +44,7 @@ class CoverBackfillRecord:
     cached: int = 0
     cleared: int = 0
     failed: int = 0
+    without_cover: int = 0
     current_item: str = ""
     errors: list[str] = field(default_factory=list)
     started_at: datetime | None = None
@@ -57,6 +59,7 @@ class CoverBackfillRecord:
             "items_cached": self.cached,
             "items_cleared": self.cleared,
             "items_failed": self.failed,
+            "items_without_cover": self.without_cover,
             "current_item": self.current_item,
             "errors": list(self.errors),
         }
@@ -76,6 +79,7 @@ def _to_record(row: sqlite3.Row, *, alive: bool) -> CoverBackfillRecord:
         cached=row["items_cached"],
         cleared=row["items_cleared"],
         failed=row["items_failed"],
+        without_cover=row["items_without_cover"],
         current_item=row["current_item"],
         errors=json.loads(row["errors_json"]),
         started_at=_moment(row["started_at"]),
@@ -149,6 +153,7 @@ class CoverBackfillStore:
                 "UPDATE cover_backfill_job SET running = ?, completed = ?, "
                 "cancelled = ?, total_items = ?, items_processed = ?, "
                 "items_cached = ?, items_cleared = ?, items_failed = ?, "
+                "items_without_cover = ?, "
                 f"current_item = ?, errors_json = ?, {cleared}"
                 f"heartbeat_at = ? WHERE id = 1{guard}",
                 (
@@ -160,6 +165,7 @@ class CoverBackfillStore:
                     record.cached,
                     record.cleared,
                     record.failed,
+                    record.without_cover,
                     record.current_item,
                     json.dumps(list(record.errors)),
                     _stamp(datetime.now(UTC)),

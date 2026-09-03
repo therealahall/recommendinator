@@ -20,6 +20,14 @@ class CoverBackfillResponse(BaseModel):
     items_cached: int = 0
     items_cleared: int = 0
     items_failed: int = 0
+    items_without_cover: int = Field(
+        0,
+        description=(
+            "Items a provider settled before it was asked for art, so no walk"
+            " can fetch them. POST /api/enrichment/reset then"
+            " /api/enrichment/start to ask again."
+        ),
+    )
     current_item: str = ""
     errors: list[str] = Field(default_factory=list)
 

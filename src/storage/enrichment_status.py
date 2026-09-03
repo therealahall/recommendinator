@@ -45,6 +45,10 @@ class EnrichmentStore:
             user_id=user_id,
         )
 
+    def settled_without_cover(self, user_id: int) -> int:
+        """Only a reset puts these back in front of a provider."""
+        return self._sqlite_db.count_settled_without_cover(user_id)
+
     def not_found_ids(
         self,
         content_type: ContentType | None = None,

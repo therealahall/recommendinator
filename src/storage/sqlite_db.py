@@ -1602,15 +1602,32 @@ class SQLiteDB:
         items = self.get_content_items_by_db_ids(db_ids)
         return [(item.db_id, item) for item in items if item.db_id is not None]
 
+    def count_settled_without_cover(self, user_id: int) -> int:
+        """``not_found`` is excluded: no provider held those items at all, and
+        retrying them is what ``--retry-not-found`` is for.
+        """
+        with self.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM content_items ci"
+                " JOIN enrichment_status es ON es.content_item_id = ci.id"
+                " WHERE ci.user_id = ? AND ci.merged_into IS NULL"
+                " AND ci.cover_url IS NULL AND es.needs_enrichment = 0"
+                " AND (es.enrichment_quality IS NULL"
+                "      OR es.enrichment_quality != 'not_found')"
+                " AND NOT EXISTS (SELECT 1 FROM content_item_dead_covers d"
+                "                  WHERE d.content_item_id = ci.id)",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
     def count_items_needing_enrichment(
         self,
         content_type: ContentType | None = None,
         user_id: int | None = None,
     ) -> int:
-        """Items previously marked as ``not_found`` are tracked separately by
-        the manager and are intentionally excluded here to avoid
-        double-counting.
-        """
+        """Items settled as ``not_found`` are counted separately, not here."""
         effective_user_id = user_id if user_id is not None else get_default_user_id()
 
         with self.connection() as conn:

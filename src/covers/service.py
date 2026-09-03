@@ -108,6 +108,7 @@ def backfill_covers(
     ]
 
     record.total = len(pending)
+    record.without_cover = storage.enrichment.settled_without_cover(user_id)
     stopped = False
     for item in pending:
         if storage.cover_jobs.stop_requested():

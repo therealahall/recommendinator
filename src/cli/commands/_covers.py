@@ -25,6 +25,12 @@ def _echo_backfill(record: CoverBackfillRecord) -> None:
     click.echo(f"  Covers cached: {record.cached}")
     click.echo(f"  Covers cleared as unreachable: {record.cleared}")
     click.echo(f"  Covers that failed for now: {record.failed}")
+    if record.without_cover:
+        click.echo(f"  Items with no cover art to fetch: {record.without_cover}")
+        click.echo(
+            "    A provider settled these before it was asked for art. Run"
+            " 'enrichment reset' then 'enrichment start' to ask again."
+        )
     for error in record.errors:
         click.echo(f"    - {error}")
 
