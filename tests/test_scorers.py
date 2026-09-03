@@ -618,7 +618,7 @@ class TestContinuationScorer:
         scorer = ContinuationScorer()
         assert scorer.score(candidate, context) == 1.0
 
-    def test_unread_scores_0(self) -> None:
+    def test_an_unstarted_item_does_not_apply(self) -> None:
         candidate = make_item(
             title="The Wire (Season 1)",
             content_type=ContentType.TV_SHOW,
@@ -626,7 +626,7 @@ class TestContinuationScorer:
         )
         context = _build_context(consumed=[])
         scorer = ContinuationScorer()
-        assert scorer.score(candidate, context) == 0.0
+        assert scorer.applies(candidate, context) is False
 
 
 class TestSeriesAffinityScorer:
@@ -745,7 +745,7 @@ class TestAdaptationScorer:
         context.adaptations = {candidate_key(candidate): adapts} if adapts else {}
         return context
 
-    def test_five_star_adaptation_scores_1(self) -> None:
+    def test_a_cited_adaptation_scores_the_top_of_the_scale(self) -> None:
         source = make_item(item_id="book", title="Dune", rating=5)
         candidate = make_item(
             item_id="film", title="Dune", content_type=ContentType.MOVIE
@@ -755,49 +755,14 @@ class TestAdaptationScorer:
 
         assert scorer.score(candidate, self._context_where(candidate, [source])) == 1.0
 
-    def test_four_star_adaptation_scores_below_a_five_star_one(self) -> None:
-        """The rating carries through rather than flattening to one bonus."""
-        source = make_item(item_id="book", title="Dune", rating=4)
-        candidate = make_item(
-            item_id="film", title="Dune", content_type=ContentType.MOVIE
-        )
-
-        scorer = AdaptationScorer()
-
-        assert scorer.score(candidate, self._context_where(candidate, [source])) == 0.75
-
-    def test_best_rated_source_wins(self) -> None:
-        sources = [
-            make_item(item_id="book", title="Dune", rating=4),
-            make_item(item_id="game", title="Dune", rating=5),
-        ]
-        candidate = make_item(
-            item_id="film", title="Dune", content_type=ContentType.MOVIE
-        )
-
-        scorer = AdaptationScorer()
-
-        assert scorer.score(candidate, self._context_where(candidate, sources)) == 1.0
-
-    def test_candidate_adapting_nothing_scores_0(self) -> None:
+    def test_a_candidate_adapting_nothing_does_not_apply(self) -> None:
         candidate = make_item(
             item_id="film", title="Solaris", content_type=ContentType.MOVIE
         )
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(candidate, self._context_where(candidate, [])) == 0.0
-
-    def test_unrated_source_scores_0(self) -> None:
-        """An adaptation of something unrated says nothing about taste."""
-        source = make_item(item_id="book", title="Dune", rating=None)
-        candidate = make_item(
-            item_id="film", title="Dune", content_type=ContentType.MOVIE
-        )
-
-        scorer = AdaptationScorer()
-
-        assert scorer.score(candidate, self._context_where(candidate, [source])) == 0.0
+        assert scorer.applies(candidate, self._context_where(candidate, [])) is False
 
     def test_another_candidates_adaptations_do_not_leak(self) -> None:
         source = make_item(item_id="book", title="Dune", rating=5)
@@ -810,4 +775,4 @@ class TestAdaptationScorer:
 
         scorer = AdaptationScorer()
 
-        assert scorer.score(other, self._context_where(adapter, [source])) == 0.0
+        assert scorer.applies(other, self._context_where(adapter, [source])) is False

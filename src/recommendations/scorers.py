@@ -104,6 +104,11 @@ class Scorer(ABC):
     def clone(self, weight: float) -> Scorer:
         return type(self)(weight=weight)
 
+    def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
+        """False only where the scorer structurally cannot fire, never where it
+        returns a neutral 0.5: an excluded scorer leaves the divisor."""
+        return True
+
     @abstractmethod
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
         """Return a score in ``[0.0, 1.0]`` for *candidate*."""
@@ -294,10 +299,11 @@ class ContinuationScorer(Scorer):
     def __init__(self, weight: float = 2.0) -> None:
         super().__init__(weight)
 
+    def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
+        return candidate.status == ConsumptionStatus.CURRENTLY_CONSUMING
+
     def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        if candidate.status == ConsumptionStatus.CURRENTLY_CONSUMING:
-            return 1.0
-        return 0.0
+        return 1.0
 
 
 class SeriesAffinityScorer(Scorer):
@@ -327,16 +333,13 @@ class AdaptationScorer(Scorer):
     def __init__(self, weight: float = 1.5) -> None:
         super().__init__(weight)
 
-    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
-        adaptations = context.adaptations.get(candidate_key(candidate))
-        if not adaptations:
-            return 0.0
+    def applies(self, candidate: ContentItem, context: ScoringContext) -> bool:
+        return bool(context.adaptations.get(candidate_key(candidate)))
 
-        best_rating = max(
-            (item.rating for item in adaptations if item.rating is not None),
-            default=1,
-        )
-        return (best_rating - 1.0) / 4.0
+    def score(self, candidate: ContentItem, context: ScoringContext) -> float:
+        # A gated signal has to score the top of the scale: the aggregate is a
+        # mean over the scorers that apply, so less would demote what it boosts.
+        return 1.0
 
 
 class ContentLengthScorer(Scorer):

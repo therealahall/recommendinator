@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.models.content import ConsumptionStatus, ContentItem, ContentType
+from src.recommendations.content_length import LengthPreference
 from src.recommendations.profile import (
     PreferenceProfile,
     ProfileGenerator,
@@ -198,6 +199,61 @@ class TestThemePreferences:
         profile = generator.generate_profile(user_id=1)
 
         assert "exploration" in profile.theme_preferences
+
+    def test_length_descriptors_are_not_themes(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        length_words = [
+            preference.value
+            for preference in LengthPreference
+            if preference is not LengthPreference.ANY
+        ]
+        for index in range(2):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"test{index}",
+                    title=f"Game {index}",
+                    content_type=ContentType.VIDEO_GAME,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                    metadata={"tags": [*length_words, "exploration"]},
+                ),
+                user_id=1,
+            )
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        assert profile.theme_preferences == ["exploration"]
+
+    def test_a_negated_review_word_does_not_credit_its_root_theme(
+        self,
+        storage_manager: StorageManager,
+    ) -> None:
+        for index in range(2):
+            storage_manager.save_content_item(
+                ContentItem(
+                    id=f"review{index}",
+                    title=f"Book {index}",
+                    content_type=ContentType.BOOK,
+                    status=ConsumptionStatus.COMPLETED,
+                    rating=5,
+                    review=(
+                        "Unemotional to a fault, but the character development "
+                        "and thought-provoking ending stayed with me."
+                    ),
+                ),
+                user_id=1,
+            )
+
+        generator = ProfileGenerator(storage_manager)
+        profile = generator.generate_profile(user_id=1)
+
+        assert set(profile.theme_preferences) == {
+            "character development",
+            "thought-provoking",
+        }
 
 
 class TestAntiPreferences:
